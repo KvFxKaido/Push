@@ -4,6 +4,8 @@ import { GitPullRequest, FileCode, Brain } from 'lucide-react';
 interface RunningScreenProps {
   repo: string;
   prNumber: string;
+  providerName: string;
+  modelName: string;
 }
 
 const STEPS = [
@@ -12,7 +14,7 @@ const STEPS = [
   { icon: Brain, text: 'Running analysis...' },
 ];
 
-export function RunningScreen({ repo, prNumber }: RunningScreenProps) {
+export function RunningScreen({ repo, prNumber, providerName, modelName }: RunningScreenProps) {
   const [stepIndex, setStepIndex] = useState(0);
 
   useEffect(() => {
@@ -39,7 +41,10 @@ export function RunningScreen({ repo, prNumber }: RunningScreenProps) {
       <h2 className="text-xl font-semibold text-white mb-2">
         Analyzing PR #{prNumber}
       </h2>
-      <p className="text-slate-400 text-sm mb-8">{repo}</p>
+      <p className="text-slate-400 text-sm mb-1">{repo}</p>
+      <p className="text-slate-500 text-xs mb-8">
+        {providerName} &middot; {modelName}
+      </p>
 
       {/* Progress Steps */}
       <div className="w-full max-w-xs space-y-3">

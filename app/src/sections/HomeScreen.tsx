@@ -2,15 +2,35 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { GitPullRequest, Github } from 'lucide-react';
 import { useGitHubAuth } from '@/hooks/useGitHubAuth';
+import type { AIProviderType } from '@/types';
+import { PROVIDERS, getProvider } from '@/lib/providers';
 
 interface HomeScreenProps {
   onAnalyze: (owner: string, repo: string, prNumber: string) => void;
   loading: boolean;
+  provider: AIProviderType;
+  modelId: string;
+  onProviderChange: (provider: AIProviderType) => void;
+  onModelChange: (modelId: string) => void;
 }
 
-export function HomeScreen({ onAnalyze, loading }: HomeScreenProps) {
+export function HomeScreen({
+  onAnalyze,
+  loading,
+  provider,
+  modelId,
+  onProviderChange,
+  onModelChange,
+}: HomeScreenProps) {
   const [owner, setOwner] = useState('owner');
   const [repo, setRepo] = useState('repo');
   const [prNumber, setPrNumber] = useState('1');
@@ -23,10 +43,21 @@ export function HomeScreen({ onAnalyze, loading }: HomeScreenProps) {
     configured: authConfigured,
   } = useGitHubAuth();
 
+  const currentProvider = getProvider(provider);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (owner && repo && prNumber) {
       onAnalyze(owner, repo, prNumber);
+    }
+  };
+
+  const handleProviderChange = (value: string) => {
+    const newProvider = value as AIProviderType;
+    onProviderChange(newProvider);
+    const prov = getProvider(newProvider);
+    if (prov && prov.models.length > 0) {
+      onModelChange(prov.models[0].id);
     }
   };
 
@@ -83,6 +114,56 @@ export function HomeScreen({ onAnalyze, loading }: HomeScreenProps) {
               </p>
             )}
             {authError && <p className="text-xs text-rose-400">{authError}</p>}
+          </div>
+
+          {/* AI Provider Selection */}
+          <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+            <p className="text-sm font-medium text-slate-200">AI Provider</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-400">Provider</Label>
+                <Select value={provider} onValueChange={handleProviderChange}>
+                  <SelectTrigger className="h-10 bg-slate-900 border-slate-700 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-900 border-slate-700">
+                    {PROVIDERS.map((p) => (
+                      <SelectItem
+                        key={p.type}
+                        value={p.type}
+                        className="text-slate-200 focus:bg-slate-800 focus:text-white"
+                      >
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-400">Model</Label>
+                <Select value={modelId} onValueChange={onModelChange}>
+                  <SelectTrigger className="h-10 bg-slate-900 border-slate-700 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-900 border-slate-700">
+                    {currentProvider?.models.map((m) => (
+                      <SelectItem
+                        key={m.id}
+                        value={m.id}
+                        className="text-slate-200 focus:bg-slate-800 focus:text-white"
+                      >
+                        {m.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500">
+              {currentProvider?.description}
+              {' — '}
+              Set <code className="text-slate-400">{currentProvider?.envKey}</code> to enable.
+            </p>
           </div>
 
           {/* Repo Input */}
@@ -147,7 +228,7 @@ export function HomeScreen({ onAnalyze, loading }: HomeScreenProps) {
           <h3 className="text-sm font-medium text-blue-300 mb-2">Demo Mode</h3>
           <p className="text-xs text-blue-400/80">
             No API key configured. Click "Analyze PR" to see sample output.
-            Add VITE_GEMINI_API_KEY to enable real analysis. GitHub OAuth is optional.
+            Add <code className="text-blue-300">{currentProvider?.envKey}</code> to enable real analysis with {currentProvider?.name}. GitHub OAuth is optional.
           </p>
         </div>
 

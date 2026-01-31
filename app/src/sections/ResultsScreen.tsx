@@ -20,6 +20,8 @@ interface ResultsScreenProps {
   repo: string;
   prNumber: string;
   onBack: () => void;
+  providerName: string;
+  modelName: string;
 }
 
 function RiskBadge({ level }: { level: RiskItem['level'] }) {
@@ -89,7 +91,7 @@ function CollapsibleSection({
   );
 }
 
-export function ResultsScreen({ result, repo, prNumber, onBack }: ResultsScreenProps) {
+export function ResultsScreen({ result, repo, prNumber, onBack, providerName, modelName }: ResultsScreenProps) {
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col">
       {/* Header */}
@@ -107,7 +109,7 @@ export function ResultsScreen({ result, repo, prNumber, onBack }: ResultsScreenP
             <h1 className="text-lg font-semibold text-white truncate">
               PR #{prNumber}
             </h1>
-            <p className="text-xs text-slate-400 truncate">{repo}</p>
+            <p className="text-xs text-slate-400 truncate">{repo} &middot; {providerName} &middot; {modelName}</p>
           </div>
         </div>
       </div>

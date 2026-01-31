@@ -1,5 +1,22 @@
 export type AppState = 'home' | 'running' | 'results';
 
+export type AIProviderType = 'gemini' | 'ollama-cloud';
+
+export interface AIModel {
+  id: string;
+  name: string;
+  provider: AIProviderType;
+}
+
+export interface AIProviderConfig {
+  type: AIProviderType;
+  name: string;
+  description: string;
+  models: AIModel[];
+  envKey: string;
+  envUrl?: string;
+}
+
 export interface PRInput {
   owner: string;
   repo: string;
