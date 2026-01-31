@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { GitPullRequest, Github } from 'lucide-react';
+import { useGitHubAuth } from '@/hooks/useGitHubAuth';
 
 interface HomeScreenProps {
   onAnalyze: (owner: string, repo: string, prNumber: string) => void;
@@ -13,6 +14,14 @@ export function HomeScreen({ onAnalyze, loading }: HomeScreenProps) {
   const [owner, setOwner] = useState('owner');
   const [repo, setRepo] = useState('repo');
   const [prNumber, setPrNumber] = useState('1');
+  const {
+    token,
+    login,
+    logout,
+    loading: authLoading,
+    error: authError,
+    configured: authConfigured,
+  } = useGitHubAuth();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,6 +48,43 @@ export function HomeScreen({ onAnalyze, loading }: HomeScreenProps) {
       {/* Form */}
       <div className="flex-1 px-4 py-6">
         <form onSubmit={handleSubmit} className="space-y-5">
+          {/* GitHub OAuth */}
+          <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-slate-200">GitHub OAuth</p>
+                <p className="text-xs text-slate-500">
+                  Connect GitHub to analyze private repositories and avoid rate limits.
+                </p>
+              </div>
+              {token ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={logout}
+                  className="border-slate-700 text-slate-200 hover:bg-slate-800"
+                >
+                  Disconnect
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={login}
+                  disabled={!authConfigured || authLoading}
+                  className="bg-slate-800 text-slate-100 hover:bg-slate-700"
+                >
+                  {authLoading ? 'Connecting...' : 'Connect GitHub'}
+                </Button>
+              )}
+            </div>
+            {!authConfigured && (
+              <p className="text-xs text-slate-500">
+                Add VITE_GITHUB_CLIENT_ID and VITE_GITHUB_OAUTH_PROXY to enable OAuth.
+              </p>
+            )}
+            {authError && <p className="text-xs text-rose-400">{authError}</p>}
+          </div>
+
           {/* Repo Input */}
           <div className="space-y-2">
             <Label className="text-sm font-medium text-slate-300">
@@ -101,7 +147,7 @@ export function HomeScreen({ onAnalyze, loading }: HomeScreenProps) {
           <h3 className="text-sm font-medium text-blue-300 mb-2">Demo Mode</h3>
           <p className="text-xs text-blue-400/80">
             No API key configured. Click "Analyze PR" to see sample output.
-            Add VITE_GEMINI_API_KEY to enable real analysis.
+            Add VITE_GEMINI_API_KEY to enable real analysis. GitHub OAuth is optional.
           </p>
         </div>
 
