@@ -1,73 +1,106 @@
-# React + TypeScript + Vite
+# Diff — AI-Powered GitHub PR Analyzer
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A client-side web app that analyzes GitHub Pull Requests using Google's Gemini API, providing AI-generated code review insights including risk assessment, diff notes, and complexity hotspots.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **PR Analysis** — Enter a GitHub repo and PR number to fetch PR data and diffs via the GitHub API
+- **AI Code Review** — Analyzes code changes with Gemini 1.5 Flash, returning structured feedback
+- **Risk Assessment** — Identifies risks categorized by severity (low / medium / high) and type (security, breaking changes, testing gaps)
+- **Diff Notes** — Annotated observations on specific files and lines, classified as logic, mechanical, or style
+- **Hotspot Detection** — Flags files with high complexity or critical changes
+- **Progressive Web App** — Installable, offline-capable PWA with service worker support
+- **Demo Mode** — Falls back to mock data when API keys are not configured, so you can explore the UI without credentials
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| Layer | Tools |
+|-------|-------|
+| Framework | React 19, TypeScript 5.9 |
+| Build | Vite 7 |
+| Styling | Tailwind CSS 3, Radix UI primitives |
+| UI Components | shadcn/ui-based component library (60+ components) |
+| Forms | React Hook Form, Zod validation |
+| APIs | GitHub REST API, Google Gemini API |
 
-## Expanding the ESLint configuration
+## Getting Started
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Prerequisites
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- Node.js (v18+)
+- npm
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### Installation
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd app
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Environment Variables
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Create a `.env` file in the `app/` directory:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```env
+VITE_GITHUB_TOKEN=your_github_token       # Optional — increases GitHub API rate limits
+VITE_GEMINI_API_KEY=your_gemini_api_key   # Required for real AI analysis
 ```
+
+Without these keys the app runs in demo mode using mock data.
+
+### Development
+
+```bash
+npm run dev
+```
+
+### Build
+
+```bash
+npm run build
+npm run preview   # preview the production build locally
+```
+
+### Lint
+
+```bash
+npm run lint
+```
+
+## Project Structure
+
+```
+app/
+├── public/                 # PWA assets (manifest, service worker, icons)
+├── src/
+│   ├── components/ui/      # Reusable UI components (shadcn/ui)
+│   ├── hooks/
+│   │   ├── useGitHub.ts    # GitHub API data fetching
+│   │   ├── useAnalysis.ts  # Gemini analysis orchestration
+│   │   └── use-mobile.ts   # Mobile viewport detection
+│   ├── lib/
+│   │   ├── gemini.ts       # Gemini API client & prompt engineering
+│   │   └── utils.ts        # Utility helpers
+│   ├── sections/
+│   │   ├── HomeScreen.tsx   # Input form (repo + PR number)
+│   │   ├── RunningScreen.tsx# Loading / progress indicator
+│   │   └── ResultsScreen.tsx# Analysis results display
+│   ├── types/index.ts       # TypeScript type definitions
+│   ├── App.tsx              # Root component & screen routing
+│   └── main.tsx             # React entry point
+├── index.html               # HTML shell & PWA registration
+├── vite.config.ts
+├── tailwind.config.js
+└── tsconfig.json
+```
+
+## How It Works
+
+1. **Input** — User provides a GitHub repository (`owner/repo`) and PR number
+2. **Fetch** — The app calls the GitHub API to retrieve PR metadata, changed files, and the unified diff
+3. **Analyze** — The diff (capped at 10k characters) is sent to Gemini 1.5 Flash with a structured review prompt
+4. **Display** — Results are rendered in collapsible sections: summary, risks, diff notes, and hotspots
+
+## License
+
+This project is private and not currently licensed for redistribution.
