@@ -1,18 +1,16 @@
-Diff — Mobile GitHub Command Center
+Diff — Mobile AI Coding Agent
 
-Purpose: A personal, mobile‑first app that replaces the 3‑4 app juggle (GitSync, GitHub, Claude, Codex) with one place to see your repos, make edits, commit to main, and watch the pipeline — all from your phone.
+Purpose: ChatGPT with direct access to your repos. A personal, mobile‑first chat interface backed by role‑based AI agents that can read your code, write patches, run them in a sandbox, and commit to main — all from your phone.
 
-This roadmap assumes a role‑based architecture. Models are replaceable. Roles are sacred.
+This replaces the 3‑4 app juggle (GitHub mobile, Claude, Codex, GitSync) with a single conversation.
+
+This roadmap assumes a role‑based architecture. Models are replaceable. Roles are locked.
 
 All AI runs through Ollama Cloud (flat subscription, no token counting, no metering UI).
 
-Orchestrator — Routes intent, normalizes input, never does the work
-
-Coder — Writes and edits code on your behalf
-
-Auditor — Pre‑commit sanity check, risk review
-
-Philosophy: Small, opinionated menus per role — not a single champion. Trade theoretical peak performance for psychological sustainability.
+Orchestrator (Kimi K2.5) — Lead analyst, interprets conversation, coordinates specialists
+Coder (GLM 4.7) — Writes, edits, and executes code in a sandbox
+Auditor (Gemini 3 Pro) — Pre‑commit gate, risk review, binary verdict
 
 The mobile experience is the primary constraint. Desktop parity is optional.
 
@@ -25,215 +23,253 @@ Design Principles (Non‑Negotiable)
 
 2. One App, Not Four — If you have to open GitHub, GitSync, or a separate AI app to finish the job, the app has failed.
 
-3. Live Pipeline — Every action the system takes is visible in real time. No spinners. No "please wait." You see each step as it happens, Manus‑style.
+3. Chat is the Interface — Conversation is the primary input. Everything you can do in the app, you can do by talking to it. No forms unless a form is genuinely faster.
 
-4. One Action Per Screen — Each screen does one thing well. No dense dashboards.
+4. Live Pipeline — Every action the system takes is visible in real time. Agent steps stream into the chat as they happen, Manus‑style. You watch the work unfold.
 
-5. Quiet Confidence — Fewer words. Structured output. Clear uncertainty labeling.
+5. Write‑First Mobile — The phone is not read‑only. You can describe edits, review diffs, and commit to main from mobile. The Auditor earns trust, not access restrictions.
 
-6. Write‑First Mobile — The phone is not read‑only. You can edit, commit, and push from mobile. The app earns trust through the Auditor, not by withholding access.
+6. Quiet Confidence — Fewer words. Structured output. Clear uncertainty labeling. The agent does not explain itself unless asked.
 
-7. No Chat by Default — Conversation exists only where it adds clarity, not everywhere.
+7. Show, Don't Dump — Rich inline cards (repo status, diff previews, audit verdicts) appear in the chat instead of walls of text. One card per concern.
 
 
 ---
 
 Agent Roles (Locked)
 
-All agents run on Ollama Cloud models. The roles do not change. Models can be swapped as the catalog evolves.
+All agents run on Ollama Cloud models. Roles are locked. Models can be swapped as the catalog evolves. The user never picks a model — the Orchestrator routes to the right specialist automatically.
 
 Current Model Assignments:
 - Orchestrator → Kimi K2.5 (256K context, agent swarm decomposition)
 - Coder → GLM 4.7 (198K context, SWE‑bench leader, agentic coding)
 - Auditor → Gemini 3 Pro Preview (1M context, SOTA reasoning)
 
-Orchestrator
 
-Role: Translate human intent into structured actions. Normalize ambiguity before routing.
+---
+
+Orchestrator (Lead)
+
+Role: Conversational lead and multi‑step coordinator. Every user message goes through the Orchestrator first. It has the most responsibility — it interprets intent, routes to specialists, and assembles results.
 
 Responsibilities:
-- Interpret user intent ("edit this file", "commit to main", "check this PR")
-- Normalize vague input into structured, actionable intents ("clean this up" → specific file + action)
-- Decide which agent(s) to invoke
-- Present results and step‑by‑step progress in the live feed
-- Sequence multi‑step workflows (edit → audit → commit → watch CI)
+- Interpret natural language intent from the chat ("what changed today?", "fix the typo in config.ts")
+- Decide which specialist(s) to invoke and what context they need
+- Break complex requests into sequenced steps
+- Assemble final outputs from specialist results
+- Maintain conversation context and memory across turns
+- Surface structured cards (repo status, diffs, verdicts) inline in the chat
+- Sequence multi‑step workflows (edit → sandbox → audit → commit → CI)
 
 Constraints:
-- No direct repo access
-- No code writing
-- No analysis generation
+- No direct code writing (Coder handles that)
+- No risk assessment (Auditor handles that)
+- No code execution
 
-The orchestrator should never surprise you. It routes the work, never does the work.
+The Orchestrator is the voice of the app. Every response the user sees is shaped by Kimi.
 
 
 ---
 
 Coder
 
-Role: Implementation and code manipulation — from mobile.
+Role: Code implementation and execution engine.
 
 Responsibilities:
-- Edit files via GitHub API (Contents API / commit creation)
-- Generate patches and diffs
-- Apply multi‑file changes when described by the user
-- Explain code changes when requested
+- Read files from repos via GitHub API
+- Write and edit code in a sandbox environment
+- Run code (lint, test, execute) to verify changes before committing
+- Generate patches and multi‑file diffs
+- Apply changes via GitHub API when approved
 
 Constraints:
-- No decision‑making authority
-- No self‑review (Auditor handles that)
-- No user conversation
-- Only acts when explicitly summoned
+- No decision‑making authority — only acts when the Orchestrator delegates
+- No self‑review — the Auditor evaluates all changes
+- No direct conversation with the user — speaks through the Orchestrator
+- Must verify changes in sandbox before proposing commits
 
-Rule: Coders generate patches. They do not decide what patches mean.
+Rule: The Coder generates and tests patches. It does not decide what patches mean or whether they ship.
 
 
 ---
 
 Auditor
 
-Role: Pre‑commit gate and analysis engine.
+Role: Risk specialist and pre‑commit gate.
 
 Responsibilities:
-- Review changes before they hit main
-- Identify risks, regressions, and breaking changes
-- Classify logical vs mechanical changes
-- Flag hotspots and complexity
+- Review all code changes before they hit main
+- Identify security vulnerabilities, breaking changes, and regressions
 - Provide binary verdict: "safe to push" or "review this first"
+- Produce detailed risk items with severity levels
+- Validate that sandbox test results match expectations
 
 Constraints:
-- No questions
-- No feature suggestions
-- No conversation
-- Hardcoded prompts only
+- No questions, no feature suggestions, no conversation
+- No code writing
+- Hardcoded evaluation prompts only
+- Cannot be bypassed — every commit goes through audit
 
-The Auditor is the reason you can write to main from mobile without anxiety. It never initiates work. It evaluates artifacts produced by others.
+The Auditor is the reason you can commit to main from your phone without anxiety. It never initiates work. It evaluates artifacts produced by others.
+
+
+---
+
+Sandbox Architecture
+
+The Coder needs an environment to read, write, and execute code — not just generate patches blind.
+
+Options under consideration:
+- WebContainers (Stackblitz) — Runs Node.js in the browser via WASM. Works on mobile. No server needed. Limited to Node/JS ecosystem.
+- Remote containers — Spin up a Docker/Firecracker instance per session. Supports any language. Requires server infra.
+- GitHub Codespaces API — Leverage GitHub's existing sandbox. Already has repo context. Costs per hour.
+
+Decision criteria:
+- Must work on mobile (rules out anything requiring a desktop IDE)
+- Must support the user's primary languages
+- Latency must be acceptable for conversational flow (seconds, not minutes)
+- Prefer no additional infra if possible
+
+The sandbox is not a full IDE. It is a verification layer — the Coder writes code, runs it, confirms it works, then proposes the commit.
 
 
 ---
 
 Roadmap
 
-Phase 0 — Stabilization (Done / In Progress)
+Phase 0 — Foundation (Done)
 
-Goal: Solidify the existing mobile web app foundation.
+Goal: Working mobile web app with basic GitHub integration and demo mode.
 
-- Mobile‑first layout locked
-- Demo mode for zero‑auth usage
-- Basic PR analysis with Ollama Cloud
-- Collapsible result sections
-- PWA installable to home screen
+What exists:
+- Mobile‑first PWA with dark theme, installable to home screen
+- GitHub OAuth + PAT authentication
+- Repo dashboard with activity indicators and sync
+- PR analysis flow (form → loading → results) with Ollama Cloud
+- Demo mode with mock data when API keys are missing
+- Role‑based model config (Orchestrator, Coder, Auditor)
 
-Exit Criteria:
-- App usable one‑handed
-- No horizontal scroll
-- Analysis readable in under 2 minutes
+What was learned:
+- The form‑driven UI feels mechanical, not conversational
+- Silent error fallbacks hide real problems — errors must surface
+- Model selection should be automatic, not user‑facing
 
 
 ---
 
-Phase 1 — Repo Awareness & GitHub Auth
+Phase 1 — Chat Interface
 
-Goal: Replace GitSync and the GitHub mobile app for day‑to‑day repo monitoring.
+Goal: Replace the form‑driven home screen with a conversational interface. The chat becomes the primary way to interact with the app.
 
 Features:
-- GitHub OAuth with read/write scopes
-- Repo list with last‑sync timestamps
-- Recent commits, open PRs, branch heads
-- PR status overview (open / draft / merged)
-- Commit history since last check
-- Manual "Sync Now" (no background polling)
-- Offline cache of repo metadata
+- Chat message list (user messages + agent responses)
+- Text input with send button (mobile‑optimized, sticky bottom)
+- Streaming responses from Ollama Cloud (token‑by‑token display)
+- Orchestrator handles all incoming messages
+- Conversation persisted in localStorage
+- Rich inline cards for structured output (not plain text for everything)
+- Typing indicators and real‑time agent status
+
+What this replaces:
+- The PR analysis form (you say "analyze PR #42 on diff" instead of filling fields)
+- The "Analyze PR" button workflow
+
+What stays:
+- Repo dashboard (accessible from chat or as a standalone view)
+- Results display (rendered as a card in the chat, not a separate screen)
+- GitHub auth (still needed, surfaced as a chat prompt if missing)
 
 Agent Use:
-- Orchestrator summarizes "what changed since last check"
+- Orchestrator interprets all user messages
+- Orchestrator renders structured cards for repos, PRs, analysis results
 
 Exit Criteria:
-- You stop opening GitSync
-- You stop opening the GitHub app for status checks
-- App is useful offline for recent state inspection
+- You can type a natural language request and get a useful response
+- The app feels like a conversation, not a control panel
+- PR analysis works through chat as well as the old form did
 
 
 ---
 
-Phase 2 — Direct Edit & Commit
+Phase 2 — Repo Awareness via Chat
 
-Goal: Edit files and commit directly to main from your phone.
+Goal: Full GitHub repo context available through conversation. Ask anything about your repos and get structured answers.
 
 Features:
-- File browser (navigate repo tree via GitHub API)
-- File viewer with edit mode (plain textarea for quick copy‑paste edits, not a code editor)
-- Single‑file and multi‑file commits to main
-- Commit message generation (Orchestrator drafts, you approve)
-- Pre‑commit Auditor review with binary verdict
-- Diff preview before pushing
-
-Workflow:
-1. Navigate to file
-2. View file contents, tap edit for quick changes (copy‑paste, fix a string, update config)
-3. Auditor reviews the diff automatically
-4. You see verdict: "safe to push" or flagged risks
-5. Confirm → commit lands on main
+- "What changed since yesterday?" → commit summary card
+- "Show my open PRs" → PR list card with status badges
+- "What's the status of PR #42?" → detailed PR card
+- "Show me config.ts" → file viewer card inline in chat
+- Branch awareness (default branch, recent branches)
+- Cross‑repo context (switch between repos mid‑conversation)
 
 Agent Use:
-- Coder applies edits when you describe what you want
-- Auditor gates every commit with a sanity check
-- Orchestrator sequences the workflow and drafts commit messages
+- Orchestrator queries GitHub API based on conversational intent
+- Orchestrator formats results as inline cards
 
 Exit Criteria:
-- You can make a real edit to main and know it landed — without leaving the app
-- Auditor catches obvious mistakes before they ship
+- You stop opening GitHub mobile for status checks
+- You stop opening GitSync for repo monitoring
+- Repo context feels native to the conversation
 
 
 ---
 
-Phase 3 — Live Pipeline Feed
+Phase 3 — Sandbox + Code Execution
 
-Goal: Manus‑style real‑time visibility into every action the app takes.
+Goal: Give the Coder a real environment to write and test code before proposing changes.
 
 Features:
-- Step‑by‑step activity log for every operation
-- Live status: "Fetching file…" → "Editing…" → "Auditor reviewing…" → "Committing…" → "CI running…" → "Checks passed ✓"
-- GitHub Actions / CI status polling after commit
-- Expandable detail on each step (see the actual diff, the audit result, the CI output)
-- Push notifications for CI completion (optional)
+- Sandbox provisioning (WebContainers or remote container)
+- Coder can clone repo, install dependencies, read/write files
+- Coder can run commands (lint, test, build) and report results
+- Sandbox state visible in the chat (live pipeline)
+- Sandbox results feed into Auditor review
+- Cleanup after session ends
 
 Agent Use:
-- Orchestrator emits structured events as it sequences work
-- All agent outputs stream into the feed
+- Orchestrator delegates coding tasks to Coder with sandbox access
+- Coder executes in sandbox, returns results to Orchestrator
+- Orchestrator surfaces sandbox output as inline cards
 
 Exit Criteria:
-- You never wonder "did it work?"
-- The app shows you exactly what happened, when, and whether it succeeded
+- The Coder can verify its own changes before proposing them
+- You can see what the Coder ran and what happened
+- Failed tests prevent bad commits
 
 
 ---
 
-Phase 4 — Agent‑Assisted Edits
+Phase 4 — Agent‑Assisted Coding
 
-Goal: Describe what you want changed in plain language. The Coder does it. The Auditor checks it. You confirm.
+Goal: Describe what you want in plain language. The Coder does it in the sandbox. The Auditor reviews it. You confirm. It ships.
 
 Features:
-- Natural language intent input ("add a loading spinner to the dashboard component")
-- Coder generates the patch
-- Auditor reviews the patch
-- Diff preview with accept / reject
+- Natural language code requests ("add a loading spinner to the dashboard")
+- Coder generates changes in sandbox, runs tests
+- Auditor reviews the diff with verdict card
+- Diff preview card with accept / reject buttons
 - Multi‑file change support
-- Live feed shows every agent step
+- Commit message drafted by Orchestrator, you approve
+- Live pipeline shows every step as it happens in the chat
 
 Workflow:
-1. You describe the change
-2. Orchestrator normalizes your request and routes to Coder
-3. Coder generates patch
-4. Auditor reviews
-5. You see the diff + verdict in the live feed
-6. Confirm → commit to main
+1. You describe the change in chat
+2. Orchestrator interprets, routes to Coder with context
+3. Coder generates changes in sandbox
+4. Coder runs tests/lint in sandbox
+5. Auditor reviews the diff → verdict card
+6. You see diff preview + verdict in chat
+7. Tap "Push" → commit lands on main
+8. CI status streams into chat
 
 Agent Use:
-- Full pipeline: Orchestrator → Coder → Auditor
+- Full pipeline: Orchestrator → Coder (sandbox) → Auditor → commit
 
 Exit Criteria:
-- You stop opening Claude or Codex in separate apps for code changes
-- Complex edits happen entirely within Diff
+- You stop opening Claude or Codex for code changes
+- A described change can go from English to main in under 2 minutes
+- The Auditor catches obvious mistakes before they ship
 
 
 ---
@@ -243,10 +279,11 @@ Phase 5 — Extensions (Future)
 Goal: Room for 1‑2 additional integrations discovered through real usage.
 
 Candidates (not committed):
-- CI/CD deeper integration (trigger deploys, view logs)
-- Issue/project tracking awareness
-- Notifications and alerts
-- Whatever else becomes a pain point
+- CI/CD deeper integration (trigger deploys, view logs in chat)
+- Issue/project tracking awareness ("what issues are assigned to me?")
+- Voice input for hands‑free mobile use
+- Multi‑turn memory (remember project context across sessions)
+- Notifications and alerts in chat
 
 Constraints:
 - Max 2 extensions at a time
@@ -259,12 +296,12 @@ Constraints:
 Explicitly Skipped (Without Guilt)
 
 - Per‑token billing or metering UI (Ollama Cloud subscription covers it)
-- Full IDE replacement (mobile editor is for targeted edits, not marathon coding)
+- Full IDE replacement (this is a conversational agent, not VS Code mobile)
 - Multi‑agent debate loops (agents have roles, not opinions)
 - Continuous background monitoring (explicit user‑initiated actions only)
 - Team collaboration features (this is a personal tool)
-- Social or feed‑based UX
 - Desktop‑first features (desktop is secondary, always)
+- Form‑heavy UI (chat is the primary input — forms only where genuinely faster)
 
 
 ---
@@ -273,10 +310,11 @@ Success Definition
 
 This app is successful if:
 
-- It is opened casually on a phone
-- It replaces GitSync, GitHub mobile, Claude app, and Codex website
-- You can edit, commit, and verify — one app, one flow
-- You see what happened in real time and trust the result
+- You open it like you open ChatGPT — casually, on your phone
+- You can say "fix the typo in README.md and push it" and it happens
+- You see every step the agents take in real time
+- The Auditor makes you trust commits from mobile
+- It replaces GitHub mobile, Claude app, Codex website, and GitSync
 - It saves time without demanding attention
 
-If it ever feels impressive, it has likely gone too far.
+If it ever feels like a dashboard instead of a conversation, it has gone wrong.

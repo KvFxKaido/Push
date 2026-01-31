@@ -1,4 +1,4 @@
-export type AppState = 'home' | 'running' | 'results';
+export type AppState = 'home' | 'running' | 'results' | 'repos';
 
 export type AgentRole = 'orchestrator' | 'coder' | 'auditor';
 
@@ -35,6 +35,7 @@ export interface PRData {
   changedFiles: number;
   diff: string;
   files: PRFile[];
+  _demo?: boolean;
 }
 
 export interface PRFile {
@@ -50,6 +51,7 @@ export interface AnalysisResult {
   risks: RiskItem[];
   diffNotes: DiffNote[];
   hotspots?: Hotspot[];
+  _demo?: boolean;
 }
 
 export interface RiskItem {
@@ -69,4 +71,53 @@ export interface Hotspot {
   file: string;
   reason: string;
   complexity: number;
+}
+
+// Phase 1 — Repo Awareness
+
+export interface RepoSummary {
+  id: number;
+  name: string;
+  full_name: string;
+  owner: string;
+  private: boolean;
+  description: string | null;
+  open_issues_count: number;
+  pushed_at: string;
+  default_branch: string;
+  language: string | null;
+  avatar_url: string;
+}
+
+export interface RepoActivity {
+  open_prs: number;
+  recent_commits: number;
+  has_new_activity: boolean;
+  last_synced: string | null;
+}
+
+export interface RepoWithActivity extends RepoSummary {
+  activity: RepoActivity;
+}
+
+// Chat types
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  status?: 'sending' | 'streaming' | 'done' | 'error';
+  cards?: ChatCard[];
+}
+
+export interface ChatCard {
+  type: 'repo' | 'pr' | 'analysis' | 'pipeline' | 'demo' | 'error';
+  data: any;
+}
+
+export interface AgentStatus {
+  active: boolean;
+  phase: string;
+  detail?: string;
 }

@@ -1,11 +1,11 @@
 {
-  "name": "GitHub PR Analyzer",
-  "short_name": "PR Analyzer",
-  "description": "Analyze GitHub PRs on the go",
+  "name": "Diff",
+  "short_name": "Diff",
+  "description": "AI coding agent with direct repo access",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#0f172a",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
   "orientation": "portrait",
   "icons": [
     {

@@ -1,6 +1,6 @@
-# Diff — Mobile GitHub Command Center
+# Diff — Mobile AI Coding Agent
 
-Personal, mobile-first PWA that replaces GitSync, GitHub mobile, Claude, and Codex with one app for repo monitoring, direct edits to main, and live pipeline visibility.
+ChatGPT with direct access to your repos. A personal, mobile-first chat interface backed by role-based AI agents that can read your code, write patches, run them in a sandbox, and commit to main.
 
 ## Quick Start
 
@@ -20,13 +20,15 @@ npm run dev
 
 ## Architecture
 
-Role-based agent system. Models are replaceable. Roles are not.
+Role-based agent system. Models are replaceable. Roles are locked. The user never picks a model.
 
-- **Orchestrator** — Routes intent, normalizes input, sequences workflows, never does the work
-- **Coder** — Writes/edits code via GitHub API, only acts when summoned
-- **Auditor** — Pre-commit gate, risk review, binary verdict
+- **Orchestrator (Kimi K2.5)** — Conversational lead, interprets user intent, coordinates specialists, assembles results. The voice of the app.
+- **Coder (GLM 4.7)** — Code implementation and execution engine. Writes, edits, and runs code in a sandbox.
+- **Auditor (Gemini 3 Pro)** — Risk specialist, pre-commit gate, binary verdict. Cannot be bypassed.
 
 All AI runs through Ollama Cloud. No other AI providers.
+
+**Vision:** Chat is the primary interface. The app is a conversation, not a dashboard. Structured screens (RepoDashboard, Results) become inline cards the agent renders in the chat.
 
 ## Project Layout
 
@@ -35,18 +37,19 @@ app/src/
   components/ui/   # shadcn/ui component library
   hooks/           # React hooks (GitHub, analysis, auth, mobile)
   lib/             # API clients (ollama, providers, prompts, utils)
-  sections/        # Screen components (Home, Running, Results)
+  sections/        # Screen components (Home, RepoDashboard, Running, Results)
   types/           # TypeScript type definitions
   App.tsx          # Root component, screen routing, state
 ```
 
 ## Key Files
 
-- `lib/providers.ts` — AI provider config and routing
+- `lib/providers.ts` — AI provider config and role-to-model mapping
 - `lib/ollama.ts` — Ollama Cloud API client
 - `lib/prompts.ts` — Analysis prompts and mock data
 - `hooks/useAnalysis.ts` — Analysis orchestration hook
 - `hooks/useGitHub.ts` — GitHub API data fetching
+- `hooks/useRepos.ts` — Repo list fetching, sync tracking, activity detection
 - `types/index.ts` — All shared TypeScript types
 
 ## Environment Variables
@@ -65,10 +68,11 @@ Without API keys the app runs in demo mode with mock data.
 
 1. Mobile first, not mobile friendly
 2. One app, not four — if you leave the app to finish the job, the app failed
-3. Live pipeline — every action visible in real time, Manus-style
-4. One action per screen
+3. Chat is the interface — conversation is the primary input
+4. Live pipeline — every agent step visible in real time, Manus-style
 5. Write-first mobile — Auditor earns trust, not access restrictions
-6. No chat by default
+6. Quiet confidence — fewer words, structured output, no over-explaining
+7. Show, don't dump — rich inline cards instead of walls of text
 
 ## Conventions
 
@@ -77,4 +81,5 @@ Without API keys the app runs in demo mode with mock data.
 - Hooks encapsulate all data fetching and state for a concern
 - Types are centralized in `types/index.ts`
 - Demo mode falls back to `MOCK_ANALYSIS` when API keys are missing
-- Provider architecture supports adding new AI providers without changing hooks or screens
+- Errors surface in the UI — never swallowed silently
+- Model selection is automatic — the Orchestrator routes to the right specialist

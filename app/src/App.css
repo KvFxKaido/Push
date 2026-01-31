@@ -23,8 +23,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #1a1a1e;
   border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #27272a;
 }
 
 /* Prevent text selection on UI elements */
@@ -35,9 +39,9 @@ button,
 
 /* Focus styles */
 input:focus,
-button:focus {
+textarea:focus,
+button:focus-visible {
   outline: none;
-  ring: 2px solid #3b82f6;
 }
 
 /* Safe area insets for notched devices */
@@ -45,7 +49,7 @@ button:focus {
   .safe-area-top {
     padding-top: env(safe-area-inset-top);
   }
-  
+
   .safe-area-bottom {
     padding-bottom: env(safe-area-inset-bottom);
   }

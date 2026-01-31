@@ -5,6 +5,7 @@ const STATE_KEY = 'github_oauth_state';
 
 const CLIENT_ID = import.meta.env.VITE_GITHUB_CLIENT_ID || '';
 const OAUTH_PROXY = import.meta.env.VITE_GITHUB_OAUTH_PROXY || '';
+const ENV_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 
 type UseGitHubAuth = {
   token: string;
@@ -13,12 +14,23 @@ type UseGitHubAuth = {
   loading: boolean;
   error: string | null;
   configured: boolean;
+  oauthConfigured: boolean;
+  setTokenManually: (token: string) => void;
 };
 
 export function useGitHubAuth(): UseGitHubAuth {
-  const [token, setToken] = useState(() => localStorage.getItem(STORAGE_KEY) || '');
+  const [token, setToken] = useState(() => localStorage.getItem(STORAGE_KEY) || ENV_TOKEN);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const setTokenManually = useCallback((pat: string) => {
+    const trimmed = pat.trim();
+    if (trimmed) {
+      localStorage.setItem(STORAGE_KEY, trimmed);
+      setToken(trimmed);
+      setError(null);
+    }
+  }, []);
 
   const login = useCallback(() => {
     if (!CLIENT_ID) {
@@ -108,6 +120,8 @@ export function useGitHubAuth(): UseGitHubAuth {
     logout,
     loading,
     error,
-    configured: Boolean(CLIENT_ID),
+    configured: Boolean(CLIENT_ID) || Boolean(ENV_TOKEN),
+    oauthConfigured: Boolean(CLIENT_ID),
+    setTokenManually,
   };
 }

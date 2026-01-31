@@ -100,10 +100,18 @@ export function useGitHub() {
         files,
       };
     } catch (err) {
-      console.log('GitHub API failed, using mock data for demo');
-      // Return mock data for demo purposes
+      const oauthToken = localStorage.getItem(OAUTH_STORAGE_KEY) || '';
+      const hasToken = Boolean(oauthToken || GITHUB_TOKEN);
+      if (hasToken) {
+        // User has a token — surface the real error, don't hide it
+        const msg = err instanceof Error ? err.message : 'GitHub API request failed';
+        setError(msg);
+        return null;
+      }
+      // No token — intentional demo mode
+      console.log('No GitHub token, using mock data for demo');
       await new Promise(resolve => setTimeout(resolve, 1000));
-      return MOCK_PR_DATA;
+      return { ...MOCK_PR_DATA, _demo: true } as PRData;
     } finally {
       setLoading(false);
     }
