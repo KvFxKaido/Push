@@ -1,15 +1,18 @@
-Mobile GitHub Analyzer — 3‑Agent Roadmap
+Mobile GitHub Analyzer — Role‑Based Agent Roadmap
 
 Purpose A personal, mobile‑first GitHub PR analysis app optimized for quick judgment passes away from the desktop. The app prioritizes clarity, trust, and low cognitive load over feature breadth.
 
-This roadmap assumes a three‑agent architecture:
+This roadmap assumes a role‑based architecture. Models are replaceable. Roles are sacred.
 
-Llama 4 — Conversational interface and orchestration
+Orchestrator — gpt‑oss‑120b (primary), kimi‑k2‑thinking (optional)
 
-DeepSeek R1 — Implementation and code mutation
+Interpreter — nemotron‑3‑nano (primary), mistral‑large‑3 (optional)
 
-Gemini — Narrow, deterministic analysis and auditing
+Coder — qwen3‑coder (primary), glm‑4.7 (secondary), deepseek‑v3.2 (heavy jobs)
 
+Auditor — gemini‑3‑flash (primary), gemini‑3‑pro (second opinion)
+
+Philosophy: Small, opinionated menus per role — not a single champion. Trade theoretical peak performance for psychological sustainability.
 
 The mobile experience is the primary constraint. Desktop parity is optional.
 
@@ -39,9 +42,25 @@ Design Principles (Non‑Negotiable)
 
 Agent Roles (Locked)
 
-Llama 4 — Conversational Orchestrator
+gpt‑oss‑120b — Orchestrator (boring, cautious, upstream)
 
 Role: Translate human intent into structured actions.
+
+Primary: gpt‑oss‑120b
+Optional alt: kimi‑k2‑thinking (for speed or exploration)
+
+Why gpt‑oss‑120b wins by default:
+
+Excellent schema obedience
+
+Very good at "don't act unless sure"
+
+Predictable under load
+
+Feels like infrastructure, not personality
+
+
+Kimi‑k2‑thinking is interesting but more assertive than conservative. Thinking mode helps, but temperament is still exploratory.
 
 Responsibilities:
 
@@ -61,14 +80,70 @@ No code writing
 No analysis generation
 
 
-Llama 4 never does the work. Llama 4 routes the work.
+The orchestrator should never surprise you. It routes the work, never does the work.
 
 
 ---
 
-DeepSeek R1 — Mechanic
+nemotron‑3‑nano — Interpreter / Mediator
+
+Role: Resolve ambiguity and clean up intent before routing.
+
+Primary: nemotron‑3‑nano
+Optional alt: mistral‑large‑3 (when more prose is needed)
+
+Why nemotron‑3‑nano:
+
+Doesn't try to steal the show
+
+Structured and efficient
+
+Doesn't get emotionally attached to solutions
+
+The calm adult who rewrites "clean this up" into something actionable
+
+
+Responsibilities:
+
+Rewrite vague user input into structured, actionable intents
+
+Mediate between orchestrator output and agent input
+
+Normalize ambiguous requests
+
+
+Constraints:
+
+No direct execution
+
+No code generation
+
+No final decision authority
+
+
+nemotron‑3‑nano clarifies. It never decides.
+
+
+---
+
+qwen3‑coder — Coder (patches, diffs, repo work)
 
 Role: Implementation and code manipulation.
+
+Primary: qwen3‑coder
+Secondary: glm‑4.7
+Optional heavy: deepseek‑v3.2 (use sparingly — powerful but expensive)
+
+Why this pool:
+
+qwen3‑coder — Excellent long‑context code edits, disciplined output, good tool usage
+
+glm‑4.7 — Solid "mechanic" energy, less hallucination than expected
+
+deepseek‑v3.2 — Powerful but expensive cognitively and monetarily
+
+
+Do NOT use as primary coders: Kimi (too opinionated), Nemotron (not specialized), Mistral‑large (generalist, not surgical)
 
 Responsibilities:
 
@@ -88,14 +163,26 @@ No self‑review
 No user conversation
 
 
-DeepSeek R1 only acts when explicitly summoned.
+Rule: Coders generate patches. They do not decide what patches mean. They only act when explicitly summoned.
 
 
 ---
 
-Gemini — Auditor
+gemini‑3‑flash / gemini‑3‑pro — Auditor / Utility
 
-Role: Narrow, deterministic analysis engine.
+Role: Narrow, deterministic analysis engine and utility reviewer.
+
+Primary: gemini‑3‑flash (audits, summaries, sanity checks)
+Secondary: gemini‑3‑pro (second opinion, not control)
+
+Why Gemini earns its keep here:
+
+Bad at multitasking by design, which ironically makes it great as a reviewer
+
+gemini‑3‑flash is fast and focused for routine audits
+
+gemini‑3‑pro adds depth when you want a second opinion
+
 
 Responsibilities:
 
@@ -106,6 +193,8 @@ Identify risks and regressions
 Classify logical vs mechanical changes
 
 Flag hotspots
+
+Quick summaries and sanity checks
 
 
 Constraints:
@@ -134,7 +223,7 @@ Mobile‑first layout locked
 
 Demo mode for zero‑auth usage
 
-Deterministic Gemini prompt
+Deterministic gemini‑3‑flash prompt
 
 Collapsible result sections
 
@@ -168,9 +257,11 @@ Confidence scores on risks
 
 Agent Use:
 
-Gemini produces graded assertions
+gemini‑3‑flash produces graded assertions
 
-Llama 4 summarizes verdict and caveats
+gpt‑oss‑120b summarizes verdict and caveats
+
+nemotron‑3‑nano normalizes user intent before routing
 
 
 Exit Criteria:
@@ -207,7 +298,7 @@ App works reliably on real PRs without manual tokens
 
 ---
 
-Phase 3 — Llama 4 Interface (Optional)
+Phase 3 — Orchestrator Interface (Optional)
 
 Goal: Add a lightweight conversational layer for intent clarification.
 
@@ -219,6 +310,8 @@ Predefined intents ("quick scan", "deep risk")
 
 Read‑only clarification prompts
 
+nemotron‑3‑nano handles ambiguity resolution before orchestrator routing
+
 
 Constraints:
 
@@ -229,19 +322,23 @@ No long conversations
 
 Exit Criteria:
 
-Llama 4 reduces friction, not increases complexity
+gpt‑oss‑120b reduces friction, not increases complexity
 
 
 
 ---
 
-Phase 4 — DeepSeek R1 Integration (Desktop‑Adjacent)
+Phase 4 — Coder Integration (Desktop‑Adjacent)
 
 Goal: Enable action follow‑ups when back at a workstation.
 
 Features:
 
-"Generate patch" action (desktop only)
+"Generate patch" action via qwen3‑coder (desktop only)
+
+glm‑4.7 as fallback coder for secondary tasks
+
+deepseek‑v3.2 available for heavy refactoring jobs
 
 Diff previews
 
@@ -251,6 +348,8 @@ Export suggestions
 Constraints:
 
 Mobile remains read‑only
+
+Coders generate patches — they do not decide what patches mean
 
 
 Exit Criteria:
@@ -294,9 +393,11 @@ Diff previews (read‑only, mobile‑optimized)
 
 Agent Use:
 
-Gemini: not used (no analysis during sync)
+gemini‑3‑flash: not used (no analysis during sync)
 
-Llama 4: optional summarization of "what changed since last check"
+gpt‑oss‑120b: optional summarization of "what changed since last check"
+
+nemotron‑3‑nano: normalizes sync context for orchestrator
 
 
 Constraints:
@@ -314,6 +415,25 @@ App can replace GitSync for passive repo monitoring
 
 App is useful offline for recent state inspection
 
+
+
+---
+
+Explicitly Skipped Models (for now)
+
+These can be safely ignored without guilt:
+
+cogito‑2.1 (overkill, unclear niche)
+
+devstral‑large/small (redundant with qwen3‑coder + glm‑4.7)
+
+minimax‑m2.x (fine, but nothing unique)
+
+gemma3 (great local model, not special in cloud)
+
+qwen3‑vl (vision isn't the bottleneck right now)
+
+You're not building a zoo. You're building a workstation.
 
 
 ---
