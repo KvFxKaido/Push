@@ -8,6 +8,18 @@ import { cn } from "@/lib/utils"
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = { light: "", dark: ".dark" } as const
 
+const escapeCssIdentifier = (value: string) => {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value)
+  }
+  return value.replace(/[^a-zA-Z0-9_-]/g, "")
+}
+
+const sanitizeCssVarKey = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "")
+
+const isSafeCssValue = (value: string) =>
+  !/[;}]/.test(value) && !value.toLowerCase().includes("</")
+
 export type ChartConfig = {
   [k in string]: {
     label?: React.ReactNode
@@ -78,19 +90,25 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
     return null
   }
 
+  const escapedId = escapeCssIdentifier(id)
+
   return (
     <style
       dangerouslySetInnerHTML={{
         __html: Object.entries(THEMES)
           .map(
             ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
+${prefix} [data-chart="${escapedId}"] {
 ${colorConfig
   .map(([key, itemConfig]) => {
+    const safeKey = sanitizeCssVarKey(key)
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
       itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
+    if (!safeKey || !color || !isSafeCssValue(color)) {
+      return null
+    }
+    return `  --color-${safeKey}: ${color};`
   })
   .join("\n")}
 }

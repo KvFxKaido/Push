@@ -83,7 +83,17 @@ function SidebarProvider({
       }
 
       // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+      const cookieValue = encodeURIComponent(String(openState))
+      const cookieParts = [
+        `${SIDEBAR_COOKIE_NAME}=${cookieValue}`,
+        "path=/",
+        `max-age=${SIDEBAR_COOKIE_MAX_AGE}`,
+        "SameSite=Lax",
+      ]
+      if (window.location.protocol === "https:") {
+        cookieParts.push("Secure")
+      }
+      document.cookie = cookieParts.join("; ")
     },
     [setOpenProp, open]
   )
