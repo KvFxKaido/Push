@@ -4,9 +4,9 @@ Purpose A personal, mobile‑first GitHub PR analysis app optimized for quick ju
 
 This roadmap assumes a three‑agent architecture:
 
-Claude — Conversational interface and orchestration
+Llama 4 — Conversational interface and orchestration
 
-Codex — Implementation and code mutation
+DeepSeek R1 — Implementation and code mutation
 
 Gemini — Narrow, deterministic analysis and auditing
 
@@ -39,7 +39,7 @@ Design Principles (Non‑Negotiable)
 
 Agent Roles (Locked)
 
-Claude — Conversational Orchestrator
+Llama 4 — Conversational Orchestrator
 
 Role: Translate human intent into structured actions.
 
@@ -61,12 +61,12 @@ No code writing
 No analysis generation
 
 
-Claude never does the work. Claude routes the work.
+Llama 4 never does the work. Llama 4 routes the work.
 
 
 ---
 
-Codex — Mechanic
+DeepSeek R1 — Mechanic
 
 Role: Implementation and code manipulation.
 
@@ -88,7 +88,7 @@ No self‑review
 No user conversation
 
 
-Codex only acts when explicitly summoned.
+DeepSeek R1 only acts when explicitly summoned.
 
 
 ---
@@ -170,7 +170,7 @@ Agent Use:
 
 Gemini produces graded assertions
 
-Claude summarizes verdict and caveats
+Llama 4 summarizes verdict and caveats
 
 
 Exit Criteria:
@@ -207,7 +207,7 @@ App works reliably on real PRs without manual tokens
 
 ---
 
-Phase 3 — Claude Interface (Optional)
+Phase 3 — Llama 4 Interface (Optional)
 
 Goal: Add a lightweight conversational layer for intent clarification.
 
@@ -229,13 +229,13 @@ No long conversations
 
 Exit Criteria:
 
-Claude reduces friction, not increases complexity
+Llama 4 reduces friction, not increases complexity
 
 
 
 ---
 
-Phase 4 — Codex Integration (Desktop‑Adjacent)
+Phase 4 — DeepSeek R1 Integration (Desktop‑Adjacent)
 
 Goal: Enable action follow‑ups when back at a workstation.
 
@@ -296,7 +296,7 @@ Agent Use:
 
 Gemini: not used (no analysis during sync)
 
-Claude: optional summarization of "what changed since last check"
+Llama 4: optional summarization of "what changed since last check"
 
 
 Constraints:
