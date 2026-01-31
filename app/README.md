@@ -43,10 +43,17 @@ Create a `.env` file in the `app/` directory:
 
 ```env
 VITE_GITHUB_TOKEN=your_github_token       # Optional — increases GitHub API rate limits
+VITE_GITHUB_CLIENT_ID=your_client_id      # Optional — enables GitHub OAuth login
+VITE_GITHUB_OAUTH_PROXY=https://your-proxy.example.com/oauth/github
 VITE_GEMINI_API_KEY=your_gemini_api_key   # Required for real AI analysis
 ```
 
 Without these keys the app runs in demo mode using mock data.
+
+To use GitHub OAuth you need a small proxy service to exchange the OAuth code
+for an access token (GitHub does not allow client-side token exchange). The
+`VITE_GITHUB_OAUTH_PROXY` endpoint should accept a POST with `{ code, redirect_uri }`
+and return `{ access_token }`.
 
 ### Development
 

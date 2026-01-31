@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import type { PRInput, PRData, PRFile } from '@/types';
 
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
+const OAUTH_STORAGE_KEY = 'github_access_token';
 
 // Mock PR data for demo when API fails or no token
 const MOCK_PR_DATA: PRData = {
@@ -32,11 +33,13 @@ export function useGitHub() {
     setError(null);
 
     try {
+      const oauthToken = localStorage.getItem(OAUTH_STORAGE_KEY) || '';
+      const authToken = oauthToken || GITHUB_TOKEN;
       const headers: Record<string, string> = {
         'Accept': 'application/vnd.github.v3+json',
       };
-      if (GITHUB_TOKEN) {
-        headers['Authorization'] = `token ${GITHUB_TOKEN}`;
+      if (authToken) {
+        headers['Authorization'] = `token ${authToken}`;
       }
 
       // Fetch PR details
