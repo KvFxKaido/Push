@@ -22,10 +22,9 @@ npm run dev
 
 Role-based agent system. Models are replaceable. Roles are not.
 
-- **Orchestrator** — Routes intent, sequences workflows, never does the work
+- **Orchestrator** — Routes intent, normalizes input, sequences workflows, never does the work
 - **Coder** — Writes/edits code via GitHub API, only acts when summoned
 - **Auditor** — Pre-commit gate, risk review, binary verdict
-- **Interpreter** — Normalizes vague input before routing
 
 All AI runs through Ollama Cloud. No other AI providers.
 

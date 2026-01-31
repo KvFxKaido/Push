@@ -6,13 +6,11 @@ This roadmap assumes a role‑based architecture. Models are replaceable. Roles 
 
 All AI runs through Ollama Cloud (flat subscription, no token counting, no metering UI).
 
-Orchestrator — Routes intent, never does the work
+Orchestrator — Routes intent, normalizes input, never does the work
 
 Coder — Writes and edits code on your behalf
 
 Auditor — Pre‑commit sanity check, risk review
-
-Interpreter — Cleans up vague input before routing
 
 Philosophy: Small, opinionated menus per role — not a single champion. Trade theoretical peak performance for psychological sustainability.
 
@@ -46,10 +44,11 @@ All agents run on Ollama Cloud models. Specific model assignments will evolve as
 
 Orchestrator
 
-Role: Translate human intent into structured actions.
+Role: Translate human intent into structured actions. Normalize ambiguity before routing.
 
 Responsibilities:
 - Interpret user intent ("edit this file", "commit to main", "check this PR")
+- Normalize vague input into structured, actionable intents ("clean this up" → specific file + action)
 - Decide which agent(s) to invoke
 - Present results and step‑by‑step progress in the live feed
 - Sequence multi‑step workflows (edit → audit → commit → watch CI)
@@ -60,25 +59,6 @@ Constraints:
 - No analysis generation
 
 The orchestrator should never surprise you. It routes the work, never does the work.
-
-
----
-
-Interpreter
-
-Role: Resolve ambiguity and clean up intent before routing.
-
-Responsibilities:
-- Rewrite vague user input into structured, actionable intents
-- Mediate between orchestrator output and agent input
-- Normalize ambiguous requests ("clean this up" → specific file + action)
-
-Constraints:
-- No direct execution
-- No code generation
-- No final decision authority
-
-The interpreter clarifies. It never decides.
 
 
 ---
@@ -161,7 +141,6 @@ Features:
 
 Agent Use:
 - Orchestrator summarizes "what changed since last check"
-- Interpreter normalizes sync context
 
 Exit Criteria:
 - You stop opening GitSync
@@ -177,7 +156,7 @@ Goal: Edit files and commit directly to main from your phone.
 
 Features:
 - File browser (navigate repo tree via GitHub API)
-- Mobile code editor (syntax highlighting, not an IDE)
+- File viewer with edit mode (plain textarea for quick copy‑paste edits, not a code editor)
 - Single‑file and multi‑file commits to main
 - Commit message generation (Orchestrator drafts, you approve)
 - Pre‑commit Auditor review with binary verdict
@@ -185,7 +164,7 @@ Features:
 
 Workflow:
 1. Navigate to file
-2. Edit (manually or describe changes to Coder)
+2. View file contents, tap edit for quick changes (copy‑paste, fix a string, update config)
 3. Auditor reviews the diff automatically
 4. You see verdict: "safe to push" or flagged risks
 5. Confirm → commit lands on main
@@ -238,15 +217,14 @@ Features:
 
 Workflow:
 1. You describe the change
-2. Interpreter normalizes your request
-3. Orchestrator routes to Coder
-4. Coder generates patch
-5. Auditor reviews
-6. You see the diff + verdict in the live feed
-7. Confirm → commit to main
+2. Orchestrator normalizes your request and routes to Coder
+3. Coder generates patch
+4. Auditor reviews
+5. You see the diff + verdict in the live feed
+6. Confirm → commit to main
 
 Agent Use:
-- Full pipeline: Interpreter → Orchestrator → Coder → Auditor
+- Full pipeline: Orchestrator → Coder → Auditor
 
 Exit Criteria:
 - You stop opening Claude or Codex in separate apps for code changes

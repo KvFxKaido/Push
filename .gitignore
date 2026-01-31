@@ -9,6 +9,9 @@ dist/
 .env.*
 !.env.example
 
+# claude code
+.claude/
+
 # editor
 .vscode/
 .idea/
@@ -16,6 +19,7 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+nul
 
 # logs
 *.log
