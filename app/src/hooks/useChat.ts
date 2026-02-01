@@ -126,7 +126,8 @@ function getToolStatusLabel(toolCall: AnyToolCall): string {
         case 'sandbox_read_file': return 'Reading file...';
         case 'sandbox_write_file': return 'Writing file...';
         case 'sandbox_diff': return 'Getting diff...';
-        case 'sandbox_commit': return 'Committing changes...';
+        case 'sandbox_commit': return 'Committing & pushing...';
+        case 'sandbox_push': return 'Pushing to remote...';
         default: return 'Sandbox operation...';
       }
     }

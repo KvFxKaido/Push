@@ -24,7 +24,8 @@ export type SandboxToolCall =
   | { tool: 'sandbox_read_file'; args: { path: string } }
   | { tool: 'sandbox_write_file'; args: { path: string; content: string } }
   | { tool: 'sandbox_diff'; args: Record<string, never> }
-  | { tool: 'sandbox_commit'; args: { message: string } };
+  | { tool: 'sandbox_commit'; args: { message: string } }
+  | { tool: 'sandbox_push'; args: Record<string, never> };
 
 // --- Validation ---
 
@@ -43,6 +44,9 @@ export function validateSandboxToolCall(parsed: any): SandboxToolCall | null {
   }
   if (parsed.tool === 'sandbox_commit' && parsed.args?.message) {
     return { tool: 'sandbox_commit', args: { message: parsed.args.message } };
+  }
+  if (parsed.tool === 'sandbox_push') {
+    return { tool: 'sandbox_push', args: {} };
   }
   return null;
 }
@@ -222,12 +226,32 @@ export async function executeSandboxToolCall(
           return { text: `[Tool Result — sandbox_commit]\nCommit failed: ${commitResult.stderr}` };
         }
 
-        // Return both audit verdict and success
+        // Step 4: Push to remote
+        const pushResult = await execInSandbox(sandboxId, 'cd /workspace && git push origin HEAD');
+
         const stats = parseDiffStats(diffResult.diff);
+
+        if (pushResult.exitCode !== 0) {
+          return {
+            text: `[Tool Result — sandbox_commit]\nCommitted "${call.args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}) but PUSH FAILED: ${pushResult.stderr}\nUse sandbox_push() to retry the push.`,
+            card: { type: 'audit-verdict', data: auditResult.card },
+          };
+        }
+
         return {
-          text: `[Tool Result — sandbox_commit]\nCommitted: "${call.args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions})`,
+          text: `[Tool Result — sandbox_commit]\nCommitted and pushed: "${call.args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions})`,
           card: { type: 'audit-verdict', data: auditResult.card },
         };
+      }
+
+      case 'sandbox_push': {
+        const pushResult = await execInSandbox(sandboxId, 'cd /workspace && git push origin HEAD');
+
+        if (pushResult.exitCode !== 0) {
+          return { text: `[Tool Result — sandbox_push]\nPush failed: ${pushResult.stderr}` };
+        }
+
+        return { text: `[Tool Result — sandbox_push]\nPushed successfully.` };
       }
 
       default:
@@ -250,7 +274,8 @@ Additional tools available when sandbox is active:
 - sandbox_read_file(path) — Read a file from the sandbox filesystem
 - sandbox_write_file(path, content) — Write or overwrite a file in the sandbox
 - sandbox_diff() — Get the git diff of all uncommitted changes
-- sandbox_commit(message) — Commit changes (requires Auditor approval)
+- sandbox_commit(message) — Commit AND push changes (requires Auditor approval). Automatically pushes after commit.
+- sandbox_push() — Retry a failed push. Use this only if sandbox_commit reported a push failure. No Auditor needed (commit was already audited).
 
 Usage: Output a fenced JSON block just like GitHub tools:
 \`\`\`json
@@ -262,5 +287,6 @@ Sandbox rules:
 - You can install packages, run tests, build, lint — anything you'd do in a terminal
 - For multi-step tasks (edit + test), use multiple tool calls in sequence
 - sandbox_diff shows what you've changed — review before committing
-- sandbox_commit triggers the Auditor for safety review before the commit goes through
+- sandbox_commit triggers the Auditor for safety review, then commits and pushes to the remote
+- If the push fails after a successful commit, use sandbox_push() to retry
 - Keep commands focused — avoid long-running servers or background processes`;

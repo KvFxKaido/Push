@@ -16,11 +16,13 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
+  GitCommitHorizontal,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useFileBrowser } from '@/hooks/useFileBrowser';
 import { FileActionsSheet } from '@/components/filebrowser/FileActionsSheet';
 import { UploadButton } from '@/components/filebrowser/UploadButton';
+import { CommitPushSheet } from '@/components/filebrowser/CommitPushSheet';
 import type { FileEntry } from '@/types';
 
 interface FileBrowserProps {
@@ -53,6 +55,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
 
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [commitSheetOpen, setCommitSheetOpen] = useState(false);
 
   // Load root directory on mount
   useEffect(() => {
@@ -206,6 +209,17 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         )}
       </div>
 
+      {/* Commit FAB — positioned left of upload FAB */}
+      <button
+        onClick={() => setCommitSheetOpen(true)}
+        disabled={status === 'loading'}
+        className="fixed bottom-6 right-[4.75rem] z-30 flex h-12 w-12 items-center justify-center rounded-full bg-[#22c55e] text-white shadow-lg shadow-[#22c55e]/25 transition-all duration-200 hover:bg-[#16a34a] active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+        title="Commit & push"
+        aria-label="Commit and push changes"
+      >
+        <GitCommitHorizontal className="h-5 w-5" />
+      </button>
+
       {/* Upload FAB */}
       <UploadButton
         onUpload={handleUpload}
@@ -218,6 +232,17 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         onDelete={handleDelete}
+      />
+
+      {/* Commit & push sheet */}
+      <CommitPushSheet
+        sandboxId={sandboxId}
+        open={commitSheetOpen}
+        onOpenChange={setCommitSheetOpen}
+        onSuccess={() => {
+          toast.success('Committed and pushed!');
+          loadDirectory(currentPath);
+        }}
       />
     </div>
   );
