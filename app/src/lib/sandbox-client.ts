@@ -117,3 +117,48 @@ export async function cleanupSandbox(
     sandbox_id: sandboxId,
   });
 }
+
+// --- File browser operations ---
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  size: number;
+}
+
+export async function listDirectory(
+  sandboxId: string,
+  path: string = '/workspace',
+): Promise<FileEntry[]> {
+  const data = await sandboxFetch<{ entries: FileEntry[]; error?: string }>('list', {
+    sandbox_id: sandboxId,
+    path,
+  });
+  if (data.error) throw new Error(data.error);
+  return data.entries;
+}
+
+export async function deleteFromSandbox(
+  sandboxId: string,
+  path: string,
+): Promise<void> {
+  const data = await sandboxFetch<{ ok: boolean; error?: string }>('delete', {
+    sandbox_id: sandboxId,
+    path,
+  });
+  if (!data.ok) throw new Error(data.error || 'Delete failed');
+}
+
+export async function renameInSandbox(
+  sandboxId: string,
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  const data = await sandboxFetch<{ ok: boolean; error?: string }>('rename', {
+    sandbox_id: sandboxId,
+    old_path: oldPath,
+    new_path: newPath,
+  });
+  if (!data.ok) throw new Error(data.error || 'Rename failed');
+}

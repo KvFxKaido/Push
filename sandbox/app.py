@@ -152,6 +152,114 @@ def get_diff(data: dict):
 
 @app.function()
 @modal.web_endpoint(method="POST")
+def list_dir(data: dict):
+    """List directory contents with metadata."""
+    sandbox_id = data.get("sandbox_id")
+    path = data.get("path", "/workspace")
+
+    if not sandbox_id:
+        return {"error": "Missing sandbox_id", "entries": []}
+
+    sb = modal.Sandbox.from_id(sandbox_id)
+
+    # Use a single command to get structured output: name, type, size
+    # Output format per line: TYPE\tSIZE\tNAME (d=dir, f=file)
+    cmd = (
+        f"cd '{path}' 2>/dev/null && "
+        "for f in * .*; do "
+        "  [ \"$f\" = '.' ] || [ \"$f\" = '..' ] || [ \"$f\" = '*' ] && continue; "
+        "  if [ -d \"$f\" ]; then echo \"d\\t0\\t$f\"; "
+        "  elif [ -f \"$f\" ]; then stat -c 'd\\t%s\\t%n' \"$f\" 2>/dev/null || echo \"f\\t0\\t$f\"; "
+        "  fi; "
+        "done"
+    )
+    # Fix: stat format for files should use 'f' not 'd'
+    cmd = (
+        f"cd '{path}' 2>/dev/null && "
+        "for f in * .*; do "
+        "  [ \"$f\" = '.' ] || [ \"$f\" = '..' ] || [ \"$f\" = '*' ] && continue; "
+        "  if [ -d \"$f\" ]; then echo \"d\\t0\\t$f\"; "
+        "  elif [ -f \"$f\" ]; then stat -c 'f\\t%s\\t%n' \"$f\" 2>/dev/null || echo \"f\\t0\\t$f\"; "
+        "  fi; "
+        "done"
+    )
+
+    p = sb.exec("bash", "-c", cmd)
+    p.wait()
+
+    if p.returncode != 0:
+        stderr = p.stderr.read()
+        return {"error": f"List failed: {stderr}", "entries": []}
+
+    entries = []
+    stdout = p.stdout.read()
+    for line in stdout.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        entry_type, size_str, name = parts
+        entries.append({
+            "name": name,
+            "path": f"{path.rstrip('/')}/{name}",
+            "type": "directory" if entry_type == "d" else "file",
+            "size": int(size_str) if size_str.isdigit() else 0,
+        })
+
+    # Sort: directories first, then files, both alphabetical
+    entries.sort(key=lambda e: (0 if e["type"] == "directory" else 1, e["name"].lower()))
+
+    return {"entries": entries}
+
+
+@app.function()
+@modal.web_endpoint(method="POST")
+def delete_file(data: dict):
+    """Delete a file or directory from the sandbox."""
+    sandbox_id = data.get("sandbox_id")
+    path = data.get("path", "")
+
+    if not sandbox_id or not path:
+        return {"ok": False, "error": "Missing sandbox_id or path"}
+
+    # Safety: prevent deleting workspace root or system paths
+    if path in ("/", "/workspace", "/workspace/"):
+        return {"ok": False, "error": "Cannot delete workspace root"}
+
+    sb = modal.Sandbox.from_id(sandbox_id)
+    p = sb.exec("rm", "-rf", path)
+    p.wait()
+
+    return {"ok": p.returncode == 0}
+
+
+@app.function()
+@modal.web_endpoint(method="POST")
+def rename_file(data: dict):
+    """Rename or move a file/directory in the sandbox."""
+    sandbox_id = data.get("sandbox_id")
+    old_path = data.get("old_path", "")
+    new_path = data.get("new_path", "")
+
+    if not sandbox_id or not old_path or not new_path:
+        return {"ok": False, "error": "Missing sandbox_id, old_path, or new_path"}
+
+    sb = modal.Sandbox.from_id(sandbox_id)
+
+    # Ensure parent directory of new_path exists
+    p = sb.exec("bash", "-c", f"mkdir -p \"$(dirname '{new_path}')\" && mv '{old_path}' '{new_path}'")
+    p.wait()
+
+    if p.returncode != 0:
+        stderr = p.stderr.read()
+        return {"ok": False, "error": f"Rename failed: {stderr}"}
+
+    return {"ok": True}
+
+
+@app.function()
+@modal.web_endpoint(method="POST")
 def cleanup(data: dict):
     """Terminate a sandbox."""
     sandbox_id = data.get("sandbox_id")

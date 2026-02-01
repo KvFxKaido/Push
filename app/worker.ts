@@ -12,7 +12,7 @@ interface Env {
   ASSETS: Fetcher;
 }
 
-const MAX_BODY_SIZE_BYTES = 64 * 1024;
+const MAX_BODY_SIZE_BYTES = 512 * 1024; // 512KB — supports file uploads via sandbox write
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 30;
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
@@ -25,6 +25,9 @@ const SANDBOX_ROUTES: Record<string, string> = {
   write: 'write-file',
   diff: 'get-diff',
   cleanup: 'cleanup',
+  list: 'list-dir',
+  delete: 'delete-file',
+  rename: 'rename-file',
 };
 
 export default {

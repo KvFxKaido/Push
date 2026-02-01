@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Settings, Trash2, Play, Square } from 'lucide-react';
+import { Settings, Trash2, Play, Square, FolderOpen } from 'lucide-react';
+import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
 import { useGitHubAuth } from '@/hooks/useGitHubAuth';
 import { useRepos } from '@/hooks/useRepos';
@@ -13,6 +14,7 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoAndChatSelector } from '@/components/chat/RepoAndChatSelector';
 import { OnboardingScreen } from '@/sections/OnboardingScreen';
 import { RepoPicker } from '@/sections/RepoPicker';
+import { FileBrowser } from '@/sections/FileBrowser';
 import type { AppScreen, RepoWithActivity } from '@/types';
 import {
   Sheet,
@@ -57,14 +59,16 @@ function App() {
   const [isDemo, setIsDemo] = useState(false);
   const [orKeyInput, setOrKeyInput] = useState('');
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
+  const [showFileBrowser, setShowFileBrowser] = useState(false);
 
   // Screen state machine
   const screen: AppScreen = useMemo(() => {
-    if (isDemo) return 'chat';
+    if (isDemo) return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
     if (!token) return 'onboarding';
     if (!activeRepo) return 'repo-picker';
+    if (showFileBrowser && sandbox.sandboxId) return 'file-browser';
     return 'chat';
-  }, [token, activeRepo, isDemo]);
+  }, [token, activeRepo, isDemo, showFileBrowser, sandbox.sandboxId]);
 
   // On PAT connect success: auto-sync repos
   const handleConnect = useCallback(
@@ -176,6 +180,21 @@ function App() {
     );
   }
 
+  // ----- File browser screen -----
+
+  if (screen === 'file-browser' && sandbox.sandboxId) {
+    return (
+      <>
+        <FileBrowser
+          sandboxId={sandbox.sandboxId}
+          repoName={activeRepo?.name || 'Sandbox'}
+          onBack={() => setShowFileBrowser(false)}
+        />
+        <Toaster position="bottom-center" />
+      </>
+    );
+  }
+
   // ----- Chat screen -----
 
   const isConnected = Boolean(token) || isDemo;
@@ -224,6 +243,17 @@ function App() {
               </span>
             </button>
           )}
+          {/* File browser toggle (only when sandbox is ready) */}
+          {sandbox.status === 'ready' && (
+            <button
+              onClick={() => setShowFileBrowser(true)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors duration-200 hover:text-[#a1a1aa] hover:bg-[#111113] active:scale-95"
+              aria-label="Open file browser"
+              title="File browser"
+            >
+              <FolderOpen className="h-4 w-4" />
+            </button>
+          )}
           <div className="flex items-center gap-1.5">
             <div
               className={`h-2 w-2 rounded-full transition-colors duration-200 ${
@@ -258,6 +288,9 @@ function App() {
         disabled={isStreaming}
         repoName={activeRepo?.name}
       />
+
+      {/* Toast notifications */}
+      <Toaster position="bottom-center" />
 
       {/* Settings Sheet */}
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>

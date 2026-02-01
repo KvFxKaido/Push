@@ -25,3 +25,10 @@ VITE_GITHUB_OAUTH_PROXY=...       # Optional — required for OAuth token exchan
 ```
 
 Without any AI keys the app runs in demo mode. OpenRouter takes priority when both keys are set.
+
+Worker secrets (set via `wrangler secret put`):
+
+- `OLLAMA_CLOUD_API_KEY` — Ollama Cloud API key for production proxy
+- `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--diff-sandbox`). Without this, sandbox returns 503.
+
+Sandbox backend: `cd ../sandbox && modal deploy app.py` — deploys the 6 Modal web endpoints.
