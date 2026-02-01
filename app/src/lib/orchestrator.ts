@@ -1,17 +1,11 @@
 import type { ChatMessage } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterKey';
+import { getOllamaKey } from '@/hooks/useOllamaKey';
 
 // ---------------------------------------------------------------------------
 // Ollama Cloud config
 // ---------------------------------------------------------------------------
-
-// Dev only — production uses the Worker proxy
-const OLLAMA_CLOUD_API_KEY = import.meta.env.VITE_OLLAMA_CLOUD_API_KEY || '';
-
-if (!import.meta.env.DEV && OLLAMA_CLOUD_API_KEY) {
-  console.warn('[Diff] OLLAMA_CLOUD_API_KEY should not be set in production builds — use the Cloudflare Worker proxy instead.');
-}
 
 // Dev: Vite proxy avoids CORS. Prod: Vercel Edge function at /api/chat holds the key.
 const OLLAMA_CLOUD_API_URL =
@@ -19,18 +13,6 @@ const OLLAMA_CLOUD_API_URL =
   (import.meta.env.DEV ? '/ollama/api/chat' : '/api/chat');
 
 const OLLAMA_ORCHESTRATOR_MODEL = 'kimi-k2.5:cloud';
-
-// Demo mode only applies in dev without any key.
-// In production, the Edge function has the key server-side.
-const isDemoMode = import.meta.env.DEV && !OLLAMA_CLOUD_API_KEY;
-
-if (import.meta.env.DEV) {
-  if (OLLAMA_CLOUD_API_KEY) {
-    console.log(`[Diff] Ollama Cloud key loaded: ${OLLAMA_CLOUD_API_KEY.slice(0, 8)}...`);
-  } else {
-    console.log('[Diff] No Ollama key — will check OpenRouter at runtime');
-  }
-}
 
 // ---------------------------------------------------------------------------
 // OpenRouter config
@@ -172,12 +154,14 @@ async function streamOllamaChat(
   try {
     console.log(`[Diff] POST ${OLLAMA_CLOUD_API_URL} (model: ${OLLAMA_ORCHESTRATOR_MODEL})`);
 
+    const ollamaKey = getOllamaKey();
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
 
-    if (OLLAMA_CLOUD_API_KEY) {
-      headers['Authorization'] = `Bearer ${OLLAMA_CLOUD_API_KEY}`;
+    if (ollamaKey) {
+      headers['Authorization'] = `Bearer ${ollamaKey}`;
     }
 
     const response = await fetch(OLLAMA_CLOUD_API_URL, {
@@ -387,8 +371,8 @@ export async function streamChat(
   onThinkingToken?: (token: string | null) => void,
   workspaceContext?: string,
 ): Promise<void> {
-  // Check OpenRouter key at runtime (not module load) so Settings changes take effect immediately
-  if (isDemoMode && !getOpenRouterKey()) {
+  // Check both keys at runtime (not module load) so Settings changes take effect immediately
+  if (import.meta.env.DEV && !getOllamaKey() && !getOpenRouterKey()) {
     const words = DEMO_WELCOME.split(' ');
     for (let i = 0; i < words.length; i++) {
       await new Promise((r) => setTimeout(r, 12));

@@ -5,6 +5,7 @@ import { useGitHubAuth } from '@/hooks/useGitHubAuth';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useOpenRouterKey } from '@/hooks/useOpenRouterKey';
+import { useOllamaKey } from '@/hooks/useOllamaKey';
 import { buildWorkspaceContext } from '@/lib/workspace-context';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
@@ -48,9 +49,11 @@ function App() {
   } = useGitHubAuth();
   const { repos, loading: reposLoading, sync: syncRepos } = useRepos();
   const { key: orKey, setKey: setOrKey, clearKey: clearOrKey, hasKey: hasOrKey } = useOpenRouterKey();
+  const { key: ollamaKey, setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey } = useOllamaKey();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
   const [orKeyInput, setOrKeyInput] = useState('');
+  const [ollamaKeyInput, setOllamaKeyInput] = useState('');
 
   // Screen state machine
   const screen: AppScreen = useMemo(() => {
@@ -183,7 +186,7 @@ function App() {
               }`}
             />
             <span className="text-xs text-[#52525b]">
-              {isDemo ? 'Demo' : hasOrKey ? 'OpenRouter' : isConnected ? 'GitHub' : 'Offline'}
+              {isDemo ? 'Demo' : hasOrKey ? 'OpenRouter' : hasOllamaKey ? 'Ollama Cloud' : isConnected ? 'GitHub' : 'Offline'}
             </span>
           </div>
           <button
@@ -280,65 +283,124 @@ function App() {
                 <div className="flex items-center gap-1.5">
                   <div
                     className={`h-2 w-2 rounded-full ${
-                      hasOrKey ? 'bg-emerald-500' : 'bg-[#52525b]'
+                      hasOrKey || hasOllamaKey ? 'bg-emerald-500' : 'bg-[#52525b]'
                     }`}
                   />
                   <span className="text-xs text-[#a1a1aa]">
-                    {hasOrKey ? 'OpenRouter' : 'Ollama Cloud'}
+                    {hasOrKey ? 'OpenRouter' : hasOllamaKey ? 'Ollama Cloud' : isDemo ? 'Demo' : 'Offline'}
                   </span>
                 </div>
               </div>
 
-              {hasOrKey ? (
-                <div className="space-y-2">
-                  <div className="rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2">
-                    <p className="text-sm text-[#a1a1aa] font-mono">
-                      {orKey?.startsWith('sk-or-') ? 'sk-or-••••••••' : 'Key saved'}
+              {/* OpenRouter */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-[#a1a1aa]">OpenRouter</label>
+                {hasOrKey ? (
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2">
+                      <p className="text-sm text-[#a1a1aa] font-mono">
+                        {orKey?.startsWith('sk-or-') ? 'sk-or-••••••••' : 'Key saved'}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => clearOrKey()}
+                      className="text-[#a1a1aa] hover:text-red-400 w-full justify-start"
+                    >
+                      Remove key
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={orKeyInput}
+                      onChange={(e) => setOrKeyInput(e.target.value)}
+                      placeholder="sk-or-..."
+                      className="w-full rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && orKeyInput.trim()) {
+                          setOrKey(orKeyInput.trim());
+                          setOrKeyInput('');
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (orKeyInput.trim()) {
+                          setOrKey(orKeyInput.trim());
+                          setOrKeyInput('');
+                        }
+                      }}
+                      disabled={!orKeyInput.trim()}
+                      className="text-[#a1a1aa] hover:text-[#fafafa] w-full justify-start"
+                    >
+                      Save OpenRouter key
+                    </Button>
+                    <p className="text-xs text-[#52525b]">
+                      Optional. Takes priority over Ollama Cloud when set.
                     </p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => clearOrKey()}
-                    className="text-[#a1a1aa] hover:text-red-400 w-full justify-start"
-                  >
-                    Remove key
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    value={orKeyInput}
-                    onChange={(e) => setOrKeyInput(e.target.value)}
-                    placeholder="sk-or-..."
-                    className="w-full rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && orKeyInput.trim()) {
-                        setOrKey(orKeyInput.trim());
-                        setOrKeyInput('');
-                      }
-                    }}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (orKeyInput.trim()) {
-                        setOrKey(orKeyInput.trim());
-                        setOrKeyInput('');
-                      }
-                    }}
-                    disabled={!orKeyInput.trim()}
-                    className="text-[#a1a1aa] hover:text-[#fafafa] w-full justify-start"
-                  >
-                    Save OpenRouter key
-                  </Button>
-                  <p className="text-xs text-[#52525b]">
-                    Optional. Adds OpenRouter as the AI provider.
-                  </p>
-                </div>
-              )}
+                )}
+              </div>
+
+              {/* Ollama Cloud */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-[#a1a1aa]">Ollama Cloud</label>
+                {hasOllamaKey ? (
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2">
+                      <p className="text-sm text-[#a1a1aa] font-mono">
+                        {ollamaKey?.slice(0, 8)}••••••••
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => clearOllamaKey()}
+                      className="text-[#a1a1aa] hover:text-red-400 w-full justify-start"
+                    >
+                      Remove key
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={ollamaKeyInput}
+                      onChange={(e) => setOllamaKeyInput(e.target.value)}
+                      placeholder="Ollama Cloud API key"
+                      className="w-full rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && ollamaKeyInput.trim()) {
+                          setOllamaKey(ollamaKeyInput.trim());
+                          setOllamaKeyInput('');
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (ollamaKeyInput.trim()) {
+                          setOllamaKey(ollamaKeyInput.trim());
+                          setOllamaKeyInput('');
+                        }
+                      }}
+                      disabled={!ollamaKeyInput.trim()}
+                      className="text-[#a1a1aa] hover:text-[#fafafa] w-full justify-start"
+                    >
+                      Save Ollama Cloud key
+                    </Button>
+                    <p className="text-xs text-[#52525b]">
+                      Optional. Used when OpenRouter key is not set.
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Danger Zone */}
