@@ -6,11 +6,11 @@ This replaces the 3‑4 app juggle (GitHub mobile, Claude, Codex, GitSync) with 
 
 This roadmap assumes a role‑based architecture. Models are replaceable. Roles are locked.
 
-All AI runs through Ollama Cloud (flat subscription, no token counting, no metering UI).
+AI runs through two providers: Ollama Cloud (Orchestrator) and OpenRouter (Coder, Auditor). Both keys are configurable at runtime via the Settings UI — no restart needed. OpenRouter free‑tier models keep costs at zero during development.
 
-Orchestrator (Kimi K2.5) — Lead analyst, interprets conversation, coordinates specialists
-Coder (GLM 4.7) — Writes, edits, and executes code in a sandbox
-Auditor (Gemini 3 Pro) — Pre‑commit gate, risk review, binary verdict
+Orchestrator (Kimi K2.5) — Lead analyst, interprets conversation, coordinates specialists (Ollama Cloud)
+Coder (GLM 4.5 Air) — Writes, edits, and executes code in a sandbox (OpenRouter, free)
+Auditor (DeepSeek R1T Chimera) — Pre‑commit gate, risk review, binary verdict (OpenRouter, free)
 
 The mobile experience is the primary constraint. Desktop parity is optional.
 
@@ -38,12 +38,12 @@ Design Principles (Non‑Negotiable)
 
 Agent Roles (Locked)
 
-All agents run on Ollama Cloud models. Roles are locked. Models can be swapped as the catalog evolves. The user never picks a model — the Orchestrator routes to the right specialist automatically.
+Agents run across two providers: Ollama Cloud (Orchestrator) and OpenRouter (Coder, Auditor). Roles are locked. Models can be swapped as catalogs evolve. The user never picks a model — the Orchestrator routes to the right specialist automatically.
 
 Current Model Assignments:
 - Orchestrator → Kimi K2.5 (256K context, agent swarm decomposition)
-- Coder → GLM 4.7 (198K context, SWE‑bench leader, agentic coding)
-- Auditor → Gemini 3 Pro Preview (1M context, SOTA reasoning)
+- Coder → GLM 4.5 Air (128K context, free via OpenRouter)
+- Auditor → DeepSeek R1T Chimera (128K context, free via OpenRouter)
 
 
 ---
@@ -119,16 +119,19 @@ Sandbox Architecture
 
 The Coder needs an environment to read, write, and execute code — not just generate patches blind.
 
-Options under consideration:
-- WebContainers (Stackblitz) — Runs Node.js in the browser via WASM. Works on mobile. No server needed. Limited to Node/JS ecosystem.
-- Remote containers — Spin up a Docker/Firecracker instance per session. Supports any language. Requires server infra.
-- GitHub Codespaces API — Leverage GitHub's existing sandbox. Already has repo context. Costs per hour.
+Decision: Modal (modal.com) — serverless containers on demand.
 
-Decision criteria:
-- Must work on mobile (rules out anything requiring a desktop IDE)
-- Must support the user's primary languages
-- Latency must be acceptable for conversational flow (seconds, not minutes)
-- Prefer no additional infra if possible
+Why Modal:
+- Any language — full Linux containers, not limited to Node/JS like WebContainers
+- Serverless — no idle infra costs, containers spin up per session and die after cleanup
+- Sub‑second cold starts — container snapshots keep latency conversational
+- Python SDK + REST API — thin backend exposes sandbox operations as web endpoints
+- Works on mobile — the client just calls HTTP endpoints, no desktop dependency
+
+What was considered and rejected:
+- WebContainers (Stackblitz) — JS/TS only, too limiting for multi‑language repos
+- GitHub Codespaces API — costs per hour, overkill for short verification runs
+- Self‑hosted Docker/Firecracker — requires managing server infra
 
 The sandbox is not a full IDE. It is a verification layer — the Coder writes code, runs it, confirms it works, then proposes the commit.
 
@@ -219,17 +222,20 @@ Phase 3 — Sandbox + Code Execution
 
 Goal: Give the Coder a real environment to write and test code before proposing changes.
 
+Sandbox: Modal (serverless containers). Python backend exposes clone_repo, run_command, write_file, read_file as web endpoints.
+
 Features:
-- Sandbox provisioning (WebContainers or remote container)
-- Coder can clone repo, install dependencies, read/write files
-- Coder can run commands (lint, test, build) and report results
-- Sandbox state visible in the chat (live pipeline)
-- Sandbox results feed into Auditor review
-- Cleanup after session ends
+- Modal sandbox provisioning — container per session with repo cloned
+- Coder (GLM 4.5 Air via OpenRouter) can read/write files, install deps, run commands
+- Agent dispatch — Orchestrator routes to Coder/Auditor models (not just Kimi)
+- Sandbox tools in the tool protocol (run_command, write_file, read_output)
+- Sandbox state visible in the chat (live pipeline) via new card types
+- Sandbox results feed into Auditor (DeepSeek R1T Chimera) review
+- Container cleanup after session ends
 
 Agent Use:
 - Orchestrator delegates coding tasks to Coder with sandbox access
-- Coder executes in sandbox, returns results to Orchestrator
+- Coder executes in Modal sandbox, returns results to Orchestrator
 - Orchestrator surfaces sandbox output as inline cards
 
 Exit Criteria:
@@ -295,7 +301,7 @@ Constraints:
 
 Explicitly Skipped (Without Guilt)
 
-- Per‑token billing or metering UI (Ollama Cloud subscription covers it)
+- Per‑token billing or metering UI (Ollama Cloud subscription + OpenRouter free tier covers it)
 - Full IDE replacement (this is a conversational agent, not VS Code mobile)
 - Multi‑agent debate loops (agents have roles, not opinions)
 - Continuous background monitoring (explicit user‑initiated actions only)

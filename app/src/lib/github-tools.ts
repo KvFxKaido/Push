@@ -18,7 +18,8 @@ export type ToolCall =
   | { tool: 'list_prs'; args: { repo: string; state?: string } }
   | { tool: 'list_commits'; args: { repo: string; count?: number } }
   | { tool: 'read_file'; args: { repo: string; path: string; branch?: string } }
-  | { tool: 'list_branches'; args: { repo: string } };
+  | { tool: 'list_branches'; args: { repo: string } }
+  | { tool: 'delegate_coder'; args: { task: string; files?: string[] } };
 
 const ACCESS_DENIED_MESSAGE =
   '[Tool Error] Access denied — can only query the active repo (owner/repo)';
@@ -54,6 +55,9 @@ function validateToolCall(parsed: any): ToolCall | null {
   }
   if (parsed.tool === 'list_branches' && parsed.args.repo) {
     return { tool: 'list_branches', args: { repo: parsed.args.repo } };
+  }
+  if (parsed.tool === 'delegate_coder' && parsed.args.task) {
+    return { tool: 'delegate_coder', args: { task: parsed.args.task, files: parsed.args.files } };
   }
   return null;
 }
@@ -401,6 +405,9 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
         return await executeReadFile(call.args.repo, call.args.path, call.args.branch);
       case 'list_branches':
         return await executeListBranches(call.args.repo);
+      case 'delegate_coder':
+        // Handled at a higher level (useChat / tool-dispatch), not here
+        return { text: '[Tool Error] delegate_coder must be handled by the chat hook.' };
       default:
         return { text: `[Tool Error] Unknown tool: ${(call as any).tool}` };
     }
@@ -428,6 +435,7 @@ Available tools:
 - list_commits(repo, count?) — List recent commits (default: 10, max: 30)
 - read_file(repo, path, branch?) — Read a file's contents (default: repo's default branch)
 - list_branches(repo) — List branches with default/protected status
+- delegate_coder(task, files?) — Delegate a coding task to the Coder agent (requires sandbox)
 
 Rules:
 - Output ONLY the JSON block when requesting a tool — no other text in the same message

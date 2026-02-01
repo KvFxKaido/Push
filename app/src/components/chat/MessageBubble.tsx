@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react';
-import { ChevronRight, GitPullRequest, GitBranch, GitCommit, FileCode } from 'lucide-react';
+import { ChevronRight, GitPullRequest, GitBranch, GitCommit, FileCode, Terminal, FileDiff, PenTool, ShieldCheck } from 'lucide-react';
 import type { ChatMessage } from '@/types';
-import { detectToolCall } from '@/lib/github-tools';
+import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 
 interface MessageBubbleProps {
@@ -154,32 +154,61 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
 }
 
 function ToolCallStatus({ content }: { content: string }) {
-  const toolCall = detectToolCall(content);
+  const toolCall = detectAnyToolCall(content);
   if (!toolCall) return null;
 
   let Icon = GitBranch;
   let label = '';
-  switch (toolCall.tool) {
-    case 'fetch_pr':
-      Icon = GitPullRequest;
-      label = `Fetching PR #${toolCall.args.pr} from ${toolCall.args.repo}`;
-      break;
-    case 'list_prs':
-      Icon = GitPullRequest;
-      label = `Listing ${toolCall.args.state || 'open'} PRs on ${toolCall.args.repo}`;
-      break;
-    case 'list_commits':
-      Icon = GitCommit;
-      label = `Fetching recent commits on ${toolCall.args.repo}`;
-      break;
-    case 'read_file':
-      Icon = FileCode;
-      label = `Reading ${toolCall.args.path} from ${toolCall.args.repo}`;
-      break;
-    case 'list_branches':
-      Icon = GitBranch;
-      label = `Listing branches on ${toolCall.args.repo}`;
-      break;
+
+  if (toolCall.source === 'github') {
+    switch (toolCall.call.tool) {
+      case 'fetch_pr':
+        Icon = GitPullRequest;
+        label = `Fetching PR #${toolCall.call.args.pr} from ${toolCall.call.args.repo}`;
+        break;
+      case 'list_prs':
+        Icon = GitPullRequest;
+        label = `Listing ${toolCall.call.args.state || 'open'} PRs on ${toolCall.call.args.repo}`;
+        break;
+      case 'list_commits':
+        Icon = GitCommit;
+        label = `Fetching recent commits on ${toolCall.call.args.repo}`;
+        break;
+      case 'read_file':
+        Icon = FileCode;
+        label = `Reading ${toolCall.call.args.path} from ${toolCall.call.args.repo}`;
+        break;
+      case 'list_branches':
+        Icon = GitBranch;
+        label = `Listing branches on ${toolCall.call.args.repo}`;
+        break;
+    }
+  } else if (toolCall.source === 'sandbox') {
+    switch (toolCall.call.tool) {
+      case 'sandbox_exec':
+        Icon = Terminal;
+        label = `Running: ${toolCall.call.args.command.slice(0, 60)}${toolCall.call.args.command.length > 60 ? '…' : ''}`;
+        break;
+      case 'sandbox_read_file':
+        Icon = FileCode;
+        label = `Reading ${toolCall.call.args.path}`;
+        break;
+      case 'sandbox_write_file':
+        Icon = PenTool;
+        label = `Writing ${toolCall.call.args.path}`;
+        break;
+      case 'sandbox_diff':
+        Icon = FileDiff;
+        label = 'Getting diff';
+        break;
+      case 'sandbox_commit':
+        Icon = ShieldCheck;
+        label = `Committing: ${toolCall.call.args.message.slice(0, 50)}`;
+        break;
+    }
+  } else if (toolCall.source === 'delegate') {
+    Icon = Terminal;
+    label = `Delegating to Coder: ${toolCall.call.args.task.slice(0, 50)}${toolCall.call.args.task.length > 50 ? '…' : ''}`;
   }
 
   return (

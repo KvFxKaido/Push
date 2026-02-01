@@ -17,7 +17,7 @@ const isDemoMode = import.meta.env.DEV && !OLLAMA_CLOUD_API_KEY;
 
 export async function analyzePRWithOllamaCloud(
   prData: PRData,
-  model = 'gemini-3-pro-preview:latest',
+  model = 'tngtech/deepseek-r1t-chimera:free',
 ): Promise<AnalysisResult> {
   if (isDemoMode) {
     console.log('[Diff] Demo mode — returning mock analysis');

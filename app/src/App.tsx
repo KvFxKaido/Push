@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Settings, Trash2 } from 'lucide-react';
+import { Settings, Trash2, Play, Square } from 'lucide-react';
 import { useChat } from '@/hooks/useChat';
 import { useGitHubAuth } from '@/hooks/useGitHubAuth';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useOpenRouterKey } from '@/hooks/useOpenRouterKey';
 import { useOllamaKey } from '@/hooks/useOllamaKey';
+import { useSandbox } from '@/hooks/useSandbox';
 import { buildWorkspaceContext } from '@/lib/workspace-context';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
@@ -38,7 +39,9 @@ function App() {
     deleteChat,
     deleteAllChats,
     setWorkspaceContext,
+    setSandboxId,
   } = useChat(activeRepo?.full_name ?? null);
+  const sandbox = useSandbox();
   const {
     token,
     setTokenManually,
@@ -111,6 +114,22 @@ function App() {
     }
   }, [repos, activeRepo, setWorkspaceContext]);
 
+  // Sync sandbox ID to useChat
+  useEffect(() => {
+    setSandboxId(sandbox.sandboxId);
+  }, [sandbox.sandboxId, setSandboxId]);
+
+  // Sandbox controls
+  const handleStartSandbox = useCallback(() => {
+    if (activeRepo) {
+      sandbox.start(activeRepo.full_name, activeRepo.default_branch);
+    }
+  }, [activeRepo, sandbox]);
+
+  const handleStopSandbox = useCallback(() => {
+    sandbox.stop();
+  }, [sandbox]);
+
   // Sync repos on mount (for returning users who already have a token)
   useEffect(() => {
     if (token) syncRepos();
@@ -179,6 +198,32 @@ function App() {
           />
         </div>
         <div className="flex items-center gap-3">
+          {/* Sandbox toggle */}
+          {activeRepo && (
+            <button
+              onClick={sandbox.status === 'ready' ? handleStopSandbox : handleStartSandbox}
+              disabled={sandbox.status === 'creating'}
+              className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all duration-200 active:scale-95 ${
+                sandbox.status === 'ready'
+                  ? 'bg-[#22c55e]/15 text-[#22c55e] hover:bg-[#22c55e]/25'
+                  : sandbox.status === 'creating'
+                  ? 'bg-[#f59e0b]/15 text-[#f59e0b] animate-pulse'
+                  : sandbox.status === 'error'
+                  ? 'bg-[#ef4444]/15 text-[#ef4444] hover:bg-[#ef4444]/25'
+                  : 'bg-[#111113] text-[#52525b] hover:text-[#a1a1aa] hover:bg-[#1a1a1e]'
+              }`}
+              title={sandbox.error || (sandbox.status === 'ready' ? 'Stop sandbox' : 'Start sandbox')}
+            >
+              {sandbox.status === 'ready' ? (
+                <Square className="h-3 w-3" />
+              ) : (
+                <Play className="h-3 w-3" />
+              )}
+              <span>
+                {sandbox.status === 'creating' ? 'Starting…' : sandbox.status === 'ready' ? 'Sandbox' : sandbox.status === 'error' ? 'Error' : 'Sandbox'}
+              </span>
+            </button>
+          )}
           <div className="flex items-center gap-1.5">
             <div
               className={`h-2 w-2 rounded-full transition-colors duration-200 ${

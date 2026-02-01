@@ -120,7 +120,10 @@ export type ChatCard =
   | { type: 'pr-list'; data: PRListCardData }
   | { type: 'commit-list'; data: CommitListCardData }
   | { type: 'file'; data: FileCardData }
-  | { type: 'branch-list'; data: BranchListCardData };
+  | { type: 'branch-list'; data: BranchListCardData }
+  | { type: 'sandbox'; data: SandboxCardData }
+  | { type: 'diff-preview'; data: DiffPreviewCardData }
+  | { type: 'audit-verdict'; data: AuditVerdictCardData };
 
 // Tool execution returns text for the LLM + optional structured card for UI
 export interface ToolExecutionResult {
@@ -166,6 +169,32 @@ export interface BranchListCardData {
   repo: string;
   defaultBranch: string;
   branches: { name: string; isDefault: boolean; isProtected: boolean }[];
+}
+
+// Phase 3 — Sandbox + Code Execution
+
+export interface SandboxCardData {
+  command: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  truncated: boolean;
+  durationMs?: number;
+}
+
+export interface DiffPreviewCardData {
+  diff: string;
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  truncated: boolean;
+}
+
+export interface AuditVerdictCardData {
+  verdict: 'safe' | 'unsafe';
+  summary: string;
+  risks: { level: 'low' | 'medium' | 'high'; description: string }[];
+  filesReviewed: number;
 }
 
 export interface AgentStatus {

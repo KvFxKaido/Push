@@ -7,6 +7,7 @@
 
 interface Env {
   OLLAMA_CLOUD_API_KEY: string;
+  MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
 }
@@ -16,6 +17,16 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 30;
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
 
+// Sandbox endpoint name mapping: /api/sandbox/{route} → Modal function name
+const SANDBOX_ROUTES: Record<string, string> = {
+  create: 'create',
+  exec: 'exec-command',
+  read: 'read-file',
+  write: 'write-file',
+  diff: 'get-diff',
+  cleanup: 'cleanup',
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -23,6 +34,12 @@ export default {
     // API route: streaming proxy to Ollama Cloud
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       return handleChat(request, env);
+    }
+
+    // API route: sandbox proxy to Modal
+    if (url.pathname.startsWith('/api/sandbox/') && request.method === 'POST') {
+      const route = url.pathname.replace('/api/sandbox/', '');
+      return handleSandbox(request, env, url, route);
     }
 
     // SPA fallback: serve index.html for non-file paths
@@ -199,6 +216,84 @@ async function readBodyText(
   }
 
   return { ok: true, text: new TextDecoder().decode(merged) };
+}
+
+async function handleSandbox(request: Request, env: Env, requestUrl: URL, route: string): Promise<Response> {
+  const modalFunction = SANDBOX_ROUTES[route];
+  if (!modalFunction) {
+    return Response.json({ error: `Unknown sandbox route: ${route}` }, { status: 404 });
+  }
+
+  const baseUrl = env.MODAL_SANDBOX_BASE_URL;
+  if (!baseUrl) {
+    return Response.json({ error: 'Sandbox not available — MODAL_SANDBOX_BASE_URL not configured' }, { status: 503 });
+  }
+
+  // Validate origin
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  // Rate limit
+  const now = Date.now();
+  cleanupRateLimitStore(now);
+  const rateLimit = checkRateLimit(getClientIp(request), now);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
+    );
+  }
+
+  // Read and forward body
+  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
+  if (!bodyResult.ok) {
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  }
+
+  // Forward to Modal web endpoint
+  // Modal web endpoints follow pattern: {base}-{function_name}.modal.run
+  const modalUrl = `${baseUrl}-${modalFunction}.modal.run`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60_000);
+    let upstream: Response;
+
+    try {
+      upstream = await fetch(modalUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: bodyResult.text,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      console.error(`[api/sandbox/${route}] Modal ${upstream.status}: ${errBody.slice(0, 500)}`);
+      return Response.json(
+        { error: `Sandbox error ${upstream.status}: ${errBody.slice(0, 200)}` },
+        { status: upstream.status },
+      );
+    }
+
+    const data: unknown = await upstream.json();
+    return Response.json(data);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    console.error(`[api/sandbox/${route}] Error: ${message}`);
+    return Response.json(
+      { error: isTimeout ? 'Sandbox request timed out' : message },
+      { status: isTimeout ? 504 : 500 },
+    );
+  }
 }
 
 async function handleChat(request: Request, env: Env): Promise<Response> {

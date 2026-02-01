@@ -10,25 +10,11 @@ export const PROVIDERS: AIProviderConfig[] = [
     envUrl: 'VITE_OLLAMA_CLOUD_API_URL',
     models: [
       {
-        id: 'gemini-3-pro-preview:latest',
-        name: 'Gemini 3 Pro (Auditor)',
-        provider: 'ollama-cloud',
-        role: 'auditor',
-        context: 1_000_000,
-      },
-      {
         id: 'kimi-k2.5:cloud',
         name: 'Kimi K2.5 (Orchestrator)',
         provider: 'ollama-cloud',
         role: 'orchestrator',
         context: 256_000,
-      },
-      {
-        id: 'glm-4.7:cloud',
-        name: 'GLM 4.7 (Coder)',
-        provider: 'ollama-cloud',
-        role: 'coder',
-        context: 198_000,
       },
     ],
   },
@@ -44,6 +30,20 @@ export const PROVIDERS: AIProviderConfig[] = [
         provider: 'openrouter',
         role: 'orchestrator',
         context: 131_072,
+      },
+      {
+        id: 'z-ai/glm-4.5-air:free',
+        name: 'GLM 4.5 Air (Coder)',
+        provider: 'openrouter',
+        role: 'coder',
+        context: 128_000,
+      },
+      {
+        id: 'tngtech/deepseek-r1t-chimera:free',
+        name: 'DeepSeek R1T Chimera (Auditor)',
+        provider: 'openrouter',
+        role: 'auditor',
+        context: 128_000,
       },
     ],
   },
@@ -71,5 +71,5 @@ export async function analyzePR(
   _providerType: AIProviderType,
   modelId?: string,
 ): Promise<AnalysisResult> {
-  return analyzePRWithOllamaCloud(prData, modelId || 'gemini-3-pro-preview:latest');
+  return analyzePRWithOllamaCloud(prData, modelId || 'tngtech/deepseek-r1t-chimera:free');
 }

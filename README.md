@@ -19,7 +19,7 @@ Diff is a personal chat interface backed by role-based AI agents. Select a repo,
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Ollama Cloud (Kimi K2.5 orchestrator) |
+| AI | Ollama Cloud + OpenRouter (dual provider, runtime-switchable) |
 | APIs | GitHub REST API |
 | Deploy | Cloudflare Workers + Assets |
 | PWA | Service Worker, Web App Manifest |
@@ -32,14 +32,15 @@ npm install
 npm run dev
 ```
 
-Create `app/.env` for local development:
+Create `app/.env` for local development, or paste keys in the Settings UI at runtime:
 
 ```env
-VITE_OLLAMA_CLOUD_API_KEY=...     # Required for AI — prod key lives in Cloudflare secrets
+VITE_OLLAMA_CLOUD_API_KEY=...     # Optional — or paste in Settings UI
+VITE_OPENROUTER_API_KEY=...       # Optional — or paste in Settings UI (takes priority over Ollama)
 VITE_GITHUB_TOKEN=...             # Optional — higher GitHub rate limits
 ```
 
-Without keys the app runs in demo mode with mock repos and a welcome message.
+Without any AI keys the app runs in demo mode with mock repos and a welcome message.
 
 ## Production
 
@@ -62,7 +63,7 @@ Diff/
 │   │   ├── components/
 │   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, RepoSelector
 │   │   │   └── ui/        # shadcn/ui component library
-│   │   ├── hooks/         # useChat, useGitHubAuth, useRepos, useActiveRepo
+│   │   ├── hooks/         # useChat, useGitHubAuth, useRepos, useActiveRepo, useOllamaKey, useOpenRouterKey
 │   │   ├── lib/           # orchestrator, github-tools, workspace-context
 │   │   ├── sections/      # OnboardingScreen, RepoPicker
 │   │   ├── types/         # TypeScript type definitions
@@ -84,10 +85,10 @@ Diff/
 Role-based agent system. Models are replaceable; roles are not.
 
 - **Orchestrator (Kimi K2.5)** — conversational lead, tool orchestration
-- **Coder (GLM 4.7)** — code implementation and edits
-- **Auditor (Gemini 3 Pro)** — risk review, pre-commit gate
+- **Coder (GLM 4.5 Air)** — code implementation and edits (OpenRouter)
+- **Auditor (DeepSeek R1T Chimera)** — risk review, pre-commit gate (OpenRouter)
 
-All AI runs through Ollama Cloud via the Cloudflare Worker proxy.
+AI runs through two providers: OpenRouter (priority) and Ollama Cloud (fallback). Both keys are configurable at runtime via the Settings UI. Production uses the Cloudflare Worker proxy for Ollama Cloud.
 
 ## License
 

@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
+import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterKey';
 import { getOllamaKey } from '@/hooks/useOllamaKey';
 
@@ -52,11 +53,19 @@ interface LLMMessage {
   content: string;
 }
 
-function toLLMMessages(messages: ChatMessage[], workspaceContext?: string): LLMMessage[] {
-  // Build system prompt: base + workspace context + tool protocol
-  let systemContent = ORCHESTRATOR_SYSTEM_PROMPT;
+function toLLMMessages(
+  messages: ChatMessage[],
+  workspaceContext?: string,
+  hasSandbox?: boolean,
+  systemPromptOverride?: string,
+): LLMMessage[] {
+  // Build system prompt: base + workspace context + tool protocol + optional sandbox tools
+  let systemContent = systemPromptOverride || ORCHESTRATOR_SYSTEM_PROMPT;
   if (workspaceContext) {
     systemContent += '\n\n' + workspaceContext + '\n' + TOOL_PROTOCOL;
+    if (hasSandbox) {
+      systemContent += '\n' + SANDBOX_TOOL_PROTOCOL;
+    }
   }
 
   const llmMessages: LLMMessage[] = [
@@ -150,6 +159,7 @@ async function streamOllamaChat(
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
   workspaceContext?: string,
+  hasSandbox?: boolean,
 ): Promise<void> {
   try {
     console.log(`[Diff] POST ${OLLAMA_CLOUD_API_URL} (model: ${OLLAMA_ORCHESTRATOR_MODEL})`);
@@ -169,7 +179,7 @@ async function streamOllamaChat(
       headers,
       body: JSON.stringify({
         model: OLLAMA_ORCHESTRATOR_MODEL,
-        messages: toLLMMessages(messages, workspaceContext),
+        messages: toLLMMessages(messages, workspaceContext, hasSandbox),
         stream: true,
       }),
     });
@@ -243,13 +253,16 @@ async function streamOllamaChat(
 // OpenRouter streaming (SSE)
 // ---------------------------------------------------------------------------
 
-async function streamOpenRouterChat(
+export async function streamOpenRouterChat(
   messages: ChatMessage[],
   onToken: (token: string) => void,
   onDone: () => void,
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
   workspaceContext?: string,
+  hasSandbox?: boolean,
+  modelOverride?: string,
+  systemPromptOverride?: string,
 ): Promise<void> {
   const apiKey = getOpenRouterKey();
   if (!apiKey) {
@@ -257,8 +270,10 @@ async function streamOpenRouterChat(
     return;
   }
 
+  const model = modelOverride || OPENROUTER_MODEL;
+
   try {
-    console.log(`[Diff] POST ${OPENROUTER_API_URL} (model: ${OPENROUTER_MODEL})`);
+    console.log(`[Diff] POST ${OPENROUTER_API_URL} (model: ${model})`);
 
     const response = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
@@ -269,8 +284,8 @@ async function streamOpenRouterChat(
         'X-Title': 'Diff',
       },
       body: JSON.stringify({
-        model: OPENROUTER_MODEL,
-        messages: toLLMMessages(messages, workspaceContext),
+        model,
+        messages: toLLMMessages(messages, workspaceContext, hasSandbox, systemPromptOverride),
         stream: true,
       }),
     });
@@ -370,6 +385,7 @@ export async function streamChat(
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
   workspaceContext?: string,
+  hasSandbox?: boolean,
 ): Promise<void> {
   // Check both keys at runtime (not module load) so Settings changes take effect immediately
   if (import.meta.env.DEV && !getOllamaKey() && !getOpenRouterKey()) {
@@ -383,8 +399,8 @@ export async function streamChat(
   }
 
   if (getOpenRouterKey()) {
-    return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext);
+    return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox);
   }
 
-  return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext);
+  return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox);
 }
