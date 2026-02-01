@@ -24,6 +24,9 @@ export default defineConfig({
         target: 'https://api.kimi.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/kimi/, ''),
+        headers: {
+          'User-Agent': 'claude-code/1.0.0',
+        },
       },
     },
   },

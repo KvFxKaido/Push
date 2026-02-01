@@ -453,6 +453,7 @@ async function handleKimiChat(request: Request, env: Env): Promise<Response> {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': authHeader,
+          'User-Agent': 'claude-code/1.0.0',
         },
         body: bodyResult.text,
         signal: controller.signal,
