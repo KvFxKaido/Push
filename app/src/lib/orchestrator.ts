@@ -1,7 +1,12 @@
 import type { ChatMessage } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
 
+// Dev only — production uses the Worker proxy
 const OLLAMA_CLOUD_API_KEY = import.meta.env.VITE_OLLAMA_CLOUD_API_KEY || '';
+
+if (!import.meta.env.DEV && OLLAMA_CLOUD_API_KEY) {
+  console.warn('[Diff] OLLAMA_CLOUD_API_KEY should not be set in production builds — use the Cloudflare Worker proxy instead.');
+}
 
 // Dev: Vite proxy avoids CORS. Prod: Vercel Edge function at /api/chat holds the key.
 const OLLAMA_CLOUD_API_URL =

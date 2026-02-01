@@ -93,8 +93,9 @@ function App() {
   const handleDisconnect = useCallback(() => {
     logout();
     clearActiveRepo();
+    deleteAllChats();
     setIsDemo(false);
-  }, [logout, clearActiveRepo]);
+  }, [logout, clearActiveRepo, deleteAllChats]);
 
   // Build workspace context when repos or active repo change
   useEffect(() => {
@@ -260,12 +261,14 @@ function App() {
                 <div className="space-y-2">
                   {!isDemo && (
                     <div className="rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2">
-                      <p className="text-xs text-[#52525b] mb-0.5">Token</p>
                       <p className="text-sm text-[#a1a1aa] font-mono">
-                        {token.slice(0, 8)}{'...'}
+                        {token.startsWith('ghp_') ? 'ghp_••••••••' : 'Token saved'}
                       </p>
                     </div>
                   )}
+                  {/* Security note: PAT is stored in localStorage (accessible to same-origin JS). */}
+                  {/* Mitigated by: no innerHTML/dangerouslySetInnerHTML usage, strict CSP in production. */}
+                  {/* Future: consider HttpOnly cookie via backend session. */}
                   <Button
                     variant="ghost"
                     size="sm"
