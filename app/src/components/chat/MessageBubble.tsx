@@ -1,11 +1,12 @@
 import { memo, useMemo, useState } from 'react';
-import { ChevronRight, GitPullRequest, GitBranch, GitCommit, FileCode, Terminal, FileDiff, PenTool, ShieldCheck } from 'lucide-react';
-import type { ChatMessage } from '@/types';
+import { ChevronRight, GitPullRequest, GitBranch, GitCommit, FileCode, Terminal, FileDiff, PenTool, ShieldCheck, Activity } from 'lucide-react';
+import type { ChatMessage, CardAction } from '@/types';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  onCardAction?: (action: CardAction) => void;
 }
 
 function formatContent(content: string): React.ReactNode[] {
@@ -182,6 +183,10 @@ function ToolCallStatus({ content }: { content: string }) {
         Icon = GitBranch;
         label = `Listing branches on ${toolCall.call.args.repo}`;
         break;
+      case 'fetch_checks':
+        Icon = Activity;
+        label = `Fetching CI status for ${toolCall.call.args.repo}`;
+        break;
     }
   } else if (toolCall.source === 'sandbox') {
     switch (toolCall.call.tool) {
@@ -201,9 +206,9 @@ function ToolCallStatus({ content }: { content: string }) {
         Icon = FileDiff;
         label = 'Getting diff';
         break;
-      case 'sandbox_commit':
+      case 'sandbox_prepare_commit':
         Icon = ShieldCheck;
-        label = `Committing: ${toolCall.call.args.message.slice(0, 50)}`;
+        label = `Reviewing commit: ${toolCall.call.args.message.slice(0, 50)}`;
         break;
     }
   } else if (toolCall.source === 'delegate') {
@@ -223,6 +228,7 @@ function ToolCallStatus({ content }: { content: string }) {
 
 export const MessageBubble = memo(function MessageBubble({
   message,
+  onCardAction,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isError = message.status === 'error';
@@ -295,7 +301,13 @@ export const MessageBubble = memo(function MessageBubble({
         {message.cards && message.cards.length > 0 && (
           <div className="mt-1">
             {message.cards.map((card, i) => (
-              <CardRenderer key={i} card={card} />
+              <CardRenderer
+                key={i}
+                card={card}
+                messageId={message.id}
+                cardIndex={i}
+                onAction={onCardAction}
+              />
             ))}
           </div>
         )}

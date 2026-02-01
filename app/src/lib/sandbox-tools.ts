@@ -8,7 +8,7 @@
  * Sandbox tools operate on a running Modal sandbox (persistent container).
  */
 
-import type { ToolExecutionResult, SandboxCardData, DiffPreviewCardData } from '@/types';
+import type { ToolExecutionResult, SandboxCardData, DiffPreviewCardData, CommitReviewCardData } from '@/types';
 import {
   execInSandbox,
   readFromSandbox,
@@ -24,7 +24,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_read_file'; args: { path: string } }
   | { tool: 'sandbox_write_file'; args: { path: string; content: string } }
   | { tool: 'sandbox_diff'; args: Record<string, never> }
-  | { tool: 'sandbox_commit'; args: { message: string } }
+  | { tool: 'sandbox_prepare_commit'; args: { message: string } }
   | { tool: 'sandbox_push'; args: Record<string, never> };
 
 // --- Validation ---
@@ -42,8 +42,8 @@ export function validateSandboxToolCall(parsed: any): SandboxToolCall | null {
   if (parsed.tool === 'sandbox_diff') {
     return { tool: 'sandbox_diff', args: {} };
   }
-  if (parsed.tool === 'sandbox_commit' && parsed.args?.message) {
-    return { tool: 'sandbox_commit', args: { message: parsed.args.message } };
+  if ((parsed.tool === 'sandbox_prepare_commit' || parsed.tool === 'sandbox_commit') && parsed.args?.message) {
+    return { tool: 'sandbox_prepare_commit', args: { message: parsed.args.message } };
   }
   if (parsed.tool === 'sandbox_push') {
     return { tool: 'sandbox_push', args: {} };
@@ -195,11 +195,11 @@ export async function executeSandboxToolCall(
         return { text: lines.join('\n'), card: { type: 'diff-preview', data: cardData } };
       }
 
-      case 'sandbox_commit': {
+      case 'sandbox_prepare_commit': {
         // Step 1: Get the diff
         const diffResult = await getSandboxDiff(sandboxId);
         if (!diffResult.diff) {
-          return { text: `[Tool Result — sandbox_commit]\nNo changes to commit.` };
+          return { text: `[Tool Result — sandbox_prepare_commit]\nNo changes to commit.` };
         }
 
         // Step 2: Run Auditor
@@ -209,38 +209,31 @@ export async function executeSandboxToolCall(
         );
 
         if (auditResult.verdict === 'unsafe') {
-          // Blocked — return verdict card
+          // Blocked — return verdict card only, no review card
           return {
-            text: `[Tool Result — sandbox_commit]\nCommit BLOCKED by Auditor: ${auditResult.card.summary}`,
+            text: `[Tool Result — sandbox_prepare_commit]\nCommit BLOCKED by Auditor: ${auditResult.card.summary}`,
             card: { type: 'audit-verdict', data: auditResult.card },
           };
         }
 
-        // Step 3: SAFE — commit in sandbox
-        const commitResult = await execInSandbox(
-          sandboxId,
-          `cd /workspace && git add -A && git commit -m "${call.args.message.replace(/"/g, '\\"')}"`,
-        );
-
-        if (commitResult.exitCode !== 0) {
-          return { text: `[Tool Result — sandbox_commit]\nCommit failed: ${commitResult.stderr}` };
-        }
-
-        // Step 4: Push to remote
-        const pushResult = await execInSandbox(sandboxId, 'cd /workspace && git push origin HEAD');
-
+        // Step 3: SAFE — return a review card for user approval (do NOT commit)
         const stats = parseDiffStats(diffResult.diff);
-
-        if (pushResult.exitCode !== 0) {
-          return {
-            text: `[Tool Result — sandbox_commit]\nCommitted "${call.args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}) but PUSH FAILED: ${pushResult.stderr}\nUse sandbox_push() to retry the push.`,
-            card: { type: 'audit-verdict', data: auditResult.card },
-          };
-        }
+        const reviewData: CommitReviewCardData = {
+          diff: {
+            diff: diffResult.diff,
+            filesChanged: stats.filesChanged,
+            additions: stats.additions,
+            deletions: stats.deletions,
+            truncated: diffResult.truncated,
+          },
+          auditVerdict: auditResult.card,
+          commitMessage: call.args.message,
+          status: 'pending',
+        };
 
         return {
-          text: `[Tool Result — sandbox_commit]\nCommitted and pushed: "${call.args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions})`,
-          card: { type: 'audit-verdict', data: auditResult.card },
+          text: `[Tool Result — sandbox_prepare_commit]\nReady for review: "${call.args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}). Waiting for user approval.`,
+          card: { type: 'commit-review', data: reviewData },
         };
       }
 
@@ -274,19 +267,24 @@ Additional tools available when sandbox is active:
 - sandbox_read_file(path) — Read a file from the sandbox filesystem
 - sandbox_write_file(path, content) — Write or overwrite a file in the sandbox
 - sandbox_diff() — Get the git diff of all uncommitted changes
-- sandbox_commit(message) — Commit AND push changes (requires Auditor approval). Automatically pushes after commit.
-- sandbox_push() — Retry a failed push. Use this only if sandbox_commit reported a push failure. No Auditor needed (commit was already audited).
+- sandbox_prepare_commit(message) — Prepare a commit for review. Gets diff, runs Auditor. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
+- sandbox_push() — Retry a failed push. Use this only if a push failed after approval. No Auditor needed (commit was already audited).
 
 Usage: Output a fenced JSON block just like GitHub tools:
 \`\`\`json
 {"tool": "sandbox_exec", "args": {"command": "npm test"}}
 \`\`\`
 
+Commit message guidelines for sandbox_prepare_commit:
+- Use conventional commit format (feat:, fix:, refactor:, docs:, etc.)
+- Keep under 72 characters
+- Describe what changed and why, not how
+
 Sandbox rules:
 - The repo is cloned to /workspace — use that as the working directory
 - You can install packages, run tests, build, lint — anything you'd do in a terminal
 - For multi-step tasks (edit + test), use multiple tool calls in sequence
 - sandbox_diff shows what you've changed — review before committing
-- sandbox_commit triggers the Auditor for safety review, then commits and pushes to the remote
+- sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.
 - If the push fails after a successful commit, use sandbox_push() to retry
 - Keep commands focused — avoid long-running servers or background processes`;

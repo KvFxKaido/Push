@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo } from 'react';
-import type { ChatMessage, AgentStatus, ActiveRepo } from '@/types';
+import type { ChatMessage, AgentStatus, ActiveRepo, CardAction } from '@/types';
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
 
@@ -8,6 +8,7 @@ interface ChatContainerProps {
   agentStatus: AgentStatus;
   activeRepo?: ActiveRepo | null;
   onSuggestion?: (text: string) => void;
+  onCardAction?: (action: CardAction) => void;
 }
 
 function EmptyState({
@@ -75,7 +76,7 @@ function EmptyState({
   );
 }
 
-export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion }: ChatContainerProps) {
+export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion, onCardAction }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -109,7 +110,7 @@ export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion 
       <div className="flex-1" />
       <div className="py-4 space-y-1">
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <MessageBubble key={msg.id} message={msg} onCardAction={onCardAction} />
         ))}
         <AgentStatusBar status={agentStatus} />
       </div>

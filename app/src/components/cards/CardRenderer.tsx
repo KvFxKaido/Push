@@ -1,4 +1,4 @@
-import type { ChatCard } from '@/types';
+import type { ChatCard, CardAction } from '@/types';
 import { PRCard } from './PRCard';
 import { PRListCard } from './PRListCard';
 import { CommitListCard } from './CommitListCard';
@@ -7,8 +7,17 @@ import { BranchListCard } from './BranchListCard';
 import { SandboxCard } from './SandboxCard';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
+import { CommitReviewCard } from './CommitReviewCard';
+import { CIStatusCard } from './CIStatusCard';
 
-export function CardRenderer({ card }: { card: ChatCard }) {
+interface CardRendererProps {
+  card: ChatCard;
+  messageId?: string;
+  cardIndex?: number;
+  onAction?: (action: CardAction) => void;
+}
+
+export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRendererProps) {
   switch (card.type) {
     case 'pr':
       return <PRCard data={card.data} />;
@@ -26,6 +35,24 @@ export function CardRenderer({ card }: { card: ChatCard }) {
       return <DiffPreviewCard data={card.data} />;
     case 'audit-verdict':
       return <AuditVerdictCard data={card.data} />;
+    case 'commit-review':
+      return (
+        <CommitReviewCard
+          data={card.data}
+          messageId={messageId || ''}
+          cardIndex={cardIndex ?? 0}
+          onAction={onAction}
+        />
+      );
+    case 'ci-status':
+      return (
+        <CIStatusCard
+          data={card.data}
+          messageId={messageId || ''}
+          cardIndex={cardIndex ?? 0}
+          onAction={onAction}
+        />
+      );
     default:
       return null;
   }

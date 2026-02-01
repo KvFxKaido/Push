@@ -123,7 +123,9 @@ export type ChatCard =
   | { type: 'branch-list'; data: BranchListCardData }
   | { type: 'sandbox'; data: SandboxCardData }
   | { type: 'diff-preview'; data: DiffPreviewCardData }
-  | { type: 'audit-verdict'; data: AuditVerdictCardData };
+  | { type: 'audit-verdict'; data: AuditVerdictCardData }
+  | { type: 'commit-review'; data: CommitReviewCardData }
+  | { type: 'ci-status'; data: CIStatusCardData };
 
 // Tool execution returns text for the LLM + optional structured card for UI
 export interface ToolExecutionResult {
@@ -196,6 +198,36 @@ export interface AuditVerdictCardData {
   risks: { level: 'low' | 'medium' | 'high'; description: string }[];
   filesReviewed: number;
 }
+
+// Phase 4 — User Confirmation + CI Status
+
+export interface CommitReviewCardData {
+  diff: DiffPreviewCardData;
+  auditVerdict: AuditVerdictCardData;
+  commitMessage: string;
+  status: 'pending' | 'approved' | 'rejected' | 'committed' | 'pushing' | 'error';
+  error?: string;
+}
+
+export interface CICheck {
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | null;
+  detailsUrl?: string;
+}
+
+export interface CIStatusCardData {
+  repo: string;
+  ref: string;
+  checks: CICheck[];
+  overall: 'pending' | 'success' | 'failure' | 'neutral' | 'no-checks';
+  fetchedAt: string;
+}
+
+export type CardAction =
+  | { type: 'commit-approve'; messageId: string; cardIndex: number; commitMessage: string }
+  | { type: 'commit-reject'; messageId: string; cardIndex: number }
+  | { type: 'ci-refresh'; messageId: string; cardIndex: number };
 
 export interface AgentStatus {
   active: boolean;

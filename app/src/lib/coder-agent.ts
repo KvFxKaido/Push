@@ -21,7 +21,7 @@ Rules:
 - Be methodical: read first, plan, implement, test
 - Keep changes minimal and focused on the task
 - If tests fail, fix them before reporting success
-- When done, use sandbox_diff to show what you changed
+- When done, use sandbox_diff to show what you changed, then sandbox_prepare_commit to propose a commit
 - Respond with a brief summary of what you did
 
 ${SANDBOX_TOOL_PROTOCOL}`;

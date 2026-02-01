@@ -43,6 +43,7 @@ function App() {
     setWorkspaceContext,
     setSandboxId,
     setAgentsMd,
+    handleCardAction,
   } = useChat(activeRepo?.full_name ?? null);
   const sandbox = useSandbox();
   const {
@@ -304,6 +305,7 @@ function App() {
         agentStatus={agentStatus}
         activeRepo={activeRepo}
         onSuggestion={sendMessage}
+        onCardAction={handleCardAction}
       />
 
       {/* Input */}

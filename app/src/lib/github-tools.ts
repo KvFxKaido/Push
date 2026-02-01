@@ -6,7 +6,7 @@
  * result back into the conversation as a synthetic message.
  */
 
-import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData } from '@/types';
+import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, CICheck, CIStatusCardData } from '@/types';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
@@ -19,7 +19,8 @@ export type ToolCall =
   | { tool: 'list_commits'; args: { repo: string; count?: number } }
   | { tool: 'read_file'; args: { repo: string; path: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string } }
-  | { tool: 'delegate_coder'; args: { task: string; files?: string[] } };
+  | { tool: 'delegate_coder'; args: { task: string; files?: string[] } }
+  | { tool: 'fetch_checks'; args: { repo: string; ref?: string } };
 
 const ACCESS_DENIED_MESSAGE =
   '[Tool Error] Access denied — can only query the active repo (owner/repo)';
@@ -58,6 +59,9 @@ function validateToolCall(parsed: any): ToolCall | null {
   }
   if (parsed.tool === 'delegate_coder' && parsed.args.task) {
     return { tool: 'delegate_coder', args: { task: parsed.args.task, files: parsed.args.files } };
+  }
+  if (parsed.tool === 'fetch_checks' && parsed.args.repo) {
+    return { tool: 'fetch_checks', args: { repo: parsed.args.repo, ref: parsed.args.ref } };
   }
   return null;
 }
@@ -374,6 +378,101 @@ async function executeListBranches(repo: string): Promise<ToolExecutionResult> {
   };
 }
 
+async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecutionResult> {
+  const headers = getGitHubHeaders();
+
+  // Default ref to HEAD of default branch
+  const commitRef = ref || 'HEAD';
+
+  // Try check runs API first (GitHub Actions, etc.)
+  const checkRunsRes = await fetch(
+    `https://api.github.com/repos/${repo}/commits/${commitRef}/check-runs?per_page=50`,
+    { headers },
+  );
+
+  let checks: CICheck[] = [];
+  let overall: CIStatusCardData['overall'] = 'no-checks';
+
+  if (checkRunsRes.ok) {
+    const data = await checkRunsRes.json();
+    if (data.check_runs && data.check_runs.length > 0) {
+      checks = data.check_runs.map((cr: any) => ({
+        name: cr.name,
+        status: cr.status as CICheck['status'],
+        conclusion: cr.conclusion as CICheck['conclusion'],
+        detailsUrl: cr.html_url || cr.details_url,
+      }));
+    }
+  }
+
+  // If no check runs, fall back to combined status API (Travis, etc.)
+  if (checks.length === 0) {
+    const statusRes = await fetch(
+      `https://api.github.com/repos/${repo}/commits/${commitRef}/status`,
+      { headers },
+    );
+    if (statusRes.ok) {
+      const statusData = await statusRes.json();
+      if (statusData.statuses && statusData.statuses.length > 0) {
+        checks = statusData.statuses.map((s: any) => ({
+          name: s.context,
+          status: 'completed' as const,
+          conclusion: s.state === 'success' ? 'success' :
+                      s.state === 'failure' || s.state === 'error' ? 'failure' :
+                      s.state === 'pending' ? null : 'neutral',
+          detailsUrl: s.target_url,
+        }));
+        // Re-mark pending statuses
+        for (const check of checks) {
+          if (check.conclusion === null) {
+            check.status = 'in_progress';
+          }
+        }
+      }
+    }
+  }
+
+  // Compute overall status
+  if (checks.length === 0) {
+    overall = 'no-checks';
+  } else if (checks.some((c) => c.status !== 'completed')) {
+    overall = 'pending';
+  } else if (checks.every((c) => c.conclusion === 'success' || c.conclusion === 'skipped' || c.conclusion === 'neutral')) {
+    overall = 'success';
+  } else if (checks.some((c) => c.conclusion === 'failure')) {
+    overall = 'failure';
+  } else {
+    overall = 'neutral';
+  }
+
+  const cardData: CIStatusCardData = {
+    repo,
+    ref: commitRef,
+    checks,
+    overall,
+    fetchedAt: new Date().toISOString(),
+  };
+
+  // Build text summary
+  const lines: string[] = [
+    `[Tool Result — fetch_checks]`,
+    `CI Status for ${repo}@${commitRef}: ${overall.toUpperCase()}`,
+  ];
+
+  if (checks.length === 0) {
+    lines.push('No CI checks configured for this repo.');
+  } else {
+    for (const check of checks) {
+      const icon = check.conclusion === 'success' ? '✓' :
+                   check.conclusion === 'failure' ? '✗' :
+                   check.status !== 'completed' ? '⏳' : '—';
+      lines.push(`  ${icon} ${check.name}: ${check.conclusion || check.status}`);
+    }
+  }
+
+  return { text: lines.join('\n'), card: { type: 'ci-status', data: cardData } };
+}
+
 function normalizeRepoName(repo: string): string {
   return repo
     .trim()
@@ -410,6 +509,8 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
         return await executeReadFile(call.args.repo, call.args.path, call.args.branch);
       case 'list_branches':
         return await executeListBranches(call.args.repo);
+      case 'fetch_checks':
+        return await executeFetchChecks(call.args.repo, call.args.ref);
       default:
         return { text: `[Tool Error] Unknown tool: ${(call as any).tool}` };
     }
@@ -438,6 +539,7 @@ Available tools:
 - read_file(repo, path, branch?) — Read a file's contents (default: repo's default branch)
 - list_branches(repo) — List branches with default/protected status
 - delegate_coder(task, files?) — Delegate a coding task to the Coder agent (requires sandbox)
+- fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
 
 Rules:
 - Output ONLY the JSON block when requesting a tool — no other text in the same message

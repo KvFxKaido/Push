@@ -1,9 +1,11 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult } from '@/types';
+import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardAction, CommitReviewCardData, ChatCard } from '@/types';
 import { streamChat } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent } from '@/lib/coder-agent';
+import { execInSandbox } from '@/lib/sandbox-client';
+import { executeToolCall } from '@/lib/github-tools';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
@@ -126,7 +128,7 @@ function getToolStatusLabel(toolCall: AnyToolCall): string {
         case 'sandbox_read_file': return 'Reading file...';
         case 'sandbox_write_file': return 'Writing file...';
         case 'sandbox_diff': return 'Getting diff...';
-        case 'sandbox_commit': return 'Committing & pushing...';
+        case 'sandbox_prepare_commit': return 'Reviewing commit...';
         case 'sandbox_push': return 'Pushing to remote...';
         default: return 'Sandbox operation...';
       }
@@ -625,6 +627,180 @@ export function useChat(activeRepoFullName: string | null) {
     [activeChatId, conversations, isStreaming, createNewChat],
   );
 
+  // --- Card action handler (Phase 4 — commit review + CI) ---
+
+  const updateCardInMessage = useCallback(
+    (chatId: string, messageId: string, cardIndex: number, updater: (card: ChatCard) => ChatCard) => {
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        const msgs = conv.messages.map((msg) => {
+          if (msg.id !== messageId || !msg.cards) return msg;
+          const cards = msg.cards.map((card, i) => (i === cardIndex ? updater(card) : card));
+          return { ...msg, cards };
+        });
+        const updated = { ...prev, [chatId]: { ...conv, messages: msgs } };
+        saveConversations(updated);
+        return updated;
+      });
+    },
+    [],
+  );
+
+  const injectSyntheticMessage = useCallback(
+    (chatId: string, content: string) => {
+      const msg: ChatMessage = {
+        id: createId(),
+        role: 'assistant',
+        content,
+        timestamp: Date.now(),
+        status: 'done',
+      };
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
+        saveConversations(updated);
+        return updated;
+      });
+    },
+    [],
+  );
+
+  const handleCardAction = useCallback(
+    async (action: CardAction) => {
+      const chatId = activeChatId;
+      if (!chatId) return;
+
+      switch (action.type) {
+        case 'commit-approve': {
+          const sandboxId = sandboxIdRef.current;
+          if (!sandboxId) {
+            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+              if (card.type !== 'commit-review') return card;
+              return { ...card, data: { ...card.data, status: 'error', error: 'Sandbox expired. Start a new sandbox.' } as CommitReviewCardData };
+            });
+            return;
+          }
+
+          // Step 1: Mark as approved (prevents double-tap)
+          updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+            if (card.type !== 'commit-review') return card;
+            return { ...card, data: { ...card.data, status: 'approved', commitMessage: action.commitMessage } as CommitReviewCardData };
+          });
+
+          setAgentStatus({ active: true, phase: 'Committing & pushing...' });
+
+          try {
+            // Step 2: Commit in sandbox
+            const commitResult = await execInSandbox(
+              sandboxId,
+              `cd /workspace && git add -A && git commit -m "${action.commitMessage.replace(/"/g, '\\"')}"`,
+            );
+
+            if (commitResult.exitCode !== 0) {
+              updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                if (card.type !== 'commit-review') return card;
+                return { ...card, data: { ...card.data, status: 'error', error: `Commit failed: ${commitResult.stderr}` } as CommitReviewCardData };
+              });
+              return;
+            }
+
+            // Step 3: Push
+            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+              if (card.type !== 'commit-review') return card;
+              return { ...card, data: { ...card.data, status: 'pushing' } as CommitReviewCardData };
+            });
+
+            const pushResult = await execInSandbox(sandboxId, 'cd /workspace && git push origin HEAD');
+
+            if (pushResult.exitCode !== 0) {
+              updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                if (card.type !== 'commit-review') return card;
+                return { ...card, data: { ...card.data, status: 'error', error: `Push failed: ${pushResult.stderr}` } as CommitReviewCardData };
+              });
+              return;
+            }
+
+            // Step 4: Success
+            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+              if (card.type !== 'commit-review') return card;
+              return { ...card, data: { ...card.data, status: 'committed' } as CommitReviewCardData };
+            });
+
+            injectSyntheticMessage(chatId, `Committed and pushed: "${action.commitMessage}"`);
+
+            // Step 5: Auto-fetch CI after 3s delay
+            const repo = repoRef.current;
+            if (repo) {
+              setTimeout(async () => {
+                try {
+                  const ciResult = await executeToolCall(
+                    { tool: 'fetch_checks', args: { repo, ref: 'HEAD' } },
+                    repo,
+                  );
+                  if (ciResult.card) {
+                    const ciMsg: ChatMessage = {
+                      id: createId(),
+                      role: 'assistant',
+                      content: 'CI status after push:',
+                      timestamp: Date.now(),
+                      status: 'done',
+                      cards: [ciResult.card],
+                    };
+                    setConversations((prev) => {
+                      const conv = prev[chatId];
+                      if (!conv) return prev;
+                      const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, ciMsg], lastMessageAt: Date.now() } };
+                      saveConversations(updated);
+                      return updated;
+                    });
+                  }
+                } catch {
+                  // CI fetch is best-effort
+                }
+              }, 3000);
+            }
+          } finally {
+            setAgentStatus({ active: false, phase: '' });
+          }
+          break;
+        }
+
+        case 'commit-reject': {
+          updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+            if (card.type !== 'commit-review') return card;
+            return { ...card, data: { ...card.data, status: 'rejected' } as CommitReviewCardData };
+          });
+          injectSyntheticMessage(chatId, 'Commit cancelled.');
+          break;
+        }
+
+        case 'ci-refresh': {
+          const repo = repoRef.current;
+          if (!repo) return;
+
+          setAgentStatus({ active: true, phase: 'Refreshing CI status...' });
+          try {
+            const ciResult = await executeToolCall(
+              { tool: 'fetch_checks', args: { repo, ref: 'HEAD' } },
+              repo,
+            );
+            if (ciResult.card && ciResult.card.type === 'ci-status') {
+              updateCardInMessage(chatId, action.messageId, action.cardIndex, () => ciResult.card!);
+            }
+          } catch {
+            // Best-effort
+          } finally {
+            setAgentStatus({ active: false, phase: '' });
+          }
+          break;
+        }
+      }
+    },
+    [activeChatId, updateCardInMessage, injectSyntheticMessage],
+  );
+
   return {
     // Active chat
     messages,
@@ -649,5 +825,8 @@ export function useChat(activeRepoFullName: string | null) {
 
     // AGENTS.md
     setAgentsMd,
+
+    // Card actions (Phase 4)
+    handleCardAction,
   };
 }
