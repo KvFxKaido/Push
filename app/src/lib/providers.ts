@@ -25,8 +25,8 @@ export const PROVIDERS: AIProviderConfig[] = [
     envKey: 'VITE_OPENROUTER_API_KEY',
     models: [
       {
-        id: 'nvidia/nemotron-3-nano-30b-a3b:free',
-        name: 'Nemotron Nano 30B (Free)',
+        id: 'moonshotai/kimi-k2:free',
+        name: 'Kimi K2 (Free)',
         provider: 'openrouter',
         role: 'orchestrator',
         context: 131_072,

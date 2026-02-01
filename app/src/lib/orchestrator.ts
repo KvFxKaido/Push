@@ -20,7 +20,7 @@ const OLLAMA_ORCHESTRATOR_MODEL = 'kimi-k2.5:cloud';
 // ---------------------------------------------------------------------------
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_MODEL = 'nvidia/nemotron-3-nano-30b-a3b:free';
+const OPENROUTER_MODEL = 'moonshotai/kimi-k2:free';
 
 // ---------------------------------------------------------------------------
 // Shared: system prompt, demo text, message builder
