@@ -1,12 +1,11 @@
 /**
- * Cloudflare Worker — serves the Vite app + streaming proxy to Ollama Cloud + Kimi.
+ * Cloudflare Worker — serves the Vite app + streaming proxy to Kimi For Coding.
  *
  * Static assets in ./dist are served directly by the [assets] layer.
- * Only unmatched requests (like /api/chat, /api/kimi/chat) reach this Worker.
+ * Only unmatched requests (like /api/kimi/chat) reach this Worker.
  */
 
 interface Env {
-  OLLAMA_CLOUD_API_KEY: string;
   MOONSHOT_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;
@@ -33,11 +32,6 @@ const SANDBOX_ROUTES: Record<string, string> = {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-
-    // API route: streaming proxy to Ollama Cloud
-    if (url.pathname === '/api/chat' && request.method === 'POST') {
-      return handleChat(request, env);
-    }
 
     // API route: streaming proxy to Kimi For Coding (SSE)
     if (url.pathname === '/api/kimi/chat' && request.method === 'POST') {
@@ -129,56 +123,6 @@ function checkRateLimit(ip: string, now: number): { allowed: boolean; retryAfter
 
   entry.count += 1;
   return { allowed: true, retryAfter: 0 };
-}
-
-type ChatPayload = {
-  model: string;
-  messages: unknown[];
-  stream?: boolean;
-  options?: Record<string, unknown>;
-  format?: string;
-  keep_alive?: string | number;
-};
-
-function sanitizeChatPayload(input: any): { ok: true; payload: ChatPayload } | { ok: false; error: string } {
-  if (!input || typeof input !== 'object') {
-    return { ok: false, error: 'Invalid JSON body' };
-  }
-
-  const model = input.model;
-  const messages = input.messages;
-
-  if (typeof model !== 'string' || !model.trim()) {
-    return { ok: false, error: 'Missing or invalid model' };
-  }
-
-  if (!Array.isArray(messages)) {
-    return { ok: false, error: 'Missing or invalid messages array' };
-  }
-
-  if (messages.length > 100) {
-    return { ok: false, error: 'Too many messages (max 100)' };
-  }
-
-  const payload: ChatPayload = { model, messages };
-
-  if (typeof input.stream === 'boolean') {
-    payload.stream = input.stream;
-  }
-
-  if (typeof input.format === 'string') {
-    payload.format = input.format;
-  }
-
-  if (typeof input.keep_alive === 'string' || typeof input.keep_alive === 'number') {
-    payload.keep_alive = input.keep_alive;
-  }
-
-  if (input.options && typeof input.options === 'object' && !Array.isArray(input.options)) {
-    payload.options = input.options as Record<string, unknown>;
-  }
-
-  return { ok: true, payload };
 }
 
 async function readBodyText(
@@ -301,108 +245,6 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
       { error: isTimeout ? 'Sandbox request timed out' : message },
       { status: isTimeout ? 504 : 500 },
     );
-  }
-}
-
-async function handleChat(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  const apiKey = env.OLLAMA_CLOUD_API_KEY;
-  if (!apiKey) {
-    return Response.json(
-      { error: 'API key not configured. Add OLLAMA_CLOUD_API_KEY in Cloudflare settings.' },
-      { status: 500 },
-    );
-  }
-
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(bodyResult.text);
-  } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
-  }
-
-  const sanitized = sanitizeChatPayload(parsed);
-  if (!sanitized.ok) {
-    return Response.json({ error: sanitized.error }, { status: 400 });
-  }
-
-  const payload = sanitized.payload;
-  console.log(
-    `[api/chat] model=${payload.model}, messages=${payload.messages.length}, stream=${payload.stream === true}`,
-  );
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60_000);
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://ollama.com/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Diff/1.0',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    console.log(`[api/chat] Upstream responded: ${upstream.status}`);
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
-      return Response.json(
-        { error: `Ollama API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    // Streaming: pipe upstream ndjson straight through
-    if (payload.stream && upstream.body) {
-      return new Response(upstream.body, {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/x-ndjson',
-          'Cache-Control': 'no-cache',
-        },
-      });
-    }
-
-    // Non-streaming: return as-is
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'Upstream request timed out after 60 seconds' : message;
-    console.error(`[api/chat] Unhandled: ${message}`);
-    return Response.json({ error }, { status });
   }
 }
 

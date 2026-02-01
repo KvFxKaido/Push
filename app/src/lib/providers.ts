@@ -1,23 +1,6 @@
-import type { AIProviderType, AIProviderConfig, AIModel, AgentRole, PRData, AnalysisResult } from '@/types';
-import { analyzePRWithOllamaCloud } from '@/lib/ollama';
+import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/types';
 
 export const PROVIDERS: AIProviderConfig[] = [
-  {
-    type: 'ollama-cloud',
-    name: 'Ollama Cloud',
-    description: 'Role-based agent models via Ollama Cloud',
-    envKey: 'VITE_OLLAMA_CLOUD_API_KEY',
-    envUrl: 'VITE_OLLAMA_CLOUD_API_URL',
-    models: [
-      {
-        id: 'kimi-k2.5:cloud',
-        name: 'Kimi K2.5 (Orchestrator)',
-        provider: 'ollama-cloud',
-        role: 'orchestrator',
-        context: 256_000,
-      },
-    ],
-  },
   {
     type: 'moonshot',
     name: 'Kimi For Coding',
@@ -64,12 +47,4 @@ export function getModelForRole(
 ): AIModel | undefined {
   const provider = getProvider(type);
   return provider?.models.find((m) => m.role === role);
-}
-
-export async function analyzePR(
-  prData: PRData,
-  _providerType: AIProviderType,
-  modelId?: string,
-): Promise<AnalysisResult> {
-  return analyzePRWithOllamaCloud(prData, modelId || 'k2p5');
 }

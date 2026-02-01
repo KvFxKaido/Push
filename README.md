@@ -19,7 +19,7 @@ Diff is a personal chat interface backed by role-based AI agents. Select a repo,
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Ollama Cloud + OpenRouter (dual provider, runtime-switchable) |
+| AI | Kimi For Coding (Kimi K2.5 via api.kimi.com) |
 | Sandbox | Modal (serverless containers) |
 | APIs | GitHub REST API |
 | Deploy | Cloudflare Workers + Assets |
@@ -36,16 +36,15 @@ npm run dev
 Create `app/.env` for local development, or paste keys in the Settings UI at runtime:
 
 ```env
-VITE_OLLAMA_CLOUD_API_KEY=...     # Optional — or paste in Settings UI
-VITE_OPENROUTER_API_KEY=...       # Optional — or paste in Settings UI (takes priority over Ollama)
+VITE_MOONSHOT_API_KEY=...         # Optional — or paste in Settings UI (sk-kimi-...)
 VITE_GITHUB_TOKEN=...             # Optional — higher GitHub rate limits
 ```
 
-Without any AI keys the app runs in demo mode with mock repos and a welcome message.
+Without a Kimi key the app runs in demo mode with mock repos and a welcome message.
 
 ## Production
 
-Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/chat` to Ollama Cloud and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 ```bash
 cd app && npm run build
@@ -62,7 +61,7 @@ Diff/
 │   ├── app.py             # Modal Python App — sandbox web endpoints
 │   └── requirements.txt
 ├── app/
-│   ├── worker.ts          # Cloudflare Worker — Ollama proxy + sandbox proxy
+│   ├── worker.ts          # Cloudflare Worker — Kimi proxy + sandbox proxy
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, RepoSelector
@@ -92,11 +91,11 @@ Diff/
 
 Role-based agent system. Models are replaceable; roles are not.
 
-- **Orchestrator (Kimi K2 on OpenRouter / Kimi K2.5 on Ollama Cloud)** — conversational lead, tool orchestration, Coder delegation
-- **Coder (GLM 4.5 Air)** — autonomous code implementation in sandbox (OpenRouter)
-- **Auditor (DeepSeek R1T Chimera)** — pre-commit safety gate, binary verdict (OpenRouter)
+- **Orchestrator (Kimi K2.5)** — conversational lead, tool orchestration, Coder delegation
+- **Coder (Kimi K2.5)** — autonomous code implementation in sandbox
+- **Auditor (Kimi K2.5)** — pre-commit safety gate, binary verdict
 
-AI runs through two providers: OpenRouter (priority) and Ollama Cloud (fallback). Both keys are configurable at runtime via the Settings UI. Production uses Cloudflare Worker proxies for Ollama Cloud and Modal sandbox.
+AI runs through a single provider: Kimi For Coding (`api.kimi.com`). The API key is configurable at runtime via the Settings UI. Production uses the Cloudflare Worker proxy for Kimi and Modal sandbox.
 
 ## License
 

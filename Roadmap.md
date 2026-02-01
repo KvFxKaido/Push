@@ -6,11 +6,11 @@ This replaces the 3‑4 app juggle (GitHub mobile, Claude, Codex, GitSync) with 
 
 This roadmap assumes a role‑based architecture. Models are replaceable. Roles are locked.
 
-AI runs through two providers: Ollama Cloud (Orchestrator) and OpenRouter (Coder, Auditor). Both keys are configurable at runtime via the Settings UI — no restart needed. OpenRouter free‑tier models keep costs at zero during development.
+AI runs through a single provider: Kimi For Coding (`api.kimi.com`). The API key is configurable at runtime via the Settings UI — no restart needed.
 
-Orchestrator (Kimi K2.5) — Lead analyst, interprets conversation, coordinates specialists (Ollama Cloud)
-Coder (GLM 4.5 Air) — Writes, edits, and executes code in a sandbox (OpenRouter, free)
-Auditor (DeepSeek R1T Chimera) — Pre‑commit gate, risk review, binary verdict (OpenRouter, free)
+Orchestrator (Kimi K2.5) — Lead analyst, interprets conversation, coordinates specialists
+Coder (Kimi K2.5) — Writes, edits, and executes code in a sandbox
+Auditor (Kimi K2.5) — Pre‑commit gate, risk review, binary verdict
 
 The mobile experience is the primary constraint. Desktop parity is optional.
 
@@ -38,12 +38,12 @@ Design Principles (Non‑Negotiable)
 
 Agent Roles (Locked)
 
-Agents run across two providers: Ollama Cloud (Orchestrator) and OpenRouter (Coder, Auditor). Roles are locked. Models can be swapped as catalogs evolve. The user never picks a model — the Orchestrator routes to the right specialist automatically.
+All agents run on Kimi For Coding (`api.kimi.com`). Roles are locked. Models can be swapped as catalogs evolve. The user never picks a model — the Orchestrator routes to the right specialist automatically.
 
 Current Model Assignments:
-- Orchestrator → Kimi K2 (OpenRouter, free) / Kimi K2.5 (Ollama Cloud, 256K context)
-- Coder → GLM 4.5 Air (128K context, free via OpenRouter)
-- Auditor → DeepSeek R1T Chimera (128K context, free via OpenRouter)
+- Orchestrator → Kimi K2.5 (256K context, via Kimi For Coding)
+- Coder → Kimi K2.5 (256K context, via Kimi For Coding)
+- Auditor → Kimi K2.5 (256K context, via Kimi For Coding)
 
 
 ---
@@ -169,7 +169,7 @@ Goal: Replace the form‑driven home screen with a conversational interface. The
 What shipped:
 - Chat message list with auto‑scroll (ChatContainer)
 - Mobile‑optimized text input, sticky bottom, Enter to send, Shift+Enter for newlines (ChatInput)
-- Streaming responses from Ollama Cloud via Kimi K2.5, token‑by‑token display
+- Streaming responses from Kimi For Coding via Kimi K2.5, token‑by‑token display
 - Think‑token parsing: Kimi's <think> blocks rendered as collapsible "Reasoning" sections in the UI
 - Multi‑chat management: create, switch, delete conversations — all persisted in localStorage
 - Rich inline cards for structured output (PR, PR list, commit list, file, branch list)
@@ -185,7 +185,7 @@ What this replaced:
 - The "Analyze PR" button workflow — now you just ask in chat
 
 What was learned:
-- Ollama Cloud has no native function calling — prompt‑engineered tool protocol works, but the LLM occasionally emits malformed JSON. Retry logic (3 rounds max) catches most cases.
+- Kimi For Coding has no native function calling — prompt‑engineered tool protocol works, but the LLM occasionally emits malformed JSON. Retry logic (3 rounds max) catches most cases.
 - Think tokens from Kimi K2.5 are surprisingly useful for transparency — users can see the reasoning before the answer. Worth keeping visible.
 - Multi‑chat was needed earlier than expected — single‑conversation gets cluttered fast on mobile.
 
@@ -224,23 +224,23 @@ Goal: Give the Coder a real environment to write and test code before proposing 
 
 What shipped:
 - Modal Python App (`sandbox/app.py`) — 6 web endpoints: create, exec_command, read_file, write_file, get_diff, cleanup
-- Cloudflare Worker proxy — 6 `/api/sandbox/*` routes forwarding to Modal (same auth-isolation pattern as Ollama proxy)
+- Cloudflare Worker proxy — 6 `/api/sandbox/*` routes forwarding to Modal (same auth-isolation pattern as Kimi proxy)
 - Frontend sandbox client (`sandbox-client.ts`) — typed HTTP wrappers around `fetch()`
 - Sandbox tools in the tool protocol — `sandbox_exec`, `sandbox_read_file`, `sandbox_write_file`, `sandbox_diff`, `sandbox_commit`
 - Unified tool dispatch (`tool-dispatch.ts`) — single detection/execution pipeline for GitHub, Sandbox, and delegation tools
 - `useSandbox` hook — session lifecycle (idle → creating → ready → error), container cleanup on unmount
 - Sandbox toggle button in the chat header — start/stop sandbox per session
 - 3 new inline card components: SandboxCard (terminal output), DiffPreviewCard (unified diff with +/- coloring), AuditVerdictCard (SAFE/UNSAFE with risk items)
-- Coder agent dispatch (`coder-agent.ts`) — GLM 4.5 Air runs autonomously (up to 5 rounds) with its own sandbox tool loop
+- Coder agent dispatch (`coder-agent.ts`) — Kimi K2.5 runs autonomously (up to 5 rounds) with its own sandbox tool loop
 - `delegate_coder` tool — Orchestrator delegates coding tasks to Coder via JSON block
-- Auditor gate (`auditor-agent.ts`) — DeepSeek R1T Chimera reviews diffs, returns structured SAFE/UNSAFE verdict
+- Auditor gate (`auditor-agent.ts`) — Kimi K2.5 reviews diffs, returns structured SAFE/UNSAFE verdict
 - Fail-safe design — Auditor defaults to UNSAFE on invalid JSON, network errors, or missing model
 - `sandbox_commit` tool — gets diff → runs Auditor → blocks on UNSAFE → commits on SAFE
 
 What was learned:
-- Modal's JS SDK requires gRPC (incompatible with Cloudflare Workers) — the solution is Python web endpoints exposed as plain HTTPS, proxied by the Worker. Same pattern as Ollama, just a different upstream.
+- Modal's JS SDK requires gRPC (incompatible with Cloudflare Workers) — the solution is Python web endpoints exposed as plain HTTPS, proxied by the Worker. Same pattern as the Kimi proxy, just a different upstream.
 - Unified tool dispatch was essential — having separate detection in useChat for GitHub vs. sandbox tools would have been fragile. A single `detectAnyToolCall()` pipeline keeps the chat hook clean.
-- The Coder needs its own system prompt and tool loop, not just the Orchestrator's. `streamOpenRouterChat` was refactored to accept `modelOverride` and `systemPromptOverride` to support this.
+- The Coder needs its own system prompt and tool loop, not just the Orchestrator's. `streamMoonshotChat` was refactored to accept `modelOverride` and `systemPromptOverride` to support this.
 - Fail-safe Auditor is the right default. A false positive (blocking a safe commit) is annoying but recoverable. A false negative (allowing a dangerous commit) is not.
 
 
@@ -301,7 +301,7 @@ Constraints:
 
 Explicitly Skipped (Without Guilt)
 
-- Per‑token billing or metering UI (Ollama Cloud subscription + OpenRouter free tier covers it)
+- Per‑token billing or metering UI (Kimi For Coding subscription covers it)
 - Full IDE replacement (this is a conversational agent, not VS Code mobile)
 - Multi‑agent debate loops (agents have roles, not opinions)
 - Continuous background monitoring (explicit user‑initiated actions only)

@@ -15,11 +15,6 @@ export default defineConfig({
   server: {
     allowedHosts: ['.trycloudflare.com'],
     proxy: {
-      '/ollama': {
-        target: 'https://ollama.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/ollama/, ''),
-      },
       '/kimi': {
         target: 'https://api.kimi.com',
         changeOrigin: true,

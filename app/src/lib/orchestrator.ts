@@ -2,28 +2,16 @@ import type { ChatMessage } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
 import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { getMoonshotKey } from '@/hooks/useMoonshotKey';
-import { getOllamaKey } from '@/hooks/useOllamaKey';
 
 // ---------------------------------------------------------------------------
-// Ollama Cloud config
-// ---------------------------------------------------------------------------
-
-// Dev: Vite proxy avoids CORS. Prod: Vercel Edge function at /api/chat holds the key.
-const OLLAMA_CLOUD_API_URL =
-  import.meta.env.VITE_OLLAMA_CLOUD_API_URL ||
-  (import.meta.env.DEV ? '/ollama/api/chat' : '/api/chat');
-
-const OLLAMA_ORCHESTRATOR_MODEL = 'kimi-k2.5:cloud';
-
-// ---------------------------------------------------------------------------
-// Moonshot / Kimi For Coding config
+// Kimi For Coding config
 // ---------------------------------------------------------------------------
 
 // Dev: Vite proxy avoids CORS. Prod: Cloudflare Worker proxy at /api/kimi/chat.
-const MOONSHOT_API_URL = import.meta.env.DEV
+const KIMI_API_URL = import.meta.env.DEV
   ? '/kimi/coding/v1/chat/completions'
   : '/api/kimi/chat';
-const MOONSHOT_MODEL = 'k2p5';
+const KIMI_MODEL = 'k2p5';
 
 // ---------------------------------------------------------------------------
 // Shared: system prompt, demo text, message builder
@@ -152,108 +140,7 @@ function createThinkTokenParser(
 }
 
 // ---------------------------------------------------------------------------
-// Ollama Cloud streaming (ndjson)
-// ---------------------------------------------------------------------------
-
-async function streamOllamaChat(
-  messages: ChatMessage[],
-  onToken: (token: string) => void,
-  onDone: () => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
-  hasSandbox?: boolean,
-): Promise<void> {
-  try {
-    console.log(`[Diff] POST ${OLLAMA_CLOUD_API_URL} (model: ${OLLAMA_ORCHESTRATOR_MODEL})`);
-
-    const ollamaKey = getOllamaKey();
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    if (ollamaKey) {
-      headers['Authorization'] = `Bearer ${ollamaKey}`;
-    }
-
-    const response = await fetch(OLLAMA_CLOUD_API_URL, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: OLLAMA_ORCHESTRATOR_MODEL,
-        messages: toLLMMessages(messages, workspaceContext, hasSandbox),
-        stream: true,
-      }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      let detail = '';
-      try {
-        const parsed = JSON.parse(body);
-        detail = parsed.error || body.slice(0, 200);
-      } catch {
-        detail = body ? body.slice(0, 200) : 'empty body';
-      }
-      console.error(`[Diff] API error: ${response.status} from ${OLLAMA_CLOUD_API_URL}`, detail);
-      throw new Error(`API ${response.status} (${OLLAMA_CLOUD_API_URL}): ${detail}`);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('No response body');
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-    const parser = createThinkTokenParser(onToken, onThinkingToken);
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-
-        try {
-          const parsed = JSON.parse(trimmed);
-          const token = parsed.message?.content;
-          if (parsed.done) {
-            parser.flush();
-            onDone();
-            return;
-          }
-          if (!token) continue;
-          parser.push(token);
-        } catch {
-          // Skip malformed lines
-        }
-      }
-    }
-
-    parser.flush();
-    onDone();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[Diff] Chat error:`, msg);
-    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-      onError(new Error(
-        `Cannot reach ${OLLAMA_CLOUD_API_URL} — network error. Are you on the right URL?`
-      ));
-    } else {
-      onError(err instanceof Error ? err : new Error(msg));
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Moonshot streaming (SSE — OpenAI-compatible)
+// Kimi For Coding streaming (SSE — OpenAI-compatible)
 // ---------------------------------------------------------------------------
 
 export async function streamMoonshotChat(
@@ -273,12 +160,12 @@ export async function streamMoonshotChat(
     return;
   }
 
-  const model = modelOverride || MOONSHOT_MODEL;
+  const model = modelOverride || KIMI_MODEL;
 
   try {
-    console.log(`[Diff] POST ${MOONSHOT_API_URL} (model: ${model})`);
+    console.log(`[Diff] POST ${KIMI_API_URL} (model: ${model})`);
 
-    const response = await fetch(MOONSHOT_API_URL, {
+    const response = await fetch(KIMI_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -397,8 +284,8 @@ export async function streamChat(
   workspaceContext?: string,
   hasSandbox?: boolean,
 ): Promise<void> {
-  // Check all keys at runtime (not module load) so Settings changes take effect immediately
-  if (import.meta.env.DEV && !getOllamaKey() && !getMoonshotKey()) {
+  // Demo mode: no API key in dev → show welcome message
+  if (import.meta.env.DEV && !getMoonshotKey()) {
     const words = DEMO_WELCOME.split(' ');
     for (let i = 0; i < words.length; i++) {
       await new Promise((r) => setTimeout(r, 12));
@@ -408,9 +295,5 @@ export async function streamChat(
     return;
   }
 
-  if (getMoonshotKey()) {
-    return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox);
-  }
-
-  return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox);
+  return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox);
 }

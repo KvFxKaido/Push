@@ -1,26 +1,22 @@
 # Security Audit Report
 
 Date: February 1, 2026
-Scope: `app/worker.ts`, `app/src/hooks/useGitHubAuth.ts`, `app/src/hooks/useChat.ts`, `app/src/lib/orchestrator.ts`, `app/src/lib/github-tools.ts`, `app/src/lib/ollama.ts`, `app/src/components/chat/MessageBubble.tsx`, `app/src/sections/OnboardingScreen.tsx`, `app/src/App.tsx`, `app/src/hooks/useRepos.ts`, `app/src/hooks/useActiveRepo.ts`, `.env` (not present), `.gitignore`.
+Scope: `app/worker.ts`, `app/src/hooks/useGitHubAuth.ts`, `app/src/hooks/useChat.ts`, `app/src/lib/orchestrator.ts`, `app/src/lib/github-tools.ts`, `app/src/components/chat/MessageBubble.tsx`, `app/src/sections/OnboardingScreen.tsx`, `app/src/App.tsx`, `app/src/hooks/useRepos.ts`, `app/src/hooks/useActiveRepo.ts`, `.env` (not present), `.gitignore`.
 
 ## Findings
 
-### 1) Unauthenticated Ollama proxy enables open, unmetered use
-- Severity: HIGH
-- File and line: `app/worker.ts:17`, `app/worker.ts:28`, `app/worker.ts:46`
-- Description: The Cloudflare Worker accepts any POST to `/api/chat` and forwards the request body directly to `https://ollama.com/api/chat` with the server-side API key. There is no authentication, origin check, or user identity verification. Any client (including non-browser clients) can use this endpoint to consume your Ollama Cloud quota using your key.
-- Recommendation: Require authentication (e.g., signed session/JWT), restrict allowed origins, and enforce per-user rate limits/quotas at the Worker. Consider a strict allowlist of models and request fields.
+### 1) ~~Unauthenticated Ollama proxy enables open, unmetered use~~ RESOLVED
+- Severity: ~~HIGH~~ RESOLVED
+- Description: The old `/api/chat` endpoint has been removed. The current `/api/kimi/chat` endpoint includes origin validation, per-IP rate limiting (30 req/min), request body size limits (512KB), and upstream timeouts (120s). The Ollama proxy no longer exists.
 
-### 2) No request-size/shape limits on `/api/chat`
-- Severity: MEDIUM
-- File and line: `app/worker.ts:37`, `app/worker.ts:54`
-- Description: The Worker parses and forwards the entire JSON body with no size limit, schema validation, or timeout. This allows large payloads or abusive parameters to increase costs or trigger resource exhaustion.
-- Recommendation: Enforce a maximum request size, validate the request schema, and set upstream timeouts. Reject unknown fields and overly long message arrays.
+### 2) ~~No request-size/shape limits on `/api/chat`~~ RESOLVED
+- Severity: ~~MEDIUM~~ RESOLVED
+- Description: The current worker enforces a 512KB body size limit, validates origin/referer headers, applies rate limiting, and sets upstream timeouts. The old unprotected `/api/chat` endpoint has been removed.
 
 ### 3) Client-side secret exposure via `VITE_*` env variables
 - Severity: MEDIUM
-- File and line: `app/src/lib/orchestrator.ts:4`, `app/src/lib/orchestrator.ts:100`, `app/src/lib/ollama.ts:4`, `app/src/lib/ollama.ts:29`, `app/src/hooks/useGitHubAuth.ts:9`, `app/src/hooks/useRepos.ts:4`, `app/src/lib/github-tools.ts:10`
-- Description: The code reads `VITE_OLLAMA_CLOUD_API_KEY` and `VITE_GITHUB_TOKEN` directly in client bundles. Any `VITE_*` variable is embedded into the built JavaScript and is visible to end users. If these are set in production, the secrets are exposed.
+- File and line: `app/src/hooks/useMoonshotKey.ts:16`, `app/src/hooks/useGitHubAuth.ts:9`, `app/src/hooks/useRepos.ts:4`, `app/src/lib/github-tools.ts:10`
+- Description: The code reads `VITE_MOONSHOT_API_KEY` and `VITE_GITHUB_TOKEN` directly in client bundles. Any `VITE_*` variable is embedded into the built JavaScript and is visible to end users. If these are set in production, the secrets are exposed. In production, the Kimi key is stored server-side as `MOONSHOT_API_KEY` on the Cloudflare Worker.
 - Recommendation: Remove secret usage from client code. Store secrets only server-side (Worker) and proxy requests; if needed for dev, use non-`VITE_` vars and inject only in local dev tooling, never in production builds.
 
 ### 4) Tool calls execute without user confirmation or repo scoping
