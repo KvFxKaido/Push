@@ -209,10 +209,19 @@ function App() {
       </header>
 
       {/* Chat */}
-      <ChatContainer messages={messages} agentStatus={agentStatus} />
+      <ChatContainer
+        messages={messages}
+        agentStatus={agentStatus}
+        activeRepo={activeRepo}
+        onSuggestion={sendMessage}
+      />
 
       {/* Input */}
-      <ChatInput onSend={sendMessage} disabled={isStreaming} />
+      <ChatInput
+        onSend={sendMessage}
+        disabled={isStreaming}
+        repoName={activeRepo?.name}
+      />
 
       {/* Settings Sheet */}
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>

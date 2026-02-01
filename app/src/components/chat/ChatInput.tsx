@@ -4,9 +4,10 @@ import { ArrowUp } from 'lucide-react';
 interface ChatInputProps {
   onSend: (message: string) => void;
   disabled?: boolean;
+  repoName?: string;
 }
 
-export function ChatInput({ onSend, disabled }: ChatInputProps) {
+export function ChatInput({ onSend, disabled, repoName }: ChatInputProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -58,7 +59,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
               value={value}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Message Diff..."
+              placeholder={repoName ? `Message about ${repoName}...` : 'Message Diff...'}
               disabled={disabled}
               rows={1}
               className="w-full resize-none bg-transparent px-4 py-2.5 text-[15px] text-[#fafafa] placeholder:text-[#52525b] outline-none disabled:opacity-40 leading-[22px]"

@@ -1,14 +1,37 @@
-import { useRef, useEffect } from 'react';
-import type { ChatMessage, AgentStatus } from '@/types';
+import { useRef, useEffect, useMemo } from 'react';
+import type { ChatMessage, AgentStatus, ActiveRepo } from '@/types';
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
 
 interface ChatContainerProps {
   messages: ChatMessage[];
   agentStatus: AgentStatus;
+  activeRepo?: ActiveRepo | null;
+  onSuggestion?: (text: string) => void;
 }
 
-function EmptyState() {
+function EmptyState({
+  activeRepo,
+  onSuggestion,
+}: {
+  activeRepo?: ActiveRepo | null;
+  onSuggestion?: (text: string) => void;
+}) {
+  const suggestions = useMemo(() => {
+    if (activeRepo) {
+      return [
+        `Show open PRs on ${activeRepo.name}`,
+        `What changed recently in ${activeRepo.name}?`,
+        `Summarize the ${activeRepo.name} codebase`,
+      ];
+    }
+    return [
+      'Review my latest PR',
+      'What changed in main today?',
+      'Show my open pull requests',
+    ];
+  }, [activeRepo]);
+
   return (
     <div className="flex flex-1 items-center justify-center px-8">
       <div className="text-center max-w-sm">
@@ -28,23 +51,23 @@ function EmptyState() {
             />
           </svg>
         </div>
-        <h2 className="text-lg font-semibold text-[#fafafa] mb-2">Diff</h2>
+        <h2 className="text-lg font-semibold text-[#fafafa] mb-2">
+          {activeRepo ? activeRepo.name : 'Diff'}
+        </h2>
         <p className="text-sm text-[#a1a1aa] leading-relaxed">
-          AI coding agent with direct repo access. Review PRs, explore codebases,
-          and ship changes — all from here.
+          {activeRepo
+            ? `Focused on ${activeRepo.full_name}. Ask about PRs, recent changes, or the codebase.`
+            : 'AI coding agent with direct repo access. Review PRs, explore codebases, and ship changes — all from here.'}
         </p>
         <div className="mt-6 flex flex-col gap-2">
-          {[
-            'Review my latest PR',
-            'What changed in main today?',
-            'Show my open pull requests',
-          ].map((suggestion) => (
-            <div
+          {suggestions.map((suggestion) => (
+            <button
               key={suggestion}
-              className="rounded-xl border border-[#1a1a1e] bg-[#111113] px-4 py-2.5 text-left text-sm text-[#a1a1aa] transition-colors duration-200 hover:border-[#27272a] hover:text-[#d4d4d8] cursor-default"
+              onClick={() => onSuggestion?.(suggestion)}
+              className="rounded-xl border border-[#1a1a1e] bg-[#111113] px-4 py-2.5 text-left text-sm text-[#a1a1aa] transition-colors duration-200 hover:border-[#27272a] hover:text-[#d4d4d8] cursor-pointer active:scale-[0.99]"
             >
               {suggestion}
-            </div>
+            </button>
           ))}
         </div>
       </div>
@@ -52,7 +75,7 @@ function EmptyState() {
   );
 }
 
-export function ChatContainer({ messages, agentStatus }: ChatContainerProps) {
+export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -73,7 +96,7 @@ export function ChatContainer({ messages, agentStatus }: ChatContainerProps) {
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
-        <EmptyState />
+        <EmptyState activeRepo={activeRepo} onSuggestion={onSuggestion} />
       </div>
     );
   }
