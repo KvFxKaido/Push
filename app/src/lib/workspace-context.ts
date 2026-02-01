@@ -64,22 +64,16 @@ export function buildWorkspaceContext(
 
   const sections: string[] = [];
 
-  // When an active repo is set, give it focused detail
+  // When an active repo is set, ONLY include that repo — no others
   if (activeRepo) {
     const focused = repos.find((r) => r.id === activeRepo.id);
-    const others = repos.filter((r) => r.id !== activeRepo.id).slice(0, 10);
 
-    sections.push(`ACTIVE REPO — ${activeRepo.full_name} (default for all tool calls):\n`);
+    sections.push(`REPO — ${activeRepo.full_name}:\n`);
 
     if (focused) {
       sections.push(formatRepoFull(focused));
     } else {
       sections.push(`• ${activeRepo.full_name} (${activeRepo.default_branch})`);
-    }
-
-    if (others.length > 0) {
-      sections.push('\nOTHER REPOS:');
-      sections.push(others.map(formatRepoCompact).join('\n'));
     }
   } else {
     // No active repo — list all with full detail for active ones
