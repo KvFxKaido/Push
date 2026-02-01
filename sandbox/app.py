@@ -1,11 +1,11 @@
 """
 Modal Python App — Sandbox CRUD for Diff.
 
-Exposes 6 web endpoints as plain HTTPS POST routes.
+Exposes 9 web endpoints as plain HTTPS POST routes.
 Each endpoint receives JSON and returns JSON.
 Browser never talks to this directly — Cloudflare Worker proxies all calls.
 
-Deploy: cd sandbox && modal deploy app.py
+Deploy: cd sandbox && python -m modal deploy app.py
 """
 
 import modal
@@ -13,7 +13,8 @@ import base64
 
 app = modal.App("diff-sandbox")
 
-image = (
+# Image for sandbox containers (cloned repos run here)
+sandbox_image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git", "curl")
     .pip_install("ruff", "pytest")
@@ -23,16 +24,19 @@ image = (
     )
 )
 
+# Image for the web endpoint functions themselves (needs FastAPI)
+endpoint_image = modal.Image.debian_slim(python_version="3.12").pip_install("fastapi[standard]")
 
-@app.function()
-@modal.web_endpoint(method="POST")
+
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
 def create(data: dict):
     """Clone repo into a new sandbox, return sandbox_id."""
     sb = modal.Sandbox.create(
         "sleep",
         "infinity",
         app=app,
-        image=image,
+        image=sandbox_image,
         timeout=1800,
     )
 
@@ -60,8 +64,8 @@ def create(data: dict):
     return {"sandbox_id": sb.object_id, "status": "ready"}
 
 
-@app.function()
-@modal.web_endpoint(method="POST")
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
 def exec_command(data: dict):
     """Run a command in an existing sandbox."""
     sandbox_id = data.get("sandbox_id")
@@ -86,8 +90,8 @@ def exec_command(data: dict):
     }
 
 
-@app.function()
-@modal.web_endpoint(method="POST")
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
 def read_file(data: dict):
     """Read a file from the sandbox."""
     sandbox_id = data.get("sandbox_id")
@@ -108,8 +112,8 @@ def read_file(data: dict):
     return {"content": content[:50_000], "truncated": len(content) > 50_000}
 
 
-@app.function()
-@modal.web_endpoint(method="POST")
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
 def write_file(data: dict):
     """Write a file in the sandbox."""
     sandbox_id = data.get("sandbox_id")
@@ -133,8 +137,8 @@ def write_file(data: dict):
     return {"ok": p.returncode == 0}
 
 
-@app.function()
-@modal.web_endpoint(method="POST")
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
 def get_diff(data: dict):
     """Get git diff of all changes."""
     sandbox_id = data.get("sandbox_id")
@@ -150,8 +154,8 @@ def get_diff(data: dict):
     return {"diff": diff[:20_000], "truncated": len(diff) > 20_000}
 
 
-@app.function()
-@modal.web_endpoint(method="POST")
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
 def list_dir(data: dict):
     """List directory contents with metadata."""
     sandbox_id = data.get("sandbox_id")
@@ -162,18 +166,7 @@ def list_dir(data: dict):
 
     sb = modal.Sandbox.from_id(sandbox_id)
 
-    # Use a single command to get structured output: name, type, size
     # Output format per line: TYPE\tSIZE\tNAME (d=dir, f=file)
-    cmd = (
-        f"cd '{path}' 2>/dev/null && "
-        "for f in * .*; do "
-        "  [ \"$f\" = '.' ] || [ \"$f\" = '..' ] || [ \"$f\" = '*' ] && continue; "
-        "  if [ -d \"$f\" ]; then echo \"d\\t0\\t$f\"; "
-        "  elif [ -f \"$f\" ]; then stat -c 'd\\t%s\\t%n' \"$f\" 2>/dev/null || echo \"f\\t0\\t$f\"; "
-        "  fi; "
-        "done"
-    )
-    # Fix: stat format for files should use 'f' not 'd'
     cmd = (
         f"cd '{path}' 2>/dev/null && "
         "for f in * .*; do "
@@ -213,8 +206,8 @@ def list_dir(data: dict):
     return {"entries": entries}
 
 
-@app.function()
-@modal.web_endpoint(method="POST")
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
 def delete_file(data: dict):
     """Delete a file or directory from the sandbox."""
     sandbox_id = data.get("sandbox_id")
@@ -234,32 +227,8 @@ def delete_file(data: dict):
     return {"ok": p.returncode == 0}
 
 
-@app.function()
-@modal.web_endpoint(method="POST")
-def rename_file(data: dict):
-    """Rename or move a file/directory in the sandbox."""
-    sandbox_id = data.get("sandbox_id")
-    old_path = data.get("old_path", "")
-    new_path = data.get("new_path", "")
-
-    if not sandbox_id or not old_path or not new_path:
-        return {"ok": False, "error": "Missing sandbox_id, old_path, or new_path"}
-
-    sb = modal.Sandbox.from_id(sandbox_id)
-
-    # Ensure parent directory of new_path exists
-    p = sb.exec("bash", "-c", f"mkdir -p \"$(dirname '{new_path}')\" && mv '{old_path}' '{new_path}'")
-    p.wait()
-
-    if p.returncode != 0:
-        stderr = p.stderr.read()
-        return {"ok": False, "error": f"Rename failed: {stderr}"}
-
-    return {"ok": True}
-
-
-@app.function()
-@modal.web_endpoint(method="POST")
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
 def cleanup(data: dict):
     """Terminate a sandbox."""
     sandbox_id = data.get("sandbox_id")

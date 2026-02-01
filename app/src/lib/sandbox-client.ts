@@ -151,14 +151,11 @@ export async function deleteFromSandbox(
 }
 
 export async function renameInSandbox(
-  sandboxId: string,
-  oldPath: string,
-  newPath: string,
+  _sandboxId: string,
+  _oldPath: string,
+  _newPath: string,
 ): Promise<void> {
-  const data = await sandboxFetch<{ ok: boolean; error?: string }>('rename', {
-    sandbox_id: sandboxId,
-    old_path: oldPath,
-    new_path: newPath,
-  });
-  if (!data.ok) throw new Error(data.error || 'Rename failed');
+  // Rename endpoint removed to fit Modal free tier (8 endpoint limit).
+  // Re-add when plan is upgraded. The UI hides the rename action.
+  throw new Error('Rename is not available on the current plan.');
 }

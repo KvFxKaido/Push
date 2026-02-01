@@ -49,7 +49,6 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
     navigateUp,
     uploadFiles,
     deleteItem,
-    renameItem,
   } = useFileBrowser(sandboxId);
 
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
@@ -91,10 +90,6 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
   const handleDelete = useCallback((path: string) => {
     deleteItem(path);
   }, [deleteItem]);
-
-  const handleRename = useCallback((oldPath: string, newName: string) => {
-    renameItem(oldPath, newName);
-  }, [renameItem]);
 
   const handleUpload = useCallback((fileList: FileList) => {
     uploadFiles(fileList);
@@ -223,7 +218,6 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         onDelete={handleDelete}
-        onRename={handleRename}
       />
     </div>
   );

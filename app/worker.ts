@@ -27,7 +27,6 @@ const SANDBOX_ROUTES: Record<string, string> = {
   cleanup: 'cleanup',
   list: 'list-dir',
   delete: 'delete-file',
-  rename: 'rename-file',
 };
 
 export default {
