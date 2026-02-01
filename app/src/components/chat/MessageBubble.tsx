@@ -1,7 +1,8 @@
 import { memo, useMemo, useState } from 'react';
-import { ChevronRight, GitPullRequest, GitBranch } from 'lucide-react';
+import { ChevronRight, GitPullRequest, GitBranch, GitCommit, FileCode } from 'lucide-react';
 import type { ChatMessage } from '@/types';
 import { detectToolCall } from '@/lib/github-tools';
+import { CardRenderer } from '@/components/cards/CardRenderer';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -156,12 +157,29 @@ function ToolCallStatus({ content }: { content: string }) {
   const toolCall = detectToolCall(content);
   if (!toolCall) return null;
 
-  const Icon = toolCall.tool === 'fetch_pr' ? GitPullRequest : GitBranch;
+  let Icon = GitBranch;
   let label = '';
-  if (toolCall.tool === 'fetch_pr') {
-    label = `Fetching PR #${toolCall.args.pr} from ${toolCall.args.repo}`;
-  } else if (toolCall.tool === 'list_prs') {
-    label = `Listing ${toolCall.args.state || 'open'} PRs on ${toolCall.args.repo}`;
+  switch (toolCall.tool) {
+    case 'fetch_pr':
+      Icon = GitPullRequest;
+      label = `Fetching PR #${toolCall.args.pr} from ${toolCall.args.repo}`;
+      break;
+    case 'list_prs':
+      Icon = GitPullRequest;
+      label = `Listing ${toolCall.args.state || 'open'} PRs on ${toolCall.args.repo}`;
+      break;
+    case 'list_commits':
+      Icon = GitCommit;
+      label = `Fetching recent commits on ${toolCall.args.repo}`;
+      break;
+    case 'read_file':
+      Icon = FileCode;
+      label = `Reading ${toolCall.args.path} from ${toolCall.args.repo}`;
+      break;
+    case 'list_branches':
+      Icon = GitBranch;
+      label = `Listing branches on ${toolCall.args.repo}`;
+      break;
   }
 
   return (
@@ -245,6 +263,13 @@ export const MessageBubble = memo(function MessageBubble({
             <span className="inline-block w-[6px] h-[16px] bg-[#0070f3] ml-0.5 align-text-bottom animate-blink" />
           )}
         </div>
+        {message.cards && message.cards.length > 0 && (
+          <div className="mt-1">
+            {message.cards.map((card, i) => (
+              <CardRenderer key={i} card={card} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

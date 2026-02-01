@@ -114,9 +114,58 @@ export interface ChatMessage {
   isToolResult?: boolean;  // Synthetic user message carrying tool data
 }
 
-export interface ChatCard {
-  type: 'repo' | 'pr' | 'analysis' | 'pipeline' | 'demo' | 'error';
-  data: any;
+// Discriminated union for rich inline cards
+export type ChatCard =
+  | { type: 'pr'; data: PRCardData }
+  | { type: 'pr-list'; data: PRListCardData }
+  | { type: 'commit-list'; data: CommitListCardData }
+  | { type: 'file'; data: FileCardData }
+  | { type: 'branch-list'; data: BranchListCardData };
+
+// Tool execution returns text for the LLM + optional structured card for UI
+export interface ToolExecutionResult {
+  text: string;
+  card?: ChatCard;
+}
+
+export interface PRCardData {
+  number: number;
+  title: string;
+  author: string;
+  state: 'open' | 'closed' | 'merged';
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  branch: string;
+  baseBranch: string;
+  createdAt: string;
+  description?: string;
+  files?: { filename: string; status: string; additions: number; deletions: number }[];
+}
+
+export interface PRListCardData {
+  repo: string;
+  state: string;
+  prs: { number: number; title: string; author: string; additions?: number; deletions?: number; createdAt: string }[];
+}
+
+export interface CommitListCardData {
+  repo: string;
+  commits: { sha: string; message: string; author: string; date: string }[];
+}
+
+export interface FileCardData {
+  repo: string;
+  path: string;
+  content: string;
+  language: string;
+  truncated: boolean;
+}
+
+export interface BranchListCardData {
+  repo: string;
+  defaultBranch: string;
+  branches: { name: string; isDefault: boolean; isProtected: boolean }[];
 }
 
 export interface AgentStatus {
