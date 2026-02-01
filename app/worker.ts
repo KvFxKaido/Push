@@ -1,24 +1,42 @@
 /**
- * Cloudflare Pages Function — streaming proxy to Ollama Cloud.
- * Deployed at /api/chat, keeps the API key server-side.
+ * Cloudflare Worker — serves the Vite app + streaming proxy to Ollama Cloud.
+ *
+ * Static assets in ./dist are served directly by the [assets] layer.
+ * Only unmatched requests (like /api/chat) reach this Worker.
  */
 
 interface Env {
   OLLAMA_CLOUD_API_KEY: string;
+  ASSETS: Fetcher;
 }
 
-export const onRequestPost: PagesFunction<Env> = async (context) => {
-  const apiKey = context.env.OLLAMA_CLOUD_API_KEY;
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    // API route: streaming proxy to Ollama Cloud
+    if (url.pathname === '/api/chat' && request.method === 'POST') {
+      return handleChat(request, env);
+    }
+
+    // SPA fallback: serve index.html for non-file paths
+    // (actual static files like .js/.css are already served by the [assets] layer)
+    return env.ASSETS.fetch(new Request(new URL('/index.html', request.url)));
+  },
+};
+
+async function handleChat(request: Request, env: Env): Promise<Response> {
+  const apiKey = env.OLLAMA_CLOUD_API_KEY;
   if (!apiKey) {
     return Response.json(
-      { error: 'API key not configured. Add OLLAMA_CLOUD_API_KEY in Cloudflare Pages settings.' },
+      { error: 'API key not configured. Add OLLAMA_CLOUD_API_KEY in Cloudflare settings.' },
       { status: 500 },
     );
   }
 
   let parsed: any;
   try {
-    parsed = await context.request.json();
+    parsed = await request.json();
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -47,7 +65,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       );
     }
 
-    // Streaming: pipe the upstream ndjson body straight through
+    // Streaming: pipe upstream ndjson straight through
     if (parsed.stream && upstream.body) {
       return new Response(upstream.body, {
         status: 200,
@@ -59,11 +77,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     // Non-streaming: return as-is
-    const data = await upstream.json();
+    const data: unknown = await upstream.json();
     return Response.json(data);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[api/chat] Unhandled: ${message}`);
     return Response.json({ error: message }, { status: 500 });
   }
-};
+}
