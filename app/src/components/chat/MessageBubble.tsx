@@ -1,5 +1,7 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
+import { ChevronRight, GitPullRequest, GitBranch } from 'lucide-react';
 import type { ChatMessage } from '@/types';
+import { detectToolCall } from '@/lib/github-tools';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -102,16 +104,99 @@ function formatInline(text: string): React.ReactNode[] {
   return result;
 }
 
+function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreaming: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Truncate preview to ~80 chars from the end of thinking
+  const preview = thinking.length > 80 ? '…' + thinking.slice(-80).trim() : thinking.trim();
+
+  return (
+    <div className="mb-2">
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="flex items-center gap-1 text-[11px] text-[#52525b] hover:text-[#888] transition-colors duration-150 group"
+      >
+        <ChevronRight
+          className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+        />
+        <span className="font-medium">
+          {isStreaming ? 'Reasoning' : 'Thought process'}
+        </span>
+        {isStreaming && (
+          <span className="inline-block w-1 h-1 rounded-full bg-[#52525b] animate-pulse ml-0.5" />
+        )}
+      </button>
+
+      {!expanded && !isStreaming && (
+        <p className="text-[12px] text-[#3a3a3e] leading-relaxed mt-1 ml-4 line-clamp-2 italic">
+          {preview}
+        </p>
+      )}
+
+      {expanded && (
+        <div className="mt-1.5 ml-4 pl-3 border-l border-[#1a1a1e] max-h-[300px] overflow-y-auto">
+          <p className="text-[12px] text-[#52525b] leading-relaxed whitespace-pre-wrap break-words">
+            {thinking}
+          </p>
+        </div>
+      )}
+
+      {isStreaming && !expanded && thinking && (
+        <div className="mt-1.5 ml-4 pl-3 border-l border-[#1a1a1e]">
+          <p className="text-[12px] text-[#3a3a3e] leading-relaxed whitespace-pre-wrap break-words line-clamp-3">
+            {thinking.slice(-200)}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolCallStatus({ content }: { content: string }) {
+  const toolCall = detectToolCall(content);
+  if (!toolCall) return null;
+
+  const Icon = toolCall.tool === 'fetch_pr' ? GitPullRequest : GitBranch;
+  let label = '';
+  if (toolCall.tool === 'fetch_pr') {
+    label = `Fetching PR #${toolCall.args.pr} from ${toolCall.args.repo}`;
+  } else if (toolCall.tool === 'list_prs') {
+    label = `Listing ${toolCall.args.state || 'open'} PRs on ${toolCall.args.repo}`;
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-1.5">
+      <div className="flex items-center gap-1.5 rounded-full bg-[#111113] border border-[#1a1a1e] px-3 py-1">
+        <Icon className="h-3 w-3 text-[#0070f3]" />
+        <span className="text-[12px] text-[#52525b] font-medium">{label}</span>
+      </div>
+    </div>
+  );
+}
+
 export const MessageBubble = memo(function MessageBubble({
   message,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isError = message.status === 'error';
+  const isStreaming = message.status === 'streaming';
+  const hasThinking = Boolean(message.thinking);
+  const hasContent = Boolean(message.content);
 
   const content = useMemo(
     () => formatContent(message.content),
     [message.content],
   );
+
+  // Hide tool result messages entirely (synthetic data injected for the API)
+  if (message.isToolResult) {
+    return null;
+  }
+
+  // Tool call messages: show a compact status line instead of raw JSON
+  if (message.isToolCall) {
+    return <ToolCallStatus content={message.content} />;
+  }
 
   if (isUser) {
     return (
@@ -144,13 +229,19 @@ export const MessageBubble = memo(function MessageBubble({
         </svg>
       </div>
       <div className="min-w-0 max-w-[85%]">
+        {hasThinking && (
+          <ThinkingBlock
+            thinking={message.thinking!}
+            isStreaming={isStreaming && !hasContent}
+          />
+        )}
         <div
           className={`text-[15px] leading-relaxed break-words ${
             isError ? 'text-red-400' : 'text-[#d4d4d8]'
           }`}
         >
           {content}
-          {message.status === 'streaming' && (
+          {isStreaming && (
             <span className="inline-block w-[6px] h-[16px] bg-[#0070f3] ml-0.5 align-text-bottom animate-blink" />
           )}
         </div>

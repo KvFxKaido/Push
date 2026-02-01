@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' };
+
 export async function POST(request: Request) {
   try {
     const apiKey = process.env.OLLAMA_CLOUD_API_KEY;
@@ -20,10 +22,6 @@ export async function POST(request: Request) {
 
     console.log(`[api/chat] model=${parsed.model}, messages=${parsed.messages?.length}, stream=${parsed.stream}`);
 
-    // First try: request non-streaming to avoid potential streaming blocks
-    // We'll stream to the client ourselves by converting the full response
-    const upstreamBody = { ...parsed, stream: false };
-
     const upstream = await fetch('https://ollama.com/api/chat', {
       method: 'POST',
       headers: {
@@ -31,7 +29,7 @@ export async function POST(request: Request) {
         'User-Agent': 'Diff/1.0',
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(upstreamBody),
+      body: JSON.stringify(parsed),
     });
 
     console.log(`[api/chat] Upstream responded: ${upstream.status}`);
@@ -45,46 +43,20 @@ export async function POST(request: Request) {
       );
     }
 
-    const data = await upstream.json();
-
-    if (parsed.stream) {
-      // Client expects ndjson streaming — simulate it from the full response
-      const content = data.message?.content || '';
-      const encoder = new TextEncoder();
-
-      const stream = new ReadableStream({
-        start(controller) {
-          // Send the content as a single chunk in Ollama ndjson format
-          const chunk = JSON.stringify({
-            model: data.model,
-            created_at: data.created_at,
-            message: { role: 'assistant', content },
-            done: false,
-          });
-          controller.enqueue(encoder.encode(chunk + '\n'));
-
-          // Send the done signal
-          const doneChunk = JSON.stringify({
-            model: data.model,
-            created_at: data.created_at,
-            message: { role: 'assistant', content: '' },
-            done: true,
-          });
-          controller.enqueue(encoder.encode(doneChunk + '\n'));
-          controller.close();
-        },
-      });
-
-      return new Response(stream, {
+    // Streaming: pipe the upstream ndjson body straight through
+    if (parsed.stream && upstream.body) {
+      return new Response(upstream.body, {
         status: 200,
         headers: {
           'Content-Type': 'application/x-ndjson',
           'Cache-Control': 'no-cache',
+          'Transfer-Encoding': 'chunked',
         },
       });
     }
 
     // Non-streaming: return as-is
+    const data = await upstream.json();
     return Response.json(data);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

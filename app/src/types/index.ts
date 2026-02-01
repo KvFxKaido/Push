@@ -108,7 +108,10 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   status?: 'sending' | 'streaming' | 'done' | 'error';
+  thinking?: string;
   cards?: ChatCard[];
+  isToolCall?: boolean;    // Assistant message that requested a tool
+  isToolResult?: boolean;  // Synthetic user message carrying tool data
 }
 
 export interface ChatCard {
@@ -120,4 +123,12 @@ export interface AgentStatus {
   active: boolean;
   phase: string;
   detail?: string;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  lastMessageAt: number;
 }

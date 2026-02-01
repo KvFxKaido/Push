@@ -1,4 +1,5 @@
 import type { ChatMessage } from '@/types';
+import { TOOL_PROTOCOL } from './github-tools';
 
 const OLLAMA_CLOUD_API_KEY = import.meta.env.VITE_OLLAMA_CLOUD_API_KEY || '';
 
@@ -47,9 +48,15 @@ interface OllamaMessage {
   content: string;
 }
 
-function toOllamaMessages(messages: ChatMessage[]): OllamaMessage[] {
+function toOllamaMessages(messages: ChatMessage[], workspaceContext?: string): OllamaMessage[] {
+  // Build system prompt: base + workspace context + tool protocol
+  let systemContent = ORCHESTRATOR_SYSTEM_PROMPT;
+  if (workspaceContext) {
+    systemContent += '\n\n' + workspaceContext + '\n' + TOOL_PROTOCOL;
+  }
+
   const ollamaMessages: OllamaMessage[] = [
-    { role: 'system', content: ORCHESTRATOR_SYSTEM_PROMPT },
+    { role: 'system', content: systemContent },
   ];
 
   for (const msg of messages) {
@@ -67,6 +74,8 @@ export async function streamChat(
   onToken: (token: string) => void,
   onDone: () => void,
   onError: (error: Error) => void,
+  onThinkingToken?: (token: string | null) => void,
+  workspaceContext?: string,
 ): Promise<void> {
   if (isDemoMode) {
     const words = DEMO_WELCOME.split(' ');
@@ -96,25 +105,23 @@ export async function streamChat(
       headers,
       body: JSON.stringify({
         model: ORCHESTRATOR_MODEL,
-        messages: toOllamaMessages(messages),
+        messages: toOllamaMessages(messages, workspaceContext),
         stream: true,
-        options: {
-          temperature: 0.4,
-        },
       }),
     });
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       // Try to extract a meaningful error from JSON response
-      let errorMsg = `API ${response.status}`;
+      let detail = '';
       try {
         const parsed = JSON.parse(body);
-        errorMsg = parsed.error || errorMsg;
+        detail = parsed.error || body.slice(0, 200);
       } catch {
-        if (body) errorMsg += `: ${body.slice(0, 200)}`;
+        detail = body ? body.slice(0, 200) : 'empty body';
       }
-      throw new Error(errorMsg);
+      console.error(`[Diff] API error: ${response.status} from ${OLLAMA_CLOUD_API_URL}`, detail);
+      throw new Error(`API ${response.status} (${OLLAMA_CLOUD_API_URL}): ${detail}`);
     }
 
     const reader = response.body?.getReader();
@@ -124,8 +131,12 @@ export async function streamChat(
 
     // Ollama native streaming: newline-delimited JSON (ndjson)
     // Each line: { message: { content: "..." }, done: bool }
+    // Kimi K2.5 emits <think>...</think> reasoning before the answer.
+    // We separate thinking tokens from response tokens via callbacks.
     const decoder = new TextDecoder();
     let buffer = '';
+    let insideThink = false;
+    let tagBuffer = '';
 
     while (true) {
       const { done, value } = await reader.read();
@@ -142,17 +153,60 @@ export async function streamChat(
         try {
           const parsed = JSON.parse(trimmed);
           const token = parsed.message?.content;
-          if (token) {
-            onToken(token);
-          }
           if (parsed.done) {
             onDone();
             return;
+          }
+          if (!token) continue;
+
+          tagBuffer += token;
+
+          // Detect <think> opening
+          if (!insideThink && tagBuffer.includes('<think>')) {
+            const before = tagBuffer.split('<think>')[0];
+            if (before) onToken(before);
+            insideThink = true;
+            tagBuffer = '';
+            continue;
+          }
+
+          // Inside thinking — emit thinking tokens, watch for </think>
+          if (insideThink) {
+            if (tagBuffer.includes('</think>')) {
+              // Emit the last chunk of thinking (before </think>)
+              const thinkContent = tagBuffer.split('</think>')[0];
+              if (thinkContent) onThinkingToken?.(thinkContent);
+              // Signal thinking is done
+              onThinkingToken?.(null);
+
+              const after = tagBuffer.split('</think>').slice(1).join('</think>');
+              insideThink = false;
+              tagBuffer = '';
+              const cleaned = after.replace(/^\s+/, '');
+              if (cleaned) onToken(cleaned);
+            } else {
+              // Emit thinking tokens as they arrive, keep tail for tag detection
+              const safe = tagBuffer.slice(0, -10);
+              if (safe) onThinkingToken?.(safe);
+              tagBuffer = tagBuffer.slice(-10);
+            }
+            continue;
+          }
+
+          // Normal content — emit when we're sure there's no partial <think
+          if (tagBuffer.length > 50 || !tagBuffer.includes('<')) {
+            onToken(tagBuffer);
+            tagBuffer = '';
           }
         } catch {
           // Skip malformed lines
         }
       }
+    }
+
+    // Flush remaining
+    if (tagBuffer && !insideThink) {
+      onToken(tagBuffer);
     }
 
     onDone();
@@ -161,7 +215,7 @@ export async function streamChat(
     console.error(`[Diff] Chat error:`, msg);
     if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
       onError(new Error(
-        `Cannot reach the AI service. Check your connection and try again.`
+        `Cannot reach ${OLLAMA_CLOUD_API_URL} — network error. Are you on the right URL?`
       ));
     } else {
       onError(err instanceof Error ? err : new Error(msg));

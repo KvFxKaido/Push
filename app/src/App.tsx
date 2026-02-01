@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Settings, Trash2 } from 'lucide-react';
 import { useChat } from '@/hooks/useChat';
 import { useGitHubAuth } from '@/hooks/useGitHubAuth';
+import { useRepos } from '@/hooks/useRepos';
+import { buildWorkspaceContext } from '@/lib/workspace-context';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
+import { ChatSwitcher } from '@/components/chat/ChatSwitcher';
 import {
   Sheet,
   SheetContent,
@@ -16,8 +19,22 @@ import { Input } from '@/components/ui/input';
 import './App.css';
 
 function App() {
-  const { messages, sendMessage, clearHistory, agentStatus, isStreaming } = useChat();
+  const {
+    messages,
+    sendMessage,
+    agentStatus,
+    isStreaming,
+    conversations,
+    activeChatId,
+    sortedChatIds,
+    switchChat,
+    createNewChat,
+    deleteChat,
+    deleteAllChats,
+    setWorkspaceContext,
+  } = useChat();
   const { token, setTokenManually, logout, configured } = useGitHubAuth();
+  const { repos, sync: syncRepos } = useRepos();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [patInput, setPatInput] = useState('');
 
@@ -28,15 +45,58 @@ function App() {
     }
   };
 
+  // Sync repos on mount
+  useEffect(() => {
+    syncRepos();
+  }, [syncRepos]);
+
+  // Build workspace context when repos change
+  useEffect(() => {
+    if (repos.length > 0) {
+      setWorkspaceContext(buildWorkspaceContext(repos));
+    } else {
+      setWorkspaceContext(null);
+    }
+  }, [repos, setWorkspaceContext]);
+
+  // Wrap createNewChat to also re-sync repos
+  const handleCreateNewChat = useCallback(() => {
+    createNewChat();
+    syncRepos();
+  }, [createNewChat, syncRepos]);
+
   const isConnected = Boolean(token);
+  const hasChats = sortedChatIds.length > 0;
+
+  // Unregister service workers on tunnel domains to prevent stale caching
+  useEffect(() => {
+    if (window.location.hostname.includes('trycloudflare.com')) {
+      navigator.serviceWorker?.getRegistrations().then((regs) =>
+        regs.forEach((r) => r.unregister())
+      );
+    }
+  }, []);
 
   return (
     <div className="flex h-dvh flex-col bg-[#09090b] safe-area-top">
       {/* Top bar */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1e]">
-        <h1 className="text-base font-semibold text-[#fafafa] tracking-tight">
-          Diff
-        </h1>
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {hasChats ? (
+            <ChatSwitcher
+              conversations={conversations}
+              sortedChatIds={sortedChatIds}
+              activeChatId={activeChatId}
+              onSwitch={switchChat}
+              onNew={handleCreateNewChat}
+              onDelete={deleteChat}
+            />
+          ) : (
+            <h1 className="text-base font-semibold text-[#fafafa] tracking-tight">
+              Diff
+            </h1>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <div
@@ -146,13 +206,13 @@ function App() {
                   variant="ghost"
                   size="sm"
                   onClick={() => {
-                    clearHistory();
+                    deleteAllChats();
                     setSettingsOpen(false);
                   }}
                   className="text-[#a1a1aa] hover:text-red-400 w-full justify-start gap-2"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  Clear chat history
+                  Delete all chats
                 </Button>
               </div>
             )}

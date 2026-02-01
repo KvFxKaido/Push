@@ -47,9 +47,6 @@ export async function analyzePRWithOllamaCloud(
         },
       ],
       stream: false,
-      options: {
-        temperature: 0.1,
-      },
     }),
   });
 

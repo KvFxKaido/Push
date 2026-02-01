@@ -13,6 +13,7 @@ export default defineConfig({
     },
   },
   server: {
+    allowedHosts: ['.trycloudflare.com'],
     proxy: {
       '/ollama': {
         target: 'https://ollama.com',
