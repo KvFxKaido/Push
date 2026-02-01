@@ -20,30 +20,30 @@ export const PROVIDERS: AIProviderConfig[] = [
   },
   {
     type: 'moonshot',
-    name: 'Moonshot',
-    description: 'Kimi models via Moonshot AI (OpenAI-compatible)',
+    name: 'Kimi For Coding',
+    description: 'Kimi K2.5 via Kimi For Coding API (OpenAI-compatible)',
     envKey: 'VITE_MOONSHOT_API_KEY',
     models: [
       {
-        id: 'kimi-k2-0905-preview',
-        name: 'Kimi K2 (Orchestrator)',
+        id: 'k2p5',
+        name: 'Kimi K2.5 (Orchestrator)',
         provider: 'moonshot',
         role: 'orchestrator',
-        context: 256_000,
+        context: 262_144,
       },
       {
-        id: 'kimi-k2-0905-preview',
-        name: 'Kimi K2 (Coder)',
+        id: 'k2p5',
+        name: 'Kimi K2.5 (Coder)',
         provider: 'moonshot',
         role: 'coder',
-        context: 256_000,
+        context: 262_144,
       },
       {
-        id: 'kimi-k2-thinking',
-        name: 'Kimi K2 Thinking (Auditor)',
+        id: 'k2p5',
+        name: 'Kimi K2.5 (Auditor)',
         provider: 'moonshot',
         role: 'auditor',
-        context: 256_000,
+        context: 262_144,
       },
     ],
   },
@@ -71,5 +71,5 @@ export async function analyzePR(
   _providerType: AIProviderType,
   modelId?: string,
 ): Promise<AnalysisResult> {
-  return analyzePRWithOllamaCloud(prData, modelId || 'kimi-k2-thinking');
+  return analyzePRWithOllamaCloud(prData, modelId || 'k2p5');
 }

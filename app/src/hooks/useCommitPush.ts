@@ -107,12 +107,12 @@ export function useCommitPush(sandboxId: string) {
       return;
     }
 
-    // Check Moonshot key for Auditor
+    // Check Kimi key for Auditor
     if (!getMoonshotKey()) {
       setState((s) => ({
         ...s,
         phase: 'error',
-        error: 'Auditor requires a Moonshot API key. Add one in Settings.',
+        error: 'Auditor requires a Kimi API key. Add one in Settings.',
       }));
       return;
     }

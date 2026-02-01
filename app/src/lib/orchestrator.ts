@@ -16,11 +16,11 @@ const OLLAMA_CLOUD_API_URL =
 const OLLAMA_ORCHESTRATOR_MODEL = 'kimi-k2.5:cloud';
 
 // ---------------------------------------------------------------------------
-// Moonshot config
+// Moonshot / Kimi For Coding config
 // ---------------------------------------------------------------------------
 
-const MOONSHOT_API_URL = 'https://api.moonshot.ai/v1/chat/completions';
-const MOONSHOT_MODEL = 'kimi-k2-0905-preview';
+const MOONSHOT_API_URL = 'https://api.kimi.com/coding/v1/chat/completions';
+const MOONSHOT_MODEL = 'k2p5';
 
 // ---------------------------------------------------------------------------
 // Shared: system prompt, demo text, message builder

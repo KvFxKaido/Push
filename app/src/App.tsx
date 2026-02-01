@@ -261,7 +261,7 @@ function App() {
               }`}
             />
             <span className="text-xs text-[#52525b]">
-              {isDemo ? 'Demo' : hasOrKey ? 'Moonshot' : hasOllamaKey ? 'Ollama Cloud' : isConnected ? 'GitHub' : 'Offline'}
+              {isDemo ? 'Demo' : hasOrKey ? 'Kimi' : hasOllamaKey ? 'Ollama Cloud' : isConnected ? 'GitHub' : 'Offline'}
             </span>
           </div>
           <button
@@ -365,19 +365,19 @@ function App() {
                     }`}
                   />
                   <span className="text-xs text-[#a1a1aa]">
-                    {hasOrKey ? 'Moonshot' : hasOllamaKey ? 'Ollama Cloud' : isDemo ? 'Demo' : 'Offline'}
+                    {hasOrKey ? 'Kimi' : hasOllamaKey ? 'Ollama Cloud' : isDemo ? 'Demo' : 'Offline'}
                   </span>
                 </div>
               </div>
 
-              {/* Moonshot */}
+              {/* Kimi */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-[#a1a1aa]">Moonshot</label>
+                <label className="text-xs font-medium text-[#a1a1aa]">Kimi</label>
                 {hasOrKey ? (
                   <div className="space-y-2">
                     <div className="rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2">
                       <p className="text-sm text-[#a1a1aa] font-mono">
-                        {orKey?.startsWith('sk-') ? `${orKey.slice(0, 6)}••••••••` : 'Key saved'}
+                        {orKey?.startsWith('sk-kimi-') ? 'sk-kimi-••••••••' : 'Key saved'}
                       </p>
                     </div>
                     <Button
@@ -395,7 +395,7 @@ function App() {
                       type="password"
                       value={orKeyInput}
                       onChange={(e) => setOrKeyInput(e.target.value)}
-                      placeholder="sk-..."
+                      placeholder="sk-kimi-..."
                       className="w-full rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && orKeyInput.trim()) {
@@ -416,7 +416,7 @@ function App() {
                       disabled={!orKeyInput.trim()}
                       className="text-[#a1a1aa] hover:text-[#fafafa] w-full justify-start"
                     >
-                      Save Moonshot key
+                      Save Kimi key
                     </Button>
                     <p className="text-xs text-[#52525b]">
                       Optional. Takes priority over Ollama Cloud when set.
