@@ -141,76 +141,76 @@ Phase 0 — Foundation (Done)
 
 Goal: Working mobile web app with basic GitHub integration and demo mode.
 
-What exists:
-- Mobile‑first PWA with dark theme, installable to home screen
-- GitHub OAuth + PAT authentication
-- Repo dashboard with activity indicators and sync
-- PR analysis flow (form → loading → results) with Ollama Cloud
-- Demo mode with mock data when API keys are missing
-- Role‑based model config (Orchestrator, Coder, Auditor)
+What shipped:
+- Mobile‑first PWA with dark theme, installable to home screen (manifest + icons, SW defined but not registered)
+- GitHub PAT authentication with validation (OAuth env vars exist but no OAuth flow)
+- Onboarding gate: PAT entry screen → repo picker → chat (state machine in App.tsx)
+- Repo picker with search, activity indicators, language tags, and sync
+- Demo mode with mock repos when no PAT is set
+- Role‑based model config in providers.ts (Orchestrator, Coder, Auditor defined — only Orchestrator wired up)
+- Cloudflare Worker streaming proxy (app/worker.ts) with rate limiting, origin validation, and API key isolation
 
 What was learned:
-- The form‑driven UI feels mechanical, not conversational
-- Silent error fallbacks hide real problems — errors must surface
+- The original form‑driven PR analysis UI felt mechanical, not conversational — replaced entirely in Phase 1
+- Silent error fallbacks hide real problems — errors must surface in the UI
 - Model selection should be automatic, not user‑facing
+- Coder and Auditor roles should stay defined but dormant until their phases arrive
 
 
 ---
 
-Phase 1 — Chat Interface
+Phase 1 — Chat Interface (Done)
 
 Goal: Replace the form‑driven home screen with a conversational interface. The chat becomes the primary way to interact with the app.
 
-Features:
-- Chat message list (user messages + agent responses)
-- Text input with send button (mobile‑optimized, sticky bottom)
-- Streaming responses from Ollama Cloud (token‑by‑token display)
-- Orchestrator handles all incoming messages
-- Conversation persisted in localStorage
-- Rich inline cards for structured output (not plain text for everything)
-- Typing indicators and real‑time agent status
+What shipped:
+- Chat message list with auto‑scroll (ChatContainer)
+- Mobile‑optimized text input, sticky bottom, Enter to send, Shift+Enter for newlines (ChatInput)
+- Streaming responses from Ollama Cloud via Kimi K2.5, token‑by‑token display
+- Think‑token parsing: Kimi's <think> blocks rendered as collapsible "Reasoning" sections in the UI
+- Multi‑chat management: create, switch, delete conversations — all persisted in localStorage
+- Rich inline cards for structured output (PR, PR list, commit list, file, branch list)
+- Real‑time agent status bar ("Thinking…", "Responding…", "Fetching from GitHub…")
+- Tool execution loop: detect JSON tool blocks in LLM response → execute → inject result → re‑call (up to 3 rounds)
+- Tool result injection protection: results wrapped in [TOOL_RESULT] markers to prevent prompt injection
+- Markdown‑lite formatting in messages: bold, inline code, fenced code blocks
+- Empty state with contextual suggestions based on active repo
+- Demo welcome message with simulated streaming when no API key is set
 
-What this replaces:
-- The PR analysis form (you say "analyze PR #42 on diff" instead of filling fields)
-- The "Analyze PR" button workflow
+What this replaced:
+- The form‑driven PR analysis flow (form → loading → results) — fully removed
+- The "Analyze PR" button workflow — now you just ask in chat
 
-What stays:
-- Repo dashboard (accessible from chat or as a standalone view)
-- Results display (rendered as a card in the chat, not a separate screen)
-- GitHub auth (still needed, surfaced as a chat prompt if missing)
-
-Agent Use:
-- Orchestrator interprets all user messages
-- Orchestrator renders structured cards for repos, PRs, analysis results
-
-Exit Criteria:
-- You can type a natural language request and get a useful response
-- The app feels like a conversation, not a control panel
-- PR analysis works through chat as well as the old form did
+What was learned:
+- Ollama Cloud has no native function calling — prompt‑engineered tool protocol works, but the LLM occasionally emits malformed JSON. Retry logic (3 rounds max) catches most cases.
+- Think tokens from Kimi K2.5 are surprisingly useful for transparency — users can see the reasoning before the answer. Worth keeping visible.
+- Multi‑chat was needed earlier than expected — single‑conversation gets cluttered fast on mobile.
 
 
 ---
 
-Phase 2 — Repo Awareness via Chat
+Phase 2 — Repo Awareness via Chat (Done)
 
 Goal: Full GitHub repo context available through conversation. Ask anything about your repos and get structured answers.
 
-Features:
-- "What changed since yesterday?" → commit summary card
-- "Show my open PRs" → PR list card with status badges
-- "What's the status of PR #42?" → detailed PR card
-- "Show me config.ts" → file viewer card inline in chat
-- Branch awareness (default branch, recent branches)
-- Cross‑repo context (switch between repos mid‑conversation)
+What shipped:
+- 5 GitHub tools via prompt‑engineered JSON protocol (no native function calling):
+  - fetch_pr — full PR details with diff, files, status → PRCard
+  - list_prs — paginated PR list with filters → PRListCard
+  - list_commits — recent commits with SHA, message, author → CommitListCard
+  - read_file — file contents with language detection + directory listing → FileCard
+  - list_branches — branches with default/protected markers → BranchListCard
+- Workspace context injection: system prompt includes active repo details (language, PR count, commit activity, push time)
+- Repo hard‑lock: Orchestrator's context only contains the selected repo. Other repos are stripped entirely. Tools enforce access control via normalized repo matching.
+- Repo‑scoped conversations: each chat is stamped with repoFullName. Switching repos filters to that repo's chats. Migration stamps existing unscoped chats on first load.
+- Combined repo + chat selector dropdown (RepoAndChatSelector): trigger shows "repo / chat ▾", repo clicks stay open to re‑filter, chat clicks close.
+- Scoped "delete all chats" — only wipes chats for the active repo, preserves other repos' history.
+- Auto‑create: switching to a repo with no chats automatically creates a new one.
 
-Agent Use:
-- Orchestrator queries GitHub API based on conversational intent
-- Orchestrator formats results as inline cards
-
-Exit Criteria:
-- You stop opening GitHub mobile for status checks
-- You stop opening GitSync for repo monitoring
-- Repo context feels native to the conversation
+What was learned:
+- "Cross‑repo context (switch mid‑conversation)" from the original plan was the wrong model. Repo‑scoped conversations (separate chat histories per repo) turned out to be more natural — you don't want Kimi confused about which repo you're asking about.
+- The tool protocol works well for read‑only GitHub queries but will need rethinking for write operations (Phase 4). JSON block detection is fragile when the LLM decides to explain the JSON before emitting it.
+- Workspace context injection (~1‑2KB) is cheap enough to include on every request. The repo hard‑lock keeps Kimi focused and prevents hallucinated cross‑repo references.
 
 
 ---

@@ -2,7 +2,7 @@ export type AppState = 'home' | 'running' | 'results' | 'repos';
 
 export type AgentRole = 'orchestrator' | 'coder' | 'auditor';
 
-export type AIProviderType = 'ollama-cloud';
+export type AIProviderType = 'ollama-cloud' | 'openrouter';
 
 export interface AIModel {
   id: string;
@@ -180,6 +180,7 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: number;
   lastMessageAt: number;
+  repoFullName?: string;  // "owner/repo". Undefined = unscoped (legacy/demo).
 }
 
 // Onboarding + Active Repo types

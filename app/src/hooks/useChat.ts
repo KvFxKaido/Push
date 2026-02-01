@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult } from '@/types';
 import { streamChat } from '@/lib/orchestrator';
 import { detectToolCall, executeToolCall } from '@/lib/github-tools';
@@ -33,10 +33,41 @@ function saveActiveChatId(id: string) {
   localStorage.setItem(ACTIVE_CHAT_KEY, id);
 }
 
+function getActiveRepoFullName(): string | null {
+  try {
+    const stored = localStorage.getItem(ACTIVE_REPO_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored);
+    if (parsed && typeof parsed.full_name === 'string' && parsed.full_name.trim()) {
+      return parsed.full_name;
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return null;
+}
+
 function loadConversations(): Record<string, Conversation> {
   try {
     const stored = localStorage.getItem(CONVERSATIONS_KEY);
-    if (stored) return JSON.parse(stored);
+    if (stored) {
+      const convs: Record<string, Conversation> = JSON.parse(stored);
+
+      // Migration: stamp unscoped conversations with the current active repo
+      const repoFullName = getActiveRepoFullName();
+      if (repoFullName) {
+        let migrated = false;
+        for (const id of Object.keys(convs)) {
+          if (!convs[id].repoFullName) {
+            convs[id] = { ...convs[id], repoFullName };
+            migrated = true;
+          }
+        }
+        if (migrated) saveConversations(convs);
+      }
+
+      return convs;
+    }
   } catch {
     // Ignore parse errors
   }
@@ -48,6 +79,7 @@ function loadConversations(): Record<string, Conversation> {
       const oldMessages: ChatMessage[] = JSON.parse(oldHistory);
       if (oldMessages.length > 0) {
         const id = createId();
+        const repoFullName = getActiveRepoFullName();
         const migrated: Record<string, Conversation> = {
           [id]: {
             id,
@@ -55,6 +87,7 @@ function loadConversations(): Record<string, Conversation> {
             messages: oldMessages,
             createdAt: oldMessages[0]?.timestamp || Date.now(),
             lastMessageAt: oldMessages[oldMessages.length - 1]?.timestamp || Date.now(),
+            repoFullName: repoFullName || undefined,
           },
         };
         saveConversations(migrated);
@@ -79,38 +112,65 @@ function loadActiveChatId(conversations: Record<string, Conversation>): string {
   return ids.sort((a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt)[0];
 }
 
-function getActiveRepoFullName(): string | null {
-  try {
-    const stored = localStorage.getItem(ACTIVE_REPO_KEY);
-    if (!stored) return null;
-    const parsed = JSON.parse(stored);
-    if (parsed && typeof parsed.full_name === 'string' && parsed.full_name.trim()) {
-      return parsed.full_name;
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return null;
-}
-
-export function useChat() {
+export function useChat(activeRepoFullName: string | null) {
   const [conversations, setConversations] = useState<Record<string, Conversation>>(loadConversations);
   const [activeChatId, setActiveChatId] = useState<string>(() => loadActiveChatId(conversations));
   const [isStreaming, setIsStreaming] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
   const abortRef = useRef(false);
   const workspaceContextRef = useRef<string | null>(null);
+  const autoCreateRef = useRef(false); // Guard against creation loops
+
+  // Keep activeRepoFullName in a ref so callbacks always see the latest value
+  const repoRef = useRef(activeRepoFullName);
+  repoRef.current = activeRepoFullName;
 
   // Derived state
   const messages = conversations[activeChatId]?.messages || [];
 
-  const sortedChatIds = useMemo(
-    () =>
-      Object.keys(conversations).sort(
-        (a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt,
-      ),
-    [conversations],
-  );
+  // Filter sortedChatIds by active repo
+  const sortedChatIds = useMemo(() => {
+    return Object.keys(conversations)
+      .filter((id) => {
+        const conv = conversations[id];
+        if (!activeRepoFullName) return !conv.repoFullName; // demo mode
+        return conv.repoFullName === activeRepoFullName;
+      })
+      .sort((a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt);
+  }, [conversations, activeRepoFullName]);
+
+  // --- Auto-switch effect ---
+  // When activeChatId is not in the filtered sortedChatIds, switch to the most
+  // recent chat for this repo. If none exist, auto-create one.
+  useEffect(() => {
+    if (sortedChatIds.length === 0 && activeRepoFullName) {
+      // No chats for this repo — auto-create (guarded to prevent loops)
+      if (!autoCreateRef.current) {
+        autoCreateRef.current = true;
+        const id = createId();
+        const newConv: Conversation = {
+          id,
+          title: 'New Chat',
+          messages: [],
+          createdAt: Date.now(),
+          lastMessageAt: Date.now(),
+          repoFullName: activeRepoFullName,
+        };
+        setConversations((prev) => {
+          const updated = { ...prev, [id]: newConv };
+          saveConversations(updated);
+          return updated;
+        });
+        setActiveChatId(id);
+        saveActiveChatId(id);
+        // Reset guard after a tick
+        setTimeout(() => { autoCreateRef.current = false; }, 0);
+      }
+    } else if (sortedChatIds.length > 0 && !sortedChatIds.includes(activeChatId)) {
+      setActiveChatId(sortedChatIds[0]);
+      saveActiveChatId(sortedChatIds[0]);
+    }
+  }, [sortedChatIds, activeChatId, activeRepoFullName]);
 
   // --- Workspace context (set from App.tsx, read during sendMessage) ---
 
@@ -128,6 +188,7 @@ export function useChat() {
       messages: [],
       createdAt: Date.now(),
       lastMessageAt: Date.now(),
+      repoFullName: repoRef.current || undefined,
     };
     setConversations((prev) => {
       const updated = { ...prev, [id]: newConv };
@@ -160,15 +221,20 @@ export function useChat() {
         const updated = { ...prev };
         delete updated[id];
 
-        // If deleting active chat, switch to most recent remaining
+        // If deleting active chat, switch to most recent remaining **for this repo**
         if (id === activeChatId) {
-          const remaining = Object.values(updated);
+          const currentRepo = repoRef.current;
+          const remaining = Object.values(updated).filter((c) => {
+            if (!currentRepo) return !c.repoFullName;
+            return c.repoFullName === currentRepo;
+          });
+
           if (remaining.length > 0) {
             const mostRecent = remaining.sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0];
             setActiveChatId(mostRecent.id);
             saveActiveChatId(mostRecent.id);
           } else {
-            // Create a new empty chat
+            // Create a new empty chat for this repo
             const newId = createId();
             updated[newId] = {
               id: newId,
@@ -176,6 +242,7 @@ export function useChat() {
               messages: [],
               createdAt: Date.now(),
               lastMessageAt: Date.now(),
+              repoFullName: currentRepo || undefined,
             };
             setActiveChatId(newId);
             saveActiveChatId(newId);
@@ -189,21 +256,37 @@ export function useChat() {
     [activeChatId],
   );
 
+  // Scoped: only deletes chats for activeRepoFullName, preserves other repos
   const deleteAllChats = useCallback(() => {
-    const id = createId();
-    const fresh: Record<string, Conversation> = {
-      [id]: {
+    const currentRepo = repoRef.current;
+    setConversations((prev) => {
+      // Keep conversations that belong to other repos
+      const kept: Record<string, Conversation> = {};
+      for (const [cid, conv] of Object.entries(prev)) {
+        const belongsToCurrentRepo = currentRepo
+          ? conv.repoFullName === currentRepo
+          : !conv.repoFullName;
+        if (!belongsToCurrentRepo) {
+          kept[cid] = conv;
+        }
+      }
+
+      // Create a fresh chat for the current repo
+      const id = createId();
+      kept[id] = {
         id,
         title: 'New Chat',
         messages: [],
         createdAt: Date.now(),
         lastMessageAt: Date.now(),
-      },
-    };
-    setConversations(fresh);
-    setActiveChatId(id);
-    saveConversations(fresh);
-    saveActiveChatId(id);
+        repoFullName: currentRepo || undefined,
+      };
+
+      setActiveChatId(id);
+      saveActiveChatId(id);
+      saveConversations(kept);
+      return kept;
+    });
   }, []);
 
   // --- Send message with tool execution loop ---
@@ -408,9 +491,9 @@ export function useChat() {
 
           // Execute tool
           setAgentStatus({ active: true, phase: 'Fetching from GitHub...' });
-          const activeRepoFullName = getActiveRepoFullName();
-          const toolExecResult: ToolExecutionResult = activeRepoFullName
-            ? await executeToolCall(toolCall, activeRepoFullName)
+          const toolRepoFullName = repoRef.current;
+          const toolExecResult: ToolExecutionResult = toolRepoFullName
+            ? await executeToolCall(toolCall, toolRepoFullName)
             : { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
 
           if (abortRef.current) break;

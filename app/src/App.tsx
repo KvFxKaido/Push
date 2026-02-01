@@ -4,11 +4,11 @@ import { useChat } from '@/hooks/useChat';
 import { useGitHubAuth } from '@/hooks/useGitHubAuth';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
+import { useOpenRouterKey } from '@/hooks/useOpenRouterKey';
 import { buildWorkspaceContext } from '@/lib/workspace-context';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
-import { ChatSwitcher } from '@/components/chat/ChatSwitcher';
-import { RepoSelector } from '@/components/chat/RepoSelector';
+import { RepoAndChatSelector } from '@/components/chat/RepoAndChatSelector';
 import { OnboardingScreen } from '@/sections/OnboardingScreen';
 import { RepoPicker } from '@/sections/RepoPicker';
 import type { AppScreen, RepoWithActivity } from '@/types';
@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import './App.css';
 
 function App() {
+  const { activeRepo, setActiveRepo, clearActiveRepo } = useActiveRepo();
   const {
     messages,
     sendMessage,
@@ -36,7 +37,7 @@ function App() {
     deleteChat,
     deleteAllChats,
     setWorkspaceContext,
-  } = useChat();
+  } = useChat(activeRepo?.full_name ?? null);
   const {
     token,
     setTokenManually,
@@ -46,9 +47,10 @@ function App() {
     validatedUser,
   } = useGitHubAuth();
   const { repos, loading: reposLoading, sync: syncRepos } = useRepos();
-  const { activeRepo, setActiveRepo, clearActiveRepo } = useActiveRepo();
+  const { key: orKey, setKey: setOrKey, clearKey: clearOrKey, hasKey: hasOrKey } = useOpenRouterKey();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
+  const [orKeyInput, setOrKeyInput] = useState('');
 
   // Screen state machine
   const screen: AppScreen = useMemo(() => {
@@ -155,38 +157,23 @@ function App() {
   // ----- Chat screen -----
 
   const isConnected = Boolean(token) || isDemo;
-  const hasChats = sortedChatIds.length > 0;
 
   return (
     <div className="flex h-dvh flex-col bg-[#09090b] safe-area-top">
       {/* Top bar */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1e]">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          {hasChats ? (
-            <ChatSwitcher
-              conversations={conversations}
-              sortedChatIds={sortedChatIds}
-              activeChatId={activeChatId}
-              onSwitch={switchChat}
-              onNew={handleCreateNewChat}
-              onDelete={deleteChat}
-            />
-          ) : (
-            <h1 className="text-base font-semibold text-[#fafafa] tracking-tight">
-              Diff
-            </h1>
-          )}
-
-          {activeRepo && (
-            <>
-              <span className="text-[#27272a]">/</span>
-              <RepoSelector
-                repos={repos}
-                activeRepo={activeRepo}
-                onSelect={handleSelectRepo}
-              />
-            </>
-          )}
+          <RepoAndChatSelector
+            repos={repos}
+            activeRepo={activeRepo}
+            onSelectRepo={handleSelectRepo}
+            conversations={conversations}
+            sortedChatIds={sortedChatIds}
+            activeChatId={activeChatId}
+            onSwitchChat={switchChat}
+            onNewChat={handleCreateNewChat}
+            onDeleteChat={deleteChat}
+          />
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
@@ -196,7 +183,7 @@ function App() {
               }`}
             />
             <span className="text-xs text-[#52525b]">
-              {isDemo ? 'Demo' : isConnected ? 'GitHub' : 'Offline'}
+              {isDemo ? 'Demo' : hasOrKey ? 'OpenRouter' : isConnected ? 'GitHub' : 'Offline'}
             </span>
           </div>
           <button
@@ -284,6 +271,76 @@ function App() {
               )}
             </div>
 
+            {/* AI Provider */}
+            <div className="space-y-3 pt-2 border-t border-[#1a1a1e]">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-[#fafafa]">
+                  AI Provider
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className={`h-2 w-2 rounded-full ${
+                      hasOrKey ? 'bg-emerald-500' : 'bg-[#52525b]'
+                    }`}
+                  />
+                  <span className="text-xs text-[#a1a1aa]">
+                    {hasOrKey ? 'OpenRouter' : 'Ollama Cloud'}
+                  </span>
+                </div>
+              </div>
+
+              {hasOrKey ? (
+                <div className="space-y-2">
+                  <div className="rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2">
+                    <p className="text-sm text-[#a1a1aa] font-mono">
+                      {orKey?.startsWith('sk-or-') ? 'sk-or-••••••••' : 'Key saved'}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => clearOrKey()}
+                    className="text-[#a1a1aa] hover:text-red-400 w-full justify-start"
+                  >
+                    Remove key
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    type="password"
+                    value={orKeyInput}
+                    onChange={(e) => setOrKeyInput(e.target.value)}
+                    placeholder="sk-or-..."
+                    className="w-full rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && orKeyInput.trim()) {
+                        setOrKey(orKeyInput.trim());
+                        setOrKeyInput('');
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (orKeyInput.trim()) {
+                        setOrKey(orKeyInput.trim());
+                        setOrKeyInput('');
+                      }
+                    }}
+                    disabled={!orKeyInput.trim()}
+                    className="text-[#a1a1aa] hover:text-[#fafafa] w-full justify-start"
+                  >
+                    Save OpenRouter key
+                  </Button>
+                  <p className="text-xs text-[#52525b]">
+                    Optional. Adds OpenRouter as the AI provider.
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* Danger Zone */}
             <div className="space-y-3 pt-2 border-t border-[#1a1a1e]">
               <label className="text-sm font-medium text-[#fafafa]">
@@ -299,7 +356,7 @@ function App() {
                 className="text-[#a1a1aa] hover:text-red-400 w-full justify-start gap-2"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                Delete all chats
+                Delete all chats{activeRepo ? ` for ${activeRepo.name}` : ''}
               </Button>
             </div>
           </div>
