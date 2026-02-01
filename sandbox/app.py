@@ -167,12 +167,13 @@ def list_dir(data: dict):
     sb = modal.Sandbox.from_id(sandbox_id)
 
     # Output format per line: TYPE\tSIZE\tNAME (d=dir, f=file)
+    # Use printf (not echo) — bash echo doesn't interpret \t
     cmd = (
         f"cd '{path}' 2>/dev/null && "
         "for f in * .*; do "
         "  [ \"$f\" = '.' ] || [ \"$f\" = '..' ] || [ \"$f\" = '*' ] && continue; "
-        "  if [ -d \"$f\" ]; then echo \"d\\t0\\t$f\"; "
-        "  elif [ -f \"$f\" ]; then stat -c 'f\\t%s\\t%n' \"$f\" 2>/dev/null || echo \"f\\t0\\t$f\"; "
+        "  if [ -d \"$f\" ]; then printf 'd\\t0\\t%s\\n' \"$f\"; "
+        "  elif [ -f \"$f\" ]; then stat -c 'f\\t%s\\t%n' \"$f\" 2>/dev/null || printf 'f\\t0\\t%s\\n' \"$f\"; "
         "  fi; "
         "done"
     )
