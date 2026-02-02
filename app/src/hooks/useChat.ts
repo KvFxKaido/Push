@@ -126,6 +126,7 @@ function getToolStatusLabel(toolCall: AnyToolCall): string {
       switch (toolCall.call.tool) {
         case 'sandbox_exec': return 'Executing in sandbox...';
         case 'sandbox_read_file': return 'Reading file...';
+        case 'sandbox_list_dir': return 'Listing directory...';
         case 'sandbox_write_file': return 'Writing file...';
         case 'sandbox_diff': return 'Getting diff...';
         case 'sandbox_prepare_commit': return 'Reviewing commit...';

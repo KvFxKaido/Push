@@ -14,6 +14,8 @@ import {
   readFromSandbox,
   writeToSandbox,
   getSandboxDiff,
+  listDirectory,
+  type FileReadResult,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 
@@ -23,6 +25,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_exec'; args: { command: string; workdir?: string } }
   | { tool: 'sandbox_read_file'; args: { path: string } }
   | { tool: 'sandbox_write_file'; args: { path: string; content: string } }
+  | { tool: 'sandbox_list_dir'; args: { path?: string } }
   | { tool: 'sandbox_diff'; args: Record<string, never> }
   | { tool: 'sandbox_prepare_commit'; args: { message: string } }
   | { tool: 'sandbox_push'; args: Record<string, never> };
@@ -38,6 +41,9 @@ export function validateSandboxToolCall(parsed: any): SandboxToolCall | null {
   }
   if (parsed.tool === 'sandbox_write_file' && parsed.args?.path && typeof parsed.args.content === 'string') {
     return { tool: 'sandbox_write_file', args: { path: parsed.args.path, content: parsed.args.content } };
+  }
+  if (parsed.tool === 'sandbox_list_dir') {
+    return { tool: 'sandbox_list_dir', args: { path: parsed.args?.path } };
   }
   if (parsed.tool === 'sandbox_diff') {
     return { tool: 'sandbox_diff', args: {} };
@@ -147,7 +153,18 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_read_file': {
-        const result = await readFromSandbox(sandboxId, call.args.path);
+        const result = await readFromSandbox(sandboxId, call.args.path) as FileReadResult & { error?: string };
+
+        // Handle directory or read errors (e.g. "cat: /path: Is a directory")
+        if (result.error) {
+          const isDir = result.error.toLowerCase().includes('is a directory');
+          if (isDir) {
+            return {
+              text: `[Tool Error] "${call.args.path}" is a directory, not a file. Use sandbox_list_dir to browse directories, then sandbox_read_file on a specific file.`,
+            };
+          }
+          return { text: `[Tool Error] ${result.error}` };
+        }
 
         const lines: string[] = [
           `[Tool Result — sandbox_read_file]`,
@@ -181,6 +198,30 @@ export async function executeSandboxToolCall(
             },
           },
         };
+      }
+
+      case 'sandbox_list_dir': {
+        const dirPath = call.args.path || '/workspace';
+        const entries = await listDirectory(sandboxId, dirPath);
+
+        const dirs = entries.filter((e) => e.type === 'directory');
+        const files = entries.filter((e) => e.type === 'file');
+
+        const lines: string[] = [
+          `[Tool Result — sandbox_list_dir]`,
+          `Directory: ${dirPath}`,
+          `${dirs.length} directories, ${files.length} files\n`,
+        ];
+
+        for (const d of dirs) {
+          lines.push(`  📁 ${d.name}/`);
+        }
+        for (const f of files) {
+          const size = f.size ? ` (${f.size} bytes)` : '';
+          lines.push(`  📄 ${f.name}${size}`);
+        }
+
+        return { text: lines.join('\n') };
       }
 
       case 'sandbox_write_file': {
@@ -288,7 +329,8 @@ SANDBOX TOOLS — You have access to a code sandbox (persistent container with t
 
 Additional tools available when sandbox is active:
 - sandbox_exec(command, workdir?) — Run a shell command in the sandbox (default workdir: /workspace)
-- sandbox_read_file(path) — Read a file from the sandbox filesystem
+- sandbox_read_file(path) — Read a single file from the sandbox filesystem. Only works on files — fails on directories.
+- sandbox_list_dir(path?) — List files and folders in a sandbox directory (default: /workspace). Use this to explore the project structure before reading specific files.
 - sandbox_write_file(path, content) — Write or overwrite a file in the sandbox
 - sandbox_diff() — Get the git diff of all uncommitted changes
 - sandbox_prepare_commit(message) — Prepare a commit for review. Gets diff, runs Auditor. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
@@ -311,4 +353,5 @@ Sandbox rules:
 - sandbox_diff shows what you've changed — review before committing
 - sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.
 - If the push fails after a successful commit, use sandbox_push() to retry
-- Keep commands focused — avoid long-running servers or background processes`;
+- Keep commands focused — avoid long-running servers or background processes
+- IMPORTANT: sandbox_read_file only works on files, not directories. To explore the project structure, use sandbox_list_dir first, then read specific files.`;
