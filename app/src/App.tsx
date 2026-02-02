@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Settings, Trash2, Play, Square, FolderOpen } from 'lucide-react';
+import { Settings, Trash2, FolderOpen } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
 import { useGitHubAuth } from '@/hooks/useGitHubAuth';
@@ -42,6 +42,7 @@ function App() {
     deleteAllChats,
     setWorkspaceContext,
     setSandboxId,
+    setEnsureSandbox,
     setAgentsMd,
     handleCardAction,
   } = useChat(activeRepo?.full_name ?? null);
@@ -148,16 +149,16 @@ function App() {
     setSandboxId(sandbox.sandboxId);
   }, [sandbox.sandboxId, setSandboxId]);
 
-  // Sandbox controls
-  const handleStartSandbox = useCallback(() => {
-    if (activeRepo) {
-      sandbox.start(activeRepo.full_name, activeRepo.default_branch);
-    }
-  }, [activeRepo, sandbox]);
+  // Lazy sandbox auto-spin: creates sandbox on demand (called by useChat when sandbox tools are detected)
+  const ensureSandbox = useCallback(async (): Promise<string | null> => {
+    if (sandbox.sandboxId) return sandbox.sandboxId;
+    if (!activeRepo) return null;
+    return sandbox.start(activeRepo.full_name, activeRepo.default_branch);
+  }, [sandbox, activeRepo]);
 
-  const handleStopSandbox = useCallback(() => {
-    sandbox.stop();
-  }, [sandbox]);
+  useEffect(() => {
+    setEnsureSandbox(ensureSandbox);
+  }, [ensureSandbox, setEnsureSandbox]);
 
   // Sync repos on mount (for returning users who already have a token)
   useEffect(() => {
@@ -242,39 +243,28 @@ function App() {
           />
         </div>
         <div className="flex items-center gap-3">
-          {/* Sandbox toggle */}
+          {/* File browser */}
           {activeRepo && (
             <button
-              onClick={sandbox.status === 'ready' ? handleStopSandbox : handleStartSandbox}
+              onClick={async () => {
+                if (sandbox.status === 'ready') {
+                  setShowFileBrowser(true);
+                  return;
+                }
+                if (sandbox.status === 'creating') return;
+                const id = await ensureSandbox();
+                if (id) setShowFileBrowser(true);
+              }}
               disabled={sandbox.status === 'creating'}
-              className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all duration-200 active:scale-95 ${
-                sandbox.status === 'ready'
-                  ? 'bg-[#22c55e]/15 text-[#22c55e] hover:bg-[#22c55e]/25'
-                  : sandbox.status === 'creating'
-                  ? 'bg-[#f59e0b]/15 text-[#f59e0b] animate-pulse'
-                  : sandbox.status === 'error'
-                  ? 'bg-[#ef4444]/15 text-[#ef4444] hover:bg-[#ef4444]/25'
-                  : 'bg-[#111113] text-[#52525b] hover:text-[#a1a1aa] hover:bg-[#1a1a1e]'
+              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors duration-200 active:scale-95 ${
+                sandbox.status === 'creating'
+                  ? 'text-[#f59e0b] animate-pulse'
+                  : sandbox.status === 'ready'
+                  ? 'text-[#22c55e] hover:bg-[#111113]'
+                  : 'text-[#52525b] hover:text-[#a1a1aa] hover:bg-[#111113]'
               }`}
-              title={sandbox.error || (sandbox.status === 'ready' ? 'Stop sandbox' : 'Start sandbox')}
-            >
-              {sandbox.status === 'ready' ? (
-                <Square className="h-3 w-3" />
-              ) : (
-                <Play className="h-3 w-3" />
-              )}
-              <span>
-                {sandbox.status === 'creating' ? 'Starting…' : sandbox.status === 'ready' ? 'Sandbox' : sandbox.status === 'error' ? 'Error' : 'Sandbox'}
-              </span>
-            </button>
-          )}
-          {/* File browser toggle (only when sandbox is ready) */}
-          {sandbox.status === 'ready' && (
-            <button
-              onClick={() => setShowFileBrowser(true)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors duration-200 hover:text-[#a1a1aa] hover:bg-[#111113] active:scale-95"
               aria-label="Open file browser"
-              title="File browser"
+              title={sandbox.status === 'creating' ? 'Starting sandbox...' : sandbox.status === 'ready' ? 'File browser' : 'Open file browser (starts sandbox)'}
             >
               <FolderOpen className="h-4 w-4" />
             </button>

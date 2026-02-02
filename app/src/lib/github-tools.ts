@@ -18,6 +18,7 @@ export type ToolCall =
   | { tool: 'list_prs'; args: { repo: string; state?: string } }
   | { tool: 'list_commits'; args: { repo: string; count?: number } }
   | { tool: 'read_file'; args: { repo: string; path: string; branch?: string } }
+  | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string } }
   | { tool: 'delegate_coder'; args: { task: string; files?: string[] } }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } };
@@ -53,6 +54,9 @@ function validateToolCall(parsed: any): ToolCall | null {
   }
   if (parsed.tool === 'read_file' && parsed.args.repo && parsed.args.path) {
     return { tool: 'read_file', args: { repo: parsed.args.repo, path: parsed.args.path, branch: parsed.args.branch } };
+  }
+  if (parsed.tool === 'list_directory' && parsed.args.repo) {
+    return { tool: 'list_directory', args: { repo: parsed.args.repo, path: parsed.args.path, branch: parsed.args.branch } };
   }
   if (parsed.tool === 'list_branches' && parsed.args.repo) {
     return { tool: 'list_branches', args: { repo: parsed.args.repo } };
@@ -294,9 +298,11 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
   const data = await res.json();
 
   if (Array.isArray(data)) {
-    // It's a directory listing, not a file
+    // It's a directory — return an error directing the AI to use list_directory instead
     const entries = data.map((e: any) => `  ${e.type === 'dir' ? '📁' : '📄'} ${e.name}`).join('\n');
-    return { text: `[Tool Result — read_file]\nDirectory listing for ${path} on ${repo}:\n\n${entries}` };
+    return {
+      text: `[Tool Error] "${path}" is a directory, not a file. Use list_directory to browse directories, then read_file on a specific file.\n\nDirectory contents:\n${entries}`,
+    };
   }
 
   if (data.type !== 'file' || !data.content) {
@@ -335,6 +341,47 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
     text: lines.join('\n'),
     card: { type: 'editor', data: { path, content, language, truncated, source: 'github' as const, repo } },
   };
+}
+
+async function executeListDirectory(repo: string, path: string = '', branch?: string): Promise<ToolExecutionResult> {
+  const headers = getGitHubHeaders();
+  const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+  const apiPath = path ? encodeURIComponent(path) : '';
+
+  const res = await fetch(
+    `https://api.github.com/repos/${repo}/contents/${apiPath}${ref}`,
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(`GitHub API returned ${res.status} for path "${path || '/'}" on ${repo}`);
+  }
+
+  const data = await res.json();
+
+  if (!Array.isArray(data)) {
+    // Single file, not a directory
+    return { text: `[Tool Error] "${path}" is a file, not a directory. Use read_file to read its contents.` };
+  }
+
+  const dirs = data.filter((e: any) => e.type === 'dir');
+  const files = data.filter((e: any) => e.type !== 'dir');
+
+  const lines: string[] = [
+    `[Tool Result — list_directory]`,
+    `Directory: ${path || '/'} on ${repo}${branch ? ` (branch: ${branch})` : ''}`,
+    `${dirs.length} directories, ${files.length} files\n`,
+  ];
+
+  for (const d of dirs) {
+    lines.push(`  📁 ${d.name}/`);
+  }
+  for (const f of files) {
+    const size = f.size ? ` (${f.size} bytes)` : '';
+    lines.push(`  📄 ${f.name}${size}`);
+  }
+
+  return { text: lines.join('\n') };
 }
 
 async function executeListBranches(repo: string): Promise<ToolExecutionResult> {
@@ -507,6 +554,8 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
         return await executeListCommits(call.args.repo, call.args.count);
       case 'read_file':
         return await executeReadFile(call.args.repo, call.args.path, call.args.branch);
+      case 'list_directory':
+        return await executeListDirectory(call.args.repo, call.args.path, call.args.branch);
       case 'list_branches':
         return await executeListBranches(call.args.repo);
       case 'fetch_checks':
@@ -536,7 +585,8 @@ Available tools:
 - fetch_pr(repo, pr) — Fetch full PR details with diff
 - list_prs(repo, state?) — List PRs (default state: "open")
 - list_commits(repo, count?) — List recent commits (default: 10, max: 30)
-- read_file(repo, path, branch?) — Read a file's contents (default: repo's default branch)
+- read_file(repo, path, branch?) — Read a single file's contents (default: repo's default branch). Only works on files — fails on directories.
+- list_directory(repo, path?, branch?) — List files and folders in a directory (default path: repo root). Use this to browse the repo structure before reading specific files.
 - list_branches(repo) — List branches with default/protected status
 - delegate_coder(task, files?) — Delegate a coding task to the Coder agent (requires sandbox)
 - fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
@@ -549,5 +599,7 @@ Rules:
 - If the user asks about a PR, repo, commits, files, or branches, use the appropriate tool to get real data
 - Never fabricate data — always use a tool to fetch it
 - For "what changed recently?" or "recent activity" use list_commits
-- For "show me [filename]" use read_file
+- For "show me [filename]" use read_file (only for individual files)
+- To explore the project structure or find files, use list_directory FIRST, then read_file on specific files
+- IMPORTANT: read_file only works on files, not directories. If you need to see what's inside a folder, always use list_directory.
 - For "what branches exist?" use list_branches`;

@@ -126,6 +126,7 @@ function getToolStatusLabel(toolCall: AnyToolCall): string {
       switch (toolCall.call.tool) {
         case 'sandbox_exec': return 'Executing in sandbox...';
         case 'sandbox_read_file': return 'Reading file...';
+        case 'sandbox_list_dir': return 'Listing directory...';
         case 'sandbox_write_file': return 'Writing file...';
         case 'sandbox_diff': return 'Getting diff...';
         case 'sandbox_prepare_commit': return 'Reviewing commit...';
@@ -207,6 +208,14 @@ export function useChat(activeRepoFullName: string | null) {
 
   const setSandboxId = useCallback((id: string | null) => {
     sandboxIdRef.current = id;
+  }, []);
+
+  // --- Lazy sandbox auto-spin (set from App.tsx) ---
+
+  const ensureSandboxRef = useRef<(() => Promise<string | null>) | null>(null);
+
+  const setEnsureSandbox = useCallback((fn: (() => Promise<string | null>) | null) => {
+    ensureSandboxRef.current = fn;
   }, []);
 
   // --- AGENTS.md content (set from App.tsx when sandbox is ready) ---
@@ -517,11 +526,22 @@ export function useChat(activeRepoFullName: string | null) {
 
           let toolExecResult: ToolExecutionResult;
 
+          // Lazy auto-spin: create sandbox on demand when a sandbox/delegate tool is needed
+          if ((toolCall.source === 'sandbox' || toolCall.source === 'delegate') && !sandboxIdRef.current) {
+            if (ensureSandboxRef.current) {
+              setAgentStatus({ active: true, phase: 'Starting sandbox...' });
+              const newId = await ensureSandboxRef.current();
+              if (newId) {
+                sandboxIdRef.current = newId;
+              }
+            }
+          }
+
           if (toolCall.source === 'delegate') {
             // Handle Coder delegation (Phase 3b)
             const currentSandboxId = sandboxIdRef.current;
             if (!currentSandboxId) {
-              toolExecResult = { text: '[Tool Error] Coder requires an active sandbox. Start a sandbox first.' };
+              toolExecResult = { text: '[Tool Error] Failed to start sandbox automatically. Try again.' };
             } else {
               try {
                 const coderResult = await runCoderAgent(
@@ -822,6 +842,7 @@ export function useChat(activeRepoFullName: string | null) {
 
     // Sandbox
     setSandboxId,
+    setEnsureSandbox,
 
     // AGENTS.md
     setAgentsMd,
