@@ -13,6 +13,13 @@ body {
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* CodeMirror — disable the global transition on internal elements (causes jank on scroll) */
+.cm-editor *,
+.cm-editor *::before,
+.cm-editor *::after {
+  transition: none !important;
+}
+
 /* Custom scrollbar for webkit */
 ::-webkit-scrollbar {
   width: 4px;

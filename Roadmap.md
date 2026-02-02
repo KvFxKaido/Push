@@ -226,7 +226,7 @@ What shipped:
 - Modal Python App (`sandbox/app.py`) — 6 web endpoints: create, exec_command, read_file, write_file, get_diff, cleanup
 - Cloudflare Worker proxy — 6 `/api/sandbox/*` routes forwarding to Modal (same auth-isolation pattern as Kimi proxy)
 - Frontend sandbox client (`sandbox-client.ts`) — typed HTTP wrappers around `fetch()`
-- Sandbox tools in the tool protocol — `sandbox_exec`, `sandbox_read_file`, `sandbox_write_file`, `sandbox_diff`, `sandbox_commit`
+- Sandbox tools in the tool protocol — `sandbox_exec`, `sandbox_read_file`, `sandbox_write_file`, `sandbox_diff`, `sandbox_commit` (renamed to `sandbox_prepare_commit` in Phase 4)
 - Unified tool dispatch (`tool-dispatch.ts`) — single detection/execution pipeline for GitHub, Sandbox, and delegation tools
 - `useSandbox` hook — session lifecycle (idle → creating → ready → error), container cleanup on unmount
 - Sandbox toggle button in the chat header — start/stop sandbox per session
@@ -235,7 +235,7 @@ What shipped:
 - `delegate_coder` tool — Orchestrator delegates coding tasks to Coder via JSON block
 - Auditor gate (`auditor-agent.ts`) — Kimi K2.5 reviews diffs, returns structured SAFE/UNSAFE verdict
 - Fail-safe design — Auditor defaults to UNSAFE on invalid JSON, network errors, or missing model
-- `sandbox_commit` tool — gets diff → runs Auditor → blocks on UNSAFE → commits on SAFE
+- `sandbox_commit` tool — gets diff → runs Auditor → blocks on UNSAFE → commits on SAFE (replaced by `sandbox_prepare_commit` in Phase 4 — now returns a review card instead of auto‑committing)
 
 What was learned:
 - Modal's JS SDK requires gRPC (incompatible with Cloudflare Workers) — the solution is Python web endpoints exposed as plain HTTPS, proxied by the Worker. Same pattern as the Kimi proxy, just a different upstream.
@@ -246,55 +246,82 @@ What was learned:
 
 ---
 
-Phase 4 — Agent‑Assisted Coding
+Phase 4 — User Confirmation + CI Status (Done)
 
-Goal: Describe what you want in plain language. The Coder does it in the sandbox. The Auditor reviews it. You confirm. It ships.
+Goal: Commits require explicit user approval. CI status is visible after push. No code lands on main without you tapping "Approve."
 
-Features:
-- Natural language code requests ("add a loading spinner to the dashboard")
-- Coder generates changes in sandbox, runs tests
-- Auditor reviews the diff with verdict card
-- Diff preview card with accept / reject buttons
-- Multi‑file change support
-- Commit message drafted by Orchestrator, you approve
-- Live pipeline shows every step as it happens in the chat
+What shipped:
+- `sandbox_commit` renamed to `sandbox_prepare_commit` — no longer auto‑commits. Returns an interactive review card for user approval.
+- Backward compatibility: LLMs emitting old `sandbox_commit` are silently mapped to `sandbox_prepare_commit`.
+- CommitReviewCard — interactive card with embedded diff preview, audit verdict, editable commit message textarea, and Approve & Push / Reject buttons. Phase‑driven UI: pending → approved → pushing → committed / rejected / error.
+- Commit message drafted by LLM, pre‑filled in the card. User can edit before approving. Conventional commit format encouraged in the tool protocol.
+- Double‑tap prevention — card status flips to `approved` on first tap, buttons disabled immediately.
+- `handleCardAction` in useChat — centralized handler for all interactive card actions (commit‑approve, commit‑reject, ci‑refresh). Executes `git add + commit + push` in sandbox on approval.
+- `fetch_checks` GitHub tool — fetches CI/CD check runs for a commit ref via GitHub's check‑runs API, with fallback to the combined status API for older CI systems (Travis, etc.).
+- CIStatusCard — displays overall CI status (success/failure/pending/no‑checks) with per‑check breakdown. Refresh button when checks are still in progress.
+- Auto‑CI fetch — 3 seconds after a successful push, CI status is automatically fetched and injected as a card in the chat.
+- CardAction type — discriminated union threading `onCardAction` callback through App → ChatContainer → MessageBubble → CardRenderer → interactive cards. Non‑interactive cards are unchanged.
+- 44px minimum touch targets on all interactive buttons (mobile‑first).
+- Coder agent prompt updated to use `sandbox_prepare_commit` and encouraged to propose commits after completing work.
 
-Workflow:
+Workflow (as shipped):
 1. You describe the change in chat
 2. Orchestrator interprets, routes to Coder with context
-3. Coder generates changes in sandbox
-4. Coder runs tests/lint in sandbox
-5. Auditor reviews the diff → verdict card
-6. You see diff preview + verdict in chat
-7. Tap "Push" → commit lands on main
-8. CI status streams into chat
+3. Coder generates changes in sandbox, runs tests
+4. Coder (or Orchestrator) calls `sandbox_prepare_commit(message)`
+5. Auditor reviews the diff → if UNSAFE, blocked with verdict card
+6. If SAFE → CommitReviewCard appears with diff + verdict + editable message
+7. You review, optionally edit the message, tap "Approve & Push"
+8. Commit + push executes in sandbox → card shows progress → success
+9. 3 seconds later, CIStatusCard auto‑appears with check run results
+10. Or tap "Reject" → commit cancelled, Orchestrator acknowledges
 
-Agent Use:
-- Full pipeline: Orchestrator → Coder (sandbox) → Auditor → commit
-
-Exit Criteria:
-- You stop opening Claude or Codex for code changes
-- A described change can go from English to main in under 2 minutes
-- The Auditor catches obvious mistakes before they ship
+What was learned:
+- Splitting commit into prepare + confirm was the right abstraction. The LLM still calls one tool, but the destructive side effect (pushing to main) is deferred to a human decision. Same pattern as GitHub PRs — propose, review, merge.
+- The `CardAction` discriminated union keeps interactive card plumbing clean. One callback threaded through the tree, one handler in useChat. No per‑card‑type prop drilling.
+- GitHub's check‑runs API takes a few seconds to register after a push, so the 3‑second delay before auto‑fetching CI is pragmatic, not arbitrary.
+- Backward compat for `sandbox_commit` was essential — cached conversations and Coder prompts from Phase 3 still work without migration.
 
 
 ---
 
-Phase 5 — Extensions (Future)
+Phase 5 — Native Android App
 
-Goal: Room for 1‑2 additional integrations discovered through real usage.
+Goal: Ship Diff as a native Android app. The PWA proved the product works on mobile — now give it the distribution, performance, and OS integration that only a native app provides.
 
-Candidates (not committed):
-- CI/CD deeper integration (trigger deploys, view logs in chat)
-- Issue/project tracking awareness ("what issues are assigned to me?")
-- Voice input for hands‑free mobile use
-- Multi‑turn memory (remember project context across sessions)
-- Notifications and alerts in chat
+Why native:
+- Push notifications for CI results, audit verdicts, and commit status — impossible from a PWA on Android without workarounds
+- Home screen presence with proper app icon, splash screen, and task switcher identity
+- Background sandbox session keep‑alive — PWA tabs get killed by Android's memory manager
+- Biometric auth for GitHub PAT — secure storage via Android Keystore instead of localStorage
+- Share intent — receive URLs, code snippets, and error logs from other apps directly into the chat
+- Play Store distribution — discoverability and auto‑updates without "Add to Home Screen" friction
+
+Technical approach:
+- Kotlin + Jetpack Compose — native UI toolkit, no cross‑platform abstraction layer
+- Same backend — Cloudflare Worker proxy, Modal sandbox, Kimi For Coding API. The Android app is a new client, not a new backend.
+- Shared tool protocol — the prompt‑engineered JSON tool protocol is transport‑agnostic. The Android client detects and executes tool calls identically to the web app.
+- Offline‑first conversation storage — Room database replaces localStorage. Conversations sync to local DB, survive app kills.
+- SSE streaming via OkHttp — same token‑by‑token streaming as the web app, using OkHttp's EventSource client
+- WebView fallback for diff rendering — unified diffs with syntax highlighting are complex to render natively. A thin WebView component for DiffPreviewCard is acceptable.
+
+What carries over unchanged:
+- All agent roles and prompts (Orchestrator, Coder, Auditor)
+- Tool protocol (JSON block detection, execution, result injection)
+- Cloudflare Worker proxy and Modal sandbox backend
+- Card data types (PRCard, CommitReviewCard, CIStatusCard, etc.) — same JSON shapes, new renderers
+
+What changes:
+- UI layer — Jetpack Compose replaces React + Tailwind
+- State management — ViewModel + StateFlow replaces React hooks + useState
+- Storage — Room + DataStore replaces localStorage
+- Auth — Android Keystore for PAT storage, optional biometric unlock
+- Networking — OkHttp + Retrofit replaces fetch()
 
 Constraints:
-- Max 2 extensions at a time
-- Each must replace an external app, not add novelty
-- If it doesn't reduce app‑juggling, it doesn't ship
+- Android only. iOS is not planned — the PWA covers iOS adequately.
+- Feature parity with web app at launch. No Android‑exclusive features in v1 except notifications and biometric auth.
+- The web app continues to ship. Android is additive, not a replacement.
 
 
 ---
@@ -308,6 +335,8 @@ Explicitly Skipped (Without Guilt)
 - Team collaboration features (this is a personal tool)
 - Desktop‑first features (desktop is secondary, always)
 - Form‑heavy UI (chat is the primary input — forms only where genuinely faster)
+- iOS native app (PWA covers iOS — Android gets native because Android's PWA support is weaker)
+- Cross‑platform frameworks (Flutter, React Native) — Jetpack Compose is the right tool for Android‑only
 
 
 ---

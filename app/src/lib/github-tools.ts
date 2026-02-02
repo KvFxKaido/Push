@@ -333,7 +333,7 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
 
   return {
     text: lines.join('\n'),
-    card: { type: 'file', data: { repo, path, content, language, truncated } },
+    card: { type: 'editor', data: { path, content, language, truncated, source: 'github' as const, repo } },
   };
 }
 

@@ -125,7 +125,8 @@ export type ChatCard =
   | { type: 'diff-preview'; data: DiffPreviewCardData }
   | { type: 'audit-verdict'; data: AuditVerdictCardData }
   | { type: 'commit-review'; data: CommitReviewCardData }
-  | { type: 'ci-status'; data: CIStatusCardData };
+  | { type: 'ci-status'; data: CIStatusCardData }
+  | { type: 'editor'; data: EditorCardData };
 
 // Tool execution returns text for the LLM + optional structured card for UI
 export interface ToolExecutionResult {
@@ -171,6 +172,17 @@ export interface BranchListCardData {
   repo: string;
   defaultBranch: string;
   branches: { name: string; isDefault: boolean; isProtected: boolean }[];
+}
+
+export interface EditorCardData {
+  path: string;
+  content: string;
+  language: string;
+  truncated: boolean;
+  /** 'github' = read-only, 'sandbox' = editable with save */
+  source: 'github' | 'sandbox';
+  repo?: string;
+  sandboxId?: string;
 }
 
 // Phase 3 — Sandbox + Code Execution
@@ -227,7 +239,8 @@ export interface CIStatusCardData {
 export type CardAction =
   | { type: 'commit-approve'; messageId: string; cardIndex: number; commitMessage: string }
   | { type: 'commit-reject'; messageId: string; cardIndex: number }
-  | { type: 'ci-refresh'; messageId: string; cardIndex: number };
+  | { type: 'ci-refresh'; messageId: string; cardIndex: number }
+  | { type: 'editor-save'; messageId: string; cardIndex: number; path: string; content: string; sandboxId: string };
 
 export interface AgentStatus {
   active: boolean;

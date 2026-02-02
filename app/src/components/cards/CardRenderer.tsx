@@ -9,6 +9,7 @@ import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
 import { CommitReviewCard } from './CommitReviewCard';
 import { CIStatusCard } from './CIStatusCard';
+import { EditorCard } from './EditorCard';
 
 interface CardRendererProps {
   card: ChatCard;
@@ -50,6 +51,15 @@ export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRende
           data={card.data}
           messageId={messageId || ''}
           cardIndex={cardIndex ?? 0}
+          onAction={onAction}
+        />
+      );
+    case 'editor':
+      return (
+        <EditorCard
+          data={card.data}
+          messageId={messageId}
+          cardIndex={cardIndex}
           onAction={onAction}
         />
       );

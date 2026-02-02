@@ -156,7 +156,31 @@ export async function executeSandboxToolCall(
           result.content,
         ];
 
-        return { text: lines.join('\n') };
+        // Guess language from extension
+        const ext = call.args.path.split('.').pop()?.toLowerCase() || '';
+        const sandboxLangMap: Record<string, string> = {
+          ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+          py: 'python', rs: 'rust', go: 'go', rb: 'ruby', java: 'java',
+          md: 'markdown', json: 'json', yaml: 'yaml', yml: 'yaml',
+          css: 'css', html: 'html', sh: 'shell', bash: 'shell',
+          toml: 'toml', sql: 'sql', c: 'c', cpp: 'cpp', h: 'c',
+        };
+        const language = sandboxLangMap[ext] || ext;
+
+        return {
+          text: lines.join('\n'),
+          card: {
+            type: 'editor',
+            data: {
+              path: call.args.path,
+              content: result.content,
+              language,
+              truncated: result.truncated,
+              source: 'sandbox' as const,
+              sandboxId,
+            },
+          },
+        };
       }
 
       case 'sandbox_write_file': {
