@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import { ChevronRight, GitPullRequest, GitBranch, GitCommit, FileCode, Terminal, FileDiff, PenTool, ShieldCheck, Activity } from 'lucide-react';
+import { ChevronRight, GitPullRequest, GitBranch, GitCommit, FileCode, Terminal, FileDiff, PenTool, ShieldCheck, Activity, FolderOpen } from 'lucide-react';
 import type { ChatMessage, CardAction } from '@/types';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { CardRenderer } from '@/components/cards/CardRenderer';
@@ -179,6 +179,10 @@ function ToolCallStatus({ content }: { content: string }) {
         Icon = FileCode;
         label = `Reading ${toolCall.call.args.path} from ${toolCall.call.args.repo}`;
         break;
+      case 'list_directory':
+        Icon = FolderOpen;
+        label = `Browsing ${toolCall.call.args.path || '/'} on ${toolCall.call.args.repo}`;
+        break;
       case 'list_branches':
         Icon = GitBranch;
         label = `Listing branches on ${toolCall.call.args.repo}`;
@@ -201,6 +205,10 @@ function ToolCallStatus({ content }: { content: string }) {
       case 'sandbox_write_file':
         Icon = PenTool;
         label = `Writing ${toolCall.call.args.path}`;
+        break;
+      case 'sandbox_list_dir':
+        Icon = FolderOpen;
+        label = `Browsing ${toolCall.call.args.path || '/workspace'}`;
         break;
       case 'sandbox_diff':
         Icon = FileDiff;

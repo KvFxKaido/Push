@@ -162,6 +162,28 @@ export async function streamMoonshotChat(
 
   const model = modelOverride || KIMI_MODEL;
 
+  const CONNECT_TIMEOUT_MS = 30_000; // 30s to get initial response headers
+  const IDLE_TIMEOUT_MS = 60_000;    // 60s max silence during streaming
+
+  const controller = new AbortController();
+  let abortReason: 'connect' | 'idle' | null = null;
+
+  // Connection timeout — abort if server doesn't respond
+  let connectTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    abortReason = 'connect';
+    controller.abort();
+  }, CONNECT_TIMEOUT_MS);
+
+  // Idle timer — reset every time we receive data
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const resetIdleTimer = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      abortReason = 'idle';
+      controller.abort();
+    }, IDLE_TIMEOUT_MS);
+  };
+
   try {
     console.log(`[Diff] POST ${KIMI_API_URL} (model: ${model})`);
 
@@ -176,7 +198,13 @@ export async function streamMoonshotChat(
         messages: toLLMMessages(messages, workspaceContext, hasSandbox, systemPromptOverride),
         stream: true,
       }),
+      signal: controller.signal,
     });
+
+    // Connection established — clear connect timeout, start idle timeout
+    clearTimeout(connectTimer);
+    connectTimer = undefined;
+    resetIdleTimer();
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
@@ -207,6 +235,7 @@ export async function streamMoonshotChat(
       const { done, value } = await reader.read();
       if (done) break;
 
+      resetIdleTimer(); // got data — reset idle timeout
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
@@ -231,12 +260,9 @@ export async function streamMoonshotChat(
           const choice = parsed.choices?.[0];
           if (!choice) continue;
 
-          // Check finish_reason
-          if (choice.finish_reason === 'stop' || choice.finish_reason === 'end_turn') {
-            parser.flush();
-            onDone();
-            return;
-          }
+          // Process tokens BEFORE checking finish_reason — Kimi may
+          // bundle the last content token in the same SSE event as
+          // finish_reason:"stop", so we must capture it first.
 
           // Kimi For Coding: reasoning tokens arrive via delta.reasoning_content
           const reasoningToken = choice.delta?.reasoning_content;
@@ -249,6 +275,13 @@ export async function streamMoonshotChat(
           if (token) {
             parser.push(token);
           }
+
+          // Check finish_reason (after processing any final tokens in this chunk)
+          if (choice.finish_reason === 'stop' || choice.finish_reason === 'end_turn' || choice.finish_reason === 'tool_calls') {
+            parser.flush();
+            onDone();
+            return;
+          }
         } catch {
           // Skip malformed SSE data
         }
@@ -259,6 +292,20 @@ export async function streamMoonshotChat(
     parser.flush();
     onDone();
   } catch (err) {
+    // Cleanup timers on error path
+    clearTimeout(connectTimer);
+    clearTimeout(idleTimer);
+
+    // Handle abort errors with specific messages
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      const timeoutMsg = abortReason === 'connect'
+        ? `Kimi API didn't respond within ${CONNECT_TIMEOUT_MS / 1000}s — server may be down.`
+        : `Kimi API stream stalled — no data for ${IDLE_TIMEOUT_MS / 1000}s.`;
+      console.error(`[Diff] Moonshot timeout (${abortReason}):`, timeoutMsg);
+      onError(new Error(timeoutMsg));
+      return;
+    }
+
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[Diff] Moonshot chat error:`, msg);
     if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
@@ -268,6 +315,9 @@ export async function streamMoonshotChat(
     } else {
       onError(err instanceof Error ? err : new Error(msg));
     }
+  } finally {
+    clearTimeout(connectTimer);
+    clearTimeout(idleTimer);
   }
 }
 

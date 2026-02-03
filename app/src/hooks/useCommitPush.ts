@@ -149,10 +149,12 @@ export function useCommitPush(sandboxId: string) {
       );
 
       if (commitResult.exitCode !== 0) {
+        // Git may write errors to stdout (e.g., "nothing to commit") or stderr
+        const errorDetail = commitResult.stderr || commitResult.stdout || 'Unknown error';
         setState((s) => ({
           ...s,
           phase: 'error',
-          error: `Commit failed: ${commitResult.stderr}`,
+          error: `Commit failed: ${errorDetail}`,
         }));
         return;
       }
@@ -163,10 +165,11 @@ export function useCommitPush(sandboxId: string) {
       const pushResult = await execInSandbox(sandboxId, 'cd /workspace && git push origin HEAD');
 
       if (pushResult.exitCode !== 0) {
+        const errorDetail = pushResult.stderr || pushResult.stdout || 'Unknown error';
         setState((s) => ({
           ...s,
           phase: 'error',
-          error: `Push failed: ${pushResult.stderr}`,
+          error: `Push failed: ${errorDetail}`,
         }));
         return;
       }

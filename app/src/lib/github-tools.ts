@@ -6,7 +6,8 @@
  * result back into the conversation as a synthetic message.
  */
 
-import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, CICheck, CIStatusCardData } from '@/types';
+import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData } from '@/types';
+import { extractBareToolJsonObjects } from './tool-dispatch';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
@@ -18,12 +19,15 @@ export type ToolCall =
   | { tool: 'list_prs'; args: { repo: string; state?: string } }
   | { tool: 'list_commits'; args: { repo: string; count?: number } }
   | { tool: 'read_file'; args: { repo: string; path: string; branch?: string } }
+  | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string } }
   | { tool: 'delegate_coder'; args: { task: string; files?: string[] } }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } };
 
 const ACCESS_DENIED_MESSAGE =
   '[Tool Error] Access denied — can only query the active repo (owner/repo)';
+
+const GITHUB_TIMEOUT_MS = 15_000; // 15s timeout for GitHub API calls
 
 // --- Auth helper (mirrors useGitHub / useRepos pattern) ---
 
@@ -37,6 +41,24 @@ function getGitHubHeaders(): Record<string, string> {
     headers['Authorization'] = `token ${authToken}`;
   }
   return headers;
+}
+
+// --- Fetch with timeout ---
+
+async function githubFetch(url: string, options?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GITHUB_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error(`GitHub API timed out after ${GITHUB_TIMEOUT_MS / 1000}s — check your connection.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // --- Detection helpers ---
@@ -53,6 +75,9 @@ function validateToolCall(parsed: any): ToolCall | null {
   }
   if (parsed.tool === 'read_file' && parsed.args.repo && parsed.args.path) {
     return { tool: 'read_file', args: { repo: parsed.args.repo, path: parsed.args.path, branch: parsed.args.branch } };
+  }
+  if (parsed.tool === 'list_directory' && parsed.args.repo) {
+    return { tool: 'list_directory', args: { repo: parsed.args.repo, path: parsed.args.path, branch: parsed.args.branch } };
   }
   if (parsed.tool === 'list_branches' && parsed.args.repo) {
     return { tool: 'list_branches', args: { repo: parsed.args.repo } };
@@ -90,17 +115,11 @@ export function detectToolCall(text: string): ToolCall | null {
     }
   }
 
-  // Also try bare JSON (no fences) — model sometimes omits backticks
-  const bareRegex = /\{[\s\S]*?"tool"\s*:\s*"[^"]+?"[\s\S]*?\}/g;
-  while ((match = bareRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[0]);
-      if (parsed.tool && parsed.args) {
-        const result = validateToolCall(parsed);
-        if (result) return result;
-      }
-    } catch {
-      // Not valid JSON
+  // Bare JSON fallback (brace-counting handles nested objects)
+  for (const parsed of extractBareToolJsonObjects(text)) {
+    if (parsed.tool && parsed.args) {
+      const result = validateToolCall(parsed);
+      if (result) return result;
     }
   }
 
@@ -113,14 +132,14 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
   const headers = getGitHubHeaders();
 
   // Fetch PR details
-  const prRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, { headers });
+  const prRes = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, { headers });
   if (!prRes.ok) {
     throw new Error(`GitHub API returned ${prRes.status} for PR #${pr} on ${repo}`);
   }
   const prData = await prRes.json();
 
   // Fetch diff
-  const diffRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, {
+  const diffRes = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, {
     headers: { ...headers, Accept: 'application/vnd.github.v3.diff' },
   });
   let diff = '';
@@ -132,7 +151,7 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
   }
 
   // Fetch files
-  const filesRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${pr}/files`, { headers });
+  const filesRes = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${pr}/files`, { headers });
   let filesData: { filename: string; status: string; additions: number; deletions: number }[] = [];
   let filesSummary = '';
   if (filesRes.ok) {
@@ -197,7 +216,7 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
 async function executeListPRs(repo: string, state: string = 'open'): Promise<ToolExecutionResult> {
   const headers = getGitHubHeaders();
 
-  const res = await fetch(
+  const res = await githubFetch(
     `https://api.github.com/repos/${repo}/pulls?state=${state}&per_page=20&sort=updated&direction=desc`,
     { headers },
   );
@@ -241,7 +260,7 @@ async function executeListPRs(repo: string, state: string = 'open'): Promise<Too
 async function executeListCommits(repo: string, count: number = 10): Promise<ToolExecutionResult> {
   const headers = getGitHubHeaders();
 
-  const res = await fetch(
+  const res = await githubFetch(
     `https://api.github.com/repos/${repo}/commits?per_page=${Math.min(count, 30)}`,
     { headers },
   );
@@ -282,7 +301,7 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
   const headers = getGitHubHeaders();
   const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
 
-  const res = await fetch(
+  const res = await githubFetch(
     `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}${ref}`,
     { headers },
   );
@@ -294,9 +313,11 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
   const data = await res.json();
 
   if (Array.isArray(data)) {
-    // It's a directory listing, not a file
+    // It's a directory — return an error directing the AI to use list_directory instead
     const entries = data.map((e: any) => `  ${e.type === 'dir' ? '📁' : '📄'} ${e.name}`).join('\n');
-    return { text: `[Tool Result — read_file]\nDirectory listing for ${path} on ${repo}:\n\n${entries}` };
+    return {
+      text: `[Tool Error] "${path}" is a directory, not a file. Use list_directory to browse directories, then read_file on a specific file.\n\nDirectory contents:\n${entries}`,
+    };
   }
 
   if (data.type !== 'file' || !data.content) {
@@ -337,13 +358,63 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
   };
 }
 
+async function executeListDirectory(repo: string, path: string = '', branch?: string): Promise<ToolExecutionResult> {
+  const headers = getGitHubHeaders();
+  const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+  const apiPath = path ? encodeURIComponent(path) : '';
+
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/contents/${apiPath}${ref}`,
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(`GitHub API returned ${res.status} for path "${path || '/'}" on ${repo}`);
+  }
+
+  const data = await res.json();
+
+  if (!Array.isArray(data)) {
+    // Single file, not a directory
+    return { text: `[Tool Error] "${path}" is a file, not a directory. Use read_file to read its contents.` };
+  }
+
+  const dirs = data.filter((e: any) => e.type === 'dir');
+  const files = data.filter((e: any) => e.type !== 'dir');
+
+  const lines: string[] = [
+    `[Tool Result — list_directory]`,
+    `Directory: ${path || '/'} on ${repo}${branch ? ` (branch: ${branch})` : ''}`,
+    `${dirs.length} directories, ${files.length} files\n`,
+  ];
+
+  for (const d of dirs) {
+    lines.push(`  📁 ${d.name}/`);
+  }
+  for (const f of files) {
+    const size = f.size ? ` (${f.size} bytes)` : '';
+    lines.push(`  📄 ${f.name}${size}`);
+  }
+
+  const cardData: FileListCardData = {
+    repo,
+    path: path || '/',
+    entries: [
+      ...dirs.map((d: any) => ({ name: d.name, type: 'directory' as const })),
+      ...files.map((f: any) => ({ name: f.name, type: 'file' as const, size: f.size })),
+    ],
+  };
+
+  return { text: lines.join('\n'), card: { type: 'file-list', data: cardData } };
+}
+
 async function executeListBranches(repo: string): Promise<ToolExecutionResult> {
   const headers = getGitHubHeaders();
 
   // Fetch branches and repo info in parallel
   const [branchRes, repoRes] = await Promise.all([
-    fetch(`https://api.github.com/repos/${repo}/branches?per_page=30`, { headers }),
-    fetch(`https://api.github.com/repos/${repo}`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}/branches?per_page=30`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}`, { headers }),
   ]);
 
   if (!branchRes.ok) {
@@ -385,7 +456,7 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
   const commitRef = ref || 'HEAD';
 
   // Try check runs API first (GitHub Actions, etc.)
-  const checkRunsRes = await fetch(
+  const checkRunsRes = await githubFetch(
     `https://api.github.com/repos/${repo}/commits/${commitRef}/check-runs?per_page=50`,
     { headers },
   );
@@ -407,7 +478,7 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
 
   // If no check runs, fall back to combined status API (Travis, etc.)
   if (checks.length === 0) {
-    const statusRes = await fetch(
+    const statusRes = await githubFetch(
       `https://api.github.com/repos/${repo}/commits/${commitRef}/status`,
       { headers },
     );
@@ -507,6 +578,8 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
         return await executeListCommits(call.args.repo, call.args.count);
       case 'read_file':
         return await executeReadFile(call.args.repo, call.args.path, call.args.branch);
+      case 'list_directory':
+        return await executeListDirectory(call.args.repo, call.args.path, call.args.branch);
       case 'list_branches':
         return await executeListBranches(call.args.repo);
       case 'fetch_checks':
@@ -536,7 +609,8 @@ Available tools:
 - fetch_pr(repo, pr) — Fetch full PR details with diff
 - list_prs(repo, state?) — List PRs (default state: "open")
 - list_commits(repo, count?) — List recent commits (default: 10, max: 30)
-- read_file(repo, path, branch?) — Read a file's contents (default: repo's default branch)
+- read_file(repo, path, branch?) — Read a single file's contents (default: repo's default branch). Only works on files — fails on directories.
+- list_directory(repo, path?, branch?) — List files and folders in a directory (default path: repo root). Use this to browse the repo structure before reading specific files.
 - list_branches(repo) — List branches with default/protected status
 - delegate_coder(task, files?) — Delegate a coding task to the Coder agent (requires sandbox)
 - fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
@@ -549,5 +623,7 @@ Rules:
 - If the user asks about a PR, repo, commits, files, or branches, use the appropriate tool to get real data
 - Never fabricate data — always use a tool to fetch it
 - For "what changed recently?" or "recent activity" use list_commits
-- For "show me [filename]" use read_file
+- For "show me [filename]" use read_file (only for individual files)
+- To explore the project structure or find files, use list_directory FIRST, then read_file on specific files
+- IMPORTANT: read_file only works on files, not directories. If you need to see what's inside a folder, always use list_directory.
 - For "what branches exist?" use list_branches`;

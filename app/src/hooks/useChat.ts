@@ -126,6 +126,7 @@ function getToolStatusLabel(toolCall: AnyToolCall): string {
       switch (toolCall.call.tool) {
         case 'sandbox_exec': return 'Executing in sandbox...';
         case 'sandbox_read_file': return 'Reading file...';
+        case 'sandbox_list_dir': return 'Listing directory...';
         case 'sandbox_write_file': return 'Writing file...';
         case 'sandbox_diff': return 'Getting diff...';
         case 'sandbox_prepare_commit': return 'Reviewing commit...';
@@ -207,6 +208,14 @@ export function useChat(activeRepoFullName: string | null) {
 
   const setSandboxId = useCallback((id: string | null) => {
     sandboxIdRef.current = id;
+  }, []);
+
+  // --- Lazy sandbox auto-spin (set from App.tsx) ---
+
+  const ensureSandboxRef = useRef<(() => Promise<string | null>) | null>(null);
+
+  const setEnsureSandbox = useCallback((fn: (() => Promise<string | null>) | null) => {
+    ensureSandboxRef.current = fn;
   }, []);
 
   // --- AGENTS.md content (set from App.tsx when sandbox is ready) ---
@@ -373,11 +382,9 @@ export function useChat(activeRepoFullName: string | null) {
       abortRef.current = false;
 
       let apiMessages = [...updatedWithUser];
-      const MAX_TOOL_ROUNDS = 3;
-      const hasSandbox = Boolean(sandboxIdRef.current);
 
       try {
-        for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        for (let round = 0; ; round++) {
           if (abortRef.current) break;
 
           if (round > 0) {
@@ -399,6 +406,9 @@ export function useChat(activeRepoFullName: string | null) {
 
           let accumulated = '';
           let thinkingAccumulated = '';
+
+          // Re-check sandbox on every round so auto-spun sandboxes are visible to the LLM
+          const hasSandboxThisRound = Boolean(sandboxIdRef.current);
 
           const streamError = await new Promise<Error | null>((resolve) => {
             streamChat(
@@ -440,7 +450,7 @@ export function useChat(activeRepoFullName: string | null) {
                 });
               },
               workspaceContextRef.current || undefined,
-              hasSandbox,
+              hasSandboxThisRound,
             );
           });
 
@@ -469,7 +479,7 @@ export function useChat(activeRepoFullName: string | null) {
           // Check for tool call in the response (unified dispatch)
           const toolCall = detectAnyToolCall(accumulated);
 
-          if (!toolCall || round === MAX_TOOL_ROUNDS) {
+          if (!toolCall) {
             setConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
@@ -517,11 +527,22 @@ export function useChat(activeRepoFullName: string | null) {
 
           let toolExecResult: ToolExecutionResult;
 
+          // Lazy auto-spin: create sandbox on demand when a sandbox/delegate tool is needed
+          if ((toolCall.source === 'sandbox' || toolCall.source === 'delegate') && !sandboxIdRef.current) {
+            if (ensureSandboxRef.current) {
+              setAgentStatus({ active: true, phase: 'Starting sandbox...' });
+              const newId = await ensureSandboxRef.current();
+              if (newId) {
+                sandboxIdRef.current = newId;
+              }
+            }
+          }
+
           if (toolCall.source === 'delegate') {
             // Handle Coder delegation (Phase 3b)
             const currentSandboxId = sandboxIdRef.current;
             if (!currentSandboxId) {
-              toolExecResult = { text: '[Tool Error] Coder requires an active sandbox. Start a sandbox first.' };
+              toolExecResult = { text: '[Tool Error] Failed to start sandbox automatically. Try again.' };
             } else {
               try {
                 const coderResult = await runCoderAgent(
@@ -699,9 +720,10 @@ export function useChat(activeRepoFullName: string | null) {
             );
 
             if (commitResult.exitCode !== 0) {
+              const errorDetail = commitResult.stderr || commitResult.stdout || 'Unknown error';
               updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                 if (card.type !== 'commit-review') return card;
-                return { ...card, data: { ...card.data, status: 'error', error: `Commit failed: ${commitResult.stderr}` } as CommitReviewCardData };
+                return { ...card, data: { ...card.data, status: 'error', error: `Commit failed: ${errorDetail}` } as CommitReviewCardData };
               });
               return;
             }
@@ -715,9 +737,10 @@ export function useChat(activeRepoFullName: string | null) {
             const pushResult = await execInSandbox(sandboxId, 'cd /workspace && git push origin HEAD');
 
             if (pushResult.exitCode !== 0) {
+              const pushErrorDetail = pushResult.stderr || pushResult.stdout || 'Unknown error';
               updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                 if (card.type !== 'commit-review') return card;
-                return { ...card, data: { ...card.data, status: 'error', error: `Push failed: ${pushResult.stderr}` } as CommitReviewCardData };
+                return { ...card, data: { ...card.data, status: 'error', error: `Push failed: ${pushErrorDetail}` } as CommitReviewCardData };
               });
               return;
             }
@@ -822,6 +845,7 @@ export function useChat(activeRepoFullName: string | null) {
 
     // Sandbox
     setSandboxId,
+    setEnsureSandbox,
 
     // AGENTS.md
     setAgentsMd,

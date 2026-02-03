@@ -121,6 +121,7 @@ export type ChatCard =
   | { type: 'commit-list'; data: CommitListCardData }
   | { type: 'file'; data: FileCardData }
   | { type: 'branch-list'; data: BranchListCardData }
+  | { type: 'file-list'; data: FileListCardData }
   | { type: 'sandbox'; data: SandboxCardData }
   | { type: 'diff-preview'; data: DiffPreviewCardData }
   | { type: 'audit-verdict'; data: AuditVerdictCardData }
@@ -172,6 +173,12 @@ export interface BranchListCardData {
   repo: string;
   defaultBranch: string;
   branches: { name: string; isDefault: boolean; isProtected: boolean }[];
+}
+
+export interface FileListCardData {
+  repo?: string;
+  path: string;
+  entries: { name: string; type: 'file' | 'directory'; size?: number }[];
 }
 
 export interface EditorCardData {

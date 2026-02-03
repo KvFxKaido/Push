@@ -1,0 +1,30 @@
+name: Deploy Modal Sandbox
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sandbox/**'
+  workflow_dispatch:  # Manual trigger from GitHub UI
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Modal CLI
+        run: pip install modal
+
+      - name: Deploy to Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          cd sandbox
+          modal deploy app.py

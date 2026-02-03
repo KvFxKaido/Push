@@ -4,6 +4,7 @@ import { PRListCard } from './PRListCard';
 import { CommitListCard } from './CommitListCard';
 import { FileCard } from './FileCard';
 import { BranchListCard } from './BranchListCard';
+import { FileListCard } from './FileListCard';
 import { SandboxCard } from './SandboxCard';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
@@ -30,6 +31,8 @@ export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRende
       return <FileCard data={card.data} />;
     case 'branch-list':
       return <BranchListCard data={card.data} />;
+    case 'file-list':
+      return <FileListCard data={card.data} />;
     case 'sandbox':
       return <SandboxCard data={card.data} />;
     case 'diff-preview':

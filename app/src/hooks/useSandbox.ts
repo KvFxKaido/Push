@@ -30,8 +30,8 @@ export function useSandbox() {
     sandboxIdRef.current = sandboxId;
   }, [sandboxId]);
 
-  const start = useCallback(async (repo: string, branch?: string) => {
-    if (status === 'creating') return;
+  const start = useCallback(async (repo: string, branch?: string): Promise<string | null> => {
+    if (status === 'creating') return null;
 
     setStatus('creating');
     setError(null);
@@ -43,15 +43,17 @@ export function useSandbox() {
       if (session.status === 'error') {
         setStatus('error');
         setError(session.error || 'Sandbox creation failed');
-        return;
+        return null;
       }
 
       setSandboxId(session.sandboxId);
       setStatus('ready');
+      return session.sandboxId;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus('error');
       setError(msg);
+      return null;
     }
   }, [status]);
 
