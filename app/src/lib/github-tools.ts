@@ -27,6 +27,8 @@ export type ToolCall =
 const ACCESS_DENIED_MESSAGE =
   '[Tool Error] Access denied — can only query the active repo (owner/repo)';
 
+const GITHUB_TIMEOUT_MS = 15_000; // 15s timeout for GitHub API calls
+
 // --- Auth helper (mirrors useGitHub / useRepos pattern) ---
 
 function getGitHubHeaders(): Record<string, string> {
@@ -39,6 +41,24 @@ function getGitHubHeaders(): Record<string, string> {
     headers['Authorization'] = `token ${authToken}`;
   }
   return headers;
+}
+
+// --- Fetch with timeout ---
+
+async function githubFetch(url: string, options?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GITHUB_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error(`GitHub API timed out after ${GITHUB_TIMEOUT_MS / 1000}s — check your connection.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // --- Detection helpers ---
@@ -112,14 +132,14 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
   const headers = getGitHubHeaders();
 
   // Fetch PR details
-  const prRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, { headers });
+  const prRes = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, { headers });
   if (!prRes.ok) {
     throw new Error(`GitHub API returned ${prRes.status} for PR #${pr} on ${repo}`);
   }
   const prData = await prRes.json();
 
   // Fetch diff
-  const diffRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, {
+  const diffRes = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, {
     headers: { ...headers, Accept: 'application/vnd.github.v3.diff' },
   });
   let diff = '';
@@ -131,7 +151,7 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
   }
 
   // Fetch files
-  const filesRes = await fetch(`https://api.github.com/repos/${repo}/pulls/${pr}/files`, { headers });
+  const filesRes = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${pr}/files`, { headers });
   let filesData: { filename: string; status: string; additions: number; deletions: number }[] = [];
   let filesSummary = '';
   if (filesRes.ok) {
@@ -196,7 +216,7 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
 async function executeListPRs(repo: string, state: string = 'open'): Promise<ToolExecutionResult> {
   const headers = getGitHubHeaders();
 
-  const res = await fetch(
+  const res = await githubFetch(
     `https://api.github.com/repos/${repo}/pulls?state=${state}&per_page=20&sort=updated&direction=desc`,
     { headers },
   );
@@ -240,7 +260,7 @@ async function executeListPRs(repo: string, state: string = 'open'): Promise<Too
 async function executeListCommits(repo: string, count: number = 10): Promise<ToolExecutionResult> {
   const headers = getGitHubHeaders();
 
-  const res = await fetch(
+  const res = await githubFetch(
     `https://api.github.com/repos/${repo}/commits?per_page=${Math.min(count, 30)}`,
     { headers },
   );
@@ -281,7 +301,7 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
   const headers = getGitHubHeaders();
   const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
 
-  const res = await fetch(
+  const res = await githubFetch(
     `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}${ref}`,
     { headers },
   );
@@ -343,7 +363,7 @@ async function executeListDirectory(repo: string, path: string = '', branch?: st
   const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
   const apiPath = path ? encodeURIComponent(path) : '';
 
-  const res = await fetch(
+  const res = await githubFetch(
     `https://api.github.com/repos/${repo}/contents/${apiPath}${ref}`,
     { headers },
   );
@@ -384,8 +404,8 @@ async function executeListBranches(repo: string): Promise<ToolExecutionResult> {
 
   // Fetch branches and repo info in parallel
   const [branchRes, repoRes] = await Promise.all([
-    fetch(`https://api.github.com/repos/${repo}/branches?per_page=30`, { headers }),
-    fetch(`https://api.github.com/repos/${repo}`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}/branches?per_page=30`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}`, { headers }),
   ]);
 
   if (!branchRes.ok) {
@@ -427,7 +447,7 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
   const commitRef = ref || 'HEAD';
 
   // Try check runs API first (GitHub Actions, etc.)
-  const checkRunsRes = await fetch(
+  const checkRunsRes = await githubFetch(
     `https://api.github.com/repos/${repo}/commits/${commitRef}/check-runs?per_page=50`,
     { headers },
   );
@@ -449,7 +469,7 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
 
   // If no check runs, fall back to combined status API (Travis, etc.)
   if (checks.length === 0) {
-    const statusRes = await fetch(
+    const statusRes = await githubFetch(
       `https://api.github.com/repos/${repo}/commits/${commitRef}/status`,
       { headers },
     );

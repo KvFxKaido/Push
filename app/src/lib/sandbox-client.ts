@@ -33,20 +33,39 @@ export interface DiffResult {
 // --- Helpers ---
 
 const SANDBOX_BASE = '/api/sandbox';
+const DEFAULT_TIMEOUT_MS = 30_000; // 30s for most operations
+const EXEC_TIMEOUT_MS = 120_000;   // 120s for command execution
 
-async function sandboxFetch<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${SANDBOX_BASE}/${endpoint}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+async function sandboxFetch<T>(
+  endpoint: string,
+  body: Record<string, unknown>,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Sandbox ${endpoint} failed (${res.status}): ${text.slice(0, 200)}`);
+  try {
+    const res = await fetch(`${SANDBOX_BASE}/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Sandbox ${endpoint} failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+
+    return res.json();
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error(`Sandbox ${endpoint} timed out after ${Math.round(timeoutMs / 1000)}s — the server may be slow or unreachable.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-
-  return res.json();
 }
 
 // --- Public API ---
@@ -77,7 +96,7 @@ export async function execInSandbox(
     sandbox_id: sandboxId,
     command,
     workdir: workdir || '/workspace',
-  });
+  }, EXEC_TIMEOUT_MS);
 }
 
 export async function readFromSandbox(

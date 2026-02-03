@@ -383,7 +383,6 @@ export function useChat(activeRepoFullName: string | null) {
 
       let apiMessages = [...updatedWithUser];
       const MAX_TOOL_ROUNDS = 3;
-      const hasSandbox = Boolean(sandboxIdRef.current);
 
       try {
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -408,6 +407,9 @@ export function useChat(activeRepoFullName: string | null) {
 
           let accumulated = '';
           let thinkingAccumulated = '';
+
+          // Re-check sandbox on every round so auto-spun sandboxes are visible to the LLM
+          const hasSandboxThisRound = Boolean(sandboxIdRef.current);
 
           const streamError = await new Promise<Error | null>((resolve) => {
             streamChat(
@@ -449,7 +451,7 @@ export function useChat(activeRepoFullName: string | null) {
                 });
               },
               workspaceContextRef.current || undefined,
-              hasSandbox,
+              hasSandboxThisRound,
             );
           });
 
