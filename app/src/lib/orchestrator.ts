@@ -39,9 +39,22 @@ Here's what I can help with:
 
 Connect your GitHub account in settings to get started, or just ask me anything about code.`;
 
+// Multimodal content types (OpenAI-compatible)
+interface LLMMessageContentText {
+  type: 'text';
+  text: string;
+}
+
+interface LLMMessageContentImage {
+  type: 'image_url';
+  image_url: { url: string };
+}
+
+type LLMMessageContent = LLMMessageContentText | LLMMessageContentImage;
+
 interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | LLMMessageContent[];
 }
 
 function toLLMMessages(
@@ -64,10 +77,43 @@ function toLLMMessages(
   ];
 
   for (const msg of messages) {
-    llmMessages.push({
-      role: msg.role === 'user' ? 'user' : 'assistant',
-      content: msg.content,
-    });
+    // Check for attachments (multimodal message)
+    if (msg.attachments && msg.attachments.length > 0) {
+      const contentParts: LLMMessageContent[] = [];
+
+      // Add text first (if any)
+      if (msg.content) {
+        contentParts.push({ type: 'text', text: msg.content });
+      }
+
+      // Add attachments
+      for (const att of msg.attachments) {
+        if (att.type === 'image') {
+          // Image: use image_url format with base64 data URL
+          contentParts.push({
+            type: 'image_url',
+            image_url: { url: att.content },
+          });
+        } else {
+          // Code/document: embed as text block
+          contentParts.push({
+            type: 'text',
+            text: `[Attached file: ${att.filename}]\n\`\`\`\n${att.content}\n\`\`\``,
+          });
+        }
+      }
+
+      llmMessages.push({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: contentParts,
+      });
+    } else {
+      // Simple text message (existing behavior)
+      llmMessages.push({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: msg.content,
+      });
+    }
   }
 
   return llmMessages;

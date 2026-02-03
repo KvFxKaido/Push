@@ -1,6 +1,6 @@
 import { memo, useMemo, useState } from 'react';
-import { ChevronRight, GitPullRequest, GitBranch, GitCommit, FileCode, Terminal, FileDiff, PenTool, ShieldCheck, Activity, FolderOpen } from 'lucide-react';
-import type { ChatMessage, CardAction } from '@/types';
+import { ChevronRight, GitPullRequest, GitBranch, GitCommit, FileCode, Terminal, FileDiff, PenTool, ShieldCheck, Activity, FolderOpen, FileText } from 'lucide-react';
+import type { ChatMessage, CardAction, AttachmentData } from '@/types';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 
@@ -234,6 +234,51 @@ function ToolCallStatus({ content }: { content: string }) {
   );
 }
 
+function AttachmentBadge({ attachment }: { attachment: AttachmentData }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (attachment.type === 'image') {
+    return (
+      <>
+        <button
+          onClick={() => setExpanded(true)}
+          className="block rounded-lg overflow-hidden border border-[#27272a] hover:border-[#3f3f46] transition-colors"
+        >
+          <img
+            src={attachment.thumbnail || attachment.content}
+            alt={attachment.filename}
+            className="h-16 w-16 object-cover"
+          />
+        </button>
+        {/* Expanded image modal */}
+        {expanded && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+            onClick={() => setExpanded(false)}
+          >
+            <img
+              src={attachment.content}
+              alt={attachment.filename}
+              className="max-w-full max-h-full object-contain rounded-lg"
+            />
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // Code or document
+  const Icon = attachment.type === 'code' ? FileCode : FileText;
+  return (
+    <div className="flex items-center gap-1.5 rounded-lg bg-[#111113]/50 border border-[#27272a] px-2 py-1">
+      <Icon className="h-3.5 w-3.5 text-[#71717a]" />
+      <span className="text-[12px] text-[#a1a1aa] truncate max-w-[120px]">
+        {attachment.filename}
+      </span>
+    </div>
+  );
+}
+
 export const MessageBubble = memo(function MessageBubble({
   message,
   onCardAction,
@@ -260,12 +305,25 @@ export const MessageBubble = memo(function MessageBubble({
   }
 
   if (isUser) {
+    const hasAttachments = message.attachments && message.attachments.length > 0;
+
     return (
       <div className="flex justify-end px-4 py-1">
         <div className="max-w-[85%] rounded-2xl rounded-br-md bg-[#1a1a2e] px-4 py-2.5">
-          <p className="text-[15px] leading-relaxed text-[#fafafa] whitespace-pre-wrap break-words">
-            {message.content}
-          </p>
+          {/* Attachments */}
+          {hasAttachments && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {message.attachments!.map((att) => (
+                <AttachmentBadge key={att.id} attachment={att} />
+              ))}
+            </div>
+          )}
+          {/* Text content */}
+          {message.content && (
+            <p className="text-[15px] leading-relaxed text-[#fafafa] whitespace-pre-wrap break-words">
+              {message.content}
+            </p>
+          )}
         </div>
       </div>
     );

@@ -102,6 +102,16 @@ export interface RepoWithActivity extends RepoSummary {
 
 // Chat types
 
+export interface AttachmentData {
+  id: string;
+  type: 'image' | 'code' | 'document';
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  content: string;      // base64 data URL for images, text for code/docs
+  thumbnail?: string;   // small preview for images
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -110,6 +120,7 @@ export interface ChatMessage {
   status?: 'sending' | 'streaming' | 'done' | 'error';
   thinking?: string;
   cards?: ChatCard[];
+  attachments?: AttachmentData[];  // User-attached files
   isToolCall?: boolean;    // Assistant message that requested a tool
   isToolResult?: boolean;  // Synthetic user message carrying tool data
 }

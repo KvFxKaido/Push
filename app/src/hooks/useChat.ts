@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardAction, CommitReviewCardData, ChatCard } from '@/types';
+import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardAction, CommitReviewCardData, ChatCard, AttachmentData } from '@/types';
 import { streamChat } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
@@ -334,8 +334,8 @@ export function useChat(activeRepoFullName: string | null) {
   // --- Send message with tool execution loop ---
 
   const sendMessage = useCallback(
-    async (text: string) => {
-      if (!text.trim() || isStreaming) return;
+    async (text: string, attachments?: AttachmentData[]) => {
+      if ((!text.trim() && (!attachments || attachments.length === 0)) || isStreaming) return;
 
       let chatId = activeChatId;
       if (!chatId || !conversations[chatId]) {
@@ -348,6 +348,7 @@ export function useChat(activeRepoFullName: string | null) {
         content: text.trim(),
         timestamp: Date.now(),
         status: 'done',
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
       };
 
       const currentMessages = conversations[chatId]?.messages || [];
