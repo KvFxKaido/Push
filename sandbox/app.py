@@ -1,5 +1,5 @@
 """
-Modal Python App — Sandbox CRUD for Diff.
+Modal Python App — Sandbox CRUD for Push.
 
 Exposes 9 web endpoints as plain HTTPS POST routes.
 Each endpoint receives JSON and returns JSON.
@@ -11,7 +11,7 @@ Deploy: cd sandbox && python -m modal deploy app.py
 import modal
 import base64
 
-app = modal.App("diff-sandbox")
+app = modal.App("push-sandbox")
 
 # Image for sandbox containers (cloned repos run here)
 sandbox_image = (

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Generate Push Icons</title>
+  <style>
+    body { font-family: system-ui; padding: 40px; background: #1a1a1a; color: #fff; }
+    .canvas-container { display: flex; gap: 40px; margin: 20px 0; }
+    canvas { border: 1px solid #333; }
+    button { background: #0070f3; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 16px; margin: 10px 5px; }
+    button:hover { background: #0060d3; }
+    h1 { color: #0070f3; }
+    p { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Generate Push Icons</h1>
+  <p>Click the buttons below to download the new "P" icons for the PWA.</p>
+
+  <div class="canvas-container">
+    <div>
+      <h3>192x192</h3>
+      <canvas id="icon192" width="192" height="192"></canvas>
+      <br>
+      <button onclick="download('icon192', 'icon-192.png')">Download 192px</button>
+    </div>
+    <div>
+      <h3>512x512</h3>
+      <canvas id="icon512" width="512" height="512"></canvas>
+      <br>
+      <button onclick="download('icon512', 'icon-512.png')">Download 512px</button>
+    </div>
+  </div>
+
+  <button onclick="downloadAll()">Download Both</button>
+
+  <script>
+    function drawIcon(canvasId, size) {
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas.getContext('2d');
+
+      // Background with rounded corners
+      const radius = size * 0.1875; // 6/32 ratio from favicon
+      ctx.fillStyle = '#0070f3';
+      ctx.beginPath();
+      ctx.roundRect(0, 0, size, size, radius);
+      ctx.fill();
+
+      // Letter "P"
+      ctx.fillStyle = 'white';
+      ctx.font = `bold ${size * 0.6875}px system-ui, -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('P', size / 2, size / 2 + size * 0.05);
+    }
+
+    function download(canvasId, filename) {
+      const canvas = document.getElementById(canvasId);
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    function downloadAll() {
+      download('icon192', 'icon-192.png');
+      setTimeout(() => download('icon512', 'icon-512.png'), 100);
+    }
+
+    // Draw on load
+    drawIcon('icon192', 192);
+    drawIcon('icon512', 512);
+  </script>
+</body>
+</html>

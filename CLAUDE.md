@@ -1,4 +1,4 @@
-# Diff — Mobile AI Coding Agent
+# Push — Mobile AI Coding Agent
 
 ChatGPT with direct access to your repos. A personal, mobile-first chat interface backed by role-based AI agents that can read your code, write patches, run them in a sandbox, and commit to main.
 
@@ -90,7 +90,7 @@ VITE_GITHUB_OAUTH_PROXY=...       # Optional, required for OAuth token exchange
 
 **Worker secrets (Cloudflare):**
 - `MOONSHOT_API_KEY` — Kimi For Coding API key (production proxy, starts with `sk-kimi-`)
-- `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--diff-sandbox`). Endpoints follow pattern `{base}-{function}.modal.run`
+- `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--push-sandbox`). Endpoints follow pattern `{base}-{function}.modal.run`
 
 **API key:** Kimi For Coding key can be set via env var or pasted in the Settings UI at runtime (stored in localStorage). Settings UI keys override env vars.
 

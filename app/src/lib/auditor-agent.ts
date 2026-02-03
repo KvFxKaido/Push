@@ -12,7 +12,7 @@ import type { ChatMessage, AuditVerdictCardData } from '@/types';
 import { streamMoonshotChat } from './orchestrator';
 import { getModelForRole } from './providers';
 
-const AUDITOR_SYSTEM_PROMPT = `You are the Auditor agent for Diff, a mobile AI coding assistant. Your sole job is to review code diffs for safety.
+const AUDITOR_SYSTEM_PROMPT = `You are the Auditor agent for Push, a mobile AI coding assistant. Your sole job is to review code diffs for safety.
 
 You MUST respond with ONLY a valid JSON object. No other text.
 

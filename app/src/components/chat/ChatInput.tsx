@@ -59,7 +59,7 @@ export function ChatInput({ onSend, disabled, repoName }: ChatInputProps) {
               value={value}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={repoName ? `Message about ${repoName}...` : 'Message Diff...'}
+              placeholder={repoName ? `Message about ${repoName}...` : 'Message Push...'}
               disabled={disabled}
               rows={1}
               className="w-full resize-none bg-transparent px-4 py-2.5 text-[15px] text-[#fafafa] placeholder:text-[#52525b] outline-none disabled:opacity-40 leading-[22px]"

@@ -53,7 +53,7 @@ function EmptyState({
           </svg>
         </div>
         <h2 className="text-lg font-semibold text-[#fafafa] mb-2">
-          {activeRepo ? activeRepo.name : 'Diff'}
+          {activeRepo ? activeRepo.name : 'Push'}
         </h2>
         <p className="text-sm text-[#a1a1aa] leading-relaxed">
           {activeRepo

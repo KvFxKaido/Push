@@ -1,5 +1,5 @@
 /**
- * Custom CodeMirror 6 dark theme matching Diff's app palette.
+ * Custom CodeMirror 6 dark theme matching Push's app palette.
  *
  * Colors pulled from the existing card/chat UI:
  * - bg: #111113 (card body), #0c0c0e (editor gutter)

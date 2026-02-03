@@ -47,7 +47,7 @@ export function OnboardingScreen({
             </svg>
           </div>
           <h1 className="text-2xl font-semibold text-[#fafafa] tracking-tight mb-2">
-            Diff
+            Push
           </h1>
           <p className="text-sm text-[#a1a1aa] leading-relaxed">
             AI coding agent with direct repo access.

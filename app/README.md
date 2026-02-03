@@ -1,6 +1,6 @@
-# Diff — App
+# Push — App
 
-Frontend source for Diff. See the [root README](../README.md) for architecture and project overview.
+Frontend source for Push. See the [root README](../README.md) for architecture and project overview.
 
 ## Scripts
 
@@ -28,6 +28,6 @@ Without a Kimi key the app runs in demo mode.
 Worker secrets (set via `wrangler secret put`):
 
 - `MOONSHOT_API_KEY` — Kimi For Coding API key for production proxy (starts with `sk-kimi-`)
-- `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--diff-sandbox`). Without this, sandbox returns 503.
+- `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--push-sandbox`). Without this, sandbox returns 503.
 
 Sandbox backend: `cd ../sandbox && modal deploy app.py` — deploys the 6 Modal web endpoints.

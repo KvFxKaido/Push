@@ -1,6 +1,6 @@
 {
-  "name": "Diff",
-  "short_name": "Diff",
+  "name": "Push",
+  "short_name": "Push",
   "description": "AI coding agent with direct repo access",
   "start_url": "/",
   "display": "standalone",

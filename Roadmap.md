@@ -1,4 +1,4 @@
-Diff — Mobile AI Coding Agent
+Push — Mobile AI Coding Agent
 
 Purpose: ChatGPT with direct access to your repos. A personal, mobile‑first chat interface backed by role‑based AI agents that can read your code, write patches, run them in a sandbox, and commit to main — all from your phone.
 
@@ -287,7 +287,7 @@ What was learned:
 
 Phase 5 — Native Android App
 
-Goal: Ship Diff as a native Android app. The PWA proved the product works on mobile — now give it the distribution, performance, and OS integration that only a native app provides.
+Goal: Ship Push as a native Android app. The PWA proved the product works on mobile — now give it the distribution, performance, and OS integration that only a native app provides.
 
 Why native:
 - Push notifications for CI results, audit verdicts, and commit status — impossible from a PWA on Android without workarounds

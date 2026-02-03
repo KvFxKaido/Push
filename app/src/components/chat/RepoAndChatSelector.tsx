@@ -39,7 +39,7 @@ export function RepoAndChatSelector({
   const chatTitle = activeConv?.title || 'New Chat';
   const repoName = activeRepo?.name;
 
-  // Build trigger label: "repo / chat ▾" or just "Diff"
+  // Build trigger label: "repo / chat ▾" or just "Push"
   const triggerLabel = repoName
     ? (
         <>
@@ -48,7 +48,7 @@ export function RepoAndChatSelector({
           <span className="text-[#a1a1aa] truncate">{chatTitle}</span>
         </>
       )
-    : <span className="text-[#fafafa] font-semibold">Diff</span>;
+    : <span className="text-[#fafafa] font-semibold">Push</span>;
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>

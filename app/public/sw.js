@@ -1,4 +1,4 @@
-const CACHE_NAME = 'diff-v1';
+const CACHE_NAME = 'push-v1';
 const urlsToCache = [
   '/',
   '/index.html',

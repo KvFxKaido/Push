@@ -17,7 +17,7 @@ const KIMI_MODEL = 'k2p5';
 // Shared: system prompt, demo text, message builder
 // ---------------------------------------------------------------------------
 
-export const ORCHESTRATOR_SYSTEM_PROMPT = `You are Diff, a concise AI coding assistant with direct GitHub repo access. You help developers review PRs, understand codebases, and ship changes from their phone.
+export const ORCHESTRATOR_SYSTEM_PROMPT = `You are Push, a concise AI coding assistant with direct GitHub repo access. You help developers review PRs, understand codebases, and ship changes from their phone.
 
 Rules:
 - Be conversational but concise. No walls of text.
@@ -28,7 +28,7 @@ Rules:
 - Never start with "I" — vary your openings.
 - FOCUS: You only know about and operate on the currently active repo. Never mention, suggest, or offer to switch to other repos — the user controls that via the UI. All questions about "the repo", "PRs", "recent changes" refer to the active repo. Period.`;
 
-const DEMO_WELCOME = `Welcome to **Diff** — your AI coding agent with direct repo access.
+const DEMO_WELCOME = `Welcome to **Push** — your AI coding agent with direct repo access.
 
 Here's what I can help with:
 

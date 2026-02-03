@@ -1,10 +1,10 @@
-# Diff
+# Push
 
 Mobile-first AI coding agent with direct GitHub repo access. Chat with your codebase — review PRs, explore changes, and ship code from your phone.
 
 ## What It Does
 
-Diff is a personal chat interface backed by role-based AI agents. Select a repo, ask questions, and the agent reads your code, analyzes PRs, and shows results as inline cards — all in a streaming conversation.
+Push is a personal chat interface backed by role-based AI agents. Select a repo, ask questions, and the agent reads your code, analyzes PRs, and shows results as inline cards — all in a streaming conversation.
 
 - **Chat-first** — conversation is the primary interface, not forms or dashboards
 - **Repo-locked context** — select a repo and the agent only sees that repo
@@ -54,7 +54,7 @@ npx wrangler deploy     # from repo root
 ## Project Structure
 
 ```
-Diff/
+Push/
 ├── CLAUDE.md              # AI assistant context (architecture, conventions)
 ├── wrangler.jsonc         # Cloudflare Workers config
 ├── sandbox/

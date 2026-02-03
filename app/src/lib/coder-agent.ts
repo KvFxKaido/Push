@@ -13,7 +13,7 @@ import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } 
 
 const MAX_CODER_ROUNDS = 5;
 
-const CODER_SYSTEM_PROMPT = `You are the Coder agent for Diff, a mobile AI coding assistant. Your job is to implement coding tasks.
+const CODER_SYSTEM_PROMPT = `You are the Coder agent for Push, a mobile AI coding assistant. Your job is to implement coding tasks.
 
 Rules:
 - You receive a task description and work autonomously to complete it
