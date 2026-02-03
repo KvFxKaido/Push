@@ -9,6 +9,7 @@
  */
 
 import type { ToolExecutionResult, SandboxCardData, DiffPreviewCardData, CommitReviewCardData } from '@/types';
+import { extractBareToolJsonObjects } from './tool-dispatch';
 import {
   execInSandbox,
   readFromSandbox,
@@ -76,17 +77,11 @@ export function detectSandboxToolCall(text: string): SandboxToolCall | null {
     }
   }
 
-  // Bare JSON fallback
-  const bareRegex = /\{[\s\S]*?"tool"\s*:\s*"sandbox_[^"]+?"[\s\S]*?\}/g;
-  while ((match = bareRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[0]);
-      if (parsed.tool?.startsWith('sandbox_') && parsed.args) {
-        const result = validateSandboxToolCall(parsed);
-        if (result) return result;
-      }
-    } catch {
-      // Not valid JSON
+  // Bare JSON fallback (brace-counting handles nested objects)
+  for (const parsed of extractBareToolJsonObjects(text)) {
+    if (parsed.tool?.startsWith('sandbox_') && parsed.args) {
+      const result = validateSandboxToolCall(parsed);
+      if (result) return result;
     }
   }
 

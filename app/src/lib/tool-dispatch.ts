@@ -11,6 +11,60 @@ import type { ToolExecutionResult } from '@/types';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, executeSandboxToolCall, type SandboxToolCall } from './sandbox-tools';
 
+// ---------------------------------------------------------------------------
+// Shared: brace-counting JSON extractor (handles nested objects)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract bare JSON objects containing a "tool" key from text.
+ * Uses brace-counting instead of regex so nested objects like
+ * {"tool":"x","args":{"repo":"a/b","path":"c"}} are captured correctly.
+ */
+export function extractBareToolJsonObjects(text: string): any[] {
+  const results: any[] = [];
+  let i = 0;
+
+  while (i < text.length) {
+    const braceIdx = text.indexOf('{', i);
+    if (braceIdx === -1) break;
+
+    // Brace-count to find the matching closing }
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+
+    for (let j = braceIdx; j < text.length; j++) {
+      const ch = text[j];
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\' && inString) { escaped = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      if (ch === '}') {
+        depth--;
+        if (depth === 0) { end = j; break; }
+      }
+    }
+
+    if (end === -1) break; // unclosed brace — stop
+
+    const candidate = text.slice(braceIdx, end + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && parsed.tool) {
+        results.push(parsed);
+      }
+    } catch {
+      // Not valid JSON — skip
+    }
+
+    i = end + 1;
+  }
+
+  return results;
+}
+
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
@@ -84,19 +138,13 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
     }
   }
 
-  // Bare JSON fallback
-  const bareRegex = /\{[\s\S]*?"tool"\s*:\s*"delegate_coder"[\s\S]*?\}/g;
-  while ((match = bareRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[0]);
-      if (parsed.tool === 'delegate_coder' && parsed.args?.task) {
-        return {
-          source: 'delegate',
-          call: { tool: 'delegate_coder', args: { task: parsed.args.task, files: parsed.args.files } },
-        };
-      }
-    } catch {
-      // Not valid JSON
+  // Bare JSON fallback (brace-counting handles nested objects)
+  for (const parsed of extractBareToolJsonObjects(text)) {
+    if (parsed.tool === 'delegate_coder' && parsed.args?.task) {
+      return {
+        source: 'delegate',
+        call: { tool: 'delegate_coder', args: { task: parsed.args.task, files: parsed.args.files } },
+      };
     }
   }
 
