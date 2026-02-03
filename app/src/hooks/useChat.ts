@@ -382,10 +382,9 @@ export function useChat(activeRepoFullName: string | null) {
       abortRef.current = false;
 
       let apiMessages = [...updatedWithUser];
-      const MAX_TOOL_ROUNDS = 3;
 
       try {
-        for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        for (let round = 0; ; round++) {
           if (abortRef.current) break;
 
           if (round > 0) {
@@ -480,7 +479,7 @@ export function useChat(activeRepoFullName: string | null) {
           // Check for tool call in the response (unified dispatch)
           const toolCall = detectAnyToolCall(accumulated);
 
-          if (!toolCall || round === MAX_TOOL_ROUNDS) {
+          if (!toolCall) {
             setConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
