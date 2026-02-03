@@ -10,6 +10,8 @@ Deploy: cd sandbox && python -m modal deploy app.py
 
 import modal
 import base64
+import json
+import urllib.request
 
 app = modal.App("diff-sandbox")
 
@@ -21,11 +23,34 @@ sandbox_image = (
     .run_commands(
         "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
         "apt-get install -y nodejs",
+        # Default git identity — overridden per-session when GitHub token is available
+        "git config --global user.email 'sandbox@diff.app'",
+        "git config --global user.name 'Diff User'",
     )
 )
 
 # Image for the web endpoint functions themselves (needs FastAPI)
 endpoint_image = modal.Image.debian_slim(python_version="3.12").pip_install("fastapi[standard]")
+
+
+def _fetch_github_user(token: str) -> tuple[str, str]:
+    """Fetch name and email from GitHub API. Returns (name, email) or defaults."""
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            user = json.loads(resp.read())
+        name = user.get("name") or user.get("login", "Diff User")
+        login = user.get("login", "user")
+        email = user.get("email") or f"{login}@users.noreply.github.com"
+        return name, email
+    except Exception:
+        return "Diff User", "sandbox@diff.app"
 
 
 @app.function(image=endpoint_image)
@@ -60,6 +85,14 @@ def create(data: dict):
         stderr = p.stderr.read()
         sb.terminate()
         return {"error": f"Clone failed: {stderr}", "sandbox_id": None}
+
+    # Configure git identity so commits work inside the sandbox
+    if github_token:
+        name, email = _fetch_github_user(github_token)
+    else:
+        name, email = "Diff User", "sandbox@diff.app"
+    sb.exec("git", "config", "--global", "user.name", name).wait()
+    sb.exec("git", "config", "--global", "user.email", email).wait()
 
     return {"sandbox_id": sb.object_id, "status": "ready"}
 
