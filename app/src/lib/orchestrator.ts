@@ -231,12 +231,9 @@ export async function streamMoonshotChat(
           const choice = parsed.choices?.[0];
           if (!choice) continue;
 
-          // Check finish_reason
-          if (choice.finish_reason === 'stop' || choice.finish_reason === 'end_turn') {
-            parser.flush();
-            onDone();
-            return;
-          }
+          // Process tokens BEFORE checking finish_reason — Kimi may
+          // bundle the last content token in the same SSE event as
+          // finish_reason:"stop", so we must capture it first.
 
           // Kimi For Coding: reasoning tokens arrive via delta.reasoning_content
           const reasoningToken = choice.delta?.reasoning_content;
@@ -248,6 +245,13 @@ export async function streamMoonshotChat(
           const token = choice.delta?.content;
           if (token) {
             parser.push(token);
+          }
+
+          // Check finish_reason (after processing any final tokens in this chunk)
+          if (choice.finish_reason === 'stop' || choice.finish_reason === 'end_turn' || choice.finish_reason === 'tool_calls') {
+            parser.flush();
+            onDone();
+            return;
           }
         } catch {
           // Skip malformed SSE data

@@ -7,6 +7,7 @@
  */
 
 import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, CICheck, CIStatusCardData } from '@/types';
+import { extractBareToolJsonObjects } from './tool-dispatch';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
@@ -94,17 +95,11 @@ export function detectToolCall(text: string): ToolCall | null {
     }
   }
 
-  // Also try bare JSON (no fences) — model sometimes omits backticks
-  const bareRegex = /\{[\s\S]*?"tool"\s*:\s*"[^"]+?"[\s\S]*?\}/g;
-  while ((match = bareRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[0]);
-      if (parsed.tool && parsed.args) {
-        const result = validateToolCall(parsed);
-        if (result) return result;
-      }
-    } catch {
-      // Not valid JSON
+  // Bare JSON fallback (brace-counting handles nested objects)
+  for (const parsed of extractBareToolJsonObjects(text)) {
+    if (parsed.tool && parsed.args) {
+      const result = validateToolCall(parsed);
+      if (result) return result;
     }
   }
 
