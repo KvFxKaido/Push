@@ -47,7 +47,13 @@ export function extractBareToolJsonObjects(text: string): any[] {
       }
     }
 
-    if (end === -1) break; // unclosed brace — stop
+    if (end === -1) {
+      // Unclosed brace — skip it and keep scanning. An unmatched {
+      // in prose or a code snippet shouldn't prevent us from finding
+      // a valid tool-call JSON later in the text.
+      i = braceIdx + 1;
+      continue;
+    }
 
     const candidate = text.slice(braceIdx, end + 1);
     try {
