@@ -23,7 +23,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
   const isBusy = isApproved || isPushing;
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${
         isCommitted ? 'bg-[#22c55e]/5' :
@@ -77,7 +77,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
             value={editedMessage}
             onChange={(e) => setEditedMessage(e.target.value)}
             rows={1}
-            className="w-full rounded-lg border border-[#1a1a1e] bg-[#0a0a0c] px-3 py-2 text-[13px] text-[#e4e4e7] font-mono placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46] resize-none leading-relaxed"
+            className="w-full rounded-lg border border-[#1a1a1a] bg-[#0a0a0c] px-3 py-2 text-[13px] text-[#e4e4e7] font-mono placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46] resize-none leading-relaxed"
             style={{ minHeight: '38px', maxHeight: '80px' }}
             onInput={(e) => {
               const target = e.target as HTMLTextAreaElement;
@@ -86,7 +86,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
             }}
           />
         ) : (
-          <div className="rounded-lg border border-[#1a1a1e] bg-[#0a0a0c] px-3 py-2">
+          <div className="rounded-lg border border-[#1a1a1a] bg-[#0a0a0c] px-3 py-2">
             <p className="text-[13px] text-[#a1a1aa] font-mono">
               {data.commitMessage}
             </p>
@@ -125,7 +125,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
                 messageId,
                 cardIndex,
               })}
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-[#1a1a1e] px-4 py-2.5 text-[13px] font-medium text-[#a1a1aa] transition-all duration-200 hover:bg-[#1a1a1e] hover:text-[#e4e4e7] active:scale-[0.98]"
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-[#1a1a1a] px-4 py-2.5 text-[13px] font-medium text-[#a1a1aa] transition-all duration-200 hover:bg-[#1a1a1a] hover:text-[#e4e4e7] active:scale-[0.98]"
               style={{ minHeight: '44px' }}
             >
               <X className="h-4 w-4" />

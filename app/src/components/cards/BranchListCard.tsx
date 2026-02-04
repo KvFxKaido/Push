@@ -3,9 +3,9 @@ import type { BranchListCardData } from '@/types';
 
 export function BranchListCard({ data }: { data: BranchListCardData }) {
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
       {/* Header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1e]">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1a]">
         <GitBranch className="h-3.5 w-3.5 text-[#a1a1aa]" />
         <span className="text-[13px] font-medium text-[#fafafa]">
           {data.branches.length} branch{data.branches.length !== 1 ? 'es' : ''}
@@ -14,7 +14,7 @@ export function BranchListCard({ data }: { data: BranchListCardData }) {
       </div>
 
       {/* Branch list */}
-      <div className="divide-y divide-[#1a1a1e]">
+      <div className="divide-y divide-[#1a1a1a]">
         {data.branches.map((branch) => (
           <div
             key={branch.name}

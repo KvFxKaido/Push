@@ -101,12 +101,12 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
   const isRoot = currentPath === '/workspace' || currentPath === '/';
 
   return (
-    <div className="flex h-dvh flex-col bg-[#09090b] safe-area-top">
+    <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
       {/* Header */}
-      <header className="flex items-center gap-2 px-3 py-3 border-b border-[#1a1a1e]">
+      <header className="flex items-center gap-2 px-3 py-3 border-b border-[#1a1a1a]">
         <button
           onClick={onBack}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-[#a1a1aa] transition-colors hover:text-[#fafafa] hover:bg-[#111113] active:scale-95 shrink-0"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[#a1a1aa] transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d] active:scale-95 shrink-0"
           aria-label="Back to chat"
         >
           <MessageSquare className="h-4 w-4" />
@@ -152,7 +152,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         <button
           onClick={() => loadDirectory(currentPath)}
           disabled={status === 'loading'}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#111113] active:scale-95 shrink-0 disabled:opacity-40"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95 shrink-0 disabled:opacity-40"
           aria-label="Refresh directory"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${status === 'loading' ? 'animate-spin' : ''}`} />
@@ -183,13 +183,13 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
             <span className="text-sm">Empty directory</span>
           </div>
         ) : (
-          <ul className="divide-y divide-[#1a1a1e]/50">
+          <ul className="divide-y divide-[#1a1a1a]/50">
             {/* Navigate up row */}
             {!isRoot && (
               <li>
                 <button
                   onClick={navigateUp}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#111113] active:bg-[#161618]"
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#0d0d0d] active:bg-[#161618]"
                 >
                   <ChevronLeft className="h-4 w-4 text-[#52525b] shrink-0" />
                   <span className="text-sm text-[#a1a1aa]">..</span>
@@ -294,7 +294,7 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerLeave}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#111113] active:bg-[#161618] select-none"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#0d0d0d] active:bg-[#161618] select-none"
       >
         {/* Icon */}
         {isDir ? (

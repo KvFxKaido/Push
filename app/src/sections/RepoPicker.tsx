@@ -61,9 +61,9 @@ export function RepoPicker({
   }, [repos, search]);
 
   return (
-    <div className="flex h-dvh flex-col bg-[#09090b] safe-area-top">
+    <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1e]">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a]">
         <div className="flex items-center gap-2 min-w-0">
           {user && (
             <span className="text-sm font-medium text-[#fafafa] truncate">
@@ -74,7 +74,7 @@ export function RepoPicker({
         </div>
         <button
           onClick={onDisconnect}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-[#52525b] transition-colors duration-200 hover:text-[#a1a1aa] hover:bg-[#111113]"
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-[#52525b] transition-colors duration-200 hover:text-[#a1a1aa] hover:bg-[#0d0d0d]"
         >
           <LogOut className="h-3.5 w-3.5" />
           Disconnect
@@ -99,7 +99,7 @@ export function RepoPicker({
             placeholder="Search repositories…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-xl border border-[#1a1a1e] bg-[#111113] pl-10 pr-4 py-2.5 text-sm text-[#fafafa] placeholder:text-[#3f3f46] outline-none transition-colors duration-200 focus:border-[#0070f3]/50"
+            className="w-full rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] pl-10 pr-4 py-2.5 text-sm text-[#fafafa] placeholder:text-[#3f3f46] outline-none transition-colors duration-200 focus:border-[#0070f3]/50"
           />
         </div>
       </div>
@@ -122,7 +122,7 @@ export function RepoPicker({
               <button
                 key={repo.id}
                 onClick={() => onSelect(repo)}
-                className="flex w-full flex-col gap-1.5 rounded-xl border border-[#1a1a1e] bg-[#111113] p-3.5 text-left transition-all duration-200 hover:border-[#27272a] hover:bg-[#141416] active:scale-[0.99]"
+                className="flex w-full flex-col gap-1.5 rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] p-3.5 text-left transition-all duration-200 hover:border-[#27272a] hover:bg-[#141416] active:scale-[0.99]"
               >
                 {/* Name row */}
                 <div className="flex items-center gap-2">

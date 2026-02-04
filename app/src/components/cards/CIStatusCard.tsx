@@ -67,7 +67,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
   );
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${overallBg(data.overall)}`}>
         {overallIcon(data.overall)}
@@ -113,7 +113,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
               messageId,
               cardIndex,
             })}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-[#1a1a1e] w-full px-4 py-2 text-[12px] font-medium text-[#a1a1aa] transition-all duration-200 hover:bg-[#1a1a1e] hover:text-[#e4e4e7] active:scale-[0.98]"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-[#1a1a1a] w-full px-4 py-2 text-[12px] font-medium text-[#a1a1aa] transition-all duration-200 hover:bg-[#1a1a1a] hover:text-[#e4e4e7] active:scale-[0.98]"
             style={{ minHeight: '44px' }}
           >
             <RefreshCw className="h-3.5 w-3.5" />

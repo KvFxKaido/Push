@@ -28,7 +28,7 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
 
   return (
     <>
-      <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+      <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
         {/* Header */}
         <div className="flex items-center">
           <button
@@ -43,7 +43,7 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
               {data.path}
             </span>
             {data.language && (
-              <span className="text-[11px] text-[#52525b] bg-[#1a1a1e] px-1.5 py-0.5 rounded shrink-0">
+              <span className="text-[11px] text-[#52525b] bg-[#1a1a1a] px-1.5 py-0.5 rounded shrink-0">
                 {data.language}
               </span>
             )}
@@ -55,7 +55,7 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
           {/* Open in Editor button */}
           <button
             onClick={() => setPanelOpen(true)}
-            className="px-2 py-2 hover:bg-[#151517] transition-colors border-l border-[#1a1a1e]"
+            className="px-2 py-2 hover:bg-[#151517] transition-colors border-l border-[#1a1a1a]"
             title="Open in Editor"
           >
             <Maximize2 className="h-3.5 w-3.5 text-[#52525b] hover:text-[#a1a1aa]" />
@@ -64,10 +64,10 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
 
         {/* CodeMirror body — read-only in inline card */}
         {expanded && (
-          <div className="border-t border-[#1a1a1e]">
+          <div className="border-t border-[#1a1a1a]">
             <CodeMirrorBody content={data.content} language={data.language} />
             {data.truncated && (
-              <div className="px-3 py-1.5 border-t border-[#1a1a1e] text-[11px] text-[#52525b] italic">
+              <div className="px-3 py-1.5 border-t border-[#1a1a1a] text-[11px] text-[#52525b] italic">
                 Content truncated at 5K characters
               </div>
             )}

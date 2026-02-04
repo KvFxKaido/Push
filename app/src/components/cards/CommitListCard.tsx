@@ -15,9 +15,9 @@ function timeAgo(dateStr: string): string {
 
 export function CommitListCard({ data }: { data: CommitListCardData }) {
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
       {/* Header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1e]">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1a]">
         <GitCommit className="h-3.5 w-3.5 text-[#a1a1aa]" />
         <span className="text-[13px] font-medium text-[#fafafa]">
           {data.commits.length} recent commit{data.commits.length !== 1 ? 's' : ''}
@@ -26,7 +26,7 @@ export function CommitListCard({ data }: { data: CommitListCardData }) {
       </div>
 
       {/* Commit list */}
-      <div className="divide-y divide-[#1a1a1e]">
+      <div className="divide-y divide-[#1a1a1a]">
         {data.commits.map((commit) => (
           <div key={commit.sha} className="px-3 py-2 flex items-start gap-2">
             <span className="text-[12px] text-[#0070f3] font-mono shrink-0 mt-0.5">

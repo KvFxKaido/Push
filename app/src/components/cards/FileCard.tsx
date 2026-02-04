@@ -7,7 +7,7 @@ export function FileCard({ data }: { data: FileCardData }) {
   const lineCount = data.content.split('\n').length;
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}
@@ -21,7 +21,7 @@ export function FileCard({ data }: { data: FileCardData }) {
           {data.path}
         </span>
         {data.language && (
-          <span className="text-[11px] text-[#52525b] bg-[#1a1a1e] px-1.5 py-0.5 rounded shrink-0">
+          <span className="text-[11px] text-[#52525b] bg-[#1a1a1a] px-1.5 py-0.5 rounded shrink-0">
             {data.language}
           </span>
         )}
@@ -32,14 +32,14 @@ export function FileCard({ data }: { data: FileCardData }) {
 
       {/* Code content */}
       {expanded && (
-        <div className="border-t border-[#1a1a1e]">
+        <div className="border-t border-[#1a1a1a]">
           <pre className="px-3 py-2 overflow-x-auto max-h-[400px] overflow-y-auto">
             <code className="font-mono text-[12px] text-[#e4e4e7] leading-relaxed whitespace-pre">
               {data.content}
             </code>
           </pre>
           {data.truncated && (
-            <div className="px-3 py-1.5 border-t border-[#1a1a1e] text-[11px] text-[#52525b] italic">
+            <div className="px-3 py-1.5 border-t border-[#1a1a1a] text-[11px] text-[#52525b] italic">
               Content truncated at 5K characters
             </div>
           )}

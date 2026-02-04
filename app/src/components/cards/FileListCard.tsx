@@ -12,9 +12,9 @@ export function FileListCard({ data }: { data: FileListCardData }) {
   const files = data.entries.filter((e) => e.type === 'file');
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
       {/* Header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1e]">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1a]">
         <Folder className="h-3.5 w-3.5 text-[#a1a1aa]" />
         <span className="text-[13px] font-medium text-[#fafafa] truncate">
           {data.path}
@@ -30,7 +30,7 @@ export function FileListCard({ data }: { data: FileListCardData }) {
       </div>
 
       {/* Entry list */}
-      <div className="divide-y divide-[#1a1a1e]">
+      <div className="divide-y divide-[#1a1a1a]">
         {dirs.map((entry) => (
           <div key={entry.name} className="px-3 py-1.5 flex items-center gap-2">
             <Folder className="h-3.5 w-3.5 text-[#0070f3] shrink-0" />

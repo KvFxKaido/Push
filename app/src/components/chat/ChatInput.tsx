@@ -123,7 +123,7 @@ export function ChatInput({ onSend, disabled, repoName, onScratchpadToggle, scra
 
   return (
     <div className="safe-area-bottom sticky bottom-0 z-10">
-      <div className="bg-[#09090b]/80 backdrop-blur-xl border-t border-[#1a1a1e]">
+      <div className="bg-[#000]/80 backdrop-blur-xl border-t border-[#1a1a1a]">
         {/* Attachment preview */}
         {hasAttachments && (
           <AttachmentPreview
@@ -137,7 +137,7 @@ export function ChatInput({ onSend, disabled, repoName, onScratchpadToggle, scra
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={disabled}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#111113] text-[#52525b] transition-colors hover:text-[#a1a1aa] active:scale-95 disabled:opacity-40"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0d0d0d] text-[#52525b] transition-colors hover:text-[#a1a1aa] active:scale-95 disabled:opacity-40"
             aria-label="Attach file"
           >
             <Paperclip className="h-4 w-4" />
@@ -163,7 +163,7 @@ export function ChatInput({ onSend, disabled, repoName, onScratchpadToggle, scra
           />
 
           {/* Text input */}
-          <div className="relative flex-1 rounded-2xl bg-[#111113] border border-[#1a1a1e] transition-colors duration-200 focus-within:border-[#27272a]">
+          <div className="relative flex-1 rounded-2xl bg-[#0d0d0d] border border-[#1a1a1a] transition-colors duration-200 focus-within:border-[#27272a]">
             <textarea
               ref={textareaRef}
               value={value}
@@ -184,7 +184,7 @@ export function ChatInput({ onSend, disabled, repoName, onScratchpadToggle, scra
             className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all duration-200 ${
               canSend
                 ? 'bg-[#0070f3] text-white hover:bg-[#0060d3] active:scale-95'
-                : 'bg-[#111113] text-[#52525b]'
+                : 'bg-[#0d0d0d] text-[#52525b]'
             }`}
             aria-label="Send message"
           >

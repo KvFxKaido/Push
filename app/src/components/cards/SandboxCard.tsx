@@ -7,7 +7,7 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
   const isSuccess = data.exitCode === 0;
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}
@@ -42,7 +42,7 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
 
       {/* Output */}
       {expanded && (
-        <div className="border-t border-[#1a1a1e]">
+        <div className="border-t border-[#1a1a1a]">
           {data.stdout && (
             <pre className="px-3 py-2 overflow-x-auto">
               <code className="font-mono text-[12px] text-[#a1a1aa] leading-relaxed whitespace-pre-wrap break-all">
@@ -58,7 +58,7 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
             </pre>
           )}
           {data.truncated && (
-            <div className="px-3 py-1.5 text-[11px] text-[#52525b] italic border-t border-[#1a1a1e]">
+            <div className="px-3 py-1.5 text-[11px] text-[#52525b] italic border-t border-[#1a1a1a]">
               Output truncated
             </div>
           )}

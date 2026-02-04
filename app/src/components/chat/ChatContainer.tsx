@@ -36,7 +36,22 @@ function EmptyState({
   return (
     <div className="flex flex-1 items-center justify-center px-8">
       <div className="text-center max-w-sm">
-        <img src="/icon-192.png" alt="Push" className="mx-auto mb-5 h-12 w-12" />
+        <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[#111] border border-[#1a1a1a]">
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 16 16"
+            fill="none"
+            className="text-[#0070f3]"
+          >
+            <path
+              d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
         <h2 className="text-lg font-semibold text-[#fafafa] mb-2">
           {activeRepo ? activeRepo.name : 'Push'}
         </h2>
@@ -50,7 +65,7 @@ function EmptyState({
             <button
               key={suggestion}
               onClick={() => onSuggestion?.(suggestion)}
-              className="rounded-xl border border-[#1a1a1e] bg-[#111113] px-4 py-2.5 text-left text-sm text-[#a1a1aa] transition-colors duration-200 hover:border-[#27272a] hover:text-[#d4d4d8] cursor-pointer active:scale-[0.99]"
+              className="rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] px-4 py-2.5 text-left text-sm text-[#a1a1aa] transition-colors duration-200 hover:border-[#27272a] hover:text-[#d4d4d8] cursor-pointer active:scale-[0.99]"
             >
               {suggestion}
             </button>

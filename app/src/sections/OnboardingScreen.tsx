@@ -26,11 +26,11 @@ export function OnboardingScreen({
   };
 
   return (
-    <div className="flex h-dvh flex-col items-center justify-center bg-[#09090b] px-6 safe-area-top">
+    <div className="flex h-dvh flex-col items-center justify-center bg-[#000] px-6 safe-area-top">
       <div className="w-full max-w-sm">
         {/* Logo + tagline */}
         <div className="text-center mb-10">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#111113] border border-[#1a1a1e]">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0d0d0d] border border-[#1a1a1a]">
             <svg
               width="22"
               height="22"
@@ -72,7 +72,7 @@ export function OnboardingScreen({
                 onChange={(e) => setPat(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
                 disabled={loading}
-                className="w-full rounded-xl border border-[#1a1a1e] bg-[#111113] px-4 py-3 text-sm text-[#fafafa] font-mono placeholder:text-[#3f3f46] outline-none transition-colors duration-200 focus:border-[#0070f3]/50 disabled:opacity-50"
+                className="w-full rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] px-4 py-3 text-sm text-[#fafafa] font-mono placeholder:text-[#3f3f46] outline-none transition-colors duration-200 focus:border-[#0070f3]/50 disabled:opacity-50"
                 autoFocus
               />
 
@@ -110,14 +110,14 @@ export function OnboardingScreen({
         {/* Divider + demo */}
         <div className="mt-8">
           <div className="flex items-center gap-3 mb-6">
-            <div className="flex-1 h-px bg-[#1a1a1e]" />
+            <div className="flex-1 h-px bg-[#1a1a1a]" />
             <span className="text-xs text-[#3f3f46]">or</span>
-            <div className="flex-1 h-px bg-[#1a1a1e]" />
+            <div className="flex-1 h-px bg-[#1a1a1a]" />
           </div>
 
           <button
             onClick={onDemo}
-            className="w-full rounded-xl border border-[#1a1a1e] bg-transparent px-4 py-3 text-sm text-[#71717a] transition-all duration-200 hover:border-[#27272a] hover:text-[#a1a1aa] active:scale-[0.98]"
+            className="w-full rounded-xl border border-[#1a1a1a] bg-transparent px-4 py-3 text-sm text-[#71717a] transition-all duration-200 hover:border-[#27272a] hover:text-[#a1a1aa] active:scale-[0.98]"
           >
             Try Demo Mode
           </button>

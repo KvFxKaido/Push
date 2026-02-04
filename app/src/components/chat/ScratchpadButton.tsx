@@ -17,7 +17,7 @@ export function ScratchpadButton({ onClick, hasContent, disabled }: ScratchpadBu
     <button
       onClick={onClick}
       disabled={disabled}
-      className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#111113] text-[#52525b] transition-colors hover:text-[#a1a1aa] active:scale-95 disabled:opacity-40"
+      className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0d0d0d] text-[#52525b] transition-colors hover:text-[#a1a1aa] active:scale-95 disabled:opacity-40"
       aria-label="Open scratchpad"
       title="Scratchpad"
     >

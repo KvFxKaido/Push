@@ -13,7 +13,7 @@ export function PRCard({ data }: { data: PRCardData }) {
   const { label, color, Icon } = statusConfig[data.state];
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
       {/* Header */}
       <div className="px-3 py-2.5 flex items-start gap-2">
         <Icon className="h-4 w-4 mt-0.5 shrink-0 text-[#a1a1aa]" />
@@ -59,7 +59,7 @@ export function PRCard({ data }: { data: PRCardData }) {
 
       {/* Files */}
       {data.files && data.files.length > 0 && (
-        <div className="border-t border-[#1a1a1e]">
+        <div className="border-t border-[#1a1a1a]">
           <button
             onClick={() => setFilesExpanded((e) => !e)}
             className="w-full px-3 py-1.5 flex items-center gap-1 text-[12px] text-[#52525b] hover:text-[#888] transition-colors"

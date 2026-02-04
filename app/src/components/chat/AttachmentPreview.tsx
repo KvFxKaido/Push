@@ -47,7 +47,7 @@ function AttachmentChip({
       className={`relative flex items-center gap-2 rounded-lg border px-2 py-1.5 shrink-0 ${
         isError
           ? 'border-red-500/30 bg-red-500/10'
-          : 'border-[#1a1a1e] bg-[#111113]'
+          : 'border-[#1a1a1a] bg-[#0d0d0d]'
       }`}
     >
       {/* Thumbnail or icon */}
@@ -79,7 +79,7 @@ function AttachmentChip({
       ) : (
         <button
           onClick={() => onRemove(attachment.id)}
-          className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-[#1a1a1e] text-[#52525b] hover:text-[#a1a1aa] transition-colors"
+          className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-[#1a1a1a] text-[#52525b] hover:text-[#a1a1aa] transition-colors"
           aria-label={`Remove ${attachment.filename}`}
         >
           <X className="h-3 w-3" />

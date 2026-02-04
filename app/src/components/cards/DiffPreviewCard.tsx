@@ -12,7 +12,7 @@ function DiffLine({ line, index }: { line: string; index: number }) {
   } else if (line.startsWith('@@')) {
     className += ' text-[#0070f3] bg-[#0070f3]/5';
   } else if (line.startsWith('diff --git')) {
-    className += ' text-[#a1a1aa] font-semibold border-t border-[#1a1a1e] pt-1 mt-1';
+    className += ' text-[#a1a1aa] font-semibold border-t border-[#1a1a1a] pt-1 mt-1';
   } else {
     className += ' text-[#52525b]';
   }
@@ -29,7 +29,7 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
   const lines = data.diff.split('\n');
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1e] bg-[#111113] overflow-hidden max-w-full">
+    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}
@@ -50,14 +50,14 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
 
       {/* Diff content */}
       {expanded && (
-        <div className="border-t border-[#1a1a1e] max-h-[400px] overflow-y-auto">
+        <div className="border-t border-[#1a1a1a] max-h-[400px] overflow-y-auto">
           <div className="py-1">
             {lines.map((line, i) => (
               <DiffLine key={i} line={line} index={i} />
             ))}
           </div>
           {data.truncated && (
-            <div className="px-3 py-1.5 text-[11px] text-[#52525b] italic border-t border-[#1a1a1e]">
+            <div className="px-3 py-1.5 text-[11px] text-[#52525b] italic border-t border-[#1a1a1a]">
               Diff truncated
             </div>
           )}

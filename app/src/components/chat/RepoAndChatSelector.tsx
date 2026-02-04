@@ -52,7 +52,7 @@ export function RepoAndChatSelector({
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger className="flex items-center gap-1.5 h-9 px-2 rounded-lg text-sm hover:bg-[#111113] transition-colors duration-200 outline-none min-w-0 max-w-[240px] active:scale-[0.98]">
+      <DropdownMenuTrigger className="flex items-center gap-1.5 h-9 px-2 rounded-lg text-sm hover:bg-[#0d0d0d] transition-colors duration-200 outline-none min-w-0 max-w-[240px] active:scale-[0.98]">
         <span className="flex items-center min-w-0 truncate">{triggerLabel}</span>
         <ChevronDown
           className={`h-3.5 w-3.5 shrink-0 text-[#52525b] transition-transform duration-200 ${
@@ -64,7 +64,7 @@ export function RepoAndChatSelector({
       <DropdownMenuContent
         align="start"
         sideOffset={8}
-        className="w-[300px] max-h-[70vh] overflow-y-auto bg-[#09090b] border-[#1a1a1e] rounded-xl shadow-xl"
+        className="w-[300px] max-h-[70vh] overflow-y-auto bg-[#000] border-[#1a1a1a] rounded-xl shadow-xl"
       >
         {/* --- REPOS section --- */}
         {repos.length > 0 && (
@@ -104,7 +104,7 @@ export function RepoAndChatSelector({
               );
             })}
 
-            <DropdownMenuSeparator className="bg-[#1a1a1e]" />
+            <DropdownMenuSeparator className="bg-[#1a1a1a]" />
           </>
         )}
 
@@ -127,7 +127,7 @@ export function RepoAndChatSelector({
                 setOpen(false);
               }}
               className={`flex items-center gap-2.5 px-3 py-2.5 cursor-pointer rounded-lg mx-1 ${
-                isActiveChat ? 'bg-[#111113]' : ''
+                isActiveChat ? 'bg-[#0d0d0d]' : ''
               }`}
             >
               <MessageSquare className="h-3.5 w-3.5 shrink-0 text-[#52525b]" />
@@ -144,7 +144,7 @@ export function RepoAndChatSelector({
                     e.preventDefault();
                     onDeleteChat(id);
                   }}
-                  className="h-7 w-7 flex items-center justify-center rounded-md text-[#52525b] hover:text-red-400 hover:bg-[#1a1a1e] transition-colors duration-150 shrink-0"
+                  className="h-7 w-7 flex items-center justify-center rounded-md text-[#52525b] hover:text-red-400 hover:bg-[#1a1a1a] transition-colors duration-150 shrink-0"
                   aria-label={`Delete ${conv.title}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -154,7 +154,7 @@ export function RepoAndChatSelector({
           );
         })}
 
-        <DropdownMenuSeparator className="bg-[#1a1a1e]" />
+        <DropdownMenuSeparator className="bg-[#1a1a1a]" />
 
         {/* --- New Chat --- */}
         <DropdownMenuItem

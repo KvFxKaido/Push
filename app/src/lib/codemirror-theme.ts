@@ -2,8 +2,8 @@
  * Custom CodeMirror 6 dark theme matching Push's app palette.
  *
  * Colors pulled from the existing card/chat UI:
- * - bg: #111113 (card body), #0c0c0e (editor gutter)
- * - border: #1a1a1e
+ * - bg: #0d0d0d (card body), #0c0c0e (editor gutter)
+ * - border: #1a1a1a
  * - text: #e4e4e7 (zinc-200)
  * - muted: #52525b (zinc-600), #3a3a3e
  * - accent: #a78bfa (violet-400) for keywords
@@ -16,7 +16,7 @@ import { tags } from '@lezer/highlight';
 export const diffEditorTheme = EditorView.theme(
   {
     '&': {
-      backgroundColor: '#111113',
+      backgroundColor: '#0d0d0d',
       color: '#e4e4e7',
       fontSize: '13px',
       fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace',
@@ -46,7 +46,7 @@ export const diffEditorTheme = EditorView.theme(
       backgroundColor: '#0c0c0e',
       color: '#3a3a3e',
       border: 'none',
-      borderRight: '1px solid #1a1a1e',
+      borderRight: '1px solid #1a1a1a',
       minWidth: '40px',
     },
     '.cm-activeLineGutter': {
@@ -70,7 +70,7 @@ export const diffEditorTheme = EditorView.theme(
       height: '4px',
     },
     '.cm-scroller::-webkit-scrollbar-thumb': {
-      background: '#1a1a1e',
+      background: '#1a1a1a',
       borderRadius: '2px',
     },
     '.cm-scroller::-webkit-scrollbar-thumb:hover': {

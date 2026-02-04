@@ -71,7 +71,7 @@ export function EditorPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="h-[92vh] rounded-t-xl border-t border-[#1a1a1e] bg-[#0c0c0e] p-0 gap-0 [&>[data-slot=sheet-close]]:hidden"
+        className="h-[92vh] rounded-t-xl border-t border-[#1a1a1a] bg-[#0c0c0e] p-0 gap-0 [&>[data-slot=sheet-close]]:hidden"
       >
         {/* Accessible but visually hidden title/description */}
         <SheetTitle className="sr-only">{filename}</SheetTitle>
@@ -80,10 +80,10 @@ export function EditorPanel({
         </SheetDescription>
 
         {/* Custom header */}
-        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-[#1a1a1e] bg-[#0c0c0e] shrink-0">
+        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-[#1a1a1a] bg-[#0c0c0e] shrink-0">
           <button
             onClick={() => onOpenChange(false)}
-            className="p-1 rounded hover:bg-[#1a1a1e] transition-colors"
+            className="p-1 rounded hover:bg-[#1a1a1a] transition-colors"
           >
             <X className="h-4 w-4 text-[#71717a]" />
           </button>
@@ -100,14 +100,14 @@ export function EditorPanel({
               Edit
             </span>
           ) : (
-            <span className="flex items-center gap-1 text-[11px] text-[#52525b] bg-[#1a1a1e] px-1.5 py-0.5 rounded shrink-0">
+            <span className="flex items-center gap-1 text-[11px] text-[#52525b] bg-[#1a1a1a] px-1.5 py-0.5 rounded shrink-0">
               <Lock className="h-2.5 w-2.5" />
               Read-only
             </span>
           )}
 
           {data.language && (
-            <span className="text-[11px] text-[#52525b] bg-[#1a1a1e] px-1.5 py-0.5 rounded shrink-0">
+            <span className="text-[11px] text-[#52525b] bg-[#1a1a1a] px-1.5 py-0.5 rounded shrink-0">
               {data.language}
             </span>
           )}
@@ -120,7 +120,7 @@ export function EditorPanel({
               className={`flex items-center gap-1 text-[12px] px-2 py-1 rounded transition-colors shrink-0 ${
                 isDirty && !saving
                   ? 'bg-[#a78bfa] text-[#0c0c0e] hover:bg-[#8b5cf6]'
-                  : 'bg-[#1a1a1e] text-[#3a3a3e] cursor-not-allowed'
+                  : 'bg-[#1a1a1a] text-[#3a3a3e] cursor-not-allowed'
               }`}
             >
               <Save className="h-3 w-3" />

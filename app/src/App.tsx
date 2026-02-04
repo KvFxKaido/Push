@@ -233,9 +233,9 @@ function App() {
   const isConnected = Boolean(token) || isDemo;
 
   return (
-    <div className="flex h-dvh flex-col bg-[#09090b] safe-area-top">
+    <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1e] relative">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-[#111]">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <RepoAndChatSelector
             repos={repos}
@@ -248,10 +248,6 @@ function App() {
             onNewChat={handleCreateNewChat}
             onDeleteChat={deleteChat}
           />
-        </div>
-        {/* Centered logo */}
-        <div className="absolute left-1/2 -translate-x-1/2">
-          <img src="/icon-192.png" alt="Push" className="h-7 w-7" />
         </div>
         <div className="flex items-center gap-3">
           {/* File browser */}
@@ -271,8 +267,8 @@ function App() {
                 sandbox.status === 'creating'
                   ? 'text-[#f59e0b] animate-pulse'
                   : sandbox.status === 'ready'
-                  ? 'text-[#22c55e] hover:bg-[#111113]'
-                  : 'text-[#52525b] hover:text-[#a1a1aa] hover:bg-[#111113]'
+                  ? 'text-[#22c55e] hover:bg-[#0d0d0d]'
+                  : 'text-[#52525b] hover:text-[#a1a1aa] hover:bg-[#0d0d0d]'
               }`}
               aria-label="Open file browser"
               title={sandbox.status === 'creating' ? 'Starting sandbox...' : sandbox.status === 'ready' ? 'File browser' : 'Open file browser (starts sandbox)'}
@@ -292,7 +288,7 @@ function App() {
           </div>
           <button
             onClick={() => setSettingsOpen(true)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors duration-200 hover:text-[#a1a1aa] hover:bg-[#111113] active:scale-95"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors duration-200 hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95"
             aria-label="Settings"
           >
             <Settings className="h-4 w-4" />
@@ -332,7 +328,7 @@ function App() {
 
       {/* Settings Sheet */}
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <SheetContent side="right" className="bg-[#09090b] border-[#1a1a1e]">
+        <SheetContent side="right" className="bg-[#000] border-[#1a1a1a]">
           <SheetHeader>
             <SheetTitle className="text-[#fafafa]">Settings</SheetTitle>
             <SheetDescription className="text-[#a1a1aa]">
@@ -366,7 +362,7 @@ function App() {
               {isConnected && (
                 <div className="space-y-2">
                   {!isDemo && (
-                    <div className="rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2">
+                    <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2">
                       <p className="text-sm text-[#a1a1aa] font-mono">
                         {token.startsWith('ghp_') ? 'ghp_••••••••' : 'Token saved'}
                       </p>
@@ -391,7 +387,7 @@ function App() {
             </div>
 
             {/* AI Provider */}
-            <div className="space-y-3 pt-2 border-t border-[#1a1a1e]">
+            <div className="space-y-3 pt-2 border-t border-[#1a1a1a]">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-[#fafafa]">
                   AI Provider
@@ -413,7 +409,7 @@ function App() {
                 <label className="text-xs font-medium text-[#a1a1aa]">Kimi</label>
                 {hasKimiKey ? (
                   <div className="space-y-2">
-                    <div className="rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2">
+                    <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2">
                       <p className="text-sm text-[#a1a1aa] font-mono">
                         {kimiKey?.startsWith('sk-kimi-') ? 'sk-kimi-••••••••' : 'Key saved'}
                       </p>
@@ -434,7 +430,7 @@ function App() {
                       value={kimiKeyInput}
                       onChange={(e) => setKimiKeyInput(e.target.value)}
                       placeholder="sk-kimi-..."
-                      className="w-full rounded-lg border border-[#1a1a1e] bg-[#111113] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
+                      className="w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && kimiKeyInput.trim()) {
                           setKimiKey(kimiKeyInput.trim());
@@ -466,7 +462,7 @@ function App() {
             </div>
 
             {/* Danger Zone */}
-            <div className="space-y-3 pt-2 border-t border-[#1a1a1e]">
+            <div className="space-y-3 pt-2 border-t border-[#1a1a1a]">
               <label className="text-sm font-medium text-[#fafafa]">
                 Data
               </label>

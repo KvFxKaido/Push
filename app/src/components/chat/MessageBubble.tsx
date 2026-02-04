@@ -27,7 +27,7 @@ function formatContent(content: string): React.ReactNode[] {
         parts.push(
           <pre
             key={`code-${codeKey++}`}
-            className="my-2 rounded-lg bg-[#0a0a0c] border border-[#1a1a1e] px-3 py-2.5 overflow-x-auto"
+            className="my-2 rounded-lg bg-[#0a0a0c] border border-[#1a1a1a] px-3 py-2.5 overflow-x-auto"
           >
             <code className="font-mono text-[13px] text-[#e4e4e7] leading-relaxed">
               {codeLines.join('\n')}
@@ -61,7 +61,7 @@ function formatContent(content: string): React.ReactNode[] {
     parts.push(
       <pre
         key={`code-${codeKey}`}
-        className="my-2 rounded-lg bg-[#0a0a0c] border border-[#1a1a1e] px-3 py-2.5 overflow-x-auto"
+        className="my-2 rounded-lg bg-[#0a0a0c] border border-[#1a1a1a] px-3 py-2.5 overflow-x-auto"
       >
         <code className="font-mono text-[13px] text-[#e4e4e7] leading-relaxed">
           {codeLines.join('\n')}
@@ -93,7 +93,7 @@ function formatInline(text: string): React.ReactNode[] {
       result.push(
         <code
           key={key++}
-          className="font-mono text-[13px] bg-[#111113] border border-[#1a1a1e] rounded px-1.5 py-0.5 text-[#e4e4e7]"
+          className="font-mono text-[13px] bg-[#0d0d0d] border border-[#1a1a1a] rounded px-1.5 py-0.5 text-[#e4e4e7]"
         >
           {match[4]}
         </code>,
@@ -136,7 +136,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
       )}
 
       {expanded && (
-        <div className="mt-1.5 ml-4 pl-3 border-l border-[#1a1a1e] max-h-[300px] overflow-y-auto">
+        <div className="mt-1.5 ml-4 pl-3 border-l border-[#1a1a1a] max-h-[300px] overflow-y-auto">
           <p className="text-[12px] text-[#52525b] leading-relaxed whitespace-pre-wrap break-words">
             {thinking}
           </p>
@@ -144,7 +144,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
       )}
 
       {isStreaming && !expanded && thinking && (
-        <div className="mt-1.5 ml-4 pl-3 border-l border-[#1a1a1e]">
+        <div className="mt-1.5 ml-4 pl-3 border-l border-[#1a1a1a]">
           <p className="text-[12px] text-[#3a3a3e] leading-relaxed whitespace-pre-wrap break-words line-clamp-3">
             {thinking.slice(-200)}
           </p>
@@ -226,7 +226,7 @@ function ToolCallStatus({ content }: { content: string }) {
 
   return (
     <div className="flex items-center gap-2 px-4 py-1.5">
-      <div className="flex items-center gap-1.5 rounded-full bg-[#111113] border border-[#1a1a1e] px-3 py-1">
+      <div className="flex items-center gap-1.5 rounded-full bg-[#0d0d0d] border border-[#1a1a1a] px-3 py-1">
         <Icon className="h-3 w-3 text-[#0070f3]" />
         <span className="text-[12px] text-[#52525b] font-medium">{label}</span>
       </div>
@@ -270,7 +270,7 @@ function AttachmentBadge({ attachment }: { attachment: AttachmentData }) {
   // Code or document
   const Icon = attachment.type === 'code' ? FileCode : FileText;
   return (
-    <div className="flex items-center gap-1.5 rounded-lg bg-[#111113]/50 border border-[#27272a] px-2 py-1">
+    <div className="flex items-center gap-1.5 rounded-lg bg-[#0d0d0d]/50 border border-[#27272a] px-2 py-1">
       <Icon className="h-3.5 w-3.5 text-[#71717a]" />
       <span className="text-[12px] text-[#a1a1aa] truncate max-w-[120px]">
         {attachment.filename}
@@ -331,7 +331,7 @@ export const MessageBubble = memo(function MessageBubble({
 
   return (
     <div className="flex items-start gap-2.5 px-4 py-1">
-      <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#111113] border border-[#1a1a1e]">
+      <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#0d0d0d] border border-[#1a1a1a]">
         <svg
           width="10"
           height="10"

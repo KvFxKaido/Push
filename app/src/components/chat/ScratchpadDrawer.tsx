@@ -62,7 +62,7 @@ export function ScratchpadDrawer({
 
       {/* Drawer */}
       <div
-        className={`fixed z-50 bg-[#09090b] border-[#1a1a1e] transition-transform duration-300 ease-out flex flex-col
+        className={`fixed z-50 bg-[#000] border-[#1a1a1a] transition-transform duration-300 ease-out flex flex-col
           /* Mobile: bottom sheet */
           inset-x-0 bottom-0 h-[60vh] rounded-t-2xl border-t border-x
           /* Desktop: right drawer */
@@ -74,7 +74,7 @@ export function ScratchpadDrawer({
         `}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1e] shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1a] shrink-0">
           <div className="flex items-center gap-2">
             <span className="text-base">📝</span>
             <h2 className="text-sm font-semibold text-[#fafafa]">Scratchpad</h2>
@@ -83,7 +83,7 @@ export function ScratchpadDrawer({
             <button
               onClick={onClear}
               disabled={!content.trim()}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#111113] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
               aria-label="Clear scratchpad"
               title="Clear"
             >
@@ -91,7 +91,7 @@ export function ScratchpadDrawer({
             </button>
             <button
               onClick={onClose}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#111113] active:scale-95"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95"
               aria-label="Close scratchpad"
             >
               <X className="h-4 w-4" />
@@ -112,12 +112,12 @@ export function ScratchpadDrawer({
 • Reference in conversation
 
 Kimi sees this in every message."
-            className="h-full w-full resize-none bg-[#111113] border border-[#1a1a1e] rounded-xl px-4 py-3 text-sm text-[#fafafa] placeholder:text-[#52525b] outline-none focus:border-[#27272a] font-mono leading-relaxed"
+            className="h-full w-full resize-none bg-[#0d0d0d] border border-[#1a1a1a] rounded-xl px-4 py-3 text-sm text-[#fafafa] placeholder:text-[#52525b] outline-none focus:border-[#27272a] font-mono leading-relaxed"
           />
         </div>
 
         {/* Footer hint */}
-        <div className="px-4 py-2 border-t border-[#1a1a1e] shrink-0">
+        <div className="px-4 py-2 border-t border-[#1a1a1a] shrink-0">
           <p className="text-xs text-[#52525b]">
             Kimi can update this via <code className="text-[#71717a]">set_scratchpad</code> or <code className="text-[#71717a]">append_scratchpad</code>
           </p>
