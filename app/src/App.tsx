@@ -235,7 +235,7 @@ function App() {
   return (
     <div className="flex h-dvh flex-col bg-[#09090b] safe-area-top">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1e]">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a1e] relative">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <RepoAndChatSelector
             repos={repos}
@@ -248,6 +248,10 @@ function App() {
             onNewChat={handleCreateNewChat}
             onDeleteChat={deleteChat}
           />
+        </div>
+        {/* Centered logo */}
+        <div className="absolute left-1/2 -translate-x-1/2">
+          <img src="/icon-192.png" alt="Push" className="h-7 w-7" />
         </div>
         <div className="flex items-center gap-3">
           {/* File browser */}

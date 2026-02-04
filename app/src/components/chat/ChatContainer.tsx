@@ -36,22 +36,7 @@ function EmptyState({
   return (
     <div className="flex flex-1 items-center justify-center px-8">
       <div className="text-center max-w-sm">
-        <div className="mx-auto mb-5 flex h-10 w-10 items-center justify-center rounded-xl bg-[#111113] border border-[#1a1a1e]">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 16 16"
-            fill="none"
-            className="text-[#0070f3]"
-          >
-            <path
-              d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
+        <img src="/icon-192.png" alt="Push" className="mx-auto mb-5 h-12 w-12" />
         <h2 className="text-lg font-semibold text-[#fafafa] mb-2">
           {activeRepo ? activeRepo.name : 'Push'}
         </h2>
