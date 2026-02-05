@@ -72,9 +72,14 @@ export function ChatInput({ onSend, disabled, repoName, onScratchpadToggle, scra
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // On mobile, Enter creates a new line; use the send button to submit
-      // On desktop, Enter sends the message (Shift+Enter for new line)
-      if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
+      // Only use mobile keyboard behavior (Enter = newline) if BOTH:
+      // 1. Narrow viewport (mobile layout) AND
+      // 2. Touch capability (actual touch device)
+      // This prevents desktop users with narrow windows from losing Enter-to-send
+      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      const isMobileDevice = isMobile && hasTouch;
+
+      if (e.key === 'Enter' && !e.shiftKey && !isMobileDevice) {
         e.preventDefault();
         handleSend();
       }
