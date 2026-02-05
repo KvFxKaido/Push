@@ -251,13 +251,95 @@ function createThinkTokenParser(
 }
 
 // ---------------------------------------------------------------------------
+// Smart Chunking — reduces UI updates on mobile by batching tokens
+// ---------------------------------------------------------------------------
+
+interface ChunkedEmitter {
+  push(token: string): void;
+  flush(): void;
+}
+
+/**
+ * Creates a chunked emitter that batches tokens for smoother mobile UI.
+ *
+ * Tokens are buffered and emitted when:
+ * 1. A word boundary (space/newline) is encountered
+ * 2. Buffer reaches MIN_CHUNK_SIZE characters
+ * 3. FLUSH_INTERVAL_MS passes without emission
+ *
+ * This reduces React setState calls from per-character to per-word,
+ * dramatically improving performance on slower mobile devices.
+ */
+function createChunkedEmitter(
+  emit: (chunk: string) => void,
+  options?: { minChunkSize?: number; flushIntervalMs?: number },
+): ChunkedEmitter {
+  const MIN_CHUNK_SIZE = options?.minChunkSize ?? 4;  // Min chars before emitting
+  const FLUSH_INTERVAL_MS = options?.flushIntervalMs ?? 50; // Max time to hold tokens
+
+  let buffer = '';
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const doEmit = () => {
+    if (buffer) {
+      emit(buffer);
+      buffer = '';
+    }
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = undefined;
+    }
+  };
+
+  const scheduleFlush = () => {
+    if (!flushTimer) {
+      flushTimer = setTimeout(doEmit, FLUSH_INTERVAL_MS);
+    }
+  };
+
+  return {
+    push(token: string) {
+      buffer += token;
+
+      // Emit on word boundaries (space, newline) if we have enough content
+      const hasWordBoundary = /[\s\n]/.test(token);
+      if (hasWordBoundary && buffer.length >= MIN_CHUNK_SIZE) {
+        doEmit();
+        return;
+      }
+
+      // Emit if buffer is getting large (long word without spaces)
+      if (buffer.length >= MIN_CHUNK_SIZE * 4) {
+        doEmit();
+        return;
+      }
+
+      // Otherwise, schedule a flush to ensure tokens don't get stuck
+      scheduleFlush();
+    },
+
+    flush() {
+      doEmit();
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Kimi For Coding streaming (SSE — OpenAI-compatible)
 // ---------------------------------------------------------------------------
+
+// --- Usage data from streaming responses ---
+
+export interface StreamUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
 
 export async function streamMoonshotChat(
   messages: ChatMessage[],
   onToken: (token: string) => void,
-  onDone: () => void,
+  onDone: (usage?: StreamUsage) => void,
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
   workspaceContext?: string,
@@ -341,7 +423,13 @@ export async function streamMoonshotChat(
     // Stream ends with "data: [DONE]" or "data:[DONE]"
     const decoder = new TextDecoder();
     let buffer = '';
-    const parser = createThinkTokenParser(onToken, onThinkingToken);
+
+    // Smart chunking: batch tokens for smoother mobile UI
+    const chunker = createChunkedEmitter(onToken);
+    const parser = createThinkTokenParser((token) => chunker.push(token), onThinkingToken);
+
+    // Track usage from response
+    let usage: StreamUsage | undefined;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -359,7 +447,8 @@ export async function streamMoonshotChat(
         // Check for stream termination: "data: [DONE]" or "data:[DONE]"
         if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
           parser.flush();
-          onDone();
+          chunker.flush();
+          onDone(usage);
           return;
         }
 
@@ -369,6 +458,16 @@ export async function streamMoonshotChat(
 
         try {
           const parsed = JSON.parse(jsonStr);
+
+          // Extract usage data if present (usually in final chunk)
+          if (parsed.usage) {
+            usage = {
+              inputTokens: parsed.usage.prompt_tokens || 0,
+              outputTokens: parsed.usage.completion_tokens || 0,
+              totalTokens: parsed.usage.total_tokens || 0,
+            };
+          }
+
           const choice = parsed.choices?.[0];
           if (!choice) continue;
 
@@ -391,7 +490,8 @@ export async function streamMoonshotChat(
           // Check finish_reason (after processing any final tokens in this chunk)
           if (choice.finish_reason === 'stop' || choice.finish_reason === 'end_turn' || choice.finish_reason === 'tool_calls') {
             parser.flush();
-            onDone();
+            chunker.flush();
+            onDone(usage);
             return;
           }
         } catch {
@@ -402,7 +502,8 @@ export async function streamMoonshotChat(
 
     // If we reach here without [DONE], still flush and finish
     parser.flush();
-    onDone();
+    chunker.flush();
+    onDone(usage);
   } catch (err) {
     // Cleanup timers on error path
     clearTimeout(connectTimer);
@@ -440,7 +541,7 @@ export async function streamMoonshotChat(
 export async function streamChat(
   messages: ChatMessage[],
   onToken: (token: string) => void,
-  onDone: () => void,
+  onDone: (usage?: StreamUsage) => void,
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
   workspaceContext?: string,
@@ -454,7 +555,7 @@ export async function streamChat(
       await new Promise((r) => setTimeout(r, 12));
       onToken(words[i] + (i < words.length - 1 ? ' ' : ''));
     }
-    onDone();
+    onDone(); // No usage data in demo mode
     return;
   }
 

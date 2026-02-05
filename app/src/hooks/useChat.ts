@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardAction, CommitReviewCardData, ChatCard, AttachmentData } from '@/types';
-import { streamChat } from '@/lib/orchestrator';
+import { streamChat, type StreamUsage } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent } from '@/lib/coder-agent';
@@ -150,7 +150,11 @@ export interface ScratchpadHandlers {
   append: (text: string) => void;
 }
 
-export function useChat(activeRepoFullName: string | null, scratchpad?: ScratchpadHandlers) {
+export interface UsageHandler {
+  trackUsage: (model: string, inputTokens: number, outputTokens: number) => void;
+}
+
+export function useChat(activeRepoFullName: string | null, scratchpad?: ScratchpadHandlers, usageHandler?: UsageHandler) {
   const [conversations, setConversations] = useState<Record<string, Conversation>>(loadConversations);
   const [activeChatId, setActiveChatId] = useState<string>(() => loadActiveChatId(conversations));
   const [isStreaming, setIsStreaming] = useState(false);
@@ -167,6 +171,10 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
   // Keep scratchpad handlers in a ref so callbacks always see the latest
   const scratchpadRef = useRef(scratchpad);
   scratchpadRef.current = scratchpad;
+
+  // Keep usage handler in a ref so callbacks always see the latest
+  const usageHandlerRef = useRef(usageHandler);
+  usageHandlerRef.current = usageHandler;
 
   // Derived state
   const messages = conversations[activeChatId]?.messages || [];
@@ -442,7 +450,13 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
                   return { ...prev, [chatId]: { ...conv, messages: msgs } };
                 });
               },
-              () => resolve(null),
+              (usage) => {
+                // Track usage if handler is available
+                if (usage && usageHandlerRef.current) {
+                  usageHandlerRef.current.trackUsage('k2p5', usage.inputTokens, usage.outputTokens);
+                }
+                resolve(null);
+              },
               (error) => resolve(error),
               (token) => {
                 if (abortRef.current) return;

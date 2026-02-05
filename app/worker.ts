@@ -33,6 +33,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
+    // API route: health check endpoint
+    if (url.pathname === '/api/health' && request.method === 'GET') {
+      return handleHealthCheck(env);
+    }
+
     // API route: streaming proxy to Kimi For Coding (SSE)
     if (url.pathname === '/api/kimi/chat' && request.method === 'POST') {
       return handleKimiChat(request, env);
@@ -306,6 +311,59 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
       details: message,
     }, { status: 500 });
   }
+}
+
+// --- Health check endpoint ---
+
+interface HealthStatus {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  timestamp: string;
+  services: {
+    worker: { status: 'ok' };
+    kimi: { status: 'ok' | 'unconfigured'; configured: boolean };
+    sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
+  };
+  version: string;
+}
+
+async function handleHealthCheck(env: Env): Promise<Response> {
+  const kimiConfigured = Boolean(env.MOONSHOT_API_KEY);
+  const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
+
+  let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
+  let sandboxError: string | undefined;
+
+  if (sandboxUrl) {
+    if (!sandboxUrl.startsWith('https://') || !sandboxUrl.includes('--')) {
+      sandboxStatus = 'misconfigured';
+      sandboxError = 'MODAL_SANDBOX_BASE_URL format is invalid';
+    } else if (sandboxUrl.endsWith('/')) {
+      sandboxStatus = 'misconfigured';
+      sandboxError = 'MODAL_SANDBOX_BASE_URL has trailing slash';
+    } else {
+      sandboxStatus = 'ok';
+    }
+  }
+
+  const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
+    kimiConfigured && sandboxStatus === 'ok' ? 'healthy' :
+    kimiConfigured || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
+
+  const health: HealthStatus = {
+    status: overallStatus,
+    timestamp: new Date().toISOString(),
+    services: {
+      worker: { status: 'ok' },
+      kimi: { status: kimiConfigured ? 'ok' : 'unconfigured', configured: kimiConfigured },
+      sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
+    },
+    version: '1.0.0',
+  };
+
+  return Response.json(health, {
+    status: overallStatus === 'unhealthy' ? 503 : 200,
+    headers: { 'Cache-Control': 'no-store' },
+  });
 }
 
 async function handleKimiChat(request: Request, env: Env): Promise<Response> {
