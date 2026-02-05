@@ -60,10 +60,14 @@ export function useScratchpad(repoFullName: string | null = null) {
   const [memories, setMemories] = useState<ScratchpadMemory[]>([]);
   const [activeMemoryId, setActiveMemoryId] = useState<string | null>(null);
   const hasMigratedRef = useRef(false);
+  // Cache for unsaved draft when viewing memories
+  const unsavedDraftRef = useRef<string | null>(null);
 
   // Load content when repo changes, with migration support
   useEffect(() => {
     const storageKey = getStorageKey(repoFullName);
+    // Clear unsaved draft when repo changes
+    unsavedDraftRef.current = null;
 
     try {
       // Try to load repo-scoped content first
@@ -213,16 +217,26 @@ export function useScratchpad(repoFullName: string | null = null) {
   const loadMemory = useCallback(
     (id: string | null) => {
       if (!id) {
+        // Restore unsaved draft when switching back to "Scratchpad (unsaved)"
+        if (unsavedDraftRef.current !== null) {
+          setContent(unsavedDraftRef.current);
+          unsavedDraftRef.current = null;
+        }
         setActiveMemoryId(null);
         return;
       }
       const memory = memories.find((entry) => entry.id === id);
       if (memory) {
+        // Cache current content as unsaved draft before loading memory
+        // Only cache if we're not already viewing a memory
+        if (activeMemoryId === null) {
+          unsavedDraftRef.current = content;
+        }
         setContent(memory.content);
         setActiveMemoryId(id);
       }
     },
-    [memories],
+    [memories, activeMemoryId, content],
   );
 
   const deleteMemory = useCallback((id: string) => {
