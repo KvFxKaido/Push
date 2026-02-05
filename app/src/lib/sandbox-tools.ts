@@ -8,7 +8,7 @@
  * Sandbox tools operate on a running Modal sandbox (persistent container).
  */
 
-import type { ToolExecutionResult, SandboxCardData, DiffPreviewCardData, CommitReviewCardData, FileListCardData } from '@/types';
+import type { ToolExecutionResult, SandboxCardData, DiffPreviewCardData, CommitReviewCardData, FileListCardData, TestResultsCardData, TypeCheckCardData } from '@/types';
 import { extractBareToolJsonObjects } from './tool-dispatch';
 import {
   execInSandbox,
@@ -29,7 +29,9 @@ export type SandboxToolCall =
   | { tool: 'sandbox_list_dir'; args: { path?: string } }
   | { tool: 'sandbox_diff'; args: Record<string, never> }
   | { tool: 'sandbox_prepare_commit'; args: { message: string } }
-  | { tool: 'sandbox_push'; args: Record<string, never> };
+  | { tool: 'sandbox_push'; args: Record<string, never> }
+  | { tool: 'sandbox_run_tests'; args: { framework?: string } }
+  | { tool: 'sandbox_check_types'; args: Record<string, never> };
 
 // --- Validation ---
 
@@ -54,6 +56,12 @@ export function validateSandboxToolCall(parsed: any): SandboxToolCall | null {
   }
   if (parsed.tool === 'sandbox_push') {
     return { tool: 'sandbox_push', args: {} };
+  }
+  if (parsed.tool === 'sandbox_run_tests') {
+    return { tool: 'sandbox_run_tests', args: { framework: parsed.args?.framework } };
+  }
+  if (parsed.tool === 'sandbox_check_types') {
+    return { tool: 'sandbox_check_types', args: {} };
   }
   return null;
 }
@@ -315,6 +323,275 @@ export async function executeSandboxToolCall(
         return { text: `[Tool Result — sandbox_push]\nPushed successfully.` };
       }
 
+      case 'sandbox_run_tests': {
+        const start = Date.now();
+
+        // Auto-detect test framework if not specified
+        let command = '';
+        let framework: TestResultsCardData['framework'] = 'unknown';
+
+        if (call.args.framework) {
+          // User specified framework
+          switch (call.args.framework.toLowerCase()) {
+            case 'npm':
+            case 'jest':
+            case 'vitest':
+            case 'mocha':
+              command = 'npm test';
+              framework = 'npm';
+              break;
+            case 'pytest':
+            case 'python':
+              command = 'pytest -v';
+              framework = 'pytest';
+              break;
+            case 'cargo':
+            case 'rust':
+              command = 'cargo test';
+              framework = 'cargo';
+              break;
+            case 'go':
+              command = 'go test ./...';
+              framework = 'go';
+              break;
+            default:
+              command = call.args.framework;
+              framework = 'unknown';
+          }
+        } else {
+          // Auto-detect by checking for config files
+          const detectResult = await execInSandbox(
+            sandboxId,
+            'cd /workspace && ls -1 package.json Cargo.toml go.mod pytest.ini pyproject.toml setup.py 2>/dev/null | head -1',
+          );
+          const detected = detectResult.stdout.trim();
+
+          if (detected === 'package.json') {
+            command = 'npm test';
+            framework = 'npm';
+          } else if (detected === 'Cargo.toml') {
+            command = 'cargo test';
+            framework = 'cargo';
+          } else if (detected === 'go.mod') {
+            command = 'go test ./...';
+            framework = 'go';
+          } else if (['pytest.ini', 'pyproject.toml', 'setup.py'].includes(detected)) {
+            command = 'pytest -v';
+            framework = 'pytest';
+          } else {
+            // Fallback: try npm test
+            command = 'npm test';
+            framework = 'npm';
+          }
+        }
+
+        const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`);
+        const durationMs = Date.now() - start;
+
+        // Parse test results from output
+        const output = result.stdout + '\n' + result.stderr;
+        let passed = 0, failed = 0, skipped = 0, total = 0;
+
+        // npm/jest/vitest patterns
+        const jestMatch = output.match(/Tests:\s*(\d+)\s*passed.*?(\d+)\s*failed.*?(\d+)\s*total/i) ||
+                          output.match(/(\d+)\s*passing.*?(\d+)\s*failing/i);
+        // pytest patterns
+        const pytestMatch = output.match(/(\d+)\s*passed.*?(\d+)\s*failed/i) ||
+                            output.match(/passed:\s*(\d+).*?failed:\s*(\d+)/i);
+        // cargo patterns
+        const cargoMatch = output.match(/test result:.*?(\d+)\s*passed.*?(\d+)\s*failed/i);
+        // go patterns
+        const goMatch = output.match(/ok\s+.*?\s+(\d+\.\d+)s/g);
+
+        if (jestMatch) {
+          passed = parseInt(jestMatch[1]) || 0;
+          failed = parseInt(jestMatch[2]) || 0;
+          total = passed + failed;
+        } else if (pytestMatch) {
+          passed = parseInt(pytestMatch[1]) || 0;
+          failed = parseInt(pytestMatch[2]) || 0;
+          total = passed + failed;
+        } else if (cargoMatch) {
+          passed = parseInt(cargoMatch[1]) || 0;
+          failed = parseInt(cargoMatch[2]) || 0;
+          total = passed + failed;
+        } else if (goMatch) {
+          passed = goMatch.length;
+          total = passed;
+        }
+
+        // Check for skipped tests
+        const skipMatch = output.match(/(\d+)\s*skipped/i);
+        if (skipMatch) {
+          skipped = parseInt(skipMatch[1]) || 0;
+          total += skipped;
+        }
+
+        const truncated = output.length > 8000;
+        const truncatedOutput = truncated ? output.slice(-8000) + '\n\n[...output truncated]' : output;
+
+        const statusIcon = result.exitCode === 0 ? '✓' : '✗';
+        const lines: string[] = [
+          `[Tool Result — sandbox_run_tests]`,
+          `${statusIcon} Tests ${result.exitCode === 0 ? 'PASSED' : 'FAILED'} (${framework})`,
+          `Command: ${command}`,
+          `Duration: ${(durationMs / 1000).toFixed(1)}s`,
+          total > 0 ? `Results: ${passed} passed, ${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ''}` : '',
+          `\nOutput:\n${truncatedOutput}`,
+        ].filter(Boolean);
+
+        const cardData: TestResultsCardData = {
+          framework,
+          passed,
+          failed,
+          skipped,
+          total,
+          durationMs,
+          exitCode: result.exitCode,
+          output: truncatedOutput,
+          truncated,
+        };
+
+        return { text: lines.join('\n'), card: { type: 'test-results', data: cardData } };
+      }
+
+      case 'sandbox_check_types': {
+        const start = Date.now();
+
+        // Auto-detect type checker
+        let command = '';
+        let tool: TypeCheckCardData['tool'] = 'unknown';
+
+        // Check for TypeScript first (most common)
+        const detectResult = await execInSandbox(
+          sandboxId,
+          'cd /workspace && ls -1 tsconfig.json pyrightconfig.json mypy.ini 2>/dev/null | head -1',
+        );
+        const detected = detectResult.stdout.trim();
+
+        if (detected === 'tsconfig.json') {
+          // Check if tsc is available
+          const tscCheck = await execInSandbox(sandboxId, 'cd /workspace && npx tsc --version 2>/dev/null');
+          if (tscCheck.exitCode === 0) {
+            command = 'npx tsc --noEmit';
+            tool = 'tsc';
+          }
+        } else if (detected === 'pyrightconfig.json') {
+          command = 'pyright';
+          tool = 'pyright';
+        } else if (detected === 'mypy.ini') {
+          command = 'mypy .';
+          tool = 'mypy';
+        }
+
+        if (!command) {
+          // Fallback: try tsc if package.json exists
+          const pkgCheck = await execInSandbox(sandboxId, 'cd /workspace && cat package.json 2>/dev/null');
+          if (pkgCheck.stdout.includes('typescript')) {
+            command = 'npx tsc --noEmit';
+            tool = 'tsc';
+          } else {
+            return { text: '[Tool Result — sandbox_check_types]\nNo type checker detected. Supported: TypeScript (tsc), Pyright, mypy.' };
+          }
+        }
+
+        const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`);
+        const durationMs = Date.now() - start;
+
+        const output = result.stdout + '\n' + result.stderr;
+        const errors: TypeCheckCardData['errors'] = [];
+        let errorCount = 0;
+        let warningCount = 0;
+
+        // Parse TypeScript errors: file.ts(line,col): error TS1234: message
+        if (tool === 'tsc') {
+          const tsErrorRegex = /(.+?)\((\d+),(\d+)\):\s*(error|warning)\s*(TS\d+):\s*(.+)/g;
+          let match;
+          while ((match = tsErrorRegex.exec(output)) !== null && errors.length < 50) {
+            const isError = match[4] === 'error';
+            if (isError) errorCount++;
+            else warningCount++;
+            errors.push({
+              file: match[1],
+              line: parseInt(match[2]),
+              column: parseInt(match[3]),
+              message: match[6],
+              code: match[5],
+            });
+          }
+          // Also check for "Found N errors" summary
+          const summaryMatch = output.match(/Found (\d+) errors?/);
+          if (summaryMatch) {
+            errorCount = Math.max(errorCount, parseInt(summaryMatch[1]));
+          }
+        }
+
+        // Parse Pyright errors: file.py:line:col - error: message
+        if (tool === 'pyright') {
+          const pyrightRegex = /(.+?):(\d+):(\d+)\s*-\s*(error|warning):\s*(.+)/g;
+          let match;
+          while ((match = pyrightRegex.exec(output)) !== null && errors.length < 50) {
+            const isError = match[4] === 'error';
+            if (isError) errorCount++;
+            else warningCount++;
+            errors.push({
+              file: match[1],
+              line: parseInt(match[2]),
+              column: parseInt(match[3]),
+              message: match[5],
+            });
+          }
+        }
+
+        // Parse mypy errors: file.py:line: error: message
+        if (tool === 'mypy') {
+          const mypyRegex = /(.+?):(\d+):\s*(error|warning):\s*(.+)/g;
+          let match;
+          while ((match = mypyRegex.exec(output)) !== null && errors.length < 50) {
+            const isError = match[3] === 'error';
+            if (isError) errorCount++;
+            else warningCount++;
+            errors.push({
+              file: match[1],
+              line: parseInt(match[2]),
+              column: 0,
+              message: match[4],
+            });
+          }
+        }
+
+        const truncated = output.length > 8000;
+        const statusIcon = result.exitCode === 0 ? '✓' : '✗';
+        const lines: string[] = [
+          `[Tool Result — sandbox_check_types]`,
+          `${statusIcon} Type check ${result.exitCode === 0 ? 'PASSED' : 'FAILED'} (${tool})`,
+          `Command: ${command}`,
+          `Duration: ${(durationMs / 1000).toFixed(1)}s`,
+          errorCount > 0 || warningCount > 0 ? `Found: ${errorCount} error${errorCount !== 1 ? 's' : ''}${warningCount > 0 ? `, ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : ''}` : '',
+        ].filter(Boolean);
+
+        if (errors.length > 0) {
+          lines.push('\nErrors:');
+          for (const err of errors.slice(0, 10)) {
+            lines.push(`  ${err.file}:${err.line}${err.column ? `:${err.column}` : ''} — ${err.message}`);
+          }
+          if (errors.length > 10) {
+            lines.push(`  ...and ${errors.length - 10} more`);
+          }
+        }
+
+        const cardData: TypeCheckCardData = {
+          tool,
+          errors,
+          errorCount,
+          warningCount,
+          exitCode: result.exitCode,
+          truncated,
+        };
+
+        return { text: lines.join('\n'), card: { type: 'type-check', data: cardData } };
+      }
+
       default:
         return { text: `[Tool Error] Unknown sandbox tool: ${(call as any).tool}` };
     }
@@ -338,6 +615,8 @@ Additional tools available when sandbox is active:
 - sandbox_diff() — Get the git diff of all uncommitted changes
 - sandbox_prepare_commit(message) — Prepare a commit for review. Gets diff, runs Auditor. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
 - sandbox_push() — Retry a failed push. Use this only if a push failed after approval. No Auditor needed (commit was already audited).
+- sandbox_run_tests(framework?) — Run the test suite. Auto-detects npm/pytest/cargo/go if framework not specified. Returns pass/fail counts and output.
+- sandbox_check_types() — Run type checker (tsc for TypeScript, pyright/mypy for Python). Auto-detects from config files. Returns errors with file:line locations.
 
 Usage: Output a fenced JSON block just like GitHub tools:
 \`\`\`json
@@ -357,4 +636,6 @@ Sandbox rules:
 - sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.
 - If the push fails after a successful commit, use sandbox_push() to retry
 - Keep commands focused — avoid long-running servers or background processes
-- IMPORTANT: sandbox_read_file only works on files, not directories. To explore the project structure, use sandbox_list_dir first, then read specific files.`;
+- IMPORTANT: sandbox_read_file only works on files, not directories. To explore the project structure, use sandbox_list_dir first, then read specific files.
+- Use sandbox_run_tests BEFORE committing to catch regressions early. It's faster than sandbox_exec("npm test") and gives structured results.
+- Use sandbox_check_types to validate TypeScript/Python code before committing. Catches type errors that tests might miss.`;

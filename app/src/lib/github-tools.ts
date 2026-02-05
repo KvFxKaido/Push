@@ -6,7 +6,7 @@
  * result back into the conversation as a synthetic message.
  */
 
-import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData } from '@/types';
+import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData } from '@/types';
 import { extractBareToolJsonObjects } from './tool-dispatch';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
@@ -22,7 +22,9 @@ export type ToolCall =
   | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string } }
   | { tool: 'delegate_coder'; args: { task: string; files?: string[] } }
-  | { tool: 'fetch_checks'; args: { repo: string; ref?: string } };
+  | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
+  | { tool: 'search_files'; args: { repo: string; query: string; path?: string } }
+  | { tool: 'list_commit_files'; args: { repo: string; ref: string } };
 
 const ACCESS_DENIED_MESSAGE =
   '[Tool Error] Access denied — can only query the active repo (owner/repo)';
@@ -155,6 +157,12 @@ function validateToolCall(parsed: any): ToolCall | null {
   }
   if (parsed.tool === 'fetch_checks' && parsed.args.repo) {
     return { tool: 'fetch_checks', args: { repo: parsed.args.repo, ref: parsed.args.ref } };
+  }
+  if (parsed.tool === 'search_files' && parsed.args.repo && parsed.args.query) {
+    return { tool: 'search_files', args: { repo: parsed.args.repo, query: parsed.args.query, path: parsed.args.path } };
+  }
+  if (parsed.tool === 'list_commit_files' && parsed.args.repo && parsed.args.ref) {
+    return { tool: 'list_commit_files', args: { repo: parsed.args.repo, ref: parsed.args.ref } };
   }
   return null;
 }
@@ -612,6 +620,169 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
   return { text: lines.join('\n'), card: { type: 'ci-status', data: cardData } };
 }
 
+async function executeSearchFiles(repo: string, query: string, path?: string): Promise<ToolExecutionResult> {
+  const headers = getGitHubHeaders();
+
+  // Use GitHub's code search API
+  // Format: query + repo:owner/name + optional path filter
+  let searchQuery = `${query} repo:${repo}`;
+  if (path) {
+    searchQuery += ` path:${path}`;
+  }
+
+  const res = await githubFetch(
+    `https://api.github.com/search/code?q=${encodeURIComponent(searchQuery)}&per_page=25`,
+    { headers },
+  );
+
+  if (!res.ok) {
+    // GitHub's code search requires authentication and has rate limits
+    if (res.status === 403) {
+      throw new Error('Code search requires authentication — ensure your GitHub token is set.');
+    }
+    if (res.status === 422) {
+      throw new Error('Invalid search query. Try a simpler pattern.');
+    }
+    throw new Error(`GitHub code search returned ${res.status}`);
+  }
+
+  const data = await res.json();
+  const totalCount = data.total_count || 0;
+
+  if (totalCount === 0) {
+    return { text: `[Tool Result — search_files]\nNo files found matching "${query}"${path ? ` in ${path}` : ''}.` };
+  }
+
+  // Parse search results — GitHub returns file info, we need to extract line matches
+  const matches: FileSearchMatch[] = [];
+  const truncated = totalCount > 25;
+
+  for (const item of data.items || []) {
+    // Each item has: name, path, sha, html_url, and text_matches (if available)
+    const textMatches = item.text_matches || [];
+    if (textMatches.length > 0) {
+      for (const tm of textMatches) {
+        // Text matches have fragments with line info
+        const fragment = tm.fragment || '';
+        const lines = fragment.split('\n');
+        for (let i = 0; i < lines.length && matches.length < 50; i++) {
+          if (lines[i].toLowerCase().includes(query.toLowerCase())) {
+            matches.push({
+              path: item.path,
+              line: i + 1, // Approximate — GitHub doesn't give exact line numbers
+              content: lines[i].trim().slice(0, 200),
+            });
+          }
+        }
+      }
+    } else {
+      // No text_matches — just show the file path
+      matches.push({
+        path: item.path,
+        line: 0,
+        content: `(match in file)`,
+      });
+    }
+  }
+
+  const lines: string[] = [
+    `[Tool Result — search_files]`,
+    `Found ${totalCount} file${totalCount !== 1 ? 's' : ''} matching "${query}"${path ? ` in ${path}` : ''}`,
+    truncated ? `(showing first 25 results)\n` : '\n',
+  ];
+
+  // Group by file
+  const byFile = new Map<string, FileSearchMatch[]>();
+  for (const m of matches) {
+    if (!byFile.has(m.path)) byFile.set(m.path, []);
+    byFile.get(m.path)!.push(m);
+  }
+
+  for (const [filePath, fileMatches] of byFile) {
+    lines.push(`📄 ${filePath}`);
+    for (const m of fileMatches.slice(0, 3)) {
+      if (m.line > 0) {
+        lines.push(`    L${m.line}: ${m.content}`);
+      }
+    }
+    if (fileMatches.length > 3) {
+      lines.push(`    ...and ${fileMatches.length - 3} more matches`);
+    }
+  }
+
+  const cardData: FileSearchCardData = {
+    repo,
+    query,
+    path,
+    matches: matches.slice(0, 50),
+    totalCount,
+    truncated,
+  };
+
+  return { text: lines.join('\n'), card: { type: 'file-search', data: cardData } };
+}
+
+async function executeListCommitFiles(repo: string, ref: string): Promise<ToolExecutionResult> {
+  const headers = getGitHubHeaders();
+
+  // Fetch commit details
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}`,
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(`GitHub API returned ${res.status} for commit ${ref} on ${repo}`);
+  }
+
+  const commit = await res.json();
+  const files = commit.files || [];
+
+  const lines: string[] = [
+    `[Tool Result — list_commit_files]`,
+    `Commit: ${commit.sha.slice(0, 7)} — ${commit.commit.message.split('\n')[0]}`,
+    `Author: ${commit.commit.author?.name || commit.author?.login || 'unknown'}`,
+    `Date: ${new Date(commit.commit.author?.date || '').toLocaleDateString()}`,
+    `\n${files.length} file${files.length !== 1 ? 's' : ''} changed:\n`,
+  ];
+
+  let totalAdditions = 0;
+  let totalDeletions = 0;
+  const fileItems: CommitFilesCardData['files'] = [];
+
+  for (const f of files.slice(0, 50)) {
+    const icon = f.status === 'added' ? '+' : f.status === 'removed' ? '-' : '~';
+    lines.push(`  ${icon} ${f.filename} (+${f.additions} -${f.deletions})`);
+    totalAdditions += f.additions || 0;
+    totalDeletions += f.deletions || 0;
+    fileItems.push({
+      filename: f.filename,
+      status: f.status,
+      additions: f.additions || 0,
+      deletions: f.deletions || 0,
+    });
+  }
+
+  if (files.length > 50) {
+    lines.push(`  ...and ${files.length - 50} more files`);
+  }
+
+  lines.push(`\nTotal: +${totalAdditions} -${totalDeletions}`);
+
+  const cardData: CommitFilesCardData = {
+    repo,
+    ref,
+    sha: commit.sha,
+    message: commit.commit.message.split('\n')[0],
+    author: commit.commit.author?.name || commit.author?.login || 'unknown',
+    date: commit.commit.author?.date || '',
+    files: fileItems,
+    totalChanges: { additions: totalAdditions, deletions: totalDeletions },
+  };
+
+  return { text: lines.join('\n'), card: { type: 'commit-files', data: cardData } };
+}
+
 function normalizeRepoName(repo: string): string {
   return repo
     .trim()
@@ -652,6 +823,10 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
         return await executeListBranches(call.args.repo);
       case 'fetch_checks':
         return await executeFetchChecks(call.args.repo, call.args.ref);
+      case 'search_files':
+        return await executeSearchFiles(call.args.repo, call.args.query, call.args.path);
+      case 'list_commit_files':
+        return await executeListCommitFiles(call.args.repo, call.args.ref);
       default:
         return { text: `[Tool Error] Unknown tool: ${(call as any).tool}` };
     }
@@ -682,6 +857,8 @@ Available tools:
 - list_branches(repo) — List branches with default/protected status
 - delegate_coder(task, files?) — Delegate a coding task to the Coder agent (requires sandbox)
 - fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
+- search_files(repo, query, path?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/").
+- list_commit_files(repo, ref) — List files changed in a commit without the full diff. Lighter than fetch_pr. ref can be SHA, branch, or tag.
 
 Rules:
 - Output ONLY the JSON block when requesting a tool — no other text in the same message
@@ -694,4 +871,6 @@ Rules:
 - For "show me [filename]" use read_file (only for individual files)
 - To explore the project structure or find files, use list_directory FIRST, then read_file on specific files
 - IMPORTANT: read_file only works on files, not directories. If you need to see what's inside a folder, always use list_directory.
-- For "what branches exist?" use list_branches`;
+- For "what branches exist?" use list_branches
+- For "find [pattern]" or "where is [thing]" use search_files — saves multiple round-trips vs manual browsing
+- For "what files changed in [commit]" use list_commit_files — lighter than fetch_pr when you just need the file list`;

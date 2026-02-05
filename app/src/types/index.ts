@@ -138,7 +138,11 @@ export type ChatCard =
   | { type: 'audit-verdict'; data: AuditVerdictCardData }
   | { type: 'commit-review'; data: CommitReviewCardData }
   | { type: 'ci-status'; data: CIStatusCardData }
-  | { type: 'editor'; data: EditorCardData };
+  | { type: 'editor'; data: EditorCardData }
+  | { type: 'file-search'; data: FileSearchCardData }
+  | { type: 'commit-files'; data: CommitFilesCardData }
+  | { type: 'test-results'; data: TestResultsCardData }
+  | { type: 'type-check'; data: TypeCheckCardData };
 
 // Tool execution returns text for the LLM + optional structured card for UI
 export interface ToolExecutionResult {
@@ -299,4 +303,53 @@ export interface FileEntry {
   path: string;
   type: 'file' | 'directory';
   size: number;
+}
+
+// Developer productivity tools — search, tests, type checking
+
+export interface FileSearchMatch {
+  path: string;
+  line: number;
+  content: string;
+}
+
+export interface FileSearchCardData {
+  repo: string;
+  query: string;
+  path?: string;
+  matches: FileSearchMatch[];
+  totalCount: number;
+  truncated: boolean;
+}
+
+export interface CommitFilesCardData {
+  repo: string;
+  ref: string;
+  sha: string;
+  message: string;
+  author: string;
+  date: string;
+  files: { filename: string; status: string; additions: number; deletions: number }[];
+  totalChanges: { additions: number; deletions: number };
+}
+
+export interface TestResultsCardData {
+  framework: 'npm' | 'pytest' | 'cargo' | 'go' | 'unknown';
+  passed: number;
+  failed: number;
+  skipped: number;
+  total: number;
+  durationMs: number;
+  exitCode: number;
+  output: string;
+  truncated: boolean;
+}
+
+export interface TypeCheckCardData {
+  tool: 'tsc' | 'pyright' | 'mypy' | 'unknown';
+  errors: { file: string; line: number; column: number; message: string; code?: string }[];
+  errorCount: number;
+  warningCount: number;
+  exitCode: number;
+  truncated: boolean;
 }
