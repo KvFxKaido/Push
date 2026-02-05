@@ -69,14 +69,22 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
 
       {/* Commit message */}
       <div className="px-3 pb-3">
-        <label className="block text-[11px] text-[#52525b] font-medium mb-1.5">
-          Commit message
-        </label>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-[11px] text-[#52525b] font-medium">
+            Commit message
+          </label>
+          {isPending && (
+            <span className="text-[10px] text-[#3f3f46] italic">
+              auto-filled by Kimi · tap to edit
+            </span>
+          )}
+        </div>
         {isPending ? (
           <textarea
             value={editedMessage}
             onChange={(e) => setEditedMessage(e.target.value)}
             rows={1}
+            placeholder="Enter commit message..."
             className="w-full rounded-lg border border-[#1a1a1a] bg-[#0a0a0c] px-3 py-2 text-[13px] text-[#e4e4e7] font-mono placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46] resize-none leading-relaxed"
             style={{ minHeight: '38px', maxHeight: '80px' }}
             onInput={(e) => {
