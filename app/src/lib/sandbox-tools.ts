@@ -400,13 +400,14 @@ export async function executeSandboxToolCall(
                             output.match(/passed:\s*(\d+).*?failed:\s*(\d+)/i);
         // cargo patterns
         const cargoMatch = output.match(/test result:.*?(\d+)\s*passed.*?(\d+)\s*failed/i);
-        // go patterns
-        const goMatch = output.match(/ok\s+.*?\s+(\d+\.\d+)s/g);
+        // go patterns — count both passing and failing packages
+        const goPassMatch = output.match(/ok\s+.*?\s+(\d+\.\d+)s/g);
+        const goFailMatch = output.match(/FAIL\s+.*?\s+(\d+\.\d+)s/g);
 
         if (jestMatch) {
           passed = parseInt(jestMatch[1]) || 0;
           failed = parseInt(jestMatch[2]) || 0;
-          total = passed + failed;
+          total = jestMatch[3] ? (parseInt(jestMatch[3]) || 0) : (passed + failed);
         } else if (pytestMatch) {
           passed = parseInt(pytestMatch[1]) || 0;
           failed = parseInt(pytestMatch[2]) || 0;
@@ -415,9 +416,10 @@ export async function executeSandboxToolCall(
           passed = parseInt(cargoMatch[1]) || 0;
           failed = parseInt(cargoMatch[2]) || 0;
           total = passed + failed;
-        } else if (goMatch) {
-          passed = goMatch.length;
-          total = passed;
+        } else if (goPassMatch || goFailMatch) {
+          passed = goPassMatch ? goPassMatch.length : 0;
+          failed = goFailMatch ? goFailMatch.length : 0;
+          total = passed + failed;
         }
 
         // Check for skipped tests
@@ -428,7 +430,7 @@ export async function executeSandboxToolCall(
         }
 
         const truncated = output.length > 8000;
-        const truncatedOutput = truncated ? output.slice(-8000) + '\n\n[...output truncated]' : output;
+        const truncatedOutput = truncated ? output.slice(0, 8000) + '\n\n[...output truncated]' : output;
 
         const statusIcon = result.exitCode === 0 ? '✓' : '✗';
         const lines: string[] = [
@@ -477,11 +479,20 @@ export async function executeSandboxToolCall(
             tool = 'tsc';
           }
         } else if (detected === 'pyrightconfig.json') {
-          command = 'pyright';
-          tool = 'pyright';
+          // Check if pyright is available
+          const pyrightCheck = await execInSandbox(sandboxId, 'cd /workspace && pyright --version 2>/dev/null');
+          if (pyrightCheck.exitCode === 0) {
+            command = 'pyright';
+            tool = 'pyright';
+          }
         } else if (detected === 'mypy.ini') {
-          command = 'mypy .';
-          tool = 'mypy';
+          // Check if mypy is available
+          const mypyCheck = await execInSandbox(sandboxId, 'cd /workspace && mypy --version 2>/dev/null');
+          if (mypyCheck.exitCode === 0) {
+            // Use 'mypy' without args to respect mypy.ini config paths
+            command = 'mypy';
+            tool = 'mypy';
+          }
         }
 
         if (!command) {

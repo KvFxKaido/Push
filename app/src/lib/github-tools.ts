@@ -630,9 +630,10 @@ async function executeSearchFiles(repo: string, query: string, path?: string): P
     searchQuery += ` path:${path}`;
   }
 
+  // Use text-match media type to get text_matches in response
   const res = await githubFetch(
     `https://api.github.com/search/code?q=${encodeURIComponent(searchQuery)}&per_page=25`,
-    { headers },
+    { headers: { ...headers, Accept: 'application/vnd.github.v3.text-match+json' } },
   );
 
   if (!res.ok) {
@@ -669,7 +670,7 @@ async function executeSearchFiles(repo: string, query: string, path?: string): P
           if (lines[i].toLowerCase().includes(query.toLowerCase())) {
             matches.push({
               path: item.path,
-              line: i + 1, // Approximate — GitHub doesn't give exact line numbers
+              line: 0, // GitHub doesn't provide exact line numbers for text_matches
               content: lines[i].trim().slice(0, 200),
             });
           }
@@ -746,15 +747,18 @@ async function executeListCommitFiles(repo: string, ref: string): Promise<ToolEx
     `\n${files.length} file${files.length !== 1 ? 's' : ''} changed:\n`,
   ];
 
+  // Calculate totals from ALL files, not just displayed ones
   let totalAdditions = 0;
   let totalDeletions = 0;
-  const fileItems: CommitFilesCardData['files'] = [];
+  for (const f of files) {
+    totalAdditions += f.additions || 0;
+    totalDeletions += f.deletions || 0;
+  }
 
+  const fileItems: CommitFilesCardData['files'] = [];
   for (const f of files.slice(0, 50)) {
     const icon = f.status === 'added' ? '+' : f.status === 'removed' ? '-' : '~';
     lines.push(`  ${icon} ${f.filename} (+${f.additions} -${f.deletions})`);
-    totalAdditions += f.additions || 0;
-    totalDeletions += f.deletions || 0;
     fileItems.push({
       filename: f.filename,
       status: f.status,
