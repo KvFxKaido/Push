@@ -1,4 +1,4 @@
-import { FlaskConical, CheckCircle2, XCircle, MinusCircle } from 'lucide-react';
+import { CheckCircle2, XCircle, MinusCircle } from 'lucide-react';
 import type { TestResultsCardData } from '@/types';
 
 export function TestResultsCard({ data }: { data: TestResultsCardData }) {
