@@ -54,6 +54,20 @@ function createMemoryId(): string {
   return `mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Validates that parsed data conforms to ScratchpadMemory[] structure */
+function validateMemories(data: unknown): ScratchpadMemory[] {
+  if (!Array.isArray(data)) return [];
+  return data.filter(
+    (item): item is ScratchpadMemory =>
+      typeof item === 'object' &&
+      item !== null &&
+      typeof item.id === 'string' &&
+      typeof item.name === 'string' &&
+      typeof item.content === 'string' &&
+      typeof item.updatedAt === 'number'
+  );
+}
+
 export function useScratchpad(repoFullName: string | null = null) {
   const [isOpen, setIsOpen] = useState(false);
   const [content, setContent] = useState('');
@@ -95,22 +109,41 @@ export function useScratchpad(repoFullName: string | null = null) {
     }
   }, [repoFullName]);
 
-  // Load memories for repo
+  // Load memories for repo and sync content with active memory
   useEffect(() => {
     const memoryKey = getMemoryStorageKey(repoFullName);
     const activeKey = getActiveMemoryKey(repoFullName);
 
+    let loadedMemories: ScratchpadMemory[] = [];
+    let loadedActiveId: string | null = null;
+
     try {
       const stored = localStorage.getItem(memoryKey);
-      setMemories(stored ? (JSON.parse(stored) as ScratchpadMemory[]) : []);
+      loadedMemories = stored ? validateMemories(JSON.parse(stored)) : [];
+      setMemories(loadedMemories);
     } catch {
       setMemories([]);
     }
 
     try {
       const storedActive = localStorage.getItem(activeKey);
-      setActiveMemoryId(storedActive ?? null);
+      loadedActiveId = storedActive ?? null;
     } catch {
+      loadedActiveId = null;
+    }
+
+    // Sync content with active memory if one is set
+    if (loadedActiveId) {
+      const activeMemory = loadedMemories.find((m) => m.id === loadedActiveId);
+      if (activeMemory) {
+        setContent(activeMemory.content);
+        setActiveMemoryId(loadedActiveId);
+      } else {
+        // Active memory no longer exists - clear the reference
+        setActiveMemoryId(null);
+        localStorage.removeItem(activeKey);
+      }
+    } else {
       setActiveMemoryId(null);
     }
   }, [repoFullName]);
@@ -234,6 +267,10 @@ export function useScratchpad(repoFullName: string | null = null) {
         }
         setContent(memory.content);
         setActiveMemoryId(id);
+      } else {
+        // Memory not found - reset selection and notify user
+        setActiveMemoryId(null);
+        toast.error('Memory not found — it may have been deleted');
       }
     },
     [memories, activeMemoryId, content],

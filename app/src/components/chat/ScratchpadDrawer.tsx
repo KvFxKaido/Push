@@ -8,8 +8,8 @@
  * Kimi edits via set_scratchpad / append_scratchpad tools.
  */
 
-import { useEffect, useRef } from 'react';
-import { BookmarkPlus, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { BookmarkPlus, Check, Trash2, X } from 'lucide-react';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 
 interface ScratchpadDrawerProps {
@@ -38,6 +38,9 @@ export function ScratchpadDrawer({
   onDeleteMemory,
 }: ScratchpadDrawerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const [isNamingMemory, setIsNamingMemory] = useState(false);
+  const [memoryName, setMemoryName] = useState('');
 
   // Focus textarea when opened
   useEffect(() => {
@@ -61,10 +64,39 @@ export function ScratchpadDrawer({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  const handleSaveMemory = () => {
-    const name = window.prompt('Name this memory:');
-    if (!name) return;
-    onSaveMemory(name);
+  // Focus name input when entering naming mode
+  useEffect(() => {
+    if (isNamingMemory && nameInputRef.current) {
+      nameInputRef.current.focus();
+    }
+  }, [isNamingMemory]);
+
+  const handleStartNaming = () => {
+    setMemoryName('');
+    setIsNamingMemory(true);
+  };
+
+  const handleCancelNaming = () => {
+    setIsNamingMemory(false);
+    setMemoryName('');
+  };
+
+  const handleConfirmNaming = () => {
+    const trimmed = memoryName.trim();
+    if (!trimmed) return;
+    onSaveMemory(trimmed);
+    setIsNamingMemory(false);
+    setMemoryName('');
+  };
+
+  const handleNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleConfirmNaming();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleCancelNaming();
+    }
   };
 
   const handleLoadMemory = (value: string) => {
@@ -104,8 +136,8 @@ export function ScratchpadDrawer({
           </div>
           <div className="flex items-center gap-1">
             <button
-              onClick={handleSaveMemory}
-              disabled={!content.trim()}
+              onClick={handleStartNaming}
+              disabled={!content.trim() || isNamingMemory}
               className="flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
               aria-label="Save scratchpad memory"
               title="Save memory"
@@ -132,11 +164,43 @@ export function ScratchpadDrawer({
           </div>
         </div>
 
+        {/* Inline memory naming input */}
+        {isNamingMemory && (
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-[#1a1a1a] bg-[#0a0a0a]">
+            <input
+              ref={nameInputRef}
+              type="text"
+              value={memoryName}
+              onChange={(e) => setMemoryName(e.target.value)}
+              onKeyDown={handleNameKeyDown}
+              placeholder="Name this memory..."
+              className="h-8 flex-1 rounded-lg border border-[#27272a] bg-[#0d0d0d] px-3 text-xs text-[#e4e4e7] outline-none focus:border-[#3f3f46] placeholder:text-[#52525b]"
+              aria-label="Memory name"
+            />
+            <button
+              onClick={handleConfirmNaming}
+              disabled={!memoryName.trim()}
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#16a34a] text-white transition-colors hover:bg-[#15803d] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+              aria-label="Confirm memory name"
+            >
+              <Check className="h-4 w-4" />
+            </button>
+            <button
+              onClick={handleCancelNaming}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95"
+              aria-label="Cancel naming"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
         <div className="flex items-center gap-2 px-4 py-2 border-b border-[#1a1a1a]">
           <select
             value={activeMemoryId ?? ''}
             onChange={(e) => handleLoadMemory(e.target.value)}
             className="h-8 flex-1 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-2 text-xs text-[#e4e4e7] outline-none focus:border-[#27272a]"
+            aria-label="Select saved memory"
           >
             <option value="">Scratchpad (unsaved)</option>
             {memories.map((memory) => (
