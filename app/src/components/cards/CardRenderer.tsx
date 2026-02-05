@@ -11,6 +11,10 @@ import { AuditVerdictCard } from './AuditVerdictCard';
 import { CommitReviewCard } from './CommitReviewCard';
 import { CIStatusCard } from './CIStatusCard';
 import { EditorCard } from './EditorCard';
+import { FileSearchCard } from './FileSearchCard';
+import { CommitFilesCard } from './CommitFilesCard';
+import { TestResultsCard } from './TestResultsCard';
+import { TypeCheckCard } from './TypeCheckCard';
 
 interface CardRendererProps {
   card: ChatCard;
@@ -66,6 +70,14 @@ export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRende
           onAction={onAction}
         />
       );
+    case 'file-search':
+      return <FileSearchCard data={card.data} />;
+    case 'commit-files':
+      return <CommitFilesCard data={card.data} />;
+    case 'test-results':
+      return <TestResultsCard data={card.data} />;
+    case 'type-check':
+      return <TypeCheckCard data={card.data} />;
     default:
       return null;
   }
