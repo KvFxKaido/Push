@@ -30,7 +30,7 @@ import './App.css';
 
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo } = useActiveRepo();
-  const scratchpad = useScratchpad();
+  const scratchpad = useScratchpad(activeRepo?.full_name ?? null);
   const {
     messages,
     sendMessage,
