@@ -70,6 +70,7 @@ function App() {
     token: appToken,
     install: installApp,
     disconnect: appDisconnect,
+    setInstallationIdManually,
     loading: appLoading,
     error: appError,
     validatedUser: appUser,
@@ -87,6 +88,8 @@ function App() {
   const [isDemo, setIsDemo] = useState(false);
   const [kimiKeyInput, setKimiKeyInput] = useState('');
   const [showFileBrowser, setShowFileBrowser] = useState(false);
+  const [installIdInput, setInstallIdInput] = useState('');
+  const [showInstallIdInput, setShowInstallIdInput] = useState(false);
 
   // Screen state machine
   const screen: AppScreen = useMemo(() => {
@@ -409,20 +412,81 @@ function App() {
                   {/* Upgrade to GitHub App (shown when using PAT) */}
                   {!isDemo && !isAppAuth && patToken && (
                     <div className="space-y-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          installApp();
-                          setSettingsOpen(false);
-                        }}
-                        className="text-[#0070f3] hover:text-[#0060d3] w-full justify-start"
-                      >
-                        ⬆️ Upgrade to GitHub App
-                      </Button>
-                      <p className="text-xs text-[#52525b]">
-                        More secure — scoped access, auto-refreshing tokens.
-                      </p>
+                      {showInstallIdInput ? (
+                        <>
+                          <input
+                            type="text"
+                            value={installIdInput}
+                            onChange={(e) => setInstallIdInput(e.target.value)}
+                            placeholder="Installation ID (e.g., 108161455)"
+                            className="w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46] font-mono"
+                            onKeyDown={async (e) => {
+                              if (e.key === 'Enter' && installIdInput.trim()) {
+                                const success = await setInstallationIdManually(installIdInput.trim());
+                                if (success) {
+                                  setInstallIdInput('');
+                                  setShowInstallIdInput(false);
+                                }
+                              }
+                            }}
+                          />
+                          <div className="flex gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={async () => {
+                                if (installIdInput.trim()) {
+                                  const success = await setInstallationIdManually(installIdInput.trim());
+                                  if (success) {
+                                    setInstallIdInput('');
+                                    setShowInstallIdInput(false);
+                                  }
+                                }
+                              }}
+                              disabled={!installIdInput.trim() || appLoading}
+                              className="text-[#0070f3] hover:text-[#0060d3] flex-1"
+                            >
+                              {appLoading ? 'Connecting...' : 'Connect'}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setShowInstallIdInput(false)}
+                              className="text-[#52525b] hover:text-[#a1a1aa]"
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                          <p className="text-xs text-[#52525b]">
+                            Find your ID at github.com/settings/installations
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              installApp();
+                              setSettingsOpen(false);
+                            }}
+                            className="text-[#0070f3] hover:text-[#0060d3] w-full justify-start"
+                          >
+                            ⬆️ Upgrade to GitHub App
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setShowInstallIdInput(true)}
+                            className="text-[#52525b] hover:text-[#a1a1aa] w-full justify-start text-xs"
+                          >
+                            Already installed? Enter ID manually
+                          </Button>
+                        </>
+                      )}
+                      {appError && (
+                        <p className="text-xs text-red-400">{appError}</p>
+                      )}
                     </div>
                   )}
                   <Button

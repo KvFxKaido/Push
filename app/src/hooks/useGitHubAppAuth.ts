@@ -23,6 +23,7 @@ type UseGitHubAppAuth = {
   installationId: string;
   install: () => void;
   disconnect: () => void;
+  setInstallationIdManually: (instId: string) => Promise<boolean>;
   loading: boolean;
   error: string | null;
   validatedUser: GitHubUser | null;
@@ -201,6 +202,24 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     );
   }, []);
 
+  // Manual installation ID entry (for users who already have the app installed)
+  const setInstallationIdManually = useCallback(
+    async (instId: string): Promise<boolean> => {
+      const trimmed = instId.trim();
+      if (!trimmed || !/^\d+$/.test(trimmed)) {
+        setError('Invalid installation ID — must be a number');
+        return false;
+      }
+      try {
+        await fetchAndSetToken(trimmed);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [fetchAndSetToken]
+  );
+
   const disconnect = useCallback(() => {
     if (refreshTimeoutRef.current) {
       clearTimeout(refreshTimeoutRef.current);
@@ -218,6 +237,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     token,
     installationId,
     install,
+    setInstallationIdManually,
     disconnect,
     loading,
     error,
