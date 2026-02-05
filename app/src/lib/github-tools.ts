@@ -47,7 +47,7 @@ function getGitHubHeaders(): Record<string, string> {
 
 // --- Fetch with timeout and retry ---
 
-function isRetryableError(error: unknown, status?: number): boolean {
+function isRetryableError(_error: unknown, status?: number): boolean {
   // Network errors, timeouts, and 5xx server errors are retryable
   if (status !== undefined) {
     // 429 rate limit is retryable

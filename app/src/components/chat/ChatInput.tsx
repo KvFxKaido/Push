@@ -70,7 +70,11 @@ export function ChatInput({ onSend, disabled, repoName, onScratchpadToggle, scra
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      // On mobile (touch devices), Enter creates a new line; use the send button to submit
+      // On desktop, Enter sends the message (Shift+Enter for new line)
+      const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+      if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
         e.preventDefault();
         handleSend();
       }
