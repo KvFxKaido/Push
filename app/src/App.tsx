@@ -318,9 +318,14 @@ function App() {
       <ScratchpadDrawer
         isOpen={scratchpad.isOpen}
         content={scratchpad.content}
+        memories={scratchpad.memories}
+        activeMemoryId={scratchpad.activeMemoryId}
         onContentChange={scratchpad.setContent}
         onClose={scratchpad.close}
         onClear={scratchpad.clear}
+        onSaveMemory={scratchpad.saveMemory}
+        onLoadMemory={scratchpad.loadMemory}
+        onDeleteMemory={scratchpad.deleteMemory}
       />
 
       {/* Toast notifications */}

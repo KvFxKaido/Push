@@ -9,22 +9,33 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { X, Trash2 } from 'lucide-react';
+import { BookmarkPlus, Trash2, X } from 'lucide-react';
+import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 
 interface ScratchpadDrawerProps {
   isOpen: boolean;
   content: string;
+  memories: ScratchpadMemory[];
+  activeMemoryId: string | null;
   onContentChange: (content: string) => void;
   onClose: () => void;
   onClear: () => void;
+  onSaveMemory: (name: string) => void;
+  onLoadMemory: (id: string | null) => void;
+  onDeleteMemory: (id: string) => void;
 }
 
 export function ScratchpadDrawer({
   isOpen,
   content,
+  memories,
+  activeMemoryId,
   onContentChange,
   onClose,
   onClear,
+  onSaveMemory,
+  onLoadMemory,
+  onDeleteMemory,
 }: ScratchpadDrawerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -49,6 +60,18 @@ export function ScratchpadDrawer({
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
+
+  const handleSaveMemory = () => {
+    const name = window.prompt('Name this memory:');
+    if (!name) return;
+    onSaveMemory(name);
+  };
+
+  const handleLoadMemory = (value: string) => {
+    onLoadMemory(value || null);
+  };
+
+  const activeMemory = memories.find((memory) => memory.id === activeMemoryId) ?? null;
 
   return (
     <>
@@ -81,6 +104,16 @@ export function ScratchpadDrawer({
           </div>
           <div className="flex items-center gap-1">
             <button
+              onClick={handleSaveMemory}
+              disabled={!content.trim()}
+              className="flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+              aria-label="Save scratchpad memory"
+              title="Save memory"
+            >
+              <BookmarkPlus className="h-3.5 w-3.5" />
+              Save
+            </button>
+            <button
               onClick={onClear}
               disabled={!content.trim()}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
@@ -97,6 +130,29 @@ export function ScratchpadDrawer({
               <X className="h-4 w-4" />
             </button>
           </div>
+        </div>
+
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-[#1a1a1a]">
+          <select
+            value={activeMemoryId ?? ''}
+            onChange={(e) => handleLoadMemory(e.target.value)}
+            className="h-8 flex-1 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-2 text-xs text-[#e4e4e7] outline-none focus:border-[#27272a]"
+          >
+            <option value="">Scratchpad (unsaved)</option>
+            {memories.map((memory) => (
+              <option key={memory.id} value={memory.id}>
+                {memory.name}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => activeMemory && onDeleteMemory(activeMemory.id)}
+            disabled={!activeMemory}
+            className="flex h-8 items-center rounded-lg border border-[#1a1a1a] px-2 text-xs text-[#52525b] transition-colors hover:text-[#f97316] hover:border-[#27272a] hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+            aria-label="Delete memory"
+          >
+            Delete
+          </button>
         </div>
 
         {/* Editor */}
