@@ -10,6 +10,9 @@ interface Env {
   MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
+  // GitHub App credentials
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
 }
 
 const MAX_BODY_SIZE_BYTES = 512 * 1024; // 512KB — supports file uploads via sandbox write
@@ -36,6 +39,11 @@ export default {
     // API route: health check endpoint
     if (url.pathname === '/api/health' && request.method === 'GET') {
       return handleHealthCheck(env);
+    }
+
+    // API route: GitHub App token exchange
+    if (url.pathname === '/api/github/app-token' && request.method === 'POST') {
+      return handleGitHubAppToken(request, env);
     }
 
     // API route: streaming proxy to Kimi For Coding (SSE)
@@ -322,6 +330,7 @@ interface HealthStatus {
     worker: { status: 'ok' };
     kimi: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
+    github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
   };
   version: string;
 }
@@ -356,6 +365,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       worker: { status: 'ok' },
       kimi: { status: kimiConfigured ? 'ok' : 'unconfigured', configured: kimiConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
+      github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
     },
     version: '1.0.0',
   };
@@ -456,4 +466,124 @@ async function handleKimiChat(request: Request, env: Env): Promise<Response> {
     console.error(`[api/kimi/chat] Unhandled: ${message}`);
     return Response.json({ error }, { status });
   }
+}
+
+// --- GitHub App token exchange ---
+
+async function handleGitHubAppToken(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
+    return Response.json({ error: 'GitHub App not configured' }, { status: 500 });
+  }
+
+  const bodyResult = await readBodyText(request, 4096);
+  if (!bodyResult.ok) {
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  }
+
+  let payload: { installation_id?: string };
+  try {
+    payload = JSON.parse(bodyResult.text);
+  } catch {
+    return Response.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+
+  const installationId = payload.installation_id;
+  if (!installationId || typeof installationId !== 'string') {
+    return Response.json({ error: 'Missing installation_id' }, { status: 400 });
+  }
+
+  // Validate installation_id is a positive integer
+  if (!/^\d+$/.test(installationId)) {
+    return Response.json({ error: 'Invalid installation_id format' }, { status: 400 });
+  }
+
+  // Prevent overly long IDs (DoS protection)
+  if (installationId.length > 20) {
+    return Response.json({ error: 'installation_id too long' }, { status: 400 });
+  }
+
+  try {
+    const jwt = await generateGitHubAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
+    const tokenData = await exchangeForInstallationToken(jwt, installationId);
+    return Response.json(tokenData);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[github/app-token] Error:', message);
+    return Response.json({ error: `GitHub App authentication failed: ${message}` }, { status: 500 });
+  }
+}
+
+async function generateGitHubAppJWT(appId: string, privateKeyPEM: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { iat: now - 60, exp: now + 600, iss: appId };
+
+  const encodeBase64Url = (data: string | Uint8Array): string => {
+    let base64: string;
+    if (typeof data === 'string') {
+      base64 = btoa(data);
+    } else {
+      const bytes = Array.from(data, (b) => String.fromCharCode(b)).join('');
+      base64 = btoa(bytes);
+    }
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  };
+
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const encodedHeader = encodeBase64Url(JSON.stringify(header));
+  const encodedPayload = encodeBase64Url(JSON.stringify(payload));
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+
+  const pemHeader = '-----BEGIN RSA PRIVATE KEY-----';
+  const pemFooter = '-----END RSA PRIVATE KEY-----';
+  const pemContents = privateKeyPEM
+    .replace(pemHeader, '')
+    .replace(pemFooter, '')
+    .replace(/\s/g, '');
+  const binaryKey = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'pkcs8',
+    binaryKey.buffer,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    cryptoKey,
+    new TextEncoder().encode(signingInput)
+  );
+
+  return `${signingInput}.${encodeBase64Url(new Uint8Array(signature))}`;
+}
+
+async function exchangeForInstallationToken(
+  jwt: string,
+  installationId: string
+): Promise<{ token: string; expires_at: string }> {
+  const response = await fetch(
+    `https://api.github.com/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`GitHub API ${response.status}: ${error}`);
+  }
+
+  return await response.json() as { token: string; expires_at: string };
 }
