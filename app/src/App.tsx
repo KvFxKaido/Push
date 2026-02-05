@@ -214,27 +214,31 @@ function App() {
 
   if (screen === 'onboarding') {
     return (
-      <OnboardingScreen
-        onConnect={handleConnect}
-        onDemo={handleDemo}
-        onInstallApp={installApp}
-        loading={authLoading}
-        error={authError}
-        validatedUser={validatedUser}
-        isAppAuth={isAppAuth}
-      />
+      <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+        <OnboardingScreen
+          onConnect={handleConnect}
+          onDemo={handleDemo}
+          onInstallApp={installApp}
+          loading={authLoading}
+          error={authError}
+          validatedUser={validatedUser}
+          isAppAuth={isAppAuth}
+        />
+      </div>
     );
   }
 
   if (screen === 'repo-picker') {
     return (
-      <RepoPicker
-        repos={repos}
-        loading={reposLoading}
-        onSelect={handleSelectRepo}
-        onDisconnect={handleDisconnect}
-        user={validatedUser}
-      />
+      <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+        <RepoPicker
+          repos={repos}
+          loading={reposLoading}
+          onSelect={handleSelectRepo}
+          onDisconnect={handleDisconnect}
+          user={validatedUser}
+        />
+      </div>
     );
   }
 
@@ -242,14 +246,14 @@ function App() {
 
   if (screen === 'file-browser' && sandbox.sandboxId) {
     return (
-      <>
+      <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
         <FileBrowser
           sandboxId={sandbox.sandboxId}
           repoName={activeRepo?.name || 'Sandbox'}
           onBack={() => setShowFileBrowser(false)}
         />
         <Toaster position="bottom-center" />
-      </>
+      </div>
     );
   }
 
@@ -258,7 +262,7 @@ function App() {
   const isConnected = Boolean(token) || isDemo;
 
   return (
-    <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
+    <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
       {/* Top bar */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-[#111]">
         <div className="flex items-center gap-2 min-w-0 flex-1">
