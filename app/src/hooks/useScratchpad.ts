@@ -13,7 +13,16 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 
 const GLOBAL_STORAGE_KEY = 'push-scratchpad';
+const MEMORY_STORAGE_KEY = 'push-scratchpad-memories';
+const ACTIVE_MEMORY_KEY = 'push-scratchpad-memory-active';
 const MAX_STORAGE_SIZE = 500_000; // 500KB soft cap for localStorage
+
+export interface ScratchpadMemory {
+  id: string;
+  name: string;
+  content: string;
+  updatedAt: number;
+}
 
 function getStorageKey(repoFullName: string | null): string {
   return repoFullName
@@ -26,9 +35,48 @@ export interface ScratchpadState {
   content: string;
 }
 
-export function useScratchpad(repoFullName: string | null = null) {
+interface UseScratchpadReturn {
+  isOpen: boolean;
+  content: string;
+  hasContent: boolean;
+  memories: ScratchpadMemory[];
+  activeMemoryId: string | null;
+  toggle: () => void;
+  open: () => void;
+  close: () => void;
+  clear: () => void;
+  append: (text: string) => void;
+  replace: (text: string) => void;
+  setContent: (content: string) => void;
+  saveMemory: (name: string) => void;
+  loadMemory: (id: string | null) => void;
+  deleteMemory: (id: string) => void;
+}
+
+function getMemoryStorageKey(repoFullName: string | null): string {
+  return repoFullName
+    ? `${MEMORY_STORAGE_KEY}:${repoFullName}`
+    : `${MEMORY_STORAGE_KEY}:global`;
+}
+
+function getActiveMemoryKey(repoFullName: string | null): string {
+  return repoFullName
+    ? `${ACTIVE_MEMORY_KEY}:${repoFullName}`
+    : `${ACTIVE_MEMORY_KEY}:global`;
+}
+
+function createMemoryId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function useScratchpad(repoFullName: string | null = null): UseScratchpadReturn {
   const [isOpen, setIsOpen] = useState(false);
   const [content, setContent] = useState('');
+  const [memories, setMemories] = useState<ScratchpadMemory[]>([]);
+  const [activeMemoryId, setActiveMemoryId] = useState<string | null>(null);
   const hasMigratedRef = useRef(false);
 
   // Load content when repo changes, with migration support
@@ -61,6 +109,26 @@ export function useScratchpad(repoFullName: string | null = null) {
     }
   }, [repoFullName]);
 
+  // Load memories for repo
+  useEffect(() => {
+    const memoryKey = getMemoryStorageKey(repoFullName);
+    const activeKey = getActiveMemoryKey(repoFullName);
+
+    try {
+      const stored = localStorage.getItem(memoryKey);
+      setMemories(stored ? (JSON.parse(stored) as ScratchpadMemory[]) : []);
+    } catch {
+      setMemories([]);
+    }
+
+    try {
+      const storedActive = localStorage.getItem(activeKey);
+      setActiveMemoryId(storedActive ?? null);
+    } catch {
+      setActiveMemoryId(null);
+    }
+  }, [repoFullName]);
+
   // Auto-save on change with error feedback
   useEffect(() => {
     const storageKey = getStorageKey(repoFullName);
@@ -84,6 +152,36 @@ export function useScratchpad(repoFullName: string | null = null) {
     }
   }, [content, repoFullName]);
 
+  useEffect(() => {
+    const memoryKey = getMemoryStorageKey(repoFullName);
+    try {
+      localStorage.setItem(memoryKey, JSON.stringify(memories));
+    } catch (e) {
+      if (e instanceof Error) {
+        if (e.name === 'QuotaExceededError') {
+          toast.error('Scratchpad memories too large to save — remove some memories');
+        } else {
+          console.error('[useScratchpad] localStorage error:', e.message);
+        }
+      }
+    }
+  }, [memories, repoFullName]);
+
+  useEffect(() => {
+    const activeKey = getActiveMemoryKey(repoFullName);
+    try {
+      if (activeMemoryId) {
+        localStorage.setItem(activeKey, activeMemoryId);
+      } else {
+        localStorage.removeItem(activeKey);
+      }
+    } catch (e) {
+      if (e instanceof Error) {
+        console.error('[useScratchpad] localStorage error:', e.message);
+      }
+    }
+  }, [activeMemoryId, repoFullName]);
+
   const toggle = useCallback(() => setIsOpen((prev) => !prev), []);
   const open = useCallback(() => setIsOpen(true), []);
   const close = useCallback(() => setIsOpen(false), []);
@@ -100,12 +198,64 @@ export function useScratchpad(repoFullName: string | null = null) {
     setContent(text);
   }, []);
 
+  const saveMemory = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+
+      setMemories((prev) => {
+        const now = Date.now();
+        const existing = prev.find((memory) => memory.name === trimmed);
+        if (existing) {
+          const updated = prev.map((memory) =>
+            memory.id === existing.id
+              ? { ...memory, content, updatedAt: now }
+              : memory
+          );
+          setActiveMemoryId(existing.id);
+          return updated;
+        }
+        const nextMemory: ScratchpadMemory = {
+          id: createMemoryId(),
+          name: trimmed,
+          content,
+          updatedAt: now,
+        };
+        setActiveMemoryId(nextMemory.id);
+        return [nextMemory, ...prev];
+      });
+    },
+    [content],
+  );
+
+  const loadMemory = useCallback(
+    (id: string | null) => {
+      if (!id) {
+        setActiveMemoryId(null);
+        return;
+      }
+      const memory = memories.find((entry) => entry.id === id);
+      if (memory) {
+        setContent(memory.content);
+        setActiveMemoryId(id);
+      }
+    },
+    [memories],
+  );
+
+  const deleteMemory = useCallback((id: string) => {
+    setMemories((prev) => prev.filter((memory) => memory.id !== id));
+    setActiveMemoryId((prev) => (prev === id ? null : prev));
+  }, []);
+
   const hasContent = content.trim().length > 0;
 
   return {
     isOpen,
     content,
     hasContent,
+    memories,
+    activeMemoryId,
     toggle,
     open,
     close,
@@ -113,6 +263,9 @@ export function useScratchpad(repoFullName: string | null = null) {
     append,
     replace,
     setContent,
+    saveMemory,
+    loadMemory,
+    deleteMemory,
   };
 }
 
