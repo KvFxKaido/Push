@@ -143,7 +143,7 @@ export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion,
   return (
     <div
       ref={containerRef}
-      className="flex flex-1 flex-col overflow-y-auto overscroll-contain relative"
+      className="flex flex-1 flex-col overflow-y-auto overscroll-contain"
     >
       <div className="flex-1" />
       <div className="py-4 space-y-1">
@@ -154,11 +154,11 @@ export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion,
       </div>
       <div ref={bottomRef} />
       
-      {/* Scroll to bottom button */}
+      {/* Scroll to bottom button - fixed position so it stays anchored to viewport */}
       <button
         onClick={scrollToBottom}
         className={`
-          absolute right-4 bottom-24
+          fixed right-4 bottom-24
           flex items-center justify-center
           w-10 h-10
           rounded-full
