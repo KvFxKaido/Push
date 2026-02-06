@@ -2,7 +2,7 @@
  * FileBrowser — full-screen file browser for the active sandbox.
  *
  * Shows a directory listing, breadcrumb navigation, upload FAB,
- * and a bottom sheet for file actions (rename/delete).
+ * and a bottom sheet for file actions (rename/delete/edit).
  * All operations go through the sandbox client — no LLM involvement.
  */
 
@@ -17,12 +17,16 @@ import {
   AlertCircle,
   RefreshCw,
   GitCommitHorizontal,
+  FileEdit,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useFileBrowser } from '@/hooks/useFileBrowser';
 import { FileActionsSheet } from '@/components/filebrowser/FileActionsSheet';
 import { UploadButton } from '@/components/filebrowser/UploadButton';
 import { CommitPushSheet } from '@/components/filebrowser/CommitPushSheet';
+import { FileEditor } from '@/components/filebrowser/FileEditor';
+import { getFileEditability } from '@/lib/file-utils';
+import { writeToSandbox } from '@/lib/sandbox-client';
 import type { FileEntry } from '@/types';
 
 interface FileBrowserProps {
@@ -56,6 +60,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [commitSheetOpen, setCommitSheetOpen] = useState(false);
+  const [editingFile, setEditingFile] = useState<FileEntry | null>(null);
 
   // Load root directory on mount
   useEffect(() => {
@@ -80,8 +85,15 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
     if (file.type === 'directory') {
       navigateTo(file.path);
     } else {
-      setSelectedFile(file);
-      setSheetOpen(true);
+      // Check if file is editable - if so, go straight to editor
+      const editability = getFileEditability(file.path, file.size);
+      if (editability.editable) {
+        setEditingFile(file);
+      } else {
+        // Non-editable files still show actions sheet
+        setSelectedFile(file);
+        setSheetOpen(true);
+      }
     }
   }, [navigateTo]);
 
@@ -94,9 +106,33 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
     deleteItem(path);
   }, [deleteItem]);
 
+  const handleEdit = useCallback((file: FileEntry) => {
+    setEditingFile(file);
+  }, []);
+
+  const handleSaveFile = useCallback(async (path: string, content: string) => {
+    await writeToSandbox(sandboxId, path, content);
+  }, [sandboxId]);
+
   const handleUpload = useCallback((fileList: FileList) => {
     uploadFiles(fileList);
   }, [uploadFiles]);
+
+  // If editing, show the editor instead of file browser
+  if (editingFile) {
+    return (
+      <FileEditor
+        file={editingFile}
+        sandboxId={sandboxId}
+        onBack={() => {
+          setEditingFile(null);
+          // Refresh directory in case of changes
+          loadDirectory(currentPath);
+        }}
+        onSave={handleSaveFile}
+      />
+    );
+  }
 
   const isRoot = currentPath === '/workspace' || currentPath === '/';
 
@@ -232,6 +268,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         onDelete={handleDelete}
+        onEdit={handleEdit}
       />
 
       {/* Commit & push sheet */}
@@ -287,6 +324,8 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
   };
 
   const isDir = file.type === 'directory';
+  const editability = !isDir ? getFileEditability(file.path, file.size) : null;
+  const isEditable = editability?.editable ?? false;
 
   return (
     <li>
@@ -299,6 +338,8 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
         {/* Icon */}
         {isDir ? (
           <Folder className="h-4 w-4 text-[#0070f3] shrink-0" />
+        ) : isEditable ? (
+          <FileEdit className="h-4 w-4 text-[#22c55e] shrink-0" />
         ) : (
           <File className="h-4 w-4 text-[#52525b] shrink-0" />
         )}
@@ -308,6 +349,9 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
           <span className={`block text-sm truncate ${isDir ? 'text-[#fafafa]' : 'text-[#a1a1aa]'}`}>
             {file.name}
           </span>
+          {!isDir && editability?.warning === 'large_file' && (
+            <span className="text-[10px] text-[#f59e0b]">Large file</span>
+          )}
         </div>
 
         {/* Size (files only) + chevron (dirs only) */}
