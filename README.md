@@ -17,7 +17,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 
 Push is for developers who:
 
-- **Already pay for an AI API** — Use your existing Kimi, OpenAI, or Ollama subscription
+- **Already pay for an AI API** — Use your existing Kimi, Ollama, or Mistral subscription
 - **Want provider flexibility** — Not locked to one vendor; switch anytime
 - **Don't have (or want) Copilot** — Same mobile workflow, different backend
 - **Like owning their tools** — Open source, self-hostable, no vendor lock-in
@@ -34,7 +34,7 @@ The app is free. The AI isn't — but you pick who you pay.
 | Create PRs | ✅ | ✅ |
 | Push directly to main | ❌ Limited | ✅ Your GitHub App, your rules |
 | Token management | Microsoft-managed | Auto-refreshing GitHub App |
-| Model backend | GPT-4 only | Kimi, Ollama, or bring your own |
+| Model backend | GPT-4 only | Kimi, Ollama, Mistral, or bring your own |
 | Hosting | Microsoft's cloud | Your Cloudflare account (or self-hosted) |
 
 Copilot is desktop-first and IDE-bound. Push is mobile-native and repo-locked — you grant exactly the permissions you want, and the agent works within those bounds. Perfect for teams that need direct write access, custom integrations, or compliance requirements.
@@ -46,7 +46,7 @@ Copilot is desktop-first and IDE-bound. Push is mobile-native and repo-locked �
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Kimi For Coding or Ollama Cloud (user picks backend) |
+| AI | Kimi For Coding, Ollama Cloud, or Mistral Vibe (user picks backend) |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -66,10 +66,11 @@ Create `app/.env` for local development, or paste keys in the Settings UI at run
 ```env
 VITE_MOONSHOT_API_KEY=...         # Optional — Kimi key, or paste in Settings UI (sk-kimi-...)
 VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud key, or paste in Settings UI
+VITE_MISTRAL_API_KEY=...          # Optional — Mistral key, or paste in Settings UI
 VITE_GITHUB_TOKEN=...             # Optional — PAT for GitHub API access
 ```
 
-Without any AI key the app runs in demo mode with mock repos and a welcome message. When both Kimi and Ollama keys are set, a backend picker appears in Settings.
+Without any AI key the app runs in demo mode with mock repos and a welcome message. When 2+ provider keys are set, a backend picker appears in Settings.
 
 ## GitHub Authentication
 
@@ -85,7 +86,7 @@ Create a PAT with `repo` scope and paste it in the Settings UI. Simpler setup, b
 
 ## Production
 
-Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding, `/api/ollama/chat` to Ollama Cloud, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding, `/api/ollama/chat` to Ollama Cloud, `/api/mistral/chat` to Mistral Vibe, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 ```bash
 cd app && npm run build
@@ -102,7 +103,7 @@ Push/
 │   ├── app.py             # Modal Python App — sandbox web endpoints
 │   └── requirements.txt
 ├── app/
-│   ├── worker.ts          # Cloudflare Worker — Kimi/Ollama proxy + sandbox proxy
+│   ├── worker.ts          # Cloudflare Worker — Kimi/Ollama/Mistral proxy + sandbox proxy
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, RepoSelector
@@ -137,7 +138,7 @@ Role-based agent system. Models are replaceable; roles are not.
 - **Coder** — autonomous code implementation in sandbox
 - **Auditor** — pre-commit safety gate, binary verdict
 
-Two AI backends are supported: **Kimi For Coding** (`api.kimi.com`) and **Ollama Cloud** (`ollama.com`). Both use OpenAI-compatible SSE streaming. The active backend serves all three roles. API keys are configurable at runtime via the Settings UI — when both are set, users pick which backend to use. Default Ollama model: `kimi-k2.5:cloud`. Production uses Cloudflare Worker proxies for both backends and Modal sandbox.
+Three AI backends are supported: **Kimi For Coding** (`api.kimi.com`), **Ollama Cloud** (`ollama.com`), and **Mistral Vibe** (`api.mistral.ai`). All use OpenAI-compatible SSE streaming. The active backend serves all three roles. API keys are configurable at runtime via the Settings UI — when 2+ are set, users pick which backend to use. Default Ollama model: `kimi-k2.5:cloud`. Default Mistral model: `devstral-small-latest`. Production uses Cloudflare Worker proxies for all backends and Modal sandbox.
 
 ## License
 
