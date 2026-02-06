@@ -1,7 +1,7 @@
 import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/types';
 
 // Valid Ollama model names — these must exist on the Ollama server
-export const OLLAMA_DEFAULT_MODEL = 'kimi-k2.5';
+export const OLLAMA_DEFAULT_MODEL = 'kimi-k2.5:cloud';
 
 // Valid Mistral model names via Mistral API
 export const MISTRAL_DEFAULT_MODEL = 'devstral-small-latest';
