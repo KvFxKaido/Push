@@ -1,6 +1,7 @@
 import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/types';
 
 export const OLLAMA_DEFAULT_MODEL = 'kimi-k2.5:cloud';
+export const MISTRAL_DEFAULT_MODEL = 'devstral-small-latest';
 
 export const PROVIDERS: AIProviderConfig[] = [
   {
@@ -62,6 +63,36 @@ export const PROVIDERS: AIProviderConfig[] = [
       },
     ],
   },
+  {
+    type: 'mistral',
+    name: 'Mistral Vibe',
+    description: 'Devstral via Mistral API (OpenAI-compatible)',
+    envKey: 'VITE_MISTRAL_API_KEY',
+    envUrl: 'https://console.mistral.ai',
+    models: [
+      {
+        id: MISTRAL_DEFAULT_MODEL,
+        name: 'Devstral (Orchestrator)',
+        provider: 'mistral',
+        role: 'orchestrator',
+        context: 262_144,
+      },
+      {
+        id: MISTRAL_DEFAULT_MODEL,
+        name: 'Devstral (Coder)',
+        provider: 'mistral',
+        role: 'coder',
+        context: 262_144,
+      },
+      {
+        id: MISTRAL_DEFAULT_MODEL,
+        name: 'Devstral (Auditor)',
+        provider: 'mistral',
+        role: 'auditor',
+        context: 262_144,
+      },
+    ],
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -86,6 +117,11 @@ export function getModelForRole(
     const userModel = getOllamaModelName();
     return { ...model, id: userModel };
   }
+  // For Mistral, overlay the user-selected model name at runtime
+  if (type === 'mistral') {
+    const userModel = getMistralModelName();
+    return { ...model, id: userModel };
+  }
   return model;
 }
 
@@ -108,17 +144,35 @@ export function setOllamaModelName(model: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Mistral Vibe — runtime model name (stored in localStorage)
+// ---------------------------------------------------------------------------
+
+const MISTRAL_MODEL_KEY = 'mistral_model';
+
+export function getMistralModelName(): string {
+  try {
+    return localStorage.getItem(MISTRAL_MODEL_KEY) || MISTRAL_DEFAULT_MODEL;
+  } catch {
+    return MISTRAL_DEFAULT_MODEL;
+  }
+}
+
+export function setMistralModelName(model: string): void {
+  localStorage.setItem(MISTRAL_MODEL_KEY, model.trim());
+}
+
+// ---------------------------------------------------------------------------
 // Provider preference — user picks which backend to use
 // ---------------------------------------------------------------------------
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'moonshot' | 'ollama';
+export type PreferredProvider = 'moonshot' | 'ollama' | 'mistral';
 
 export function getPreferredProvider(): PreferredProvider | null {
   try {
     const stored = localStorage.getItem(PREFERRED_PROVIDER_KEY);
-    if (stored === 'moonshot' || stored === 'ollama') return stored;
+    if (stored === 'moonshot' || stored === 'ollama' || stored === 'mistral') return stored;
   } catch {
     // SSR / restricted context
   }

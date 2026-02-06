@@ -2,7 +2,7 @@ export type AppState = 'home' | 'running' | 'results' | 'repos';
 
 export type AgentRole = 'orchestrator' | 'coder' | 'auditor';
 
-export type AIProviderType = 'moonshot' | 'ollama';
+export type AIProviderType = 'moonshot' | 'ollama' | 'mistral';
 
 export interface AIModel {
   id: string;

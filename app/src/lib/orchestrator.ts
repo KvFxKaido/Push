@@ -4,7 +4,8 @@ import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { getMoonshotKey } from '@/hooks/useMoonshotKey';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
-import { getOllamaModelName, getPreferredProvider } from './providers';
+import { getMistralKey } from '@/hooks/useMistralConfig';
+import { getOllamaModelName, getMistralModelName, getPreferredProvider } from './providers';
 
 // ---------------------------------------------------------------------------
 // Kimi For Coding config
@@ -21,6 +22,12 @@ const KIMI_MODEL = 'k2p5';
 const OLLAMA_API_URL = import.meta.env.DEV
   ? '/ollama/v1/chat/completions'
   : '/api/ollama/chat';
+
+// Mistral Vibe: OpenAI-compatible endpoint (Devstral models).
+// Dev: Vite proxy avoids CORS. Prod: Cloudflare Worker proxy at /api/mistral/chat.
+const MISTRAL_API_URL = import.meta.env.DEV
+  ? '/mistral/v1/chat/completions'
+  : '/api/mistral/chat';
 
 // Rolling window config — keeps context focused and latency low
 const MAX_HISTORY_MESSAGES = 30;
@@ -726,10 +733,192 @@ export async function streamOllamaChat(
 }
 
 // ---------------------------------------------------------------------------
+// Mistral Vibe streaming (SSE — OpenAI-compatible)
+// ---------------------------------------------------------------------------
+
+export async function streamMistralChat(
+  messages: ChatMessage[],
+  onToken: (token: string) => void,
+  onDone: (usage?: StreamUsage) => void,
+  onError: (error: Error) => void,
+  onThinkingToken?: (token: string | null) => void,
+  workspaceContext?: string,
+  hasSandbox?: boolean,
+  modelOverride?: string,
+  systemPromptOverride?: string,
+  scratchpadContent?: string,
+): Promise<void> {
+  const apiKey = getMistralKey();
+  if (!apiKey) {
+    onError(new Error('Mistral API key not configured'));
+    return;
+  }
+
+  const model = modelOverride || getMistralModelName();
+
+  const CONNECT_TIMEOUT_MS = 30_000;
+  const IDLE_TIMEOUT_MS = 90_000; // Mistral API is generally fast
+
+  const controller = new AbortController();
+  let abortReason: 'connect' | 'idle' | null = null;
+
+  let connectTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    abortReason = 'connect';
+    controller.abort();
+  }, CONNECT_TIMEOUT_MS);
+
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const resetIdleTimer = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      abortReason = 'idle';
+      controller.abort();
+    }, IDLE_TIMEOUT_MS);
+  };
+
+  try {
+    console.log(`[Push] POST ${MISTRAL_API_URL} (model: ${model})`);
+
+    const response = await fetch(MISTRAL_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: toLLMMessages(messages, workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent),
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(connectTimer);
+    connectTimer = undefined;
+    resetIdleTimer();
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      let detail = '';
+      try {
+        const parsed = JSON.parse(body);
+        detail = parsed.error?.message || parsed.message || parsed.error || body.slice(0, 200);
+      } catch {
+        detail = body ? body.slice(0, 200) : 'empty body';
+      }
+      console.error(`[Push] Mistral error: ${response.status}`, detail);
+      throw new Error(`Mistral ${response.status}: ${detail}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const chunker = createChunkedEmitter(onToken);
+    const parser = createThinkTokenParser((token) => chunker.push(token), onThinkingToken);
+
+    let usage: StreamUsage | undefined;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      resetIdleTimer();
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
+          parser.flush();
+          chunker.flush();
+          onDone(usage);
+          return;
+        }
+
+        if (!trimmed.startsWith('data:')) continue;
+        const jsonStr = trimmed[5] === ' ' ? trimmed.slice(6) : trimmed.slice(5);
+
+        try {
+          const parsed = JSON.parse(jsonStr);
+
+          if (parsed.usage) {
+            usage = {
+              inputTokens: parsed.usage.prompt_tokens || 0,
+              outputTokens: parsed.usage.completion_tokens || 0,
+              totalTokens: parsed.usage.total_tokens || 0,
+            };
+          }
+
+          const choice = parsed.choices?.[0];
+          if (!choice) continue;
+
+          // Mistral may emit reasoning via delta.reasoning_content
+          const reasoningToken = choice.delta?.reasoning_content;
+          if (reasoningToken) {
+            onThinkingToken?.(reasoningToken);
+          }
+
+          const token = choice.delta?.content;
+          if (token) {
+            parser.push(token);
+          }
+
+          if (choice.finish_reason === 'stop' || choice.finish_reason === 'end_turn' || choice.finish_reason === 'length') {
+            parser.flush();
+            chunker.flush();
+            onDone(usage);
+            return;
+          }
+        } catch {
+          // Skip malformed SSE data
+        }
+      }
+    }
+
+    parser.flush();
+    chunker.flush();
+    onDone(usage);
+  } catch (err) {
+    clearTimeout(connectTimer);
+    clearTimeout(idleTimer);
+
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      const timeoutMsg = abortReason === 'connect'
+        ? `Mistral API didn't respond within ${CONNECT_TIMEOUT_MS / 1000}s — server may be down.`
+        : `Mistral API stream stalled — no data for ${IDLE_TIMEOUT_MS / 1000}s.`;
+      console.error(`[Push] Mistral timeout (${abortReason}):`, timeoutMsg);
+      onError(new Error(timeoutMsg));
+      return;
+    }
+
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Push] Mistral chat error:`, msg);
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      onError(new Error(
+        `Cannot reach Mistral — network error. Check your connection.`
+      ));
+    } else {
+      onError(err instanceof Error ? err : new Error(msg));
+    }
+  } finally {
+    clearTimeout(connectTimer);
+    clearTimeout(idleTimer);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'moonshot' | 'ollama' | 'demo';
+export type ActiveProvider = 'moonshot' | 'ollama' | 'mistral' | 'demo';
 
 /**
  * Determine which provider is active.
@@ -743,14 +932,17 @@ export function getActiveProvider(): ActiveProvider {
   const preferred = getPreferredProvider();
   const hasOllama = Boolean(getOllamaKey());
   const hasKimi = Boolean(getMoonshotKey());
+  const hasMistral = Boolean(getMistralKey());
 
   // Honour explicit preference when the key is available
   if (preferred === 'ollama' && hasOllama) return 'ollama';
   if (preferred === 'moonshot' && hasKimi) return 'moonshot';
+  if (preferred === 'mistral' && hasMistral) return 'mistral';
 
   // No preference (or preferred key was removed) — first available
   if (hasKimi) return 'moonshot';
   if (hasOllama) return 'ollama';
+  if (hasMistral) return 'mistral';
   return 'demo';
 }
 
@@ -783,6 +975,10 @@ export async function streamChat(
 
   if (provider === 'ollama') {
     return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent);
+  }
+
+  if (provider === 'mistral') {
+    return streamMistralChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent);
   }
 
   return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent);

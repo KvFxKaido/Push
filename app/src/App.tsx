@@ -8,6 +8,7 @@ import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useMoonshotKey } from '@/hooks/useMoonshotKey';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
+import { useMistralConfig } from '@/hooks/useMistralConfig';
 import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, type PreferredProvider } from '@/lib/providers';
 import { getActiveProvider } from '@/lib/orchestrator';
 import { useSandbox } from '@/hooks/useSandbox';
@@ -88,11 +89,14 @@ function App() {
   const { repos, loading: reposLoading, sync: syncRepos } = useRepos();
   const { key: kimiKey, setKey: setKimiKey, clearKey: clearKimiKey, hasKey: hasKimiKey } = useMoonshotKey();
   const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
+  const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
   const [kimiKeyInput, setKimiKeyInput] = useState('');
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [ollamaModelInput, setOllamaModelInput] = useState('');
+  const [mistralKeyInput, setMistralKeyInput] = useState('');
+  const [mistralModelInput, setMistralModelInput] = useState('');
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
 
   // Derive display label from actual active provider
@@ -322,7 +326,7 @@ function App() {
               }`}
             />
             <span className="text-xs text-[#52525b]">
-              {activeProviderLabel === 'ollama' ? 'Ollama' : activeProviderLabel === 'moonshot' ? 'Kimi' : isDemo ? 'Demo' : isConnected ? 'GitHub' : 'Offline'}
+              {activeProviderLabel === 'ollama' ? 'Ollama' : activeProviderLabel === 'moonshot' ? 'Kimi' : activeProviderLabel === 'mistral' ? 'Mistral' : isDemo ? 'Demo' : isConnected ? 'GitHub' : 'Offline'}
             </span>
           </div>
           <button
@@ -527,21 +531,21 @@ function App() {
                 <div className="flex items-center gap-1.5">
                   <div
                     className={`h-2 w-2 rounded-full ${
-                      hasOllamaKey || hasKimiKey ? 'bg-emerald-500' : 'bg-[#52525b]'
+                      hasOllamaKey || hasKimiKey || hasMistralKey ? 'bg-emerald-500' : 'bg-[#52525b]'
                     }`}
                   />
                   <span className="text-xs text-[#a1a1aa]">
-                    {activeProviderLabel === 'ollama' ? 'Ollama' : activeProviderLabel === 'moonshot' ? 'Kimi' : isDemo ? 'Demo' : 'Offline'}
+                    {activeProviderLabel === 'ollama' ? 'Ollama' : activeProviderLabel === 'moonshot' ? 'Kimi' : activeProviderLabel === 'mistral' ? 'Mistral' : isDemo ? 'Demo' : 'Offline'}
                   </span>
                 </div>
               </div>
 
-              {/* Backend picker — shown when both providers have keys */}
-              {hasKimiKey && hasOllamaKey && (
+              {/* Backend picker — shown when 2+ providers have keys */}
+              {[hasKimiKey, hasOllamaKey, hasMistralKey].filter(Boolean).length >= 2 && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-[#a1a1aa]">Active backend</label>
                   <div className="flex gap-2">
-                    {([['moonshot', 'Kimi'], ['ollama', 'Ollama']] as const).map(([value, label]) => (
+                    {([['moonshot', 'Kimi', hasKimiKey], ['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey]] as const).filter(([, , has]) => has).map(([value, label]) => (
                       <button
                         key={value}
                         onClick={() => {
@@ -698,6 +702,87 @@ function App() {
                     </Button>
                     <p className="text-xs text-[#52525b]">
                       Kimi For Coding API key (starts with sk-kimi-).
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Mistral Vibe */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-[#a1a1aa]">Mistral Vibe</label>
+                {hasMistralKey ? (
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2">
+                      <p className="text-sm text-[#a1a1aa] font-mono">Key saved</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#71717a] shrink-0">Model:</span>
+                      <input
+                        type="text"
+                        value={mistralModelInput || mistralModel}
+                        onChange={(e) => setMistralModelInput(e.target.value)}
+                        onBlur={() => {
+                          if (mistralModelInput.trim()) {
+                            setMistralModel(mistralModelInput.trim());
+                          }
+                          setMistralModelInput('');
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && mistralModelInput.trim()) {
+                            setMistralModel(mistralModelInput.trim());
+                            setMistralModelInput('');
+                          }
+                        }}
+                        placeholder="devstral-small-latest"
+                        className="flex-1 rounded-md border border-[#1a1a1a] bg-[#0d0d0d] px-2 py-1 text-xs text-[#fafafa] font-mono placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        clearMistralKey();
+                        if (activeBackend === 'mistral') {
+                          clearPreferredProvider();
+                          setActiveBackend(null);
+                        }
+                      }}
+                      className="text-[#a1a1aa] hover:text-red-400 w-full justify-start"
+                    >
+                      Remove key
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={mistralKeyInput}
+                      onChange={(e) => setMistralKeyInput(e.target.value)}
+                      placeholder="Mistral API key"
+                      className="w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && mistralKeyInput.trim()) {
+                          setMistralKey(mistralKeyInput.trim());
+                          setMistralKeyInput('');
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (mistralKeyInput.trim()) {
+                          setMistralKey(mistralKeyInput.trim());
+                          setMistralKeyInput('');
+                        }
+                      }}
+                      disabled={!mistralKeyInput.trim()}
+                      className="text-[#a1a1aa] hover:text-[#fafafa] w-full justify-start"
+                    >
+                      Save Mistral key
+                    </Button>
+                    <p className="text-xs text-[#52525b]">
+                      Mistral API key from console.mistral.ai.
                     </p>
                   </div>
                 )}

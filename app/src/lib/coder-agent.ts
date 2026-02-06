@@ -7,7 +7,7 @@
  */
 
 import type { ChatMessage, ChatCard } from '@/types';
-import { streamMoonshotChat, streamOllamaChat, getActiveProvider } from './orchestrator';
+import { streamMoonshotChat, streamOllamaChat, streamMistralChat, getActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 
@@ -55,8 +55,8 @@ export async function runCoderAgent(
   agentsMd?: string,
 ): Promise<{ summary: string; cards: ChatCard[]; rounds: number }> {
   const provider = getActiveProvider();
-  const providerType = provider === 'ollama' ? 'ollama' : 'moonshot';
-  const streamFn = provider === 'ollama' ? streamOllamaChat : streamMoonshotChat;
+  const providerType = provider === 'ollama' ? 'ollama' : provider === 'mistral' ? 'mistral' : 'moonshot';
+  const streamFn = provider === 'ollama' ? streamOllamaChat : provider === 'mistral' ? streamMistralChat : streamMoonshotChat;
 
   const coderModel = getModelForRole(providerType, 'coder');
   if (!coderModel) {
