@@ -24,6 +24,21 @@ Push is for developers who:
 
 The app is free. The AI isn't — but you pick who you pay.
 
+## Why Push Over Copilot?
+
+**You control the permissions.**
+
+| | GitHub Copilot | Push |
+|---|---|---|
+| Read repos | ✅ | ✅ |
+| Create PRs | ✅ | ✅ |
+| Push directly to main | ❌ Limited | ✅ Your GitHub App, your rules |
+| Token management | Microsoft-managed | Auto-refreshing GitHub App |
+| Model backend | GPT-4 only | Kimi, Ollama, or bring your own |
+| Hosting | Microsoft's cloud | Your Cloudflare account (or self-hosted) |
+
+Copilot is desktop-first and IDE-bound. Push is mobile-native and repo-locked — you grant exactly the permissions you want, and the agent works within those bounds. Perfect for teams that need direct write access, custom integrations, or compliance requirements.
+
 ## Tech Stack
 
 | Layer | Tools |
