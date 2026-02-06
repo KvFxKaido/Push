@@ -22,6 +22,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
 | AI | Kimi For Coding (Kimi K2.5 via api.kimi.com) |
 | Sandbox | Modal (serverless containers) |
+| Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
 | Deploy | Cloudflare Workers + Assets |
 | PWA | Service Worker, Web App Manifest |
@@ -38,10 +39,22 @@ Create `app/.env` for local development, or paste keys in the Settings UI at run
 
 ```env
 VITE_MOONSHOT_API_KEY=...         # Optional — or paste in Settings UI (sk-kimi-...)
-VITE_GITHUB_TOKEN=...             # Optional — higher GitHub rate limits
+VITE_GITHUB_TOKEN=...             # Optional — PAT for GitHub API access
 ```
 
 Without a Kimi key the app runs in demo mode with mock repos and a welcome message.
+
+## GitHub Authentication
+
+Push supports two authentication methods:
+
+### Option 1: GitHub App (Recommended)
+
+Install the Push GitHub App and authorize access to your repos. Tokens refresh automatically — no manual management needed.
+
+### Option 2: Personal Access Token
+
+Create a PAT with `repo` scope and paste it in the Settings UI. Simpler setup, but tokens can expire and need manual rotation.
 
 ## Production
 
@@ -68,7 +81,7 @@ Push/
 │   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, RepoSelector
 │   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, etc.
 │   │   │   └── ui/        # shadcn/ui component library
-│   │   ├── hooks/         # useChat, useSandbox, useScratchpad, useGitHubAuth, useRepos, useActiveRepo
+│   │   ├── hooks/         # useChat, useSandbox, useScratchpad, useGitHubAuth, useGitHubAppAuth, useRepos
 │   │   ├── lib/           # orchestrator, tool-dispatch, scratchpad-tools, sandbox-client, coder-agent
 │   │   ├── sections/      # OnboardingScreen, RepoPicker
 │   │   ├── types/         # TypeScript type definitions
@@ -79,7 +92,7 @@ Push/
 
 ## How It Works
 
-1. **Onboard** — validate a GitHub PAT (calls `GET /user` to verify)
+1. **Onboard** — authenticate via GitHub App or PAT
 2. **Pick a repo** — select from your repos, search by name
 3. **Chat** — ask about PRs, recent changes, codebase structure
 4. **Tools** — the agent emits JSON tool blocks, the client executes them against GitHub's API or sandbox, injects results, and re-prompts (up to 3 rounds)
