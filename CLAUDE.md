@@ -18,6 +18,7 @@ npm run dev
 - **Multi-backend AI** (user picks in Settings):
   - Kimi For Coding (Kimi K2.5 via api.kimi.com, OpenAI-compatible SSE)
   - Ollama Cloud (open models on cloud GPUs via ollama.com, OpenAI-compatible SSE)
+  - Mistral Vibe (Devstral via api.mistral.ai, OpenAI-compatible SSE)
 - Modal (serverless containers) for sandbox code execution
 - Cloudflare Workers (streaming proxy + sandbox proxy)
 - PWA with service worker and offline support
@@ -30,7 +31,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 - **Coder** — Code implementation and execution engine. Writes, edits, and runs code in a sandbox.
 - **Auditor** — Risk specialist, pre-commit gate, binary verdict. Cannot be bypassed.
 
-**AI backends:** Two providers are supported — **Kimi For Coding** (`api.kimi.com`) and **Ollama Cloud** (`ollama.com`). Both use OpenAI-compatible SSE streaming. API keys are configurable at runtime via the Settings UI — no restart needed. When both keys are set, a backend picker appears in Settings. The active backend serves all three roles. Default Ollama model is `kimi-k2.5:cloud`. Production uses Cloudflare Worker proxies at `/api/kimi/chat` and `/api/ollama/chat`.
+**AI backends:** Three providers are supported — **Kimi For Coding** (`api.kimi.com`), **Ollama Cloud** (`ollama.com`), and **Mistral Vibe** (`api.mistral.ai`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via the Settings UI — no restart needed. When 2+ keys are set, a backend picker appears in Settings. The active backend serves all three roles. Default Ollama model is `kimi-k2.5:cloud`. Default Mistral model is `devstral-small-latest`. Production uses Cloudflare Worker proxies at `/api/kimi/chat`, `/api/ollama/chat`, and `/api/mistral/chat`.
 
 **Onboarding gate:** Users must validate a GitHub PAT and select an active repo before chatting. Demo mode is an escape hatch with mock data. App state machine: `onboarding → repo-picker → chat`.
 
@@ -60,7 +61,7 @@ app/src/
   sections/          # Screen components (OnboardingScreen, RepoPicker)
   types/             # TypeScript type definitions
   App.tsx            # Root component, screen state machine
-app/worker.ts        # Cloudflare Worker — streaming proxy to Kimi/Ollama + sandbox proxy to Modal
+app/worker.ts        # Cloudflare Worker — streaming proxy to Kimi/Ollama/Mistral + sandbox proxy to Modal
 sandbox/app.py       # Modal Python App — 6 web endpoints for sandbox CRUD
 sandbox/requirements.txt
 wrangler.jsonc       # Cloudflare Workers config (repo root)
@@ -68,7 +69,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 ## Key Files
 
-- `lib/orchestrator.ts` — System prompt, multi-backend streaming (Kimi + Ollama SSE), think-token parsing, provider routing, rolling window context management
+- `lib/orchestrator.ts` — System prompt, multi-backend streaming (Kimi + Ollama + Mistral SSE), think-token parsing, provider routing, rolling window context management
 - `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks) + `delegate_coder`
 - `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt
 - `lib/sandbox-client.ts` — HTTP client for `/api/sandbox/*` endpoints (thin fetch wrappers)
@@ -77,7 +78,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `lib/coder-agent.ts` — Coder sub-agent loop (up to 5 autonomous rounds, uses active backend)
 - `lib/auditor-agent.ts` — Auditor review + verdict (fail-safe to UNSAFE, uses active backend)
 - `lib/workspace-context.ts` — Builds active repo context for system prompt injection
-- `lib/providers.ts` — AI provider configs (Kimi + Ollama), role-to-model mapping, backend preference
+- `lib/providers.ts` — AI provider configs (Kimi + Ollama + Mistral), role-to-model mapping, backend preference
 - `hooks/useChat.ts` — Chat state, message history, unified tool execution loop, Coder delegation, scratchpad integration
 - `hooks/useSandbox.ts` — Sandbox session lifecycle (idle → creating → ready → error)
 - `hooks/useScratchpad.ts` — Shared notepad state, localStorage persistence, content size limits
@@ -86,6 +87,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `hooks/useRepos.ts` — Repo list fetching, sync tracking, activity detection
 - `hooks/useMoonshotKey.ts` — Kimi For Coding API key management (localStorage + env fallback)
 - `hooks/useOllamaConfig.ts` — Ollama Cloud API key + model name management (localStorage + env fallback)
+- `hooks/useMistralConfig.ts` — Mistral Vibe API key + model name management (localStorage + env fallback)
 - `types/index.ts` — All shared TypeScript types (includes card data types for sandbox, diff preview, audit verdict)
 
 ## Environment Variables
@@ -93,6 +95,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 ```env
 VITE_MOONSHOT_API_KEY=...         # Optional — Kimi key, can also be set via Settings UI (sk-kimi-...)
 VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud key, can also be set via Settings UI
+VITE_MISTRAL_API_KEY=...          # Optional — Mistral key, can also be set via Settings UI
 VITE_GITHUB_TOKEN=...             # Optional, higher GitHub rate limits
 VITE_GITHUB_CLIENT_ID=...         # Optional, enables OAuth login
 VITE_GITHUB_OAUTH_PROXY=...       # Optional, required for OAuth token exchange
@@ -101,11 +104,12 @@ VITE_GITHUB_OAUTH_PROXY=...       # Optional, required for OAuth token exchange
 **Worker secrets (Cloudflare):**
 - `MOONSHOT_API_KEY` — Kimi For Coding API key (production proxy, starts with `sk-kimi-`)
 - `OLLAMA_API_KEY` — Ollama Cloud API key (production proxy)
+- `MISTRAL_API_KEY` — Mistral Vibe API key (production proxy)
 - `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--push-sandbox`). Endpoints follow pattern `{base}-{function}.modal.run`
 
-**API keys:** Kimi and Ollama Cloud keys can be set via env vars or pasted in the Settings UI at runtime (stored in localStorage). Settings UI keys override env vars. When both are set, the user picks which backend to use via a toggle in Settings. The preference is stored in localStorage.
+**API keys:** Kimi, Ollama Cloud, and Mistral keys can be set via env vars or pasted in the Settings UI at runtime (stored in localStorage). Settings UI keys override env vars. When 2+ are set, the user picks which backend to use via a toggle in Settings. The preference is stored in localStorage.
 
-**Production:** Cloudflare Worker at `app/worker.ts` holds `MOONSHOT_API_KEY`, `OLLAMA_API_KEY`, and `MODAL_SANDBOX_BASE_URL` as runtime secrets. The client never sees them. The worker proxies `/api/kimi/chat` to `api.kimi.com` (with `User-Agent: claude-code/1.0.0` for Kimi's agent gating) and `/api/ollama/chat` to `ollama.com/v1/chat/completions`.
+**Production:** Cloudflare Worker at `app/worker.ts` holds `MOONSHOT_API_KEY`, `OLLAMA_API_KEY`, `MISTRAL_API_KEY`, and `MODAL_SANDBOX_BASE_URL` as runtime secrets. The client never sees them. The worker proxies `/api/kimi/chat` to `api.kimi.com` (with `User-Agent: claude-code/1.0.0` for Kimi's agent gating), `/api/ollama/chat` to `ollama.com/v1/chat/completions`, and `/api/mistral/chat` to `api.mistral.ai/v1/chat/completions`.
 
 Without any API keys (dev) the app runs in demo mode with mock data. Without `MODAL_SANDBOX_BASE_URL` the sandbox button shows but returns a 503.
 

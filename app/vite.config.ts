@@ -28,6 +28,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/ollama/, ''),
       },
+      '/mistral': {
+        target: 'https://api.mistral.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/mistral/, ''),
+      },
     },
   },
 });
