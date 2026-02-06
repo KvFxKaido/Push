@@ -6,6 +6,16 @@ import { getMoonshotKey } from '@/hooks/useMoonshotKey';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOllamaModelName, getMistralModelName, getPreferredProvider } from './providers';
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface StreamUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
 
 // ---------------------------------------------------------------------------
 // Kimi For Coding config
@@ -365,7 +375,63 @@ interface StreamProviderConfig {
   shouldResetStallOnReasoning?: boolean;
 }
 
+interface AutoRetryConfig {
+  maxAttempts?: number;
+  backoffMs?: number;
+}
+
+
 async function streamSSEChat(
+  config: StreamProviderConfig,
+  messages: ChatMessage[],
+  onToken: (token: string) => void,
+  onDone: (usage?: StreamUsage) => void,
+  onError: (error: Error) => void,
+  onThinkingToken?: (token: string | null) => void,
+  workspaceContext?: string,
+  hasSandbox?: boolean,
+  systemPromptOverride?: string,
+  scratchpadContent?: string,
+  signal?: AbortSignal,
+  autoRetry?: AutoRetryConfig,
+): Promise<void> {
+  const maxAttempts = autoRetry?.maxAttempts ?? 1;
+  const backoffMs = autoRetry?.backoffMs ?? 1000;
+  
+  let lastError: Error | undefined;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await streamSSEChatOnce(
+        config, messages, onToken, onDone, onError, onThinkingToken,
+        workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal,
+      );
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      
+      // Don't retry on auth errors or user aborts
+      if (lastError.message.includes('key') || lastError.message.includes('auth') || 
+          lastError.message.includes('Unauthorized') || signal?.aborted) {
+        throw lastError;
+      }
+      
+      // Check if this is a timeout error worth retrying
+      const isTimeout = lastError.message.includes('timeout') || 
+                        lastError.message.includes('stall') ||
+                        lastError.message.includes('no data');
+      
+      if (attempt < maxAttempts && isTimeout) {
+        console.log(`[Push] Retry attempt ${attempt}/${maxAttempts} after ${backoffMs}ms...`);
+        await new Promise(r => setTimeout(r, backoffMs * attempt));
+        continue;
+      }
+      
+      throw lastError;
+    }
+  }
+}
+
+async function streamSSEChatOnce(
   config: StreamProviderConfig,
   messages: ChatMessage[],
   onToken: (token: string) => void,
@@ -559,18 +625,14 @@ async function streamSSEChat(
         return;
       }
       let timeoutMsg: string;
-      switch (abortReason) {
-        case 'connect':
-          timeoutMsg = errorMessages.connect(Math.round(connectTimeoutMs / 1000));
-          break;
-        case 'stall':
-          timeoutMsg = errorMessages.stall?.(Math.round(stallTimeoutMs! / 1000)) ?? errorMessages.idle(Math.round(idleTimeoutMs / 1000));
-          break;
-        case 'total':
-          timeoutMsg = errorMessages.total?.(Math.round(totalTimeoutMs! / 1000)) ?? errorMessages.idle(Math.round(idleTimeoutMs / 1000));
-          break;
-        default:
-          timeoutMsg = errorMessages.idle(Math.round(idleTimeoutMs / 1000));
+      if (abortReason === 'connect') {
+        timeoutMsg = errorMessages.connect(Math.round(connectTimeoutMs / 1000));
+      } else if (abortReason === 'stall') {
+        timeoutMsg = errorMessages.stall?.(Math.round(stallTimeoutMs! / 1000)) ?? errorMessages.idle(Math.round(idleTimeoutMs / 1000));
+      } else if (abortReason === 'total') {
+        timeoutMsg = errorMessages.total?.(Math.round(totalTimeoutMs! / 1000)) ?? errorMessages.idle(Math.round(idleTimeoutMs / 1000));
+      } else {
+        timeoutMsg = errorMessages.idle(Math.round(idleTimeoutMs / 1000));
       }
       console.error(`[Push] ${name} timeout (${abortReason}):`, timeoutMsg);
       onError(new Error(timeoutMsg));
@@ -591,12 +653,13 @@ async function streamSSEChat(
     clearTimeout(totalTimer);
     signal?.removeEventListener('abort', onExternalAbort);
   }
-}
 
 
 // ---------------------------------------------------------------------------
 // Kimi For Coding streaming (SSE — OpenAI-compatible)
 // ---------------------------------------------------------------------------
+
+}
 
 export async function streamMoonshotChat(
   messages: ChatMessage[],

@@ -160,6 +160,8 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
   const [isStreaming, setIsStreaming] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
   const abortRef = useRef(false);
+  // Track processed message content to prevent duplicate tokens during streaming glitches
+  const processedContentRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const workspaceContextRef = useRef<string | null>(null);
   const sandboxIdRef = useRef<string | null>(null);
@@ -461,6 +463,10 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
               apiMessages,
               (token) => {
                 if (abortRef.current) return;
+                // Simple dedup: skip exact duplicate tokens at same position
+                const contentKey = `${round}:${accumulated.length}:${token}`;
+                if (processedContentRef.current.has(contentKey)) return;
+                processedContentRef.current.add(contentKey);
                 accumulated += token;
                 setAgentStatus({ active: true, phase: 'Responding...' });
                 setConversations((prev) => {
@@ -488,6 +494,10 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
                   setAgentStatus({ active: true, phase: 'Responding...' });
                   return;
                 }
+                // Simple dedup for thinking tokens
+                const thinkingKey = `think:${round}:${thinkingAccumulated.length}:${token}`;
+                if (processedContentRef.current.has(thinkingKey)) return;
+                processedContentRef.current.add(thinkingKey);
                 thinkingAccumulated += token;
                 setAgentStatus({ active: true, phase: 'Reasoning...' });
                 setConversations((prev) => {

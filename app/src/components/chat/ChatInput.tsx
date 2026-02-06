@@ -158,8 +158,8 @@ export function ChatInput({ onSend, onStop, isStreaming, repoName, onScratchpadT
           <div className="relative flex items-end gap-2">
             {/* Scratchpad button */}
             <ScratchpadButton
-              onClick={onScratchpadToggle}
-              hasContent={scratchpadHasContent}
+              onClick={onScratchpadToggle ?? (() => {})}
+              hasContent={scratchpadHasContent ?? false}
               disabled={isStreaming}
             />
 
