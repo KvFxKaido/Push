@@ -13,6 +13,17 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 - **Streaming** — responses arrive token-by-token with visible thinking
 - **Demo mode** — works with mock data when no credentials are configured
 
+## Who It's For
+
+Push is for developers who:
+
+- **Already pay for an AI API** — Use your existing Kimi, OpenAI, or Ollama subscription
+- **Want provider flexibility** — Not locked to one vendor; switch anytime
+- **Don't have (or want) Copilot** — Same mobile workflow, different backend
+- **Like owning their tools** — Open source, self-hostable, no vendor lock-in
+
+The app is free. The AI isn't — but you pick who you pay.
+
 ## Tech Stack
 
 | Layer | Tools |
