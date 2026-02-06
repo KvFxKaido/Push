@@ -946,6 +946,18 @@ export function getActiveProvider(): ActiveProvider {
   return 'demo';
 }
 
+/**
+ * Map an active provider to its stream function and provider type.
+ * Centralises the provider → function routing used by Coder / Auditor agents.
+ */
+export function getProviderStreamFn(provider: ActiveProvider) {
+  switch (provider) {
+    case 'ollama':  return { providerType: 'ollama' as const,  streamFn: streamOllamaChat };
+    case 'mistral': return { providerType: 'mistral' as const, streamFn: streamMistralChat };
+    default:        return { providerType: 'moonshot' as const, streamFn: streamMoonshotChat };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public router — picks the right provider at runtime
 // ---------------------------------------------------------------------------

@@ -33,6 +33,8 @@ import {
 import { Button } from '@/components/ui/button';
 import './App.css';
 
+const PROVIDER_LABELS: Record<string, string> = { ollama: 'Ollama', moonshot: 'Kimi', mistral: 'Mistral' };
+
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo } = useActiveRepo();
   const scratchpad = useScratchpad(activeRepo?.full_name ?? null);
@@ -101,6 +103,7 @@ function App() {
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
+  const availableProviders = ([['moonshot', 'Kimi', hasKimiKey], ['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey]] as const).filter(([, , has]) => has);
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
@@ -326,7 +329,7 @@ function App() {
               }`}
             />
             <span className="text-xs text-[#52525b]">
-              {activeProviderLabel === 'ollama' ? 'Ollama' : activeProviderLabel === 'moonshot' ? 'Kimi' : activeProviderLabel === 'mistral' ? 'Mistral' : isDemo ? 'Demo' : isConnected ? 'GitHub' : 'Offline'}
+              {PROVIDER_LABELS[activeProviderLabel] || (isDemo ? 'Demo' : isConnected ? 'GitHub' : 'Offline')}
             </span>
           </div>
           <button
@@ -535,17 +538,17 @@ function App() {
                     }`}
                   />
                   <span className="text-xs text-[#a1a1aa]">
-                    {activeProviderLabel === 'ollama' ? 'Ollama' : activeProviderLabel === 'moonshot' ? 'Kimi' : activeProviderLabel === 'mistral' ? 'Mistral' : isDemo ? 'Demo' : 'Offline'}
+                    {PROVIDER_LABELS[activeProviderLabel] || (isDemo ? 'Demo' : 'Offline')}
                   </span>
                 </div>
               </div>
 
               {/* Backend picker — shown when 2+ providers have keys */}
-              {[hasKimiKey, hasOllamaKey, hasMistralKey].filter(Boolean).length >= 2 && (
+              {availableProviders.length >= 2 && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-[#a1a1aa]">Active backend</label>
                   <div className="flex gap-2">
-                    {([['moonshot', 'Kimi', hasKimiKey], ['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey]] as const).filter(([, , has]) => has).map(([value, label]) => (
+                    {availableProviders.map(([value, label]) => (
                       <button
                         key={value}
                         onClick={() => {
