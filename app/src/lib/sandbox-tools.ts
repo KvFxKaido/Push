@@ -471,8 +471,17 @@ export async function executeSandboxToolCall(
         );
         const detected = detectResult.stdout.trim();
 
-        if (detected === 'tsconfig.json') {
-          // Check if tsc is available
+        if (detected === 'tsconfig.json' || detected === 'tsconfig.app.json' || detected === 'tsconfig.node.json') {
+          // Check if node_modules exists, install if missing
+          const nodeModulesCheck = await execInSandbox(sandboxId, 'cd /workspace && ls -d node_modules 2>/dev/null');
+          if (nodeModulesCheck.exitCode !== 0) {
+            const installResult = await execInSandbox(sandboxId, 'cd /workspace && npm install');
+            if (installResult.exitCode !== 0) {
+              return { text: `[Tool Result — sandbox_check_types]\nFailed to install dependencies:\n${installResult.stderr}` };
+            }
+          }
+
+          // Check if tsc is available and run type check
           const tscCheck = await execInSandbox(sandboxId, 'cd /workspace && npx tsc --version 2>/dev/null');
           if (tscCheck.exitCode === 0) {
             command = 'npx tsc --noEmit';
