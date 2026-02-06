@@ -1,6 +1,6 @@
 import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/types';
 
-export const OLLAMA_DEFAULT_MODEL = 'qwen2.5-coder';
+export const OLLAMA_DEFAULT_MODEL = 'kimi-k2.5:cloud';
 
 export const PROVIDERS: AIProviderConfig[] = [
   {
@@ -105,4 +105,30 @@ export function getOllamaModelName(): string {
 
 export function setOllamaModelName(model: string): void {
   localStorage.setItem(OLLAMA_MODEL_KEY, model.trim());
+}
+
+// ---------------------------------------------------------------------------
+// Provider preference — user picks which backend to use
+// ---------------------------------------------------------------------------
+
+const PREFERRED_PROVIDER_KEY = 'preferred_provider';
+
+export type PreferredProvider = 'moonshot' | 'ollama';
+
+export function getPreferredProvider(): PreferredProvider | null {
+  try {
+    const stored = localStorage.getItem(PREFERRED_PROVIDER_KEY);
+    if (stored === 'moonshot' || stored === 'ollama') return stored;
+  } catch {
+    // SSR / restricted context
+  }
+  return null;
+}
+
+export function setPreferredProvider(provider: PreferredProvider): void {
+  localStorage.setItem(PREFERRED_PROVIDER_KEY, provider);
+}
+
+export function clearPreferredProvider(): void {
+  localStorage.removeItem(PREFERRED_PROVIDER_KEY);
 }

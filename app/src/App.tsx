@@ -8,6 +8,8 @@ import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useMoonshotKey } from '@/hooks/useMoonshotKey';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
+import { getPreferredProvider, setPreferredProvider, type PreferredProvider } from '@/lib/providers';
+import { getActiveProvider } from '@/lib/orchestrator';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { buildWorkspaceContext } from '@/lib/workspace-context';
@@ -91,6 +93,10 @@ function App() {
   const [kimiKeyInput, setKimiKeyInput] = useState('');
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [ollamaModelInput, setOllamaModelInput] = useState('');
+  const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
+
+  // Derive display label from actual active provider
+  const activeProviderLabel = getActiveProvider();
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
@@ -525,10 +531,35 @@ function App() {
                     }`}
                   />
                   <span className="text-xs text-[#a1a1aa]">
-                    {hasOllamaKey ? 'Ollama' : hasKimiKey ? 'Kimi' : isDemo ? 'Demo' : 'Offline'}
+                    {activeProviderLabel === 'ollama' ? 'Ollama' : activeProviderLabel === 'moonshot' ? 'Kimi' : isDemo ? 'Demo' : 'Offline'}
                   </span>
                 </div>
               </div>
+
+              {/* Backend picker — shown when both providers have keys */}
+              {hasKimiKey && hasOllamaKey && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-[#a1a1aa]">Active backend</label>
+                  <div className="flex gap-2">
+                    {([['moonshot', 'Kimi'], ['ollama', 'Ollama']] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        onClick={() => {
+                          setPreferredProvider(value);
+                          setActiveBackend(value);
+                        }}
+                        className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          (activeBackend ?? activeProviderLabel) === value
+                            ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                            : 'border-[#1a1a1a] bg-[#0d0d0d] text-[#71717a] hover:text-[#a1a1aa]'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Ollama Cloud */}
               <div className="space-y-2">
@@ -556,7 +587,7 @@ function App() {
                             setOllamaModelInput('');
                           }
                         }}
-                        placeholder="qwen2.5-coder"
+                        placeholder="kimi-k2.5:cloud"
                         className="flex-1 rounded-md border border-[#1a1a1a] bg-[#0d0d0d] px-2 py-1 text-xs text-[#fafafa] font-mono placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
                       />
                     </div>
@@ -660,9 +691,6 @@ function App() {
                 )}
               </div>
 
-              <p className="text-xs text-[#52525b]">
-                Ollama Cloud takes priority when both keys are set.
-              </p>
             </div>
 
             {/* Danger Zone */}

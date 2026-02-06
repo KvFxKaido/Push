@@ -4,7 +4,7 @@ import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { getMoonshotKey } from '@/hooks/useMoonshotKey';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
-import { getOllamaModelName } from './providers';
+import { getOllamaModelName, getPreferredProvider } from './providers';
 
 // ---------------------------------------------------------------------------
 // Kimi For Coding config
@@ -732,13 +732,25 @@ export async function streamOllamaChat(
 export type ActiveProvider = 'moonshot' | 'ollama' | 'demo';
 
 /**
- * Determine which provider is active based on configured API keys.
- * Priority: Ollama Cloud > Kimi > Demo.
- * (Ollama wins if both are set — user explicitly opted in.)
+ * Determine which provider is active.
+ *
+ * 1. If the user set a preference AND that provider has a key → use it.
+ * 2. Otherwise, use whichever provider has a key (Kimi checked first for
+ *    backwards compat — existing users already have a Kimi key).
+ * 3. No keys → demo.
  */
 export function getActiveProvider(): ActiveProvider {
-  if (getOllamaKey()) return 'ollama';
-  if (getMoonshotKey()) return 'moonshot';
+  const preferred = getPreferredProvider();
+  const hasOllama = Boolean(getOllamaKey());
+  const hasKimi = Boolean(getMoonshotKey());
+
+  // Honour explicit preference when the key is available
+  if (preferred === 'ollama' && hasOllama) return 'ollama';
+  if (preferred === 'moonshot' && hasKimi) return 'moonshot';
+
+  // No preference (or preferred key was removed) — first available
+  if (hasKimi) return 'moonshot';
+  if (hasOllama) return 'ollama';
   return 'demo';
 }
 
