@@ -322,7 +322,7 @@ function App() {
               }`}
             />
             <span className="text-xs text-[#52525b]">
-              {isDemo ? 'Demo' : hasKimiKey ? 'Kimi' : isConnected ? 'GitHub' : 'Offline'}
+              {activeProviderLabel === 'ollama' ? 'Ollama' : activeProviderLabel === 'moonshot' ? 'Kimi' : isDemo ? 'Demo' : isConnected ? 'GitHub' : 'Offline'}
             </span>
           </div>
           <button
