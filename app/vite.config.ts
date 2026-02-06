@@ -23,6 +23,11 @@ export default defineConfig({
           'User-Agent': 'claude-code/1.0.0',
         },
       },
+      '/ollama': {
+        target: 'https://ollama.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/ollama/, ''),
+      },
     },
   },
 });

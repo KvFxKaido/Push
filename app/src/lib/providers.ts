@@ -1,5 +1,7 @@
 import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/types';
 
+export const OLLAMA_DEFAULT_MODEL = 'kimi-k2.5:cloud';
+
 export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'moonshot',
@@ -30,6 +32,36 @@ export const PROVIDERS: AIProviderConfig[] = [
       },
     ],
   },
+  {
+    type: 'ollama',
+    name: 'Ollama Cloud',
+    description: 'Ollama Cloud — run open models on cloud GPUs (OpenAI-compatible)',
+    envKey: 'VITE_OLLAMA_API_KEY',
+    envUrl: 'https://ollama.com',
+    models: [
+      {
+        id: OLLAMA_DEFAULT_MODEL,
+        name: 'Ollama (Orchestrator)',
+        provider: 'ollama',
+        role: 'orchestrator',
+        context: 131_072,
+      },
+      {
+        id: OLLAMA_DEFAULT_MODEL,
+        name: 'Ollama (Coder)',
+        provider: 'ollama',
+        role: 'coder',
+        context: 131_072,
+      },
+      {
+        id: OLLAMA_DEFAULT_MODEL,
+        name: 'Ollama (Auditor)',
+        provider: 'ollama',
+        role: 'auditor',
+        context: 131_072,
+      },
+    ],
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -46,5 +78,57 @@ export function getModelForRole(
   role: AgentRole,
 ): AIModel | undefined {
   const provider = getProvider(type);
-  return provider?.models.find((m) => m.role === role);
+  const model = provider?.models.find((m) => m.role === role);
+  if (!model) return undefined;
+
+  // For Ollama, overlay the user-selected model name at runtime
+  if (type === 'ollama') {
+    const userModel = getOllamaModelName();
+    return { ...model, id: userModel };
+  }
+  return model;
+}
+
+// ---------------------------------------------------------------------------
+// Ollama Cloud — runtime model name (stored in localStorage)
+// ---------------------------------------------------------------------------
+
+const OLLAMA_MODEL_KEY = 'ollama_model';
+
+export function getOllamaModelName(): string {
+  try {
+    return localStorage.getItem(OLLAMA_MODEL_KEY) || OLLAMA_DEFAULT_MODEL;
+  } catch {
+    return OLLAMA_DEFAULT_MODEL;
+  }
+}
+
+export function setOllamaModelName(model: string): void {
+  localStorage.setItem(OLLAMA_MODEL_KEY, model.trim());
+}
+
+// ---------------------------------------------------------------------------
+// Provider preference — user picks which backend to use
+// ---------------------------------------------------------------------------
+
+const PREFERRED_PROVIDER_KEY = 'preferred_provider';
+
+export type PreferredProvider = 'moonshot' | 'ollama';
+
+export function getPreferredProvider(): PreferredProvider | null {
+  try {
+    const stored = localStorage.getItem(PREFERRED_PROVIDER_KEY);
+    if (stored === 'moonshot' || stored === 'ollama') return stored;
+  } catch {
+    // SSR / restricted context
+  }
+  return null;
+}
+
+export function setPreferredProvider(provider: PreferredProvider): void {
+  localStorage.setItem(PREFERRED_PROVIDER_KEY, provider);
+}
+
+export function clearPreferredProvider(): void {
+  localStorage.removeItem(PREFERRED_PROVIDER_KEY);
 }

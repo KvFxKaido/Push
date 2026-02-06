@@ -7,7 +7,7 @@
  */
 
 import type { ChatMessage, ChatCard } from '@/types';
-import { streamMoonshotChat } from './orchestrator';
+import { streamMoonshotChat, streamOllamaChat, getActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 
@@ -54,9 +54,13 @@ export async function runCoderAgent(
   onStatus: (phase: string, detail?: string) => void,
   agentsMd?: string,
 ): Promise<{ summary: string; cards: ChatCard[]; rounds: number }> {
-  const coderModel = getModelForRole('moonshot', 'coder');
+  const provider = getActiveProvider();
+  const providerType = provider === 'ollama' ? 'ollama' : 'moonshot';
+  const streamFn = provider === 'ollama' ? streamOllamaChat : streamMoonshotChat;
+
+  const coderModel = getModelForRole(providerType, 'coder');
   if (!coderModel) {
-    throw new Error('Coder model not configured. Ensure Moonshot has a coder model.');
+    throw new Error(`Coder model not configured for ${providerType}.`);
   }
 
   // Build system prompt, optionally including AGENTS.md (truncated if too large)
@@ -85,9 +89,9 @@ export async function runCoderAgent(
 
     let accumulated = '';
 
-    // Stream Coder response
+    // Stream Coder response via active provider
     const streamError = await new Promise<Error | null>((resolve) => {
-      streamMoonshotChat(
+      streamFn(
         messages,
         (token) => { accumulated += token; },
         () => resolve(null),

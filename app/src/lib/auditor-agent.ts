@@ -9,7 +9,7 @@
  */
 
 import type { ChatMessage, AuditVerdictCardData } from '@/types';
-import { streamMoonshotChat } from './orchestrator';
+import { streamMoonshotChat, streamOllamaChat, getActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
 
 const AUDITOR_SYSTEM_PROMPT = `You are the Auditor agent for Push, a mobile AI coding assistant. Your sole job is to review code diffs for safety.
@@ -52,7 +52,11 @@ export async function runAuditor(
   diff: string,
   onStatus: (phase: string) => void,
 ): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
-  const auditorModel = getModelForRole('moonshot', 'auditor');
+  const provider = getActiveProvider();
+  const providerType = provider === 'ollama' ? 'ollama' : 'moonshot';
+  const streamFn = provider === 'ollama' ? streamOllamaChat : streamMoonshotChat;
+
+  const auditorModel = getModelForRole(providerType, 'auditor');
   if (!auditorModel) {
     // No auditor model → fail-safe to unsafe
     return {
@@ -82,7 +86,7 @@ export async function runAuditor(
   let accumulated = '';
 
   const streamError = await new Promise<Error | null>((resolve) => {
-    streamMoonshotChat(
+    streamFn(
       messages,
       (token) => { accumulated += token; },
       () => resolve(null),

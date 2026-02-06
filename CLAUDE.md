@@ -15,20 +15,22 @@ npm run dev
 - React 19 + TypeScript 5.9 + Vite 7
 - Tailwind CSS 3 + shadcn/ui (Radix primitives)
 - GitHub REST API for repo operations
-- Kimi For Coding (Kimi K2.5 via api.kimi.com, OpenAI-compatible SSE streaming)
+- **Multi-backend AI** (user picks in Settings):
+  - Kimi For Coding (Kimi K2.5 via api.kimi.com, OpenAI-compatible SSE)
+  - Ollama Cloud (open models on cloud GPUs via ollama.com, OpenAI-compatible SSE)
 - Modal (serverless containers) for sandbox code execution
 - Cloudflare Workers (streaming proxy + sandbox proxy)
 - PWA with service worker and offline support
 
 ## Architecture
 
-Role-based agent system. Models are replaceable. Roles are locked. The user never picks a model.
+Role-based agent system. Models are replaceable. Roles are locked. The user never picks a model — they pick a backend.
 
-- **Orchestrator (Kimi K2.5)** — Conversational lead, interprets user intent, coordinates specialists, assembles results. The voice of the app.
-- **Coder (Kimi K2.5)** — Code implementation and execution engine. Writes, edits, and runs code in a sandbox.
-- **Auditor (Kimi K2.5)** — Risk specialist, pre-commit gate, binary verdict. Cannot be bypassed.
+- **Orchestrator** — Conversational lead, interprets user intent, coordinates specialists, assembles results. The voice of the app.
+- **Coder** — Code implementation and execution engine. Writes, edits, and runs code in a sandbox.
+- **Auditor** — Risk specialist, pre-commit gate, binary verdict. Cannot be bypassed.
 
-AI runs through a single provider: **Kimi For Coding** (`api.kimi.com`). The API key is configurable at runtime via the Settings UI — no restart needed. Production uses the Cloudflare Worker proxy at `/api/kimi/chat`.
+**AI backends:** Two providers are supported — **Kimi For Coding** (`api.kimi.com`) and **Ollama Cloud** (`ollama.com`). Both use OpenAI-compatible SSE streaming. API keys are configurable at runtime via the Settings UI — no restart needed. When both keys are set, a backend picker appears in Settings. The active backend serves all three roles. Default Ollama model is `kimi-k2.5:cloud`. Production uses Cloudflare Worker proxies at `/api/kimi/chat` and `/api/ollama/chat`.
 
 **Onboarding gate:** Users must validate a GitHub PAT and select an active repo before chatting. Demo mode is an escape hatch with mock data. App state machine: `onboarding → repo-picker → chat`.
 
@@ -42,9 +44,9 @@ AI runs through a single provider: **Kimi For Coding** (`api.kimi.com`). The API
 
 **Repo hard lock:** The Orchestrator only sees the active repo in its context. Other repos are stripped entirely. Repo switching is UI-only via the header dropdown.
 
-**Scratchpad:** A shared notepad that both the user and Kimi can read/write. User opens via button in ChatInput, Kimi updates via `set_scratchpad` / `append_scratchpad` tools. Content persists in localStorage and is always injected into the system prompt. Useful for consolidating ideas, requirements, and decisions throughout a session. Content is escaped to prevent prompt injection.
+**Scratchpad:** A shared notepad that both the user and the LLM can read/write. User opens via button in ChatInput, the LLM updates via `set_scratchpad` / `append_scratchpad` tools. Content persists in localStorage and is always injected into the system prompt. Useful for consolidating ideas, requirements, and decisions throughout a session. Content is escaped to prevent prompt injection.
 
-**Rolling window:** Context is trimmed to the last 30 messages before sending to Kimi. Tool call/result pairs are kept together to prevent orphaned results. This reduces latency and keeps the LLM focused on recent conversation without losing critical tool context.
+**Rolling window:** Context is trimmed to the last 30 messages before sending to the LLM. Tool call/result pairs are kept together to prevent orphaned results. This reduces latency and keeps the LLM focused on recent conversation without losing critical tool context.
 
 ## Project Layout
 
@@ -58,7 +60,7 @@ app/src/
   sections/          # Screen components (OnboardingScreen, RepoPicker)
   types/             # TypeScript type definitions
   App.tsx            # Root component, screen state machine
-app/worker.ts        # Cloudflare Worker — streaming proxy to Kimi For Coding + sandbox proxy to Modal
+app/worker.ts        # Cloudflare Worker — streaming proxy to Kimi/Ollama + sandbox proxy to Modal
 sandbox/app.py       # Modal Python App — 6 web endpoints for sandbox CRUD
 sandbox/requirements.txt
 wrangler.jsonc       # Cloudflare Workers config (repo root)
@@ -66,16 +68,16 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 ## Key Files
 
-- `lib/orchestrator.ts` — System prompt, Kimi streaming (SSE), think-token parsing, rolling window context management
+- `lib/orchestrator.ts` — System prompt, multi-backend streaming (Kimi + Ollama SSE), think-token parsing, provider routing, rolling window context management
 - `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks) + `delegate_coder`
 - `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt
 - `lib/sandbox-client.ts` — HTTP client for `/api/sandbox/*` endpoints (thin fetch wrappers)
 - `lib/scratchpad-tools.ts` — Scratchpad tool definitions (`set_scratchpad`, `append_scratchpad`), prompt injection escaping
 - `lib/tool-dispatch.ts` — Unified tool dispatch (GitHub + Sandbox + Scratchpad + delegation)
-- `lib/coder-agent.ts` — Coder sub-agent loop (Kimi K2.5, up to 5 autonomous rounds)
-- `lib/auditor-agent.ts` — Auditor review + verdict (Kimi K2.5, fail-safe to UNSAFE)
+- `lib/coder-agent.ts` — Coder sub-agent loop (up to 5 autonomous rounds, uses active backend)
+- `lib/auditor-agent.ts` — Auditor review + verdict (fail-safe to UNSAFE, uses active backend)
 - `lib/workspace-context.ts` — Builds active repo context for system prompt injection
-- `lib/providers.ts` — AI provider config and role-to-model mapping
+- `lib/providers.ts` — AI provider configs (Kimi + Ollama), role-to-model mapping, backend preference
 - `hooks/useChat.ts` — Chat state, message history, unified tool execution loop, Coder delegation, scratchpad integration
 - `hooks/useSandbox.ts` — Sandbox session lifecycle (idle → creating → ready → error)
 - `hooks/useScratchpad.ts` — Shared notepad state, localStorage persistence, content size limits
@@ -83,12 +85,14 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `hooks/useActiveRepo.ts` — Active repo selection + localStorage persistence
 - `hooks/useRepos.ts` — Repo list fetching, sync tracking, activity detection
 - `hooks/useMoonshotKey.ts` — Kimi For Coding API key management (localStorage + env fallback)
+- `hooks/useOllamaConfig.ts` — Ollama Cloud API key + model name management (localStorage + env fallback)
 - `types/index.ts` — All shared TypeScript types (includes card data types for sandbox, diff preview, audit verdict)
 
 ## Environment Variables
 
 ```env
-VITE_MOONSHOT_API_KEY=...         # Optional — can also be set via Settings UI (sk-kimi-...)
+VITE_MOONSHOT_API_KEY=...         # Optional — Kimi key, can also be set via Settings UI (sk-kimi-...)
+VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud key, can also be set via Settings UI
 VITE_GITHUB_TOKEN=...             # Optional, higher GitHub rate limits
 VITE_GITHUB_CLIENT_ID=...         # Optional, enables OAuth login
 VITE_GITHUB_OAUTH_PROXY=...       # Optional, required for OAuth token exchange
@@ -96,11 +100,12 @@ VITE_GITHUB_OAUTH_PROXY=...       # Optional, required for OAuth token exchange
 
 **Worker secrets (Cloudflare):**
 - `MOONSHOT_API_KEY` — Kimi For Coding API key (production proxy, starts with `sk-kimi-`)
+- `OLLAMA_API_KEY` — Ollama Cloud API key (production proxy)
 - `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--push-sandbox`). Endpoints follow pattern `{base}-{function}.modal.run`
 
-**API key:** Kimi For Coding key can be set via env var or pasted in the Settings UI at runtime (stored in localStorage). Settings UI keys override env vars.
+**API keys:** Kimi and Ollama Cloud keys can be set via env vars or pasted in the Settings UI at runtime (stored in localStorage). Settings UI keys override env vars. When both are set, the user picks which backend to use via a toggle in Settings. The preference is stored in localStorage.
 
-**Production:** Cloudflare Worker at `app/worker.ts` holds `MOONSHOT_API_KEY` and `MODAL_SANDBOX_BASE_URL` as runtime secrets. The client never sees them. The worker proxies `/api/kimi/chat` to `api.kimi.com` with `User-Agent: claude-code/1.0.0` (required by Kimi's agent gating).
+**Production:** Cloudflare Worker at `app/worker.ts` holds `MOONSHOT_API_KEY`, `OLLAMA_API_KEY`, and `MODAL_SANDBOX_BASE_URL` as runtime secrets. The client never sees them. The worker proxies `/api/kimi/chat` to `api.kimi.com` (with `User-Agent: claude-code/1.0.0` for Kimi's agent gating) and `/api/ollama/chat` to `ollama.com/v1/chat/completions`.
 
 Without any API keys (dev) the app runs in demo mode with mock data. Without `MODAL_SANDBOX_BASE_URL` the sandbox button shows but returns a 503.
 

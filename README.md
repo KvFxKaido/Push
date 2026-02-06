@@ -20,7 +20,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Kimi For Coding (Kimi K2.5 via api.kimi.com) |
+| AI | Kimi For Coding or Ollama Cloud (user picks backend) |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -38,11 +38,12 @@ npm run dev
 Create `app/.env` for local development, or paste keys in the Settings UI at runtime:
 
 ```env
-VITE_MOONSHOT_API_KEY=...         # Optional — or paste in Settings UI (sk-kimi-...)
+VITE_MOONSHOT_API_KEY=...         # Optional — Kimi key, or paste in Settings UI (sk-kimi-...)
+VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud key, or paste in Settings UI
 VITE_GITHUB_TOKEN=...             # Optional — PAT for GitHub API access
 ```
 
-Without a Kimi key the app runs in demo mode with mock repos and a welcome message.
+Without any AI key the app runs in demo mode with mock repos and a welcome message. When both Kimi and Ollama keys are set, a backend picker appears in Settings.
 
 ## GitHub Authentication
 
@@ -58,7 +59,7 @@ Create a PAT with `repo` scope and paste it in the Settings UI. Simpler setup, b
 
 ## Production
 
-Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding, `/api/ollama/chat` to Ollama Cloud, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 ```bash
 cd app && npm run build
@@ -75,7 +76,7 @@ Push/
 │   ├── app.py             # Modal Python App — sandbox web endpoints
 │   └── requirements.txt
 ├── app/
-│   ├── worker.ts          # Cloudflare Worker — Kimi proxy + sandbox proxy
+│   ├── worker.ts          # Cloudflare Worker — Kimi/Ollama proxy + sandbox proxy
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, RepoSelector
@@ -106,11 +107,11 @@ Push/
 
 Role-based agent system. Models are replaceable; roles are not.
 
-- **Orchestrator (Kimi K2.5)** — conversational lead, tool orchestration, Coder delegation
-- **Coder (Kimi K2.5)** — autonomous code implementation in sandbox
-- **Auditor (Kimi K2.5)** — pre-commit safety gate, binary verdict
+- **Orchestrator** — conversational lead, tool orchestration, Coder delegation
+- **Coder** — autonomous code implementation in sandbox
+- **Auditor** — pre-commit safety gate, binary verdict
 
-AI runs through a single provider: Kimi For Coding (`api.kimi.com`). The API key is configurable at runtime via the Settings UI. Production uses the Cloudflare Worker proxy for Kimi and Modal sandbox.
+Two AI backends are supported: **Kimi For Coding** (`api.kimi.com`) and **Ollama Cloud** (`ollama.com`). Both use OpenAI-compatible SSE streaming. The active backend serves all three roles. API keys are configurable at runtime via the Settings UI — when both are set, users pick which backend to use. Default Ollama model: `kimi-k2.5:cloud`. Production uses Cloudflare Worker proxies for both backends and Modal sandbox.
 
 ## License
 
