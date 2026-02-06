@@ -8,9 +8,22 @@
  * the verdict defaults to UNSAFE (blocking the commit).
  */
 
-import type { ChatMessage, AuditVerdictCardData } from '@/types';
-import { streamMoonshotChat } from './orchestrator';
+import type { ChatMessage, AuditVerdictCardData, AIProviderType } from '@/types';
+import { streamProviderChat } from './orchestrator';
 import { getModelForRole } from './providers';
+
+// Get active provider from localStorage
+function getActiveProvider(): AIProviderType {
+  try {
+    const stored = localStorage.getItem('ai_provider_type');
+    if (stored === 'moonshot' || stored === 'ollama-cloud') {
+      return stored;
+    }
+  } catch {
+    // SSR / restricted context
+  }
+  return 'moonshot'; // default
+}
 
 const AUDITOR_SYSTEM_PROMPT = `You are the Auditor agent for Push, a mobile AI coding assistant. Your sole job is to review code diffs for safety.
 
@@ -52,7 +65,8 @@ export async function runAuditor(
   diff: string,
   onStatus: (phase: string) => void,
 ): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
-  const auditorModel = getModelForRole('moonshot', 'auditor');
+  const activeProvider = getActiveProvider();
+  const auditorModel = getModelForRole(activeProvider, 'auditor');
   if (!auditorModel) {
     // No auditor model → fail-safe to unsafe
     return {
@@ -82,7 +96,8 @@ export async function runAuditor(
   let accumulated = '';
 
   const streamError = await new Promise<Error | null>((resolve) => {
-    streamMoonshotChat(
+    streamProviderChat(
+      activeProvider,
       messages,
       (token) => { accumulated += token; },
       () => resolve(null),

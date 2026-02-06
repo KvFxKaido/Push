@@ -1,21 +1,43 @@
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, AIProviderType } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
 import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
-import { getMoonshotKey } from '@/hooks/useMoonshotKey';
+import { getProviderKey } from '@/hooks/useAIProvider';
+import { getProvider, getModelForRole } from './providers';
 
 // ---------------------------------------------------------------------------
-// Kimi For Coding config
+// Provider config — dynamically determined at runtime
 // ---------------------------------------------------------------------------
-
-// Dev: Vite proxy avoids CORS. Prod: Cloudflare Worker proxy at /api/kimi/chat.
-const KIMI_API_URL = import.meta.env.DEV
-  ? '/kimi/coding/v1/chat/completions'
-  : '/api/kimi/chat';
-const KIMI_MODEL = 'k2p5';
 
 // Rolling window config — keeps context focused and latency low
 const MAX_HISTORY_MESSAGES = 30;
+
+// Get API URL based on provider type
+function getApiUrl(providerType: AIProviderType): string {
+  const provider = getProvider(providerType);
+  if (!provider) {
+    throw new Error(`Unknown provider: ${providerType}`);
+  }
+
+  // Use baseUrl if provided, otherwise fall back to legacy Kimi logic
+  if (provider.baseUrl) {
+    return provider.baseUrl;
+  }
+
+  // Legacy Kimi path (dev uses Vite proxy)
+  return import.meta.env.DEV
+    ? '/kimi/coding/v1/chat/completions'
+    : '/api/kimi/chat';
+}
+
+// Get model ID for a provider and role
+function getModelId(providerType: AIProviderType, role: 'orchestrator' | 'coder' | 'auditor'): string {
+  const model = getModelForRole(providerType, role);
+  if (!model) {
+    throw new Error(`No model found for provider ${providerType} and role ${role}`);
+  }
+  return model.id;
+}
 
 // ---------------------------------------------------------------------------
 // Rolling Window — trims old messages while keeping tool call/result pairs intact
@@ -325,7 +347,7 @@ function createChunkedEmitter(
 }
 
 // ---------------------------------------------------------------------------
-// Kimi For Coding streaming (SSE — OpenAI-compatible)
+// AI Provider streaming (SSE — OpenAI-compatible)
 // ---------------------------------------------------------------------------
 
 // --- Usage data from streaming responses ---
@@ -336,7 +358,8 @@ export interface StreamUsage {
   totalTokens: number;
 }
 
-export async function streamMoonshotChat(
+export async function streamProviderChat(
+  providerType: AIProviderType,
   messages: ChatMessage[],
   onToken: (token: string) => void,
   onDone: (usage?: StreamUsage) => void,
@@ -348,13 +371,15 @@ export async function streamMoonshotChat(
   systemPromptOverride?: string,
   scratchpadContent?: string,
 ): Promise<void> {
-  const apiKey = getMoonshotKey();
+  const apiKey = getProviderKey(providerType);
   if (!apiKey) {
-    onError(new Error('Moonshot API key not configured'));
+    const providerName = getProvider(providerType)?.name || providerType;
+    onError(new Error(`${providerName} API key not configured`));
     return;
   }
 
-  const model = modelOverride || KIMI_MODEL;
+  const model = modelOverride || getModelId(providerType, 'orchestrator');
+  const apiUrl = getApiUrl(providerType);
 
   const CONNECT_TIMEOUT_MS = 30_000; // 30s to get initial response headers
   const IDLE_TIMEOUT_MS = 60_000;    // 60s max silence during streaming
@@ -379,9 +404,9 @@ export async function streamMoonshotChat(
   };
 
   try {
-    console.log(`[Push] POST ${KIMI_API_URL} (model: ${model})`);
+    console.log(`[Push] POST ${apiUrl} (model: ${model})`);
 
-    const response = await fetch(KIMI_API_URL, {
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -409,8 +434,9 @@ export async function streamMoonshotChat(
       } catch {
         detail = body ? body.slice(0, 200) : 'empty body';
       }
-      console.error(`[Push] Moonshot error: ${response.status}`, detail);
-      throw new Error(`Moonshot ${response.status}: ${detail}`);
+      const providerName = getProvider(providerType)?.name || providerType;
+      console.error(`[Push] ${providerName} error: ${response.status}`, detail);
+      throw new Error(`${providerName} ${response.status}: ${detail}`);
     }
 
     const reader = response.body?.getReader();
@@ -509,21 +535,23 @@ export async function streamMoonshotChat(
     clearTimeout(connectTimer);
     clearTimeout(idleTimer);
 
+    const providerName = getProvider(providerType)?.name || providerType;
+
     // Handle abort errors with specific messages
     if (err instanceof DOMException && err.name === 'AbortError') {
       const timeoutMsg = abortReason === 'connect'
-        ? `Kimi API didn't respond within ${CONNECT_TIMEOUT_MS / 1000}s — server may be down.`
-        : `Kimi API stream stalled — no data for ${IDLE_TIMEOUT_MS / 1000}s.`;
-      console.error(`[Push] Moonshot timeout (${abortReason}):`, timeoutMsg);
+        ? `${providerName} API didn't respond within ${CONNECT_TIMEOUT_MS / 1000}s — server may be down.`
+        : `${providerName} API stream stalled — no data for ${IDLE_TIMEOUT_MS / 1000}s.`;
+      console.error(`[Push] ${providerName} timeout (${abortReason}):`, timeoutMsg);
       onError(new Error(timeoutMsg));
       return;
     }
 
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[Push] Moonshot chat error:`, msg);
+    console.error(`[Push] ${providerName} chat error:`, msg);
     if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
       onError(new Error(
-        `Cannot reach Moonshot — network error. Check your connection.`
+        `Cannot reach ${providerName} — network error. Check your connection.`
       ));
     } else {
       onError(err instanceof Error ? err : new Error(msg));
@@ -538,6 +566,19 @@ export async function streamMoonshotChat(
 // Public router — picks the right provider at runtime
 // ---------------------------------------------------------------------------
 
+// Get active provider from localStorage
+function getActiveProvider(): AIProviderType {
+  try {
+    const stored = localStorage.getItem('ai_provider_type');
+    if (stored === 'moonshot' || stored === 'ollama-cloud') {
+      return stored;
+    }
+  } catch {
+    // SSR / restricted context
+  }
+  return 'moonshot'; // default
+}
+
 export async function streamChat(
   messages: ChatMessage[],
   onToken: (token: string) => void,
@@ -548,8 +589,10 @@ export async function streamChat(
   hasSandbox?: boolean,
   scratchpadContent?: string,
 ): Promise<void> {
+  const activeProvider = getActiveProvider();
+  
   // Demo mode: no API key in dev → show welcome message
-  if (import.meta.env.DEV && !getMoonshotKey()) {
+  if (import.meta.env.DEV && !getProviderKey(activeProvider)) {
     const words = DEMO_WELCOME.split(' ');
     for (let i = 0; i < words.length; i++) {
       await new Promise((r) => setTimeout(r, 12));
@@ -559,5 +602,5 @@ export async function streamChat(
     return;
   }
 
-  return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent);
+  return streamProviderChat(activeProvider, messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent);
 }

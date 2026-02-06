@@ -2,7 +2,7 @@ export type AppState = 'home' | 'running' | 'results' | 'repos';
 
 export type AgentRole = 'orchestrator' | 'coder' | 'auditor';
 
-export type AIProviderType = 'moonshot';
+export type AIProviderType = 'moonshot' | 'ollama-cloud';
 
 export interface AIModel {
   id: string;
@@ -19,6 +19,7 @@ export interface AIProviderConfig {
   models: AIModel[];
   envKey: string;
   envUrl?: string;
+  baseUrl?: string;
 }
 
 export interface PRInput {

@@ -7,6 +7,7 @@
 
 interface Env {
   MOONSHOT_API_KEY?: string;
+  OLLAMA_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
@@ -49,6 +50,11 @@ export default {
     // API route: streaming proxy to Kimi For Coding (SSE)
     if (url.pathname === '/api/kimi/chat' && request.method === 'POST') {
       return handleKimiChat(request, env);
+    }
+
+    // API route: streaming proxy to Ollama Cloud (SSE)
+    if (url.pathname === '/api/ollama/chat' && request.method === 'POST') {
+      return handleOllamaChat(request, env);
     }
 
     // API route: sandbox proxy to Modal
@@ -329,6 +335,7 @@ interface HealthStatus {
   services: {
     worker: { status: 'ok' };
     kimi: { status: 'ok' | 'unconfigured'; configured: boolean };
+    ollama: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
   };
@@ -337,6 +344,7 @@ interface HealthStatus {
 
 async function handleHealthCheck(env: Env): Promise<Response> {
   const kimiConfigured = Boolean(env.MOONSHOT_API_KEY);
+  const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -354,9 +362,10 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     }
   }
 
+  const anyAIConfigured = kimiConfigured || ollamaConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
-    kimiConfigured && sandboxStatus === 'ok' ? 'healthy' :
-    kimiConfigured || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
+    anyAIConfigured && sandboxStatus === 'ok' ? 'healthy' :
+    anyAIConfigured || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
 
   const health: HealthStatus = {
     status: overallStatus,
@@ -364,6 +373,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     services: {
       worker: { status: 'ok' },
       kimi: { status: kimiConfigured ? 'ok' : 'unconfigured', configured: kimiConfigured },
+      ollama: { status: ollamaConfigured ? 'ok' : 'unconfigured', configured: ollamaConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
     },
@@ -464,6 +474,97 @@ async function handleKimiChat(request: Request, env: Env): Promise<Response> {
     const status = isTimeout ? 504 : 500;
     const error = isTimeout ? 'Kimi request timed out after 120 seconds' : message;
     console.error(`[api/kimi/chat] Unhandled: ${message}`);
+    return Response.json({ error }, { status });
+  }
+}
+
+async function handleOllamaChat(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const now = Date.now();
+  cleanupRateLimitStore(now);
+  const rateLimit = checkRateLimit(getClientIp(request), now);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
+    );
+  }
+
+  // Prefer server-side secret; fall back to client-provided Authorization header
+  const serverKey = env.OLLAMA_API_KEY;
+  const clientAuth = request.headers.get('Authorization');
+  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
+
+  if (!authHeader) {
+    return Response.json(
+      { error: 'Ollama API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.' },
+      { status: 401 },
+    );
+  }
+
+  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
+  if (!bodyResult.ok) {
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  }
+
+  console.log(`[api/ollama/chat] Forwarding request (${bodyResult.text.length} bytes)`);
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 min for long responses
+    let upstream: Response;
+
+    try {
+      upstream = await fetch('https://ollama.com/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authHeader,
+        },
+        body: bodyResult.text,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    console.log(`[api/ollama/chat] Upstream responded: ${upstream.status}`);
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      console.error(`[api/ollama/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
+      return Response.json(
+        { error: `Ollama API error ${upstream.status}: ${errBody.slice(0, 200)}` },
+        { status: upstream.status },
+      );
+    }
+
+    // SSE streaming: pipe upstream body straight through
+    if (upstream.body) {
+      return new Response(upstream.body, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    // Non-streaming fallback
+    const data: unknown = await upstream.json();
+    return Response.json(data);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    const status = isTimeout ? 504 : 500;
+    const error = isTimeout ? 'Ollama request timed out after 120 seconds' : message;
+    console.error(`[api/ollama/chat] Unhandled: ${message}`);
     return Response.json({ error }, { status });
   }
 }

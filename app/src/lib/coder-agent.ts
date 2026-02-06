@@ -6,10 +6,23 @@
  * all within the sandbox. It runs up to 5 rounds before exiting.
  */
 
-import type { ChatMessage, ChatCard } from '@/types';
-import { streamMoonshotChat } from './orchestrator';
+import type { ChatMessage, ChatCard, AIProviderType } from '@/types';
+import { streamProviderChat } from './orchestrator';
 import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
+
+// Get active provider from localStorage
+function getActiveProvider(): AIProviderType {
+  try {
+    const stored = localStorage.getItem('ai_provider_type');
+    if (stored === 'moonshot' || stored === 'ollama-cloud') {
+      return stored;
+    }
+  } catch {
+    // SSR / restricted context
+  }
+  return 'moonshot'; // default
+}
 
 const MAX_CODER_ROUNDS = 5;
 
@@ -54,9 +67,10 @@ export async function runCoderAgent(
   onStatus: (phase: string, detail?: string) => void,
   agentsMd?: string,
 ): Promise<{ summary: string; cards: ChatCard[]; rounds: number }> {
-  const coderModel = getModelForRole('moonshot', 'coder');
+  const activeProvider = getActiveProvider();
+  const coderModel = getModelForRole(activeProvider, 'coder');
   if (!coderModel) {
-    throw new Error('Coder model not configured. Ensure Moonshot has a coder model.');
+    throw new Error('Coder model not configured. Ensure your AI provider has a coder model.');
   }
 
   // Build system prompt, optionally including AGENTS.md (truncated if too large)
@@ -87,7 +101,8 @@ export async function runCoderAgent(
 
     // Stream Coder response
     const streamError = await new Promise<Error | null>((resolve) => {
-      streamMoonshotChat(
+      streamProviderChat(
+        activeProvider,
         messages,
         (token) => { accumulated += token; },
         () => resolve(null),

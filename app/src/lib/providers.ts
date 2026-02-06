@@ -30,6 +30,36 @@ export const PROVIDERS: AIProviderConfig[] = [
       },
     ],
   },
+  {
+    type: 'ollama-cloud',
+    name: 'Ollama Cloud',
+    description: 'Run large models on Ollama\'s cloud infrastructure',
+    envKey: 'VITE_OLLAMA_API_KEY',
+    baseUrl: '/api/ollama/chat',
+    models: [
+      {
+        id: 'llama4:maverick-cloud',
+        name: 'Llama 4 Maverick',
+        provider: 'ollama-cloud',
+        role: 'orchestrator',
+        context: 128_000,
+      },
+      {
+        id: 'llama4:maverick-cloud',
+        name: 'Llama 4 Maverick',
+        provider: 'ollama-cloud',
+        role: 'coder',
+        context: 128_000,
+      },
+      {
+        id: 'llama4:maverick-cloud',
+        name: 'Llama 4 Maverick',
+        provider: 'ollama-cloud',
+        role: 'auditor',
+        context: 128_000,
+      },
+    ],
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
