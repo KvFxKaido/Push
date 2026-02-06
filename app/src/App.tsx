@@ -7,6 +7,7 @@ import { useGitHubAppAuth } from '@/hooks/useGitHubAppAuth';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useMoonshotKey } from '@/hooks/useMoonshotKey';
+import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { buildWorkspaceContext } from '@/lib/workspace-context';
@@ -84,9 +85,12 @@ function App() {
   const validatedUser = appUser || patUser;
   const { repos, loading: reposLoading, sync: syncRepos } = useRepos();
   const { key: kimiKey, setKey: setKimiKey, clearKey: clearKimiKey, hasKey: hasKimiKey } = useMoonshotKey();
+  const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
   const [kimiKeyInput, setKimiKeyInput] = useState('');
+  const [ollamaKeyInput, setOllamaKeyInput] = useState('');
+  const [ollamaModelInput, setOllamaModelInput] = useState('');
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
@@ -517,13 +521,88 @@ function App() {
                 <div className="flex items-center gap-1.5">
                   <div
                     className={`h-2 w-2 rounded-full ${
-                      hasKimiKey ? 'bg-emerald-500' : 'bg-[#52525b]'
+                      hasOllamaKey || hasKimiKey ? 'bg-emerald-500' : 'bg-[#52525b]'
                     }`}
                   />
                   <span className="text-xs text-[#a1a1aa]">
-                    {hasKimiKey ? 'Kimi' : isDemo ? 'Demo' : 'Offline'}
+                    {hasOllamaKey ? 'Ollama' : hasKimiKey ? 'Kimi' : isDemo ? 'Demo' : 'Offline'}
                   </span>
                 </div>
+              </div>
+
+              {/* Ollama Cloud */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-[#a1a1aa]">Ollama Cloud</label>
+                {hasOllamaKey ? (
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2">
+                      <p className="text-sm text-[#a1a1aa] font-mono">Key saved</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#71717a] shrink-0">Model:</span>
+                      <input
+                        type="text"
+                        value={ollamaModelInput || ollamaModel}
+                        onChange={(e) => setOllamaModelInput(e.target.value)}
+                        onBlur={() => {
+                          if (ollamaModelInput.trim()) {
+                            setOllamaModel(ollamaModelInput.trim());
+                          }
+                          setOllamaModelInput('');
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && ollamaModelInput.trim()) {
+                            setOllamaModel(ollamaModelInput.trim());
+                            setOllamaModelInput('');
+                          }
+                        }}
+                        placeholder="qwen2.5-coder"
+                        className="flex-1 rounded-md border border-[#1a1a1a] bg-[#0d0d0d] px-2 py-1 text-xs text-[#fafafa] font-mono placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => clearOllamaKey()}
+                      className="text-[#a1a1aa] hover:text-red-400 w-full justify-start"
+                    >
+                      Remove key
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={ollamaKeyInput}
+                      onChange={(e) => setOllamaKeyInput(e.target.value)}
+                      placeholder="Ollama Cloud API key"
+                      className="w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && ollamaKeyInput.trim()) {
+                          setOllamaKey(ollamaKeyInput.trim());
+                          setOllamaKeyInput('');
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (ollamaKeyInput.trim()) {
+                          setOllamaKey(ollamaKeyInput.trim());
+                          setOllamaKeyInput('');
+                        }
+                      }}
+                      disabled={!ollamaKeyInput.trim()}
+                      className="text-[#a1a1aa] hover:text-[#fafafa] w-full justify-start"
+                    >
+                      Save Ollama key
+                    </Button>
+                    <p className="text-xs text-[#52525b]">
+                      Ollama Cloud API key from ollama.com/cloud.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Kimi */}
@@ -581,6 +660,9 @@ function App() {
                 )}
               </div>
 
+              <p className="text-xs text-[#52525b]">
+                Ollama Cloud takes priority when both keys are set.
+              </p>
             </div>
 
             {/* Danger Zone */}

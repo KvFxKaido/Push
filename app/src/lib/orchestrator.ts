@@ -3,6 +3,8 @@ import { TOOL_PROTOCOL } from './github-tools';
 import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { getMoonshotKey } from '@/hooks/useMoonshotKey';
+import { getOllamaKey } from '@/hooks/useOllamaConfig';
+import { getOllamaModelName } from './providers';
 
 // ---------------------------------------------------------------------------
 // Kimi For Coding config
@@ -13,6 +15,12 @@ const KIMI_API_URL = import.meta.env.DEV
   ? '/kimi/coding/v1/chat/completions'
   : '/api/kimi/chat';
 const KIMI_MODEL = 'k2p5';
+
+// Ollama Cloud: OpenAI-compatible endpoint.
+// Dev: Vite proxy avoids CORS. Prod: Cloudflare Worker proxy at /api/ollama/chat.
+const OLLAMA_API_URL = import.meta.env.DEV
+  ? '/ollama/v1/chat/completions'
+  : '/api/ollama/chat';
 
 // Rolling window config — keeps context focused and latency low
 const MAX_HISTORY_MESSAGES = 30;
@@ -535,6 +543,206 @@ export async function streamMoonshotChat(
 }
 
 // ---------------------------------------------------------------------------
+// Ollama Cloud streaming (SSE — OpenAI-compatible)
+// ---------------------------------------------------------------------------
+
+export async function streamOllamaChat(
+  messages: ChatMessage[],
+  onToken: (token: string) => void,
+  onDone: (usage?: StreamUsage) => void,
+  onError: (error: Error) => void,
+  onThinkingToken?: (token: string | null) => void,
+  workspaceContext?: string,
+  hasSandbox?: boolean,
+  modelOverride?: string,
+  systemPromptOverride?: string,
+  scratchpadContent?: string,
+): Promise<void> {
+  const apiKey = getOllamaKey();
+  if (!apiKey) {
+    onError(new Error('Ollama Cloud API key not configured'));
+    return;
+  }
+
+  const model = modelOverride || getOllamaModelName();
+
+  const CONNECT_TIMEOUT_MS = 30_000;
+  const IDLE_TIMEOUT_MS = 120_000; // Ollama Cloud can be slower on cold starts
+
+  const controller = new AbortController();
+  let abortReason: 'connect' | 'idle' | null = null;
+
+  let connectTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    abortReason = 'connect';
+    controller.abort();
+  }, CONNECT_TIMEOUT_MS);
+
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const resetIdleTimer = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      abortReason = 'idle';
+      controller.abort();
+    }, IDLE_TIMEOUT_MS);
+  };
+
+  try {
+    console.log(`[Push] POST ${OLLAMA_API_URL} (model: ${model})`);
+
+    const response = await fetch(OLLAMA_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: toLLMMessages(messages, workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent),
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(connectTimer);
+    connectTimer = undefined;
+    resetIdleTimer();
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      let detail = '';
+      try {
+        const parsed = JSON.parse(body);
+        detail = parsed.error?.message || parsed.error || body.slice(0, 200);
+      } catch {
+        detail = body ? body.slice(0, 200) : 'empty body';
+      }
+      console.error(`[Push] Ollama Cloud error: ${response.status}`, detail);
+      throw new Error(`Ollama Cloud ${response.status}: ${detail}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    // SSE format: same as OpenAI — "data: {...}" lines, ends with "data: [DONE]"
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const chunker = createChunkedEmitter(onToken);
+    const parser = createThinkTokenParser((token) => chunker.push(token), onThinkingToken);
+
+    let usage: StreamUsage | undefined;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      resetIdleTimer();
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
+          parser.flush();
+          chunker.flush();
+          onDone(usage);
+          return;
+        }
+
+        if (!trimmed.startsWith('data:')) continue;
+        const jsonStr = trimmed[5] === ' ' ? trimmed.slice(6) : trimmed.slice(5);
+
+        try {
+          const parsed = JSON.parse(jsonStr);
+
+          if (parsed.usage) {
+            usage = {
+              inputTokens: parsed.usage.prompt_tokens || 0,
+              outputTokens: parsed.usage.completion_tokens || 0,
+              totalTokens: parsed.usage.total_tokens || 0,
+            };
+          }
+
+          const choice = parsed.choices?.[0];
+          if (!choice) continue;
+
+          // Some Ollama models emit reasoning via delta.reasoning_content
+          const reasoningToken = choice.delta?.reasoning_content;
+          if (reasoningToken) {
+            onThinkingToken?.(reasoningToken);
+          }
+
+          const token = choice.delta?.content;
+          if (token) {
+            parser.push(token);
+          }
+
+          if (choice.finish_reason === 'stop' || choice.finish_reason === 'end_turn' || choice.finish_reason === 'length') {
+            parser.flush();
+            chunker.flush();
+            onDone(usage);
+            return;
+          }
+        } catch {
+          // Skip malformed SSE data
+        }
+      }
+    }
+
+    parser.flush();
+    chunker.flush();
+    onDone(usage);
+  } catch (err) {
+    clearTimeout(connectTimer);
+    clearTimeout(idleTimer);
+
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      const timeoutMsg = abortReason === 'connect'
+        ? `Ollama Cloud didn't respond within ${CONNECT_TIMEOUT_MS / 1000}s — server may be cold-starting.`
+        : `Ollama Cloud stream stalled — no data for ${IDLE_TIMEOUT_MS / 1000}s.`;
+      console.error(`[Push] Ollama timeout (${abortReason}):`, timeoutMsg);
+      onError(new Error(timeoutMsg));
+      return;
+    }
+
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Push] Ollama Cloud chat error:`, msg);
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      onError(new Error(
+        `Cannot reach Ollama Cloud — network error. Check your connection.`
+      ));
+    } else {
+      onError(err instanceof Error ? err : new Error(msg));
+    }
+  } finally {
+    clearTimeout(connectTimer);
+    clearTimeout(idleTimer);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Active provider detection
+// ---------------------------------------------------------------------------
+
+export type ActiveProvider = 'moonshot' | 'ollama' | 'demo';
+
+/**
+ * Determine which provider is active based on configured API keys.
+ * Priority: Ollama Cloud > Kimi > Demo.
+ * (Ollama wins if both are set — user explicitly opted in.)
+ */
+export function getActiveProvider(): ActiveProvider {
+  if (getOllamaKey()) return 'ollama';
+  if (getMoonshotKey()) return 'moonshot';
+  return 'demo';
+}
+
+// ---------------------------------------------------------------------------
 // Public router — picks the right provider at runtime
 // ---------------------------------------------------------------------------
 
@@ -548,15 +756,21 @@ export async function streamChat(
   hasSandbox?: boolean,
   scratchpadContent?: string,
 ): Promise<void> {
-  // Demo mode: no API key in dev → show welcome message
-  if (import.meta.env.DEV && !getMoonshotKey()) {
+  const provider = getActiveProvider();
+
+  // Demo mode: no API keys in dev → show welcome message
+  if (provider === 'demo' && import.meta.env.DEV) {
     const words = DEMO_WELCOME.split(' ');
     for (let i = 0; i < words.length; i++) {
       await new Promise((r) => setTimeout(r, 12));
       onToken(words[i] + (i < words.length - 1 ? ' ' : ''));
     }
-    onDone(); // No usage data in demo mode
+    onDone();
     return;
+  }
+
+  if (provider === 'ollama') {
+    return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent);
   }
 
   return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent);
