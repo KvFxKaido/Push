@@ -10,8 +10,21 @@
 import { useState, useCallback } from 'react';
 import { getSandboxDiff, execInSandbox } from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
-import { getMoonshotKey } from '@/hooks/useMoonshotKey';
+import { getProviderKey } from '@/hooks/useAIProvider';
 import type { DiffPreviewCardData, AuditVerdictCardData } from '@/types';
+
+// Get active provider from localStorage
+function getActiveProvider(): 'moonshot' | 'ollama-cloud' {
+  try {
+    const stored = localStorage.getItem('ai_provider_type');
+    if (stored === 'moonshot' || stored === 'ollama-cloud') {
+      return stored;
+    }
+  } catch {
+    // SSR / restricted context
+  }
+  return 'moonshot'; // default
+}
 
 export type CommitPushPhase =
   | 'idle'
@@ -107,12 +120,14 @@ export function useCommitPush(sandboxId: string) {
       return;
     }
 
-    // Check Kimi key for Auditor
-    if (!getMoonshotKey()) {
+    // Check AI provider key for Auditor
+    const activeProvider = getActiveProvider();
+    if (!getProviderKey(activeProvider)) {
+      const providerName = activeProvider === 'moonshot' ? 'Kimi' : 'Ollama Cloud';
       setState((s) => ({
         ...s,
         phase: 'error',
-        error: 'Auditor requires a Kimi API key. Add one in Settings.',
+        error: `Auditor requires a ${providerName} API key. Add one in Settings.`,
       }));
       return;
     }
