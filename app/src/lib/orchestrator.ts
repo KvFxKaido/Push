@@ -712,7 +712,7 @@ export async function streamOllamaChat(
 
           // Treat ANY non-null finish_reason as end-of-stream.
           // Ollama models may return values other than 'stop' (e.g., 'eos').
-          if (choice.finish_reason) {
+          if (choice.finish_reason != null) {
             parser.flush();
             chunker.flush();
             onDone(usage);
