@@ -20,7 +20,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Kimi For Coding (Kimi K2.5 via api.kimi.com) |
+| AI | Kimi For Coding (Kimi K2.5) or Ollama Cloud (Llama 4 Maverick) |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -38,11 +38,28 @@ npm run dev
 Create `app/.env` for local development, or paste keys in the Settings UI at runtime:
 
 ```env
-VITE_MOONSHOT_API_KEY=...         # Optional — or paste in Settings UI (sk-kimi-...)
+VITE_MOONSHOT_API_KEY=...         # Optional — Kimi For Coding API key (sk-kimi-...)
+VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud API key
 VITE_GITHUB_TOKEN=...             # Optional — PAT for GitHub API access
 ```
 
-Without a Kimi key the app runs in demo mode with mock repos and a welcome message.
+Without an AI provider key the app runs in demo mode with mock repos and a welcome message.
+
+## AI Providers
+
+Push supports multiple AI providers. Choose your preferred provider in Settings:
+
+### Kimi For Coding (Default)
+- **Model:** Kimi K2.5 (262K context)
+- **API:** api.kimi.com/coding/v1/chat/completions
+- **Key format:** sk-kimi-...
+
+### Ollama Cloud
+- **Model:** Llama 4 Maverick (128K context)
+- **API:** ollama.com/api/chat
+- **Key format:** Your Ollama Cloud API key
+
+Both providers use the same tool-calling system (prompt-engineered JSON blocks), so switching is seamless.
 
 ## GitHub Authentication
 
@@ -58,11 +75,19 @@ Create a PAT with `repo` scope and paste it in the Settings UI. Simpler setup, b
 
 ## Production
 
-Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding, `/api/ollama/chat` to Ollama Cloud, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 ```bash
 cd app && npm run build
 npx wrangler deploy     # from repo root
+```
+
+**Worker secrets:**
+```bash
+npx wrangler secret put MOONSHOT_API_KEY      # Kimi For Coding API key
+npx wrangler secret put OLLAMA_API_KEY        # Ollama Cloud API key
+npx wrangler secret put MODAL_SANDBOX_BASE_URL # Modal base URL
+```
 ```
 
 ## Project Structure

@@ -17,17 +17,19 @@ npm run lint      # Run ESLint
 Create `.env` in this directory, or paste keys in the Settings UI at runtime:
 
 ```env
-VITE_MOONSHOT_API_KEY=...         # Optional — or paste in Settings UI (sk-kimi-...)
+VITE_MOONSHOT_API_KEY=...         # Optional — Kimi For Coding API key (sk-kimi-...)
+VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud API key
 VITE_GITHUB_TOKEN=...             # Optional — higher GitHub rate limits
 VITE_GITHUB_CLIENT_ID=...         # Optional — enables OAuth login
 VITE_GITHUB_OAUTH_PROXY=...       # Optional — required for OAuth token exchange
 ```
 
-Without a Kimi key the app runs in demo mode.
+Without an AI provider key the app runs in demo mode.
 
 Worker secrets (set via `wrangler secret put`):
 
 - `MOONSHOT_API_KEY` — Kimi For Coding API key for production proxy (starts with `sk-kimi-`)
+- `OLLAMA_API_KEY` — Ollama Cloud API key for production proxy
 - `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--push-sandbox`). Without this, sandbox returns 503.
 
 Sandbox backend: `cd ../sandbox && modal deploy app.py` — deploys the 6 Modal web endpoints.

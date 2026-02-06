@@ -6,7 +6,7 @@ import { useGitHubAuth } from '@/hooks/useGitHubAuth';
 import { useGitHubAppAuth } from '@/hooks/useGitHubAppAuth';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
-import { useMoonshotKey } from '@/hooks/useMoonshotKey';
+import { useAIProvider } from '@/hooks/useAIProvider';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { buildWorkspaceContext } from '@/lib/workspace-context';
@@ -18,7 +18,7 @@ import { ScratchpadDrawer } from '@/components/chat/ScratchpadDrawer';
 import { OnboardingScreen } from '@/sections/OnboardingScreen';
 import { RepoPicker } from '@/sections/RepoPicker';
 import { FileBrowser } from '@/sections/FileBrowser';
-import type { AppScreen, RepoWithActivity } from '@/types';
+import type { AppScreen, RepoWithActivity, AIProviderType } from '@/types';
 import {
   Sheet,
   SheetContent,
@@ -83,10 +83,14 @@ function App() {
   const authError = appError || patError;
   const validatedUser = appUser || patUser;
   const { repos, loading: reposLoading, sync: syncRepos } = useRepos();
-  const { key: kimiKey, setKey: setKimiKey, clearKey: clearKimiKey, hasKey: hasKimiKey } = useMoonshotKey();
+  
+  // AI Provider management
+  const aiProvider = useAIProvider();
+  const { activeProvider, activeProviderConfig, hasActiveKey, providers } = aiProvider;
+  
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
-  const [kimiKeyInput, setKimiKeyInput] = useState('');
+  const [apiKeyInput, setApiKeyInput] = useState('');
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
@@ -312,7 +316,7 @@ function App() {
               }`}
             />
             <span className="text-xs text-[#52525b]">
-              {isDemo ? 'Demo' : hasKimiKey ? 'Kimi' : isConnected ? 'GitHub' : 'Offline'}
+              {isDemo ? 'Demo' : hasActiveKey ? activeProviderConfig?.name : isConnected ? 'GitHub' : 'Offline'}
             </span>
           </div>
           <button
@@ -517,29 +521,54 @@ function App() {
                 <div className="flex items-center gap-1.5">
                   <div
                     className={`h-2 w-2 rounded-full ${
-                      hasKimiKey ? 'bg-emerald-500' : 'bg-[#52525b]'
+                      hasActiveKey ? 'bg-emerald-500' : 'bg-[#52525b]'
                     }`}
                   />
                   <span className="text-xs text-[#a1a1aa]">
-                    {hasKimiKey ? 'Kimi' : isDemo ? 'Demo' : 'Offline'}
+                    {hasActiveKey ? activeProviderConfig?.name : isDemo ? 'Demo' : 'Offline'}
                   </span>
                 </div>
               </div>
 
-              {/* Kimi */}
+              {/* Provider selector */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-[#a1a1aa]">Kimi</label>
-                {hasKimiKey ? (
+                <label className="text-xs font-medium text-[#a1a1aa]">Select Provider</label>
+                <div className="flex gap-2">
+                  {providers.map((provider) => (
+                    <button
+                      key={provider.type}
+                      onClick={() => aiProvider.setActiveProvider(provider.type)}
+                      className={`flex-1 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                        activeProvider === provider.type
+                          ? 'border-[#0070f3] bg-[#0070f3]/10 text-[#0070f3]'
+                          : 'border-[#1a1a1a] bg-[#0d0d0d] text-[#a1a1aa] hover:border-[#3f3f46]'
+                      }`}
+                    >
+                      {provider.name}
+                    </button>
+                  ))}
+                </div>
+                {activeProviderConfig && (
+                  <p className="text-xs text-[#52525b]">
+                    {activeProviderConfig.description}
+                  </p>
+                )}
+              </div>
+
+              {/* API Key input for selected provider */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-[#a1a1aa]">API Key</label>
+                {hasActiveKey ? (
                   <div className="space-y-2">
                     <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2">
                       <p className="text-sm text-[#a1a1aa] font-mono">
-                        {kimiKey?.startsWith('sk-kimi-') ? 'sk-kimi-••••••••' : 'Key saved'}
+                        {aiProvider.getKey(activeProvider)?.substring(0, 12)}••••••••
                       </p>
                     </div>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => clearKimiKey()}
+                      onClick={() => aiProvider.clearKey(activeProvider)}
                       className="text-[#a1a1aa] hover:text-red-400 w-full justify-start"
                     >
                       Remove key
@@ -549,14 +578,14 @@ function App() {
                   <div className="space-y-2">
                     <input
                       type="password"
-                      value={kimiKeyInput}
-                      onChange={(e) => setKimiKeyInput(e.target.value)}
-                      placeholder="sk-kimi-..."
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder={activeProvider === 'moonshot' ? 'sk-kimi-...' : 'your-api-key'}
                       className="w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter' && kimiKeyInput.trim()) {
-                          setKimiKey(kimiKeyInput.trim());
-                          setKimiKeyInput('');
+                        if (e.key === 'Enter' && apiKeyInput.trim()) {
+                          aiProvider.setKey(activeProvider, apiKeyInput.trim());
+                          setApiKeyInput('');
                         }
                       }}
                     />
@@ -564,18 +593,20 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        if (kimiKeyInput.trim()) {
-                          setKimiKey(kimiKeyInput.trim());
-                          setKimiKeyInput('');
+                        if (apiKeyInput.trim()) {
+                          aiProvider.setKey(activeProvider, apiKeyInput.trim());
+                          setApiKeyInput('');
                         }
                       }}
-                      disabled={!kimiKeyInput.trim()}
+                      disabled={!apiKeyInput.trim()}
                       className="text-[#a1a1aa] hover:text-[#fafafa] w-full justify-start"
                     >
-                      Save Kimi key
+                      Save API key
                     </Button>
                     <p className="text-xs text-[#52525b]">
-                      Kimi For Coding API key (starts with sk-kimi-).
+                      {activeProvider === 'moonshot' 
+                        ? 'Kimi For Coding API key (starts with sk-kimi-)' 
+                        : 'Ollama Cloud API key'}
                     </p>
                   </div>
                 )}
