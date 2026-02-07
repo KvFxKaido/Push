@@ -656,7 +656,7 @@ function App() {
                 {hasOllamaKey ? (
                   <div className="space-y-2">
                     <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2">
-                      <p className="text-sm text-[#a1a1aa] font-mono">Key saved</p>
+                      <p className="text-sm text-[#a1a1aa] font-mono">Key Saved</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-[#71717a] shrink-0">Model:</span>
@@ -738,7 +738,7 @@ function App() {
                   <div className="space-y-2">
                     <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2">
                       <p className="text-sm text-[#a1a1aa] font-mono">
-                        {kimiKey?.startsWith('sk-kimi-') ? 'sk-kimi-••••••••' : 'Key saved'}
+                        Key Saved
                       </p>
                     </div>
                     <Button
@@ -798,7 +798,7 @@ function App() {
                 {hasMistralKey ? (
                   <div className="space-y-2">
                     <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2">
-                      <p className="text-sm text-[#a1a1aa] font-mono">Key saved</p>
+                      <p className="text-sm text-[#a1a1aa] font-mono">Key Saved</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-[#71717a] shrink-0">Model:</span>
