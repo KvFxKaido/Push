@@ -77,7 +77,7 @@ function App() {
     replace: scratchpad.replace,
     append: scratchpad.append,
   });
-  const sandbox = useSandbox();
+  const sandbox = useSandbox(activeRepo?.full_name ?? null);
   // PAT-based auth (fallback)
   const {
     token: patToken,
