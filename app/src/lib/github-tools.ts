@@ -29,6 +29,30 @@ export type ToolCall =
 const ACCESS_DENIED_MESSAGE =
   '[Tool Error] Access denied — can only query the active repo (owner/repo)';
 
+// --- Enhanced error messages ---
+
+function formatGitHubError(status: number, context: string, branch?: string): string {
+  switch (status) {
+    case 404: {
+      const branchHint = branch ? ` on branch "${branch}"` : '';
+      return `[Tool Error] Not found: ${context}${branchHint}. The file may not exist, the path might be incorrect, or the branch may be different. Try list_directory to browse, or list_branches to see available branches.`;
+    }
+    case 403:
+      return `[Tool Error] Access forbidden (403) for ${context}. Your GitHub token may lack permissions, or you have hit API rate limits. Check your token in Settings.`;
+    case 429:
+      return `[Tool Error] Rate limited (429) for ${context}. GitHub is throttling requests. The system will retry automatically, or check your token status.`;
+    case 401:
+      return `[Tool Error] Unauthorized (401) for ${context}. Your GitHub token is invalid or expired. Re-authenticate in Settings.`;
+    case 500:
+    case 502:
+    case 503:
+      return `[Tool Error] GitHub server error (${status}) for ${context}. This is temporary — retry shortly.`;
+    default:
+      return `[Tool Error] GitHub API returned ${status} for ${context}`;
+  }
+}
+
+
 const GITHUB_TIMEOUT_MS = 15_000; // 15s timeout for GitHub API calls
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000; // 1s initial delay for exponential backoff
@@ -210,7 +234,53 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
   // Fetch PR details
   const prRes = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${pr}`, { headers });
   if (!prRes.ok) {
-    throw new Error(`GitHub API returned ${prRes.status} for PR #${pr} on ${repo}`);
+    throw new Error(formatGitHubError(prRes.status, `PR #${pr} on ${repo}`));
+  }
+  const prData = await prRes.json();
+
+  // Parse PR body for linked issues (Fixes #123, Closes #456, etc.)
+  const linkedIssues: { number: number; title?: string }[] = [];
+  if (prData.body) {
+    const issuePattern = /(?:fixes|closes|resolves|#)\s*#(\d+)/gi;
+    const matches = [...prData.body.matchAll(issuePattern)];
+    for (const match of matches.slice(0, 3)) {
+      linkedIssues.push({ number: parseInt(match[1], 10) });
+    }
+  }
+
+  // Fetch titles for linked issues (best effort)
+  for (const issue of linkedIssues) {
+    try {
+      const issueRes = await githubFetch(
+        `https://api.github.com/repos/${repo}/issues/${issue.number}`,
+        { headers }
+      );
+      if (issueRes.ok) {
+        const issueData = await issueRes.json();
+        issue.title = issueData.title;
+      }
+    } catch {
+      // Ignore errors for linked issues
+    }
+  }
+
+  // Fetch recent commits to the PR branch
+  let branchCommits: { sha: string; message: string; author: string }[] = [];
+  try {
+    const commitsRes = await githubFetch(
+      `https://api.github.com/repos/${repo}/pulls/${pr}/commits`,
+      { headers }
+    );
+    if (commitsRes.ok) {
+      const commitsData = await commitsRes.json();
+      branchCommits = commitsData.slice(0, 5).map((c: any) => ({
+        sha: c.sha.slice(0, 7),
+        message: c.commit.message.split('\n')[0].slice(0, 60),
+        author: c.commit.author?.name || c.author?.login || 'unknown',
+      }));
+    }
+  } catch {
+    // Ignore errors for branch commits
   }
   const prData = await prRes.json();
 
@@ -263,6 +333,20 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
     lines.push(`\nDescription:\n${desc}`);
   }
 
+  if (linkedIssues.length > 0) {
+    const issueLines = linkedIssues.map(i => 
+      i.title ? `  #${i.number}: ${i.title}` : `  #${i.number}`
+    ).join('\n');
+    lines.push(`\nLinked Issues:\n${issueLines}`);
+  }
+
+  if (branchCommits.length > 0) {
+    const commitLines = branchCommits.map(c => 
+      `  ${c.sha} — ${c.message}${c.message.length >= 60 ? '...' : ''} (${c.author})`
+    ).join('\n');
+    lines.push(`\nRecent Commits:\n${commitLines}`);
+  }
+
   if (filesSummary) {
     lines.push(`\nFiles:\n${filesSummary}`);
   }
@@ -298,7 +382,7 @@ async function executeListPRs(repo: string, state: string = 'open'): Promise<Too
   );
 
   if (!res.ok) {
-    throw new Error(`GitHub API returned ${res.status} for PRs on ${repo}`);
+    throw new Error(formatGitHubError(res.status, `PRs on ${repo}`));
   }
 
   const prs = await res.json();
@@ -342,7 +426,7 @@ async function executeListCommits(repo: string, count: number = 10): Promise<Too
   );
 
   if (!res.ok) {
-    throw new Error(`GitHub API returned ${res.status} for commits on ${repo}`);
+    throw new Error(formatGitHubError(res.status, `commits on ${repo}`));
   }
 
   const commits = await res.json();
@@ -383,7 +467,7 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
   );
 
   if (!res.ok) {
-    throw new Error(`GitHub API returned ${res.status} for ${path} on ${repo}`);
+    throw new Error(formatGitHubError(res.status, `${path} on ${repo}`, branch));
   }
 
   const data = await res.json();
@@ -445,7 +529,7 @@ async function executeListDirectory(repo: string, path: string = '', branch?: st
   );
 
   if (!res.ok) {
-    throw new Error(`GitHub API returned ${res.status} for path "${path || '/'}" on ${repo}`);
+    throw new Error(formatGitHubError(res.status, `path "${path || '/'}" on ${repo}`, branch));
   }
 
   const data = await res.json();
@@ -494,7 +578,7 @@ async function executeListBranches(repo: string): Promise<ToolExecutionResult> {
   ]);
 
   if (!branchRes.ok) {
-    throw new Error(`GitHub API returned ${branchRes.status} for branches on ${repo}`);
+    throw new Error(formatGitHubError(branchRes.status, `branches on ${repo}`));
   }
 
   const branches = await branchRes.json();
@@ -741,7 +825,7 @@ async function executeListCommitFiles(repo: string, ref: string): Promise<ToolEx
   );
 
   if (!res.ok) {
-    throw new Error(`GitHub API returned ${res.status} for commit ${ref} on ${repo}`);
+    throw new Error(formatGitHubError(res.status, `commit ${ref} on ${repo}`));
   }
 
   const commit = await res.json();

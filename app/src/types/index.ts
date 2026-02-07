@@ -289,6 +289,7 @@ export interface ActiveRepo {
   full_name: string;
   owner: string;
   default_branch: string;
+  current_branch?: string;  // User-selected branch for context awareness
   private: boolean;
 }
 

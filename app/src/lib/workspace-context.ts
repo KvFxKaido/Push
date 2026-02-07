@@ -63,6 +63,13 @@ export function buildWorkspaceContext(
     const focused = repos.find((r) => r.id === activeRepo.id);
 
     sections.push(`REPO — ${activeRepo.full_name}:\n`);
+    
+    // Show branch context
+    const branchContext = activeRepo.current_branch || activeRepo.default_branch;
+    const branchIndicator = activeRepo.current_branch 
+      ? " (current: " + activeRepo.current_branch + ")"
+      : " (default: " + activeRepo.default_branch + ")";
+    sections.push("Branch: " + branchContext + branchIndicator + "\n");
 
     if (focused) {
       sections.push(formatRepoFull(focused));
