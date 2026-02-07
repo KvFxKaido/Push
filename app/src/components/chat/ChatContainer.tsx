@@ -109,8 +109,10 @@ export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion,
       </button>
 
       <div className="border-t border-[#1a1a1a] bg-[#000] sticky bottom-0 z-10">
-        <div className="flex items-center justify-between">
-          <AgentStatusBar status={agentStatus} />
+        <div className="flex items-center justify-between min-h-[40px]">
+          <div className="flex-1">
+            <AgentStatusBar status={agentStatus} />
+          </div>
           <button onClick={() => setIsVigilOpen(true)} className="flex items-center gap-2 px-3 py-1.5 mr-4 my-2 rounded-full bg-[#1a1a1a] border border-[#27272a] text-[10px] font-mono text-[#a1a1aa] hover:text-white transition-colors">
             <TerminalSquare size={12} />
             <span>VIGIL</span>
