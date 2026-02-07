@@ -80,6 +80,16 @@ cd app && npm run build
 npx wrangler deploy     # from repo root
 ```
 
+## Architecture
+
+Role-based agent system. **Models are replaceable; roles are not.**
+
+- **Orchestrator** — conversational lead, tool orchestration, delegates to Coder
+- **Coder** — autonomous code implementation in sandbox
+- **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
+
+Three AI backends are supported: **Kimi For Coding**, **Mistral Vibe**, and **Ollama Cloud**. All use OpenAI-compatible streaming. The active backend serves all three roles, and you can switch anytime via Settings.
+
 ## Project Structure
 
 ```
