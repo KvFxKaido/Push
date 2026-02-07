@@ -23,7 +23,7 @@ export type ToolCall =
   | { tool: 'list_branches'; args: { repo: string } }
   | { tool: 'delegate_coder'; args: { task: string; files?: string[] } }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
-  | { tool: 'search_files'; args: { repo: string; query: string; path?: string } }
+  | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } }
   | { tool: 'list_commit_files'; args: { repo: string; ref: string } };
 
 const ACCESS_DENIED_MESSAGE =
@@ -159,7 +159,7 @@ function validateToolCall(parsed: any): ToolCall | null {
     return { tool: 'fetch_checks', args: { repo: parsed.args.repo, ref: parsed.args.ref } };
   }
   if (parsed.tool === 'search_files' && parsed.args.repo && parsed.args.query) {
-    return { tool: 'search_files', args: { repo: parsed.args.repo, query: parsed.args.query, path: parsed.args.path } };
+    return { tool: 'search_files', args: { repo: parsed.args.repo, query: parsed.args.query, path: parsed.args.path, branch: parsed.args.branch } };
   }
   if (parsed.tool === 'list_commit_files' && parsed.args.repo && parsed.args.ref) {
     return { tool: 'list_commit_files', args: { repo: parsed.args.repo, ref: parsed.args.ref } };
@@ -620,11 +620,11 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
   return { text: lines.join('\n'), card: { type: 'ci-status', data: cardData } };
 }
 
-async function executeSearchFiles(repo: string, query: string, path?: string): Promise<ToolExecutionResult> {
+async function executeSearchFiles(repo: string, query: string, path?: string, branch?: string): Promise<ToolExecutionResult> {
   const headers = getGitHubHeaders();
 
   // Use GitHub's code search API
-  // Format: query + repo:owner/name + optional path filter
+  // Format: query + repo:owner/name + optional path/branch filter
   let searchQuery = `${query} repo:${repo}`;
   if (path) {
     searchQuery += ` path:${path}`;
@@ -828,7 +828,7 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
       case 'fetch_checks':
         return await executeFetchChecks(call.args.repo, call.args.ref);
       case 'search_files':
-        return await executeSearchFiles(call.args.repo, call.args.query, call.args.path);
+        return await executeSearchFiles(call.args.repo, call.args.query, call.args.path, call.args.branch);
       case 'list_commit_files':
         return await executeListCommitFiles(call.args.repo, call.args.ref);
       default:
@@ -861,7 +861,7 @@ Available tools:
 - list_branches(repo) — List branches with default/protected status
 - delegate_coder(task, files?) — Delegate a coding task to the Coder agent (requires sandbox)
 - fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
-- search_files(repo, query, path?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/").
+- search_files(repo, query, path?, branch?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/"). Note: GitHub code search indexes the default branch; branch filter is best-effort.
 - list_commit_files(repo, ref) — List files changed in a commit without the full diff. Lighter than fetch_pr. ref can be SHA, branch, or tag.
 
 Rules:

@@ -11,27 +11,11 @@ import { getOllamaModelName, getMistralModelName, getPreferredProvider } from '.
 // ---------------------------------------------------------------------------
 
 interface StreamUsage {
-// Chunk metadata for tracking streaming progress
-export interface ChunkMetadata {
-  chunkIndex: number;
-}
   inputTokens: number;
-// Chunk metadata for tracking streaming progress
-export interface ChunkMetadata {
-  chunkIndex: number;
-}
   outputTokens: number;
-// Chunk metadata for tracking streaming progress
-export interface ChunkMetadata {
-  chunkIndex: number;
-}
   totalTokens: number;
-// Chunk metadata for tracking streaming progress
-export interface ChunkMetadata {
-  chunkIndex: number;
 }
-}
-// Chunk metadata for tracking streaming progress
+
 export interface ChunkMetadata {
   chunkIndex: number;
 }
@@ -842,11 +826,15 @@ export async function streamMistralChat(
       apiKey,
       model: modelOverride || getMistralModelName(),
       connectTimeoutMs: 30_000,
-      idleTimeoutMs: 90_000,
+      idleTimeoutMs: 60_000,
+      stallTimeoutMs: 30_000,
+      totalTimeoutMs: 180_000,
       errorMessages: {
         keyMissing: 'Mistral API key not configured',
         connect: (s) => `Mistral API didn't respond within ${s}s — server may be down.`,
         idle: (s) => `Mistral API stream stalled — no data for ${s}s.`,
+        stall: (s) => `Mistral API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
+        total: (s) => `Mistral API response exceeded ${s}s total time limit.`,
         network: 'Cannot reach Mistral — network error. Check your connection.',
       },
       parseError: (p, f) => p.error?.message || p.message || p.error || f,
