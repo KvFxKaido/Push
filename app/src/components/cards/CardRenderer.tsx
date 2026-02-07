@@ -15,6 +15,8 @@ import { FileSearchCard } from './FileSearchCard';
 import { CommitFilesCard } from './CommitFilesCard';
 import { TestResultsCard } from './TestResultsCard';
 import { TypeCheckCard } from './TypeCheckCard';
+import { WorkflowRunsCard } from './WorkflowRunsCard';
+import { WorkflowLogsCard } from './WorkflowLogsCard';
 
 interface CardRendererProps {
   card: ChatCard;
@@ -78,6 +80,10 @@ export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRende
       return <TestResultsCard data={card.data} />;
     case 'type-check':
       return <TypeCheckCard data={card.data} />;
+    case 'workflow-runs':
+      return <WorkflowRunsCard data={card.data} />;
+    case 'workflow-logs':
+      return <WorkflowLogsCard data={card.data} />;
     default:
       return null;
   }

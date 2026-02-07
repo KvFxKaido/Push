@@ -142,7 +142,9 @@ export type ChatCard =
   | { type: 'file-search'; data: FileSearchCardData }
   | { type: 'commit-files'; data: CommitFilesCardData }
   | { type: 'test-results'; data: TestResultsCardData }
-  | { type: 'type-check'; data: TypeCheckCardData };
+  | { type: 'type-check'; data: TypeCheckCardData }
+  | { type: 'workflow-runs'; data: WorkflowRunsCardData }
+  | { type: 'workflow-logs'; data: WorkflowLogsCardData };
 
 // Tool execution returns text for the LLM + optional structured card for UI
 export interface ToolExecutionResult {
@@ -355,4 +357,53 @@ export interface TypeCheckCardData {
   warningCount: number;
   exitCode: number;
   truncated: boolean;
+}
+
+// GitHub Actions workflow types
+
+export interface WorkflowRunItem {
+  id: number;
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'waiting' | 'requested' | 'pending';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  branch: string;
+  event: string;
+  createdAt: string;
+  updatedAt: string;
+  htmlUrl: string;
+  runNumber: number;
+  actor: string;
+}
+
+export interface WorkflowRunsCardData {
+  repo: string;
+  runs: WorkflowRunItem[];
+  workflow?: string;
+  truncated: boolean;
+}
+
+export interface WorkflowJobStep {
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  number: number;
+}
+
+export interface WorkflowJob {
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'waiting';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  steps: WorkflowJobStep[];
+  htmlUrl: string;
+}
+
+export interface WorkflowLogsCardData {
+  runId: number;
+  runName: string;
+  runNumber: number;
+  status: string;
+  conclusion: string | null;
+  jobs: WorkflowJob[];
+  htmlUrl: string;
+  repo: string;
 }

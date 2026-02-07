@@ -27,3 +27,7 @@ nul
 # python
 __pycache__/
 *.pyc
+
+# android development
+android/
+android-wrapper/

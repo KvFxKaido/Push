@@ -6,7 +6,7 @@
  * result back into the conversation as a synthetic message.
  */
 
-import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData } from '@/types';
+import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData } from '@/types';
 import { extractBareToolJsonObjects } from './tool-dispatch';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
@@ -24,7 +24,10 @@ export type ToolCall =
   | { tool: 'delegate_coder'; args: { task: string; files?: string[] } }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
   | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } }
-  | { tool: 'list_commit_files'; args: { repo: string; ref: string } };
+  | { tool: 'list_commit_files'; args: { repo: string; ref: string } }
+  | { tool: 'trigger_workflow'; args: { repo: string; workflow: string; ref?: string; inputs?: Record<string, string> } }
+  | { tool: 'get_workflow_runs'; args: { repo: string; workflow?: string; branch?: string; status?: string; count?: number } }
+  | { tool: 'get_workflow_logs'; args: { repo: string; run_id: number } };
 
 const ACCESS_DENIED_MESSAGE =
   '[Tool Error] Access denied — can only query the active repo (owner/repo)';
@@ -187,6 +190,15 @@ function validateToolCall(parsed: any): ToolCall | null {
   }
   if (parsed.tool === 'list_commit_files' && parsed.args.repo && parsed.args.ref) {
     return { tool: 'list_commit_files', args: { repo: parsed.args.repo, ref: parsed.args.ref } };
+  }
+  if (parsed.tool === 'trigger_workflow' && parsed.args.repo && parsed.args.workflow) {
+    return { tool: 'trigger_workflow', args: { repo: parsed.args.repo, workflow: parsed.args.workflow, ref: parsed.args.ref, inputs: parsed.args.inputs } };
+  }
+  if (parsed.tool === 'get_workflow_runs' && parsed.args.repo) {
+    return { tool: 'get_workflow_runs', args: { repo: parsed.args.repo, workflow: parsed.args.workflow, branch: parsed.args.branch, status: parsed.args.status, count: parsed.args.count ? Number(parsed.args.count) : undefined } };
+  }
+  if (parsed.tool === 'get_workflow_logs' && parsed.args.repo && parsed.args.run_id) {
+    return { tool: 'get_workflow_logs', args: { repo: parsed.args.repo, run_id: Number(parsed.args.run_id) } };
   }
   return null;
 }
@@ -878,6 +890,199 @@ async function executeListCommitFiles(repo: string, ref: string): Promise<ToolEx
   return { text: lines.join('\n'), card: { type: 'commit-files', data: cardData } };
 }
 
+async function executeTriggerWorkflow(
+  repo: string,
+  workflow: string,
+  ref?: string,
+  inputs?: Record<string, string>,
+): Promise<ToolExecutionResult> {
+  const headers = getGitHubHeaders();
+
+  // If no ref provided, fetch the repo's default branch
+  let targetRef = ref;
+  if (!targetRef) {
+    const repoRes = await githubFetch(`https://api.github.com/repos/${repo}`, { headers });
+    if (repoRes.ok) {
+      const repoData = await repoRes.json();
+      targetRef = repoData.default_branch || 'main';
+    } else {
+      targetRef = 'main';
+    }
+  }
+
+  const body: Record<string, unknown> = { ref: targetRef };
+  if (inputs && Object.keys(inputs).length > 0) {
+    body.inputs = inputs;
+  }
+
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
+    {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+
+  if (res.status === 404) {
+    throw new Error(`[Tool Error] Workflow "${workflow}" not found on ${repo}. Use get_workflow_runs to see available workflows.`);
+  }
+  if (res.status === 422) {
+    throw new Error(`[Tool Error] Workflow "${workflow}" does not have a workflow_dispatch trigger, or the inputs are invalid.`);
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `triggering workflow "${workflow}" on ${repo}`));
+  }
+
+  // 204 No Content — dispatch accepted, no run ID returned
+  return {
+    text: [
+      `[Tool Result — trigger_workflow]`,
+      `Workflow "${workflow}" dispatched on ${repo} (ref: ${targetRef}).`,
+      `Note: GitHub returns no run ID for dispatches. Use get_workflow_runs to check if it started.`,
+    ].join('\n'),
+  };
+}
+
+async function executeGetWorkflowRuns(
+  repo: string,
+  workflow?: string,
+  branch?: string,
+  status?: string,
+  count?: number,
+): Promise<ToolExecutionResult> {
+  const headers = getGitHubHeaders();
+  const perPage = Math.max(1, Math.min(count || 10, 20));
+
+  // Build URL — use workflow-scoped endpoint when workflow specified
+  let url: string;
+  if (workflow) {
+    url = `https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/runs?per_page=${perPage}`;
+  } else {
+    url = `https://api.github.com/repos/${repo}/actions/runs?per_page=${perPage}`;
+  }
+  if (branch) url += `&branch=${encodeURIComponent(branch)}`;
+  if (status) url += `&status=${encodeURIComponent(status)}`;
+
+  const res = await githubFetch(url, { headers });
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `workflow runs on ${repo}`));
+  }
+
+  const data = await res.json();
+  const rawRuns = data.workflow_runs || [];
+
+  const runs: WorkflowRunItem[] = rawRuns.map((r: any) => ({
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    conclusion: r.conclusion,
+    branch: r.head_branch || '',
+    event: r.event,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    htmlUrl: r.html_url,
+    runNumber: r.run_number,
+    actor: r.actor?.login || 'unknown',
+  }));
+
+  if (runs.length === 0) {
+    return { text: `[Tool Result — get_workflow_runs]\nNo workflow runs found on ${repo}${workflow ? ` for "${workflow}"` : ''}.` };
+  }
+
+  // Build text summary
+  const lines: string[] = [
+    `[Tool Result — get_workflow_runs]`,
+    `${runs.length} recent run${runs.length > 1 ? 's' : ''} on ${repo}${workflow ? ` (workflow: ${workflow})` : ''}:\n`,
+  ];
+
+  for (const run of runs) {
+    const icon = run.conclusion === 'success' ? '✓' :
+                 run.conclusion === 'failure' ? '✗' :
+                 run.status !== 'completed' ? '⏳' : '—';
+    lines.push(`  ${icon} #${run.runNumber} ${run.name}`);
+    lines.push(`    ${run.branch} | ${run.event} | ${run.actor} | ${new Date(run.createdAt).toLocaleDateString()}`);
+  }
+
+  const cardData: WorkflowRunsCardData = {
+    repo,
+    runs,
+    workflow,
+    truncated: (data.total_count || 0) > perPage,
+  };
+
+  return { text: lines.join('\n'), card: { type: 'workflow-runs', data: cardData } };
+}
+
+async function executeGetWorkflowLogs(repo: string, runId: number): Promise<ToolExecutionResult> {
+  const headers = getGitHubHeaders();
+
+  // Fetch run details and jobs in parallel
+  const [runRes, jobsRes] = await Promise.all([
+    githubFetch(`https://api.github.com/repos/${repo}/actions/runs/${runId}`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}/actions/runs/${runId}/jobs?per_page=50`, { headers }),
+  ]);
+
+  if (!runRes.ok) {
+    throw new Error(formatGitHubError(runRes.status, `workflow run #${runId} on ${repo}`));
+  }
+
+  const runData = await runRes.json();
+  let jobsData: any[] = [];
+  if (jobsRes.ok) {
+    const jd = await jobsRes.json();
+    jobsData = jd.jobs || [];
+  }
+
+  const jobs: WorkflowJob[] = jobsData.map((j: any) => ({
+    name: j.name,
+    status: j.status,
+    conclusion: j.conclusion,
+    htmlUrl: j.html_url,
+    steps: (j.steps || []).map((s: any) => ({
+      name: s.name,
+      status: s.status,
+      conclusion: s.conclusion,
+      number: s.number,
+    })),
+  }));
+
+  // Build text summary
+  const lines: string[] = [
+    `[Tool Result — get_workflow_logs]`,
+    `Run: ${runData.name} #${runData.run_number}`,
+    `Status: ${runData.status} | Conclusion: ${runData.conclusion || 'pending'}`,
+    `Branch: ${runData.head_branch || '—'} | Event: ${runData.event}`,
+    `\nJobs (${jobs.length}):\n`,
+  ];
+
+  for (const job of jobs) {
+    const icon = job.conclusion === 'success' ? '✓' :
+                 job.conclusion === 'failure' ? '✗' :
+                 job.status !== 'completed' ? '⏳' : '—';
+    lines.push(`  ${icon} ${job.name} — ${job.conclusion || job.status}`);
+    for (const step of job.steps) {
+      const sIcon = step.conclusion === 'success' ? '✓' :
+                    step.conclusion === 'failure' ? '✗' :
+                    step.status !== 'completed' ? '⏳' : '—';
+      lines.push(`      ${sIcon} ${step.number}. ${step.name}`);
+    }
+  }
+
+  const cardData: WorkflowLogsCardData = {
+    runId,
+    runName: runData.name,
+    runNumber: runData.run_number,
+    status: runData.status,
+    conclusion: runData.conclusion,
+    jobs,
+    htmlUrl: runData.html_url,
+    repo,
+  };
+
+  return { text: lines.join('\n'), card: { type: 'workflow-logs', data: cardData } };
+}
+
 /**
  * Fetch project instruction files from a GitHub repo via the REST API.
  * Tries AGENTS.md first, then CLAUDE.md as fallback.
@@ -957,6 +1162,12 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
         return await executeSearchFiles(call.args.repo, call.args.query, call.args.path, call.args.branch);
       case 'list_commit_files':
         return await executeListCommitFiles(call.args.repo, call.args.ref);
+      case 'trigger_workflow':
+        return await executeTriggerWorkflow(call.args.repo, call.args.workflow, call.args.ref, call.args.inputs);
+      case 'get_workflow_runs':
+        return await executeGetWorkflowRuns(call.args.repo, call.args.workflow, call.args.branch, call.args.status, call.args.count);
+      case 'get_workflow_logs':
+        return await executeGetWorkflowLogs(call.args.repo, call.args.run_id);
       default:
         return { text: `[Tool Error] Unknown tool: ${(call as any).tool}` };
     }
@@ -989,6 +1200,9 @@ Available tools:
 - fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
 - search_files(repo, query, path?, branch?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/"). Note: GitHub code search indexes the default branch; branch filter is best-effort.
 - list_commit_files(repo, ref) — List files changed in a commit without the full diff. Lighter than fetch_pr. ref can be SHA, branch, or tag.
+- trigger_workflow(repo, workflow, ref?, inputs?) — Trigger a workflow_dispatch event. "workflow" is the filename (e.g. "deploy.yml") or workflow ID. ref defaults to the repo's default branch. inputs is an optional key-value map matching the workflow's inputs.
+- get_workflow_runs(repo, workflow?, branch?, status?, count?) — List recent GitHub Actions runs. Filter by workflow name/file, branch, or status ("completed", "in_progress", "queued"). count defaults to 10, max 20. Shows run status, conclusion, trigger event, and actor.
+- get_workflow_logs(repo, run_id) — Get job-level and step-level details for a specific workflow run. Shows each job's steps with pass/fail status. Use after get_workflow_runs to drill into a specific run.
 
 Rules:
 - Output ONLY the JSON block when requesting a tool — no other text in the same message
@@ -1003,4 +1217,7 @@ Rules:
 - IMPORTANT: read_file only works on files, not directories. If you need to see what's inside a folder, always use list_directory.
 - For "what branches exist?" use list_branches
 - For "find [pattern]" or "where is [thing]" use search_files — saves multiple round-trips vs manual browsing
-- For "what files changed in [commit]" use list_commit_files — lighter than fetch_pr when you just need the file list`;
+- For "what files changed in [commit]" use list_commit_files — lighter than fetch_pr when you just need the file list
+- For "deploy" or "run workflow" use trigger_workflow, then suggest get_workflow_runs to check status
+- For "show CI runs" or "what workflows ran" use get_workflow_runs
+- For "why did the build fail" use get_workflow_runs to find the run, then get_workflow_logs for step-level details`;
