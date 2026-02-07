@@ -20,6 +20,17 @@ function formatInline(text: string): React.ReactNode[] {
   return result;
 }
 
+function isToolCall(code: string): boolean {
+  try {
+    const trimmed = code.trim();
+    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return false;
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' && 'tool' in parsed;
+  } catch {
+    return false;
+  }
+}
+
 function formatContent(content: string): React.ReactNode[] {
   if (!content) return [];
   const parts: React.ReactNode[] = [];
@@ -30,7 +41,14 @@ function formatContent(content: string): React.ReactNode[] {
     const line = lines[i];
     if (line.startsWith('```')) {
       if (inCodeBlock) {
-        parts.push(<pre key={`code-${codeKey++}`} className="my-2 rounded-lg bg-[#0a0a0c] border border-[#1a1a1a] px-3 py-2.5 overflow-x-auto"><code className="font-mono text-[13px] text-[#e4e4e7]">{codeLines.join('\n')}</code></pre>);
+        const fullCode = codeLines.join('\n');
+        if (!isToolCall(fullCode)) {
+          parts.push(
+            <pre key={`code-${codeKey++}`} className="my-2 rounded-lg bg-[#0a0a0c] border border-[#1a1a1a] px-3 py-2.5 overflow-x-auto">
+              <code className="font-mono text-[13px] text-[#e4e4e7]">{fullCode}</code>
+            </pre>
+          );
+        }
         codeLines = []; inCodeBlock = false;
       } else inCodeBlock = true;
       continue;
@@ -58,11 +76,6 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
 export const MessageBubble = memo(({ message, onCardAction }: MessageBubbleProps) => {
   const isAssistant = message.role === 'assistant';
   if ((message.role as string) === 'tool') return null; // VIGIL Filter
-  
-  // Filter out internal tool result markers that might be passed as regular messages
-  if (message.content?.startsWith('[TOOL_RESULT') || message.content?.startsWith('[Tool Result')) {
-    return null;
-  }
 
   return (
     <div className={`flex flex-col ${isAssistant ? 'items-start' : 'items-end'} mb-4 px-4`}>
