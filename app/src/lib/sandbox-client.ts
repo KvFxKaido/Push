@@ -28,6 +28,9 @@ export interface FileReadResult {
 export interface DiffResult {
   diff: string;
   truncated: boolean;
+  /** Raw `git status --porcelain` output for diagnostics */
+  git_status?: string;
+  error?: string;
 }
 
 // --- Error types ---
@@ -241,12 +244,18 @@ export async function readFromSandbox(
   });
 }
 
+export interface WriteResult {
+  ok: boolean;
+  error?: string;
+  bytes_written?: number;
+}
+
 export async function writeToSandbox(
   sandboxId: string,
   path: string,
   content: string,
-): Promise<{ ok: boolean }> {
-  return sandboxFetch<{ ok: boolean }>('write', {
+): Promise<WriteResult> {
+  return sandboxFetch<WriteResult>('write', {
     sandbox_id: sandboxId,
     path,
     content,

@@ -257,17 +257,49 @@ export async function executeSandboxToolCall(
         const result = await writeToSandbox(sandboxId, call.args.path, call.args.content);
 
         if (!result.ok) {
-          return { text: formatSandboxError("Failed to write file", call.args.path) };
+          const detail = result.error || 'Unknown error';
+          return { text: formatSandboxError(detail, call.args.path) };
         }
 
-        return { text: `[Tool Result — sandbox_write_file]\nWrote ${call.args.path} (${call.args.content.length} bytes)` };
+        // Post-write verification: check that git sees the change
+        const verifyResult = await execInSandbox(
+          sandboxId,
+          `cd /workspace && git status --porcelain -- '${call.args.path.replace(/'/g, "'\\''")}'`,
+        );
+        const gitSees = verifyResult.stdout.trim();
+
+        const lines: string[] = [
+          `[Tool Result — sandbox_write_file]`,
+          `Wrote ${call.args.path} (${result.bytes_written ?? call.args.content.length} bytes)`,
+        ];
+
+        if (!gitSees && call.args.path.startsWith('/workspace/')) {
+          lines.push(`⚠ Warning: git reports no changes for this file. The content may be identical to the original.`);
+        } else if (!call.args.path.startsWith('/workspace')) {
+          lines.push(`⚠ Note: File is outside /workspace — git will not track this file.`);
+        }
+
+        return { text: lines.join('\n') };
       }
 
       case 'sandbox_diff': {
         const result = await getSandboxDiff(sandboxId);
 
+        if (result.error) {
+          return { text: `[Tool Error — sandbox_diff]\n${result.error}` };
+        }
+
         if (!result.diff) {
-          return { text: `[Tool Result — sandbox_diff]\nNo changes detected.` };
+          const diagnosticLines = [
+            `[Tool Result — sandbox_diff]`,
+            `No changes detected.`,
+          ];
+          if (result.git_status) {
+            diagnosticLines.push(`\ngit status output:\n${result.git_status}`);
+          } else {
+            diagnosticLines.push(`\nThe working tree is clean. If you expected changes, verify that sandbox_write_file succeeded and the file is inside /workspace.`);
+          }
+          return { text: diagnosticLines.join('\n') };
         }
 
         const stats = parseDiffStats(result.diff);
@@ -292,8 +324,19 @@ export async function executeSandboxToolCall(
       case 'sandbox_prepare_commit': {
         // Step 1: Get the diff
         const diffResult = await getSandboxDiff(sandboxId);
+
+        if (diffResult.error) {
+          return { text: `[Tool Error — sandbox_prepare_commit]\n${diffResult.error}` };
+        }
+
         if (!diffResult.diff) {
-          return { text: `[Tool Result — sandbox_prepare_commit]\nNo changes to commit.` };
+          const lines = [`[Tool Result — sandbox_prepare_commit]\nNo changes to commit.`];
+          if (diffResult.git_status) {
+            lines.push(`git status shows: ${diffResult.git_status}`);
+          } else {
+            lines.push(`Working tree is clean. Verify files were written inside /workspace and content differs from the original.`);
+          }
+          return { text: lines.join('\n') };
         }
 
         // Step 2: Run Auditor

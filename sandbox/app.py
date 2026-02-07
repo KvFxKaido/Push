@@ -158,16 +158,42 @@ def write_file(data: dict):
 
     sb = modal.Sandbox.from_id(sandbox_id)
 
-    # Use base64 to safely transfer content with special characters
+    # Escape single quotes in path for shell safety
+    safe_path = path.replace("'", "'\\''")
+
+    # Step 1: Create parent directory
+    p = sb.exec("bash", "-c", f"mkdir -p \"$(dirname '{safe_path}')\"")
+    p.wait()
+    if p.returncode != 0:
+        stderr = p.stderr.read()
+        return {"ok": False, "error": f"Failed to create directory: {stderr}"}
+
+    # Step 2: Write file using base64 encoding for safe content transfer.
+    # Use printf instead of echo (no trailing newline interpretation).
     encoded = base64.b64encode(content.encode()).decode()
     p = sb.exec(
         "bash",
         "-c",
-        f"mkdir -p \"$(dirname '{path}')\" && echo '{encoded}' | base64 -d > '{path}'",
+        f"printf '%s' '{encoded}' | base64 -d > '{safe_path}'",
     )
     p.wait()
 
-    return {"ok": p.returncode == 0}
+    if p.returncode != 0:
+        stderr = p.stderr.read()
+        return {"ok": False, "error": f"Write failed: {stderr}"}
+
+    # Step 3: Verify the file exists and has content (catches silent write failures)
+    p = sb.exec("bash", "-c", f"wc -c < '{safe_path}'")
+    p.wait()
+
+    if p.returncode != 0:
+        return {"ok": False, "error": "Verification failed — file may not have been written"}
+
+    written_bytes = p.stdout.read().strip()
+    return {
+        "ok": True,
+        "bytes_written": int(written_bytes) if written_bytes.isdigit() else 0,
+    }
 
 
 @app.function(image=endpoint_image)
@@ -180,11 +206,40 @@ def get_diff(data: dict):
         return {"error": "Missing sandbox_id", "diff": ""}
 
     sb = modal.Sandbox.from_id(sandbox_id)
-    p = sb.exec("bash", "-c", "cd /workspace && git add -A && git diff --cached")
+
+    # Step 1: Clear stale index lock (left by crashed git operations)
+    sb.exec("bash", "-c", "rm -f /workspace/.git/index.lock").wait()
+
+    # Step 2: Check git status first to diagnose "no changes" issues
+    p = sb.exec("bash", "-c", "cd /workspace && git status --porcelain")
+    p.wait()
+    status_output = p.stdout.read().strip()
+    status_stderr = p.stderr.read().strip()
+
+    if status_stderr:
+        return {"error": f"git status failed: {status_stderr}", "diff": ""}
+
+    if not status_output:
+        # No changes detected by git — return empty diff with diagnostic info
+        return {"diff": "", "truncated": False, "git_status": "clean"}
+
+    # Step 3: Stage all changes
+    p = sb.exec("bash", "-c", "cd /workspace && git add -A")
+    p.wait()
+    if p.returncode != 0:
+        stderr = p.stderr.read()
+        return {"error": f"git add failed: {stderr}", "diff": ""}
+
+    # Step 4: Get the diff of staged changes
+    p = sb.exec("bash", "-c", "cd /workspace && git diff --cached")
     p.wait()
 
     diff = p.stdout.read()
-    return {"diff": diff[:20_000], "truncated": len(diff) > 20_000}
+    return {
+        "diff": diff[:20_000],
+        "truncated": len(diff) > 20_000,
+        "git_status": status_output[:2_000],
+    }
 
 
 @app.function(image=endpoint_image)

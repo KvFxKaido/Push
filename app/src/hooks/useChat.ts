@@ -621,6 +621,17 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
                 sp.replace,
                 sp.append,
               );
+              // Eagerly update the ref so the next LLM round sees the new content
+              // (React state is async, but the ref is read synchronously in streamChat)
+              if (toolCall.call.tool === 'set_scratchpad') {
+                scratchpadRef.current = { ...sp, content: toolCall.call.content };
+              } else if (toolCall.call.tool === 'append_scratchpad') {
+                const prev = sp.content.trim();
+                scratchpadRef.current = {
+                  ...sp,
+                  content: prev ? `${prev}\n\n${toolCall.call.content}` : toolCall.call.content,
+                };
+              }
               toolExecResult = { text: result };
             }
           } else if (toolCall.source === 'delegate') {
