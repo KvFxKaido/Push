@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardAction, CommitReviewCardData, ChatCard, AttachmentData, AIProviderType } from '@/types';
-import { streamChat, getActiveProvider, estimateContextTokens } from '@/lib/orchestrator';
+import { streamChat, getActiveProvider, estimateContextTokens, MAX_CONTEXT_TOKENS } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent } from '@/lib/coder-agent';
@@ -187,8 +187,7 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
   // Context usage — estimate tokens for the meter
   const contextUsage = useMemo(() => {
     const used = estimateContextTokens(messages);
-    const max = 100_000; // matches MAX_CONTEXT_TOKENS in orchestrator
-    return { used, max, percent: Math.min(100, Math.round((used / max) * 100)) };
+    return { used, max: MAX_CONTEXT_TOKENS, percent: Math.min(100, Math.round((used / MAX_CONTEXT_TOKENS) * 100)) };
   }, [messages]);
 
   // Check if this conversation has user messages (i.e., provider is locked)

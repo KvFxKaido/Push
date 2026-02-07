@@ -44,7 +44,7 @@ const MISTRAL_API_URL = import.meta.env.DEV
   : '/api/mistral/chat';
 
 // Rolling window config — token-based context management
-const MAX_CONTEXT_TOKENS = 100_000; // Token budget for messages (leaves room for system prompt + response)
+export const MAX_CONTEXT_TOKENS = 100_000; // Token budget for messages (leaves room for system prompt + response)
 const SUMMARIZE_THRESHOLD = 0.7; // Start summarizing at 70% of budget
 
 // ---------------------------------------------------------------------------
