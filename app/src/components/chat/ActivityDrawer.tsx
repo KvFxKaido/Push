@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { X, TerminalSquare } from 'lucide-react';
 import type { ChatMessage } from '@/types';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
@@ -16,11 +16,12 @@ export function ActivityDrawer({ isOpen, onClose, messages }: ActivityDrawerProp
       if (m.role === 'assistant') {
         const toolCall = detectAnyToolCall(m.content);
         if (toolCall) {
-          const args = JSON.stringify(toolCall.call.args || toolCall.call.task || '');
+          const callObj = toolCall.call as any;
+          const argsText = JSON.stringify(callObj.args || callObj.task || '');
           items.push({
             type: 'call', 
-            tool: toolCall.call.tool,
-            content: `> ${toolCall.call.tool}: ${args.slice(0, 500)}${args.length > 500 ? '...' : ''}`,
+            tool: callObj.tool,
+            content: `> ${callObj.tool}: ${argsText.slice(0, 500)}${argsText.length > 500 ? '...' : ''}`,
             timestamp: m.timestamp
           });
         }

@@ -44,6 +44,14 @@ export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion,
           <div ref={bottomRef} className="h-4 w-full" />
         </div>
       </div>
+      
+      <button
+        onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+        className={`fixed bottom-24 right-5 rounded-full bg-[#111] p-2 text-[#a1a1aa] shadow-lg border border-[#1a1a1a] transition-opacity ${showScrollButton ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      >
+        <ArrowDown className="h-5 w-5" />
+      </button>
+
       <div className="border-t border-[#1a1a1a] bg-[#000] sticky bottom-0">
         <div className="flex items-center justify-between">
           <AgentStatusBar status={agentStatus} />
