@@ -92,16 +92,31 @@ export function estimateContextTokens(messages: ChatMessage[]): number {
  * Compress a tool result message into a compact summary.
  * Keeps the tool name and key stats, drops verbose content (file listings,
  * full code, raw diffs) that consumed the most tokens.
+ * 
+ * CRITICAL: Preserves the [TOOL_RESULT] security wrapper that prevents
+ * prompt injection attacks. The wrapper must remain intact after summarization.
  */
 function summarizeToolResult(msg: ChatMessage): ChatMessage {
   const lines = msg.content.split('\n');
 
-  // Extract tool header line like "[Tool Result — sandbox_exec]"
-  const headerLine = lines.find(l => l.startsWith('[Tool Result')) || lines[0] || '';
+  // Check if content has the security wrapper
+  const hasWrapper = lines[0]?.startsWith('[TOOL_RESULT');
+  const closingWrapper = hasWrapper ? '[/TOOL_RESULT]' : '';
+
+  // Extract the wrapper opening line if present
+  const wrapperOpening = hasWrapper ? lines[0] : '';
+
+  // Find the inner tool header like "[Tool Result — sandbox_exec]"
+  const contentStartIdx = hasWrapper ? 1 : 0;
+  const contentLines = hasWrapper ? lines.slice(1, -1) : lines; // exclude wrapper tags
+  const headerLine = contentLines.find(l => l.startsWith('[Tool Result')) || contentLines[0] || '';
 
   // Keep first 4 non-empty lines after header (usually contain key stats)
   const statLines: string[] = [];
-  for (const line of lines.slice(1)) {
+  const headerIdx = contentLines.indexOf(headerLine);
+  const afterHeader = headerIdx >= 0 ? contentLines.slice(headerIdx + 1) : contentLines.slice(1);
+  
+  for (const line of afterHeader) {
     if (statLines.length >= 4) break;
     const trimmed = line.trim();
     if (trimmed && !trimmed.startsWith('```')) {
@@ -109,8 +124,13 @@ function summarizeToolResult(msg: ChatMessage): ChatMessage {
     }
   }
 
-  const summary = [headerLine, ...statLines, '[...summarized]'].join('\n');
-  return { ...msg, content: summary };
+  // Rebuild with wrapper intact
+  const summaryContent = [headerLine, ...statLines, '[...summarized]'].join('\n');
+  const wrappedSummary = hasWrapper 
+    ? `${wrapperOpening}\n${summaryContent}\n${closingWrapper}`
+    : summaryContent;
+
+  return { ...msg, content: wrappedSummary };
 }
 
 /**
