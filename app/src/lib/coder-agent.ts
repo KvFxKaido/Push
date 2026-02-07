@@ -3,7 +3,7 @@
  *
  * Uses the active provider (Kimi / Ollama / Mistral) with the role-specific
  * model resolved via providers.ts. The Coder can read files, write files,
- * run commands, and get diffs — all within the sandbox. Runs up to 5 rounds.
+ * run commands, and get diffs — all within the sandbox. Runs until done (no round cap).
  */
 
 import type { ChatMessage, ChatCard } from '@/types';
@@ -11,7 +11,6 @@ import { getActiveProvider, getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 
-const MAX_CODER_ROUNDS = 5;
 const CODER_ROUND_TIMEOUT_MS = 90_000; // 90s max per streaming round
 
 // Size limits to prevent 413 errors from provider APIs
@@ -84,9 +83,9 @@ export async function runCoderAgent(
     },
   ];
 
-  for (let round = 0; round < MAX_CODER_ROUNDS; round++) {
+  for (let round = 0; ; round++) {
     rounds = round + 1;
-    onStatus('Coder working...', `Round ${rounds}/${MAX_CODER_ROUNDS}`);
+    onStatus('Coder working...', `Round ${rounds}`);
 
     let accumulated = '';
 
@@ -165,10 +164,4 @@ export async function runCoderAgent(
     }
   }
 
-  // Max rounds reached
-  return {
-    summary: `Reached max rounds (${MAX_CODER_ROUNDS}). Last response:\n\n${messages[messages.length - 1]?.content || '(no response)'}`,
-    cards: allCards,
-    rounds,
-  };
 }

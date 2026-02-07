@@ -12,7 +12,6 @@ const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
 const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
-const MAX_TOOL_ROUNDS = 15;
 
 function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -440,7 +439,7 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
       let apiMessages = [...updatedWithUser];
 
       try {
-        for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        for (let round = 0; ; round++) {
           if (abortRef.current) break;
 
           if (round > 0) {
