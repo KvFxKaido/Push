@@ -438,6 +438,7 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
       abortControllerRef.current = new AbortController();
 
       let apiMessages = [...updatedWithUser];
+      let hitMaxRounds = false;
 
       try {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -725,6 +726,30 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
             },
             toolResultMsg,
           ];
+
+          // Check if we're about to hit the max rounds limit
+          if (round === MAX_TOOL_ROUNDS - 1) {
+            hitMaxRounds = true;
+          }
+        }
+
+        // Handle max rounds case: add error message to user
+        if (hitMaxRounds) {
+          const errorMsg: ChatMessage = {
+            id: createId(),
+            role: 'assistant',
+            content: 'Max tool rounds reached. The conversation stopped to prevent an infinite loop. Please try rephrasing your request or breaking it into smaller tasks.',
+            timestamp: Date.now(),
+            status: 'error',
+          };
+
+          setConversations((prev) => {
+            const conv = prev[chatId];
+            if (!conv) return prev;
+            const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, errorMsg], lastMessageAt: Date.now() } };
+            saveConversations(updated);
+            return updated;
+          });
         }
       } finally {
         setIsStreaming(false);
