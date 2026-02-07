@@ -177,3 +177,4 @@ export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion,
     </div>
   );
 }
+// VIGIL_DEBUG_MARKER
