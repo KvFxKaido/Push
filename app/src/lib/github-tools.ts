@@ -631,12 +631,10 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
   }
 
   // GitHub code search primarily indexes the default branch.
-  // When a branch is specified, we use the Contents API search via ref param
-  // as a best-effort hint — results may still come from the default branch.
-  let searchUrl = `https://api.github.com/search/code?q=${encodeURIComponent(searchQuery)}&per_page=25`;
-  if (branch) {
-    searchUrl += `&ref=${encodeURIComponent(branch)}`;
-  }
+  // The branch parameter is informational only — the Search Code API
+  // does not support branch-scoped search via query parameters.
+  // Results will come from the default branch regardless of the branch argument.
+  const searchUrl = `https://api.github.com/search/code?q=${encodeURIComponent(searchQuery)}&per_page=25`;
 
   // Use text-match media type to get text_matches in response
   const res = await githubFetch(
@@ -869,7 +867,7 @@ Available tools:
 - list_branches(repo) — List branches with default/protected status
 - delegate_coder(task, files?) — Delegate a coding task to the Coder agent (requires sandbox)
 - fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
-- search_files(repo, query, path?, branch?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/"). Note: GitHub code search indexes the default branch; branch filter is best-effort.
+- search_files(repo, query, path?, branch?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/"). Note: GitHub code search indexes the default branch only; branch parameter is informational and does not affect search scope.
 - list_commit_files(repo, ref) — List files changed in a commit without the full diff. Lighter than fetch_pr. ref can be SHA, branch, or tag.
 
 Rules:
