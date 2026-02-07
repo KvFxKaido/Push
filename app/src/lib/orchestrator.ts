@@ -43,61 +43,156 @@ const MISTRAL_API_URL = import.meta.env.DEV
   ? '/mistral/v1/chat/completions'
   : '/api/mistral/chat';
 
-// Rolling window config — keeps context focused and latency low
-const MAX_HISTORY_MESSAGES = 60;
+// Rolling window config — token-based context management
+const MAX_CONTEXT_TOKENS = 100_000; // Token budget for messages (leaves room for system prompt + response)
+const SUMMARIZE_THRESHOLD = 0.7; // Start summarizing at 70% of budget
 
 // ---------------------------------------------------------------------------
-// Rolling Window — trims old messages while keeping tool call/result pairs intact
+// Token Estimation — rough heuristic, no tokenizer dependency
 // ---------------------------------------------------------------------------
 
 /**
- * Trim messages to a rolling window, preserving tool call/result pairs.
- *
- * Tool calls and their results are a logical unit — splitting them causes
- * the LLM to hallucinate about what tool was called or misinterpret results.
- *
- * Algorithm: Walk backwards, keeping messages until we hit the limit.
- * If we include a tool result, also include the preceding tool call.
+ * Estimate token count from text. ~4 chars per token for English/code.
+ * This is intentionally conservative (slightly over-estimates) so we
+ * don't accidentally blow past the real limit.
  */
-function trimToRollingWindow(messages: ChatMessage[]): ChatMessage[] {
-  if (messages.length <= MAX_HISTORY_MESSAGES) {
-    return messages;
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3.5);
+}
+
+function estimateMessageTokens(msg: ChatMessage): number {
+  let tokens = estimateTokens(msg.content) + 4; // 4 tokens overhead per message
+  if (msg.thinking) tokens += estimateTokens(msg.thinking);
+  if (msg.attachments) {
+    for (const att of msg.attachments) {
+      if (att.type === 'image') tokens += 1000; // rough estimate for vision
+      else tokens += estimateTokens(att.content);
+    }
   }
+  return tokens;
+}
 
-  const kept: ChatMessage[] = [];
-  let count = 0;
-  let i = messages.length - 1;
+/**
+ * Estimate total tokens for an array of chat messages.
+ * Exported so useChat can expose context usage to the UI.
+ */
+export function estimateContextTokens(messages: ChatMessage[]): number {
+  let total = 0;
+  for (const msg of messages) {
+    total += estimateMessageTokens(msg);
+  }
+  return total;
+}
 
-  while (i >= 0) {
-    const msg = messages[i];
+// ---------------------------------------------------------------------------
+// Smart Context Management — summarize instead of drop, pin first message
+// ---------------------------------------------------------------------------
 
-    // If this is a tool result, we must also keep the preceding assistant message (tool call)
-    if (msg.isToolResult && i > 0) {
-      // Check if adding this pair would exceed the limit
-      if (count + 2 > MAX_HISTORY_MESSAGES) {
-        break;
-      }
-      const toolCall = messages[i - 1];
-      // Add both: tool call first, then result
-      kept.unshift(msg);
-      kept.unshift(toolCall);
-      count += 2;
-      i -= 2;
-    } else {
-      if (count >= MAX_HISTORY_MESSAGES) {
-        break;
-      }
-      kept.unshift(msg);
-      count++;
-      i--;
+/**
+ * Compress a tool result message into a compact summary.
+ * Keeps the tool name and key stats, drops verbose content (file listings,
+ * full code, raw diffs) that consumed the most tokens.
+ */
+function summarizeToolResult(msg: ChatMessage): ChatMessage {
+  const lines = msg.content.split('\n');
+
+  // Extract tool header line like "[Tool Result — sandbox_exec]"
+  const headerLine = lines.find(l => l.startsWith('[Tool Result')) || lines[0] || '';
+
+  // Keep first 4 non-empty lines after header (usually contain key stats)
+  const statLines: string[] = [];
+  for (const line of lines.slice(1)) {
+    if (statLines.length >= 4) break;
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('```')) {
+      statLines.push(trimmed);
     }
   }
 
-  // Log when we truncate (helpful for debugging)
-  if (messages.length > kept.length) {
-    console.log(`[Push] Rolling window: ${messages.length} → ${kept.length} messages`);
+  const summary = [headerLine, ...statLines, '[...summarized]'].join('\n');
+  return { ...msg, content: summary };
+}
+
+/**
+ * Manage context window: summarize old messages instead of dropping them.
+ *
+ * Strategy:
+ * 1. Always keep the first user message verbatim (the original task)
+ * 2. Keep recent messages verbatim (they're most relevant)
+ * 3. Summarize old tool results (biggest token consumers)
+ * 4. If still over budget, start dropping oldest summarized pairs
+ */
+function manageContext(messages: ChatMessage[]): ChatMessage[] {
+  const totalTokens = estimateContextTokens(messages);
+
+  // Under budget — keep everything
+  if (totalTokens <= MAX_CONTEXT_TOKENS) {
+    return messages;
   }
 
+  // Find first user message index (to pin it)
+  const firstUserIdx = messages.findIndex(m => m.role === 'user' && !m.isToolResult);
+
+  // Phase 1: Summarize old tool results (walk from oldest to newest, skip recent 10)
+  const result = [...messages];
+  const recentBoundary = Math.max(0, result.length - 10);
+  let currentTokens = totalTokens;
+
+  for (let i = 0; i < recentBoundary && currentTokens > MAX_CONTEXT_TOKENS; i++) {
+    const msg = result[i];
+    if (msg.isToolResult) {
+      const before = estimateMessageTokens(msg);
+      const summarized = summarizeToolResult(msg);
+      const after = estimateMessageTokens(summarized);
+      result[i] = summarized;
+      currentTokens -= (before - after);
+    }
+  }
+
+  if (currentTokens <= MAX_CONTEXT_TOKENS) {
+    console.log(`[Push] Context managed via summarization: ${totalTokens} → ${currentTokens} tokens`);
+    return result;
+  }
+
+  // Phase 2: Drop oldest message pairs (but never the pinned first user message)
+  const kept: ChatMessage[] = [];
+  let droppedTokens = 0;
+
+  // Always keep the first user message
+  if (firstUserIdx >= 0) {
+    kept.push(result[firstUserIdx]);
+  }
+
+  // Walk from oldest, skip messages until we're under budget
+  let dropping = true;
+  for (let i = 0; i < result.length; i++) {
+    if (i === firstUserIdx) continue; // Already added
+
+    if (dropping) {
+      const msgTokens = estimateMessageTokens(result[i]);
+      // If this is a tool result, also account for its tool call pair
+      droppedTokens += msgTokens;
+
+      if (currentTokens - droppedTokens <= MAX_CONTEXT_TOKENS * SUMMARIZE_THRESHOLD) {
+        dropping = false;
+        // Add a context note so the model knows history was trimmed
+        kept.push({
+          id: 'context-trimmed',
+          role: 'user',
+          content: '[Earlier conversation messages were summarized to fit context. The original task from the user is preserved above.]',
+          timestamp: 0,
+          status: 'done',
+          isToolResult: true, // hide from UI
+        });
+      }
+    }
+
+    if (!dropping) {
+      kept.push(result[i]);
+    }
+  }
+
+  console.log(`[Push] Context managed: ${totalTokens} tokens → ~${currentTokens - droppedTokens} tokens (${messages.length} → ${kept.length} messages)`);
   return kept;
 }
 
@@ -174,8 +269,8 @@ function toLLMMessages(
     { role: 'system', content: systemContent },
   ];
 
-  // Apply rolling window to keep context focused
-  const windowedMessages = trimToRollingWindow(messages);
+  // Smart context management — summarize old messages instead of dropping
+  const windowedMessages = manageContext(messages);
 
   for (const msg of windowedMessages) {
     // Check for attachments (multimodal message)

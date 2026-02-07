@@ -68,6 +68,7 @@ function App() {
     setEnsureSandbox,
     setAgentsMd,
     handleCardAction,
+    contextUsage,
     abortStream,
   } = useChat(activeRepo?.full_name ?? null, {
     content: scratchpad.content,
@@ -388,6 +389,7 @@ function App() {
         repoName={activeRepo?.name}
         onScratchpadToggle={scratchpad.toggle}
         scratchpadHasContent={scratchpad.hasContent}
+        contextUsage={contextUsage}
       />
 
       {/* Scratchpad drawer */}

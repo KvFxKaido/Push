@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ScratchpadButton } from './ScratchpadButton';
+import { ContextMeter } from './ContextMeter';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { processFile, getTotalAttachmentSize } from '@/lib/file-processing';
 import type { StagedAttachment } from '@/lib/file-processing';
@@ -14,12 +15,13 @@ interface ChatInputProps {
   repoName?: string;
   onScratchpadToggle?: () => void;
   scratchpadHasContent?: boolean;
+  contextUsage?: { used: number; max: number; percent: number };
 }
 
 const ACCEPTED_FILES = 'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
 const MAX_PAYLOAD = 400 * 1024; // 400KB total
 
-export function ChatInput({ onSend, onStop, isStreaming, repoName, onScratchpadToggle, scratchpadHasContent }: ChatInputProps) {
+export function ChatInput({ onSend, onStop, isStreaming, repoName, onScratchpadToggle, scratchpadHasContent, contextUsage }: ChatInputProps) {
   const [value, setValue] = useState('');
   const [stagedAttachments, setStagedAttachments] = useState<StagedAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -227,16 +229,22 @@ export function ChatInput({ onSend, onStop, isStreaming, repoName, onScratchpadT
 
           {/* Status row */}
           {isStreaming ? (
-            <div className="mt-2 flex items-center justify-center">
+            <div className="mt-2 flex items-center justify-between px-1">
               <span className="text-xs text-[#52525b]">
                 Generating... Click stop to cancel
               </span>
+              {contextUsage && <ContextMeter {...contextUsage} />}
             </div>
           ) : readyAttachments.length > 0 ? (
-            <div className="mt-2 flex items-center justify-center">
+            <div className="mt-2 flex items-center justify-between px-1">
               <span className="text-xs text-[#52525b]">
                 {readyAttachments.length} attachment{readyAttachments.length > 1 ? 's' : ''} ready
               </span>
+              {contextUsage && <ContextMeter {...contextUsage} />}
+            </div>
+          ) : contextUsage && contextUsage.percent >= 5 ? (
+            <div className="mt-2 flex items-center justify-end px-1">
+              <ContextMeter {...contextUsage} />
             </div>
           ) : null}
         </div>
