@@ -620,7 +620,7 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
   return { text: lines.join('\n'), card: { type: 'ci-status', data: cardData } };
 }
 
-async function executeSearchFiles(repo: string, query: string, path?: string, branch?: string): Promise<ToolExecutionResult> {
+async function executeSearchFiles(repo: string, query: string, path?: string, _branch?: string): Promise<ToolExecutionResult> {
   const headers = getGitHubHeaders();
 
   // Use GitHub's code search API
