@@ -18,6 +18,23 @@ function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
+  const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
+  const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
+
+  // Drop old auto-injected sandbox state messages entirely.
+  if (
+    message.role === 'assistant' &&
+    sandboxAttachedBanner.test(message.content.trim()) &&
+    cards.length === 0
+  ) {
+    return null;
+  }
+
+  if (!message.cards) return message;
+  return { ...message, cards };
+}
+
 function generateTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user');
   if (!firstUser) return 'New Chat';
@@ -58,6 +75,12 @@ function loadConversations(): Record<string, Conversation> {
     const stored = localStorage.getItem(CONVERSATIONS_KEY);
     if (stored) {
       const convs: Record<string, Conversation> = JSON.parse(stored);
+      for (const id of Object.keys(convs)) {
+        const cleaned = (convs[id].messages || [])
+          .map(sanitizeSandboxStateCards)
+          .filter((m): m is ChatMessage => m !== null);
+        convs[id] = { ...convs[id], messages: cleaned };
+      }
 
       // Migration: stamp unscoped conversations with the current active repo
       const repoFullName = getActiveRepoFullName();
@@ -744,11 +767,13 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
                       const conv = prev[chatId];
                       if (!conv) return prev;
                       const msgs = [...conv.messages];
+                      const safeCards = allCards.filter((card) => card.type !== 'sandbox-state');
+                      if (safeCards.length === 0) return prev;
                       for (let i = msgs.length - 1; i >= 0; i--) {
                         if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
                           msgs[i] = {
                             ...msgs[i],
-                            cards: [...(msgs[i].cards || []), ...allCards],
+                            cards: [...(msgs[i].cards || []), ...safeCards],
                           };
                           break;
                         }
@@ -778,6 +803,26 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
 
           // Attach card to the assistant message that triggered the tool call
           if (toolExecResult.card) {
+            if (toolExecResult.card.type === 'sandbox-state') {
+              // No longer render or persist sandbox state cards in chat.
+              continue;
+            }
+            if (toolExecResult.card.type === 'browser-screenshot') {
+              const browserCardMsg: ChatMessage = {
+                id: createId(),
+                role: 'assistant',
+                content: '',
+                timestamp: Date.now(),
+                status: 'done',
+                cards: [toolExecResult.card],
+              };
+              setConversations((prev) => {
+                const conv = prev[chatId];
+                if (!conv) return prev;
+                return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, browserCardMsg] } };
+              });
+            }
+
             setConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
@@ -877,6 +922,9 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
 
   const injectAssistantCardMessage = useCallback(
     (chatId: string, content: string, card: ChatCard) => {
+      if (card.type === 'sandbox-state') {
+        return;
+      }
       const msg: ChatMessage = {
         id: createId(),
         role: 'assistant',

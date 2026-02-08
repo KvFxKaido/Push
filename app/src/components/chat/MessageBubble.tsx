@@ -369,6 +369,11 @@ export const MessageBubble = memo(function MessageBubble({
   const hasThinking = Boolean(message.thinking);
   const hasContent = Boolean(message.content);
 
+  const visibleCards = useMemo(
+    () => (message.cards || []).filter((card) => card.type !== 'sandbox-state'),
+    [message.cards],
+  );
+
   const content = useMemo(
     () => formatContent(message.content),
     [message.content],
@@ -382,7 +387,7 @@ export const MessageBubble = memo(function MessageBubble({
   // Hide tool call messages only when they have no cards.
   // Some tools (e.g. browser screenshots) attach cards to the tool-call
   // message itself; keep those visible so the card can render.
-  if (message.isToolCall && (!message.cards || message.cards.length === 0)) {
+  if (message.isToolCall && visibleCards.length === 0) {
     return null;
   }
 
@@ -454,9 +459,9 @@ export const MessageBubble = memo(function MessageBubble({
             <CopyButton text={message.content} />
           </div>
         )}
-        {message.cards && message.cards.length > 0 && (
+        {visibleCards.length > 0 && (
           <div className="mt-1">
-            {message.cards.map((card, i) => (
+            {visibleCards.map((card, i) => (
               <CardRenderer
                 key={i}
                 card={card}

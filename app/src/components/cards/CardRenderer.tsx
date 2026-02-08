@@ -6,7 +6,6 @@ import { FileCard } from './FileCard';
 import { BranchListCard } from './BranchListCard';
 import { FileListCard } from './FileListCard';
 import { SandboxCard } from './SandboxCard';
-import { SandboxStateCard } from './SandboxStateCard';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
 import { CommitReviewCard } from './CommitReviewCard';
@@ -44,14 +43,7 @@ export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRende
     case 'sandbox':
       return <SandboxCard data={card.data} />;
     case 'sandbox-state':
-      return (
-        <SandboxStateCard
-          data={card.data}
-          messageId={messageId}
-          cardIndex={cardIndex}
-          onAction={onAction}
-        />
-      );
+      return null;
     case 'diff-preview':
       return <DiffPreviewCard data={card.data} />;
     case 'audit-verdict':

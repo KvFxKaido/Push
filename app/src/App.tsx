@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, Trash2, FolderOpen, Cpu } from 'lucide-react';
+import { Settings, Trash2, FolderOpen, Cpu, GitBranch, RefreshCw, Loader2 } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
 import { useGitHubAuth } from '@/hooks/useGitHubAuth';
@@ -70,7 +70,6 @@ function App() {
     setSandboxId,
     setEnsureSandbox,
     setAgentsMd,
-    injectAssistantCardMessage,
     handleCardAction,
     contextUsage,
     abortStream,
@@ -120,7 +119,6 @@ function App() {
   const [mistralKeyInput, setMistralKeyInput] = useState('');
   const [mistralModelInput, setMistralModelInput] = useState('');
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
-  const sandboxStateEmittedRef = useRef<Set<string>>(new Set());
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
@@ -129,6 +127,11 @@ function App() {
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
+
+  // Sandbox state for settings display
+  const [sandboxState, setSandboxState] = useState<SandboxStateCardData | null>(null);
+  const [sandboxStateLoading, setSandboxStateLoading] = useState(false);
+  const sandboxStateFetchedFor = useRef<string | null>(null);
   const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() => getSandboxStartMode());
   const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
@@ -269,72 +272,58 @@ function App() {
     setSandboxId(sandbox.sandboxId);
   }, [sandbox.sandboxId, setSandboxId]);
 
-  // Emit a sandbox state card when a sandbox is ready/reconnected.
-  useEffect(() => {
-    if (sandbox.status !== 'ready' || !sandbox.sandboxId || !activeChatId) return;
+  // Fetch sandbox git state (for settings display)
+  const fetchSandboxState = useCallback(async (id: string) => {
+    setSandboxStateLoading(true);
+    try {
+      const result = await execInSandbox(id, 'cd /workspace && git status -sb --porcelain=1');
+      if (result.exitCode !== 0) return;
 
-    const emitKey = `${activeChatId}:${sandbox.sandboxId}`;
-    if (sandboxStateEmittedRef.current.has(emitKey)) return;
+      const lines = result.stdout.split('\n').map((l: string) => l.trimEnd()).filter(Boolean);
+      const statusLine = lines.find((l: string) => l.startsWith('##'))?.slice(2).trim() || 'unknown';
+      const branch = statusLine.split('...')[0].trim() || 'unknown';
+      const entries = lines.filter((l: string) => !l.startsWith('##'));
 
-    let cancelled = false;
-    (async () => {
-      try {
-        const statusResult = await execInSandbox(
-          sandbox.sandboxId!,
-          'cd /workspace && git status -sb --porcelain=1',
-        );
-        if (cancelled || statusResult.exitCode !== 0) return;
-
-        const lines = statusResult.stdout
-          .split('\n')
-          .map((line) => line.trimEnd())
-          .filter(Boolean);
-        const statusLine = lines.find((line) => line.startsWith('##'))?.slice(2).trim() || 'unknown';
-        const branch = statusLine.split('...')[0].trim() || 'unknown';
-        const entries = lines.filter((line) => !line.startsWith('##'));
-
-        let stagedFiles = 0;
-        let unstagedFiles = 0;
-        let untrackedFiles = 0;
-
-        for (const entry of entries) {
-          const x = entry[0] || ' ';
-          const y = entry[1] || ' ';
-          if (x === '?' && y === '?') {
-            untrackedFiles++;
-            continue;
-          }
-          if (x !== ' ') stagedFiles++;
-          if (y !== ' ') unstagedFiles++;
-        }
-
-        const cardData: SandboxStateCardData = {
-          sandboxId: sandbox.sandboxId!,
-          repoPath: '/workspace',
-          branch,
-          statusLine,
-          changedFiles: entries.length,
-          stagedFiles,
-          unstagedFiles,
-          untrackedFiles,
-          preview: entries.slice(0, 6).map((line) => (line.length > 120 ? `${line.slice(0, 120)}...` : line)),
-          fetchedAt: new Date().toISOString(),
-        };
-
-        injectAssistantCardMessage(activeChatId, `Sandbox attached on \`${branch}\`.`, {
-          type: 'sandbox-state',
-          data: cardData,
-        });
-        sandboxStateEmittedRef.current.add(emitKey);
-      } catch {
-        // Best effort; sandbox state card is informational only.
+      let stagedFiles = 0, unstagedFiles = 0, untrackedFiles = 0;
+      for (const entry of entries) {
+        const x = entry[0] || ' ', y = entry[1] || ' ';
+        if (x === '?' && y === '?') { untrackedFiles++; continue; }
+        if (x !== ' ') stagedFiles++;
+        if (y !== ' ') unstagedFiles++;
       }
-    })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [sandbox.status, sandbox.sandboxId, activeChatId, injectAssistantCardMessage]);
+      setSandboxState({
+        sandboxId: id,
+        repoPath: '/workspace',
+        branch,
+        statusLine,
+        changedFiles: entries.length,
+        stagedFiles,
+        unstagedFiles,
+        untrackedFiles,
+        preview: entries.slice(0, 6).map((l: string) => l.length > 120 ? `${l.slice(0, 120)}...` : l),
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch {
+      // Best-effort — sandbox state is informational
+    } finally {
+      setSandboxStateLoading(false);
+    }
+  }, []);
+
+  // Auto-fetch sandbox state when sandbox becomes ready
+  useEffect(() => {
+    if (sandbox.status !== 'ready' || !sandbox.sandboxId) {
+      if (sandbox.status === 'idle') {
+        setSandboxState(null);
+        sandboxStateFetchedFor.current = null;
+      }
+      return;
+    }
+    if (sandboxStateFetchedFor.current === sandbox.sandboxId) return;
+    sandboxStateFetchedFor.current = sandbox.sandboxId;
+    fetchSandboxState(sandbox.sandboxId);
+  }, [sandbox.status, sandbox.sandboxId, fetchSandboxState]);
 
   // Lazy sandbox auto-spin: creates sandbox on demand (called by useChat when sandbox tools are detected)
   const ensureSandbox = useCallback(async (): Promise<string | null> => {
@@ -805,6 +794,90 @@ function App() {
                 Smart prewarms sandbox for likely coding prompts. Always prewarms on every message.
               </p>
             </div>
+
+            {/* Sandbox State */}
+            {sandbox.status !== 'idle' && (
+              <div className="space-y-3 pt-2 border-t border-[#1a1a1a]">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-[#fafafa]">
+                    Sandbox
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <div className={`h-2 w-2 rounded-full ${
+                      sandbox.status === 'ready' ? 'bg-emerald-500' :
+                      sandbox.status === 'creating' ? 'bg-[#f59e0b] animate-pulse' :
+                      sandbox.status === 'error' ? 'bg-red-500' : 'bg-[#52525b]'
+                    }`} />
+                    <span className="text-xs text-[#a1a1aa]">
+                      {sandbox.status === 'ready' ? 'Running' :
+                       sandbox.status === 'creating' ? 'Starting...' :
+                       sandbox.status === 'error' ? 'Error' : 'Idle'}
+                    </span>
+                  </div>
+                </div>
+
+                {sandboxState && sandbox.status === 'ready' && (
+                  <div className="rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden">
+                    <div className="px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <GitBranch className="h-3.5 w-3.5 text-[#71717a]" />
+                        <span className="text-xs text-[#e4e4e7] font-mono truncate">{sandboxState.branch}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${
+                          sandboxState.changedFiles > 0
+                            ? 'bg-[#f59e0b]/15 text-[#f59e0b]'
+                            : 'bg-[#22c55e]/15 text-[#22c55e]'
+                        }`}>
+                          {sandboxState.changedFiles > 0 ? `${sandboxState.changedFiles} changed` : 'clean'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => sandbox.sandboxId && fetchSandboxState(sandbox.sandboxId)}
+                          disabled={sandboxStateLoading}
+                          className="inline-flex items-center gap-1 rounded border border-[#27272a] px-1.5 py-0.5 text-[10px] text-[#a1a1aa] hover:text-[#fafafa] hover:border-[#3f3f46] disabled:opacity-50"
+                          title="Refresh sandbox state"
+                        >
+                          {sandboxStateLoading ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3 w-3" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {sandboxState.changedFiles > 0 && (
+                      <div className="px-3 pb-2 space-y-1.5">
+                        <div className="flex gap-3 text-[11px] text-[#71717a]">
+                          <span>Staged: <span className="text-[#a1a1aa]">{sandboxState.stagedFiles}</span></span>
+                          <span>Unstaged: <span className="text-[#a1a1aa]">{sandboxState.unstagedFiles}</span></span>
+                          <span>Untracked: <span className="text-[#a1a1aa]">{sandboxState.untrackedFiles}</span></span>
+                        </div>
+                        {sandboxState.preview.length > 0 && (
+                          <div className="rounded border border-[#1f1f23] bg-[#0a0a0c] p-1.5 space-y-0.5">
+                            {sandboxState.preview.map((line, idx) => (
+                              <div key={`${line}-${idx}`} className="text-[10px] text-[#a1a1aa] font-mono truncate">
+                                {line}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="px-3 pb-2 text-[10px] text-[#52525b]">
+                      {new Date(sandboxState.fetchedAt).toLocaleTimeString()}
+                      <span className="font-mono ml-1.5">{sandboxState.sandboxId.slice(0, 12)}...</span>
+                    </div>
+                  </div>
+                )}
+
+                {sandbox.error && (
+                  <p className="text-xs text-red-400">{sandbox.error}</p>
+                )}
+              </div>
+            )}
 
             {/* AI Provider */}
             <div className="space-y-3 pt-2 border-t border-[#1a1a1a]">
