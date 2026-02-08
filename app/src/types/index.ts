@@ -134,6 +134,7 @@ export type ChatCard =
   | { type: 'branch-list'; data: BranchListCardData }
   | { type: 'file-list'; data: FileListCardData }
   | { type: 'sandbox'; data: SandboxCardData }
+  | { type: 'sandbox-state'; data: SandboxStateCardData }
   | { type: 'diff-preview'; data: DiffPreviewCardData }
   | { type: 'audit-verdict'; data: AuditVerdictCardData }
   | { type: 'commit-review'; data: CommitReviewCardData }
@@ -220,6 +221,19 @@ export interface SandboxCardData {
   durationMs?: number;
 }
 
+export interface SandboxStateCardData {
+  sandboxId: string;
+  repoPath: string;
+  branch: string;
+  statusLine?: string;
+  changedFiles: number;
+  stagedFiles: number;
+  unstagedFiles: number;
+  untrackedFiles: number;
+  preview: string[];
+  fetchedAt: string;
+}
+
 export interface DiffPreviewCardData {
   diff: string;
   filesChanged: number;
@@ -264,6 +278,7 @@ export type CardAction =
   | { type: 'commit-approve'; messageId: string; cardIndex: number; commitMessage: string }
   | { type: 'commit-reject'; messageId: string; cardIndex: number }
   | { type: 'ci-refresh'; messageId: string; cardIndex: number }
+  | { type: 'sandbox-state-refresh'; messageId: string; cardIndex: number; sandboxId: string }
   | { type: 'editor-save'; messageId: string; cardIndex: number; path: string; content: string; sandboxId: string };
 
 export interface AgentStatus {

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardAction, CommitReviewCardData, ChatCard, AttachmentData, AIProviderType } from '@/types';
+import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardAction, CommitReviewCardData, ChatCard, AttachmentData, AIProviderType, SandboxStateCardData } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, detectMalformedToolAttempt } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
@@ -7,6 +7,7 @@ import { runCoderAgent } from '@/lib/coder-agent';
 import { execInSandbox } from '@/lib/sandbox-client';
 import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
+import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
@@ -142,6 +143,20 @@ function getToolStatusLabel(toolCall: AnyToolCall): string {
     default:
       return 'Processing...';
   }
+}
+
+function shouldPrewarmSandbox(text: string, attachments?: AttachmentData[]): boolean {
+  const normalized = text.toLowerCase();
+  const intentRegex = /\b(edit|modify|change|refactor|fix|implement|write|create|add|remove|rename|run|test|build|lint|compile|typecheck|type-check|commit|push|patch|bug|failing|error|debug)\b/;
+  if (intentRegex.test(normalized)) return true;
+
+  const fileHintRegex = /\b([a-z0-9_\-/]+\.(ts|tsx|js|jsx|py|rs|go|java|rb|css|html|json|md|yml|yaml|toml|sh))\b/i;
+  if (fileHintRegex.test(text)) return true;
+
+  if (attachments?.some((att) => att.type === 'code' || att.type === 'document')) {
+    return true;
+  }
+  return false;
 }
 
 export interface ScratchpadHandlers {
@@ -433,6 +448,21 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
       setIsStreaming(true);
       abortRef.current = false;
 
+      const sandboxStartMode = getSandboxStartMode();
+      const shouldAutoStartSandbox = sandboxStartMode === 'always'
+        || (sandboxStartMode === 'smart' && shouldPrewarmSandbox(text.trim(), attachments));
+      if (!sandboxIdRef.current && ensureSandboxRef.current && shouldAutoStartSandbox) {
+        setAgentStatus({ active: true, phase: 'Starting sandbox...' });
+        try {
+          const prewarmedId = await ensureSandboxRef.current();
+          if (prewarmedId) {
+            sandboxIdRef.current = prewarmedId;
+          }
+        } catch {
+          // Best effort prewarm; continue chat flow without sandbox.
+        }
+      }
+
       // Create new AbortController for this stream
       abortControllerRef.current = new AbortController();
 
@@ -672,36 +702,65 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
               toolExecResult = { text: '[Tool Error] Failed to start sandbox automatically. Try again.' };
             } else {
               try {
-                const coderResult = await runCoderAgent(
-                  toolCall.call.args.task,
-                  currentSandboxId,
-                  toolCall.call.args.files || [],
-                  (phase, detail) => {
-                    setAgentStatus({ active: true, phase, detail });
-                  },
-                  agentsMdRef.current || undefined,
-                );
-
-                // Attach all Coder cards to the assistant message
-                if (coderResult.cards.length > 0) {
-                  setConversations((prev) => {
-                    const conv = prev[chatId];
-                    if (!conv) return prev;
-                    const msgs = [...conv.messages];
-                    for (let i = msgs.length - 1; i >= 0; i--) {
-                      if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
-                        msgs[i] = {
-                          ...msgs[i],
-                          cards: [...(msgs[i].cards || []), ...coderResult.cards],
-                        };
-                        break;
-                      }
-                    }
-                    return { ...prev, [chatId]: { ...conv, messages: msgs } };
-                  });
+                const delegateArgs = toolCall.call.args;
+                const taskList = Array.isArray(delegateArgs.tasks)
+                  ? delegateArgs.tasks.filter((t) => typeof t === 'string' && t.trim())
+                  : [];
+                if (delegateArgs.task?.trim()) {
+                  taskList.unshift(delegateArgs.task.trim());
                 }
 
-                toolExecResult = { text: `[Tool Result — delegate_coder]\n${coderResult.summary}\n(${coderResult.rounds} round${coderResult.rounds !== 1 ? 's' : ''})` };
+                if (taskList.length === 0) {
+                  toolExecResult = { text: '[Tool Error] delegate_coder requires "task" or non-empty "tasks" array.' };
+                } else {
+                  const allCards: ChatCard[] = [];
+                  const summaries: string[] = [];
+                  let totalRounds = 0;
+
+                  for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
+                    const task = taskList[taskIndex];
+                    const coderResult = await runCoderAgent(
+                      task,
+                      currentSandboxId,
+                      delegateArgs.files || [],
+                      (phase, detail) => {
+                        const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
+                        setAgentStatus({ active: true, phase: `${prefix}${phase}`, detail });
+                      },
+                      agentsMdRef.current || undefined,
+                    );
+                    totalRounds += coderResult.rounds;
+                    summaries.push(
+                      taskList.length > 1
+                        ? `Task ${taskIndex + 1}: ${coderResult.summary}`
+                        : coderResult.summary,
+                    );
+                    allCards.push(...coderResult.cards);
+                  }
+
+                  // Attach all Coder cards to the assistant message
+                  if (allCards.length > 0) {
+                    setConversations((prev) => {
+                      const conv = prev[chatId];
+                      if (!conv) return prev;
+                      const msgs = [...conv.messages];
+                      for (let i = msgs.length - 1; i >= 0; i--) {
+                        if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
+                          msgs[i] = {
+                            ...msgs[i],
+                            cards: [...(msgs[i].cards || []), ...allCards],
+                          };
+                          break;
+                        }
+                      }
+                      return { ...prev, [chatId]: { ...conv, messages: msgs } };
+                    });
+                  }
+
+                  toolExecResult = {
+                    text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''})`,
+                  };
+                }
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 toolExecResult = { text: `[Tool Error] Coder failed: ${msg}` };
@@ -804,6 +863,27 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
         content,
         timestamp: Date.now(),
         status: 'done',
+      };
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
+        saveConversations(updated);
+        return updated;
+      });
+    },
+    [],
+  );
+
+  const injectAssistantCardMessage = useCallback(
+    (chatId: string, content: string, card: ChatCard) => {
+      const msg: ChatMessage = {
+        id: createId(),
+        role: 'assistant',
+        content,
+        timestamp: Date.now(),
+        status: 'done',
+        cards: [card],
       };
       setConversations((prev) => {
         const conv = prev[chatId];
@@ -958,6 +1038,65 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
           }
           break;
         }
+
+        case 'sandbox-state-refresh': {
+          setAgentStatus({ active: true, phase: 'Refreshing sandbox state...' });
+          try {
+            const statusResult = await execInSandbox(
+              action.sandboxId,
+              'cd /workspace && git status -sb --porcelain=1',
+            );
+            if (statusResult.exitCode !== 0) {
+              break;
+            }
+
+            const lines = statusResult.stdout
+              .split('\n')
+              .map((line) => line.trimEnd())
+              .filter(Boolean);
+            const statusLine = lines.find((line) => line.startsWith('##'))?.slice(2).trim() || 'unknown';
+            const branch = statusLine.split('...')[0].trim() || 'unknown';
+            const entries = lines.filter((line) => !line.startsWith('##'));
+
+            let stagedFiles = 0;
+            let unstagedFiles = 0;
+            let untrackedFiles = 0;
+
+            for (const entry of entries) {
+              const x = entry[0] || ' ';
+              const y = entry[1] || ' ';
+              if (x === '?' && y === '?') {
+                untrackedFiles++;
+                continue;
+              }
+              if (x !== ' ') stagedFiles++;
+              if (y !== ' ') unstagedFiles++;
+            }
+
+            const nextData: SandboxStateCardData = {
+              sandboxId: action.sandboxId,
+              repoPath: '/workspace',
+              branch,
+              statusLine,
+              changedFiles: entries.length,
+              stagedFiles,
+              unstagedFiles,
+              untrackedFiles,
+              preview: entries.slice(0, 6).map((line) => (line.length > 120 ? `${line.slice(0, 120)}...` : line)),
+              fetchedAt: new Date().toISOString(),
+            };
+
+            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+              if (card.type !== 'sandbox-state') return card;
+              return { ...card, data: nextData };
+            });
+          } catch {
+            // Best-effort refresh
+          } finally {
+            setAgentStatus({ active: false, phase: '' });
+          }
+          break;
+        }
       }
     },
     [activeChatId, updateCardInMessage, injectSyntheticMessage],
@@ -990,6 +1129,7 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
 
     // AGENTS.md
     setAgentsMd,
+    injectAssistantCardMessage,
 
     // Card actions (Phase 4)
     handleCardAction,

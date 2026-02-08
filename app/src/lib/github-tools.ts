@@ -21,7 +21,7 @@ export type ToolCall =
   | { tool: 'read_file'; args: { repo: string; path: string; branch?: string } }
   | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string } }
-  | { tool: 'delegate_coder'; args: { task: string; files?: string[] } }
+  | { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[] } }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
   | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } }
   | { tool: 'list_commit_files'; args: { repo: string; ref: string } }
@@ -179,8 +179,8 @@ function validateToolCall(parsed: any): ToolCall | null {
   if (parsed.tool === 'list_branches' && parsed.args.repo) {
     return { tool: 'list_branches', args: { repo: parsed.args.repo } };
   }
-  if (parsed.tool === 'delegate_coder' && parsed.args.task) {
-    return { tool: 'delegate_coder', args: { task: parsed.args.task, files: parsed.args.files } };
+  if (parsed.tool === 'delegate_coder' && (parsed.args.task || Array.isArray(parsed.args.tasks))) {
+    return { tool: 'delegate_coder', args: { task: parsed.args.task, tasks: parsed.args.tasks, files: parsed.args.files } };
   }
   if (parsed.tool === 'fetch_checks' && parsed.args.repo) {
     return { tool: 'fetch_checks', args: { repo: parsed.args.repo, ref: parsed.args.ref } };
@@ -1196,7 +1196,7 @@ Available tools:
 - read_file(repo, path, branch?) — Read a single file's contents (default: repo's default branch). Only works on files — fails on directories.
 - list_directory(repo, path?, branch?) — List files and folders in a directory (default path: repo root). Use this to browse the repo structure before reading specific files.
 - list_branches(repo) — List branches with default/protected status
-- delegate_coder(task, files?) — Delegate a coding task to the Coder agent (requires sandbox)
+- delegate_coder(task?, tasks?, files?) — Delegate coding to the Coder agent (requires sandbox). Use "task" for one task, or "tasks" array for batch independent tasks.
 - fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
 - search_files(repo, query, path?, branch?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/"). Note: GitHub code search indexes the default branch; branch filter is best-effort.
 - list_commit_files(repo, ref) — List files changed in a commit without the full diff. Lighter than fetch_pr. ref can be SHA, branch, or tag.
@@ -1220,4 +1220,5 @@ Rules:
 - For "what files changed in [commit]" use list_commit_files — lighter than fetch_pr when you just need the file list
 - For "deploy" or "run workflow" use trigger_workflow, then suggest get_workflow_runs to check status
 - For "show CI runs" or "what workflows ran" use get_workflow_runs
-- For "why did the build fail" use get_workflow_runs to find the run, then get_workflow_logs for step-level details`;
+- For "why did the build fail" use get_workflow_runs to find the run, then get_workflow_logs for step-level details
+- For multiple independent coding tasks in one request, use delegate_coder with "tasks": ["task 1", "task 2", ...]`;

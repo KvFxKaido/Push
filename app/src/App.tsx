@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, Trash2, FolderOpen, Cpu } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
@@ -14,8 +14,9 @@ import { getActiveProvider, getContextMode, setContextMode, type ContextMode } f
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { buildWorkspaceContext } from '@/lib/workspace-context';
-import { readFromSandbox } from '@/lib/sandbox-client';
+import { readFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { fetchProjectInstructions } from '@/lib/github-tools';
+import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoAndChatSelector } from '@/components/chat/RepoAndChatSelector';
@@ -23,7 +24,7 @@ import { ScratchpadDrawer } from '@/components/chat/ScratchpadDrawer';
 import { OnboardingScreen } from '@/sections/OnboardingScreen';
 import { RepoPicker } from '@/sections/RepoPicker';
 import { FileBrowser } from '@/sections/FileBrowser';
-import type { AppScreen, RepoWithActivity, AIProviderType } from '@/types';
+import type { AppScreen, RepoWithActivity, AIProviderType, SandboxStateCardData } from '@/types';
 import {
   Sheet,
   SheetContent,
@@ -69,6 +70,7 @@ function App() {
     setSandboxId,
     setEnsureSandbox,
     setAgentsMd,
+    injectAssistantCardMessage,
     handleCardAction,
     contextUsage,
     abortStream,
@@ -117,6 +119,7 @@ function App() {
   const [mistralKeyInput, setMistralKeyInput] = useState('');
   const [mistralModelInput, setMistralModelInput] = useState('');
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
+  const sandboxStateEmittedRef = useRef<Set<string>>(new Set());
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
@@ -125,6 +128,7 @@ function App() {
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
+  const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() => getSandboxStartMode());
   const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
 
@@ -146,6 +150,11 @@ function App() {
   const updateContextMode = useCallback((mode: ContextMode) => {
     setContextMode(mode);
     setContextModeState(mode);
+  }, []);
+
+  const updateSandboxStartMode = useCallback((mode: SandboxStartMode) => {
+    setSandboxStartMode(mode);
+    setSandboxStartModeState(mode);
   }, []);
 
   // Screen state machine
@@ -258,6 +267,73 @@ function App() {
   useEffect(() => {
     setSandboxId(sandbox.sandboxId);
   }, [sandbox.sandboxId, setSandboxId]);
+
+  // Emit a sandbox state card when a sandbox is ready/reconnected.
+  useEffect(() => {
+    if (sandbox.status !== 'ready' || !sandbox.sandboxId || !activeChatId) return;
+
+    const emitKey = `${activeChatId}:${sandbox.sandboxId}`;
+    if (sandboxStateEmittedRef.current.has(emitKey)) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const statusResult = await execInSandbox(
+          sandbox.sandboxId!,
+          'cd /workspace && git status -sb --porcelain=1',
+        );
+        if (cancelled || statusResult.exitCode !== 0) return;
+
+        const lines = statusResult.stdout
+          .split('\n')
+          .map((line) => line.trimEnd())
+          .filter(Boolean);
+        const statusLine = lines.find((line) => line.startsWith('##'))?.slice(2).trim() || 'unknown';
+        const branch = statusLine.split('...')[0].trim() || 'unknown';
+        const entries = lines.filter((line) => !line.startsWith('##'));
+
+        let stagedFiles = 0;
+        let unstagedFiles = 0;
+        let untrackedFiles = 0;
+
+        for (const entry of entries) {
+          const x = entry[0] || ' ';
+          const y = entry[1] || ' ';
+          if (x === '?' && y === '?') {
+            untrackedFiles++;
+            continue;
+          }
+          if (x !== ' ') stagedFiles++;
+          if (y !== ' ') unstagedFiles++;
+        }
+
+        const cardData: SandboxStateCardData = {
+          sandboxId: sandbox.sandboxId!,
+          repoPath: '/workspace',
+          branch,
+          statusLine,
+          changedFiles: entries.length,
+          stagedFiles,
+          unstagedFiles,
+          untrackedFiles,
+          preview: entries.slice(0, 6).map((line) => (line.length > 120 ? `${line.slice(0, 120)}...` : line)),
+          fetchedAt: new Date().toISOString(),
+        };
+
+        injectAssistantCardMessage(activeChatId, `Sandbox attached on \`${branch}\`.`, {
+          type: 'sandbox-state',
+          data: cardData,
+        });
+        sandboxStateEmittedRef.current.add(emitKey);
+      } catch {
+        // Best effort; sandbox state card is informational only.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sandbox.status, sandbox.sandboxId, activeChatId, injectAssistantCardMessage]);
 
   // Lazy sandbox auto-spin: creates sandbox on demand (called by useChat when sandbox tools are detected)
   const ensureSandbox = useCallback(async (): Promise<string | null> => {
@@ -664,6 +740,56 @@ function App() {
                   No trimming can hit model context limits on long chats and cause failures.
                 </p>
               )}
+            </div>
+
+            {/* Sandbox start behavior */}
+            <div className="space-y-3 pt-2 border-t border-[#1a1a1a]">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-[#fafafa]">
+                  Sandbox Start Mode
+                </label>
+                <span className="text-xs text-[#a1a1aa]">
+                  {sandboxStartMode === 'off' ? 'Off' : sandboxStartMode === 'smart' ? 'Smart' : 'Always'}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateSandboxStartMode('off')}
+                  className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                    sandboxStartMode === 'off'
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                      : 'border-[#1a1a1a] bg-[#0d0d0d] text-[#71717a] hover:text-[#a1a1aa]'
+                  }`}
+                >
+                  Off
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateSandboxStartMode('smart')}
+                  className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                    sandboxStartMode === 'smart'
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                      : 'border-[#1a1a1a] bg-[#0d0d0d] text-[#71717a] hover:text-[#a1a1aa]'
+                  }`}
+                >
+                  Smart
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateSandboxStartMode('always')}
+                  className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                    sandboxStartMode === 'always'
+                      ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
+                      : 'border-[#1a1a1a] bg-[#0d0d0d] text-[#71717a] hover:text-[#a1a1aa]'
+                  }`}
+                >
+                  Always
+                </button>
+              </div>
+              <p className="text-[11px] text-[#a1a1aa]">
+                Smart prewarms sandbox for likely coding prompts. Always prewarms on every message.
+              </p>
             </div>
 
             {/* AI Provider */}

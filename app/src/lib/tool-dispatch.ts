@@ -75,7 +75,7 @@ export function extractBareToolJsonObjects(text: string): any[] {
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
-  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: { task: string; files?: string[] } } }
+  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[] } } }
   | { source: 'scratchpad'; call: ScratchpadToolCall };
 
 /**
@@ -157,10 +157,10 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
   while ((match = fenceRegex.exec(text)) !== null) {
     try {
       const parsed = JSON.parse(match[1].trim());
-      if (parsed.tool === 'delegate_coder' && parsed.args?.task) {
+      if (parsed.tool === 'delegate_coder' && (parsed.args?.task || Array.isArray(parsed.args?.tasks))) {
         return {
           source: 'delegate',
-          call: { tool: 'delegate_coder', args: { task: parsed.args.task, files: parsed.args.files } },
+          call: { tool: 'delegate_coder', args: { task: parsed.args.task, tasks: parsed.args.tasks, files: parsed.args.files } },
         };
       }
     } catch {
@@ -170,10 +170,10 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
 
   // Bare JSON fallback (brace-counting handles nested objects)
   for (const parsed of extractBareToolJsonObjects(text)) {
-    if (parsed.tool === 'delegate_coder' && parsed.args?.task) {
+    if (parsed.tool === 'delegate_coder' && (parsed.args?.task || Array.isArray(parsed.args?.tasks))) {
       return {
         source: 'delegate',
-        call: { tool: 'delegate_coder', args: { task: parsed.args.task, files: parsed.args.files } },
+        call: { tool: 'delegate_coder', args: { task: parsed.args.task, tasks: parsed.args.tasks, files: parsed.args.files } },
       };
     }
   }

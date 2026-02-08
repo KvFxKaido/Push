@@ -49,6 +49,7 @@ function formatSandboxError(error: string, context?: string): string {
 export type SandboxToolCall =
   | { tool: 'sandbox_exec'; args: { command: string; workdir?: string } }
   | { tool: 'sandbox_read_file'; args: { path: string } }
+  | { tool: 'sandbox_search'; args: { query: string; path?: string } }
   | { tool: 'sandbox_write_file'; args: { path: string; content: string } }
   | { tool: 'sandbox_list_dir'; args: { path?: string } }
   | { tool: 'sandbox_diff'; args: Record<string, never> }
@@ -63,13 +64,16 @@ export function validateSandboxToolCall(parsed: any): SandboxToolCall | null {
   if (parsed.tool === 'sandbox_exec' && parsed.args?.command) {
     return { tool: 'sandbox_exec', args: { command: parsed.args.command, workdir: parsed.args.workdir } };
   }
-  if (parsed.tool === 'sandbox_read_file' && parsed.args?.path) {
+  if ((parsed.tool === 'sandbox_read_file' || parsed.tool === 'read_sandbox_file') && parsed.args?.path) {
     return { tool: 'sandbox_read_file', args: { path: parsed.args.path } };
+  }
+  if ((parsed.tool === 'sandbox_search' || parsed.tool === 'search_sandbox') && parsed.args?.query) {
+    return { tool: 'sandbox_search', args: { query: parsed.args.query, path: parsed.args.path } };
   }
   if (parsed.tool === 'sandbox_write_file' && parsed.args?.path && typeof parsed.args.content === 'string') {
     return { tool: 'sandbox_write_file', args: { path: parsed.args.path, content: parsed.args.content } };
   }
-  if (parsed.tool === 'sandbox_list_dir') {
+  if (parsed.tool === 'sandbox_list_dir' || parsed.tool === 'list_sandbox_dir') {
     return { tool: 'sandbox_list_dir', args: { path: parsed.args?.path } };
   }
   if (parsed.tool === 'sandbox_diff') {
@@ -100,7 +104,7 @@ export function detectSandboxToolCall(text: string): SandboxToolCall | null {
   while ((match = fenceRegex.exec(text)) !== null) {
     try {
       const parsed = JSON.parse(match[1].trim());
-      if (parsed.tool?.startsWith('sandbox_') && parsed.args) {
+      if (parsed.tool?.startsWith('sandbox_') || ['read_sandbox_file', 'search_sandbox', 'list_sandbox_dir'].includes(parsed.tool)) {
         const result = validateSandboxToolCall(parsed);
         if (result) return result;
       }
@@ -111,13 +115,17 @@ export function detectSandboxToolCall(text: string): SandboxToolCall | null {
 
   // Bare JSON fallback (brace-counting handles nested objects)
   for (const parsed of extractBareToolJsonObjects(text)) {
-    if (parsed.tool?.startsWith('sandbox_') && parsed.args) {
+    if (parsed.tool?.startsWith('sandbox_') || ['read_sandbox_file', 'search_sandbox', 'list_sandbox_dir'].includes(parsed.tool)) {
       const result = validateSandboxToolCall(parsed);
       if (result) return result;
     }
   }
 
   return null;
+}
+
+function shellEscape(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
 // --- Diff parsing helper ---
@@ -218,6 +226,64 @@ export async function executeSandboxToolCall(
               sandboxId,
             },
           },
+        };
+      }
+
+      case 'sandbox_search': {
+        const query = call.args.query.trim();
+        const searchPath = (call.args.path || '/workspace').trim() || '/workspace';
+
+        if (!query) {
+          return { text: '[Tool Error] sandbox_search requires a non-empty query.' };
+        }
+
+        const escapedQuery = shellEscape(query);
+        const escapedPath = shellEscape(searchPath);
+        const command = [
+          'if command -v rg >/dev/null 2>&1; then',
+          `  rg -n --hidden --glob '!.git' --color never --max-count 200 -- ${escapedQuery} ${escapedPath};`,
+          'else',
+          `  grep -RIn --exclude-dir=.git -- ${escapedQuery} ${escapedPath} | head -n 200;`,
+          'fi',
+        ].join(' ');
+
+        const result = await execInSandbox(sandboxId, command);
+        if (result.exitCode !== 0 && !result.stdout.trim()) {
+          // rg returns exit code 1 when no matches; treat as a normal "no results" case.
+          if (result.exitCode === 1) {
+            return {
+              text: `[Tool Result — sandbox_search]\nNo matches for "${query}" in ${searchPath}.`,
+            };
+          }
+          return {
+            text: formatSandboxError(result.stderr || 'Search failed', `sandbox_search (${searchPath})`),
+          };
+        }
+
+        const output = result.stdout.trim();
+        if (!output) {
+          return {
+            text: `[Tool Result — sandbox_search]\nNo matches for "${query}" in ${searchPath}.`,
+          };
+        }
+
+        const lines = output
+          .split('\n')
+          .slice(0, 120)
+          .map((line) => line.length > 320 ? `${line.slice(0, 320)}...` : line);
+
+        const matchCount = lines.length;
+        const truncated = output.split('\n').length > lines.length || result.truncated;
+
+        return {
+          text: [
+            '[Tool Result — sandbox_search]',
+            `Query: ${query}`,
+            `Path: ${searchPath}`,
+            `Matches: ${matchCount}${truncated ? ' (truncated)' : ''}`,
+            '',
+            ...lines,
+          ].join('\n'),
         };
       }
 
@@ -691,6 +757,7 @@ SANDBOX TOOLS — You have access to a code sandbox (persistent container with t
 Additional tools available when sandbox is active:
 - sandbox_exec(command, workdir?) — Run a shell command in the sandbox (default workdir: /workspace)
 - sandbox_read_file(path) — Read a single file from the sandbox filesystem. Only works on files — fails on directories.
+- sandbox_search(query, path?) — Search file contents in the sandbox (uses rg/grep). Fast way to locate functions, symbols, and strings before editing.
 - sandbox_list_dir(path?) — List files and folders in a sandbox directory (default: /workspace). Use this to explore the project structure before reading specific files.
 - sandbox_write_file(path, content) — Write or overwrite a file in the sandbox
 - sandbox_diff() — Get the git diff of all uncommitted changes
@@ -698,6 +765,11 @@ Additional tools available when sandbox is active:
 - sandbox_push() — Retry a failed push. Use this only if a push failed after approval. No Auditor needed (commit was already audited).
 - sandbox_run_tests(framework?) — Run the test suite. Auto-detects npm/pytest/cargo/go if framework not specified. Returns pass/fail counts and output.
 - sandbox_check_types() — Run type checker (tsc for TypeScript, pyright/mypy for Python). Auto-detects from config files. Returns errors with file:line locations.
+
+Compatibility aliases also work:
+- read_sandbox_file(path) → sandbox_read_file
+- search_sandbox(query, path?) → sandbox_search
+- list_sandbox_dir(path?) → sandbox_list_dir
 
 Usage: Output a fenced JSON block just like GitHub tools:
 \`\`\`json
@@ -718,5 +790,6 @@ Sandbox rules:
 - If the push fails after a successful commit, use sandbox_push() to retry
 - Keep commands focused — avoid long-running servers or background processes
 - IMPORTANT: sandbox_read_file only works on files, not directories. To explore the project structure, use sandbox_list_dir first, then read specific files.
+- Before delegating code changes, prefer sandbox_search to quickly locate relevant files/functions and provide precise context.
 - Use sandbox_run_tests BEFORE committing to catch regressions early. It's faster than sandbox_exec("npm test") and gives structured results.
 - Use sandbox_check_types to validate TypeScript/Python code before committing. Catches type errors that tests might miss.`;
