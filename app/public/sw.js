@@ -1,4 +1,4 @@
-const CACHE_NAME = 'push-v2';
+const CACHE_NAME = 'push-v3';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -30,7 +30,7 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
 
   // Never cache API calls
-  if (request.url.includes('/api/') || request.url.includes('/kimi/')) {
+  if (request.url.includes('/api/') || request.url.includes('/kimi/') || request.url.includes('/ollama/') || request.url.includes('/mistral/')) {
     return;
   }
 

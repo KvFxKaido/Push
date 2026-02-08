@@ -25,7 +25,7 @@ export function ActivityDrawer({ isOpen, onClose, messages }: ActivityDrawerProp
             timestamp: m.timestamp
           });
         }
-      } else if ((m.role as string) === 'tool') {
+      } else if (m.isToolResult) {
         items.push({ type: 'result', content: m.content, timestamp: m.timestamp });
       }
     });

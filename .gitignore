@@ -3,6 +3,10 @@ node_modules/
 
 # build output
 dist/
+build-out*.txt
+
+# wrangler
+.wrangler/
 
 # environment variables
 .env
