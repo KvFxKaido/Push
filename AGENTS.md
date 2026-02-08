@@ -56,6 +56,28 @@ Tools are prompt-engineered — the system prompt defines available tools and JS
 
 The Orchestrator can delegate complex coding tasks to the Coder sub-agent via the `delegate_coder` tool. The Coder runs autonomously with its own tool loop in the sandbox, then returns results to the Orchestrator.
 
+### Browser Tools (Optional)
+
+Push includes optional sandbox browser tools backed by Browserbase:
+
+- `sandbox_browser_screenshot` — capture a webpage screenshot and render a preview card
+- `sandbox_browser_extract` — extract main text from a URL, with optional `selector:` / `css:` instruction prefixes
+
+These tools are prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true` and execute through Worker routes `/api/sandbox/browser-screenshot` and `/api/sandbox/browser-extract`.
+
+### Browserbase Status
+
+From `documents/Browserbase Integration Spike.md`:
+
+- [x] v1 complete and validated on deployed Worker + Modal
+- [x] `sandbox_browser_screenshot` shipped (card UI + metadata)
+- [x] `sandbox_browser_extract` shipped (card UI + bounded text extraction)
+- [x] Browserbase credentials injected server-side via Worker secrets
+- [x] Guardrails shipped (URL allowlist, private-network block, output caps)
+- [x] Test suite shipped (97 tests across tool/client/routes/types)
+- [ ] Validate on real mobile cellular networks (iOS Safari + Android Chrome)
+- [ ] Progressively enable `VITE_BROWSER_TOOL_ENABLED` after latency/error checks
+
 ### Scratchpad
 
 A shared notepad that both the user and AI can read/write. Content persists in localStorage and is always injected into the system prompt. Tools: `set_scratchpad` (replace) and `append_scratchpad` (add). Useful for consolidating ideas, requirements, and decisions throughout a session.
@@ -203,6 +225,10 @@ VITE_MISTRAL_API_KEY=...          # Mistral API key
 VITE_GITHUB_TOKEN=...             # Optional, higher GitHub rate limits
 VITE_GITHUB_CLIENT_ID=...         # Optional, enables OAuth login
 VITE_GITHUB_OAUTH_PROXY=...       # Optional, required for OAuth
+
+# Browser tools (optional)
+VITE_BROWSER_TOOL_ENABLED=true    # Expose browser tools in agent prompts
+VITE_API_PROXY_TARGET=http://127.0.0.1:8787  # Vite proxy target for local Worker API
 ```
 
 ### Cloudflare Worker Secrets
@@ -216,6 +242,8 @@ npx wrangler secret put OLLAMA_API_KEY            # Ollama Cloud API key
 npx wrangler secret put MISTRAL_API_KEY           # Mistral API key
 
 npx wrangler secret put MODAL_SANDBOX_BASE_URL    # https://user--push-sandbox
+npx wrangler secret put BROWSERBASE_API_KEY       # Browserbase API key (for browser tools)
+npx wrangler secret put BROWSERBASE_PROJECT_ID    # Browserbase project id
 ```
 
 ## Development Commands
@@ -254,10 +282,12 @@ Without any API key, the app runs in demo mode with mock repos and welcome messa
 ## Security Notes
 
 - API keys never exposed to client in production (Worker proxies all AI calls)
+- Browserbase credentials are injected server-side by the Worker (never exposed to client)
 - Auditor gate cannot be bypassed — every commit requires SAFE verdict
 - Auditor defaults to UNSAFE on any error (fail-safe design)
 - Repo context is hard-locked — Orchestrator only sees selected repo
 - Sandbox containers auto-terminate after 30 minutes
+- Browser tools validate URL shape/protocol and reject private-network targets
 - Scratchpad content is escaped to prevent prompt injection
 - Scratchpad content capped at 50KB to prevent DoS via tool flooding
 - Context management uses token-budget summarization and preserves tool call/result pairing when trimming

@@ -11,6 +11,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 - **Chat-first** — conversation is the primary interface, not forms or dashboards
 - **Repo-locked context** — select a repo and the agent only sees that repo
 - **Tool protocol** — the agent calls GitHub and sandbox tools mid-conversation (PRs, commits, diffs, tests, type checks, workflows)
+- **Browser tools (optional)** — capture screenshots and extract page text via Browserbase in the sandbox
 - **Scratchpad** — shared notepad for accumulating ideas, requirements, and decisions throughout a session
 - **Streaming** — responses arrive token-by-token with visible thinking
 - **Demo mode** — Explore the workflow before connecting any accounts. Try the full agent experience with mock data to understand the philosophy before adding your keys.
@@ -55,6 +56,8 @@ VITE_MOONSHOT_API_KEY=...         # Kimi For Coding (unlimited API with subscrip
 VITE_MISTRAL_API_KEY=...          # Mistral Vibe (unlimited API with subscription)
 VITE_OLLAMA_API_KEY=...           # Ollama Cloud (unlimited API with subscription)
 VITE_GITHUB_TOKEN=...             # Optional — PAT for GitHub API access
+VITE_BROWSER_TOOL_ENABLED=true    # Optional — enables sandbox browser tools in prompts
+VITE_API_PROXY_TARGET=http://127.0.0.1:8787  # Optional — Vite -> local Wrangler proxy target
 ```
 
 Without any AI key the app runs in demo mode with mock repos and a welcome message. When 2+ provider keys are set, a backend picker appears in Settings.
@@ -75,6 +78,8 @@ Create a PAT with `repo` scope and paste it in the Settings UI. Simpler setup, b
 
 Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding, `/api/ollama/chat` to Ollama Cloud, `/api/mistral/chat` to Mistral Vibe, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
+For browser tools, set Worker secrets `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`. The Worker injects these server-side for `/api/sandbox/browser-screenshot` and `/api/sandbox/browser-extract` so browser credentials never reach the client.
+
 ```bash
 cd app && npm run build
 npx wrangler deploy     # from repo root
@@ -89,6 +94,19 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
 Three AI backends are supported: **Kimi For Coding**, **Mistral Vibe**, and **Ollama Cloud**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+
+## Browserbase Status
+
+Current state from `documents/Browserbase Integration Spike.md`:
+
+- [x] v1 complete and validated on deployed Worker + Modal
+- [x] `sandbox_browser_screenshot` shipped (card UI + metadata)
+- [x] `sandbox_browser_extract` shipped (card UI + bounded text extraction)
+- [x] Browserbase credentials injected server-side via Worker secrets
+- [x] Guardrails shipped (URL allowlist, private-network block, output caps)
+- [x] Test suite shipped (97 tests across tool/client/routes/types)
+- [ ] Validate on real mobile cellular networks (iOS Safari + Android Chrome)
+- [ ] Progressively enable `VITE_BROWSER_TOOL_ENABLED` after latency/error checks
 
 ## Project Structure
 

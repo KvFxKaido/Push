@@ -37,6 +37,18 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Tool protocol:** Tools are prompt-engineered — the system prompt defines available tools and JSON format. The orchestrator detects JSON tool blocks in responses, executes them against GitHub's API, injects results as synthetic messages, and re-calls the LLM. Both the Orchestrator and Coder tool loops are unbounded — they continue until the model stops emitting tool calls (or the user aborts). Sandbox tools use the same JSON block pattern, detected by a unified tool dispatch layer.
 
+**Browser tools (optional):** Sandbox browser operations are available via `sandbox_browser_screenshot` and `sandbox_browser_extract`. They are prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true` and routed through Worker endpoints `/api/sandbox/browser-screenshot` and `/api/sandbox/browser-extract`. The Worker injects Browserbase credentials server-side.
+
+**Browserbase status (from `documents/Browserbase Integration Spike.md`):**
+- [x] v1 complete and validated on deployed Worker + Modal
+- [x] `sandbox_browser_screenshot` shipped (card UI + metadata)
+- [x] `sandbox_browser_extract` shipped (card UI + bounded text extraction)
+- [x] Browserbase credentials injected server-side via Worker secrets
+- [x] Guardrails shipped (URL allowlist, private-network block, output caps)
+- [x] Test suite shipped (97 tests across tool/client/routes/types)
+- [ ] Validate on real mobile cellular networks (iOS Safari + Android Chrome)
+- [ ] Progressively enable `VITE_BROWSER_TOOL_ENABLED` after latency/error checks
+
 **Sandbox:** Modal (serverless containers) provides a persistent Linux environment per session. The repo is cloned into `/workspace`. The Coder reads/writes files, runs commands, and gets diffs — all via sandbox tools. The Cloudflare Worker proxies sandbox requests to Modal web endpoints (keeps Modal auth server-side). Containers auto-terminate after 30 min.
 
 **Coder delegation:** The Orchestrator can delegate coding tasks to the Coder via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox (unbounded rounds, 90s timeout per round, 60KB context cap), then returns a summary + cards to the Orchestrator.
@@ -64,7 +76,7 @@ app/src/
   types/             # TypeScript type definitions
   App.tsx            # Root component, screen state machine
 app/worker.ts        # Cloudflare Worker — streaming proxy to Kimi/Ollama/Mistral + sandbox proxy to Modal
-sandbox/app.py       # Modal Python App — 8 web endpoints for sandbox CRUD
+sandbox/app.py       # Modal Python App — sandbox web endpoints (file ops, exec/git, browser tools)
 sandbox/requirements.txt
 wrangler.jsonc       # Cloudflare Workers config (repo root)
 ```
@@ -101,6 +113,8 @@ VITE_MISTRAL_API_KEY=...          # Optional — Mistral key, can also be set vi
 VITE_GITHUB_TOKEN=...             # Optional, higher GitHub rate limits
 VITE_GITHUB_CLIENT_ID=...         # Optional, enables OAuth login
 VITE_GITHUB_OAUTH_PROXY=...       # Optional, required for OAuth token exchange
+VITE_BROWSER_TOOL_ENABLED=true    # Optional, enables browser tools in prompts
+VITE_API_PROXY_TARGET=...         # Optional, Vite /api proxy target (defaults to http://127.0.0.1:8787)
 ```
 
 **Worker secrets (Cloudflare):**
@@ -108,6 +122,8 @@ VITE_GITHUB_OAUTH_PROXY=...       # Optional, required for OAuth token exchange
 - `OLLAMA_API_KEY` — Ollama Cloud API key (production proxy)
 - `MISTRAL_API_KEY` — Mistral Vibe API key (production proxy)
 - `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--push-sandbox`). Endpoints follow pattern `{base}-{function}.modal.run`
+- `BROWSERBASE_API_KEY` — Browserbase API key (for browser screenshot/extract endpoints)
+- `BROWSERBASE_PROJECT_ID` — Browserbase project id
 
 **API keys:** Kimi, Ollama Cloud, and Mistral keys can be set via env vars or pasted in the Settings UI at runtime (stored in localStorage). Settings UI keys override env vars. When 2+ are set, the user picks which backend to use via a toggle in Settings. The preference is stored in localStorage.
 
