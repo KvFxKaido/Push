@@ -17,6 +17,8 @@ import type {
   TestResultsCardData,
   TypeCheckCardData,
   BrowserScreenshotCardData,
+  BrowserExtractCardData,
+  BrowserToolError,
 } from '@/types';
 import { extractBareToolJsonObjects } from './tool-dispatch';
 import {
@@ -26,10 +28,32 @@ import {
   getSandboxDiff,
   listDirectory,
   browserScreenshotInSandbox,
+  browserExtractInSandbox,
   type FileReadResult,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { browserToolEnabled } from './feature-flags';
+import { recordBrowserMetric } from './browser-metrics';
+
+// --- Browser tool error taxonomy ---
+
+const BROWSER_ERROR_MESSAGES: Record<string, string> = {
+  NAVIGATION_TIMEOUT: 'The page took too long to load',
+  INVALID_URL: "The URL couldn't be reached",
+  BLOCKED_TARGET: "This URL points to a private or local network and can't be accessed",
+  IMAGE_TOO_LARGE: 'The screenshot was too large to capture',
+  SESSION_CREATE_FAILED: "Couldn't start a browser session — try again",
+  BROWSERBASE_NOT_CONFIGURED: "Browser service isn't configured — contact your admin",
+  BROWSER_CONNECT_URL_MISSING: "Couldn't start a browser session — try again",
+  BROWSERBASE_HTTP_ERROR: "The browser service returned an error — try again",
+  BROWSERBASE_EXECUTION_ERROR: 'Something went wrong while loading the page — try again',
+  EMPTY_EXTRACTION: 'No readable text was found on the page',
+};
+
+function toBrowserToolError(code: string, fallbackDetails?: string): BrowserToolError {
+  const message = BROWSER_ERROR_MESSAGES[code] || 'Something went wrong — try again';
+  return { code, message: fallbackDetails && !BROWSER_ERROR_MESSAGES[code] ? `${message} (${fallbackDetails})` : message };
+}
 
 // --- Enhanced error messages ---
 
@@ -68,7 +92,8 @@ export type SandboxToolCall =
   | { tool: 'sandbox_push'; args: Record<string, never> }
   | { tool: 'sandbox_run_tests'; args: { framework?: string } }
   | { tool: 'sandbox_check_types'; args: Record<string, never> }
-  | { tool: 'sandbox_browser_screenshot'; args: { url: string; fullPage?: boolean } };
+  | { tool: 'sandbox_browser_screenshot'; args: { url: string; fullPage?: boolean } }
+  | { tool: 'sandbox_browser_extract'; args: { url: string; instruction?: string } };
 
 // --- Validation ---
 
@@ -105,6 +130,9 @@ export function validateSandboxToolCall(parsed: any): SandboxToolCall | null {
   }
   if (parsed.tool === 'sandbox_browser_screenshot' && parsed.args?.url && browserToolEnabled) {
     return { tool: 'sandbox_browser_screenshot', args: { url: parsed.args.url, fullPage: Boolean(parsed.args.fullPage) } };
+  }
+  if (parsed.tool === 'sandbox_browser_extract' && parsed.args?.url && browserToolEnabled) {
+    return { tool: 'sandbox_browser_extract', args: { url: parsed.args.url, instruction: parsed.args.instruction } };
   }
   return null;
 }
@@ -764,24 +792,58 @@ export async function executeSandboxToolCall(
           return { text: '[Tool Error] sandbox_browser_screenshot requires an absolute http(s) URL.' };
         }
 
-        const result = await browserScreenshotInSandbox(sandboxId, targetUrl, Boolean(call.args.fullPage));
-        if (!result.ok) {
-          const detail = result.details ? ` (${result.details})` : '';
-          return { text: `[Tool Error] ${result.error || 'Browser screenshot failed'}${detail}` };
+        const ssStart = Date.now();
+        let ssRetries = 0;
+        let ssResult: Awaited<ReturnType<typeof browserScreenshotInSandbox>>;
+        try {
+          ssResult = await browserScreenshotInSandbox(
+            sandboxId, targetUrl, Boolean(call.args.fullPage),
+            (r) => { ssRetries = r; },
+          );
+        } catch (screenshotErr) {
+          const ssDuration = Date.now() - ssStart;
+          const errMsg = screenshotErr instanceof Error ? screenshotErr.message : String(screenshotErr);
+          const errCode = errMsg.match(/\(([A-Z_]+)\)/)?.[1] || 'FETCH_ERROR';
+          recordBrowserMetric('screenshot', { durationMs: ssDuration, success: false, errorCode: errCode, retries: ssRetries });
+          throw screenshotErr;
+        }
+        const ssDuration = Date.now() - ssStart;
+
+        if (!ssResult.ok) {
+          const errorCode = ssResult.error || 'UNKNOWN';
+          recordBrowserMetric('screenshot', { durationMs: ssDuration, success: false, errorCode, retries: ssRetries });
+          const error = toBrowserToolError(errorCode, ssResult.details);
+          const cardData: BrowserScreenshotCardData = {
+            url: targetUrl,
+            finalUrl: targetUrl,
+            title: '',
+            statusCode: null,
+            mimeType: '',
+            imageBase64: '',
+            truncated: false,
+            error,
+          };
+          return {
+            text: `[Tool Error] ${error.message}`,
+            card: { type: 'browser-screenshot', data: cardData },
+          };
         }
 
-        if (!result.image_base64 || !result.mime_type) {
+        if (!ssResult.image_base64 || !ssResult.mime_type) {
+          recordBrowserMetric('screenshot', { durationMs: ssDuration, success: false, errorCode: 'MISSING_IMAGE_DATA', retries: ssRetries });
           return { text: '[Tool Error] Browser screenshot response was missing image data.' };
         }
 
+        recordBrowserMetric('screenshot', { durationMs: ssDuration, success: true, retries: ssRetries });
+
         const cardData: BrowserScreenshotCardData = {
           url: targetUrl,
-          finalUrl: result.final_url || targetUrl,
-          title: result.title || 'Browser Screenshot',
-          statusCode: typeof result.status_code === 'number' ? result.status_code : null,
-          mimeType: result.mime_type,
-          imageBase64: result.image_base64,
-          truncated: Boolean(result.truncated),
+          finalUrl: ssResult.final_url || targetUrl,
+          title: ssResult.title || 'Browser Screenshot',
+          statusCode: typeof ssResult.status_code === 'number' ? ssResult.status_code : null,
+          mimeType: ssResult.mime_type,
+          imageBase64: ssResult.image_base64,
+          truncated: Boolean(ssResult.truncated),
         };
 
         const lines = [
@@ -794,6 +856,86 @@ export async function executeSandboxToolCall(
         ];
 
         return { text: lines.join('\n'), card: { type: 'browser-screenshot', data: cardData } };
+      }
+
+      case 'sandbox_browser_extract': {
+        if (!browserToolEnabled) {
+          return { text: '[Tool Error] Browser tools are disabled. Set VITE_BROWSER_TOOL_ENABLED=true to enable.' };
+        }
+
+        const targetUrl = call.args.url.trim();
+        if (!/^https?:\/\//i.test(targetUrl)) {
+          return { text: '[Tool Error] sandbox_browser_extract requires an absolute http(s) URL.' };
+        }
+
+        const instruction = (call.args.instruction || '').trim();
+        const exStart = Date.now();
+        let exRetries = 0;
+        let exResult: Awaited<ReturnType<typeof browserExtractInSandbox>>;
+        try {
+          exResult = await browserExtractInSandbox(
+            sandboxId, targetUrl, instruction,
+            (r) => { exRetries = r; },
+          );
+        } catch (extractErr) {
+          const exDuration = Date.now() - exStart;
+          const errMsg = extractErr instanceof Error ? extractErr.message : String(extractErr);
+          const errCode = errMsg.match(/\(([A-Z_]+)\)/)?.[1] || 'FETCH_ERROR';
+          recordBrowserMetric('extract', { durationMs: exDuration, success: false, errorCode: errCode, retries: exRetries });
+          throw extractErr;
+        }
+        const exDuration = Date.now() - exStart;
+
+        if (!exResult.ok) {
+          const errorCode = exResult.error || 'UNKNOWN';
+          recordBrowserMetric('extract', { durationMs: exDuration, success: false, errorCode, retries: exRetries });
+          const error = toBrowserToolError(errorCode, exResult.details);
+          const cardData: BrowserExtractCardData = {
+            url: targetUrl,
+            finalUrl: targetUrl,
+            title: '',
+            statusCode: null,
+            instruction: instruction || undefined,
+            content: '',
+            truncated: false,
+            error,
+          };
+          return {
+            text: `[Tool Error] ${error.message}`,
+            card: { type: 'browser-extract', data: cardData },
+          };
+        }
+
+        const content = (exResult.content || '').trim();
+        if (!content) {
+          recordBrowserMetric('extract', { durationMs: exDuration, success: false, errorCode: 'EMPTY_CONTENT', retries: exRetries });
+          return { text: '[Tool Error] Browser extract returned no content.' };
+        }
+
+        recordBrowserMetric('extract', { durationMs: exDuration, success: true, retries: exRetries });
+
+        const cardData: BrowserExtractCardData = {
+          url: targetUrl,
+          finalUrl: exResult.final_url || targetUrl,
+          title: exResult.title || 'Browser Extract',
+          statusCode: typeof exResult.status_code === 'number' ? exResult.status_code : null,
+          instruction: instruction || undefined,
+          content,
+          truncated: Boolean(exResult.truncated),
+        };
+
+        const lines = [
+          '[Tool Result — sandbox_browser_extract]',
+          `URL: ${cardData.url}`,
+          `Final URL: ${cardData.finalUrl}`,
+          `Title: ${cardData.title}`,
+          `Status: ${cardData.statusCode === null ? 'n/a' : cardData.statusCode}`,
+          cardData.truncated ? 'Content truncated: yes' : 'Content truncated: no',
+          '',
+          cardData.content,
+        ];
+
+        return { text: lines.join('\n'), card: { type: 'browser-extract', data: cardData } };
       }
 
       default:
@@ -809,7 +951,7 @@ export async function executeSandboxToolCall(
 // --- System prompt extension ---
 
 const BROWSER_TOOL_PROTOCOL_LINE = browserToolEnabled
-  ? '\n- sandbox_browser_screenshot(url, fullPage?) — Capture a webpage screenshot in the sandbox browser and return it as a card.'
+  ? '\n- sandbox_browser_screenshot(url, fullPage?) — Capture a webpage screenshot in the sandbox browser and return it as a card.\n- sandbox_browser_extract(url, instruction?) — Extract readable page text (or focused content with instruction) from a webpage.'
   : '';
 
 export const SANDBOX_TOOL_PROTOCOL = `
@@ -846,6 +988,10 @@ Sandbox rules:
 - The repo is cloned to /workspace — use that as the working directory
 - You can install packages, run tests, build, lint — anything you'd do in a terminal
 - For multi-step tasks (edit + test), use multiple tool calls in sequence
+- For webpage tasks with external URLs, prefer browser tools first:
+  - Use sandbox_browser_screenshot for visual capture
+  - Use sandbox_browser_extract for text extraction
+  - Do not default to sandbox_exec with curl/python for these unless browser tools fail
 - sandbox_diff shows what you've changed — review before committing
 - sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.
 - If the push fails after a successful commit, use sandbox_push() to retry

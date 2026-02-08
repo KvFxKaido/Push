@@ -40,6 +40,7 @@ sandbox_image = (
 endpoint_image = modal.Image.debian_slim(python_version="3.12").pip_install("fastapi[standard]", "playwright")
 OWNER_TOKEN_FILE = "/tmp/push-owner-token"
 MAX_SCREENSHOT_BYTES = 1_500_000
+MAX_EXTRACT_CHARS = 20_000
 LIST_DIR_SCRIPT = """
 import json
 import os
@@ -548,6 +549,137 @@ def browser_screenshot(data: dict):
             "status_code": status_code,
             "mime_type": mime_type,
             "image_base64": image_b64,
+            "truncated": truncated,
+        }
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="ignore")
+        except Exception:
+            body = str(exc)
+        return {
+            "ok": False,
+            "error": "BROWSERBASE_HTTP_ERROR",
+            "details": f"{exc.code}: {body[:300]}",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "BROWSERBASE_EXECUTION_ERROR",
+            "details": str(exc),
+        }
+    finally:
+        _browserbase_end_session(browserbase_api_key, session_id)
+
+
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
+def browser_extract(data: dict):
+    """Browser extract endpoint (Browserbase-backed text extraction)."""
+    sandbox_id = data.get("sandbox_id")
+    owner_token = data.get("owner_token", "")
+    url = str(data.get("url", "")).strip()
+    instruction = str(data.get("instruction", "")).strip()
+
+    if not sandbox_id or not url:
+        return {"ok": False, "error": "Missing sandbox_id or url"}
+
+    sb = modal.Sandbox.from_id(sandbox_id)
+    if not _validate_owner_token(sb, owner_token):
+        return {"ok": False, "error": "Unauthorized sandbox access"}
+
+    browserbase_api_key = str(data.get("browserbase_api_key", "")).strip()
+    browserbase_project_id = str(data.get("browserbase_project_id", "")).strip()
+    if not browserbase_api_key or not browserbase_project_id:
+        return {
+            "ok": False,
+            "error": "BROWSERBASE_NOT_CONFIGURED",
+            "details": "Missing Browserbase credentials. Configure BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID on the Worker.",
+        }
+
+    blocked, blocked_reason = _is_blocked_browser_target(url)
+    if blocked:
+        return {
+            "ok": False,
+            "error": "INVALID_URL",
+            "details": blocked_reason,
+        }
+
+    session_id = ""
+    try:
+        session = _browserbase_create_session(browserbase_api_key, browserbase_project_id)
+        session_id = str(session.get("id", ""))
+        connect_url = str(session.get("connectUrl") or session.get("connect_url") or "").strip()
+        if not connect_url:
+            return {
+                "ok": False,
+                "error": "BROWSER_CONNECT_URL_MISSING",
+                "details": "Browserbase session was created without a connect URL.",
+            }
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(connect_url, timeout=20000)
+
+            if browser.contexts:
+                context = browser.contexts[0]
+                if context.pages:
+                    page = context.pages[0]
+                else:
+                    page = context.new_page()
+            else:
+                context = browser.new_context(viewport={"width": 1280, "height": 720})
+                page = context.new_page()
+
+            page.set_default_timeout(15000)
+            response = page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+
+            status_code = response.status if response else None
+            final_url = page.url
+            title = page.title() or ""
+
+            # Base extraction: readable text from the page body.
+            extracted = page.locator("body").inner_text(timeout=5000)
+
+            # Optional focused extraction when instruction includes selector hints.
+            # Supported hints:
+            # - "selector: .foo"
+            # - "css: .foo"
+            selector = ""
+            lowered = instruction.lower()
+            for prefix in ("selector:", "css:"):
+                if lowered.startswith(prefix):
+                    selector = instruction[len(prefix):].strip()
+                    break
+
+            if selector:
+                try:
+                    extracted = page.locator(selector).first.inner_text(timeout=5000)
+                except Exception:
+                    # Keep base extraction if selector resolution fails.
+                    pass
+
+            browser.close()
+
+        normalized = " ".join((extracted or "").split())
+        if not normalized:
+            return {
+                "ok": False,
+                "error": "EMPTY_EXTRACTION",
+                "details": "No readable text found on the page.",
+            }
+
+        truncated = len(normalized) > MAX_EXTRACT_CHARS
+        content = normalized[:MAX_EXTRACT_CHARS]
+        return {
+            "ok": True,
+            "title": title,
+            "final_url": final_url,
+            "status_code": status_code,
+            "content": content,
             "truncated": truncated,
         }
     except urllib.error.HTTPError as exc:

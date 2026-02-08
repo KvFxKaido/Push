@@ -145,6 +145,7 @@ export type ChatCard =
   | { type: 'test-results'; data: TestResultsCardData }
   | { type: 'type-check'; data: TypeCheckCardData }
   | { type: 'browser-screenshot'; data: BrowserScreenshotCardData }
+  | { type: 'browser-extract'; data: BrowserExtractCardData }
   | { type: 'workflow-runs'; data: WorkflowRunsCardData }
   | { type: 'workflow-logs'; data: WorkflowLogsCardData };
 
@@ -235,6 +236,11 @@ export interface SandboxStateCardData {
   fetchedAt: string;
 }
 
+export interface BrowserToolError {
+  code: string;
+  message: string;
+}
+
 export interface BrowserScreenshotCardData {
   url: string;
   finalUrl: string;
@@ -243,6 +249,18 @@ export interface BrowserScreenshotCardData {
   mimeType: string;
   imageBase64: string;
   truncated: boolean;
+  error?: BrowserToolError;
+}
+
+export interface BrowserExtractCardData {
+  url: string;
+  finalUrl: string;
+  title: string;
+  statusCode: number | null;
+  instruction?: string;
+  content: string;
+  truncated: boolean;
+  error?: BrowserToolError;
 }
 
 export interface DiffPreviewCardData {

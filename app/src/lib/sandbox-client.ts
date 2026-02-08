@@ -46,6 +46,17 @@ export interface BrowserScreenshotResult {
   details?: string;
 }
 
+export interface BrowserExtractResult {
+  ok: boolean;
+  title?: string;
+  final_url?: string;
+  status_code?: number | null;
+  content?: string;
+  truncated?: boolean;
+  error?: string;
+  details?: string;
+}
+
 // --- Error types ---
 
 export interface SandboxError {
@@ -144,16 +155,22 @@ function isRetryableError(err: unknown, statusCode?: number): boolean {
 /**
  * Wraps a fetch call with exponential backoff retry logic.
  * Retries up to MAX_RETRIES times with delays: 2s, 4s, 8s, 16s.
+ *
+ * @param onRetries — optional callback invoked with the total retry count
+ *   (0 if first attempt succeeded) just before returning or throwing.
  */
 async function withRetry<T>(
   operation: () => Promise<T>,
   endpoint: string,
+  onRetries?: (retries: number) => void,
 ): Promise<T> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await operation();
+      const result = await operation();
+      onRetries?.(attempt); // attempt 0 = first try succeeded, 1 = 1 retry, etc.
+      return result;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
 
@@ -167,6 +184,7 @@ async function withRetry<T>(
 
       // Don't retry non-retryable errors
       if (!isRetryableError(err, statusCode)) {
+        onRetries?.(attempt);
         throw lastError;
       }
 
@@ -182,6 +200,7 @@ async function withRetry<T>(
     }
   }
 
+  onRetries?.(MAX_RETRIES);
   throw new Error(`Sandbox ${endpoint} failed after ${MAX_RETRIES + 1} attempts: ${lastError?.message}`);
 }
 
@@ -189,6 +208,7 @@ async function sandboxFetch<T>(
   endpoint: string,
   body: Record<string, unknown>,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  onRetries?: (retries: number) => void,
 ): Promise<T> {
   return withRetry(async () => {
     const controller = new AbortController();
@@ -219,7 +239,7 @@ async function sandboxFetch<T>(
     } finally {
       clearTimeout(timer);
     }
-  }, endpoint);
+  }, endpoint, onRetries);
 }
 
 // --- Public API ---
@@ -363,6 +383,7 @@ export async function browserScreenshotInSandbox(
   sandboxId: string,
   url: string,
   fullPage: boolean = false,
+  onRetries?: (retries: number) => void,
 ): Promise<BrowserScreenshotResult> {
   return sandboxFetch<BrowserScreenshotResult>(
     'browser-screenshot',
@@ -373,5 +394,25 @@ export async function browserScreenshotInSandbox(
       full_page: fullPage,
     },
     BROWSER_TIMEOUT_MS,
+    onRetries,
+  );
+}
+
+export async function browserExtractInSandbox(
+  sandboxId: string,
+  url: string,
+  instruction?: string,
+  onRetries?: (retries: number) => void,
+): Promise<BrowserExtractResult> {
+  return sandboxFetch<BrowserExtractResult>(
+    'browser-extract',
+    {
+      ...withOwnerToken({}),
+      sandbox_id: sandboxId,
+      url,
+      instruction: instruction || '',
+    },
+    BROWSER_TIMEOUT_MS,
+    onRetries,
   );
 }

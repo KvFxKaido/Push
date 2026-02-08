@@ -8,6 +8,7 @@ import { execInSandbox } from '@/lib/sandbox-client';
 import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
+import { browserToolEnabled } from '@/lib/feature-flags';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
@@ -180,6 +181,43 @@ function shouldPrewarmSandbox(text: string, attachments?: AttachmentData[]): boo
     return true;
   }
   return false;
+}
+
+function isBrowserIntentPrompt(text: string): boolean {
+  const normalized = text.toLowerCase();
+  const hasUrl = /https?:\/\/\S+/i.test(text);
+  if (!hasUrl) return false;
+
+  // Explicit browser/extract/screenshot intent
+  if (/\b(screenshot|extract|browser|webpage|website|navigate|url)\b/.test(normalized)) {
+    return true;
+  }
+
+  // Common phrasing: "what's on ...", "summarize ...", etc for a URL.
+  if (/\b(what('?s| is)? on|summari[sz]e|read|pull|scrape|get text|parse)\b/.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+function withBrowserToolHint(messages: ChatMessage[]): ChatMessage[] {
+  if (!browserToolEnabled || messages.length === 0) return messages;
+
+  const idx = messages.length - 1;
+  const last = messages[idx];
+  if (last.role !== 'user' || last.isToolResult) return messages;
+  if (!isBrowserIntentPrompt(last.content)) return messages;
+
+  const hint =
+    '\n\n[INTERNAL TOOL HINT]\n' +
+    'For URL browsing tasks, use sandbox_browser_screenshot or sandbox_browser_extract before sandbox_exec.\n' +
+    'Only fall back to sandbox_exec (curl/python) if browser tools fail.\n' +
+    '[/INTERNAL TOOL HINT]';
+
+  const patched = [...messages];
+  patched[idx] = { ...last, content: `${last.content}${hint}` };
+  return patched;
 }
 
 export interface ScratchpadHandlers {
@@ -489,7 +527,7 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
       // Create new AbortController for this stream
       abortControllerRef.current = new AbortController();
 
-      let apiMessages = [...updatedWithUser];
+      let apiMessages = withBrowserToolHint([...updatedWithUser]);
 
       try {
         for (let round = 0; ; round++) {

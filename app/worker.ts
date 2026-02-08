@@ -39,6 +39,7 @@ const SANDBOX_ROUTES: Record<string, string> = {
   list: 'file-ops',
   delete: 'file-ops',
   'browser-screenshot': 'browser-screenshot',
+  'browser-extract': 'browser-extract',
 };
 
 export default {
@@ -264,7 +265,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
 
   // Route-specific payload enrichment without changing client contracts.
   let forwardBodyText = bodyResult.text;
-  if (route === 'read' || route === 'write' || route === 'list' || route === 'delete' || route === 'browser-screenshot') {
+  if (route === 'read' || route === 'write' || route === 'list' || route === 'delete' || route === 'browser-screenshot' || route === 'browser-extract') {
     try {
       const payload = JSON.parse(bodyResult.text) as Record<string, unknown>;
 
@@ -273,7 +274,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
       if (route === 'list') payload.action = 'list';
       if (route === 'delete') payload.action = 'delete';
 
-      if (route === 'browser-screenshot') {
+      if (route === 'browser-screenshot' || route === 'browser-extract') {
         payload.browserbase_api_key = env.BROWSERBASE_API_KEY || '';
         payload.browserbase_project_id = env.BROWSERBASE_PROJECT_ID || '';
       }

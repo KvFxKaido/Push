@@ -1,0 +1,719 @@
+/**
+ * Tests for browser tool validation, detection, and execution in sandbox-tools.ts.
+ *
+ * Covers:
+ * - sandbox_browser_screenshot validation (valid URLs, invalid schemes, missing URLs, feature flag)
+ * - sandbox_browser_extract validation (valid URLs, instruction, invalid URLs, feature flag)
+ * - Tool detection from fenced JSON and bare JSON
+ * - Tool execution (mocked sandbox-client calls)
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// ---- Mocks must be set up before importing the module under test ----
+
+// Use vi.hoisted() so these variables are available inside the hoisted vi.mock() factories.
+const {
+  mockBrowserToolEnabled,
+  mockBrowserScreenshotInSandbox,
+  mockBrowserExtractInSandbox,
+} = vi.hoisted(() => ({
+  mockBrowserToolEnabled: { value: true },
+  mockBrowserScreenshotInSandbox: vi.fn(),
+  mockBrowserExtractInSandbox: vi.fn(),
+}));
+
+// Mock the feature-flags module so we can control browserToolEnabled per test.
+vi.mock('./feature-flags', () => ({
+  get browserToolEnabled() {
+    return mockBrowserToolEnabled.value;
+  },
+}));
+
+// Mock sandbox-client so no real HTTP calls are made.
+vi.mock('./sandbox-client', () => ({
+  execInSandbox: vi.fn(),
+  readFromSandbox: vi.fn(),
+  writeToSandbox: vi.fn(),
+  getSandboxDiff: vi.fn(),
+  listDirectory: vi.fn(),
+  browserScreenshotInSandbox: (...args: unknown[]) => mockBrowserScreenshotInSandbox(...args),
+  browserExtractInSandbox: (...args: unknown[]) => mockBrowserExtractInSandbox(...args),
+}));
+
+// Mock auditor-agent (needed by sandbox_prepare_commit, not used in browser tests).
+vi.mock('./auditor-agent', () => ({
+  runAuditor: vi.fn(),
+}));
+
+// Mock browser-metrics (the execution code calls recordBrowserMetric).
+vi.mock('./browser-metrics', () => ({
+  recordBrowserMetric: vi.fn(),
+}));
+
+// Mock tool-dispatch for extractBareToolJsonObjects.
+// We provide a real implementation since the detection tests rely on it.
+vi.mock('./tool-dispatch', async () => {
+  const actual = await vi.importActual<typeof import('./tool-dispatch')>('./tool-dispatch');
+  return {
+    extractBareToolJsonObjects: actual.extractBareToolJsonObjects,
+  };
+});
+
+import {
+  validateSandboxToolCall,
+  detectSandboxToolCall,
+  executeSandboxToolCall,
+} from './sandbox-tools';
+
+// ---------------------------------------------------------------------------
+// 1. Tool validation -- sandbox_browser_screenshot
+// ---------------------------------------------------------------------------
+
+describe('validateSandboxToolCall -- sandbox_browser_screenshot', () => {
+  beforeEach(() => {
+    mockBrowserToolEnabled.value = true;
+  });
+
+  it('accepts a valid https URL', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_screenshot',
+      args: { url: 'https://example.com' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_browser_screenshot');
+    if (result!.tool === 'sandbox_browser_screenshot') {
+      expect(result!.args.url).toBe('https://example.com');
+      expect(result!.args.fullPage).toBe(false);
+    }
+  });
+
+  it('accepts a valid http URL', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_screenshot',
+      args: { url: 'http://example.com/page' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_browser_screenshot');
+  });
+
+  it('accepts fullPage: true', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_screenshot',
+      args: { url: 'https://example.com', fullPage: true },
+    });
+    expect(result).not.toBeNull();
+    if (result!.tool === 'sandbox_browser_screenshot') {
+      expect(result!.args.fullPage).toBe(true);
+    }
+  });
+
+  it('coerces truthy fullPage to boolean', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_screenshot',
+      args: { url: 'https://example.com', fullPage: 1 },
+    });
+    expect(result).not.toBeNull();
+    if (result!.tool === 'sandbox_browser_screenshot') {
+      expect(result!.args.fullPage).toBe(true);
+    }
+  });
+
+  it('rejects missing URL', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_screenshot',
+      args: {},
+    });
+    expect(result).toBeNull();
+  });
+
+  it('rejects empty string URL', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_screenshot',
+      args: { url: '' },
+    });
+    expect(result).toBeNull();
+  });
+
+  it('rejects when browserToolEnabled is false', () => {
+    mockBrowserToolEnabled.value = false;
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_screenshot',
+      args: { url: 'https://example.com' },
+    });
+    expect(result).toBeNull();
+  });
+
+  it('rejects missing args entirely', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_screenshot',
+    });
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2. Tool validation -- sandbox_browser_extract
+// ---------------------------------------------------------------------------
+
+describe('validateSandboxToolCall -- sandbox_browser_extract', () => {
+  beforeEach(() => {
+    mockBrowserToolEnabled.value = true;
+  });
+
+  it('accepts a valid https URL without instruction', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_extract',
+      args: { url: 'https://example.com' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_browser_extract');
+    if (result!.tool === 'sandbox_browser_extract') {
+      expect(result!.args.url).toBe('https://example.com');
+      expect(result!.args.instruction).toBeUndefined();
+    }
+  });
+
+  it('accepts a valid URL with an instruction', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_extract',
+      args: { url: 'https://example.com/docs', instruction: 'Get the pricing table' },
+    });
+    expect(result).not.toBeNull();
+    if (result!.tool === 'sandbox_browser_extract') {
+      expect(result!.args.instruction).toBe('Get the pricing table');
+    }
+  });
+
+  it('accepts http URL', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_extract',
+      args: { url: 'http://docs.example.com/api' },
+    });
+    expect(result).not.toBeNull();
+  });
+
+  it('rejects missing URL', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_extract',
+      args: { instruction: 'some instruction' },
+    });
+    expect(result).toBeNull();
+  });
+
+  it('rejects empty string URL', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_extract',
+      args: { url: '' },
+    });
+    expect(result).toBeNull();
+  });
+
+  it('rejects when browserToolEnabled is false', () => {
+    mockBrowserToolEnabled.value = false;
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_browser_extract',
+      args: { url: 'https://example.com' },
+    });
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Tool detection -- fenced and bare JSON
+// ---------------------------------------------------------------------------
+
+describe('detectSandboxToolCall -- browser tools', () => {
+  beforeEach(() => {
+    mockBrowserToolEnabled.value = true;
+  });
+
+  it('detects sandbox_browser_screenshot in fenced JSON', () => {
+    const text = 'Let me take a screenshot.\n```json\n{"tool": "sandbox_browser_screenshot", "args": {"url": "https://example.com"}}\n```';
+    const result = detectSandboxToolCall(text);
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_browser_screenshot');
+    if (result!.tool === 'sandbox_browser_screenshot') {
+      expect(result!.args.url).toBe('https://example.com');
+    }
+  });
+
+  it('detects sandbox_browser_extract in fenced JSON', () => {
+    const text = '```json\n{"tool": "sandbox_browser_extract", "args": {"url": "https://docs.example.com", "instruction": "Get the API reference"}}\n```';
+    const result = detectSandboxToolCall(text);
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_browser_extract');
+    if (result!.tool === 'sandbox_browser_extract') {
+      expect(result!.args.url).toBe('https://docs.example.com');
+      expect(result!.args.instruction).toBe('Get the API reference');
+    }
+  });
+
+  it('detects sandbox_browser_screenshot in bare JSON (no fences)', () => {
+    const text = 'Here is the tool call: {"tool": "sandbox_browser_screenshot", "args": {"url": "https://example.com", "fullPage": true}}';
+    const result = detectSandboxToolCall(text);
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_browser_screenshot');
+    if (result!.tool === 'sandbox_browser_screenshot') {
+      expect(result!.args.fullPage).toBe(true);
+    }
+  });
+
+  it('detects sandbox_browser_extract in bare JSON', () => {
+    const text = '{"tool": "sandbox_browser_extract", "args": {"url": "https://example.com"}}';
+    const result = detectSandboxToolCall(text);
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_browser_extract');
+  });
+
+  it('returns null for browser tools when feature flag is off', () => {
+    mockBrowserToolEnabled.value = false;
+    const text = '```json\n{"tool": "sandbox_browser_screenshot", "args": {"url": "https://example.com"}}\n```';
+    const result = detectSandboxToolCall(text);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when URL is missing from args', () => {
+    const text = '```json\n{"tool": "sandbox_browser_screenshot", "args": {}}\n```';
+    const result = detectSandboxToolCall(text);
+    expect(result).toBeNull();
+  });
+
+  it('handles nested JSON in args correctly', () => {
+    const text = '{"tool": "sandbox_browser_screenshot", "args": {"url": "https://example.com/path?q=1&r=2"}}';
+    const result = detectSandboxToolCall(text);
+    expect(result).not.toBeNull();
+    if (result!.tool === 'sandbox_browser_screenshot') {
+      expect(result!.args.url).toBe('https://example.com/path?q=1&r=2');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Tool execution -- sandbox_browser_screenshot
+// ---------------------------------------------------------------------------
+
+describe('executeSandboxToolCall -- sandbox_browser_screenshot', () => {
+  beforeEach(() => {
+    mockBrowserToolEnabled.value = true;
+    mockBrowserScreenshotInSandbox.mockReset();
+    mockBrowserExtractInSandbox.mockReset();
+  });
+
+  it('returns error when no sandboxId is provided', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'https://example.com', fullPage: false } },
+      '',
+    );
+    expect(result.text).toContain('No active sandbox');
+  });
+
+  it('returns error when browserToolEnabled is false', async () => {
+    mockBrowserToolEnabled.value = false;
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'https://example.com', fullPage: false } },
+      'sb-123',
+    );
+    expect(result.text).toContain('Browser tools are disabled');
+  });
+
+  it('rejects non-http URL at execution time', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'ftp://example.com/file', fullPage: false } },
+      'sb-123',
+    );
+    expect(result.text).toContain('requires an absolute http(s) URL');
+  });
+
+  it('rejects javascript: scheme at execution time', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'javascript:alert(1)', fullPage: false } },
+      'sb-123',
+    );
+    expect(result.text).toContain('requires an absolute http(s) URL');
+  });
+
+  it('rejects data: scheme at execution time', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'data:text/html,hello', fullPage: false } },
+      'sb-123',
+    );
+    expect(result.text).toContain('requires an absolute http(s) URL');
+  });
+
+  it('rejects file: scheme at execution time', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'file:///etc/passwd', fullPage: false } },
+      'sb-123',
+    );
+    expect(result.text).toContain('requires an absolute http(s) URL');
+  });
+
+  it('returns error card when sandbox client reports known error code', async () => {
+    // Use a known error code from the BROWSER_ERROR_MESSAGES map
+    mockBrowserScreenshotInSandbox.mockResolvedValue({
+      ok: false,
+      error: 'NAVIGATION_TIMEOUT',
+      details: 'Page did not load within 30s',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'https://slow-site.com', fullPage: false } },
+      'sb-123',
+    );
+    // NAVIGATION_TIMEOUT maps to "The page took too long to load"
+    expect(result.text).toContain('The page took too long to load');
+    expect(result.card).toBeDefined();
+    expect(result.card!.type).toBe('browser-screenshot');
+  });
+
+  it('returns fallback error for unknown error codes', async () => {
+    mockBrowserScreenshotInSandbox.mockResolvedValue({
+      ok: false,
+      error: 'SOME_UNKNOWN_CODE',
+      details: 'unusual details',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'https://slow-site.com', fullPage: false } },
+      'sb-123',
+    );
+    // Unknown code falls back to "Something went wrong"
+    expect(result.text).toContain('Something went wrong');
+    expect(result.text).toContain('unusual details');
+  });
+
+  it('returns error when response is missing image data', async () => {
+    mockBrowserScreenshotInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Example',
+      final_url: 'https://example.com',
+      status_code: 200,
+      // missing image_base64 and mime_type
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'https://example.com', fullPage: false } },
+      'sb-123',
+    );
+    expect(result.text).toContain('missing image data');
+  });
+
+  it('returns card with correct shape on success', async () => {
+    mockBrowserScreenshotInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Example Domain',
+      final_url: 'https://example.com/',
+      status_code: 200,
+      mime_type: 'image/png',
+      image_base64: 'iVBORw0KGgoAAAANSUhEUgAAAAUA',
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'https://example.com', fullPage: false } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('sandbox_browser_screenshot');
+    expect(result.text).toContain('https://example.com');
+    expect(result.text).toContain('Example Domain');
+    expect(result.card).toBeDefined();
+    expect(result.card!.type).toBe('browser-screenshot');
+
+    const data = result.card!.data as import('@/types').BrowserScreenshotCardData;
+    expect(data.url).toBe('https://example.com');
+    expect(data.finalUrl).toBe('https://example.com/');
+    expect(data.title).toBe('Example Domain');
+    expect(data.statusCode).toBe(200);
+    expect(data.mimeType).toBe('image/png');
+    expect(data.imageBase64).toBe('iVBORw0KGgoAAAANSUhEUgAAAAUA');
+    expect(data.truncated).toBe(false);
+  });
+
+  it('passes fullPage, sandboxId, and onRetries callback to the client', async () => {
+    mockBrowserScreenshotInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Full Page',
+      final_url: 'https://example.com',
+      status_code: 200,
+      mime_type: 'image/png',
+      image_base64: 'abc',
+      truncated: false,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'https://example.com', fullPage: true } },
+      'sb-456',
+    );
+
+    // The 4th argument is the onRetries callback function
+    expect(mockBrowserScreenshotInSandbox).toHaveBeenCalledWith(
+      'sb-456', 'https://example.com', true, expect.any(Function),
+    );
+  });
+
+  it('handles null status_code', async () => {
+    mockBrowserScreenshotInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Test',
+      final_url: 'https://example.com',
+      status_code: null,
+      mime_type: 'image/png',
+      image_base64: 'data',
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_screenshot', args: { url: 'https://example.com', fullPage: false } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Status: n/a');
+    const data = result.card!.data as import('@/types').BrowserScreenshotCardData;
+    expect(data.statusCode).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Tool execution -- sandbox_browser_extract
+// ---------------------------------------------------------------------------
+
+describe('executeSandboxToolCall -- sandbox_browser_extract', () => {
+  beforeEach(() => {
+    mockBrowserToolEnabled.value = true;
+    mockBrowserScreenshotInSandbox.mockReset();
+    mockBrowserExtractInSandbox.mockReset();
+  });
+
+  it('returns error when no sandboxId is provided', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com' } },
+      '',
+    );
+    expect(result.text).toContain('No active sandbox');
+  });
+
+  it('returns error when browserToolEnabled is false', async () => {
+    mockBrowserToolEnabled.value = false;
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com' } },
+      'sb-123',
+    );
+    expect(result.text).toContain('Browser tools are disabled');
+  });
+
+  it('rejects non-http URL at execution time', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'ftp://files.example.com/data' } },
+      'sb-123',
+    );
+    expect(result.text).toContain('requires an absolute http(s) URL');
+  });
+
+  it('rejects javascript: scheme at execution time', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'javascript:void(0)' } },
+      'sb-123',
+    );
+    expect(result.text).toContain('requires an absolute http(s) URL');
+  });
+
+  it('rejects data: scheme at execution time', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'data:text/plain,hello' } },
+      'sb-123',
+    );
+    expect(result.text).toContain('requires an absolute http(s) URL');
+  });
+
+  it('rejects file: scheme at execution time', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'file:///etc/hosts' } },
+      'sb-123',
+    );
+    expect(result.text).toContain('requires an absolute http(s) URL');
+  });
+
+  it('returns error card when sandbox client reports known error code', async () => {
+    // Use a known error code from the BROWSER_ERROR_MESSAGES map
+    mockBrowserExtractInSandbox.mockResolvedValue({
+      ok: false,
+      error: 'SESSION_CREATE_FAILED',
+      details: 'Could not connect',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com' } },
+      'sb-123',
+    );
+    // SESSION_CREATE_FAILED maps to "Couldn't start a browser session -- try again"
+    expect(result.text).toContain("start a browser session");
+    expect(result.card).toBeDefined();
+    expect(result.card!.type).toBe('browser-extract');
+  });
+
+  it('returns fallback error for unknown error codes', async () => {
+    mockBrowserExtractInSandbox.mockResolvedValue({
+      ok: false,
+      error: 'WEIRD_ERROR',
+      details: 'some detail',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com' } },
+      'sb-123',
+    );
+    expect(result.text).toContain('Something went wrong');
+    expect(result.text).toContain('some detail');
+  });
+
+  it('returns error when content is empty', async () => {
+    mockBrowserExtractInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Empty Page',
+      final_url: 'https://example.com',
+      status_code: 200,
+      content: '',
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com' } },
+      'sb-123',
+    );
+    expect(result.text).toContain('returned no content');
+  });
+
+  it('returns card with correct shape on success', async () => {
+    mockBrowserExtractInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'API Docs',
+      final_url: 'https://docs.example.com/api',
+      status_code: 200,
+      content: '# API Reference\n\nWelcome to the API docs.',
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://docs.example.com/api', instruction: 'Get API reference' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('sandbox_browser_extract');
+    expect(result.text).toContain('API Docs');
+    expect(result.card).toBeDefined();
+    expect(result.card!.type).toBe('browser-extract');
+
+    const data = result.card!.data as import('@/types').BrowserExtractCardData;
+    expect(data.url).toBe('https://docs.example.com/api');
+    expect(data.finalUrl).toBe('https://docs.example.com/api');
+    expect(data.title).toBe('API Docs');
+    expect(data.statusCode).toBe(200);
+    expect(data.instruction).toBe('Get API reference');
+    expect(data.content).toContain('API Reference');
+    expect(data.truncated).toBe(false);
+  });
+
+  it('passes instruction, sandboxId, and onRetries callback to the client', async () => {
+    mockBrowserExtractInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Test',
+      final_url: 'https://example.com',
+      status_code: 200,
+      content: 'some content',
+      truncated: false,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com', instruction: 'Find pricing info' } },
+      'sb-789',
+    );
+
+    // The 4th argument is the onRetries callback function
+    expect(mockBrowserExtractInSandbox).toHaveBeenCalledWith(
+      'sb-789', 'https://example.com', 'Find pricing info', expect.any(Function),
+    );
+  });
+
+  it('passes empty string instruction when not provided', async () => {
+    mockBrowserExtractInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Test',
+      final_url: 'https://example.com',
+      status_code: 200,
+      content: 'some content',
+      truncated: false,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com' } },
+      'sb-789',
+    );
+
+    // The execution trims the instruction, so undefined becomes ''
+    // The 4th argument is the onRetries callback function
+    expect(mockBrowserExtractInSandbox).toHaveBeenCalledWith(
+      'sb-789', 'https://example.com', '', expect.any(Function),
+    );
+  });
+
+  it('omits instruction from card data when empty', async () => {
+    mockBrowserExtractInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Test',
+      final_url: 'https://example.com',
+      status_code: 200,
+      content: 'some content',
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com' } },
+      'sb-789',
+    );
+
+    const data = result.card!.data as import('@/types').BrowserExtractCardData;
+    expect(data.instruction).toBeUndefined();
+  });
+
+  it('handles null status_code', async () => {
+    mockBrowserExtractInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Test',
+      final_url: 'https://example.com',
+      status_code: null,
+      content: 'content',
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Status: n/a');
+    const data = result.card!.data as import('@/types').BrowserExtractCardData;
+    expect(data.statusCode).toBeNull();
+  });
+
+  it('reports truncation correctly', async () => {
+    mockBrowserExtractInSandbox.mockResolvedValue({
+      ok: true,
+      title: 'Long Page',
+      final_url: 'https://example.com',
+      status_code: 200,
+      content: 'truncated content...',
+      truncated: true,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_browser_extract', args: { url: 'https://example.com' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Content truncated: yes');
+    const data = result.card!.data as import('@/types').BrowserExtractCardData;
+    expect(data.truncated).toBe(true);
+  });
+});
