@@ -379,8 +379,10 @@ export const MessageBubble = memo(function MessageBubble({
     return null;
   }
 
-  // Hide tool call messages — they now live in the Console drawer
-  if (message.isToolCall) {
+  // Hide tool call messages only when they have no cards.
+  // Some tools (e.g. browser screenshots) attach cards to the tool-call
+  // message itself; keep those visible so the card can render.
+  if (message.isToolCall && (!message.cards || message.cards.length === 0)) {
     return null;
   }
 
@@ -435,17 +437,19 @@ export const MessageBubble = memo(function MessageBubble({
             isStreaming={isStreaming && !hasContent}
           />
         )}
-        <div
-          className={`text-[15px] leading-relaxed break-words ${
-            isError ? 'text-red-400' : 'text-[#d4d4d8]'
-          }`}
-        >
-          {content}
-          {isStreaming && (
-            <span className="inline-block w-[6px] h-[16px] bg-[#0070f3] ml-0.5 align-text-bottom animate-blink" />
-          )}
-        </div>
-        {hasContent && !isStreaming && (
+        {!message.isToolCall && (
+          <div
+            className={`text-[15px] leading-relaxed break-words ${
+              isError ? 'text-red-400' : 'text-[#d4d4d8]'
+            }`}
+          >
+            {content}
+            {isStreaming && (
+              <span className="inline-block w-[6px] h-[16px] bg-[#0070f3] ml-0.5 align-text-bottom animate-blink" />
+            )}
+          </div>
+        )}
+        {!message.isToolCall && hasContent && !isStreaming && (
           <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-150 mt-1">
             <CopyButton text={message.content} />
           </div>
