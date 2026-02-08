@@ -138,6 +138,16 @@ export async function executeAnyToolCall(
   }
 }
 
+/**
+ * Check if text contains what looks like a tool call attempt that failed to parse.
+ * Returns true if there's a {"tool": or "tool": pattern but detectAnyToolCall returned null.
+ * Used by useChat to inject error feedback so the LLM can retry.
+ */
+export function detectMalformedToolAttempt(text: string): boolean {
+  // Look for patterns that strongly suggest an intended tool call
+  return /[{,]\s*"tool"\s*:\s*"/.test(text);
+}
+
 // --- delegate_coder detection ---
 
 function detectDelegateCoder(text: string): AnyToolCall | null {

@@ -224,7 +224,12 @@ Voice:
 Boundaries:
 - If you don't know something, say so. Don't guess.
 - You only know about the active repo. Never mention other repos — the user controls that via UI.
-- All questions about "the repo", PRs, or changes refer to the active repo. Period.`;
+- All questions about "the repo", PRs, or changes refer to the active repo. Period.
+
+Error recovery:
+- If a tool result contains an error, diagnose it and retry with corrected arguments — don't just report the error.
+- Never claim a task is complete unless a tool result confirms success.
+- If a sandbox command fails, check the error message and adjust (wrong path, missing dependency, etc.).`;
 
 const DEMO_WELCOME = `Welcome to **Push** — your AI coding agent with direct repo access.
 
@@ -887,7 +892,7 @@ export async function streamOllamaChat(
         network: 'Cannot reach Ollama Cloud — network error. Check your connection.',
       },
       parseError: (p, f) => p.error?.message || p.error || f,
-      checkFinishReason: (c) => c.finish_reason != null,
+      checkFinishReason: (c) => c.finish_reason === 'stop' || c.finish_reason === 'end_turn' || c.finish_reason === 'length',
       shouldResetStallOnReasoning: true,
     },
     messages,
