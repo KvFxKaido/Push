@@ -10,7 +10,7 @@ import { useMoonshotKey } from '@/hooks/useMoonshotKey';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
 import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, type PreferredProvider } from '@/lib/providers';
-import { getActiveProvider } from '@/lib/orchestrator';
+import { getActiveProvider, getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { buildWorkspaceContext } from '@/lib/workspace-context';
@@ -125,6 +125,7 @@ function App() {
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
+  const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
 
   const copyAllowlistCommand = useCallback(async () => {
@@ -141,6 +142,11 @@ function App() {
       document.body.removeChild(textarea);
     }
   }, [allowlistSecretCmd]);
+
+  const updateContextMode = useCallback((mode: ContextMode) => {
+    setContextMode(mode);
+    setContextModeState(mode);
+  }, []);
 
   // Screen state machine
   const screen: AppScreen = useMemo(() => {
@@ -616,6 +622,47 @@ function App() {
                     Disconnect
                   </Button>
                 </div>
+              )}
+            </div>
+
+            {/* Context window behavior */}
+            <div className="space-y-3 pt-2 border-t border-[#1a1a1a]">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-[#fafafa]">
+                  Context Mode
+                </label>
+                <span className="text-xs text-[#a1a1aa]">
+                  {contextMode === 'graceful' ? 'Graceful digest' : 'No trimming'}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateContextMode('graceful')}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                    contextMode === 'graceful'
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                      : 'border-[#1a1a1a] bg-[#0d0d0d] text-[#71717a] hover:text-[#a1a1aa]'
+                  }`}
+                >
+                  Graceful Digest
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateContextMode('none')}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                    contextMode === 'none'
+                      ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
+                      : 'border-[#1a1a1a] bg-[#0d0d0d] text-[#71717a] hover:text-[#a1a1aa]'
+                  }`}
+                >
+                  No Trimming
+                </button>
+              </div>
+              {contextMode === 'none' && (
+                <p className="text-[11px] text-[#a1a1aa]">
+                  No trimming can hit model context limits on long chats and cause failures.
+                </p>
               )}
             </div>
 

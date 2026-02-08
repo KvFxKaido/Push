@@ -43,9 +43,31 @@ const MISTRAL_API_URL = import.meta.env.DEV
   ? '/mistral/v1/chat/completions'
   : '/api/mistral/chat';
 
+// Context mode config (runtime toggle from Settings)
+const CONTEXT_MODE_STORAGE_KEY = 'push_context_mode';
+export type ContextMode = 'graceful' | 'none';
+
 // Rolling window config — token-based context management
-const MAX_CONTEXT_TOKENS = 100_000; // Token budget for messages (leaves room for system prompt + response)
-const SUMMARIZE_THRESHOLD = 0.7; // Start summarizing at 70% of budget
+const MAX_CONTEXT_TOKENS = 100_000; // Hard cap
+const TARGET_CONTEXT_TOKENS = 88_000; // Soft target leaves room for system prompt + response
+
+export function getContextMode(): ContextMode {
+  try {
+    const stored = localStorage.getItem(CONTEXT_MODE_STORAGE_KEY);
+    if (stored === 'none') return 'none';
+  } catch {
+    // ignore storage errors
+  }
+  return 'graceful';
+}
+
+export function setContextMode(mode: ContextMode): void {
+  try {
+    localStorage.setItem(CONTEXT_MODE_STORAGE_KEY, mode);
+  } catch {
+    // ignore storage errors
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Token Estimation — rough heuristic, no tokenizer dependency
@@ -113,6 +135,50 @@ function summarizeToolResult(msg: ChatMessage): ChatMessage {
   return { ...msg, content: summary };
 }
 
+function summarizeVerboseMessage(msg: ChatMessage): ChatMessage {
+  if (msg.content.length < 1200) return msg;
+
+  const lines = msg.content.split('\n').map((l) => l.trim()).filter(Boolean);
+  const preview = lines.slice(0, 4).map((l) => (l.length > 180 ? l.slice(0, 180) + '...' : l));
+  const summary = [...preview, '[...summarized]'].join('\n');
+  return { ...msg, content: summary };
+}
+
+function buildContextDigest(removed: ChatMessage[]): string {
+  const points: string[] = [];
+
+  for (const msg of removed) {
+    if (points.length >= 18) break;
+
+    if (msg.isToolResult) {
+      const header = msg.content.split('\n').find((l) => l.startsWith('[Tool Result')) || '';
+      if (header) points.push(`- ${header}`);
+      continue;
+    }
+
+    if (msg.isToolCall) {
+      points.push('- Tool call executed in earlier context.');
+      continue;
+    }
+
+    const firstLine = msg.content.split('\n').map((l) => l.trim()).find(Boolean) || '';
+    if (!firstLine) continue;
+    const snippet = firstLine.length > 200 ? firstLine.slice(0, 200) + '...' : firstLine;
+    points.push(`- ${msg.role === 'user' ? 'User' : 'Assistant'}: ${snippet}`);
+  }
+
+  if (points.length === 0) {
+    points.push('- Earlier context trimmed for token budget.');
+  }
+
+  return [
+    '[CONTEXT DIGEST]',
+    'Earlier messages were condensed to fit the context budget.',
+    ...points,
+    '[/CONTEXT DIGEST]',
+  ].join('\n');
+}
+
 /**
  * Manage context window: summarize old messages instead of dropping them.
  *
@@ -123,88 +189,113 @@ function summarizeToolResult(msg: ChatMessage): ChatMessage {
  * 4. If still over budget, start dropping oldest summarized pairs
  */
 function manageContext(messages: ChatMessage[]): ChatMessage[] {
+  if (getContextMode() === 'none') {
+    return messages;
+  }
+
   const totalTokens = estimateContextTokens(messages);
 
-  // Under budget — keep everything
-  if (totalTokens <= MAX_CONTEXT_TOKENS) {
+  // Under target — keep everything
+  if (totalTokens <= TARGET_CONTEXT_TOKENS) {
     return messages;
   }
 
   // Find first user message index (to pin it)
   const firstUserIdx = messages.findIndex(m => m.role === 'user' && !m.isToolResult);
 
-  // Phase 1: Summarize old tool results (walk from oldest to newest, skip recent 10)
+  // Phase 1: Summarize old verbose content (walk from oldest to newest, skip recent 14)
   const result = [...messages];
-  const recentBoundary = Math.max(0, result.length - 10);
+  const recentBoundary = Math.max(0, result.length - 14);
   let currentTokens = totalTokens;
 
-  for (let i = 0; i < recentBoundary && currentTokens > MAX_CONTEXT_TOKENS; i++) {
+  for (let i = 0; i < recentBoundary && currentTokens > TARGET_CONTEXT_TOKENS; i++) {
     const msg = result[i];
-    if (msg.isToolResult) {
-      const before = estimateMessageTokens(msg);
-      const summarized = summarizeToolResult(msg);
-      const after = estimateMessageTokens(summarized);
-      result[i] = summarized;
-      currentTokens -= (before - after);
-    }
+    const before = estimateMessageTokens(msg);
+    const summarized = msg.isToolResult ? summarizeToolResult(msg) : summarizeVerboseMessage(msg);
+    const after = estimateMessageTokens(summarized);
+    result[i] = summarized;
+    currentTokens -= (before - after);
   }
 
-  if (currentTokens <= MAX_CONTEXT_TOKENS) {
+  if (currentTokens <= TARGET_CONTEXT_TOKENS) {
     console.log(`[Push] Context managed via summarization: ${totalTokens} → ${currentTokens} tokens`);
     return result;
   }
 
-  // Phase 2: Drop oldest message pairs (but never the pinned first user message)
-  const kept: ChatMessage[] = [];
-  let droppedTokens = 0;
+  // Phase 2: Remove oldest non-pinned messages with a digest fallback.
+  const tailStart = Math.max(0, result.length - 14);
+  const protectedIdx = new Set<number>();
+  if (firstUserIdx >= 0) protectedIdx.add(firstUserIdx);
+  for (let i = tailStart; i < result.length; i++) protectedIdx.add(i);
 
-  // Always keep the first user message
-  if (firstUserIdx >= 0) {
-    kept.push(result[firstUserIdx]);
+  const toRemove = new Set<number>();
+  const removed: ChatMessage[] = [];
+
+  for (let i = 0; i < result.length && currentTokens > TARGET_CONTEXT_TOKENS; i++) {
+    if (protectedIdx.has(i) || toRemove.has(i)) continue;
+
+    // Keep tool call/result paired for coherence.
+    if (result[i].isToolCall && i + 1 < result.length && result[i + 1]?.isToolResult && !protectedIdx.has(i + 1)) {
+      toRemove.add(i);
+      toRemove.add(i + 1);
+      removed.push(result[i], result[i + 1]);
+      currentTokens -= estimateMessageTokens(result[i]) + estimateMessageTokens(result[i + 1]);
+      i++;
+      continue;
+    }
+    if (result[i].isToolResult && i > 0 && result[i - 1]?.isToolCall && !protectedIdx.has(i - 1)) {
+      // Let the pair be removed when the call index is processed.
+      continue;
+    }
+
+    toRemove.add(i);
+    removed.push(result[i]);
+    currentTokens -= estimateMessageTokens(result[i]);
   }
 
-  // Walk from oldest, skip messages until we're under budget.
-  // Tool call/result pairs are atomic — drop or keep both together.
-  let dropping = true;
+  if (toRemove.size === 0) {
+    return result;
+  }
+
+  const digestMessage: ChatMessage = {
+    id: `context-digest-${Date.now()}`,
+    role: 'user',
+    content: buildContextDigest(removed),
+    timestamp: 0,
+    status: 'done',
+    isToolResult: true, // hidden in UI, still sent to model
+  };
+
+  const kept: ChatMessage[] = [];
+  let digestInserted = false;
   for (let i = 0; i < result.length; i++) {
-    if (i === firstUserIdx) continue; // Already added
+    if (toRemove.has(i)) continue;
 
-    if (dropping) {
-      // If this is a tool call followed by a tool result, handle as a pair
-      const isToolCallPair = result[i].isToolCall && i + 1 < result.length && result[i + 1]?.isToolResult;
-      const isToolResultOfPair = result[i].isToolResult && i > 0 && result[i - 1]?.isToolCall;
-
-      // Skip tool results that are part of a pair we already dropped
-      if (isToolResultOfPair) continue;
-
-      // Drop the pair together
-      const pairTokens = isToolCallPair
-        ? estimateMessageTokens(result[i]) + estimateMessageTokens(result[i + 1])
-        : estimateMessageTokens(result[i]);
-
-      droppedTokens += pairTokens;
-      if (isToolCallPair) i++; // skip the result too
-
-      if (currentTokens - droppedTokens <= MAX_CONTEXT_TOKENS * SUMMARIZE_THRESHOLD) {
-        dropping = false;
-        // Add a context note so the model knows history was trimmed
-        kept.push({
-          id: 'context-trimmed',
-          role: 'user',
-          content: '[Earlier conversation messages were summarized to fit context. The original task from the user is preserved above.]',
-          timestamp: 0,
-          status: 'done',
-          isToolResult: true, // hide from UI
-        });
+    if (!digestInserted) {
+      if (firstUserIdx >= 0 && i === firstUserIdx + 1) {
+        kept.push(digestMessage);
+        digestInserted = true;
+      } else if (firstUserIdx < 0 && i === 0) {
+        kept.push(digestMessage);
+        digestInserted = true;
       }
     }
 
-    if (!dropping) {
-      kept.push(result[i]);
+    kept.push(result[i]);
+  }
+  if (!digestInserted) kept.unshift(digestMessage);
+
+  if (estimateContextTokens(kept) > MAX_CONTEXT_TOKENS) {
+    // Last resort hard trim from oldest non-protected while keeping digest and recent tail.
+    const hardResult = [...kept];
+    while (estimateContextTokens(hardResult) > MAX_CONTEXT_TOKENS && hardResult.length > 16) {
+      hardResult.splice(1, 1);
     }
+    console.log(`[Push] Context managed (hard fallback): ${totalTokens} → ${estimateContextTokens(hardResult)} tokens`);
+    return hardResult;
   }
 
-  console.log(`[Push] Context managed: ${totalTokens} tokens → ~${currentTokens - droppedTokens} tokens (${messages.length} → ${kept.length} messages)`);
+  console.log(`[Push] Context managed with digest: ${totalTokens} → ${estimateContextTokens(kept)} tokens (${messages.length} → ${kept.length} messages)`);
   return kept;
 }
 
