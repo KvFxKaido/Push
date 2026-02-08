@@ -609,13 +609,15 @@ async function generateGitHubAppJWT(appId, privateKeyPEM) {
   const encodedHeader = encodeBase64Url(JSON.stringify(header));
   const encodedPayload = encodeBase64Url(JSON.stringify(payload));
   const signingInput = `${encodedHeader}.${encodedPayload}`;
-  const pemHeader = "-----BEGIN RSA PRIVATE KEY-----";
-  const pemFooter = "-----END RSA PRIVATE KEY-----";
+  const isPkcs1 = privateKeyPEM.includes("BEGIN RSA PRIVATE KEY");
+  const pemHeader = isPkcs1 ? "-----BEGIN RSA PRIVATE KEY-----" : "-----BEGIN PRIVATE KEY-----";
+  const pemFooter = isPkcs1 ? "-----END RSA PRIVATE KEY-----" : "-----END PRIVATE KEY-----";
   const pemContents = privateKeyPEM.replace(pemHeader, "").replace(pemFooter, "").replace(/\s/g, "");
-  const binaryKey = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+  const derBytes = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+  const pkcs8Bytes = isPkcs1 ? wrapPkcs1InPkcs8(derBytes) : derBytes;
   const cryptoKey = await crypto.subtle.importKey(
     "pkcs8",
-    binaryKey.buffer,
+    pkcs8Bytes.buffer,
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
     ["sign"]
@@ -628,6 +630,45 @@ async function generateGitHubAppJWT(appId, privateKeyPEM) {
   return `${signingInput}.${encodeBase64Url(new Uint8Array(signature))}`;
 }
 __name(generateGitHubAppJWT, "generateGitHubAppJWT");
+function wrapPkcs1InPkcs8(pkcs1Der) {
+  function asn1Length(len) {
+    if (len < 128) return new Uint8Array([len]);
+    if (len < 256) return new Uint8Array([129, len]);
+    return new Uint8Array([130, len >> 8 & 255, len & 255]);
+  }
+  __name(asn1Length, "asn1Length");
+  const version = new Uint8Array([2, 1, 0]);
+  const rsaOid = new Uint8Array([
+    48,
+    13,
+    6,
+    9,
+    42,
+    134,
+    72,
+    134,
+    247,
+    13,
+    1,
+    1,
+    1,
+    5,
+    0
+  ]);
+  const octetTag = new Uint8Array([4]);
+  const octetLen = asn1Length(pkcs1Der.length);
+  const innerLen = version.length + rsaOid.length + octetTag.length + octetLen.length + pkcs1Der.length;
+  const seqTag = new Uint8Array([48]);
+  const seqLen = asn1Length(innerLen);
+  const result = new Uint8Array(seqTag.length + seqLen.length + innerLen);
+  let off = 0;
+  for (const part of [seqTag, seqLen, version, rsaOid, octetTag, octetLen, pkcs1Der]) {
+    result.set(part, off);
+    off += part.length;
+  }
+  return result;
+}
+__name(wrapPkcs1InPkcs8, "wrapPkcs1InPkcs8");
 async function exchangeForInstallationToken(jwt, installationId) {
   const response = await fetch(
     `https://api.github.com/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
@@ -690,7 +731,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-S8293l/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-oJ3VQN/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -722,7 +763,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-S8293l/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-oJ3VQN/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

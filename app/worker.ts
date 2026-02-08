@@ -778,17 +778,23 @@ async function generateGitHubAppJWT(appId: string, privateKeyPEM: string): Promi
   const encodedPayload = encodeBase64Url(JSON.stringify(payload));
   const signingInput = `${encodedHeader}.${encodedPayload}`;
 
-  const pemHeader = '-----BEGIN RSA PRIVATE KEY-----';
-  const pemFooter = '-----END RSA PRIVATE KEY-----';
+  // GitHub App keys are PKCS#1 (BEGIN RSA PRIVATE KEY), but Web Crypto
+  // importKey('pkcs8') requires PKCS#8 (BEGIN PRIVATE KEY). The production
+  // Cloudflare runtime is lenient, but the local workerd dev runtime is not.
+  // Handle both formats to work everywhere.
+  const isPkcs1 = privateKeyPEM.includes('BEGIN RSA PRIVATE KEY');
+  const pemHeader = isPkcs1 ? '-----BEGIN RSA PRIVATE KEY-----' : '-----BEGIN PRIVATE KEY-----';
+  const pemFooter = isPkcs1 ? '-----END RSA PRIVATE KEY-----' : '-----END PRIVATE KEY-----';
   const pemContents = privateKeyPEM
     .replace(pemHeader, '')
     .replace(pemFooter, '')
     .replace(/\s/g, '');
-  const binaryKey = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+  const derBytes = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+  const pkcs8Bytes = isPkcs1 ? wrapPkcs1InPkcs8(derBytes) : derBytes;
 
   const cryptoKey = await crypto.subtle.importKey(
     'pkcs8',
-    binaryKey.buffer,
+    pkcs8Bytes.buffer,
     { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
     false,
     ['sign']
@@ -801,6 +807,41 @@ async function generateGitHubAppJWT(appId: string, privateKeyPEM: string): Promi
   );
 
   return `${signingInput}.${encodeBase64Url(new Uint8Array(signature))}`;
+}
+
+/** Wrap a PKCS#1 RSA private key in a PKCS#8 ASN.1 envelope */
+function wrapPkcs1InPkcs8(pkcs1Der: Uint8Array): Uint8Array {
+  // PKCS#8 structure:
+  //   SEQUENCE {
+  //     INTEGER 0 (version),
+  //     SEQUENCE { OID 1.2.840.113549.1.1.1 (rsaEncryption), NULL },
+  //     OCTET STRING { <PKCS#1 DER bytes> }
+  //   }
+  function asn1Length(len: number): Uint8Array {
+    if (len < 0x80) return new Uint8Array([len]);
+    if (len < 0x100) return new Uint8Array([0x81, len]);
+    return new Uint8Array([0x82, (len >> 8) & 0xff, len & 0xff]);
+  }
+
+  const version = new Uint8Array([0x02, 0x01, 0x00]);
+  const rsaOid = new Uint8Array([
+    0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+    0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
+  ]);
+  const octetTag = new Uint8Array([0x04]);
+  const octetLen = asn1Length(pkcs1Der.length);
+
+  const innerLen = version.length + rsaOid.length + octetTag.length + octetLen.length + pkcs1Der.length;
+  const seqTag = new Uint8Array([0x30]);
+  const seqLen = asn1Length(innerLen);
+
+  const result = new Uint8Array(seqTag.length + seqLen.length + innerLen);
+  let off = 0;
+  for (const part of [seqTag, seqLen, version, rsaOid, octetTag, octetLen, pkcs1Der]) {
+    result.set(part, off);
+    off += part.length;
+  }
+  return result;
 }
 
 async function exchangeForInstallationToken(
