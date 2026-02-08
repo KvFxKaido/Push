@@ -14,6 +14,11 @@ import { getActiveProvider, getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
 
 const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
+}
 
 const AUDITOR_SYSTEM_PROMPT = `You are the Auditor agent for Push, a mobile AI coding assistant. Your sole job is to review code diffs for safety.
 
@@ -135,15 +140,25 @@ export async function runAuditor(
       jsonStr = fenceMatch[1].trim();
     }
 
-    const parsed = JSON.parse(jsonStr);
+    const parsed = asRecord(JSON.parse(jsonStr));
+    const parsedVerdict = parsed?.verdict;
+    const parsedSummary = parsed?.summary;
+    const parsedRisks = parsed?.risks;
 
-    const verdict: 'safe' | 'unsafe' = parsed.verdict === 'safe' ? 'safe' : 'unsafe';
-    const summary = typeof parsed.summary === 'string' ? parsed.summary : 'No summary provided';
-    const risks = Array.isArray(parsed.risks)
-      ? parsed.risks.map((r: any) => ({
-          level: ['low', 'medium', 'high'].includes(r.level) ? r.level : 'medium',
-          description: typeof r.description === 'string' ? r.description : 'Unknown risk',
-        }))
+    const verdict: 'safe' | 'unsafe' = parsedVerdict === 'safe' ? 'safe' : 'unsafe';
+    const summary = typeof parsedSummary === 'string' ? parsedSummary : 'No summary provided';
+    const risks = Array.isArray(parsedRisks)
+      ? parsedRisks.map((risk) => {
+          const r = asRecord(risk);
+          const level = r?.level;
+          const description = r?.description;
+          const riskLevel: 'low' | 'medium' | 'high' =
+            level === 'low' || level === 'medium' || level === 'high' ? level : 'medium';
+          return {
+            level: riskLevel,
+            description: typeof description === 'string' ? description : 'Unknown risk',
+          };
+        })
       : [];
 
     return {

@@ -21,8 +21,14 @@ import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-
  * Uses brace-counting instead of regex so nested objects like
  * {"tool":"x","args":{"repo":"a/b","path":"c"}} are captured correctly.
  */
-export function extractBareToolJsonObjects(text: string): any[] {
-  const results: any[] = [];
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
+}
+
+export function extractBareToolJsonObjects(text: string): unknown[] {
+  const results: unknown[] = [];
   let i = 0;
 
   while (i < text.length) {
@@ -59,7 +65,8 @@ export function extractBareToolJsonObjects(text: string): any[] {
     const candidate = text.slice(braceIdx, end + 1);
     try {
       const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === 'object' && parsed.tool) {
+      const parsedObj = asRecord(parsed);
+      if (parsedObj && typeof parsedObj.tool === 'string') {
         results.push(parsed);
       }
     } catch {
@@ -157,10 +164,15 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
   while ((match = fenceRegex.exec(text)) !== null) {
     try {
       const parsed = JSON.parse(match[1].trim());
-      if (parsed.tool === 'delegate_coder' && (parsed.args?.task || Array.isArray(parsed.args?.tasks))) {
+      const parsedObj = asRecord(parsed);
+      const args = asRecord(parsedObj?.args);
+      const task = typeof args?.task === 'string' ? args.task : undefined;
+      const tasks = Array.isArray(args?.tasks) ? args.tasks.filter((v): v is string => typeof v === 'string') : undefined;
+      const files = Array.isArray(args?.files) ? args.files.filter((v): v is string => typeof v === 'string') : undefined;
+      if (parsedObj?.tool === 'delegate_coder' && (task || (tasks && tasks.length > 0))) {
         return {
           source: 'delegate',
-          call: { tool: 'delegate_coder', args: { task: parsed.args.task, tasks: parsed.args.tasks, files: parsed.args.files } },
+          call: { tool: 'delegate_coder', args: { task, tasks, files } },
         };
       }
     } catch {
@@ -170,10 +182,15 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
 
   // Bare JSON fallback (brace-counting handles nested objects)
   for (const parsed of extractBareToolJsonObjects(text)) {
-    if (parsed.tool === 'delegate_coder' && (parsed.args?.task || Array.isArray(parsed.args?.tasks))) {
+    const parsedObj = asRecord(parsed);
+    const args = asRecord(parsedObj?.args);
+    const task = typeof args?.task === 'string' ? args.task : undefined;
+    const tasks = Array.isArray(args?.tasks) ? args.tasks.filter((v): v is string => typeof v === 'string') : undefined;
+    const files = Array.isArray(args?.files) ? args.files.filter((v): v is string => typeof v === 'string') : undefined;
+    if (parsedObj?.tool === 'delegate_coder' && (task || (tasks && tasks.length > 0))) {
       return {
         source: 'delegate',
-        call: { tool: 'delegate_coder', args: { task: parsed.args.task, tasks: parsed.args.tasks, files: parsed.args.files } },
+        call: { tool: 'delegate_coder', args: { task, tasks, files } },
       };
     }
   }

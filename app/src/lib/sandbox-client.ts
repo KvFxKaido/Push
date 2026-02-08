@@ -370,10 +370,13 @@ export async function deleteFromSandbox(
 }
 
 export async function renameInSandbox(
-  _sandboxId: string,
-  _oldPath: string,
-  _newPath: string,
+  sandboxId: string,
+  oldPath: string,
+  newPath: string,
 ): Promise<void> {
+  void sandboxId;
+  void oldPath;
+  void newPath;
   // Rename endpoint removed to fit Modal free tier (8 endpoint limit).
   // Re-add when plan is upgraded. The UI hides the rename action.
   throw new Error('Rename is not available on the current plan.');

@@ -8,7 +8,7 @@
  * - Basic syntax highlighting via CSS classes
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { ArrowLeft, Save, RotateCcw, AlertCircle, Check, FileCode } from 'lucide-react';
 import { toast } from 'sonner';
 import { getFileEditability, isBinaryContent, formatFileSize } from '@/lib/file-utils';
@@ -38,17 +38,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
   const language = editability.language || 'text';
   const isLargeFile = file.size > WARNING_SIZE;
 
-  // Load file content on mount
-  useEffect(() => {
-    loadFile();
-  }, [file.path, sandboxId]);
-
-  // Track changes
-  useEffect(() => {
-    setHasChanges(content !== originalContent);
-  }, [content, originalContent]);
-
-  const loadFile = async () => {
+  const loadFile = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -79,7 +69,17 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
     } finally {
       setLoading(false);
     }
-  };
+  }, [sandboxId, file.path]);
+
+  // Load file content on mount
+  useEffect(() => {
+    loadFile();
+  }, [loadFile]);
+
+  // Track changes
+  useEffect(() => {
+    setHasChanges(content !== originalContent);
+  }, [content, originalContent]);
 
   const handleSave = async () => {
     if (!hasChanges) {

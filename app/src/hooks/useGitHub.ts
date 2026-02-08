@@ -82,9 +82,22 @@ export function useGitHub() {
         diff = await diffResponse.text();
       }
 
-      const files: PRFile[] = filesData.map((f: any) => ({
+      type PullFileApi = {
+        filename: string;
+        status: string;
+        additions: number;
+        deletions: number;
+        patch?: string;
+      };
+      const normalizeStatus = (status: string): PRFile['status'] => {
+        if (status === 'added' || status === 'removed' || status === 'modified' || status === 'renamed') {
+          return status;
+        }
+        return 'modified';
+      };
+      const files: PRFile[] = (filesData as PullFileApi[]).map((f) => ({
         filename: f.filename,
-        status: f.status,
+        status: normalizeStatus(f.status),
         additions: f.additions,
         deletions: f.deletions,
         patch: f.patch,

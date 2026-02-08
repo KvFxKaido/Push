@@ -85,6 +85,7 @@ export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion,
   const containerRef = useRef<HTMLDivElement>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const lastMessageRef = useRef<ChatMessage | null>(null);
+  const lastMessageContent = messages.length > 0 ? messages[messages.length - 1]?.content : '';
 
   // Track scroll position and show/hide scroll button
   useEffect(() => {
@@ -129,7 +130,7 @@ export function ChatContainer({ messages, agentStatus, activeRepo, onSuggestion,
 
     // Update ref to track the last message
     lastMessageRef.current = lastMessage;
-  }, [messages, messages.length > 0 ? messages[messages.length - 1]?.content : '']);
+  }, [messages, lastMessageContent]);
 
   const scrollToBottom = () => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });

@@ -29,6 +29,20 @@ export type ToolCall =
   | { tool: 'get_workflow_runs'; args: { repo: string; workflow?: string; branch?: string; status?: string; count?: number } }
   | { tool: 'get_workflow_logs'; args: { repo: string; run_id: number } };
 
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined;
+}
+
 const ACCESS_DENIED_MESSAGE =
   '[Tool Error] Access denied — can only query the active repo (owner/repo)';
 
@@ -160,45 +174,66 @@ async function githubFetch(url: string, options?: RequestInit): Promise<Response
 
 // --- Detection helpers ---
 
-function validateToolCall(parsed: any): ToolCall | null {
-  if (parsed.tool === 'fetch_pr' && parsed.args.repo && parsed.args.pr) {
-    return { tool: 'fetch_pr', args: { repo: parsed.args.repo, pr: Number(parsed.args.pr) } };
+function validateToolCall(parsed: unknown): ToolCall | null {
+  const parsedObj = asRecord(parsed);
+  if (!parsedObj) return null;
+  const tool = asString(parsedObj.tool);
+  const args = asRecord(parsedObj.args);
+  if (!tool || !args) return null;
+
+  const repo = asString(args.repo);
+  const branch = asString(args.branch);
+
+  if (tool === 'fetch_pr' && repo && args.pr !== undefined) {
+    return { tool: 'fetch_pr', args: { repo, pr: Number(args.pr) } };
   }
-  if (parsed.tool === 'list_prs' && parsed.args.repo) {
-    return { tool: 'list_prs', args: { repo: parsed.args.repo, state: parsed.args.state } };
+  if (tool === 'list_prs' && repo) {
+    return { tool: 'list_prs', args: { repo, state: asString(args.state) } };
   }
-  if (parsed.tool === 'list_commits' && parsed.args.repo) {
-    return { tool: 'list_commits', args: { repo: parsed.args.repo, count: parsed.args.count ? Number(parsed.args.count) : undefined } };
+  if (tool === 'list_commits' && repo) {
+    return { tool: 'list_commits', args: { repo, count: args.count !== undefined ? Number(args.count) : undefined } };
   }
-  if (parsed.tool === 'read_file' && parsed.args.repo && parsed.args.path) {
-    return { tool: 'read_file', args: { repo: parsed.args.repo, path: parsed.args.path, branch: parsed.args.branch } };
+  if (tool === 'read_file' && repo && asString(args.path)) {
+    return { tool: 'read_file', args: { repo, path: asString(args.path)!, branch } };
   }
-  if (parsed.tool === 'list_directory' && parsed.args.repo) {
-    return { tool: 'list_directory', args: { repo: parsed.args.repo, path: parsed.args.path, branch: parsed.args.branch } };
+  if (tool === 'list_directory' && repo) {
+    return { tool: 'list_directory', args: { repo, path: asString(args.path), branch } };
   }
-  if (parsed.tool === 'list_branches' && parsed.args.repo) {
-    return { tool: 'list_branches', args: { repo: parsed.args.repo } };
+  if (tool === 'list_branches' && repo) {
+    return { tool: 'list_branches', args: { repo } };
   }
-  if (parsed.tool === 'delegate_coder' && (parsed.args.task || Array.isArray(parsed.args.tasks))) {
-    return { tool: 'delegate_coder', args: { task: parsed.args.task, tasks: parsed.args.tasks, files: parsed.args.files } };
+  if (tool === 'delegate_coder') {
+    const task = asString(args.task);
+    const tasks = asStringArray(args.tasks);
+    const files = asStringArray(args.files);
+    if (task || (tasks && tasks.length > 0)) {
+      return { tool: 'delegate_coder', args: { task, tasks, files } };
+    }
   }
-  if (parsed.tool === 'fetch_checks' && parsed.args.repo) {
-    return { tool: 'fetch_checks', args: { repo: parsed.args.repo, ref: parsed.args.ref } };
+  if (tool === 'fetch_checks' && repo) {
+    return { tool: 'fetch_checks', args: { repo, ref: asString(args.ref) } };
   }
-  if (parsed.tool === 'search_files' && parsed.args.repo && parsed.args.query) {
-    return { tool: 'search_files', args: { repo: parsed.args.repo, query: parsed.args.query, path: parsed.args.path, branch: parsed.args.branch } };
+  if (tool === 'search_files' && repo && asString(args.query)) {
+    return { tool: 'search_files', args: { repo, query: asString(args.query)!, path: asString(args.path), branch } };
   }
-  if (parsed.tool === 'list_commit_files' && parsed.args.repo && parsed.args.ref) {
-    return { tool: 'list_commit_files', args: { repo: parsed.args.repo, ref: parsed.args.ref } };
+  if (tool === 'list_commit_files' && repo && asString(args.ref)) {
+    return { tool: 'list_commit_files', args: { repo, ref: asString(args.ref)! } };
   }
-  if (parsed.tool === 'trigger_workflow' && parsed.args.repo && parsed.args.workflow) {
-    return { tool: 'trigger_workflow', args: { repo: parsed.args.repo, workflow: parsed.args.workflow, ref: parsed.args.ref, inputs: parsed.args.inputs } };
+  if (tool === 'trigger_workflow' && repo && asString(args.workflow)) {
+    let inputs: Record<string, string> | undefined;
+    const rawInputs = asRecord(args.inputs);
+    if (rawInputs) {
+      inputs = Object.fromEntries(
+        Object.entries(rawInputs).filter(([, v]) => typeof v === 'string') as Array<[string, string]>,
+      );
+    }
+    return { tool: 'trigger_workflow', args: { repo, workflow: asString(args.workflow)!, ref: asString(args.ref), inputs } };
   }
-  if (parsed.tool === 'get_workflow_runs' && parsed.args.repo) {
-    return { tool: 'get_workflow_runs', args: { repo: parsed.args.repo, workflow: parsed.args.workflow, branch: parsed.args.branch, status: parsed.args.status, count: parsed.args.count ? Number(parsed.args.count) : undefined } };
+  if (tool === 'get_workflow_runs' && repo) {
+    return { tool: 'get_workflow_runs', args: { repo, workflow: asString(args.workflow), branch, status: asString(args.status), count: args.count !== undefined ? Number(args.count) : undefined } };
   }
-  if (parsed.tool === 'get_workflow_logs' && parsed.args.repo && parsed.args.run_id) {
-    return { tool: 'get_workflow_logs', args: { repo: parsed.args.repo, run_id: Number(parsed.args.run_id) } };
+  if (tool === 'get_workflow_logs' && repo && args.run_id !== undefined) {
+    return { tool: 'get_workflow_logs', args: { repo, run_id: Number(args.run_id) } };
   }
   return null;
 }
@@ -229,7 +264,8 @@ export function detectToolCall(text: string): ToolCall | null {
 
   // Bare JSON fallback (brace-counting handles nested objects)
   for (const parsed of extractBareToolJsonObjects(text)) {
-    if (parsed.tool && parsed.args) {
+    const parsedObj = asRecord(parsed);
+    if (parsedObj?.tool && parsedObj?.args) {
       const result = validateToolCall(parsed);
       if (result) return result;
     }
@@ -284,11 +320,16 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
       { headers }
     );
     if (commitsRes.ok) {
-      const commitsData = await commitsRes.json();
-      branchCommits = commitsData.slice(0, 5).map((c: any) => ({
-        sha: c.sha.slice(0, 7),
-        message: c.commit.message.split('\n')[0].slice(0, 60),
-        author: c.commit.author?.name || c.author?.login || 'unknown',
+      type PRCommitApi = {
+        sha: string;
+        commit?: { message?: string; author?: { name?: string } };
+        author?: { login?: string };
+      };
+      const commitsData = (await commitsRes.json()) as PRCommitApi[];
+      branchCommits = commitsData.slice(0, 5).map((c) => ({
+        sha: (c.sha || '').slice(0, 7),
+        message: (c.commit?.message || '').split('\n')[0].slice(0, 60),
+        author: c.commit?.author?.name || c.author?.login || 'unknown',
       }));
     }
   } catch {
@@ -312,8 +353,9 @@ async function executeFetchPR(repo: string, pr: number): Promise<ToolExecutionRe
   let filesData: { filename: string; status: string; additions: number; deletions: number }[] = [];
   let filesSummary = '';
   if (filesRes.ok) {
-    const files = await filesRes.json();
-    filesData = files.slice(0, 20).map((f: any) => ({
+    type PRFileApi = { filename: string; status: string; additions: number; deletions: number };
+    const files = (await filesRes.json()) as PRFileApi[];
+    filesData = files.slice(0, 20).map((f) => ({
       filename: f.filename,
       status: f.status,
       additions: f.additions,
@@ -485,7 +527,10 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
 
   if (Array.isArray(data)) {
     // It's a directory — return an error directing the AI to use list_directory instead
-    const entries = data.map((e: any) => `  ${e.type === 'dir' ? '📁' : '📄'} ${e.name}`).join('\n');
+    type ContentEntryApi = { type?: string; name?: string };
+    const entries = (data as ContentEntryApi[])
+      .map((e) => `  ${e.type === 'dir' ? '📁' : '📄'} ${e.name || 'unknown'}`)
+      .join('\n');
     return {
       text: `[Tool Error] "${path}" is a directory, not a file. Use list_directory to browse directories, then read_file on a specific file.\n\nDirectory contents:\n${entries}`,
     };
@@ -550,8 +595,10 @@ async function executeListDirectory(repo: string, path: string = '', branch?: st
     return { text: `[Tool Error] "${path}" is a file, not a directory. Use read_file to read its contents.` };
   }
 
-  const dirs = data.filter((e: any) => e.type === 'dir');
-  const files = data.filter((e: any) => e.type !== 'dir');
+  type ContentEntryApi = { name?: string; type?: string; size?: number };
+  const entries = data as ContentEntryApi[];
+  const dirs = entries.filter((e) => e.type === 'dir');
+  const files = entries.filter((e) => e.type !== 'dir');
 
   const lines: string[] = [
     `[Tool Result — list_directory]`,
@@ -571,8 +618,8 @@ async function executeListDirectory(repo: string, path: string = '', branch?: st
     repo,
     path: path || '/',
     entries: [
-      ...dirs.map((d: any) => ({ name: d.name, type: 'directory' as const })),
-      ...files.map((f: any) => ({ name: f.name, type: 'file' as const, size: f.size })),
+      ...dirs.map((d) => ({ name: d.name || '', type: 'directory' as const })),
+      ...files.map((f) => ({ name: f.name || '', type: 'file' as const, size: f.size })),
     ],
   };
 
@@ -636,10 +683,10 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
   let overall: CIStatusCardData['overall'] = 'no-checks';
 
   if (checkRunsRes.ok) {
-    const data = await checkRunsRes.json();
+    const data = await checkRunsRes.json() as { check_runs?: Array<{ name?: string; status?: string; conclusion?: string | null; html_url?: string; details_url?: string }> };
     if (data.check_runs && data.check_runs.length > 0) {
-      checks = data.check_runs.map((cr: any) => ({
-        name: cr.name,
+      checks = data.check_runs.map((cr) => ({
+        name: cr.name || 'unknown-check',
         status: cr.status as CICheck['status'],
         conclusion: cr.conclusion as CICheck['conclusion'],
         detailsUrl: cr.html_url || cr.details_url,
@@ -654,10 +701,10 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
       { headers },
     );
     if (statusRes.ok) {
-      const statusData = await statusRes.json();
+      const statusData = await statusRes.json() as { statuses?: Array<{ context?: string; state?: string; target_url?: string }> };
       if (statusData.statuses && statusData.statuses.length > 0) {
-        checks = statusData.statuses.map((s: any) => ({
-          name: s.context,
+        checks = statusData.statuses.map((s) => ({
+          name: s.context || 'unknown-check',
           status: 'completed' as const,
           conclusion: s.state === 'success' ? 'success' :
                       s.state === 'failure' || s.state === 'error' ? 'failure' :
@@ -972,7 +1019,20 @@ async function executeGetWorkflowRuns(
   const data = await res.json();
   const rawRuns = data.workflow_runs || [];
 
-  const runs: WorkflowRunItem[] = rawRuns.map((r: any) => ({
+  type WorkflowRunApi = {
+    id: number;
+    name: string;
+    status: WorkflowRunItem['status'];
+    conclusion: WorkflowRunItem['conclusion'];
+    head_branch?: string;
+    event: string;
+    created_at: string;
+    updated_at: string;
+    html_url: string;
+    run_number: number;
+    actor?: { login?: string };
+  };
+  const runs: WorkflowRunItem[] = (rawRuns as WorkflowRunApi[]).map((r) => ({
     id: r.id,
     name: r.name,
     status: r.status,
@@ -1028,21 +1088,39 @@ async function executeGetWorkflowLogs(repo: string, runId: number): Promise<Tool
   }
 
   const runData = await runRes.json();
-  let jobsData: any[] = [];
+  type WorkflowStepApi = { name: string; status: string; conclusion: string | null; number: number };
+  type WorkflowJobApi = { name: string; status: string; conclusion: string | null; html_url: string; steps?: WorkflowStepApi[] };
+  const normalizeJobStatus = (status: string): WorkflowJob['status'] =>
+    status === 'queued' || status === 'in_progress' || status === 'completed' || status === 'waiting'
+      ? status
+      : 'completed';
+  const normalizeJobConclusion = (value: string | null): WorkflowJob['conclusion'] =>
+    value === null || value === 'success' || value === 'failure' || value === 'cancelled' || value === 'skipped'
+      ? value
+      : null;
+  const normalizeStepStatus = (status: string): WorkflowJob['steps'][number]['status'] =>
+    status === 'queued' || status === 'in_progress' || status === 'completed'
+      ? status
+      : 'completed';
+  const normalizeStepConclusion = (value: string | null): WorkflowJob['steps'][number]['conclusion'] =>
+    value === null || value === 'success' || value === 'failure' || value === 'cancelled' || value === 'skipped'
+      ? value
+      : null;
+  let jobsData: WorkflowJobApi[] = [];
   if (jobsRes.ok) {
-    const jd = await jobsRes.json();
+    const jd = await jobsRes.json() as { jobs?: WorkflowJobApi[] };
     jobsData = jd.jobs || [];
   }
 
-  const jobs: WorkflowJob[] = jobsData.map((j: any) => ({
+  const jobs: WorkflowJob[] = jobsData.map((j) => ({
     name: j.name,
-    status: j.status,
-    conclusion: j.conclusion,
+    status: normalizeJobStatus(j.status),
+    conclusion: normalizeJobConclusion(j.conclusion),
     htmlUrl: j.html_url,
-    steps: (j.steps || []).map((s: any) => ({
+    steps: (j.steps || []).map((s) => ({
       name: s.name,
-      status: s.status,
-      conclusion: s.conclusion,
+      status: normalizeStepStatus(s.status),
+      conclusion: normalizeStepConclusion(s.conclusion),
       number: s.number,
     })),
   }));
@@ -1169,7 +1247,7 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
       case 'get_workflow_logs':
         return await executeGetWorkflowLogs(call.args.repo, call.args.run_id);
       default:
-        return { text: `[Tool Error] Unknown tool: ${(call as any).tool}` };
+        return { text: `[Tool Error] Unknown tool: ${String((call as { tool?: unknown }).tool ?? 'unknown')}` };
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

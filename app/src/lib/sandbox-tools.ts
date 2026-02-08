@@ -97,42 +97,57 @@ export type SandboxToolCall =
 
 // --- Validation ---
 
-export function validateSandboxToolCall(parsed: any): SandboxToolCall | null {
-  if (parsed.tool === 'sandbox_exec' && parsed.args?.command) {
-    return { tool: 'sandbox_exec', args: { command: parsed.args.command, workdir: parsed.args.workdir } };
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
+}
+
+function getToolName(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null {
+  const parsedObj = asRecord(parsed);
+  if (!parsedObj) return null;
+  const tool = getToolName(parsedObj.tool);
+  const args = asRecord(parsedObj.args) || {};
+
+  if (tool === 'sandbox_exec' && typeof args.command === 'string') {
+    return { tool: 'sandbox_exec', args: { command: args.command, workdir: typeof args.workdir === 'string' ? args.workdir : undefined } };
   }
-  if ((parsed.tool === 'sandbox_read_file' || parsed.tool === 'read_sandbox_file') && parsed.args?.path) {
-    return { tool: 'sandbox_read_file', args: { path: parsed.args.path } };
+  if ((tool === 'sandbox_read_file' || tool === 'read_sandbox_file') && typeof args.path === 'string') {
+    return { tool: 'sandbox_read_file', args: { path: args.path } };
   }
-  if ((parsed.tool === 'sandbox_search' || parsed.tool === 'search_sandbox') && parsed.args?.query) {
-    return { tool: 'sandbox_search', args: { query: parsed.args.query, path: parsed.args.path } };
+  if ((tool === 'sandbox_search' || tool === 'search_sandbox') && typeof args.query === 'string') {
+    return { tool: 'sandbox_search', args: { query: args.query, path: typeof args.path === 'string' ? args.path : undefined } };
   }
-  if (parsed.tool === 'sandbox_write_file' && parsed.args?.path && typeof parsed.args.content === 'string') {
-    return { tool: 'sandbox_write_file', args: { path: parsed.args.path, content: parsed.args.content } };
+  if (tool === 'sandbox_write_file' && typeof args.path === 'string' && typeof args.content === 'string') {
+    return { tool: 'sandbox_write_file', args: { path: args.path, content: args.content } };
   }
-  if (parsed.tool === 'sandbox_list_dir' || parsed.tool === 'list_sandbox_dir') {
-    return { tool: 'sandbox_list_dir', args: { path: parsed.args?.path } };
+  if (tool === 'sandbox_list_dir' || tool === 'list_sandbox_dir') {
+    return { tool: 'sandbox_list_dir', args: { path: typeof args.path === 'string' ? args.path : undefined } };
   }
-  if (parsed.tool === 'sandbox_diff') {
+  if (tool === 'sandbox_diff') {
     return { tool: 'sandbox_diff', args: {} };
   }
-  if ((parsed.tool === 'sandbox_prepare_commit' || parsed.tool === 'sandbox_commit') && parsed.args?.message) {
-    return { tool: 'sandbox_prepare_commit', args: { message: parsed.args.message } };
+  if ((tool === 'sandbox_prepare_commit' || tool === 'sandbox_commit') && typeof args.message === 'string') {
+    return { tool: 'sandbox_prepare_commit', args: { message: args.message } };
   }
-  if (parsed.tool === 'sandbox_push') {
+  if (tool === 'sandbox_push') {
     return { tool: 'sandbox_push', args: {} };
   }
-  if (parsed.tool === 'sandbox_run_tests') {
-    return { tool: 'sandbox_run_tests', args: { framework: parsed.args?.framework } };
+  if (tool === 'sandbox_run_tests') {
+    return { tool: 'sandbox_run_tests', args: { framework: typeof args.framework === 'string' ? args.framework : undefined } };
   }
-  if (parsed.tool === 'sandbox_check_types') {
+  if (tool === 'sandbox_check_types') {
     return { tool: 'sandbox_check_types', args: {} };
   }
-  if (parsed.tool === 'sandbox_browser_screenshot' && parsed.args?.url && browserToolEnabled) {
-    return { tool: 'sandbox_browser_screenshot', args: { url: parsed.args.url, fullPage: Boolean(parsed.args.fullPage) } };
+  if (tool === 'sandbox_browser_screenshot' && typeof args.url === 'string' && browserToolEnabled) {
+    return { tool: 'sandbox_browser_screenshot', args: { url: args.url, fullPage: Boolean(args.fullPage) } };
   }
-  if (parsed.tool === 'sandbox_browser_extract' && parsed.args?.url && browserToolEnabled) {
-    return { tool: 'sandbox_browser_extract', args: { url: parsed.args.url, instruction: parsed.args.instruction } };
+  if (tool === 'sandbox_browser_extract' && typeof args.url === 'string' && browserToolEnabled) {
+    return { tool: 'sandbox_browser_extract', args: { url: args.url, instruction: typeof args.instruction === 'string' ? args.instruction : undefined } };
   }
   return null;
 }
@@ -147,7 +162,8 @@ export function detectSandboxToolCall(text: string): SandboxToolCall | null {
   while ((match = fenceRegex.exec(text)) !== null) {
     try {
       const parsed = JSON.parse(match[1].trim());
-      if (parsed.tool?.startsWith('sandbox_') || ['read_sandbox_file', 'search_sandbox', 'list_sandbox_dir'].includes(parsed.tool)) {
+      const toolName = getToolName(asRecord(parsed)?.tool);
+      if (toolName.startsWith('sandbox_') || ['read_sandbox_file', 'search_sandbox', 'list_sandbox_dir'].includes(toolName)) {
         const result = validateSandboxToolCall(parsed);
         if (result) return result;
       }
@@ -158,7 +174,8 @@ export function detectSandboxToolCall(text: string): SandboxToolCall | null {
 
   // Bare JSON fallback (brace-counting handles nested objects)
   for (const parsed of extractBareToolJsonObjects(text)) {
-    if (parsed.tool?.startsWith('sandbox_') || ['read_sandbox_file', 'search_sandbox', 'list_sandbox_dir'].includes(parsed.tool)) {
+    const toolName = getToolName(asRecord(parsed)?.tool);
+    if (toolName.startsWith('sandbox_') || ['read_sandbox_file', 'search_sandbox', 'list_sandbox_dir'].includes(toolName)) {
       const result = validateSandboxToolCall(parsed);
       if (result) return result;
     }
@@ -168,7 +185,7 @@ export function detectSandboxToolCall(text: string): SandboxToolCall | null {
 }
 
 function shellEscape(value: string): string {
-  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 // --- Diff parsing helper ---
@@ -939,7 +956,7 @@ export async function executeSandboxToolCall(
       }
 
       default:
-        return { text: `[Tool Error] Unknown sandbox tool: ${(call as any).tool}` };
+        return { text: `[Tool Error] Unknown sandbox tool: ${String((call as { tool?: unknown }).tool ?? 'unknown')}` };
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

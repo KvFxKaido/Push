@@ -89,6 +89,7 @@ export function useScratchpad(repoFullName: string | null = null) {
 
       if (stored !== null) {
         // Repo-specific scratchpad exists
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setContent(stored);
       } else if (!hasMigratedRef.current) {
         // No repo-specific content - try to migrate from global
@@ -120,6 +121,7 @@ export function useScratchpad(repoFullName: string | null = null) {
     try {
       const stored = localStorage.getItem(memoryKey);
       loadedMemories = stored ? validateMemories(JSON.parse(stored)) : [];
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMemories(loadedMemories);
     } catch {
       setMemories([]);

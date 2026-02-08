@@ -123,6 +123,7 @@ export function useGitHubAuth(): UseGitHubAuth {
     sessionStorage.removeItem(STATE_KEY);
 
     if (!state || state !== expectedState) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError('GitHub OAuth failed: invalid state parameter.');
       return;
     }

@@ -177,6 +177,7 @@ export function CommitPushSheet({
   useEffect(() => {
     if (phase === 'reviewing' && suggestedMessage && !hasAutoFilled && !commitMessage) {
       setCommitMessage(suggestedMessage);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasAutoFilled(true);
     }
   }, [phase, suggestedMessage, hasAutoFilled, commitMessage, setCommitMessage]);

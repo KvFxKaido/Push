@@ -256,7 +256,10 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
   usageHandlerRef.current = usageHandler;
 
   // Derived state
-  const messages = conversations[activeChatId]?.messages || [];
+  const messages = useMemo(
+    () => conversations[activeChatId]?.messages ?? [],
+    [conversations, activeChatId],
+  );
   const conversationProvider = conversations[activeChatId]?.provider;
 
   // Context usage — estimate tokens for the meter
@@ -1019,7 +1022,7 @@ export function useChat(activeRepoFullName: string | null, scratchpad?: Scratchp
               return;
             }
 
-            const safeCommitMessage = normalizedCommitMessage.replace(/'/g, `'\"'\"'`);
+            const safeCommitMessage = normalizedCommitMessage.replace(/'/g, `'"'"'`);
 
             // Step 2: Commit in sandbox
             const commitResult = await execInSandbox(

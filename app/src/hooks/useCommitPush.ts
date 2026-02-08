@@ -106,7 +106,7 @@ export function useCommitPush(sandboxId: string) {
       setState((s) => ({ ...s, phase: 'error', error: 'Commit message is required.' }));
       return;
     }
-    const safeCommitMessage = message.replace(/'/g, `'\"'\"'`);
+    const safeCommitMessage = message.replace(/'/g, `'"'"'`);
 
     // Require an active AI provider — runAuditor handles its own fail-safe
     if (getActiveProvider() === 'demo') {

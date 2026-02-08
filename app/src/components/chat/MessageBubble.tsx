@@ -180,7 +180,7 @@ function formatInline(text: string): React.ReactNode[] {
   // Match bold, italic, inline code, links, and plain text
   // Bold before italic so ** is tried before *
   const regex =
-    /(\*\*(.+?)\*\*)|(\*([^*]+?)\*)|(`([^`]+?)`)|(\[([^\]]+)\]\(([^)]+)\))|([^*`\[]+|[*`\[])/g;
+    /(\*\*(.+?)\*\*)|(\*([^*]+?)\*)|(`([^`]+?)`)|(\[([^\]]+)]\(([^)]+)\))|([^*`[]+|[*`[])/g;
   let match;
   let key = 0;
 

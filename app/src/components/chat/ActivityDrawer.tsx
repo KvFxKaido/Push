@@ -3,6 +3,8 @@ import { X, TerminalSquare } from 'lucide-react';
 import type { ChatMessage } from '@/types';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
 
+type ToolCallLike = { tool?: string; args?: unknown; task?: unknown };
+
 interface ActivityDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -16,7 +18,7 @@ export function ActivityDrawer({ isOpen, onClose, messages }: ActivityDrawerProp
       if (m.role === 'assistant') {
         const toolCall = detectAnyToolCall(m.content);
         if (toolCall) {
-          const callObj = toolCall.call as any;
+          const callObj = toolCall.call as ToolCallLike;
           const argsText = JSON.stringify(callObj.args || callObj.task || '');
           items.push({
             type: 'call', 

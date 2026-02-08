@@ -20,6 +20,29 @@ export interface ChunkMetadata {
   chunkIndex: number;
 }
 
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
+}
+
+function parseProviderError(parsed: unknown, fallback: string, includeTopLevelMessage = false): string {
+  const record = asRecord(parsed);
+  if (!record) return fallback;
+  const errorValue = record.error;
+  if (typeof errorValue === 'string') return errorValue;
+  const errorRecord = asRecord(errorValue);
+  if (typeof errorRecord?.message === 'string') return errorRecord.message;
+  if (includeTopLevelMessage && typeof record.message === 'string') return record.message;
+  return fallback;
+}
+
+function hasFinishReason(choice: unknown, reasons: string[]): boolean {
+  const record = asRecord(choice);
+  const finishReason = record?.finish_reason;
+  return typeof finishReason === 'string' && reasons.includes(finishReason);
+}
+
 
 // ---------------------------------------------------------------------------
 // Kimi For Coding config
@@ -602,8 +625,8 @@ interface StreamProviderConfig {
     total?: (seconds: number) => string;
     network: string;
   };
-  parseError: (parsed: any, fallback: string) => string;
-  checkFinishReason: (choice: any) => boolean;
+  parseError: (parsed: unknown, fallback: string) => string;
+  checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
 }
 
@@ -692,8 +715,7 @@ async function streamSSEChatOnce(
   } = config;
 
   const controller = new AbortController();
-  const abortReasons = ['connect', 'idle', 'user'] as const;
-  type AbortReason = typeof abortReasons[number] | 'stall' | 'total' | null;
+  type AbortReason = 'connect' | 'idle' | 'user' | 'stall' | 'total' | null;
   let abortReason: AbortReason = null;
 
   const onExternalAbort = () => {
@@ -941,8 +963,8 @@ export async function streamMoonshotChat(
         idle: (s) => `Kimi API stream stalled — no data for ${s}s.`,
         network: 'Cannot reach Moonshot — network error. Check your connection.',
       },
-      parseError: (p, f) => p.error?.message || p.error || f,
-      checkFinishReason: (c) => c.finish_reason === 'stop' || c.finish_reason === 'end_turn' || c.finish_reason === 'tool_calls',
+      parseError: (p, f) => parseProviderError(p, f),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'tool_calls']),
     },
     messages,
     onToken,
@@ -998,8 +1020,8 @@ export async function streamOllamaChat(
         total: (s) => `Ollama Cloud response exceeded ${s}s total time limit.`,
         network: 'Cannot reach Ollama Cloud — network error. Check your connection.',
       },
-      parseError: (p, f) => p.error?.message || p.error || f,
-      checkFinishReason: (c) => c.finish_reason === 'stop' || c.finish_reason === 'end_turn' || c.finish_reason === 'length',
+      parseError: (p, f) => parseProviderError(p, f),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length']),
       shouldResetStallOnReasoning: true,
     },
     messages,
@@ -1056,8 +1078,8 @@ export async function streamMistralChat(
         total: (s) => `Mistral API response exceeded ${s}s total time limit.`,
         network: 'Cannot reach Mistral — network error. Check your connection.',
       },
-      parseError: (p, f) => p.error?.message || p.message || p.error || f,
-      checkFinishReason: (c) => c.finish_reason === 'stop' || c.finish_reason === 'end_turn' || c.finish_reason === 'length',
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length']),
     },
     messages,
     onToken,

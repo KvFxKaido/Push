@@ -177,17 +177,29 @@ export function useRepos() {
 
       const previousPushed = getStoredPushedAt();
 
-      const summaries: RepoSummary[] = reposData.map((r: any) => ({
+      type RepoApi = {
+        id: number;
+        name: string;
+        full_name: string;
+        owner: { login: string; avatar_url: string };
+        private: boolean;
+        description?: string | null;
+        open_issues_count: number;
+        pushed_at: string;
+        default_branch: string;
+        language?: string | null;
+      };
+      const summaries: RepoSummary[] = (reposData as RepoApi[]).map((r) => ({
         id: r.id,
         name: r.name,
         full_name: r.full_name,
         owner: r.owner.login,
         private: r.private,
-        description: r.description,
+        description: r.description ?? null,
         open_issues_count: r.open_issues_count,
         pushed_at: r.pushed_at,
         default_branch: r.default_branch,
-        language: r.language,
+        language: r.language ?? null,
         avatar_url: r.owner.avatar_url,
       }));
 
@@ -228,7 +240,7 @@ export function useRepos() {
       setRepos(reposWithActivity);
       setLastSyncTime(now);
       localStorage.setItem(SYNC_STORAGE_KEY, now);
-    } catch (err) {
+    } catch {
       console.log('GitHub API failed, using mock data for demo');
       const now = new Date().toISOString();
       setRepos(MOCK_REPOS.map((r) => ({
