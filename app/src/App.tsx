@@ -375,6 +375,7 @@ function App() {
           onConnect={handleConnect}
           onDemo={handleDemo}
           onInstallApp={installApp}
+          onConnectInstallationId={setInstallationIdManually}
           loading={authLoading}
           error={authError}
           validatedUser={validatedUser}

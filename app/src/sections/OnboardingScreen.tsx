@@ -6,6 +6,7 @@ interface OnboardingScreenProps {
   onConnect: (pat: string) => Promise<boolean>;
   onDemo: () => void;
   onInstallApp: () => void;
+  onConnectInstallationId: (installationId: string) => Promise<boolean>;
   loading: boolean;
   error: string | null;
   validatedUser: GitHubUser | null;
@@ -16,6 +17,7 @@ export function OnboardingScreen({
   onConnect,
   onDemo,
   onInstallApp,
+  onConnectInstallationId,
   loading,
   error,
   validatedUser,
@@ -23,11 +25,22 @@ export function OnboardingScreen({
 }: OnboardingScreenProps) {
   const [pat, setPat] = useState('');
   const [showPatInput, setShowPatInput] = useState(false);
+  const [showInstallIdInput, setShowInstallIdInput] = useState(false);
+  const [installationId, setInstallationId] = useState('');
 
   const handleConnect = async () => {
     if (!pat.trim() || loading) return;
     const success = await onConnect(pat.trim());
     if (success) setPat('');
+  };
+
+  const handleConnectInstallation = async () => {
+    if (!installationId.trim() || loading) return;
+    const success = await onConnectInstallationId(installationId.trim());
+    if (success) {
+      setInstallationId('');
+      setShowInstallIdInput(false);
+    }
   };
 
   return (
@@ -114,6 +127,47 @@ export function OnboardingScreen({
                 Stored locally, never sent to our servers.
               </p>
             </>
+          ) : showInstallIdInput ? (
+            <>
+              <input
+                type="text"
+                placeholder="Installation ID (numbers only)"
+                value={installationId}
+                onChange={(e) => setInstallationId(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleConnectInstallation()}
+                disabled={loading}
+                className="w-full rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] px-4 py-3 text-sm text-[#fafafa] font-mono placeholder:text-[#3f3f46] outline-none transition-colors duration-200 focus:border-[#0070f3]/50 disabled:opacity-50"
+                autoFocus
+              />
+
+              <button
+                onClick={handleConnectInstallation}
+                disabled={!installationId.trim() || loading}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0070f3] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0060d3] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Connecting…
+                  </>
+                ) : (
+                  'Connect Existing Install'
+                )}
+              </button>
+
+              <button
+                onClick={() => setShowInstallIdInput(false)}
+                className="w-full text-xs text-[#52525b] hover:text-[#71717a] transition-colors"
+              >
+                ← Back to install flow
+              </button>
+
+              <p className="text-xs text-[#52525b] text-center leading-relaxed">
+                Already installed? Paste your installation ID.
+                <br />
+                Find it at <code className="text-[#71717a] font-mono">github.com/settings/installations</code>.
+              </p>
+            </>
           ) : (
             <>
               {/* GitHub App install (primary) */}
@@ -154,6 +208,13 @@ export function OnboardingScreen({
               >
                 <Key className="h-4 w-4" />
                 Use Personal Access Token
+              </button>
+
+              <button
+                onClick={() => setShowInstallIdInput(true)}
+                className="w-full text-xs text-[#52525b] hover:text-[#71717a] transition-colors"
+              >
+                Already installed? Enter installation ID
               </button>
             </>
           )}
