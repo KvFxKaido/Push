@@ -5,7 +5,6 @@ import type { GitHubUser } from '@/types';
 interface OnboardingScreenProps {
   onConnect: (pat: string) => Promise<boolean>;
   onConnectOAuth: () => void;
-  onDemo: () => void;
   onSandboxMode: () => void;
   onInstallApp: () => void;
   onConnectInstallationId: (installationId: string) => Promise<boolean>;
@@ -18,7 +17,6 @@ interface OnboardingScreenProps {
 export function OnboardingScreen({
   onConnect,
   onConnectOAuth,
-  onDemo,
   onSandboxMode,
   onInstallApp,
   onConnectInstallationId,

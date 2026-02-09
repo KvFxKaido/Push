@@ -53,6 +53,7 @@ function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo } = useActiveRepo();
   const scratchpad = useScratchpad(activeRepo?.full_name ?? null);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [isSandboxMode, setIsSandboxMode] = useState(false);
   const {
     messages,
     sendMessage,
@@ -114,7 +115,6 @@ function App() {
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
-  const [isSandboxMode, setIsSandboxMode] = useState(false);
   const [kimiKeyInput, setKimiKeyInput] = useState('');
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [ollamaModelInput, setOllamaModelInput] = useState('');
@@ -182,12 +182,6 @@ function App() {
     },
     [setTokenManually, syncRepos],
   );
-
-  // Demo mode escape hatch
-  const handleDemo = useCallback(() => {
-    setIsDemo(true);
-    syncRepos(); // Will use mock repos since no token
-  }, [syncRepos]);
 
   // Sandbox mode — ephemeral workspace, no GitHub auth required
   const handleSandboxMode = useCallback(() => {
@@ -413,7 +407,6 @@ function App() {
         <OnboardingScreen
           onConnect={handleConnect}
           onConnectOAuth={connectApp}
-          onDemo={handleDemo}
           onSandboxMode={handleSandboxMode}
           onInstallApp={installApp}
           onConnectInstallationId={setInstallationIdManually}
