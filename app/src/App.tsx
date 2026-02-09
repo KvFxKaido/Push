@@ -107,7 +107,7 @@ function App() {
   const authLoading = appLoading || patLoading;
   const authError = appError || patError;
   const validatedUser = appUser || patUser;
-  const { repos, loading: reposLoading, sync: syncRepos } = useRepos();
+  const { repos, loading: reposLoading, error: reposError, sync: syncRepos } = useRepos();
   const { setKey: setKimiKey, clearKey: clearKimiKey, hasKey: hasKimiKey } = useMoonshotKey();
   const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
@@ -382,6 +382,7 @@ function App() {
         <RepoPicker
           repos={repos}
           loading={reposLoading}
+          error={reposError}
           onSelect={handleSelectRepo}
           onDisconnect={handleDisconnect}
           user={validatedUser}

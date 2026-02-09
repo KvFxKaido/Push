@@ -10,6 +10,7 @@ import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardDat
 import { extractBareToolJsonObjects } from './tool-dispatch';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
+const APP_TOKEN_STORAGE_KEY = 'github_app_token';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 
 // --- Tool types ---
@@ -78,7 +79,8 @@ const BASE_DELAY_MS = 1000; // 1s initial delay for exponential backoff
 
 function getGitHubHeaders(): Record<string, string> {
   const oauthToken = localStorage.getItem(OAUTH_STORAGE_KEY) || '';
-  const authToken = oauthToken || GITHUB_TOKEN;
+  const appToken = localStorage.getItem(APP_TOKEN_STORAGE_KEY) || '';
+  const authToken = oauthToken || appToken || GITHUB_TOKEN;
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.v3+json',
   };

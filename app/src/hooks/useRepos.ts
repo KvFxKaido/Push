@@ -3,12 +3,14 @@ import type { RepoWithActivity, RepoSummary, RepoActivity } from '@/types';
 
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 const OAUTH_STORAGE_KEY = 'github_access_token';
+const APP_TOKEN_STORAGE_KEY = 'github_app_token';
 const SYNC_STORAGE_KEY = 'repo_last_sync';
 const PUSHED_STORAGE_KEY = 'repo_last_pushed';
 
 function getAuthHeaders(): Record<string, string> {
   const oauthToken = localStorage.getItem(OAUTH_STORAGE_KEY) || '';
-  const authToken = oauthToken || GITHUB_TOKEN;
+  const appToken = localStorage.getItem(APP_TOKEN_STORAGE_KEY) || '';
+  const authToken = oauthToken || appToken || GITHUB_TOKEN;
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.v3+json',
   };
@@ -169,7 +171,7 @@ export function useRepos() {
 
       // Fetch repos sorted by recent push
       const reposRes = await fetch(
-        'https://api.github.com/user/repos?sort=pushed&direction=desc&per_page=30',
+        'https://api.github.com/user/repos?sort=pushed&direction=desc&per_page=100',
         { headers },
       );
       if (!reposRes.ok) throw new Error('Failed to fetch repos');
@@ -240,7 +242,18 @@ export function useRepos() {
       setRepos(reposWithActivity);
       setLastSyncTime(now);
       localStorage.setItem(SYNC_STORAGE_KEY, now);
-    } catch {
+    } catch (err) {
+      const hasAnyToken = Boolean(
+        localStorage.getItem(OAUTH_STORAGE_KEY) ||
+        localStorage.getItem(APP_TOKEN_STORAGE_KEY) ||
+        GITHUB_TOKEN
+      );
+      if (hasAnyToken) {
+        const msg = err instanceof Error ? err.message : 'Failed to fetch repositories from GitHub';
+        setError(msg);
+        setRepos([]);
+        return;
+      }
       console.log('GitHub API failed, using mock data for demo');
       const now = new Date().toISOString();
       setRepos(MOCK_REPOS.map((r) => ({

@@ -17,6 +17,7 @@ import { createSandbox, cleanupSandbox, execInSandbox, setSandboxOwnerToken } fr
 export type SandboxStatus = 'idle' | 'creating' | 'ready' | 'error';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
+const APP_TOKEN_STORAGE_KEY = 'github_app_token';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 
 const SANDBOX_SESSION_KEY = 'sandbox_session';
@@ -31,7 +32,7 @@ interface PersistedSandboxSession {
 }
 
 function getGitHubToken(): string {
-  return localStorage.getItem(OAUTH_STORAGE_KEY) || GITHUB_TOKEN;
+  return localStorage.getItem(OAUTH_STORAGE_KEY) || localStorage.getItem(APP_TOKEN_STORAGE_KEY) || GITHUB_TOKEN;
 }
 
 function saveSession(session: PersistedSandboxSession): void {

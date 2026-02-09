@@ -5,6 +5,7 @@ import type { RepoWithActivity, GitHubUser } from '@/types';
 interface RepoPickerProps {
   repos: RepoWithActivity[];
   loading: boolean;
+  error?: string | null;
   onSelect: (repo: RepoWithActivity) => void;
   onDisconnect: () => void;
   user: GitHubUser | null;
@@ -43,6 +44,7 @@ function timeAgo(dateStr: string): string {
 export function RepoPicker({
   repos,
   loading,
+  error,
   onSelect,
   onDisconnect,
   user,
@@ -91,6 +93,14 @@ export function RepoPicker({
             Pick a repo to focus on. You can switch later.
           </p>
         </div>
+
+        {error && (
+          <div className="rounded-xl border border-red-500/30 bg-red-950/30 px-3 py-2">
+            <p className="text-xs text-red-200">
+              Couldn&apos;t load repositories from GitHub: {error}
+            </p>
+          </div>
+        )}
 
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#3f3f46]" />

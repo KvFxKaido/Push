@@ -3,6 +3,7 @@ import type { PRInput, PRData, PRFile } from '@/types';
 
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 const OAUTH_STORAGE_KEY = 'github_access_token';
+const APP_TOKEN_STORAGE_KEY = 'github_app_token';
 
 // Mock PR data for demo when API fails or no token
 const MOCK_PR_DATA: PRData = {
@@ -34,7 +35,8 @@ export function useGitHub() {
 
     try {
       const oauthToken = localStorage.getItem(OAUTH_STORAGE_KEY) || '';
-      const authToken = oauthToken || GITHUB_TOKEN;
+      const appToken = localStorage.getItem(APP_TOKEN_STORAGE_KEY) || '';
+      const authToken = oauthToken || appToken || GITHUB_TOKEN;
       const headers: Record<string, string> = {
         'Accept': 'application/vnd.github.v3+json',
       };
@@ -114,7 +116,8 @@ export function useGitHub() {
       };
     } catch (err) {
       const oauthToken = localStorage.getItem(OAUTH_STORAGE_KEY) || '';
-      const hasToken = Boolean(oauthToken || GITHUB_TOKEN);
+      const appToken = localStorage.getItem(APP_TOKEN_STORAGE_KEY) || '';
+      const hasToken = Boolean(oauthToken || appToken || GITHUB_TOKEN);
       if (hasToken) {
         // User has a token — surface the real error, don't hide it
         const msg = err instanceof Error ? err.message : 'GitHub API request failed';
