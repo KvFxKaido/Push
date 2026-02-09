@@ -25,8 +25,6 @@ function triggerDownload(base64: string, filename: string): void {
 }
 
 export function SandboxDownloadCard({ data }: SandboxDownloadCardProps) {
-  const filename = `workspace-${Date.now()}.tar.gz`;
-
   return (
     <div className="rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden">
       <div className="px-3 py-2.5 flex items-center justify-between gap-3">
@@ -42,7 +40,7 @@ export function SandboxDownloadCard({ data }: SandboxDownloadCardProps) {
           </div>
         </div>
         <button
-          onClick={() => triggerDownload(data.archiveBase64, filename)}
+          onClick={() => triggerDownload(data.archiveBase64, `workspace-${Date.now()}.tar.gz`)}
           className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 active:scale-95"
         >
           <Download className="h-3 w-3" />
