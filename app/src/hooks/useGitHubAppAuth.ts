@@ -47,7 +47,11 @@ function formatAppTokenError(status: number, errorMessage: string): string {
 
 function getGitHubAppRedirectUri(): string {
   const configured = GITHUB_APP_REDIRECT_URI.trim();
-  if (configured) return configured;
+  if (configured) {
+    // Normalize via URL constructor so trailing-slash handling matches the fallback path
+    // and GitHub's registered callback URL.
+    try { return new URL(configured).toString(); } catch { return configured; }
+  }
   // Canonical root URL avoids origin/slash mismatches in GitHub callback checks.
   return new URL('/', window.location.origin).toString();
 }

@@ -39,7 +39,11 @@ async function validateToken(pat: string): Promise<GitHubUser | null> {
 
 function getOAuthRedirectUri(): string {
   const configured = OAUTH_REDIRECT_URI.trim();
-  if (configured) return configured;
+  if (configured) {
+    // Normalize via URL constructor so trailing-slash handling matches the fallback path
+    // and GitHub's registered callback URL.
+    try { return new URL(configured).toString(); } catch { return configured; }
+  }
   return new URL('/', window.location.origin).toString();
 }
 
