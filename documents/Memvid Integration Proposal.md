@@ -1,6 +1,6 @@
 # User Profile & Personalization — Sprint Spec
 
-> **Status:** Sprint-ready
+> **Status:** Tickets 1-3 complete. Ticket 4 (Skill Presets) deferred as stretch.
 > **Date:** 2026-02-09
 > **Goal:** Let the user tell the model who they are. Ship a Settings section for identity + preferences, inject it into the system prompt.
 
@@ -107,14 +107,14 @@ The scratchpad is **freeform per-session notes** (AI + user can write). Profile 
 - `app/src/types/index.ts` — add `UserProfile` type
 
 **Scope:**
-- [ ] Define `UserProfile` interface and `USER_PROFILE_DEFAULTS` in `types/index.ts`
-- [ ] Create `useUserProfile` hook following the `useOllamaConfig.ts` pattern:
+- [x] Define `UserProfile` interface and `USER_PROFILE_DEFAULTS` in `types/index.ts`
+- [x] Create `useUserProfile` hook following the `useOllamaConfig.ts` pattern:
   - `getUserProfile(): UserProfile` — standalone getter (reads localStorage, returns defaults for missing fields)
   - `useUserProfile()` — React hook returning `{ profile, updateProfile, clearProfile }`
   - `updateProfile(partial: Partial<UserProfile>)` — merges into existing, saves to localStorage
   - `clearProfile()` — resets to defaults, removes localStorage key
-- [ ] Auto-populate `githubLogin` from auth state when available (pass as param or read from `localStorage` key used by `useGitHubAuth`)
-- [ ] Cap `bio` at 300 chars on save
+- [x] Auto-populate `githubLogin` from auth state when available (pass as param or read from `localStorage` key used by `useGitHubAuth`)
+- [x] Cap `bio` at 300 chars on save
 
 **Reference pattern:** `app/src/hooks/useOllamaConfig.ts` (standalone getter + React hook)
 
@@ -130,14 +130,14 @@ The scratchpad is **freeform per-session notes** (AI + user can write). Profile 
 - `app/src/App.tsx` — add section in Settings sheet
 
 **Scope:**
-- [ ] Add "About You" section in Settings sheet, placed **above** the "AI Provider" section (~line 1477)
-- [ ] Fields:
+- [x] Add "About You" section in Settings sheet, placed in "You" tab (tabbed Settings redesign)
+- [x] Fields:
   - `Your Name` — text input (maps to `displayName`)
   - `GitHub` — read-only display of `githubLogin` (auto-populated from auth)
   - `About You` — textarea, 300 char limit (maps to `bio`), placeholder: "Anything you want the assistant to know about you"
-- [ ] "Clear Profile" button with confirmation (same pattern as "Delete all chats")
-- [ ] Use `useUserProfile()` hook from Ticket 1
-- [ ] Match existing Settings styling (dark theme, `bg-[#111]` inputs, `border-[#333]`)
+- [x] "Clear Profile" button with confirmation (same pattern as "Delete all chats")
+- [x] Use `useUserProfile()` hook from Ticket 1
+- [x] Match existing Settings styling (dark theme, `bg-[#111]` inputs, `border-[#333]`)
 
 **Does NOT touch:** orchestrator.ts, hooks/ (except importing useUserProfile), types/
 
@@ -163,13 +163,13 @@ Settings
 - `app/src/lib/orchestrator.ts` — inject profile block into system prompt assembly
 
 **Scope:**
-- [ ] Import `getUserProfile` from `useUserProfile.ts`
-- [ ] Add `buildUserIdentityBlock(profile: UserProfile): string` function
+- [x] Import `getUserProfile` from `useUserProfile.ts`
+- [x] Add `buildUserIdentityBlock(profile: UserProfile): string` function
   - Returns the formatted block from the "Prompt Block" section above
   - Returns empty string if `displayName` is empty
-  - Escapes `bio` using `escapeForPrompt()` from `lib/scratchpad-tools.ts` (or same logic)
-- [ ] Inject the block in `toLLMMessages()` after workspace context, before tool protocols (~line 395)
-- [ ] Also inject into Coder context in `lib/coder-agent.ts` (so delegated coding tasks know the user's name)
+  - Escapes `bio` using identity-block boundary sanitization (prevents `[USER IDENTITY]` tag injection)
+- [x] Inject the block in `toLLMMessages()` after base system prompt, before workspace context
+- [x] Also inject into Coder context in `lib/coder-agent.ts` (so delegated coding tasks know the user's name)
 
 **Does NOT touch:** App.tsx, Settings UI, types/
 
