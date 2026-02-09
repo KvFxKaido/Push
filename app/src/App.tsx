@@ -668,7 +668,7 @@ function App() {
                             type="text"
                             value={installIdInput}
                             onChange={(e) => setInstallIdInput(e.target.value)}
-                            placeholder="Installation ID (e.g., 108161455)"
+                            placeholder="Installation ID (e.g., 12345678)"
                             className="w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46] font-mono"
                             onKeyDown={async (e) => {
                               if (e.key === 'Enter' && installIdInput.trim()) {

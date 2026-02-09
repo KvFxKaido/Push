@@ -17,7 +17,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 - **Browser tools (optional)** — capture screenshots and extract page text via Browserbase in the sandbox
 - **Scratchpad** — shared notepad for accumulating ideas, requirements, and decisions throughout a session
 - **Streaming** — responses arrive token-by-token with visible thinking
-- **Demo mode** — Explore the workflow before connecting any accounts. Try the full agent experience with mock data to understand the philosophy before adding your keys.
+- **Sandbox Mode** — Start coding immediately without GitHub auth. Ephemeral workspace that auto-expires after 30 minutes. Download your work before it disappears.
 
 ## Who It's For
 
@@ -63,7 +63,7 @@ VITE_BROWSER_TOOL_ENABLED=true    # Optional — enables sandbox browser tools i
 VITE_API_PROXY_TARGET=http://127.0.0.1:8787  # Optional — Vite -> local Wrangler proxy target
 ```
 
-Without any AI key the app runs in demo mode with mock repos and a welcome message. When 2+ provider keys are set, a backend picker appears in Settings.
+Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings.
 
 ## GitHub Authentication
 
@@ -76,6 +76,17 @@ Install the Push GitHub App and authorize access to your repos. Tokens refresh a
 ### Option 2: Personal Access Token
 
 Create a PAT with `repo` scope and paste it in the Settings UI. Simpler setup, but tokens can expire and need manual rotation.
+
+## Sandbox Mode
+
+Don't have GitHub access right now? Start a **Sandbox** — an ephemeral workspace with no authentication required. The agent can still write code, run commands, and iterate in an isolated Linux container.
+
+- **30 minute lifetime** — Container auto-terminates (5-minute warning banner shown)
+- **Download anytime** — Export your work as a tar.gz archive before expiry
+- **No GitHub needed** — Start from onboarding or the repo dropdown
+- **Same agent power** — Full Coder capabilities: file ops, execution, browser tools
+
+Use it for quick experiments, learning the interface, or when you're on a device without GitHub credentials.
 
 ## Production
 
