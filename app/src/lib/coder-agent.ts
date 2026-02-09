@@ -55,6 +55,7 @@ export async function runCoderAgent(
   files: string[],
   onStatus: (phase: string, detail?: string) => void,
   agentsMd?: string,
+  signal?: AbortSignal,
 ): Promise<{ summary: string; cards: ChatCard[]; rounds: number }> {
   // Resolve provider and model for the 'coder' role via providers.ts
   const activeProvider = getActiveProvider();
@@ -94,6 +95,10 @@ export async function runCoderAgent(
   ];
 
   for (let round = 0; ; round++) {
+    if (signal?.aborted) {
+      throw new DOMException('Coder cancelled by user.', 'AbortError');
+    }
+
     rounds = round + 1;
     onStatus('Coder working...', `Round ${rounds}`);
 
@@ -123,6 +128,8 @@ export async function runCoderAgent(
         true,      // hasSandbox
         coderModelId,
         systemPrompt,
+        undefined, // no scratchpad needed
+        signal,
       );
     });
 
@@ -145,6 +152,9 @@ export async function runCoderAgent(
       // Check for web search tool call (Ollama only — Mistral handles search natively)
       const webSearch = detectWebSearchToolCall(accumulated);
       if (webSearch) {
+        if (signal?.aborted) {
+          throw new DOMException('Coder cancelled by user.', 'AbortError');
+        }
         onStatus('Coder searching...', webSearch.args.query);
         const searchResult = await executeWebSearch(webSearch.args.query, activeProvider);
         if (searchResult.card) allCards.push(searchResult.card);
@@ -165,6 +175,9 @@ export async function runCoderAgent(
     }
 
     // Execute sandbox tool
+    if (signal?.aborted) {
+      throw new DOMException('Coder cancelled by user.', 'AbortError');
+    }
     onStatus('Coder executing...', toolCall.tool);
     const result = await executeSandboxToolCall(toolCall, sandboxId);
 

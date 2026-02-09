@@ -268,6 +268,7 @@ export function useChat(
   // Track processed message content to prevent duplicate tokens during streaming glitches
   const processedContentRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
+  const cancelStatusTimerRef = useRef<number | null>(null);
   const workspaceContextRef = useRef<string | null>(null);
   const sandboxIdRef = useRef<string | null>(null);
   const autoCreateRef = useRef(false); // Guard against creation loops
@@ -383,7 +384,22 @@ export function useChat(
     abortRef.current = true;
     abortControllerRef.current?.abort();
     setIsStreaming(false);
-    setAgentStatus({ active: false, phase: '' });
+    if (cancelStatusTimerRef.current !== null) {
+      window.clearTimeout(cancelStatusTimerRef.current);
+    }
+    setAgentStatus({ active: true, phase: 'Cancelled' });
+    cancelStatusTimerRef.current = window.setTimeout(() => {
+      setAgentStatus({ active: false, phase: '' });
+      cancelStatusTimerRef.current = null;
+    }, 1200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (cancelStatusTimerRef.current !== null) {
+        window.clearTimeout(cancelStatusTimerRef.current);
+      }
+    };
   }, []);
 
   // --- Chat management ---
@@ -834,6 +850,7 @@ export function useChat(
                         setAgentStatus({ active: true, phase: `${prefix}${phase}`, detail });
                       },
                       agentsMdRef.current || undefined,
+                      abortControllerRef.current?.signal,
                     );
                     totalRounds += coderResult.rounds;
                     summaries.push(
@@ -870,8 +887,13 @@ export function useChat(
                   };
                 }
               } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                toolExecResult = { text: `[Tool Error] Coder failed: ${msg}` };
+                const isAbort = err instanceof DOMException && err.name === 'AbortError';
+                if (isAbort || abortRef.current) {
+                  toolExecResult = { text: '[Tool Result — delegate_coder]\nCoder cancelled by user.' };
+                } else {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  toolExecResult = { text: `[Tool Error] Coder failed: ${msg}` };
+                }
               }
             }
           } else {
@@ -987,7 +1009,9 @@ export function useChat(
         }
       } finally {
         setIsStreaming(false);
-        setAgentStatus({ active: false, phase: '' });
+        if (cancelStatusTimerRef.current === null) {
+          setAgentStatus({ active: false, phase: '' });
+        }
         abortControllerRef.current = null;
       }
     },
