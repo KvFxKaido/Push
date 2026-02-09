@@ -4,6 +4,7 @@ import type { RepoWithActivity, RepoSummary, RepoActivity } from '@/types';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 const OAUTH_STORAGE_KEY = 'github_access_token';
 const APP_TOKEN_STORAGE_KEY = 'github_app_token';
+const APP_INSTALLATION_ID_KEY = 'github_app_installation_id';
 const SYNC_STORAGE_KEY = 'repo_last_sync';
 const PUSHED_STORAGE_KEY = 'repo_last_pushed';
 
@@ -148,6 +149,10 @@ export function useRepos() {
 
     try {
       const headers = getAuthHeaders();
+      const oauthToken = localStorage.getItem(OAUTH_STORAGE_KEY) || '';
+      const appToken = localStorage.getItem(APP_TOKEN_STORAGE_KEY) || '';
+      const hasInstallationId = Boolean(localStorage.getItem(APP_INSTALLATION_ID_KEY));
+      const isGitHubAppAuth = Boolean(!oauthToken && appToken && hasInstallationId);
 
       if (!headers['Authorization']) {
         // No token — use mock data
@@ -163,19 +168,31 @@ export function useRepos() {
         return;
       }
 
-      // Fetch authenticated user
-      const userRes = await fetch('https://api.github.com/user', { headers });
-      if (!userRes.ok) throw new Error('Failed to fetch user');
-      const userData = await userRes.json();
-      setUserInfo({ login: userData.login, avatar_url: userData.avatar_url });
+      let reposData: unknown;
+      if (isGitHubAppAuth) {
+        // Installation tokens are repo-scoped and cannot call /user.
+        const reposRes = await fetch(
+          'https://api.github.com/installation/repositories?per_page=100',
+          { headers },
+        );
+        if (!reposRes.ok) throw new Error('Failed to fetch installation repositories');
+        const payload = await reposRes.json() as { repositories?: unknown[] };
+        reposData = payload.repositories ?? [];
+        setUserInfo(null);
+      } else {
+        // OAuth/PAT path has user context.
+        const userRes = await fetch('https://api.github.com/user', { headers });
+        if (!userRes.ok) throw new Error('Failed to fetch user');
+        const userData = await userRes.json();
+        setUserInfo({ login: userData.login, avatar_url: userData.avatar_url });
 
-      // Fetch repos sorted by recent push
-      const reposRes = await fetch(
-        'https://api.github.com/user/repos?sort=pushed&direction=desc&per_page=100',
-        { headers },
-      );
-      if (!reposRes.ok) throw new Error('Failed to fetch repos');
-      const reposData = await reposRes.json();
+        const reposRes = await fetch(
+          'https://api.github.com/user/repos?sort=pushed&direction=desc&per_page=100',
+          { headers },
+        );
+        if (!reposRes.ok) throw new Error('Failed to fetch repos');
+        reposData = await reposRes.json();
+      }
 
       const previousPushed = getStoredPushedAt();
 
