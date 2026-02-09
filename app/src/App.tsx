@@ -64,6 +64,28 @@ const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 const SNAPSHOT_IDLE_MS = 5 * 60 * 1000;
 const SNAPSHOT_HARD_CAP_MS = 4 * 60 * 60 * 1000;
 const SNAPSHOT_MIN_GAP_MS = 60 * 1000;
+const SNAPSHOT_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function formatSnapshotAge(timestamp: number): string {
+  const diffMs = Date.now() - timestamp;
+  if (diffMs < 60_000) return 'just now';
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function snapshotStagePercent(stage: HydrateProgress['stage']): number {
+  switch (stage) {
+    case 'uploading': return 20;
+    case 'restoring': return 60;
+    case 'validating': return 85;
+    case 'done': return 100;
+    default: return 0;
+  }
+}
 
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo } = useActiveRepo();
@@ -706,6 +728,8 @@ function App() {
   // ----- Chat screen -----
 
   const isConnected = Boolean(token) || isDemo || isSandboxMode;
+  const snapshotAgeLabel = latestSnapshot ? formatSnapshotAge(latestSnapshot.createdAt) : null;
+  const snapshotIsStale = latestSnapshot ? (Date.now() - latestSnapshot.createdAt) > SNAPSHOT_STALE_MS : false;
 
   return (
     <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
@@ -720,8 +744,11 @@ function App() {
               </div>
               <span className="text-[10px] text-[#52525b]">ephemeral</span>
               {latestSnapshot && (
-                <span className="text-[10px] text-[#3f3f46]" title={`Latest snapshot: ${new Date(latestSnapshot.createdAt).toLocaleString()}`}>
-                  snapshot ready
+                <span
+                  className={`text-[10px] ${snapshotIsStale ? 'text-amber-400' : 'text-[#3f3f46]'}`}
+                  title={`Latest snapshot: ${new Date(latestSnapshot.createdAt).toLocaleString()}`}
+                >
+                  {snapshotIsStale ? `snapshot stale (${snapshotAgeLabel})` : `snapshot ${snapshotAgeLabel}`}
                 </span>
               )}
               {sandbox.status === 'ready' && (
@@ -760,7 +787,15 @@ function App() {
                 </button>
               )}
               {snapshotRestoring && snapshotRestoreProgress && (
-                <span className="text-[10px] text-[#71717a]">{snapshotRestoreProgress.message}</span>
+                <div className="flex min-w-[120px] flex-col gap-1">
+                  <span className="text-[10px] text-[#71717a]">{snapshotRestoreProgress.message}</span>
+                  <div className="h-1 w-full overflow-hidden rounded bg-[#1a1a1a]">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-300"
+                      style={{ width: `${snapshotStagePercent(snapshotRestoreProgress.stage)}%` }}
+                    />
+                  </div>
+                </div>
               )}
             </div>
           ) : (

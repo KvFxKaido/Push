@@ -5,6 +5,7 @@ const DB_VERSION = 1;
 const STORE_NAME = 'snapshots';
 const CREATED_AT_INDEX = 'createdAt';
 const SNAPSHOT_NAME = 'push-workspace-snapshot';
+const SNAPSHOT_RETENTION_COUNT = 3;
 
 interface SnapshotRecord {
   id: string;
@@ -117,15 +118,44 @@ export async function saveSnapshotToIndexedDB(
     sizeBytes: blob.size,
   };
 
-  await withStore('readwrite', async (store) => {
-    await requestToPromise(store.put(record));
-    const index = store.index(CREATED_AT_INDEX);
-    const all = await requestToPromise(index.getAll());
-    const sorted = (all as SnapshotRecord[]).sort((a, b) => b.createdAt - a.createdAt);
-    for (const stale of sorted.slice(3)) {
-      await requestToPromise(store.delete(stale.id));
+  const writeWithRetention = async (retainCount: number): Promise<void> => {
+    await withStore('readwrite', async (store) => {
+      await requestToPromise(store.put(record));
+      const index = store.index(CREATED_AT_INDEX);
+      const all = await requestToPromise(index.getAll());
+      const sorted = (all as SnapshotRecord[]).sort((a, b) => b.createdAt - a.createdAt);
+      for (const stale of sorted.slice(retainCount)) {
+        await requestToPromise(store.delete(stale.id));
+      }
+    });
+  };
+
+  try {
+    await writeWithRetention(SNAPSHOT_RETENTION_COUNT);
+  } catch (err) {
+    const isQuotaError = err instanceof DOMException && err.name === 'QuotaExceededError';
+    if (!isQuotaError) throw err;
+
+    // Fallback for tight browser storage quotas: keep only the newest existing snapshot, then retry once.
+    await withStore('readwrite', async (store) => {
+      const index = store.index(CREATED_AT_INDEX);
+      const all = await requestToPromise(index.getAll());
+      const sorted = (all as SnapshotRecord[]).sort((a, b) => b.createdAt - a.createdAt);
+      for (const stale of sorted.slice(1)) {
+        await requestToPromise(store.delete(stale.id));
+      }
+    });
+
+    try {
+      await writeWithRetention(1);
+    } catch (retryErr) {
+      const retryQuotaError = retryErr instanceof DOMException && retryErr.name === 'QuotaExceededError';
+      if (retryQuotaError) {
+        throw new Error('Snapshot is too large for local browser storage quota.');
+      }
+      throw retryErr;
     }
-  });
+  }
 
   return {
     id: record.id,
