@@ -133,6 +133,8 @@ function App() {
     isStreaming,
     lockedProvider,
     isProviderLocked,
+    lockedModel,
+    isModelLocked,
     conversations,
     activeChatId,
     sortedChatIds,
@@ -239,6 +241,8 @@ function App() {
   const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() => getSandboxStartMode());
   const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
+  const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
+  const isMistralModelLocked = isModelLocked && lockedProvider === 'mistral';
 
   const refreshOllamaModels = useCallback(async () => {
     if (!hasOllamaKey || ollamaModelsLoading) return;
@@ -1499,6 +1503,11 @@ function App() {
                   <p className="text-xs text-[#71717a] mt-0.5">
                     Start a new chat to switch providers
                   </p>
+                  {lockedModel && (
+                    <p className="text-xs text-[#71717a] mt-0.5">
+                      Model locked for this chat: <span className="font-mono text-[#a1a1aa]">{lockedModel}</span>
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -1547,7 +1556,7 @@ function App() {
                       <select
                         value={ollamaModel}
                         onChange={(e) => setOllamaModel(e.target.value)}
-                        disabled={ollamaModelOptions.length === 0}
+                        disabled={ollamaModelOptions.length === 0 || isOllamaModelLocked}
                         className="flex-1 rounded-md border border-[#1a1a1a] bg-[#0d0d0d] px-2 py-1 text-xs text-[#fafafa] font-mono focus:outline-none focus:border-[#3f3f46] disabled:opacity-50"
                       >
                         {ollamaModelOptions.length === 0 ? (
@@ -1563,7 +1572,7 @@ function App() {
                       <button
                         type="button"
                         onClick={refreshOllamaModels}
-                        disabled={ollamaModelsLoading}
+                        disabled={ollamaModelsLoading || isOllamaModelLocked}
                         className="rounded-md border border-[#1a1a1a] bg-[#0d0d0d] p-1.5 text-[#a1a1aa] hover:text-[#fafafa] disabled:opacity-50"
                         aria-label="Refresh Ollama models"
                         title="Refresh Ollama models"
@@ -1579,6 +1588,11 @@ function App() {
                     {ollamaModelsUpdatedAt && (
                       <p className="text-xs text-[#52525b]">
                         Updated {new Date(ollamaModelsUpdatedAt).toLocaleTimeString()}
+                      </p>
+                    )}
+                    {isOllamaModelLocked && lockedModel && (
+                      <p className="text-xs text-amber-400">
+                        Locked to {lockedModel} for this chat. Start a new chat to change model.
                       </p>
                     )}
                     <Button
@@ -1706,7 +1720,7 @@ function App() {
                       <select
                         value={mistralModel}
                         onChange={(e) => setMistralModel(e.target.value)}
-                        disabled={mistralModelOptions.length === 0}
+                        disabled={mistralModelOptions.length === 0 || isMistralModelLocked}
                         className="flex-1 rounded-md border border-[#1a1a1a] bg-[#0d0d0d] px-2 py-1 text-xs text-[#fafafa] font-mono focus:outline-none focus:border-[#3f3f46] disabled:opacity-50"
                       >
                         {mistralModelOptions.length === 0 ? (
@@ -1722,7 +1736,7 @@ function App() {
                       <button
                         type="button"
                         onClick={refreshMistralModels}
-                        disabled={mistralModelsLoading}
+                        disabled={mistralModelsLoading || isMistralModelLocked}
                         className="rounded-md border border-[#1a1a1a] bg-[#0d0d0d] p-1.5 text-[#a1a1aa] hover:text-[#fafafa] disabled:opacity-50"
                         aria-label="Refresh Mistral models"
                         title="Refresh Mistral models"
@@ -1738,6 +1752,11 @@ function App() {
                     {mistralModelsUpdatedAt && (
                       <p className="text-xs text-[#52525b]">
                         Updated {new Date(mistralModelsUpdatedAt).toLocaleTimeString()}
+                      </p>
+                    )}
+                    {isMistralModelLocked && lockedModel && (
+                      <p className="text-xs text-amber-400">
+                        Locked to {lockedModel} for this chat. Start a new chat to change model.
                       </p>
                     )}
                     <Button

@@ -339,6 +339,8 @@ export interface Conversation {
   repoFullName?: string;  // "owner/repo". Undefined = unscoped (legacy/demo).
   /** The AI provider that was used when the first message was sent. Locked for the whole conversation. */
   provider?: AIProviderType;
+  /** The model id used on first message for the locked provider (if known). */
+  model?: string;
 }
 
 // Onboarding + Active Repo types

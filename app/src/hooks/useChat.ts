@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardAction, CommitReviewCardData, ChatCard, AttachmentData, AIProviderType, SandboxStateCardData, ActiveRepo } from '@/types';
-import { streamChat, getActiveProvider, estimateContextTokens } from '@/lib/orchestrator';
+import { streamChat, getActiveProvider, estimateContextTokens, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, detectMalformedToolAttempt } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent } from '@/lib/coder-agent';
@@ -9,6 +9,7 @@ import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import { browserToolEnabled } from '@/lib/feature-flags';
+import { getMistralModelName, getOllamaModelName } from '@/lib/providers';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
@@ -17,6 +18,21 @@ const ACTIVE_REPO_KEY = 'active_repo';
 
 function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+const KIMI_LOCKED_MODEL = 'k2p5';
+
+function getCurrentModelForProvider(provider: AIProviderType | ActiveProvider): string | undefined {
+  switch (provider) {
+    case 'ollama':
+      return getOllamaModelName();
+    case 'mistral':
+      return getMistralModelName();
+    case 'moonshot':
+      return KIMI_LOCKED_MODEL;
+    default:
+      return undefined;
+  }
 }
 
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
@@ -274,6 +290,7 @@ export function useChat(
     [conversations, activeChatId],
   );
   const conversationProvider = conversations[activeChatId]?.provider;
+  const conversationModel = conversations[activeChatId]?.model;
 
   // Context usage — estimate tokens for the meter
   const contextUsage = useMemo(() => {
@@ -286,8 +303,10 @@ export function useChat(
   // Provider is locked if: we have a stored provider, OR there are user messages (legacy chats)
   const hasUserMessages = messages.some(m => m.role === 'user');
   const isProviderLocked = Boolean(conversationProvider) || hasUserMessages;
+  const isModelLocked = Boolean(conversationModel) || hasUserMessages;
   // The locked provider: use stored one, or null for legacy chats (unknown)
   const lockedProvider: AIProviderType | null = conversationProvider || null;
+  const lockedModel: string | null = conversationModel || null;
 
   // Filter sortedChatIds by active repo
   const sortedChatIds = useMemo(() => {
@@ -494,9 +513,15 @@ export function useChat(
       const isFirstMessage = currentMessages.length === 0;
       const newTitle = isFirstMessage ? generateTitle(updatedWithUser) : conversations[chatId]?.title || 'New Chat';
 
-      // Lock provider on first message: capture current provider and store in conversation
-      // IMPORTANT: We capture the provider at send time, NOT from global state later
-      const providerToStore = isFirstMessage ? getActiveProvider() : undefined;
+      const existingConversation = conversations[chatId];
+      const lockedProviderForChat = (existingConversation?.provider || getActiveProvider()) as ActiveProvider;
+      const existingLockedModel = existingConversation?.model;
+      const resolvedModelForChat = existingLockedModel || getCurrentModelForProvider(lockedProviderForChat);
+
+      const shouldPersistProvider = isFirstMessage && !existingConversation?.provider;
+      const shouldPersistModel =
+        (isFirstMessage || (!!existingConversation?.provider && !existingConversation?.model)) &&
+        !!resolvedModelForChat;
 
       const firstAssistant: ChatMessage = {
         id: createId(),
@@ -514,8 +539,8 @@ export function useChat(
             messages: [...updatedWithUser, firstAssistant],
             title: newTitle,
             lastMessageAt: Date.now(),
-            // Store provider on first message
-            ...(isFirstMessage && providerToStore ? { provider: providerToStore } : {}),
+            ...(shouldPersistProvider ? { provider: lockedProviderForChat } : {}),
+            ...(shouldPersistModel && resolvedModelForChat ? { model: resolvedModelForChat } : {}),
           },
         };
         saveConversations(updated);
@@ -629,6 +654,8 @@ export function useChat(
               hasSandboxThisRound,
               scratchpadRef.current?.content,
               abortControllerRef.current?.signal,
+              lockedProviderForChat,
+              resolvedModelForChat,
             );
           });
 
@@ -1243,6 +1270,8 @@ export function useChat(
     isStreaming,
     lockedProvider,
     isProviderLocked,
+    lockedModel,
+    isModelLocked,
 
     // Multi-chat management
     conversations,

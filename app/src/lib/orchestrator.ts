@@ -1159,8 +1159,10 @@ export async function streamChat(
   hasSandbox?: boolean,
   scratchpadContent?: string,
   signal?: AbortSignal,
+  providerOverride?: ActiveProvider,
+  modelOverride?: string,
 ): Promise<void> {
-  const provider = getActiveProvider();
+  const provider = providerOverride || getActiveProvider();
 
   // Demo mode: no API keys in dev → show welcome message
   if (provider === 'demo' && import.meta.env.DEV) {
@@ -1176,12 +1178,12 @@ export async function streamChat(
   }
 
   if (provider === 'ollama') {
-    return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent, signal);
+    return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   if (provider === 'mistral') {
-    return streamMistralChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent, signal);
+    return streamMistralChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
-  return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, undefined, undefined, scratchpadContent, signal);
+  return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
 }
