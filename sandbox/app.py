@@ -41,6 +41,7 @@ endpoint_image = modal.Image.debian_slim(python_version="3.12").pip_install("fas
 OWNER_TOKEN_FILE = "/tmp/push-owner-token"
 MAX_SCREENSHOT_BYTES = 1_500_000
 MAX_EXTRACT_CHARS = 20_000
+ALLOWED_DOMAINS: set[str] = set()
 LIST_DIR_SCRIPT = """
 import json
 import os
@@ -145,6 +146,8 @@ def _is_blocked_browser_target(url: str) -> tuple[bool, str]:
     hostname = (parsed.hostname or "").strip().lower()
     if not hostname:
         return True, "URL hostname is required"
+    if hostname in ALLOWED_DOMAINS:
+        return False, ""
 
     if hostname in ("localhost", "127.0.0.1", "::1") or hostname.endswith(".local"):
         return True, "Localhost targets are not allowed"
