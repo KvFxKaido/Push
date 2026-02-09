@@ -203,6 +203,7 @@ function App() {
   const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('you');
   const [isDemo, setIsDemo] = useState(false);
   const { profile, updateProfile, clearProfile } = useUserProfile();
   const [displayNameDraft, setDisplayNameDraft] = useState('');
@@ -1163,16 +1164,36 @@ function App() {
 
       {/* Settings Sheet */}
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <SheetContent side="right" className="bg-[#000] border-[#1a1a1a]">
-          <SheetHeader>
+        <SheetContent side="right" className="bg-[#000] border-[#1a1a1a] flex flex-col overflow-hidden">
+          <SheetHeader className="shrink-0">
             <SheetTitle className="text-[#fafafa]">Settings</SheetTitle>
             <SheetDescription className="text-[#a1a1aa]">
               Connect GitHub and configure your workspace.
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex flex-col gap-6 px-4 pt-2">
+          {/* Tab bar */}
+          <div className="flex gap-1 px-4 pt-1 pb-2 shrink-0">
+            {([['you', 'You'], ['workspace', 'Workspace'], ['ai', 'AI']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSettingsTab(key)}
+                className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                  settingsTab === key
+                    ? 'bg-[#1a1a1a] text-[#fafafa]'
+                    : 'text-[#52525b] hover:text-[#a1a1aa]'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+          <div className="flex flex-col gap-6 px-4 pt-2 pb-8">
             {/* GitHub Connection */}
+            {settingsTab === 'you' && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-[#fafafa]">
@@ -1336,9 +1357,11 @@ function App() {
                 </div>
               )}
             </div>
+            )}
 
             {/* Context window behavior */}
-            <div className="space-y-3 pt-2 border-t border-[#1a1a1a]">
+            {settingsTab === 'workspace' && (<>
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-[#fafafa]">
                   Context Mode
@@ -1512,7 +1535,10 @@ function App() {
               </div>
             )}
 
+            </>)}
+
             {/* About You */}
+            {settingsTab === 'you' && (
             <div className="space-y-3 pt-2 border-t border-[#1a1a1a]">
               <label className="text-sm font-medium text-[#fafafa]">
                 About You
@@ -1575,9 +1601,11 @@ function App() {
                 </Button>
               )}
             </div>
+            )}
 
             {/* AI Provider */}
-            <div className="space-y-3 pt-2 border-t border-[#1a1a1a]">
+            {settingsTab === 'ai' && (<>
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-[#fafafa]">
                   AI Provider
@@ -1932,6 +1960,8 @@ function App() {
                 Delete all chats{activeRepo ? ` for ${activeRepo.name}` : ''}
               </Button>
             </div>
+            </>)}
+          </div>
           </div>
         </SheetContent>
       </Sheet>
