@@ -26,7 +26,7 @@ interface Env {
 const MAX_BODY_SIZE_BYTES = 512 * 1024; // 512KB default
 const RESTORE_MAX_BODY_SIZE_BYTES = 12 * 1024 * 1024; // 12MB for snapshot restore payloads
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_MAX = 120; // Raised from 30 — tool-heavy workflows (Coder delegation, web search, sandbox ops) can easily hit 30+ requests/min in normal use
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
 
 // Sandbox endpoint name mapping: /api/sandbox/{route} → Modal function name
