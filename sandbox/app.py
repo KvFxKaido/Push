@@ -41,7 +41,7 @@ endpoint_image = modal.Image.debian_slim(python_version="3.12").pip_install("fas
 OWNER_TOKEN_FILE = "/tmp/push-owner-token"
 MAX_SCREENSHOT_BYTES = 1_500_000
 MAX_EXTRACT_CHARS = 20_000
-ALLOWED_DOMAINS: set[str] = set()
+ALLOWED_DOMAINS: set[str] = {"push.ishawnd.workers.dev"}
 LIST_DIR_SCRIPT = """
 import json
 import os
