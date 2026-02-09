@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, Trash2, FolderOpen, Cpu, GitBranch, RefreshCw, Loader2, Download } from 'lucide-react';
+import { Settings, Trash2, FolderOpen, Cpu, GitBranch, RefreshCw, Loader2, Download, Save, RotateCcw } from 'lucide-react';
+import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
 import { useGitHubAuth } from '@/hooks/useGitHubAuth';
@@ -11,12 +12,22 @@ import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
 import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, type PreferredProvider } from '@/lib/providers';
 import { getActiveProvider, getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
+import { fetchOllamaModels, fetchMistralModels } from '@/lib/model-catalog';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { buildWorkspaceContext } from '@/lib/workspace-context';
 import { readFromSandbox, execInSandbox, downloadFromSandbox } from '@/lib/sandbox-client';
 import { fetchProjectInstructions } from '@/lib/github-tools';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
+import {
+  createSnapshot,
+  saveSnapshotToIndexedDB,
+  getLatestSnapshotBlob,
+  getLatestSnapshotMeta,
+  hydrateSnapshot,
+  type SnapshotMeta,
+  type HydrateProgress,
+} from '@/lib/snapshot-manager';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoAndChatSelector } from '@/components/chat/RepoAndChatSelector';
@@ -48,6 +59,11 @@ const PROVIDER_ICONS: Record<AIProviderType, string> = {
   mistral: '🌪️',
   demo: '⚡'
 };
+
+const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+const SNAPSHOT_IDLE_MS = 5 * 60 * 1000;
+const SNAPSHOT_HARD_CAP_MS = 4 * 60 * 60 * 1000;
+const SNAPSHOT_MIN_GAP_MS = 60 * 1000;
 
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo } = useActiveRepo();
@@ -117,10 +133,16 @@ function App() {
   const [isDemo, setIsDemo] = useState(false);
   const [kimiKeyInput, setKimiKeyInput] = useState('');
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
-  const [ollamaModelInput, setOllamaModelInput] = useState('');
   const [mistralKeyInput, setMistralKeyInput] = useState('');
-  const [mistralModelInput, setMistralModelInput] = useState('');
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [mistralModels, setMistralModels] = useState<string[]>([]);
+  const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
+  const [mistralModelsLoading, setMistralModelsLoading] = useState(false);
+  const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
+  const [mistralModelsError, setMistralModelsError] = useState<string | null>(null);
+  const [ollamaModelsUpdatedAt, setOllamaModelsUpdatedAt] = useState<number | null>(null);
+  const [mistralModelsUpdatedAt, setMistralModelsUpdatedAt] = useState<number | null>(null);
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
@@ -134,9 +156,89 @@ function App() {
   const [sandboxState, setSandboxState] = useState<SandboxStateCardData | null>(null);
   const [sandboxStateLoading, setSandboxStateLoading] = useState(false);
   const sandboxStateFetchedFor = useRef<string | null>(null);
+  const [latestSnapshot, setLatestSnapshot] = useState<SnapshotMeta | null>(null);
+  const [snapshotSaving, setSnapshotSaving] = useState(false);
+  const [snapshotRestoring, setSnapshotRestoring] = useState(false);
+  const [snapshotRestoreProgress, setSnapshotRestoreProgress] = useState<HydrateProgress | null>(null);
+  const snapshotLastActivityRef = useRef<number>(Date.now());
+  const snapshotLastSavedAtRef = useRef<number>(0);
+  const snapshotSessionStartedAtRef = useRef<number>(Date.now());
+  const snapshotHardCapNotifiedRef = useRef(false);
   const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() => getSandboxStartMode());
   const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
+
+  const refreshOllamaModels = useCallback(async () => {
+    if (!hasOllamaKey || ollamaModelsLoading) return;
+    setOllamaModelsLoading(true);
+    setOllamaModelsError(null);
+    try {
+      const models = await fetchOllamaModels();
+      setOllamaModels(models);
+      setOllamaModelsUpdatedAt(Date.now());
+      if (models.length === 0) setOllamaModelsError('No models returned by Ollama.');
+    } catch (err) {
+      setOllamaModelsError(err instanceof Error ? err.message : 'Failed to load Ollama models.');
+    } finally {
+      setOllamaModelsLoading(false);
+    }
+  }, [hasOllamaKey, ollamaModelsLoading]);
+
+  const refreshMistralModels = useCallback(async () => {
+    if (!hasMistralKey || mistralModelsLoading) return;
+    setMistralModelsLoading(true);
+    setMistralModelsError(null);
+    try {
+      const models = await fetchMistralModels();
+      setMistralModels(models);
+      setMistralModelsUpdatedAt(Date.now());
+      if (models.length === 0) setMistralModelsError('No models returned by Mistral.');
+    } catch (err) {
+      setMistralModelsError(err instanceof Error ? err.message : 'Failed to load Mistral models.');
+    } finally {
+      setMistralModelsLoading(false);
+    }
+  }, [hasMistralKey, mistralModelsLoading]);
+
+  useEffect(() => {
+    if (settingsOpen && hasOllamaKey && ollamaModels.length === 0 && !ollamaModelsLoading) {
+      refreshOllamaModels();
+    }
+  }, [settingsOpen, hasOllamaKey, ollamaModels.length, ollamaModelsLoading, refreshOllamaModels]);
+
+  useEffect(() => {
+    if (settingsOpen && hasMistralKey && mistralModels.length === 0 && !mistralModelsLoading) {
+      refreshMistralModels();
+    }
+  }, [settingsOpen, hasMistralKey, mistralModels.length, mistralModelsLoading, refreshMistralModels]);
+
+  useEffect(() => {
+    if (!hasOllamaKey) {
+      setOllamaModels([]);
+      setOllamaModelsError(null);
+      setOllamaModelsUpdatedAt(null);
+    }
+  }, [hasOllamaKey]);
+
+  useEffect(() => {
+    if (!hasMistralKey) {
+      setMistralModels([]);
+      setMistralModelsError(null);
+      setMistralModelsUpdatedAt(null);
+    }
+  }, [hasMistralKey]);
+
+  const ollamaModelOptions = useMemo(() => {
+    const set = new Set(ollamaModels);
+    if (ollamaModel && !set.has(ollamaModel)) return [ollamaModel, ...ollamaModels];
+    return ollamaModels;
+  }, [ollamaModels, ollamaModel]);
+
+  const mistralModelOptions = useMemo(() => {
+    const set = new Set(mistralModels);
+    if (mistralModel && !set.has(mistralModel)) return [mistralModel, ...mistralModels];
+    return mistralModels;
+  }, [mistralModels, mistralModel]);
 
   const copyAllowlistCommand = useCallback(async () => {
     try {
@@ -196,6 +298,89 @@ function App() {
 
   // Sandbox download handler (for header button + expiry banner)
   const [sandboxDownloading, setSandboxDownloading] = useState(false);
+  const markSnapshotActivity = useCallback(() => {
+    snapshotLastActivityRef.current = Date.now();
+  }, []);
+
+  const refreshLatestSnapshot = useCallback(async () => {
+    try {
+      const meta = await getLatestSnapshotMeta();
+      setLatestSnapshot(meta);
+    } catch {
+      setLatestSnapshot(null);
+    }
+  }, []);
+
+  const captureSnapshot = useCallback(async (reason: 'manual' | 'interval' | 'idle') => {
+    if (!sandbox.sandboxId || sandbox.status !== 'ready') return false;
+    const now = Date.now();
+    if (reason !== 'manual' && (now - snapshotLastSavedAtRef.current) < SNAPSHOT_MIN_GAP_MS) {
+      return false;
+    }
+
+    setSnapshotSaving(true);
+    try {
+      const blob = await createSnapshot('/workspace', sandbox.sandboxId);
+      const label = `workspace-${new Date().toISOString()}`;
+      await saveSnapshotToIndexedDB(label, blob);
+      snapshotLastSavedAtRef.current = Date.now();
+      await refreshLatestSnapshot();
+      if (reason === 'manual') {
+        toast.success('Snapshot saved');
+      }
+      return true;
+    } catch (err) {
+      if (reason === 'manual') {
+        const message = err instanceof Error ? err.message : 'Snapshot save failed';
+        toast.error(message);
+      }
+      return false;
+    } finally {
+      setSnapshotSaving(false);
+    }
+  }, [sandbox.sandboxId, sandbox.status, refreshLatestSnapshot]);
+
+  const handleRestoreFromSnapshot = useCallback(async () => {
+    if (snapshotRestoring) return;
+    const blob = await getLatestSnapshotBlob();
+    if (!blob) {
+      toast.error('No snapshot found');
+      return;
+    }
+
+    let targetSandboxId = sandbox.sandboxId;
+    if (!targetSandboxId) {
+      targetSandboxId = isSandboxMode
+        ? await sandbox.start('', 'main')
+        : (activeRepo ? await sandbox.start(activeRepo.full_name, activeRepo.default_branch) : null);
+    }
+    if (!targetSandboxId) {
+      toast.error('Sandbox is not ready');
+      return;
+    }
+
+    const shouldProceed = !sandbox.sandboxId || window.confirm('Restore will overwrite files in /workspace. Continue?');
+    if (!shouldProceed) return;
+
+    setSnapshotRestoring(true);
+    setSnapshotRestoreProgress({ stage: 'uploading', message: 'Uploading snapshot...' });
+    try {
+      const result = await hydrateSnapshot(blob, '/workspace', targetSandboxId, setSnapshotRestoreProgress);
+      if (!result.ok) {
+        toast.error(result.error || 'Restore failed');
+        return;
+      }
+      markSnapshotActivity();
+      toast.success(`Snapshot restored (${result.restoredFiles ?? 0} files)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Restore failed';
+      toast.error(message);
+    } finally {
+      setSnapshotRestoring(false);
+      setSnapshotRestoreProgress(null);
+    }
+  }, [snapshotRestoring, sandbox, isSandboxMode, activeRepo, markSnapshotActivity]);
+
   const handleSandboxDownload = useCallback(async () => {
     if (!sandbox.sandboxId || sandboxDownloading) return;
     setSandboxDownloading(true);
@@ -379,6 +564,64 @@ function App() {
     }
   }, [isSandboxMode, sandbox.status, sandbox.sandboxId, sandbox.start]);
 
+  // Load latest local snapshot metadata when sandbox mode is active.
+  useEffect(() => {
+    if (!isSandboxMode) return;
+    refreshLatestSnapshot();
+  }, [isSandboxMode, refreshLatestSnapshot]);
+
+  // Snapshot activity heartbeat sources: user input + chat agent activity.
+  useEffect(() => {
+    if (!isSandboxMode) return;
+    const mark = () => markSnapshotActivity();
+    window.addEventListener('keydown', mark);
+    window.addEventListener('pointerdown', mark);
+    return () => {
+      window.removeEventListener('keydown', mark);
+      window.removeEventListener('pointerdown', mark);
+    };
+  }, [isSandboxMode, markSnapshotActivity]);
+
+  useEffect(() => {
+    if (isStreaming) {
+      markSnapshotActivity();
+    }
+  }, [isStreaming, markSnapshotActivity]);
+
+  useEffect(() => {
+    if (!sandbox.sandboxId) return;
+    snapshotSessionStartedAtRef.current = Date.now();
+    snapshotHardCapNotifiedRef.current = false;
+  }, [sandbox.sandboxId]);
+
+  // Auto-save every 5 minutes and on idle heartbeat, with a 4-hour hard cap.
+  useEffect(() => {
+    if (!isSandboxMode || sandbox.status !== 'ready' || !sandbox.sandboxId) return;
+    const timer = window.setInterval(async () => {
+      const now = Date.now();
+      const age = now - snapshotSessionStartedAtRef.current;
+      if (age > SNAPSHOT_HARD_CAP_MS) {
+        if (!snapshotHardCapNotifiedRef.current) {
+          snapshotHardCapNotifiedRef.current = true;
+          toast.message('Snapshot autosave paused after 4 hours');
+        }
+        return;
+      }
+
+      const lastSavedAgo = now - snapshotLastSavedAtRef.current;
+      const idleFor = now - snapshotLastActivityRef.current;
+      if (lastSavedAgo >= SNAPSHOT_INTERVAL_MS) {
+        await captureSnapshot('interval');
+        return;
+      }
+      if (idleFor >= SNAPSHOT_IDLE_MS) {
+        await captureSnapshot('idle');
+      }
+    }, 15_000);
+
+    return () => window.clearInterval(timer);
+  }, [isSandboxMode, sandbox.status, sandbox.sandboxId, captureSnapshot]);
+
   // Sync repos on mount (for returning users who already have a token)
   useEffect(() => {
     if (token) syncRepos();
@@ -389,6 +632,16 @@ function App() {
     createNewChat();
     syncRepos();
   }, [createNewChat, syncRepos]);
+
+  const sendMessageWithSnapshotHeartbeat = useCallback((message: string, attachments?: Parameters<typeof sendMessage>[1]) => {
+    markSnapshotActivity();
+    return sendMessage(message, attachments);
+  }, [markSnapshotActivity, sendMessage]);
+
+  const handleCardActionWithSnapshotHeartbeat = useCallback((action: Parameters<typeof handleCardAction>[0]) => {
+    markSnapshotActivity();
+    return handleCardAction(action);
+  }, [markSnapshotActivity, handleCardAction]);
 
   // Unregister service workers on tunnel domains to prevent stale caching
   useEffect(() => {
@@ -466,6 +719,35 @@ function App() {
                 <span className="text-xs font-medium text-[#a1a1aa]">Sandbox</span>
               </div>
               <span className="text-[10px] text-[#52525b]">ephemeral</span>
+              {latestSnapshot && (
+                <span className="text-[10px] text-[#3f3f46]" title={`Latest snapshot: ${new Date(latestSnapshot.createdAt).toLocaleString()}`}>
+                  snapshot ready
+                </span>
+              )}
+              {sandbox.status === 'ready' && (
+                <button
+                  onClick={() => captureSnapshot('manual')}
+                  disabled={snapshotSaving || snapshotRestoring}
+                  className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-[#52525b] transition-colors hover:text-emerald-400 hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-50"
+                  title="Save Snapshot Now"
+                  aria-label="Save Snapshot Now"
+                >
+                  {snapshotSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Save
+                </button>
+              )}
+              {latestSnapshot && (
+                <button
+                  onClick={handleRestoreFromSnapshot}
+                  disabled={snapshotSaving || snapshotRestoring || sandbox.status === 'creating'}
+                  className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-[#52525b] transition-colors hover:text-emerald-400 hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-50"
+                  title="Restore from Last Snapshot"
+                  aria-label="Restore from Last Snapshot"
+                >
+                  {snapshotRestoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                  Restore
+                </button>
+              )}
               {sandbox.status === 'ready' && (
                 <button
                   onClick={handleSandboxDownload}
@@ -476,6 +758,9 @@ function App() {
                 >
                   {sandboxDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                 </button>
+              )}
+              {snapshotRestoring && snapshotRestoreProgress && (
+                <span className="text-[10px] text-[#71717a]">{snapshotRestoreProgress.message}</span>
               )}
             </div>
           ) : (
@@ -570,15 +855,15 @@ function App() {
         messages={messages}
         agentStatus={agentStatus}
         activeRepo={activeRepo}
-        onSuggestion={sendMessage}
-        onCardAction={handleCardAction}
+        onSuggestion={sendMessageWithSnapshotHeartbeat}
+        onCardAction={handleCardActionWithSnapshotHeartbeat}
         isConsoleOpen={isConsoleOpen}
         onConsoleClose={() => setIsConsoleOpen(false)}
       />
 
       {/* Input */}
       <ChatInput
-        onSend={sendMessage}
+        onSend={sendMessageWithSnapshotHeartbeat}
         onStop={abortStream}
         isStreaming={isStreaming}
         repoName={activeRepo?.name}
@@ -1031,26 +1316,43 @@ function App() {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-[#71717a] shrink-0">Model:</span>
-                      <input
-                        type="text"
-                        value={ollamaModelInput || ollamaModel}
-                        onChange={(e) => setOllamaModelInput(e.target.value)}
-                        onBlur={() => {
-                          if (ollamaModelInput.trim()) {
-                            setOllamaModel(ollamaModelInput.trim());
-                          }
-                          setOllamaModelInput('');
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && ollamaModelInput.trim()) {
-                            setOllamaModel(ollamaModelInput.trim());
-                            setOllamaModelInput('');
-                          }
-                        }}
-                        placeholder="kimi-k2.5"
-                        className="flex-1 rounded-md border border-[#1a1a1a] bg-[#0d0d0d] px-2 py-1 text-xs text-[#fafafa] font-mono placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
-                      />
+                      <select
+                        value={ollamaModel}
+                        onChange={(e) => setOllamaModel(e.target.value)}
+                        disabled={ollamaModelOptions.length === 0}
+                        className="flex-1 rounded-md border border-[#1a1a1a] bg-[#0d0d0d] px-2 py-1 text-xs text-[#fafafa] font-mono focus:outline-none focus:border-[#3f3f46] disabled:opacity-50"
+                      >
+                        {ollamaModelOptions.length === 0 ? (
+                          <option value={ollamaModel}>{ollamaModel}</option>
+                        ) : (
+                          ollamaModelOptions.map((model) => (
+                            <option key={model} value={model}>
+                              {model}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={refreshOllamaModels}
+                        disabled={ollamaModelsLoading}
+                        className="rounded-md border border-[#1a1a1a] bg-[#0d0d0d] p-1.5 text-[#a1a1aa] hover:text-[#fafafa] disabled:opacity-50"
+                        aria-label="Refresh Ollama models"
+                        title="Refresh Ollama models"
+                      >
+                        {ollamaModelsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                      </button>
                     </div>
+                    {ollamaModelsError && (
+                      <p className="text-xs text-amber-400">
+                        {ollamaModelsError}
+                      </p>
+                    )}
+                    {ollamaModelsUpdatedAt && (
+                      <p className="text-xs text-[#52525b]">
+                        Updated {new Date(ollamaModelsUpdatedAt).toLocaleTimeString()}
+                      </p>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1173,26 +1475,43 @@ function App() {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-[#71717a] shrink-0">Model:</span>
-                      <input
-                        type="text"
-                        value={mistralModelInput || mistralModel}
-                        onChange={(e) => setMistralModelInput(e.target.value)}
-                        onBlur={() => {
-                          if (mistralModelInput.trim()) {
-                            setMistralModel(mistralModelInput.trim());
-                          }
-                          setMistralModelInput('');
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && mistralModelInput.trim()) {
-                            setMistralModel(mistralModelInput.trim());
-                            setMistralModelInput('');
-                          }
-                        }}
-                        placeholder="devstral-small-latest"
-                        className="flex-1 rounded-md border border-[#1a1a1a] bg-[#0d0d0d] px-2 py-1 text-xs text-[#fafafa] font-mono placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46]"
-                      />
+                      <select
+                        value={mistralModel}
+                        onChange={(e) => setMistralModel(e.target.value)}
+                        disabled={mistralModelOptions.length === 0}
+                        className="flex-1 rounded-md border border-[#1a1a1a] bg-[#0d0d0d] px-2 py-1 text-xs text-[#fafafa] font-mono focus:outline-none focus:border-[#3f3f46] disabled:opacity-50"
+                      >
+                        {mistralModelOptions.length === 0 ? (
+                          <option value={mistralModel}>{mistralModel}</option>
+                        ) : (
+                          mistralModelOptions.map((model) => (
+                            <option key={model} value={model}>
+                              {model}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={refreshMistralModels}
+                        disabled={mistralModelsLoading}
+                        className="rounded-md border border-[#1a1a1a] bg-[#0d0d0d] p-1.5 text-[#a1a1aa] hover:text-[#fafafa] disabled:opacity-50"
+                        aria-label="Refresh Mistral models"
+                        title="Refresh Mistral models"
+                      >
+                        {mistralModelsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                      </button>
                     </div>
+                    {mistralModelsError && (
+                      <p className="text-xs text-amber-400">
+                        {mistralModelsError}
+                      </p>
+                    )}
+                    {mistralModelsUpdatedAt && (
+                      <p className="text-xs text-[#52525b]">
+                        Updated {new Date(mistralModelsUpdatedAt).toLocaleTimeString()}
+                      </p>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"

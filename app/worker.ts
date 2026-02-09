@@ -23,7 +23,8 @@ interface Env {
   GITHUB_APP_CLIENT_SECRET?: string;
 }
 
-const MAX_BODY_SIZE_BYTES = 512 * 1024; // 512KB — supports file uploads via sandbox write
+const MAX_BODY_SIZE_BYTES = 512 * 1024; // 512KB default
+const RESTORE_MAX_BODY_SIZE_BYTES = 12 * 1024 * 1024; // 12MB for snapshot restore payloads
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 30;
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
@@ -38,6 +39,7 @@ const SANDBOX_ROUTES: Record<string, string> = {
   cleanup: 'cleanup',
   list: 'file-ops',
   delete: 'file-ops',
+  restore: 'file-ops',
   'browser-screenshot': 'browser-screenshot',
   'browser-extract': 'browser-extract',
   download: 'create-archive',
@@ -72,9 +74,19 @@ export default {
       return handleOllamaChat(request, env);
     }
 
+    // API route: model catalog proxy to Ollama Cloud
+    if (url.pathname === '/api/ollama/models' && request.method === 'GET') {
+      return handleOllamaModels(request, env);
+    }
+
     // API route: streaming proxy to Mistral Vibe (SSE, OpenAI-compatible)
     if (url.pathname === '/api/mistral/chat' && request.method === 'POST') {
       return handleMistralChat(request, env);
+    }
+
+    // API route: model catalog proxy to Mistral
+    if (url.pathname === '/api/mistral/models' && request.method === 'GET') {
+      return handleMistralModels(request, env);
     }
 
     // API route: sandbox proxy to Modal
@@ -259,14 +271,23 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   }
 
   // Read and forward body
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
+  const maxBodyBytes = route === 'restore' ? RESTORE_MAX_BODY_SIZE_BYTES : MAX_BODY_SIZE_BYTES;
+  const bodyResult = await readBodyText(request, maxBodyBytes);
   if (!bodyResult.ok) {
     return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
   }
 
   // Route-specific payload enrichment without changing client contracts.
   let forwardBodyText = bodyResult.text;
-  if (route === 'read' || route === 'write' || route === 'list' || route === 'delete' || route === 'browser-screenshot' || route === 'browser-extract') {
+  if (
+    route === 'read'
+    || route === 'write'
+    || route === 'list'
+    || route === 'delete'
+    || route === 'restore'
+    || route === 'browser-screenshot'
+    || route === 'browser-extract'
+  ) {
     try {
       const payload = JSON.parse(bodyResult.text) as Record<string, unknown>;
 
@@ -274,6 +295,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
       if (route === 'write') payload.action = 'write';
       if (route === 'list') payload.action = 'list';
       if (route === 'delete') payload.action = 'delete';
+      if (route === 'restore') payload.action = 'hydrate';
 
       if (route === 'browser-screenshot' || route === 'browser-extract') {
         payload.browserbase_api_key = env.BROWSERBASE_API_KEY || '';
@@ -527,6 +549,70 @@ async function handleKimiChat(request: Request, env: Env): Promise<Response> {
 
 // --- Ollama Cloud streaming proxy ---
 
+async function handleOllamaModels(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const now = Date.now();
+  cleanupRateLimitStore(now);
+  const rateLimit = checkRateLimit(getClientIp(request), now);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
+    );
+  }
+
+  const serverKey = env.OLLAMA_API_KEY;
+  const clientAuth = request.headers.get('Authorization');
+  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
+
+  if (!authHeader) {
+    return Response.json(
+      { error: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.' },
+      { status: 401 },
+    );
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    let upstream: Response;
+
+    try {
+      upstream = await fetch('https://ollama.com/v1/models', {
+        method: 'GET',
+        headers: {
+          'Authorization': authHeader,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      return Response.json(
+        { error: `Ollama Cloud API error ${upstream.status}: ${errBody.slice(0, 200)}` },
+        { status: upstream.status },
+      );
+    }
+
+    const data: unknown = await upstream.json();
+    return Response.json(data);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    const status = isTimeout ? 504 : 500;
+    const error = isTimeout ? 'Ollama Cloud model list timed out after 30 seconds' : message;
+    return Response.json({ error }, { status });
+  }
+}
+
 async function handleOllamaChat(request: Request, env: Env): Promise<Response> {
   const requestUrl = new URL(request.url);
   const originCheck = validateOrigin(request, requestUrl, env);
@@ -619,6 +705,70 @@ async function handleOllamaChat(request: Request, env: Env): Promise<Response> {
 }
 
 // --- Mistral Vibe streaming proxy ---
+
+async function handleMistralModels(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const now = Date.now();
+  cleanupRateLimitStore(now);
+  const rateLimit = checkRateLimit(getClientIp(request), now);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
+    );
+  }
+
+  const serverKey = env.MISTRAL_API_KEY;
+  const clientAuth = request.headers.get('Authorization');
+  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
+
+  if (!authHeader) {
+    return Response.json(
+      { error: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.' },
+      { status: 401 },
+    );
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    let upstream: Response;
+
+    try {
+      upstream = await fetch('https://api.mistral.ai/v1/models', {
+        method: 'GET',
+        headers: {
+          'Authorization': authHeader,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      return Response.json(
+        { error: `Mistral API error ${upstream.status}: ${errBody.slice(0, 200)}` },
+        { status: upstream.status },
+      );
+    }
+
+    const data: unknown = await upstream.json();
+    return Response.json(data);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    const status = isTimeout ? 504 : 500;
+    const error = isTimeout ? 'Mistral model list timed out after 30 seconds' : message;
+    return Response.json({ error }, { status });
+  }
+}
 
 async function handleMistralChat(request: Request, env: Env): Promise<Response> {
   const requestUrl = new URL(request.url);

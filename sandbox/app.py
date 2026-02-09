@@ -306,12 +306,12 @@ def file_ops(data: dict):
 
     if not sandbox_id:
         return {"error": "Missing sandbox_id"}
-    if action not in ("read", "write", "list", "delete"):
+    if action not in ("read", "write", "list", "delete", "hydrate"):
         return {"error": f"Unknown file operation: {action}"}
 
     sb = modal.Sandbox.from_id(sandbox_id)
     if not _validate_owner_token(sb, owner_token):
-        if action in ("write", "delete"):
+        if action in ("write", "delete", "hydrate"):
             return {"ok": False, "error": "Unauthorized sandbox access"}
         if action == "read":
             return {"error": "Unauthorized sandbox access", "content": ""}
@@ -363,6 +363,63 @@ def file_ops(data: dict):
             "ok": True,
             "bytes_written": int(written_bytes) if written_bytes.isdigit() else 0,
         }
+
+    if action == "hydrate":
+        archive_base64 = str(data.get("archive_base64", "")).strip()
+        target = str(data.get("path", "/workspace") or "/workspace")
+        archive_format = str(data.get("format", "tar.gz") or "tar.gz")
+        if not archive_base64:
+            return {"ok": False, "error": "Missing archive_base64"}
+        if archive_format != "tar.gz":
+            return {"ok": False, "error": "Unsupported format"}
+        if not target.startswith("/workspace"):
+            return {"ok": False, "error": "Path must be within /workspace"}
+
+        tmp_b64 = "/tmp/restore.tar.gz.b64"
+        tmp_archive = "/tmp/restore.tar.gz"
+        escaped_target = target.replace("'", "'\\''")
+
+        sb.exec("rm", "-f", tmp_b64, tmp_archive).wait()
+        chunk_size = 120_000
+        for i in range(0, len(archive_base64), chunk_size):
+            chunk = archive_base64[i : i + chunk_size].replace("'", "'\\''")
+            p = sb.exec("bash", "-lc", f"printf '%s' '{chunk}' >> {tmp_b64}")
+            p.wait()
+            if p.returncode != 0:
+                stderr = p.stderr.read()
+                return {"ok": False, "error": f"Snapshot upload failed: {stderr}"}
+
+        p = sb.exec("bash", "-lc", f"base64 -d {tmp_b64} > {tmp_archive}")
+        p.wait()
+        if p.returncode != 0:
+            stderr = p.stderr.read()
+            return {"ok": False, "error": f"Snapshot decode failed: {stderr}"}
+
+        p = sb.exec("tar", "tzf", tmp_archive)
+        p.wait()
+        if p.returncode != 0:
+            stderr = p.stderr.read()
+            return {"ok": False, "error": f"Snapshot validation failed: {stderr}"}
+
+        p = sb.exec("bash", "-lc", f"mkdir -p '{escaped_target}' && find '{escaped_target}' -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +")
+        p.wait()
+        if p.returncode != 0:
+            stderr = p.stderr.read()
+            return {"ok": False, "error": f"Workspace cleanup failed: {stderr}"}
+
+        p = sb.exec("tar", "xzf", tmp_archive, "-C", target)
+        p.wait()
+        if p.returncode != 0:
+            stderr = p.stderr.read()
+            return {"ok": False, "error": f"Snapshot restore failed: {stderr}"}
+
+        p = sb.exec("bash", "-lc", f"find '{escaped_target}' -type f | wc -l")
+        p.wait()
+        restored_files_raw = p.stdout.read().strip() if p.returncode == 0 else "0"
+        restored_files = int(restored_files_raw) if restored_files_raw.isdigit() else 0
+
+        sb.exec("rm", "-f", tmp_b64, tmp_archive).wait()
+        return {"ok": True, "restored_files": restored_files}
 
     if action == "list":
         target = path or "/workspace"

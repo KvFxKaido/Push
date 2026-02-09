@@ -338,6 +338,7 @@ export async function cleanupSandbox(
 // --- Archive download ---
 
 const ARCHIVE_TIMEOUT_MS = 120_000; // 120s for large archive generation
+const RESTORE_TIMEOUT_MS = 180_000; // 180s for large archive upload + extraction
 
 export interface ArchiveResult {
   ok: boolean;
@@ -369,6 +370,36 @@ export async function downloadFromSandbox(
     archiveBase64: raw.archive_base64,
     sizeBytes: raw.size_bytes,
     format: raw.format,
+    error: raw.error,
+  };
+}
+
+export interface RestoreResult {
+  ok: boolean;
+  restoredFiles?: number;
+  error?: string;
+}
+
+export async function hydrateSnapshotInSandbox(
+  sandboxId: string,
+  archiveBase64: string,
+  path: string = '/workspace',
+): Promise<RestoreResult> {
+  const raw = await sandboxFetch<{
+    ok: boolean;
+    restored_files?: number;
+    error?: string;
+  }>('restore', {
+    ...withOwnerToken({}),
+    sandbox_id: sandboxId,
+    archive_base64: archiveBase64,
+    path,
+    format: 'tar.gz',
+  }, RESTORE_TIMEOUT_MS);
+
+  return {
+    ok: raw.ok,
+    restoredFiles: raw.restored_files,
     error: raw.error,
   };
 }

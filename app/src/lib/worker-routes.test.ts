@@ -24,8 +24,10 @@ const SANDBOX_ROUTES: Record<string, string> = {
   cleanup: 'cleanup',
   list: 'file-ops',
   delete: 'file-ops',
+  restore: 'file-ops',
   'browser-screenshot': 'browser-screenshot',
   'browser-extract': 'browser-extract',
+  download: 'create-archive',
 };
 
 // ---------------------------------------------------------------------------
@@ -70,8 +72,10 @@ describe('SANDBOX_ROUTES — completeness', () => {
     'cleanup',
     'list',
     'delete',
+    'restore',
     'browser-screenshot',
     'browser-extract',
+    'download',
   ];
 
   for (const route of expectedRoutes) {
