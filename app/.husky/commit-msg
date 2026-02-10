@@ -1,1 +1,2 @@
+#!/bin/sh
 cd app && npx --no-install commitlint --edit "$1"
