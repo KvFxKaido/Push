@@ -66,13 +66,19 @@ export function useSandbox(activeRepoFullName?: string | null) {
   const [status, setStatus] = useState<SandboxStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const sandboxIdRef = useRef<string | null>(null);
+  const statusRef = useRef<SandboxStatus>('idle');
   const reconnectingRef = useRef(false);
   const reconnectPromiseRef = useRef<Promise<string | null> | null>(null);
+  const startPromiseRef = useRef<Promise<string | null> | null>(null);
 
   // Keep ref in sync for cleanup
   useEffect(() => {
     sandboxIdRef.current = sandboxId;
   }, [sandboxId]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   // Attempt to reconnect to a saved sandbox session on mount
   useEffect(() => {
@@ -147,49 +153,62 @@ export function useSandbox(activeRepoFullName?: string | null) {
   }, [activeRepoFullName, status]);
 
   const start = useCallback(async (repo: string, branch?: string): Promise<string | null> => {
-    if (status === 'creating') return null;
+    if (startPromiseRef.current) return startPromiseRef.current;
+    if (statusRef.current === 'creating') return null;
 
-    // If reconnection is in progress, wait for it
-    if (reconnectingRef.current && reconnectPromiseRef.current) {
-      const reconnectedId = await reconnectPromiseRef.current;
-      if (reconnectedId) return reconnectedId;
-    }
-
-    setStatus('creating');
-    setError(null);
-    setSandboxOwnerToken(null);
-
-    try {
-      // Empty repo = sandbox mode (ephemeral workspace, no clone, no token needed)
-      const token = repo ? getGitHubToken() : '';
-      const session = await createSandbox(repo, branch, token);
-
-      if (session.status === 'error') {
-        setStatus('error');
-        setError(session.error || 'Sandbox creation failed');
-        return null;
+    const startPromise = (async () => {
+      // If reconnection is in progress, wait for it
+      if (reconnectingRef.current && reconnectPromiseRef.current) {
+        const reconnectedId = await reconnectPromiseRef.current;
+        if (reconnectedId) return reconnectedId;
       }
 
-      setSandboxId(session.sandboxId);
-      setStatus('ready');
-      setSandboxOwnerToken(session.ownerToken || null);
+      if (sandboxIdRef.current) return sandboxIdRef.current;
 
-      saveSession({
-        sandboxId: session.sandboxId,
-        ownerToken: session.ownerToken || '',
-        repoFullName: repo,
-        branch: branch || 'main',
-        createdAt: Date.now(),
-      });
+      setStatus('creating');
+      setError(null);
+      setSandboxOwnerToken(null);
 
-      return session.sandboxId;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setStatus('error');
-      setError(msg);
-      return null;
-    }
-  }, [status]);
+      try {
+        // Empty repo = sandbox mode (ephemeral workspace, no clone, no token needed)
+        const token = repo ? getGitHubToken() : '';
+        const session = await createSandbox(repo, branch, token);
+
+        if (session.status === 'error') {
+          setStatus('error');
+          setError(session.error || 'Sandbox creation failed');
+          return null;
+        }
+
+        setSandboxId(session.sandboxId);
+        setStatus('ready');
+        setSandboxOwnerToken(session.ownerToken || null);
+
+        saveSession({
+          sandboxId: session.sandboxId,
+          ownerToken: session.ownerToken || '',
+          repoFullName: repo,
+          branch: branch || 'main',
+          createdAt: Date.now(),
+        });
+
+        return session.sandboxId;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setStatus('error');
+        setError(msg);
+        return null;
+      }
+    })();
+
+    startPromiseRef.current = startPromise;
+
+    return startPromise.finally(() => {
+      if (startPromiseRef.current === startPromise) {
+        startPromiseRef.current = null;
+      }
+    });
+  }, []);
 
   const stop = useCallback(async () => {
     const id = sandboxIdRef.current;

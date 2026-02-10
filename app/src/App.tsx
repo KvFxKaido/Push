@@ -778,12 +778,12 @@ function App() {
   }, [ensureSandbox, setEnsureSandbox]);
 
   // Auto-start sandbox when entering sandbox mode
+  const { status: sandboxStatus, sandboxId: currentSandboxId, start: startSandbox } = sandbox;
   useEffect(() => {
-    const { status, sandboxId, start } = sandbox;
-    if (isSandboxMode && status === 'idle' && !sandboxId) {
-      start('', 'main');
+    if (isSandboxMode && sandboxStatus === 'idle' && !currentSandboxId) {
+      startSandbox('', 'main');
     }
-  }, [isSandboxMode, sandbox]);
+  }, [isSandboxMode, sandboxStatus, currentSandboxId, startSandbox]);
 
   // Load latest local snapshot metadata when sandbox mode is active.
   useEffect(() => {
