@@ -30,6 +30,20 @@ nul
 # logs
 *.log
 
+# local browser automation artifacts
+.playwright-cli/
+chat-view.png
+console-open.png
+mobile-panel-console-tab.png
+mobile-panel-console.png
+new-chat-view.png
+onboarding.png
+panel-closed.png
+panel-console-tab.png
+panel-scratchpad-tab.png
+scratchpad-open.png
+settings-open.png
+
 # python
 __pycache__/
 *.pyc

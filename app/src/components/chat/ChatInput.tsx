@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { ArrowUp, Paperclip, Square, TerminalSquare } from 'lucide-react';
+import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import { AttachmentPreview } from './AttachmentPreview';
-import { ScratchpadButton } from './ScratchpadButton';
+import { WorkspacePanelButton } from './WorkspacePanelButton';
 import { ContextMeter } from './ContextMeter';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { processFile, getTotalAttachmentSize } from '@/lib/file-processing';
@@ -13,9 +13,8 @@ interface ChatInputProps {
   onStop?: () => void;
   isStreaming?: boolean;
   repoName?: string;
-  onScratchpadToggle?: () => void;
+  onWorkspacePanelToggle?: () => void;
   scratchpadHasContent?: boolean;
-  onConsoleToggle?: () => void;
   agentActive?: boolean;
   contextUsage?: { used: number; max: number; percent: number };
 }
@@ -23,7 +22,7 @@ interface ChatInputProps {
 const ACCEPTED_FILES = 'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
 const MAX_PAYLOAD = 400 * 1024; // 400KB total
 
-export function ChatInput({ onSend, onStop, isStreaming, repoName, onScratchpadToggle, scratchpadHasContent, onConsoleToggle, agentActive, contextUsage }: ChatInputProps) {
+export function ChatInput({ onSend, onStop, isStreaming, repoName, onWorkspacePanelToggle, scratchpadHasContent, agentActive, contextUsage }: ChatInputProps) {
   const [value, setValue] = useState('');
   const [stagedAttachments, setStagedAttachments] = useState<StagedAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -160,25 +159,12 @@ export function ChatInput({ onSend, onStop, isStreaming, repoName, onScratchpadT
 
         <div className="px-4 py-3">
           <div className="relative flex items-end gap-2">
-            {/* Scratchpad button */}
-            <ScratchpadButton
-              onClick={onScratchpadToggle ?? (() => {})}
-              hasContent={scratchpadHasContent ?? false}
-              disabled={isStreaming}
+            {/* Workspace panel toggle */}
+            <WorkspacePanelButton
+              onClick={onWorkspacePanelToggle ?? (() => {})}
+              scratchpadHasContent={scratchpadHasContent ?? false}
+              agentActive={agentActive ?? false}
             />
-
-            {/* Console button */}
-            <button
-              onClick={onConsoleToggle}
-              className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0d0d0d] text-[#52525b] transition-colors hover:text-[#a1a1aa] active:scale-95"
-              aria-label="Open console"
-              title="Console"
-            >
-              <TerminalSquare className="h-4 w-4" />
-              {agentActive && (
-                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-[#0070f3] animate-pulse" />
-              )}
-            </button>
 
             {/* File attachment button */}
             <button

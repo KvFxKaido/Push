@@ -33,7 +33,7 @@ import {
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoAndChatSelector } from '@/components/chat/RepoAndChatSelector';
-import { ScratchpadDrawer } from '@/components/chat/ScratchpadDrawer';
+import { WorkspacePanel } from '@/components/chat/WorkspacePanel';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { OnboardingScreen } from '@/sections/OnboardingScreen';
 import { RepoPicker } from '@/sections/RepoPicker';
@@ -118,7 +118,7 @@ const AGENTS_MD_TEMPLATE = `# AGENTS.md
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo } = useActiveRepo();
   const scratchpad = useScratchpad(activeRepo?.full_name ?? null);
-  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [isWorkspacePanelOpen, setIsWorkspacePanelOpen] = useState(false);
   const [isSandboxMode, setIsSandboxMode] = useState(false);
   const sandbox = useSandbox(isSandboxMode ? '' : (activeRepo?.full_name ?? null));
   const {
@@ -1171,8 +1171,6 @@ function App() {
         isSandboxMode={isSandboxMode}
         onSuggestion={sendMessageWithSnapshotHeartbeat}
         onCardAction={handleCardActionWithSnapshotHeartbeat}
-        isConsoleOpen={isConsoleOpen}
-        onConsoleClose={() => setIsConsoleOpen(false)}
       />
 
       {/* Input */}
@@ -1181,21 +1179,21 @@ function App() {
         onStop={abortStream}
         isStreaming={isStreaming}
         repoName={activeRepo?.name}
-        onScratchpadToggle={scratchpad.toggle}
+        onWorkspacePanelToggle={() => setIsWorkspacePanelOpen(o => !o)}
         scratchpadHasContent={scratchpad.hasContent}
-        onConsoleToggle={() => setIsConsoleOpen(o => !o)}
         agentActive={agentStatus.active}
         contextUsage={contextUsage}
       />
 
-      {/* Scratchpad drawer */}
-      <ScratchpadDrawer
-        isOpen={scratchpad.isOpen}
+      {/* Workspace panel (console + scratchpad) */}
+      <WorkspacePanel
+        isOpen={isWorkspacePanelOpen}
+        onClose={() => setIsWorkspacePanelOpen(false)}
+        messages={messages}
         content={scratchpad.content}
         memories={scratchpad.memories}
         activeMemoryId={scratchpad.activeMemoryId}
         onContentChange={scratchpad.setContent}
-        onClose={scratchpad.close}
         onClear={scratchpad.clear}
         onSaveMemory={scratchpad.saveMemory}
         onLoadMemory={scratchpad.loadMemory}

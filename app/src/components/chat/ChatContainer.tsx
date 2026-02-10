@@ -3,7 +3,6 @@ import { ArrowDown } from 'lucide-react';
 import type { ChatMessage, AgentStatus, ActiveRepo, CardAction } from '@/types';
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
-import { ActivityDrawer } from './ActivityDrawer';
 
 interface ChatContainerProps {
   messages: ChatMessage[];
@@ -12,8 +11,6 @@ interface ChatContainerProps {
   isSandboxMode?: boolean;
   onSuggestion?: (text: string) => void;
   onCardAction?: (action: CardAction) => void;
-  isConsoleOpen?: boolean;
-  onConsoleClose?: () => void;
 }
 
 function EmptyState({
@@ -92,7 +89,7 @@ function EmptyState({
   );
 }
 
-export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode, onSuggestion, onCardAction, isConsoleOpen, onConsoleClose }: ChatContainerProps) {
+export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode, onSuggestion, onCardAction }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -152,7 +149,6 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
         <EmptyState activeRepo={activeRepo} isSandboxMode={isSandboxMode} onSuggestion={onSuggestion} />
-        <ActivityDrawer isOpen={isConsoleOpen ?? false} onClose={onConsoleClose ?? (() => {})} messages={messages} />
       </div>
     );
   }
@@ -194,7 +190,6 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
         <ArrowDown size={18} />
       </button>
 
-      <ActivityDrawer isOpen={isConsoleOpen ?? false} onClose={onConsoleClose ?? (() => {})} messages={messages} />
     </div>
   );
 }
