@@ -18,40 +18,40 @@ function runStatusIcon(run: WorkflowRunItem) {
     case 'timed_out':
       return <XCircle className="h-3.5 w-3.5 shrink-0 text-[#f59e0b]" />;
     default:
-      return <MinusCircle className="h-3.5 w-3.5 shrink-0 text-[#a1a1aa]" />;
+      return <MinusCircle className="h-3.5 w-3.5 shrink-0 text-push-fg-secondary" />;
   }
 }
 
 function headerBg(runs: WorkflowRunItem[]): string {
-  if (runs.length === 0) return 'bg-[#52525b]/5';
+  if (runs.length === 0) return 'bg-push-fg-dim/10';
   const first = runs[0];
   if (first.status !== 'completed') return 'bg-[#f59e0b]/5';
   switch (first.conclusion) {
     case 'success': return 'bg-[#22c55e]/5';
     case 'failure': return 'bg-[#ef4444]/5';
-    default: return 'bg-[#52525b]/5';
+    default: return 'bg-push-fg-dim/10';
   }
 }
 
 function headerColor(runs: WorkflowRunItem[]): string {
-  if (runs.length === 0) return 'text-[#a1a1aa]';
+  if (runs.length === 0) return 'text-push-fg-secondary';
   const first = runs[0];
   if (first.status !== 'completed') return 'text-[#f59e0b]';
   switch (first.conclusion) {
     case 'success': return 'text-[#22c55e]';
     case 'failure': return 'text-[#ef4444]';
-    default: return 'text-[#a1a1aa]';
+    default: return 'text-push-fg-secondary';
   }
 }
 
 function headerIcon(runs: WorkflowRunItem[]) {
-  if (runs.length === 0) return <Play className="h-4 w-4 shrink-0 text-[#52525b]" />;
+  if (runs.length === 0) return <Play className="h-4 w-4 shrink-0 text-push-fg-dim" />;
   const first = runs[0];
   if (first.status !== 'completed') return <Clock className="h-4 w-4 shrink-0 text-[#f59e0b]" />;
   switch (first.conclusion) {
     case 'success': return <CheckCircle2 className="h-4 w-4 shrink-0 text-[#22c55e]" />;
     case 'failure': return <XCircle className="h-4 w-4 shrink-0 text-[#ef4444]" />;
-    default: return <MinusCircle className="h-4 w-4 shrink-0 text-[#a1a1aa]" />;
+    default: return <MinusCircle className="h-4 w-4 shrink-0 text-push-fg-secondary" />;
   }
 }
 
@@ -70,7 +70,7 @@ function timeAgo(dateStr: string): string {
 
 export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${headerBg(data.runs)}`}>
         {headerIcon(data.runs)}
@@ -78,11 +78,11 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
           Workflow Runs
         </span>
         {data.workflow && (
-          <span className="text-[11px] text-[#52525b] truncate">
+          <span className="text-[11px] text-push-fg-dim truncate">
             {data.workflow}
           </span>
         )}
-        <span className="ml-auto text-[11px] text-[#52525b]">
+        <span className="ml-auto text-[11px] text-push-fg-dim">
           {data.runs.length} run{data.runs.length !== 1 ? 's' : ''}
         </span>
       </div>
@@ -99,7 +99,7 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
                     #{run.runNumber} {run.name}
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5 text-[12px] text-[#52525b]">
+                <div className="flex items-center gap-1.5 text-[12px] text-push-fg-dim">
                   <GitBranch className="h-3 w-3 shrink-0" />
                   <span className="truncate">{run.branch}</span>
                   <span>·</span>
@@ -115,14 +115,14 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
         </div>
       ) : (
         <div className="px-3 py-3">
-          <p className="text-[12px] text-[#52525b]">No workflow runs found.</p>
+          <p className="text-[12px] text-push-fg-dim">No workflow runs found.</p>
         </div>
       )}
 
       {/* Truncated notice */}
       {data.truncated && (
         <div className="px-3 pb-2">
-          <p className="text-[11px] text-[#52525b] text-center">
+          <p className="text-[11px] text-push-fg-dim text-center">
             More runs available — narrow with workflow or branch filter
           </p>
         </div>

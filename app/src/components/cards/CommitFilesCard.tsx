@@ -24,15 +24,15 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
   };
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
-      <div className="px-3 py-2 border-b border-[#1a1a1a]">
+      <div className="px-3 py-2 border-b border-push-edge">
         <div className="flex items-center gap-2">
-          <GitCommit className="h-3.5 w-3.5 text-[#a1a1aa]" />
-          <span className="text-[12px] text-[#0070f3] font-mono">{data.sha.slice(0, 7)}</span>
+          <GitCommit className="h-3.5 w-3.5 text-push-fg-secondary" />
+          <span className="text-[12px] text-push-link font-mono">{data.sha.slice(0, 7)}</span>
           <span className="text-[13px] text-[#e4e4e7] truncate flex-1">{data.message}</span>
         </div>
-        <div className="flex items-center gap-2 mt-1 text-[11px] text-[#52525b]">
+        <div className="flex items-center gap-2 mt-1 text-[11px] text-push-fg-dim">
           <span>{data.author}</span>
           <span>{timeAgo(data.date)}</span>
           <span className="ml-auto">
@@ -44,14 +44,14 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
       </div>
 
       {/* File list */}
-      <div className="divide-y divide-[#1a1a1a] max-h-[250px] overflow-y-auto">
+      <div className="divide-y divide-push-edge max-h-[250px] overflow-y-auto">
         {data.files.map((file) => (
           <div key={file.filename} className="px-3 py-1.5 flex items-center gap-2">
             {statusIcon(file.status)}
             <span className="text-[12px] text-[#e4e4e7] font-mono truncate flex-1">
               {file.filename}
             </span>
-            <span className="text-[11px] text-[#52525b] shrink-0">
+            <span className="text-[11px] text-push-fg-dim shrink-0">
               <span className="text-[#22c55e]">+{file.additions}</span>
               {' '}
               <span className="text-[#ef4444]">-{file.deletions}</span>
@@ -61,7 +61,7 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
       </div>
 
       {/* Footer with count */}
-      <div className="px-3 py-1.5 border-t border-[#1a1a1a] text-[11px] text-[#52525b]">
+      <div className="px-3 py-1.5 border-t border-push-edge text-[11px] text-push-fg-dim">
         {data.files.length} file{data.files.length !== 1 ? 's' : ''} changed
       </div>
     </div>

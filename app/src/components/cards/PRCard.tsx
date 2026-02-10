@@ -13,25 +13,25 @@ export function PRCard({ data }: { data: PRCardData }) {
   const { label, color, Icon } = statusConfig[data.state];
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
       <div className="px-3 py-2.5 flex items-start gap-2">
-        <Icon className="h-4 w-4 mt-0.5 shrink-0 text-[#a1a1aa]" />
+        <Icon className="h-4 w-4 mt-0.5 shrink-0 text-push-fg-secondary" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-[#fafafa] leading-tight">
+            <span className="text-sm font-medium text-push-fg leading-tight">
               {data.title}
             </span>
-            <span className="text-[12px] text-[#52525b] font-mono">#{data.number}</span>
+            <span className="text-[12px] text-push-fg-dim font-mono">#{data.number}</span>
           </div>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${color}`}>
               {label}
             </span>
-            <span className="text-[12px] text-[#52525b]">
+            <span className="text-[12px] text-push-fg-dim">
               by {data.author}
             </span>
-            <span className="text-[12px] text-[#52525b]">
+            <span className="text-[12px] text-push-fg-dim">
               {new Date(data.createdAt).toLocaleDateString()}
             </span>
           </div>
@@ -42,8 +42,8 @@ export function PRCard({ data }: { data: PRCardData }) {
       <div className="px-3 pb-2 flex items-center gap-3 text-[12px]">
         <span className="text-[#22c55e] font-mono">+{data.additions}</span>
         <span className="text-[#ef4444] font-mono">-{data.deletions}</span>
-        <span className="text-[#52525b]">{data.changedFiles} file{data.changedFiles !== 1 ? 's' : ''}</span>
-        <span className="text-[#52525b] font-mono text-[11px]">
+        <span className="text-push-fg-dim">{data.changedFiles} file{data.changedFiles !== 1 ? 's' : ''}</span>
+        <span className="text-push-fg-dim font-mono text-[11px]">
           {data.branch} → {data.baseBranch}
         </span>
       </div>
@@ -51,7 +51,7 @@ export function PRCard({ data }: { data: PRCardData }) {
       {/* Description */}
       {data.description && (
         <div className="px-3 pb-2">
-          <p className="text-[13px] text-[#a1a1aa] leading-relaxed line-clamp-3">
+          <p className="text-[13px] text-push-fg-secondary leading-relaxed line-clamp-3">
             {data.description}
           </p>
         </div>
@@ -59,10 +59,10 @@ export function PRCard({ data }: { data: PRCardData }) {
 
       {/* Files */}
       {data.files && data.files.length > 0 && (
-        <div className="border-t border-[#1a1a1a]">
+        <div className="border-t border-push-edge">
           <button
             onClick={() => setFilesExpanded((e) => !e)}
-            className="w-full px-3 py-1.5 flex items-center gap-1 text-[12px] text-[#52525b] hover:text-[#888] transition-colors"
+            className="w-full px-3 py-1.5 flex items-center gap-1 text-[12px] text-push-fg-dim hover:text-push-fg-secondary transition-colors"
           >
             <ChevronRight
               className={`h-3 w-3 transition-transform duration-200 ${filesExpanded ? 'rotate-90' : ''}`}
@@ -73,11 +73,11 @@ export function PRCard({ data }: { data: PRCardData }) {
             <div className="px-3 pb-2 space-y-0.5">
               {data.files.map((f, i) => (
                 <div key={i} className="flex items-center gap-2 text-[12px]">
-                  <span className="text-[#52525b] font-mono w-12 text-right shrink-0">
+                  <span className="text-push-fg-dim font-mono w-12 text-right shrink-0">
                     <span className="text-[#22c55e]">+{f.additions}</span>{' '}
                     <span className="text-[#ef4444]">-{f.deletions}</span>
                   </span>
-                  <span className="text-[#a1a1aa] font-mono truncate">{f.filename}</span>
+                  <span className="text-push-fg-secondary font-mono truncate">{f.filename}</span>
                 </div>
               ))}
             </div>

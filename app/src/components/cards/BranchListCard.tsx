@@ -3,18 +3,18 @@ import type { BranchListCardData } from '@/types';
 
 export function BranchListCard({ data }: { data: BranchListCardData }) {
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1a]">
-        <GitBranch className="h-3.5 w-3.5 text-[#a1a1aa]" />
-        <span className="text-[13px] font-medium text-[#fafafa]">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-push-edge">
+        <GitBranch className="h-3.5 w-3.5 text-push-fg-secondary" />
+        <span className="text-[13px] font-medium text-push-fg">
           {data.branches.length} branch{data.branches.length !== 1 ? 'es' : ''}
         </span>
-        <span className="text-[12px] text-[#52525b] font-mono">{data.repo}</span>
+        <span className="text-[12px] text-push-fg-dim font-mono">{data.repo}</span>
       </div>
 
       {/* Branch list */}
-      <div className="divide-y divide-[#1a1a1a]">
+      <div className="divide-y divide-push-edge">
         {data.branches.map((branch) => (
           <div
             key={branch.name}
@@ -24,7 +24,7 @@ export function BranchListCard({ data }: { data: BranchListCardData }) {
               {branch.name}
             </span>
             {branch.isDefault && (
-              <span className="inline-flex items-center gap-0.5 text-[11px] text-[#0070f3] bg-[#0070f3]/10 px-1.5 py-0.5 rounded-full shrink-0">
+              <span className="inline-flex items-center gap-0.5 text-[11px] text-push-link bg-push-link/10 px-1.5 py-0.5 rounded-full shrink-0">
                 <Star className="h-2.5 w-2.5" />
                 default
               </span>

@@ -44,7 +44,7 @@ export function UploadButton({ onUpload, disabled }: UploadButtonProps) {
       <button
         onClick={handleClick}
         disabled={disabled}
-        className="fixed bottom-6 right-6 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-[#0070f3] text-white shadow-lg shadow-[#0070f3]/25 transition-all duration-200 hover:bg-[#0060d3] active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+        className="fixed bottom-6 right-6 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-push-accent text-white shadow-lg shadow-push-accent/25 transition-all duration-200 hover:bg-[#0060d3] active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
         title="Upload files"
         aria-label="Upload files"
       >

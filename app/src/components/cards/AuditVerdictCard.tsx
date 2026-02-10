@@ -11,7 +11,7 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
   const isSafe = data.verdict === 'safe';
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Verdict header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${isSafe ? 'bg-[#22c55e]/5' : 'bg-[#ef4444]/5'}`}>
         {isSafe ? (
@@ -22,14 +22,14 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
         <span className={`text-sm font-medium ${isSafe ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
           {isSafe ? 'SAFE' : 'UNSAFE'} — Auditor Verdict
         </span>
-        <span className="ml-auto text-[11px] text-[#52525b]">
+        <span className="ml-auto text-[11px] text-push-fg-dim">
           {data.filesReviewed} file{data.filesReviewed !== 1 ? 's' : ''} reviewed
         </span>
       </div>
 
       {/* Summary */}
       <div className="px-3 py-2">
-        <p className="text-[13px] text-[#a1a1aa] leading-relaxed">
+        <p className="text-[13px] text-push-fg-secondary leading-relaxed">
           {data.summary}
         </p>
       </div>
@@ -42,7 +42,7 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
               <span className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full mt-0.5 shrink-0 uppercase ${riskColors[risk.level]}`}>
                 {risk.level}
               </span>
-              <span className="text-[12px] text-[#a1a1aa] leading-relaxed">
+              <span className="text-[12px] text-push-fg-secondary leading-relaxed">
                 {risk.description}
               </span>
             </div>

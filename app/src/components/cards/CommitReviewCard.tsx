@@ -23,28 +23,28 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
   const isBusy = isApproved || isPushing;
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${
         isCommitted ? 'bg-[#22c55e]/5' :
-        isRejected ? 'bg-[#52525b]/5' :
+        isRejected ? 'bg-push-fg-dim/10' :
         isError ? 'bg-[#ef4444]/5' :
-        'bg-[#0070f3]/5'
+        'bg-push-link/10'
       }`}>
         {isCommitted ? (
           <Check className="h-4 w-4 shrink-0 text-[#22c55e]" />
         ) : isRejected ? (
-          <X className="h-4 w-4 shrink-0 text-[#52525b]" />
+          <X className="h-4 w-4 shrink-0 text-push-fg-dim" />
         ) : isError ? (
           <AlertCircle className="h-4 w-4 shrink-0 text-[#ef4444]" />
         ) : isBusy ? (
-          <Loader2 className="h-4 w-4 shrink-0 text-[#0070f3] animate-spin" />
+          <Loader2 className="h-4 w-4 shrink-0 text-push-link animate-spin" />
         ) : (
-          <GitCommit className="h-4 w-4 shrink-0 text-[#0070f3]" />
+          <GitCommit className="h-4 w-4 shrink-0 text-push-link" />
         )}
         <span className={`text-sm font-medium ${
           isCommitted ? 'text-[#22c55e]' :
-          isRejected ? 'text-[#52525b]' :
+          isRejected ? 'text-push-fg-dim' :
           isError ? 'text-[#ef4444]' :
           'text-[#e4e4e7]'
         }`}>
@@ -70,11 +70,11 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
       {/* Commit message */}
       <div className="px-3 pb-3">
         <div className="flex items-center justify-between mb-1.5">
-          <label className="text-[11px] text-[#52525b] font-medium">
+          <label className="text-[11px] text-push-fg-dim font-medium">
             Commit message
           </label>
           {isPending && (
-            <span className="text-[10px] text-[#3f3f46] italic">
+            <span className="text-[10px] text-[#5f6b80] italic">
               auto-filled by Kimi · tap to edit
             </span>
           )}
@@ -85,7 +85,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
             onChange={(e) => setEditedMessage(e.target.value)}
             rows={1}
             placeholder="Enter commit message..."
-            className="w-full rounded-lg border border-[#1a1a1a] bg-[#0a0a0c] px-3 py-2 text-[13px] text-[#e4e4e7] font-mono placeholder:text-[#52525b] focus:outline-none focus:border-[#3f3f46] resize-none leading-relaxed"
+            className="w-full rounded-lg border border-push-edge bg-[#05080e] px-3 py-2 text-[13px] text-[#e4e4e7] font-mono placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50 resize-none leading-relaxed"
             style={{ minHeight: '38px', maxHeight: '80px' }}
             onInput={(e) => {
               const target = e.target as HTMLTextAreaElement;
@@ -94,8 +94,8 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
             }}
           />
         ) : (
-          <div className="rounded-lg border border-[#1a1a1a] bg-[#0a0a0c] px-3 py-2">
-            <p className="text-[13px] text-[#a1a1aa] font-mono">
+          <div className="rounded-lg border border-push-edge bg-[#05080e] px-3 py-2">
+            <p className="text-[13px] text-push-fg-secondary font-mono">
               {data.commitMessage}
             </p>
           </div>
@@ -133,7 +133,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
                 messageId,
                 cardIndex,
               })}
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-[#1a1a1a] px-4 py-2.5 text-[13px] font-medium text-[#a1a1aa] transition-all duration-200 hover:bg-[#1a1a1a] hover:text-[#e4e4e7] active:scale-[0.98]"
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-push-edge px-4 py-2.5 text-[13px] font-medium text-push-fg-secondary transition-all duration-200 hover:bg-[#111624] hover:text-[#e4e4e7] active:scale-[0.98]"
               style={{ minHeight: '44px' }}
             >
               <X className="h-4 w-4" />

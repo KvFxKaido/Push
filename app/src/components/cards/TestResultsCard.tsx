@@ -16,22 +16,22 @@ export function TestResultsCard({ data }: { data: TestResultsCardData }) {
   }[data.framework];
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
-      <div className={`px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1a] ${statusBg}`}>
+      <div className={`px-3 py-2 flex items-center gap-2 border-b border-push-edge ${statusBg}`}>
         <Icon className={`h-4 w-4 ${statusColor}`} />
         <span className={`text-[13px] font-medium ${statusColor}`}>
           Tests {passed ? 'Passed' : 'Failed'}
         </span>
-        <span className="text-[12px] text-[#52525b]">{frameworkLabel}</span>
-        <span className="text-[11px] text-[#52525b] ml-auto">
+        <span className="text-[12px] text-push-fg-dim">{frameworkLabel}</span>
+        <span className="text-[11px] text-push-fg-dim ml-auto">
           {(data.durationMs / 1000).toFixed(1)}s
         </span>
       </div>
 
       {/* Stats */}
       {data.total > 0 && (
-        <div className="px-3 py-2 flex items-center gap-4 border-b border-[#1a1a1a]">
+        <div className="px-3 py-2 flex items-center gap-4 border-b border-push-edge">
           <div className="flex items-center gap-1.5">
             <CheckCircle2 className="h-3.5 w-3.5 text-[#22c55e]" />
             <span className="text-[12px] text-[#e4e4e7]">{data.passed} passed</span>
@@ -44,7 +44,7 @@ export function TestResultsCard({ data }: { data: TestResultsCardData }) {
           )}
           {data.skipped > 0 && (
             <div className="flex items-center gap-1.5">
-              <MinusCircle className="h-3.5 w-3.5 text-[#52525b]" />
+              <MinusCircle className="h-3.5 w-3.5 text-push-fg-dim" />
               <span className="text-[12px] text-[#e4e4e7]">{data.skipped} skipped</span>
             </div>
           )}
@@ -53,7 +53,7 @@ export function TestResultsCard({ data }: { data: TestResultsCardData }) {
 
       {/* Output preview */}
       <div className="px-3 py-2 max-h-[200px] overflow-y-auto">
-        <pre className="text-[11px] text-[#a1a1aa] font-mono whitespace-pre-wrap break-all leading-relaxed">
+        <pre className="text-[11px] text-push-fg-secondary font-mono whitespace-pre-wrap break-all leading-relaxed">
           {data.output.slice(-2000)}
         </pre>
         {data.truncated && (

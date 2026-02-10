@@ -196,7 +196,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         
         <div className="flex-1 min-w-0">
           <h1 className="text-sm font-medium text-[#fafafa] truncate flex items-center gap-2">
-            <FileCode className="h-3.5 w-3.5 text-[#0070f3]" />
+            <FileCode className="h-3.5 w-3.5 text-push-accent" />
             {file.name}
           </h1>
           <p className="text-[10px] text-[#52525b]">
@@ -224,7 +224,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
             disabled={saving}
             className={`flex h-8 px-3 items-center gap-1.5 rounded-lg text-xs transition-colors ${
               showDiff 
-                ? 'bg-[#0070f3]/20 text-[#0070f3]' 
+                ? 'bg-push-accent/20 text-push-accent' 
                 : 'text-[#a1a1aa] hover:text-[#fafafa] hover:bg-[#0d0d0d]'
             } disabled:opacity-40`}
           >
@@ -252,7 +252,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         {loading ? (
           <div className="flex h-full items-center justify-center text-[#52525b]">
             <div className="flex flex-col items-center gap-3">
-              <span className="w-5 h-5 border-2 border-[#52525b] border-t-[#0070f3] rounded-full animate-spin" />
+              <span className="w-5 h-5 border-2 border-[#52525b] border-t-push-accent rounded-full animate-spin" />
               <span className="text-xs">Loading...</span>
             </div>
           </div>

@@ -22,7 +22,16 @@ interface ChatInputProps {
 const ACCEPTED_FILES = 'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
 const MAX_PAYLOAD = 400 * 1024; // 400KB total
 
-export function ChatInput({ onSend, onStop, isStreaming, repoName, onWorkspacePanelToggle, scratchpadHasContent, agentActive, contextUsage }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  onStop,
+  isStreaming,
+  repoName,
+  onWorkspacePanelToggle,
+  scratchpadHasContent,
+  agentActive,
+  contextUsage,
+}: ChatInputProps) {
   const [value, setValue] = useState('');
   const [stagedAttachments, setStagedAttachments] = useState<StagedAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -146,19 +155,43 @@ export function ChatInput({ onSend, onStop, isStreaming, repoName, onWorkspacePa
     }
   };
 
+  const statusText = isStreaming
+    ? 'Generating...'
+    : readyAttachments.length > 0
+      ? `${readyAttachments.length} attachment${readyAttachments.length > 1 ? 's' : ''} ready`
+      : null;
+
   return (
-    <div className="safe-area-bottom sticky bottom-0 z-10">
-      <div className="bg-[#000]/80 backdrop-blur-xl border-t border-[#1a1a1a]">
+    <div className="safe-area-bottom sticky bottom-0 z-10 px-3 pb-3">
+      <div className="relative overflow-hidden rounded-[24px] border border-[#171c25] bg-[linear-gradient(180deg,#0a0d13_0%,#04060a_100%)] shadow-[0_20px_52px_rgba(0,0,0,0.68)] backdrop-blur-xl">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-white/[0.03] to-transparent" />
+
         {/* Attachment preview */}
         {hasAttachments && (
-          <AttachmentPreview
-            attachments={stagedAttachments}
-            onRemove={handleRemoveAttachment}
-          />
+          <div className="px-3 pt-3">
+            <AttachmentPreview
+              attachments={stagedAttachments}
+              onRemove={handleRemoveAttachment}
+            />
+          </div>
         )}
 
-        <div className="px-4 py-3">
-          <div className="relative flex items-end gap-2">
+        {/* Text input */}
+        <div className="px-3 pt-3">
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={repoName ? `Ask about ${repoName}...` : 'Ask about code...'}
+            disabled={isStreaming}
+            rows={1}
+            className="w-full resize-none overflow-hidden bg-transparent px-1 pb-2 text-[15px] leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 px-2 pb-2.5 pt-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             {/* Workspace panel toggle */}
             <WorkspacePanelButton
               onClick={onWorkspacePanelToggle ?? (() => {})}
@@ -171,83 +204,58 @@ export function ChatInput({ onSend, onStop, isStreaming, repoName, onWorkspacePa
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
-              className={`flex h-10 w-10 items-center justify-center rounded-xl transition-colors duration-200 active:scale-95 ${
+              className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-200 active:scale-95 ${
                 isStreaming
-                  ? 'text-[#52525b] cursor-not-allowed'
-                  : 'text-[#71717a] hover:text-[#a1a1aa] hover:bg-[#111]'
+                  ? 'cursor-not-allowed border-[#1f2430] text-[#545c6e]'
+                  : 'border-push-edge bg-[#080b10]/95 text-[#8891a1] hover:border-push-edge-hover hover:bg-[#0d1119] hover:text-[#e2e8f0]'
               }`}
               aria-label="Attach file"
               title="Attach file"
             >
-              <Paperclip className="h-5 w-5" />
-            </button>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={ACCEPTED_FILES}
-              multiple
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-
-            {/* Text input */}
-            <div className="relative flex-1">
-              <textarea
-                ref={textareaRef}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={repoName ? `Ask about ${repoName}...` : 'Ask about code...'}
-                disabled={isStreaming}
-                rows={1}
-                className="w-full resize-none overflow-hidden rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-2.5 text-sm text-[#fafafa] placeholder:text-[#52525b] focus:border-[#3f3f46] focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </div>
-
-            {/* Send/Stop button */}
-            <button
-              type="button"
-              onClick={handleButtonClick}
-              disabled={!isStreaming && !canSend}
-              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-95 ${
-                isStreaming
-                  ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50'
-                  : canSend
-                  ? 'bg-[#0070f3] text-white hover:bg-[#0060d3] shadow-lg shadow-blue-500/20'
-                  : 'bg-[#1a1a1a] text-[#52525b] cursor-not-allowed'
-              }`}
-              aria-label={isStreaming ? 'Stop generating' : 'Send message'}
-              title={isStreaming ? 'Stop generating' : 'Send message'}
-            >
-              {isStreaming ? (
-                <Square className="h-4 w-4 fill-current" />
-              ) : (
-                <ArrowUp className="h-5 w-5" />
-              )}
+              <Paperclip className="h-4 w-4" />
             </button>
           </div>
 
-          {/* Status row */}
-          {isStreaming ? (
-            <div className="mt-2 flex items-center justify-between px-1">
-              <span className="text-xs text-[#52525b]">
-                Generating... Click stop to cancel
-              </span>
-              {contextUsage && <ContextMeter {...contextUsage} />}
-            </div>
-          ) : readyAttachments.length > 0 ? (
-            <div className="mt-2 flex items-center justify-between px-1">
-              <span className="text-xs text-[#52525b]">
-                {readyAttachments.length} attachment{readyAttachments.length > 1 ? 's' : ''} ready
-              </span>
-              {contextUsage && <ContextMeter {...contextUsage} />}
-            </div>
-          ) : contextUsage && contextUsage.percent >= 5 ? (
-            <div className="mt-2 flex items-center justify-end px-1">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ACCEPTED_FILES}
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+
+          <div className="min-w-0 flex-1 px-1">
+            {statusText ? (
+              <p className="truncate text-xs text-[#788396]">
+                {statusText}
+              </p>
+            ) : contextUsage && contextUsage.percent >= 5 ? (
               <ContextMeter {...contextUsage} />
-            </div>
-          ) : null}
+            ) : null}
+          </div>
+
+          {/* Send/Stop button */}
+          <button
+            type="button"
+            onClick={handleButtonClick}
+            disabled={!isStreaming && !canSend}
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-all duration-200 active:scale-95 ${
+              isStreaming
+                ? 'border-red-400/50 bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                : canSend
+                  ? 'border-push-sky/60 bg-push-sky/15 text-[#7dd3fc] shadow-[0_0_20px_rgba(56,189,248,0.25)] hover:bg-push-sky/25 hover:text-[#bae6fd]'
+                  : 'cursor-not-allowed border-[#262c38] bg-[#151a22] text-[#576176]'
+            }`}
+            aria-label={isStreaming ? 'Stop generating' : 'Send message'}
+            title={isStreaming ? 'Stop generating' : 'Send message'}
+          >
+            {isStreaming ? (
+              <Square className="h-4 w-4 fill-current" />
+            ) : (
+              <ArrowUp className="h-4 w-4" />
+            )}
+          </button>
         </div>
       </div>
     </div>

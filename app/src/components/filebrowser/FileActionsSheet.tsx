@@ -71,7 +71,7 @@ export function FileActionsSheet({
           {!isDirectory && canEdit && (
             <button
               onClick={handleEdit}
-              className="flex items-center gap-3 px-3 py-3 rounded-lg text-[#0070f3] hover:bg-[#0070f3]/10 transition-colors text-left"
+              className="flex items-center gap-3 px-3 py-3 rounded-lg text-push-accent hover:bg-push-accent/10 transition-colors text-left"
             >
               <FileEdit className="h-4 w-4 shrink-0" />
               <span className="text-sm">Edit file</span>

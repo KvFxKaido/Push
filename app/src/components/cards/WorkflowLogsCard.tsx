@@ -19,7 +19,7 @@ function jobIcon(job: WorkflowJob) {
     case 'timed_out':
       return <XCircle className="h-3.5 w-3.5 shrink-0 text-[#f59e0b]" />;
     default:
-      return <MinusCircle className="h-3.5 w-3.5 shrink-0 text-[#a1a1aa]" />;
+      return <MinusCircle className="h-3.5 w-3.5 shrink-0 text-push-fg-secondary" />;
   }
 }
 
@@ -33,9 +33,9 @@ function stepIcon(step: WorkflowJobStep) {
     case 'failure':
       return <XCircle className="h-3 w-3 shrink-0 text-[#ef4444]" />;
     case 'skipped':
-      return <MinusCircle className="h-3 w-3 shrink-0 text-[#52525b]" />;
+      return <MinusCircle className="h-3 w-3 shrink-0 text-push-fg-dim" />;
     default:
-      return <MinusCircle className="h-3 w-3 shrink-0 text-[#a1a1aa]" />;
+      return <MinusCircle className="h-3 w-3 shrink-0 text-push-fg-secondary" />;
   }
 }
 
@@ -88,7 +88,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
   };
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${headerBg(data.conclusion)}`}>
         {headerIcon(data.conclusion)}
@@ -96,11 +96,11 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
           <span className={`text-sm font-medium ${headerColor(data.conclusion)}`}>
             {data.runName}
           </span>
-          <span className="text-[11px] text-[#52525b] ml-1.5">
+          <span className="text-[11px] text-push-fg-dim ml-1.5">
             #{data.runNumber}
           </span>
         </div>
-        <span className="text-[11px] text-[#52525b] uppercase shrink-0">
+        <span className="text-[11px] text-push-fg-dim uppercase shrink-0">
           {data.conclusion || data.status}
         </span>
       </div>
@@ -108,21 +108,21 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
       {/* Jobs */}
       <div className="max-h-[300px] overflow-y-auto">
         {data.jobs.map((job, idx) => (
-          <div key={idx} className="border-t border-[#1a1a1a] first:border-t-0">
+          <div key={idx} className="border-t border-push-edge first:border-t-0">
             {/* Job header — clickable */}
             <button
               onClick={() => toggleJob(idx)}
-              className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-[#111] transition-colors"
+              className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-[#0d1119] transition-colors"
             >
               {expanded.has(idx)
-                ? <ChevronDown className="h-3 w-3 shrink-0 text-[#52525b]" />
-                : <ChevronRight className="h-3 w-3 shrink-0 text-[#52525b]" />
+                ? <ChevronDown className="h-3 w-3 shrink-0 text-push-fg-dim" />
+                : <ChevronRight className="h-3 w-3 shrink-0 text-push-fg-dim" />
               }
               {jobIcon(job)}
               <span className="text-[13px] text-[#e4e4e7] truncate flex-1">
                 {job.name}
               </span>
-              <span className="text-[11px] text-[#52525b] shrink-0">
+              <span className="text-[11px] text-push-fg-dim shrink-0">
                 {job.conclusion || job.status}
               </span>
             </button>
@@ -133,10 +133,10 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
                 {job.steps.map((step) => (
                   <div key={step.number} className="flex items-center gap-2 min-h-[22px]">
                     {stepIcon(step)}
-                    <span className="text-[12px] text-[#71717a]">
+                    <span className="text-[12px] text-push-fg-muted">
                       {step.number}.
                     </span>
-                    <span className="text-[12px] text-[#a1a1aa] truncate flex-1">
+                    <span className="text-[12px] text-push-fg-secondary truncate flex-1">
                       {step.name}
                     </span>
                   </div>
@@ -148,12 +148,12 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
       </div>
 
       {/* Footer — View on GitHub */}
-      <div className="px-3 py-2 border-t border-[#1a1a1a]">
+      <div className="px-3 py-2 border-t border-push-edge">
         <a
           href={data.htmlUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1.5 text-[12px] text-[#0070f3] hover:text-[#339af0] transition-colors"
+          className="flex items-center justify-center gap-1.5 text-[12px] text-push-link hover:text-[#86ccff] transition-colors"
         >
           <ExternalLink className="h-3 w-3" />
           View on GitHub

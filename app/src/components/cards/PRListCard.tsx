@@ -15,21 +15,21 @@ function timeAgo(dateStr: string): string {
 
 export function PRListCard({ data }: { data: PRListCardData }) {
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1a]">
-        <GitPullRequest className="h-3.5 w-3.5 text-[#a1a1aa]" />
-        <span className="text-[13px] font-medium text-[#fafafa]">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-push-edge">
+        <GitPullRequest className="h-3.5 w-3.5 text-push-fg-secondary" />
+        <span className="text-[13px] font-medium text-push-fg">
           {data.prs.length} {data.state} PR{data.prs.length !== 1 ? 's' : ''}
         </span>
-        <span className="text-[12px] text-[#52525b] font-mono">{data.repo}</span>
+        <span className="text-[12px] text-push-fg-dim font-mono">{data.repo}</span>
       </div>
 
       {/* PR list */}
-      <div className="divide-y divide-[#1a1a1a]">
+      <div className="divide-y divide-push-edge">
         {data.prs.map((pr) => (
           <div key={pr.number} className="px-3 py-2 flex items-start gap-2">
-            <span className="text-[12px] text-[#52525b] font-mono shrink-0 mt-0.5">
+            <span className="text-[12px] text-push-fg-dim font-mono shrink-0 mt-0.5">
               #{pr.number}
             </span>
             <div className="min-w-0 flex-1">
@@ -37,14 +37,14 @@ export function PRListCard({ data }: { data: PRListCardData }) {
                 {pr.title}
               </p>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-[11px] text-[#52525b]">{pr.author}</span>
+                <span className="text-[11px] text-push-fg-dim">{pr.author}</span>
                 {pr.additions != null && (
                   <span className="text-[11px] font-mono">
                     <span className="text-[#22c55e]">+{pr.additions}</span>{' '}
                     <span className="text-[#ef4444]">-{pr.deletions || 0}</span>
                   </span>
                 )}
-                <span className="text-[11px] text-[#3a3a3e]">{timeAgo(pr.createdAt)}</span>
+                <span className="text-[11px] text-[#5f6b80]">{timeAgo(pr.createdAt)}</span>
               </div>
             </div>
           </div>

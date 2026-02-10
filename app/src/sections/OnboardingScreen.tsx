@@ -51,13 +51,13 @@ export function OnboardingScreen({
       <div className="w-full max-w-sm">
         {/* Logo + tagline */}
         <div className="text-center mb-10">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0d0d0d] border border-[#1a1a1a]">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[#1e2634] bg-[linear-gradient(180deg,#0d1119_0%,#070a10_100%)] shadow-[0_12px_30px_rgba(0,0,0,0.55)]">
             <svg
               width="22"
               height="22"
               viewBox="0 0 16 16"
               fill="none"
-              className="text-[#0070f3]"
+              className="text-push-accent"
             >
               <path
                 d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z"
@@ -70,7 +70,7 @@ export function OnboardingScreen({
           <h1 className="text-2xl font-semibold text-[#fafafa] tracking-tight mb-2">
             Push
           </h1>
-          <p className="text-sm text-[#a1a1aa] leading-relaxed">
+          <p className="text-sm text-push-fg-secondary leading-relaxed">
             AI coding agent with direct repo access.
           </p>
         </div>
@@ -97,14 +97,14 @@ export function OnboardingScreen({
                 onChange={(e) => setPat(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
                 disabled={loading}
-                className="w-full rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] px-4 py-3 text-sm text-[#fafafa] font-mono placeholder:text-[#3f3f46] outline-none transition-colors duration-200 focus:border-[#0070f3]/50 disabled:opacity-50"
+                className="w-full rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-push-fg font-mono placeholder:text-[#4f596d] outline-none transition-colors duration-200 focus:border-push-sky/50 disabled:opacity-50"
                 autoFocus
               />
 
               <button
                 onClick={handleConnect}
                 disabled={!pat.trim() || loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0070f3] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0060d3] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
               >
                 {loading ? (
                   <>
@@ -118,14 +118,14 @@ export function OnboardingScreen({
 
               <button
                 onClick={() => setShowPatInput(false)}
-                className="w-full text-xs text-[#52525b] hover:text-[#71717a] transition-colors"
+                className="w-full text-xs text-push-fg-dim hover:text-[#8e99ad] transition-colors"
               >
                 ← Back to GitHub App
               </button>
 
-              <p className="text-xs text-[#52525b] text-center leading-relaxed">
+              <p className="text-xs text-push-fg-dim text-center leading-relaxed">
                 Personal access token with{' '}
-                <code className="text-[#71717a] font-mono">repo</code> scope.
+                <code className="text-[#9ca6b9] font-mono">repo</code> scope.
                 <br />
                 Stored locally, never sent to our servers.
               </p>
@@ -139,14 +139,14 @@ export function OnboardingScreen({
                 onChange={(e) => setInstallationId(e.target.value.replace(/\D/g, ''))}
                 onKeyDown={(e) => e.key === 'Enter' && handleConnectInstallation()}
                 disabled={loading}
-                className="w-full rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] px-4 py-3 text-sm text-[#fafafa] font-mono placeholder:text-[#3f3f46] outline-none transition-colors duration-200 focus:border-[#0070f3]/50 disabled:opacity-50"
+                className="w-full rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-push-fg font-mono placeholder:text-[#4f596d] outline-none transition-colors duration-200 focus:border-push-sky/50 disabled:opacity-50"
                 autoFocus
               />
 
               <button
                 onClick={handleConnectInstallation}
                 disabled={!installationId.replace(/\D/g, '') || loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0070f3] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0060d3] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
               >
                 {loading ? (
                   <>
@@ -160,15 +160,15 @@ export function OnboardingScreen({
 
               <button
                 onClick={() => setShowInstallIdInput(false)}
-                className="w-full text-xs text-[#52525b] hover:text-[#71717a] transition-colors"
+                className="w-full text-xs text-push-fg-dim hover:text-[#8e99ad] transition-colors"
               >
                 ← Back to install flow
               </button>
 
-              <p className="text-xs text-[#52525b] text-center leading-relaxed">
+              <p className="text-xs text-push-fg-dim text-center leading-relaxed">
                 Already installed? Paste your installation ID.
                 <br />
-                Find it at <code className="text-[#71717a] font-mono">github.com/settings/installations</code>.
+                Find it at <code className="text-[#9ca6b9] font-mono">github.com/settings/installations</code>.
               </p>
 
               {error && (
@@ -183,7 +183,7 @@ export function OnboardingScreen({
               <button
                 onClick={onConnectOAuth}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0070f3] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0060d3] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
               >
                 {loading ? (
                   <>
@@ -198,10 +198,10 @@ export function OnboardingScreen({
                 )}
               </button>
 
-              <p className="text-xs text-[#52525b] text-center leading-relaxed">
+              <p className="text-xs text-push-fg-dim text-center leading-relaxed">
                 One click for returning users.
                 <br />
-                <span className="text-emerald-500/80">Recommended</span> — auto-detects your installation.
+                <span className="text-emerald-400">Recommended</span> — auto-detects your installation.
               </p>
 
               {error && (
@@ -214,7 +214,7 @@ export function OnboardingScreen({
               <button
                 onClick={onInstallApp}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1a1a1a] bg-transparent px-4 py-3 text-sm text-[#71717a] transition-all duration-200 hover:border-[#27272a] hover:text-[#a1a1aa] active:scale-[0.98]"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] active:scale-[0.98]"
               >
                 <Github className="h-4 w-4" />
                 Install GitHub App
@@ -223,7 +223,7 @@ export function OnboardingScreen({
               {/* PAT fallback */}
               <button
                 onClick={() => setShowPatInput(true)}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1a1a1a] bg-transparent px-4 py-3 text-sm text-[#71717a] transition-all duration-200 hover:border-[#27272a] hover:text-[#a1a1aa] active:scale-[0.98]"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] active:scale-[0.98]"
               >
                 <Key className="h-4 w-4" />
                 Use Personal Access Token
@@ -231,7 +231,7 @@ export function OnboardingScreen({
 
               <button
                 onClick={() => setShowInstallIdInput(true)}
-                className="w-full text-xs text-[#52525b] hover:text-[#71717a] transition-colors"
+                className="w-full text-xs text-push-fg-dim hover:text-[#8e99ad] transition-colors"
               >
                 Already installed? Enter installation ID
               </button>
@@ -242,18 +242,18 @@ export function OnboardingScreen({
         {/* Divider + sandbox */}
         <div className="mt-8">
           <div className="flex items-center gap-3 mb-6">
-            <div className="flex-1 h-px bg-[#1a1a1a]" />
-            <span className="text-xs text-[#3f3f46]">or</span>
-            <div className="flex-1 h-px bg-[#1a1a1a]" />
+            <div className="flex-1 h-px bg-[#1b2230]" />
+            <span className="text-xs text-[#4f596d]">or</span>
+            <div className="flex-1 h-px bg-[#1b2230]" />
           </div>
 
           <button
             onClick={onSandboxMode}
-            className="w-full rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm font-medium text-emerald-400 transition-all duration-200 hover:border-emerald-500/50 hover:bg-emerald-500/10 active:scale-[0.98]"
+            className="w-full rounded-xl border border-emerald-500/25 bg-emerald-900/10 px-4 py-3 text-sm font-medium text-emerald-300 transition-all duration-200 hover:border-emerald-500/45 hover:bg-emerald-800/20 active:scale-[0.98]"
           >
             Try it now — no account needed
           </button>
-          <p className="text-xs text-[#52525b] text-center mt-2">
+          <p className="text-xs text-push-fg-dim text-center mt-2">
             Ephemeral sandbox. Nothing is saved unless you choose.
           </p>
         </div>

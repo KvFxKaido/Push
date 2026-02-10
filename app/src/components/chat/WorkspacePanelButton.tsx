@@ -17,14 +17,14 @@ export function WorkspacePanelButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0d0d0d] text-[#52525b] transition-colors hover:text-[#a1a1aa] active:scale-95 disabled:opacity-40"
+      className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#2a2f39] bg-[#0c0f15]/90 text-[#8891a1] transition-all duration-200 hover:border-[#384151] hover:bg-[#10141d] hover:text-[#e2e8f0] active:scale-95 disabled:opacity-40"
       aria-label="Open workspace panel"
       title="Workspace"
     >
       <PanelRight className="h-4 w-4" />
       {(scratchpadHasContent || agentActive) && (
         <span
-          className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-[#0070f3] ${
+          className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-push-sky ${
             agentActive ? 'animate-pulse' : ''
           }`}
         />

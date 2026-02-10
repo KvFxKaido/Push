@@ -30,12 +30,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1a1a1a;
+  background: #1f2531;
   border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #27272a;
+  background: #2f3949;
 }
 
 /* Prevent text selection on UI elements */
@@ -44,10 +44,20 @@ button,
   user-select: none;
 }
 
-/* Focus styles */
-input:focus,
-textarea:focus,
-button:focus-visible {
+/* Focus visibility — keyboard only */
+:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.5);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Inputs keep their border-based focus styles instead of outline */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
   outline: none;
 }
 

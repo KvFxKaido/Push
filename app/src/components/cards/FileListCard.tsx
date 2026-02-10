@@ -12,28 +12,28 @@ export function FileListCard({ data }: { data: FileListCardData }) {
   const files = data.entries.filter((e) => e.type === 'file');
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1a]">
-        <Folder className="h-3.5 w-3.5 text-[#a1a1aa]" />
-        <span className="text-[13px] font-medium text-[#fafafa] truncate">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-push-edge">
+        <Folder className="h-3.5 w-3.5 text-push-fg-secondary" />
+        <span className="text-[13px] font-medium text-push-fg truncate">
           {data.path}
         </span>
-        <span className="text-[12px] text-[#52525b] shrink-0">
+        <span className="text-[12px] text-push-fg-dim shrink-0">
           {dirs.length > 0 && `${dirs.length} dir${dirs.length !== 1 ? 's' : ''}`}
           {dirs.length > 0 && files.length > 0 && ', '}
           {files.length > 0 && `${files.length} file${files.length !== 1 ? 's' : ''}`}
         </span>
         {data.repo && (
-          <span className="text-[12px] text-[#52525b] font-mono ml-auto shrink-0">{data.repo}</span>
+          <span className="text-[12px] text-push-fg-dim font-mono ml-auto shrink-0">{data.repo}</span>
         )}
       </div>
 
       {/* Entry list */}
-      <div className="divide-y divide-[#1a1a1a]">
+      <div className="divide-y divide-push-edge">
         {dirs.map((entry) => (
           <div key={entry.name} className="px-3 py-1.5 flex items-center gap-2">
-            <Folder className="h-3.5 w-3.5 text-[#0070f3] shrink-0" />
+            <Folder className="h-3.5 w-3.5 text-push-link shrink-0" />
             <span className="text-[13px] text-[#e4e4e7] font-mono truncate">
               {entry.name}/
             </span>
@@ -41,12 +41,12 @@ export function FileListCard({ data }: { data: FileListCardData }) {
         ))}
         {files.map((entry) => (
           <div key={entry.name} className="px-3 py-1.5 flex items-center gap-2">
-            <FileText className="h-3.5 w-3.5 text-[#52525b] shrink-0" />
+            <FileText className="h-3.5 w-3.5 text-push-fg-dim shrink-0" />
             <span className="text-[13px] text-[#e4e4e7] font-mono truncate">
               {entry.name}
             </span>
             {entry.size != null && (
-              <span className="text-[11px] text-[#3a3a3e] ml-auto shrink-0">
+              <span className="text-[11px] text-[#5f6b80] ml-auto shrink-0">
                 {formatSize(entry.size)}
               </span>
             )}

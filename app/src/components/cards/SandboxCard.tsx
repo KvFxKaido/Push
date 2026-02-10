@@ -7,19 +7,19 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
   const isSuccess = data.exitCode === 0;
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="w-full px-3 py-2.5 flex items-center gap-2 hover:bg-[#161618] transition-colors"
+        className="w-full px-3 py-2.5 flex items-center gap-2 hover:bg-[#0d1119] transition-colors"
       >
-        <Terminal className="h-4 w-4 shrink-0 text-[#a1a1aa]" />
+        <Terminal className="h-4 w-4 shrink-0 text-push-fg-secondary" />
         <code className="flex-1 text-[13px] text-[#e4e4e7] font-mono text-left truncate">
           {data.command}
         </code>
         <div className="flex items-center gap-2 shrink-0">
           {data.durationMs !== undefined && (
-            <span className="text-[11px] text-[#52525b] font-mono">
+            <span className="text-[11px] text-push-fg-dim font-mono">
               {data.durationMs < 1000 ? `${data.durationMs}ms` : `${(data.durationMs / 1000).toFixed(1)}s`}
             </span>
           )}
@@ -35,35 +35,35 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
             </span>
           )}
           <ChevronRight
-            className={`h-3 w-3 text-[#52525b] transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+            className={`h-3 w-3 text-push-fg-dim transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
           />
         </div>
       </button>
 
       {/* Output */}
       {expanded && (
-        <div className="border-t border-[#1a1a1a]">
+        <div className="border-t border-push-edge">
           {data.stdout && (
             <pre className="px-3 py-2 overflow-x-auto">
-              <code className="font-mono text-[12px] text-[#a1a1aa] leading-relaxed whitespace-pre-wrap break-all">
+              <code className="font-mono text-[12px] text-push-fg-secondary leading-relaxed whitespace-pre-wrap break-all">
                 {data.stdout}
               </code>
             </pre>
           )}
           {data.stderr && (
-            <pre className="px-3 py-2 bg-[#0a0a0c] overflow-x-auto">
+            <pre className="px-3 py-2 bg-[#05080e] overflow-x-auto">
               <code className="font-mono text-[12px] text-[#ef4444]/70 leading-relaxed whitespace-pre-wrap break-all">
                 {data.stderr}
               </code>
             </pre>
           )}
           {data.truncated && (
-            <div className="px-3 py-1.5 text-[11px] text-[#52525b] italic border-t border-[#1a1a1a]">
+            <div className="px-3 py-1.5 text-[11px] text-push-fg-dim italic border-t border-push-edge">
               Output truncated
             </div>
           )}
           {!data.stdout && !data.stderr && (
-            <div className="px-3 py-2 text-[12px] text-[#52525b] italic">
+            <div className="px-3 py-2 text-[12px] text-push-fg-dim italic">
               No output
             </div>
           )}

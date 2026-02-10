@@ -47,19 +47,19 @@ export function RepoAndChatSelector({
   const triggerLabel = repoName
     ? (
         <>
-          <span className="text-[#fafafa] font-semibold truncate">{repoName}</span>
-          <span className="text-[#27272a] mx-0.5">/</span>
-          <span className="text-[#a1a1aa] truncate">{chatTitle}</span>
+          <span className="truncate font-semibold text-push-fg">{repoName}</span>
+          <span className="mx-0.5 text-[#2f3c52]">/</span>
+          <span className="truncate text-push-fg-secondary">{chatTitle}</span>
         </>
       )
-    : <span className="text-[#fafafa] font-semibold">Push</span>;
+    : <span className="font-semibold text-push-fg">Push</span>;
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger className="flex items-center gap-1.5 h-9 px-2 rounded-lg text-sm hover:bg-[#0d0d0d] transition-colors duration-200 outline-none min-w-0 max-w-[240px] active:scale-[0.98]">
+      <DropdownMenuTrigger className="flex h-9 min-w-0 max-w-[240px] items-center gap-1.5 rounded-lg border border-push-edge bg-push-surface px-2 text-sm outline-none transition-colors duration-200 hover:border-[#31425a] hover:bg-[#0d1119] active:scale-[0.98]">
         <span className="flex items-center min-w-0 truncate">{triggerLabel}</span>
         <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 text-[#52525b] transition-transform duration-200 ${
+          className={`h-3.5 w-3.5 shrink-0 text-push-fg-dim transition-transform duration-200 ${
             open ? 'rotate-180' : ''
           }`}
         />
@@ -68,12 +68,12 @@ export function RepoAndChatSelector({
       <DropdownMenuContent
         align="start"
         sideOffset={8}
-        className="w-[300px] max-h-[70vh] overflow-y-auto bg-[#000] border-[#1a1a1a] rounded-xl shadow-xl"
+        className="max-h-[70vh] w-[300px] overflow-y-auto rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#05070b_100%)] shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
       >
         {/* --- REPOS section --- */}
         {repos.length > 0 && (
           <>
-            <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-[#52525b] font-medium px-3 py-1.5">
+            <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
               Repos
             </DropdownMenuLabel>
 
@@ -86,19 +86,19 @@ export function RepoAndChatSelector({
                     e.preventDefault(); // Keep dropdown open on repo click
                     onSelectRepo(repo);
                   }}
-                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer rounded-lg mx-1 ${
-                    isActive ? 'bg-[#0070f3]/10' : ''
+                  className={`mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 ${
+                    isActive ? 'bg-[#0b74e8]/15' : 'hover:bg-[#0d1119]'
                   }`}
                 >
                   <span className={`flex-1 truncate text-sm font-medium ${
-                    isActive ? 'text-[#0070f3]' : 'text-[#a1a1aa]'
+                    isActive ? 'text-push-link' : 'text-[#c5cfde]'
                   }`}>
                     {repo.name}
                   </span>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {repo.private && <Lock className="h-3 w-3 text-[#3f3f46]" />}
+                    {repo.private && <Lock className="h-3 w-3 text-[#5f6b80]" />}
                     {repo.activity.open_prs > 0 && (
-                      <span className="flex items-center gap-0.5 text-xs text-[#3f3f46]">
+                      <span className="flex items-center gap-0.5 text-xs text-[#5f6b80]">
                         <GitPullRequest className="h-3 w-3" />
                         {repo.activity.open_prs}
                       </span>
@@ -115,7 +115,7 @@ export function RepoAndChatSelector({
                   onBrowseRepos();
                   setOpen(false);
                 }}
-                className="flex items-center gap-2.5 px-3 py-2 cursor-pointer text-[#0070f3] hover:text-[#0060d3] rounded-lg mx-1 mt-1"
+                className="mx-1 mt-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-push-link hover:bg-[#0d1119] hover:text-[#86ccff]"
               >
                 <FolderOpen className="h-4 w-4" />
                 <span className="text-sm font-medium">Browse repos</span>
@@ -129,19 +129,19 @@ export function RepoAndChatSelector({
                   onSandboxMode();
                   setOpen(false);
                 }}
-                className="flex items-center gap-2.5 px-3 py-2 cursor-pointer text-emerald-400 hover:text-emerald-300 rounded-lg mx-1"
+                className="mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-emerald-300 hover:bg-[#0d1119] hover:text-emerald-200"
               >
                 <Box className="h-4 w-4" />
                 <span className="text-sm font-medium">New Sandbox</span>
               </DropdownMenuItem>
             )}
 
-            <DropdownMenuSeparator className="bg-[#1a1a1a]" />
+            <DropdownMenuSeparator className="bg-push-edge" />
           </>
         )}
 
         {/* --- CHATS section --- */}
-        <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-[#52525b] font-medium px-3 py-1.5">
+        <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
           Chats
         </DropdownMenuLabel>
 
@@ -158,14 +158,14 @@ export function RepoAndChatSelector({
                 onSwitchChat(id);
                 setOpen(false);
               }}
-              className={`flex items-center gap-2.5 px-3 py-2.5 cursor-pointer rounded-lg mx-1 ${
-                isActiveChat ? 'bg-[#0d0d0d]' : ''
+              className={`mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2.5 ${
+                isActiveChat ? 'bg-[#101621]' : 'hover:bg-[#0d1119]'
               }`}
             >
-              <MessageSquare className="h-3.5 w-3.5 shrink-0 text-[#52525b]" />
+              <MessageSquare className="h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
               <div className="flex-1 min-w-0">
-                <div className="text-sm text-[#fafafa] truncate">{conv.title}</div>
-                <div className="text-[11px] text-[#52525b]">
+                <div className="truncate text-sm text-push-fg">{conv.title}</div>
+                <div className="text-[11px] text-push-fg-dim">
                   {msgCount} msg{msgCount !== 1 ? 's' : ''}
                 </div>
               </div>
@@ -176,7 +176,7 @@ export function RepoAndChatSelector({
                     e.preventDefault();
                     onDeleteChat(id);
                   }}
-                  className="h-7 w-7 flex items-center justify-center rounded-md text-[#52525b] hover:text-red-400 hover:bg-[#1a1a1a] transition-colors duration-150 shrink-0"
+                  className="h-7 w-7 shrink-0 rounded-md text-push-fg-dim transition-colors duration-150 hover:bg-[#1a1f2b] hover:text-red-400"
                   aria-label={`Delete ${conv.title}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -186,7 +186,7 @@ export function RepoAndChatSelector({
           );
         })}
 
-        <DropdownMenuSeparator className="bg-[#1a1a1a]" />
+        <DropdownMenuSeparator className="bg-push-edge" />
 
         {/* --- New Chat --- */}
         <DropdownMenuItem
@@ -194,7 +194,7 @@ export function RepoAndChatSelector({
             onNewChat();
             setOpen(false);
           }}
-          className="flex items-center gap-2.5 px-3 py-2.5 cursor-pointer text-[#0070f3] hover:text-[#0060d3] rounded-lg mx-1"
+          className="mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2.5 text-push-link hover:bg-[#0d1119] hover:text-[#86ccff]"
         >
           <Plus className="h-4 w-4" />
           <span className="text-sm font-medium">New Chat</span>

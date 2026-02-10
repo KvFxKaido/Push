@@ -240,7 +240,7 @@ export function CommitPushSheet({
           {/* Spinner phases */}
           {isSpinnerPhase && (
             <div className="flex flex-col items-center justify-center gap-3 py-8">
-              <Loader2 className="h-5 w-5 animate-spin text-[#0070f3]" />
+              <Loader2 className="h-5 w-5 animate-spin text-push-accent" />
               <span className="text-sm text-[#a1a1aa]">
                 {PHASE_LABELS[phase] || 'Working…'}
               </span>
@@ -263,7 +263,7 @@ export function CommitPushSheet({
                   {suggestedMessage && suggestedMessage !== commitMessage && (
                     <button
                       onClick={handleUseSuggestion}
-                      className="flex items-center gap-1 text-xs text-[#0070f3] hover:text-[#0060d3] transition-colors"
+                      className="flex items-center gap-1 text-xs text-push-accent hover:text-[#0060d3] transition-colors"
                       title="Use AI-suggested message"
                     >
                       <Sparkles className="h-3 w-3" />
@@ -277,7 +277,7 @@ export function CommitPushSheet({
                   value={commitMessage}
                   onChange={(e) => setCommitMessage(e.target.value)}
                   placeholder="Describe your changes…"
-                  className="w-full rounded-lg border border-[#1a1a1a] bg-[#000] px-3 py-2.5 text-sm text-[#fafafa] placeholder:text-[#3f3f46] focus:outline-none focus:ring-1 focus:ring-[#0070f3]"
+                  className="w-full rounded-lg border border-[#1a1a1a] bg-[#000] px-3 py-2.5 text-sm text-[#fafafa] placeholder:text-[#3f3f46] focus:outline-none focus:ring-1 focus:ring-push-accent"
                   autoFocus
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && commitMessage.trim()) {

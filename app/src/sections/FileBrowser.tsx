@@ -139,10 +139,10 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
   return (
     <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
       {/* Header */}
-      <header className="flex items-center gap-2 px-3 py-3 border-b border-[#1a1a1a]">
+      <header className="flex items-center gap-2 border-b border-[#151b26] bg-[linear-gradient(180deg,#05070b_0%,#020306_100%)] px-3 py-3">
         <button
           onClick={onBack}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-[#a1a1aa] transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d] active:scale-95 shrink-0"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-secondary transition-colors hover:border-[#31425a] hover:bg-[#0d1119] hover:text-push-fg active:scale-95"
           aria-label="Back to chat"
         >
           <MessageSquare className="h-4 w-4" />
@@ -156,8 +156,8 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
                 onClick={() => loadDirectory('/workspace')}
                 className={`px-1.5 py-0.5 rounded transition-colors ${
                   isRoot
-                    ? 'text-[#fafafa] font-medium'
-                    : 'text-[#a1a1aa] hover:text-[#fafafa]'
+                    ? 'font-medium text-push-fg'
+                    : 'text-push-fg-secondary hover:text-push-fg'
                 }`}
               >
                 {repoName}
@@ -167,13 +167,13 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
               const isLast = i === breadcrumbs.length - 2;
               return (
                 <li key={crumb.path} className="flex items-center gap-1">
-                  <ChevronRight className="h-3 w-3 text-[#3f3f46] shrink-0" />
+                  <ChevronRight className="h-3 w-3 shrink-0 text-[#5f6b80]" />
                   <button
                     onClick={() => loadDirectory(crumb.path)}
                     className={`px-1.5 py-0.5 rounded transition-colors ${
                       isLast
-                        ? 'text-[#fafafa] font-medium'
-                        : 'text-[#a1a1aa] hover:text-[#fafafa]'
+                        ? 'font-medium text-push-fg'
+                        : 'text-push-fg-secondary hover:text-push-fg'
                     }`}
                   >
                     {crumb.label}
@@ -188,7 +188,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         <button
           onClick={() => loadDirectory(currentPath)}
           disabled={status === 'loading'}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95 shrink-0 disabled:opacity-40"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-dim transition-colors hover:border-[#31425a] hover:bg-[#0d1119] hover:text-[#d1d8e6] active:scale-95 disabled:opacity-40"
           aria-label="Refresh directory"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${status === 'loading' ? 'animate-spin' : ''}`} />
@@ -198,37 +198,37 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
       {/* File list */}
       <div className="flex-1 overflow-y-auto overscroll-contain">
         {status === 'loading' && files.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-[#52525b]">
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-[#788396]">
             <Loader2 className="h-5 w-5 animate-spin" />
             <span className="text-sm">Loading…</span>
           </div>
         ) : status === 'error' ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center">
             <AlertCircle className="h-5 w-5 text-[#ef4444]/70" />
-            <p className="text-sm text-[#a1a1aa]">{error}</p>
+            <p className="text-sm text-push-fg-secondary">{error}</p>
             <button
               onClick={() => loadDirectory(currentPath)}
-              className="text-xs text-[#0070f3] hover:underline"
+              className="text-xs text-push-accent hover:underline"
             >
               Retry
             </button>
           </div>
         ) : files.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-2 text-[#52525b]">
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-[#788396]">
             <Folder className="h-5 w-5" />
             <span className="text-sm">Empty directory</span>
           </div>
         ) : (
-          <ul className="divide-y divide-[#1a1a1a]/50">
+          <ul className="divide-y divide-[#1a2130]/70">
             {/* Navigate up row */}
             {!isRoot && (
               <li>
                 <button
                   onClick={navigateUp}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#0d0d0d] active:bg-[#161618]"
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#0d1119] active:bg-[#121a29]"
                 >
-                  <ChevronLeft className="h-4 w-4 text-[#52525b] shrink-0" />
-                  <span className="text-sm text-[#a1a1aa]">..</span>
+                  <ChevronLeft className="h-4 w-4 shrink-0 text-push-fg-dim" />
+                  <span className="text-sm text-push-fg-secondary">..</span>
                 </button>
               </li>
             )}
@@ -333,20 +333,20 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerLeave}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#0d0d0d] active:bg-[#161618] select-none"
+        className="flex w-full select-none items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#0d1119] active:bg-[#121a29]"
       >
         {/* Icon */}
         {isDir ? (
-          <Folder className="h-4 w-4 text-[#0070f3] shrink-0" />
+          <Folder className="h-4 w-4 shrink-0 text-[#4fb6ff]" />
         ) : isEditable ? (
-          <FileEdit className="h-4 w-4 text-[#22c55e] shrink-0" />
+          <FileEdit className="h-4 w-4 shrink-0 text-[#22c55e]" />
         ) : (
-          <File className="h-4 w-4 text-[#52525b] shrink-0" />
+          <File className="h-4 w-4 shrink-0 text-push-fg-dim" />
         )}
 
         {/* Name + meta */}
         <div className="flex-1 min-w-0">
-          <span className={`block text-sm truncate ${isDir ? 'text-[#fafafa]' : 'text-[#a1a1aa]'}`}>
+          <span className={`block truncate text-sm ${isDir ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
             {file.name}
           </span>
           {!isDir && editability?.warning === 'large_file' && (
@@ -356,9 +356,9 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
 
         {/* Size (files only) + chevron (dirs only) */}
         {isDir ? (
-          <ChevronRight className="h-3.5 w-3.5 text-[#3f3f46] shrink-0" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#5f6b80]" />
         ) : (
-          <span className="text-[11px] text-[#52525b] font-mono shrink-0">
+          <span className="shrink-0 font-mono text-[11px] text-push-fg-dim">
             {formatSize(file.size)}
           </span>
         )}

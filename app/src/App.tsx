@@ -952,7 +952,7 @@ function App() {
   return (
     <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-[#111]">
+      <header className="flex items-center justify-between border-b border-[#151b26] bg-[linear-gradient(180deg,#05070b_0%,#020306_100%)] px-4 py-3">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {isSandboxMode ? (
             <div className="flex items-center gap-2">
@@ -962,17 +962,17 @@ function App() {
                   sandbox.stop();
                   createNewChat();
                 }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0d0d0d] border border-[#1a1a1a] hover:border-[#3f3f46] transition-colors"
+                className="flex items-center gap-1.5 rounded-lg border border-push-edge bg-push-surface px-2.5 py-1 transition-colors hover:border-[#31425a]"
                 title="Exit sandbox mode"
               >
                 <div className={`h-2 w-2 rounded-full ${sandbox.status === 'ready' ? 'bg-emerald-500' : sandbox.status === 'creating' ? 'bg-[#f59e0b] animate-pulse' : sandbox.status === 'error' ? 'bg-red-500' : 'bg-[#52525b]'}`} />
-                <span className="text-xs font-medium text-[#a1a1aa]">Sandbox</span>
-                <span className="text-[10px] text-[#52525b]">✕</span>
+                <span className="text-xs font-medium text-[#c5cfde]">Sandbox</span>
+                <span className="text-[10px] text-push-fg-dim">✕</span>
               </button>
-              <span className="text-[10px] text-[#52525b]">ephemeral</span>
+              <span className="text-[10px] text-push-fg-dim">ephemeral</span>
               {latestSnapshot && (
                 <span
-                  className={`text-[10px] ${snapshotIsStale ? 'text-amber-400' : 'text-[#3f3f46]'}`}
+                  className={`text-[10px] ${snapshotIsStale ? 'text-amber-400' : 'text-[#5f6b80]'}`}
                   title={`Latest snapshot: ${new Date(latestSnapshot.createdAt).toLocaleString()}`}
                 >
                   {snapshotIsStale ? `snapshot stale (${snapshotAgeLabel})` : `snapshot ${snapshotAgeLabel}`}
@@ -982,7 +982,7 @@ function App() {
                 <button
                   onClick={() => captureSnapshot('manual')}
                   disabled={snapshotSaving || snapshotRestoring}
-                  className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-[#52525b] transition-colors hover:text-emerald-400 hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-50"
+                  className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-push-fg-dim transition-colors hover:bg-[#0d1119] hover:text-emerald-400 active:scale-95 disabled:opacity-50"
                   title="Save Snapshot Now"
                   aria-label="Save Snapshot Now"
                 >
@@ -994,7 +994,7 @@ function App() {
                 <button
                   onClick={handleRestoreFromSnapshot}
                   disabled={snapshotSaving || snapshotRestoring || sandbox.status === 'creating'}
-                  className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-[#52525b] transition-colors hover:text-emerald-400 hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-50"
+                  className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-push-fg-dim transition-colors hover:bg-[#0d1119] hover:text-emerald-400 active:scale-95 disabled:opacity-50"
                   title="Restore from Last Snapshot"
                   aria-label="Restore from Last Snapshot"
                 >
@@ -1006,7 +1006,7 @@ function App() {
                 <button
                   onClick={handleSandboxDownload}
                   disabled={sandboxDownloading}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-[#52525b] transition-colors hover:text-emerald-400 hover:bg-[#0d0d0d] active:scale-95 disabled:opacity-50"
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-push-fg-dim transition-colors hover:bg-[#0d1119] hover:text-emerald-400 active:scale-95 disabled:opacity-50"
                   title="Download workspace"
                   aria-label="Download workspace"
                 >
@@ -1015,8 +1015,8 @@ function App() {
               )}
               {snapshotRestoring && snapshotRestoreProgress && (
                 <div className="flex min-w-[120px] flex-col gap-1">
-                  <span className="text-[10px] text-[#71717a]">{snapshotRestoreProgress.message}</span>
-                  <div className="h-1 w-full overflow-hidden rounded bg-[#1a1a1a]">
+                  <span className="text-[10px] text-push-fg-muted">{snapshotRestoreProgress.message}</span>
+                  <div className="h-1 w-full overflow-hidden rounded bg-[#1a2130]">
                     <div
                       className="h-full bg-emerald-500 transition-all duration-300"
                       style={{ width: `${snapshotStagePercent(snapshotRestoreProgress.stage)}%` }}
@@ -1055,12 +1055,12 @@ function App() {
                 if (id) setShowFileBrowser(true);
               }}
               disabled={sandbox.status === 'creating'}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors duration-200 active:scale-95 ${
+              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors duration-200 active:scale-95 ${
                 sandbox.status === 'creating'
-                  ? 'text-[#f59e0b] animate-pulse'
+                  ? 'border-push-edge text-[#f59e0b] animate-pulse'
                   : sandbox.status === 'ready'
-                  ? 'text-[#22c55e] hover:bg-[#0d0d0d]'
-                  : 'text-[#52525b] hover:text-[#a1a1aa] hover:bg-[#0d0d0d]'
+                  ? 'border-[#244230] text-[#22c55e] hover:bg-[#0d1119]'
+                  : 'border-push-edge text-push-fg-dim hover:border-[#31425a] hover:text-[#d1d8e6] hover:bg-[#0d1119]'
               }`}
               aria-label="Open file browser"
               title={sandbox.status === 'creating' ? 'Starting sandbox...' : sandbox.status === 'ready' ? 'File browser' : 'Open file browser (starts sandbox)'}
@@ -1072,29 +1072,29 @@ function App() {
           {/* Provider indicator with lock status */}
           <div className="flex items-center gap-2">
             <div
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors ${
+              className={`flex items-center gap-1.5 rounded-md border px-2 py-1 transition-colors ${
                 isProviderLocked 
-                  ? 'bg-[#0d0d0d] border border-[#1a1a1a]' 
-                  : ''
+                  ? 'border-[#244230] bg-[#08110b]' 
+                  : 'border-push-edge bg-push-surface'
               }`}
               title={isProviderLocked 
                 ? `${PROVIDER_LABELS[lockedProvider || 'demo']} locked for this chat` 
                 : 'Provider can be changed until first message'}
             >
-              <Cpu className={`h-3 w-3 ${isProviderLocked ? 'text-emerald-500' : 'text-[#52525b]'}`} />
-              <span className={`text-xs ${isProviderLocked ? 'text-[#a1a1aa]' : 'text-[#52525b]'}`}>
+              <Cpu className={`h-3 w-3 ${isProviderLocked ? 'text-emerald-500' : 'text-push-fg-dim'}`} />
+              <span className={`text-xs ${isProviderLocked ? 'text-[#c5cfde]' : 'text-push-fg-secondary'}`}>
                 {PROVIDER_ICONS[lockedProvider || activeProviderLabel]}
                 {PROVIDER_LABELS[lockedProvider || activeProviderLabel]}
               </span>
               {isProviderLocked && (
-                <span className="text-[10px] text-[#52525b] ml-1">🔒</span>
+                <span className="ml-1 text-[10px] text-push-fg-dim">🔒</span>
               )}
             </div>
           </div>
           
           <button
             onClick={() => setSettingsOpen(true)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#52525b] transition-colors duration-200 hover:text-[#a1a1aa] hover:bg-[#0d0d0d] active:scale-95"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-dim transition-colors duration-200 hover:border-[#31425a] hover:bg-[#0d1119] hover:text-[#d1d8e6] active:scale-95"
             aria-label="Settings"
           >
             <Settings className="h-4 w-4" />
@@ -1137,24 +1137,24 @@ function App() {
       )}
 
       {!isSandboxMode && activeRepo && projectInstructionsChecked && !agentsMdContent && (
-        <div className="mx-4 mt-3 rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] px-3 py-3">
+        <div className="mx-4 mt-3 rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] px-3 py-3 shadow-[0_12px_28px_rgba(0,0,0,0.35)]">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-medium text-[#e4e4e7]">No AGENTS.md found</p>
-              <p className="text-[11px] text-[#71717a]">Add project instructions so the agent understands your repo conventions.</p>
+              <p className="text-[11px] text-push-fg-muted">Add project instructions so the agent understands your repo conventions.</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <button
                 onClick={handleCreateAgentsMdWithAI}
                 disabled={creatingAgentsMdWithAI || isStreaming}
-                className="rounded-lg border border-emerald-700/50 bg-emerald-900/20 px-3 py-1.5 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-900/30 disabled:opacity-50"
+                className="rounded-lg border border-emerald-600/35 bg-emerald-900/20 px-3 py-1.5 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-900/30 disabled:opacity-50"
               >
                 {creatingAgentsMdWithAI ? 'Drafting...' : 'Create with AI'}
               </button>
               <button
                 onClick={handleCreateAgentsMd}
                 disabled={creatingAgentsMd || creatingAgentsMdWithAI}
-                className="rounded-lg border border-[#1f2937] bg-[#111827] px-3 py-1.5 text-xs font-medium text-emerald-300 transition-colors hover:bg-[#0f172a] disabled:opacity-50"
+                className="rounded-lg border border-[#243148] bg-[#0b1220] px-3 py-1.5 text-xs font-medium text-[#8ad4ff] transition-colors hover:bg-[#0d1526] disabled:opacity-50"
               >
                 {creatingAgentsMd ? 'Creating...' : 'Create Template'}
               </button>

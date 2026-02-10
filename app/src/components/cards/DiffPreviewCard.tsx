@@ -10,11 +10,11 @@ function DiffLine({ line, index }: { line: string; index: number }) {
   } else if (line.startsWith('-') && !line.startsWith('---')) {
     className += ' text-[#ef4444] bg-[#ef4444]/5';
   } else if (line.startsWith('@@')) {
-    className += ' text-[#0070f3] bg-[#0070f3]/5';
+    className += ' text-push-link bg-push-link/10';
   } else if (line.startsWith('diff --git')) {
-    className += ' text-[#a1a1aa] font-semibold border-t border-[#1a1a1a] pt-1 mt-1';
+    className += ' text-push-fg-secondary font-semibold border-t border-push-edge pt-1 mt-1';
   } else {
-    className += ' text-[#52525b]';
+    className += ' text-push-fg-dim';
   }
 
   return (
@@ -29,13 +29,13 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
   const lines = data.diff.split('\n');
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="w-full px-3 py-2.5 flex items-center gap-2 hover:bg-[#161618] transition-colors"
+        className="w-full px-3 py-2.5 flex items-center gap-2 hover:bg-[#0d1119] transition-colors"
       >
-        <FileDiff className="h-4 w-4 shrink-0 text-[#a1a1aa]" />
+        <FileDiff className="h-4 w-4 shrink-0 text-push-fg-secondary" />
         <span className="flex-1 text-[13px] text-[#e4e4e7] text-left">
           {data.filesChanged} file{data.filesChanged !== 1 ? 's' : ''} changed
         </span>
@@ -43,21 +43,21 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
           <span className="text-[12px] text-[#22c55e] font-mono">+{data.additions}</span>
           <span className="text-[12px] text-[#ef4444] font-mono">-{data.deletions}</span>
           <ChevronRight
-            className={`h-3 w-3 text-[#52525b] transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+            className={`h-3 w-3 text-push-fg-dim transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
           />
         </div>
       </button>
 
       {/* Diff content */}
       {expanded && (
-        <div className="border-t border-[#1a1a1a] max-h-[400px] overflow-y-auto">
+        <div className="border-t border-push-edge max-h-[400px] overflow-y-auto">
           <div className="py-1">
             {lines.map((line, i) => (
               <DiffLine key={i} line={line} index={i} />
             ))}
           </div>
           {data.truncated && (
-            <div className="px-3 py-1.5 text-[11px] text-[#52525b] italic border-t border-[#1a1a1a]">
+            <div className="px-3 py-1.5 text-[11px] text-push-fg-dim italic border-t border-push-edge">
               Diff truncated
             </div>
           )}

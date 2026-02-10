@@ -5,6 +5,19 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        // ── Push design tokens ────────────────────────────
+        // Single source of truth. Use these instead of [#hex].
+        'push-fg':           '#f5f7ff',  // primary text
+        'push-fg-secondary': '#b4becf',  // secondary text, labels
+        'push-fg-muted':     '#8b96aa',  // muted text, subtle icons
+        'push-fg-dim':       '#667086',  // dimmest text, placeholders
+        'push-edge':         '#1f2531',  // primary border
+        'push-edge-hover':   '#2f3949',  // hover border
+        'push-surface':      '#070a10',  // surface background
+        'push-accent':       '#0070f3',  // blue accent
+        'push-sky':          '#38bdf8',  // cyan accent (focus rings, glow)
+        'push-link':         '#5cb7ff',  // bright blue links, actions
+        // ──────────────────────────────────────────────────
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

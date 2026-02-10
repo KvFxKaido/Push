@@ -47,13 +47,13 @@ function EmptyState({
   return (
     <div className="flex flex-1 items-center justify-center px-8">
       <div className="text-center max-w-sm">
-        <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[#111] border border-[#1a1a1a]">
+        <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-xl border border-[#1e2634] bg-[linear-gradient(180deg,#0d1119_0%,#070a10_100%)] shadow-[0_12px_30px_rgba(0,0,0,0.55)]">
           <svg
             width="22"
             height="22"
             viewBox="0 0 16 16"
             fill="none"
-            className="text-[#0070f3]"
+            className="text-push-accent"
           >
             <path
               d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z"
@@ -66,7 +66,7 @@ function EmptyState({
         <h2 className="text-lg font-semibold text-[#fafafa] mb-2">
           {activeRepo ? activeRepo.name : isSandboxMode ? 'Sandbox' : 'Push'}
         </h2>
-        <p className="text-sm text-[#a1a1aa] leading-relaxed">
+        <p className="text-sm leading-relaxed text-push-fg-secondary">
           {activeRepo
             ? `Focused on ${activeRepo.full_name}. Ask about PRs, recent changes, or the codebase.`
             : isSandboxMode
@@ -78,7 +78,7 @@ function EmptyState({
             <button
               key={suggestion}
               onClick={() => onSuggestion?.(suggestion)}
-              className="rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] px-4 py-2.5 text-left text-sm text-[#a1a1aa] transition-colors duration-200 hover:border-[#27272a] hover:text-[#d4d4d8] cursor-pointer active:scale-[0.99]"
+              className="cursor-pointer rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] px-4 py-2.5 text-left text-sm text-push-fg-secondary shadow-[0_10px_28px_rgba(0,0,0,0.38)] transition-colors duration-200 hover:border-[#31425a] hover:text-[#f0f4ff] active:scale-[0.99]"
             >
               {suggestion}
             </button>
@@ -177,11 +177,12 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
           flex items-center justify-center
           w-10 h-10
           rounded-full
-          bg-[#111] border border-[#1a1a1a]
-          text-[#a1a1aa]
-          shadow-lg
+          border border-push-edge
+          bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)]
+          text-push-fg-secondary
+          shadow-[0_12px_28px_rgba(0,0,0,0.5)]
           transition-all duration-200 ease-in-out
-          hover:border-[#27272a] hover:text-[#d4d4d8]
+          hover:border-[#31425a] hover:text-[#f0f4ff]
           active:scale-95
           ${showScrollButton ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'}
         `}

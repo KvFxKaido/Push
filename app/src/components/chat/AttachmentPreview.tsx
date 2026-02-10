@@ -47,7 +47,7 @@ function AttachmentChip({
       className={`relative flex items-center gap-2 rounded-lg border px-2 py-1.5 shrink-0 ${
         isError
           ? 'border-red-500/30 bg-red-500/10'
-          : 'border-[#1a1a1a] bg-[#0d0d0d]'
+          : 'border-push-edge bg-push-surface'
       }`}
     >
       {/* Thumbnail or icon */}
@@ -58,28 +58,28 @@ function AttachmentChip({
           className="h-8 w-8 rounded object-cover"
         />
       ) : attachment.type === 'code' ? (
-        <FileCode className="h-5 w-5 text-[#0070f3]" />
+        <FileCode className="h-5 w-5 text-push-accent" />
       ) : (
-        <FileText className="h-5 w-5 text-[#a1a1aa]" />
+        <FileText className="h-5 w-5 text-[#8891a1]" />
       )}
 
       {/* Filename and size */}
       <div className="flex flex-col min-w-0">
-        <span className="text-xs text-[#fafafa] truncate max-w-[120px]">
+        <span className="text-xs text-push-fg truncate max-w-[120px]">
           {attachment.filename}
         </span>
-        <span className="text-[10px] text-[#52525b]">
+        <span className="text-[10px] text-push-fg-dim">
           {isError ? attachment.error : formatFileSize(attachment.sizeBytes)}
         </span>
       </div>
 
       {/* Processing spinner or remove button */}
       {isProcessing ? (
-        <Loader2 className="h-4 w-4 text-[#52525b] animate-spin" />
+        <Loader2 className="h-4 w-4 text-push-fg-dim animate-spin" />
       ) : (
         <button
           onClick={() => onRemove(attachment.id)}
-          className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-[#1a1a1a] text-[#52525b] hover:text-[#a1a1aa] transition-colors"
+          className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-[#0d1119] text-push-fg-dim hover:text-[#8891a1] transition-colors"
           aria-label={`Remove ${attachment.filename}`}
         >
           <X className="h-3 w-3" />

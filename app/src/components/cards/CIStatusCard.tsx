@@ -17,9 +17,9 @@ function overallIcon(overall: CIStatusCardData['overall']) {
     case 'pending':
       return <Clock className="h-4 w-4 shrink-0 text-[#f59e0b]" />;
     case 'neutral':
-      return <MinusCircle className="h-4 w-4 shrink-0 text-[#a1a1aa]" />;
+      return <MinusCircle className="h-4 w-4 shrink-0 text-push-fg-secondary" />;
     case 'no-checks':
-      return <Activity className="h-4 w-4 shrink-0 text-[#52525b]" />;
+      return <Activity className="h-4 w-4 shrink-0 text-push-fg-dim" />;
   }
 }
 
@@ -28,7 +28,7 @@ function overallColor(overall: CIStatusCardData['overall']): string {
     case 'success': return 'text-[#22c55e]';
     case 'failure': return 'text-[#ef4444]';
     case 'pending': return 'text-[#f59e0b]';
-    default: return 'text-[#a1a1aa]';
+    default: return 'text-push-fg-secondary';
   }
 }
 
@@ -37,7 +37,7 @@ function overallBg(overall: CIStatusCardData['overall']): string {
     case 'success': return 'bg-[#22c55e]/5';
     case 'failure': return 'bg-[#ef4444]/5';
     case 'pending': return 'bg-[#f59e0b]/5';
-    default: return 'bg-[#52525b]/5';
+    default: return 'bg-push-fg-dim/10';
   }
 }
 
@@ -55,9 +55,9 @@ function checkIcon(check: CICheck) {
       return <XCircle className="h-3 w-3 shrink-0 text-[#f59e0b]" />;
     case 'skipped':
     case 'neutral':
-      return <MinusCircle className="h-3 w-3 shrink-0 text-[#52525b]" />;
+      return <MinusCircle className="h-3 w-3 shrink-0 text-push-fg-dim" />;
     default:
-      return <MinusCircle className="h-3 w-3 shrink-0 text-[#52525b]" />;
+      return <MinusCircle className="h-3 w-3 shrink-0 text-push-fg-dim" />;
   }
 }
 
@@ -67,14 +67,14 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
   );
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${overallBg(data.overall)}`}>
         {overallIcon(data.overall)}
         <span className={`text-sm font-medium ${overallColor(data.overall)}`}>
           CI Status
         </span>
-        <span className="ml-auto text-[11px] text-[#52525b]">
+        <span className="ml-auto text-[11px] text-push-fg-dim">
           {data.overall === 'no-checks' ? 'No checks' : data.overall.toUpperCase()}
         </span>
       </div>
@@ -85,10 +85,10 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
           {data.checks.map((check, i) => (
             <div key={i} className="flex items-center gap-2 min-h-[24px]">
               {checkIcon(check)}
-              <span className="text-[12px] text-[#a1a1aa] truncate flex-1">
+              <span className="text-[12px] text-push-fg-secondary truncate flex-1">
                 {check.name}
               </span>
-              <span className="text-[11px] text-[#52525b] shrink-0">
+              <span className="text-[11px] text-push-fg-dim shrink-0">
                 {check.status !== 'completed'
                   ? check.status.replace('_', ' ')
                   : check.conclusion || '—'}
@@ -98,7 +98,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
         </div>
       ) : (
         <div className="px-3 py-3">
-          <p className="text-[12px] text-[#52525b]">
+          <p className="text-[12px] text-push-fg-dim">
             No CI checks configured for this repo.
           </p>
         </div>
@@ -113,7 +113,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
               messageId,
               cardIndex,
             })}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-[#1a1a1a] w-full px-4 py-2 text-[12px] font-medium text-[#a1a1aa] transition-all duration-200 hover:bg-[#1a1a1a] hover:text-[#e4e4e7] active:scale-[0.98]"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-push-edge w-full px-4 py-2 text-[12px] font-medium text-push-fg-secondary transition-all duration-200 hover:bg-[#111624] hover:text-[#e4e4e7] active:scale-[0.98]"
             style={{ minHeight: '44px' }}
           >
             <RefreshCw className="h-3.5 w-3.5" />

@@ -15,19 +15,19 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
   }[data.tool];
 
   return (
-    <div className="my-2 rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden max-w-full">
+    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
       {/* Header */}
-      <div className={`px-3 py-2 flex items-center gap-2 border-b border-[#1a1a1a] ${statusBg}`}>
+      <div className={`px-3 py-2 flex items-center gap-2 border-b border-push-edge ${statusBg}`}>
         <Icon className={`h-4 w-4 ${statusColor}`} />
         <span className={`text-[13px] font-medium ${statusColor}`}>
           {passed ? 'No Type Errors' : 'Type Errors Found'}
         </span>
-        <span className="text-[12px] text-[#52525b]">{toolLabel}</span>
+        <span className="text-[12px] text-push-fg-dim">{toolLabel}</span>
       </div>
 
       {/* Stats */}
       {(data.errorCount > 0 || data.warningCount > 0) && (
-        <div className="px-3 py-2 flex items-center gap-4 border-b border-[#1a1a1a]">
+        <div className="px-3 py-2 flex items-center gap-4 border-b border-push-edge">
           {data.errorCount > 0 && (
             <div className="flex items-center gap-1.5">
               <XCircle className="h-3.5 w-3.5 text-[#ef4444]" />
@@ -49,24 +49,24 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
 
       {/* Error list */}
       {data.errors.length > 0 && (
-        <div className="divide-y divide-[#1a1a1a] max-h-[250px] overflow-y-auto">
+        <div className="divide-y divide-push-edge max-h-[250px] overflow-y-auto">
           {data.errors.slice(0, 15).map((err, i) => (
             <div key={i} className="px-3 py-1.5">
               <div className="flex items-center gap-2 text-[12px]">
-                <FileCode className="h-3 w-3 text-[#52525b] shrink-0" />
-                <span className="text-[#0070f3] font-mono">
+                <FileCode className="h-3 w-3 text-push-fg-dim shrink-0" />
+                <span className="text-push-link font-mono">
                   {err.file}:{err.line}
                   {err.column > 0 ? `:${err.column}` : ''}
                 </span>
                 {err.code && (
-                  <span className="text-[#52525b] font-mono text-[11px]">{err.code}</span>
+                  <span className="text-push-fg-dim font-mono text-[11px]">{err.code}</span>
                 )}
               </div>
-              <p className="text-[11px] text-[#a1a1aa] mt-0.5 ml-5 truncate">{err.message}</p>
+              <p className="text-[11px] text-push-fg-secondary mt-0.5 ml-5 truncate">{err.message}</p>
             </div>
           ))}
           {data.errors.length > 15 && (
-            <div className="px-3 py-1.5 text-[11px] text-[#52525b]">
+            <div className="px-3 py-1.5 text-[11px] text-push-fg-dim">
               +{data.errors.length - 15} more errors
             </div>
           )}
@@ -74,7 +74,7 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
       )}
 
       {data.truncated && (
-        <div className="px-3 py-1.5 border-t border-[#1a1a1a] text-[11px] text-[#f59e0b]">
+        <div className="px-3 py-1.5 border-t border-push-edge text-[11px] text-[#f59e0b]">
           Output truncated
         </div>
       )}
