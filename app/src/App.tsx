@@ -1008,7 +1008,7 @@ function App() {
   return (
     <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
       {/* Top bar */}
-      <header className="flex items-center justify-between border-b border-[#151b26] bg-[linear-gradient(180deg,#05070b_0%,#020306_100%)] px-4 py-3">
+      <header className="mx-3 mt-2 flex items-center justify-between rounded-2xl border border-[#1b2230] bg-[linear-gradient(180deg,#070a11_0%,#03050a_100%)] px-3.5 py-2.5 shadow-[0_16px_36px_rgba(0,0,0,0.52)] backdrop-blur-xl">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <RepoChatDrawer
