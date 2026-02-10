@@ -14,6 +14,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 - **Chat-first** — conversation is the primary interface, not forms or dashboards
 - **Repo-locked context** — select a repo and the agent only sees that repo
 - **Tool protocol** — the agent calls GitHub and sandbox tools mid-conversation (PRs, commits, diffs, tests, type checks, workflows)
+- **Web search** — the agent can search the web mid-conversation via Tavily, Ollama native search, or DuckDuckGo fallback
 - **Browser tools (optional)** — capture screenshots and extract page text via Browserbase in the sandbox
 - **Scratchpad** — shared notepad for accumulating ideas, requirements, and decisions throughout a session
 - **User identity** — tell the agent your name, bio, and GitHub login so it knows who it's working with
@@ -56,12 +57,16 @@ npm run dev
 Create `app/.env` for local development, or paste keys in the Settings UI at runtime. Push works with AI services that include API access in their subscriptions:
 
 ```env
-VITE_MOONSHOT_API_KEY=...         # Kimi For Coding (unlimited API with subscription)
-VITE_MISTRAL_API_KEY=...          # Mistral Vibe (unlimited API with subscription)
-VITE_OLLAMA_API_KEY=...           # Ollama Cloud (unlimited API with subscription)
-VITE_GITHUB_TOKEN=...             # Optional — PAT for GitHub API access
-VITE_BROWSER_TOOL_ENABLED=true    # Optional — enables sandbox browser tools in prompts
-VITE_API_PROXY_TARGET=http://127.0.0.1:8787  # Optional — Vite -> local Wrangler proxy target
+VITE_MOONSHOT_API_KEY=...              # Kimi For Coding (unlimited API with subscription)
+VITE_MISTRAL_API_KEY=...              # Mistral Vibe (unlimited API with subscription)
+VITE_OLLAMA_API_KEY=...               # Ollama Cloud (unlimited API with subscription)
+VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)
+VITE_GITHUB_TOKEN=...                 # Optional — PAT for GitHub API access
+VITE_GITHUB_CLIENT_ID=...             # Optional — GitHub App OAuth client ID
+VITE_GITHUB_APP_REDIRECT_URI=...      # Optional — GitHub App OAuth redirect URI
+VITE_GITHUB_OAUTH_PROXY=...           # Optional — GitHub OAuth token exchange proxy
+VITE_GITHUB_REDIRECT_URI=...          # Optional — GitHub OAuth redirect URI
+VITE_BROWSER_TOOL_ENABLED=true        # Optional — enables sandbox browser tools in prompts
 ```
 
 Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings.
@@ -136,13 +141,14 @@ Push/
 │   ├── worker.ts          # Cloudflare Worker — Kimi/Ollama/Mistral proxy + sandbox proxy
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, RepoSelector
-│   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, etc.
-│   │   │   └── ui/        # shadcn/ui component library
-│   │   └── hooks/         # useChat, useSandbox, useScratchpad, useUserProfile, useGitHubAuth, useGitHubAppAuth, useRepos
-│   │   ├── lib/           # Agent logic, tool protocols, git operations
-│   │   ├── sections/      # OnboardingScreen, RepoPicker, FileBrowser
-│   │   └── types/         # TypeScript definitions
+│   │   │   ├── chat/           # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspacePanel, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner
+│   │   │   ├── cards/          # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
+│   │   │   ├── filebrowser/    # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
+│   │   │   └── ui/             # shadcn/ui component library
+│   │   ├── hooks/              # useChat, useSandbox, useScratchpad, useUserProfile, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useTavilyConfig, useUsageTracking
+│   │   ├── lib/                # Agent logic, tool protocols, git operations, web search, model catalog, prompts
+│   │   ├── sections/           # OnboardingScreen, RepoPicker, FileBrowser, HomeScreen
+│   │   └── types/              # TypeScript definitions
 │   └── package.json
 └── README.md
 ```

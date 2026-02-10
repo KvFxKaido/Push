@@ -39,6 +39,8 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Browser tools (optional):** `sandbox_browser_screenshot` and `sandbox_browser_extract`, prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true`, routed through Worker endpoints. The Worker injects Browserbase credentials server-side.
 
+**Web search tools:** The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). Mistral handles search natively via its Agents API. API keys are configurable at runtime via Settings.
+
 **Sandbox:** Modal (serverless containers) provides a persistent Linux environment per session. The repo is cloned into `/workspace` (or an empty workspace is created in Sandbox Mode). The Coder reads/writes files, runs commands, and gets diffs — all via sandbox tools. The Cloudflare Worker proxies sandbox requests to Modal web endpoints (keeps Modal auth server-side). Containers auto-terminate after 30 min.
 
 **Sandbox Mode:** Ephemeral workspace with no GitHub repo. Entry via onboarding ("Try it now") or repo picker ("New Sandbox"). GitHub tools are blocked; only sandbox tools are available. Expiry warning at 5 min remaining. Download via header button, expiry banner, or `sandbox_download` AI tool (tar.gz archive). See `documents/Sandbox mode.md` for full spec.
@@ -61,14 +63,15 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 ```
 app/src/
-  components/chat/   # Chat UI (ChatContainer, ChatInput, MessageBubble, ScratchpadDrawer, SandboxExpiryBanner)
-  components/cards/  # Rich inline cards (PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, SandboxDownloadCard, etc.)
-  components/ui/     # shadcn/ui component library
-  hooks/             # React hooks (useChat, useGitHubAuth, useRepos, useActiveRepo, useSandbox, useScratchpad, etc.)
-  lib/               # Orchestrator, tool protocol, sandbox client, agent modules, workspace context
-  sections/          # Screen components (OnboardingScreen, RepoPicker, FileBrowser)
-  types/             # TypeScript type definitions
-  App.tsx            # Root component, screen state machine
+  components/chat/        # Chat UI (ChatContainer, ChatInput, MessageBubble, AgentStatusBar, AttachmentPreview, ContextMeter, WorkspacePanel, WorkspacePanelButton, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner)
+  components/cards/       # Rich inline cards (PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, SandboxDownloadCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, EditorPanel, FileCard, FileListCard, BrowserExtractCard, BrowserScreenshotCard, BranchListCard, CIStatusCard, CommitListCard, CommitFilesCard, PRListCard, TypeCheckCard, WorkflowRunsCard, WorkflowLogsCard, SandboxStateCard, CardRenderer)
+  components/filebrowser/ # File browser UI (FileActionsSheet, CommitPushSheet, FileEditor, UploadButton)
+  components/ui/          # shadcn/ui component library
+  hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useOllamaConfig, useMoonshotKey, useMistralConfig, useTavilyConfig, useUsageTracking, use-mobile)
+  lib/                    # Orchestrator, tool protocol, sandbox client, agent modules, workspace context, web search, model catalog, prompts, feature flags, snapshot manager
+  sections/               # Screen components (OnboardingScreen, RepoPicker, FileBrowser, HomeScreen)
+  types/                  # TypeScript type definitions
+  App.tsx                 # Root component, screen state machine
 app/worker.ts        # Cloudflare Worker — streaming proxy to Kimi/Ollama/Mistral + sandbox proxy to Modal
 sandbox/app.py       # Modal Python App — sandbox web endpoints (file ops, exec/git, browser tools, archive download)
 sandbox/requirements.txt
@@ -87,18 +90,43 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `lib/auditor-agent.ts` — Auditor review + verdict (fail-safe to UNSAFE, uses active backend)
 - `lib/workspace-context.ts` — Builds active repo context for system prompt injection
 - `lib/providers.ts` — AI provider configs (Kimi + Ollama + Mistral), role-to-model mapping, backend preference
+- `lib/web-search-tools.ts` — Web search tool definitions (Tavily, Ollama native search, DuckDuckGo fallback; Mistral handles search natively via Agents API)
+- `lib/model-catalog.ts` — Manages Ollama/Mistral model lists and selection
+- `lib/prompts.ts` — Prompt building utilities
+- `lib/feature-flags.ts` — Feature flag system
+- `lib/snapshot-manager.ts` — Workspace snapshot management and recovery
+- `lib/file-processing.ts` — File content processing and transformation
+- `lib/file-utils.ts` — File utility helpers
+- `lib/sandbox-start-mode.ts` — Sandbox startup mode configuration
+- `lib/browser-metrics.ts` — Browser performance metrics tracking
+- `lib/codemirror-langs.ts` — CodeMirror language support configuration
+- `lib/codemirror-theme.ts` — CodeMirror editor theme
+- `lib/utils.ts` — General utility functions
 - `hooks/useChat.ts` — Chat state, message history, unified tool execution loop, Coder delegation, scratchpad integration
 - `hooks/useUserProfile.ts` — User identity (name, bio, GitHub login), standalone getter + React hook, localStorage persistence
 - `hooks/useSandbox.ts` — Sandbox session lifecycle (idle → creating → ready → error), supports ephemeral mode
 - `hooks/useScratchpad.ts` — Shared notepad state, localStorage persistence, content size limits
 - `hooks/useGitHubAuth.ts` — PAT validation, OAuth flow, mount re-validation
+- `hooks/useGitHubAppAuth.ts` — GitHub App OAuth flow and token refresh
+- `hooks/useGitHub.ts` — GitHub API client hook
 - `hooks/useActiveRepo.ts` — Active repo selection + localStorage persistence
 - `hooks/useRepos.ts` — Repo list fetching, sync tracking, activity detection
+- `hooks/useFileBrowser.ts` — File browser state and navigation
+- `hooks/useCodeMirror.ts` — CodeMirror editor integration
+- `hooks/useCommitPush.ts` — Commit and push workflow state
+- `hooks/useOllamaConfig.ts` — Ollama backend configuration and model selection
+- `hooks/useMoonshotKey.ts` — Kimi/Moonshot API key management
+- `hooks/useMistralConfig.ts` — Mistral backend configuration and model selection
+- `hooks/useTavilyConfig.ts` — Tavily web search API key management
+- `hooks/useUsageTracking.ts` — Usage analytics tracking
+- `hooks/use-mobile.ts` — Mobile viewport detection
 - `types/index.ts` — All shared TypeScript types (includes card data types for sandbox, diff preview, audit verdict)
 
 ## Environment
 
-Environment variables are defined in `app/.env` (local dev) and Cloudflare Worker secrets (production). See `app/.env` for the full list with comments. API keys can also be set via the Settings UI at runtime. Without any API keys the app runs in demo mode with mock data.
+Environment variables are defined in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI at runtime. Without any API keys the app runs in demo mode with mock data.
+
+Key variables: `VITE_MOONSHOT_API_KEY` (Kimi), `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
 
 ## Design Principles
 
@@ -112,7 +140,7 @@ Environment variables are defined in `app/.env` (local dev) and Cloudflare Worke
 
 ## Conventions
 
-- Gate screens go in `sections/`, chat components in `components/chat/`, inline cards in `components/cards/`
+- Gate screens go in `sections/`, chat components in `components/chat/`, inline cards in `components/cards/`, file browser components in `components/filebrowser/`
 - API clients and orchestration logic go in `lib/`
 - Agent modules (coder-agent, auditor-agent) go in `lib/` and export a single `run*()` function
 - Hooks encapsulate all data fetching and state for a concern
