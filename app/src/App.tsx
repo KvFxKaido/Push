@@ -779,10 +779,11 @@ function App() {
 
   // Auto-start sandbox when entering sandbox mode
   useEffect(() => {
-    if (isSandboxMode && sandbox.status === 'idle' && !sandbox.sandboxId) {
-      sandbox.start('', 'main');
+    const { status, sandboxId, start } = sandbox;
+    if (isSandboxMode && status === 'idle' && !sandboxId) {
+      start('', 'main');
     }
-  }, [isSandboxMode, sandbox.status, sandbox.sandboxId, sandbox.start]);
+  }, [isSandboxMode, sandbox]);
 
   // Load latest local snapshot metadata when sandbox mode is active.
   useEffect(() => {
@@ -851,7 +852,7 @@ function App() {
     if (validatedUser?.login && validatedUser.login !== profile.githubLogin) {
       updateProfile({ githubLogin: validatedUser.login });
     }
-  }, [validatedUser?.login]);
+  }, [validatedUser?.login, profile.githubLogin, updateProfile]);
 
   // Wrap createNewChat to also re-sync repos
   const handleCreateNewChat = useCallback(() => {
