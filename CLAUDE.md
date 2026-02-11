@@ -57,17 +57,27 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Rolling window:** Context is managed by token budget, not fixed message count. The app summarizes older tool-heavy messages first, then trims oldest message pairs if still over budget, while keeping tool call/result pairs together.
 
+**Active Branch model:** There is always exactly one Active Branch per repo session. It is the sandbox branch, chat context branch, commit target, push target, and diff base. Switching branches is atomic and explicit — it tears down the current sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer and home page. Branch creation happens only via the header "Create Branch" action (available on main). On feature branches, the header shows "Merge into main" instead.
+
+**Merge flow (GitHub PR merge):** All merges go through GitHub — Push never runs `git merge` locally. "Merge into main" is a five-step ritual: (1) check for clean working tree (commit & push if dirty), (2) find or create a Pull Request via GitHub API, (3) Auditor reviews the PR diff (`main...active`) with a SAFE/UNSAFE verdict, (4) check merge eligibility (mergeable state, CI, reviews), (5) merge via GitHub API (merge commit strategy, no fast-forward). Post-merge: user can switch to main and optionally delete the branch. Merge conflicts and branch protection are surfaced, never bypassed. PRs are only created as part of this merge ritual — no standalone "create PR" action.
+
+**Protect Main:** Optional setting that blocks direct commits to `main`, requiring a branch for all work. Configurable as a global default (on/off) plus per-repo override (inherit/always/never). Stored in localStorage via `useProtectMain` hook. No-op in Sandbox Mode.
+
+**Branch-scoped chats:** Conversations are permanently bound to the branch on which they were created. The history drawer groups chats by branch. Switching to a branch with existing chats lets the user resume any of them. After merge, branch chats receive a closure message; deleted branches are marked `(Merged + Deleted)` in history. Chats are never duplicated or rebound.
+
+**PR awareness:** Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo.
+
 **Project instructions (two-phase loading):** When the user selects a repo, the app immediately fetches `AGENTS.md` (or `CLAUDE.md` as fallback) via the GitHub REST API and injects it into the Orchestrator's system prompt and the Coder's context. When a sandbox becomes ready later, the app re-reads from the sandbox filesystem (which may have local edits) and upgrades the content. This ensures all agents have project context from the first message, not just after sandbox spin-up.
 
 ## Project Layout
 
 ```
 app/src/
-  components/chat/        # Chat UI (ChatContainer, ChatInput, MessageBubble, AgentStatusBar, AttachmentPreview, ContextMeter, WorkspacePanel, WorkspacePanelButton, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner)
+  components/chat/        # Chat UI (ChatContainer, ChatInput, MessageBubble, AgentStatusBar, AttachmentPreview, ContextMeter, WorkspacePanel, WorkspacePanelButton, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet)
   components/cards/       # Rich inline cards (PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, SandboxDownloadCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, EditorPanel, FileCard, FileListCard, BrowserExtractCard, BrowserScreenshotCard, BranchListCard, CIStatusCard, CommitListCard, CommitFilesCard, PRListCard, TypeCheckCard, WorkflowRunsCard, WorkflowLogsCard, SandboxStateCard, CardRenderer)
   components/filebrowser/ # File browser UI (FileActionsSheet, CommitPushSheet, FileEditor, UploadButton)
   components/ui/          # shadcn/ui component library
-  hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useOllamaConfig, useMoonshotKey, useMistralConfig, useTavilyConfig, useUsageTracking, use-mobile)
+  hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useOllamaConfig, useMoonshotKey, useMistralConfig, useTavilyConfig, useUsageTracking, use-mobile)
   lib/                    # Orchestrator, tool protocol, sandbox client, agent modules, workspace context, web search, model catalog, prompts, feature flags, snapshot manager
   sections/               # Screen components (OnboardingScreen, RepoPicker, FileBrowser, HomeScreen)
   types/                  # TypeScript type definitions
@@ -81,7 +91,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 ## Key Files
 
 - `lib/orchestrator.ts` — System prompt, multi-backend streaming (Kimi + Ollama + Mistral SSE), think-token parsing, provider routing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
-- `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks), `delegate_coder`, `fetchProjectInstructions` (reads AGENTS.md/CLAUDE.md from repos via API)
+- `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks), `delegate_coder`, `fetchProjectInstructions` (reads AGENTS.md/CLAUDE.md from repos via API), branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`)
 - `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt
 - `lib/sandbox-client.ts` — HTTP client for `/api/sandbox/*` endpoints (thin fetch wrappers)
 - `lib/scratchpad-tools.ts` — Scratchpad tool definitions (`set_scratchpad`, `append_scratchpad`), prompt injection escaping
@@ -114,6 +124,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `hooks/useFileBrowser.ts` — File browser state and navigation
 - `hooks/useCodeMirror.ts` — CodeMirror editor integration
 - `hooks/useCommitPush.ts` — Commit and push workflow state
+- `hooks/useProtectMain.ts` — Main branch protection (global default + per-repo override), localStorage persistence, standalone getter + React hook
 - `hooks/useOllamaConfig.ts` — Ollama backend configuration and model selection
 - `hooks/useMoonshotKey.ts` — Kimi/Moonshot API key management
 - `hooks/useMistralConfig.ts` — Mistral backend configuration and model selection
@@ -150,4 +161,7 @@ Key variables: `VITE_MOONSHOT_API_KEY` (Kimi), `VITE_MISTRAL_API_KEY` (Mistral),
 - Errors surface in the UI — never swallowed silently
 - Model selection is automatic — the Orchestrator routes to the right specialist
 - Active repo is hard-locked — the Orchestrator's context only contains the selected repo
+- Active branch is the single context for commits, pushes, diffs, and chat — switching branches tears down the sandbox
+- Chats are permanently branch-scoped — never duplicated or rebound across branches
+- All merges go through GitHub PR API — no local `git merge`
 - Auditor defaults to UNSAFE on any error (fail-safe design)
