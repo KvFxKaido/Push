@@ -71,7 +71,7 @@ export function EditorPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="h-[92vh] rounded-t-xl border-t border-push-edge bg-[#05080e] p-0 gap-0 [&>[data-slot=sheet-close]]:hidden"
+        className="h-[92dvh] rounded-t-xl border-t border-push-edge bg-[#05080e] p-0 gap-0 [&>[data-slot=sheet-close]]:hidden"
       >
         {/* Accessible but visually hidden title/description */}
         <SheetTitle className="sr-only">{filename}</SheetTitle>
