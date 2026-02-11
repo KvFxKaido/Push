@@ -1,4 +1,4 @@
-const CACHE_NAME = 'push-v3';
+const CACHE_NAME = 'push-v4';
 const urlsToCache = [
   '/',
   '/index.html',
