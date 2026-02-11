@@ -1,4 +1,9 @@
 /* Mobile-first styles */
+html,
+body {
+  background-color: #000;
+}
+
 html {
   touch-action: manipulation;
 }
