@@ -1122,7 +1122,6 @@ function App() {
   const isConnected = Boolean(token) || isDemo || isSandboxMode;
   const snapshotAgeLabel = latestSnapshot ? formatSnapshotAge(latestSnapshot.createdAt) : null;
   const snapshotIsStale = latestSnapshot ? (Date.now() - latestSnapshot.createdAt) > SNAPSHOT_STALE_MS : false;
-  const activeConversationTitle = conversations[activeChatId]?.title || 'New Chat';
 
   return (
     <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
@@ -1162,9 +1161,6 @@ function App() {
             <div className="min-w-0">
               <p className="truncate text-xs font-semibold text-[#f5f7ff]">
                 {isSandboxMode ? 'Sandbox' : activeRepo?.name || 'Push'}
-              </p>
-              <p className="truncate text-[10px] text-[#8b96aa]">
-                {activeConversationTitle}
               </p>
             </div>
           </div>

@@ -38,20 +38,11 @@ export function RepoAndChatSelector({
   onSandboxMode,
 }: RepoAndChatSelectorProps) {
   const [open, setOpen] = useState(false);
-
-  const activeConv = conversations[activeChatId];
-  const chatTitle = activeConv?.title || 'New Chat';
   const repoName = activeRepo?.name;
 
-  // Build trigger label: "repo / chat ▾" or just "Push"
+  // Build trigger label: repo name or just "Push"
   const triggerLabel = repoName
-    ? (
-        <>
-          <span className="truncate font-semibold text-push-fg">{repoName}</span>
-          <span className="mx-0.5 text-[#2f3c52]">/</span>
-          <span className="truncate text-push-fg-secondary">{chatTitle}</span>
-        </>
-      )
+    ? <span className="truncate font-semibold text-push-fg">{repoName}</span>
     : <span className="font-semibold text-push-fg">Push</span>;
 
   return (
