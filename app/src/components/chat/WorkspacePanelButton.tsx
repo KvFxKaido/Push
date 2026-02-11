@@ -17,7 +17,7 @@ export function WorkspacePanelButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#2a2f39] bg-[#0c0f15]/90 text-[#8891a1] transition-all duration-200 hover:border-[#384151] hover:bg-[#10141d] hover:text-[#e2e8f0] hover:shadow-push-sm spring-press disabled:opacity-40"
+      className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#8891a1] transition-all duration-200 hover:text-[#e2e8f0] spring-press disabled:opacity-40"
       aria-label="Open workspace panel"
       title="Workspace"
     >

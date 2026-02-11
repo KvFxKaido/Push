@@ -1008,7 +1008,7 @@ function App() {
   return (
     <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
       {/* Top bar */}
-      <header className="mx-3 mt-2 flex items-center justify-between rounded-2xl border border-[#1a2030]/80 bg-[linear-gradient(180deg,#080c14_0%,#040710_100%)] px-3.5 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.4),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl">
+      <header className="flex items-center justify-between px-4 pt-3 pb-2">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <RepoChatDrawer
@@ -1111,12 +1111,12 @@ function App() {
                 if (id) setShowFileBrowser(true);
               }}
               disabled={sandbox.status === 'creating'}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-all duration-200 spring-press ${
+              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 spring-press ${
                 sandbox.status === 'creating'
-                  ? 'border-push-edge text-[#f59e0b] animate-pulse'
+                  ? 'text-[#f59e0b] animate-pulse'
                   : sandbox.status === 'ready'
-                  ? 'border-[#244230] text-[#22c55e] hover:bg-[#0d1119] hover:shadow-push-sm'
-                  : 'border-push-edge text-push-fg-dim hover:border-[#31425a] hover:text-[#d1d8e6] hover:bg-[#0d1119]'
+                  ? 'text-[#22c55e] hover:text-[#4ade80]'
+                  : 'text-push-fg-dim hover:text-[#d1d8e6]'
               }`}
               aria-label="Open file browser"
               title={sandbox.status === 'creating' ? 'Starting sandbox...' : sandbox.status === 'ready' ? 'File browser' : 'Open file browser (starts sandbox)'}
