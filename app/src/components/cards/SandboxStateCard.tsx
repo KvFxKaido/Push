@@ -12,7 +12,7 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
   const hasChanges = data.changedFiles > 0;
 
   return (
-    <div className="my-2 overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+    <div className="my-2.5 overflow-hidden rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-push-card">
       <div className="px-3 py-2.5 border-b border-push-edge flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <FolderGit2 className="h-4 w-4 text-[#22c55e] shrink-0" />

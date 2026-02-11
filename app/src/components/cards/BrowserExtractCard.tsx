@@ -4,7 +4,7 @@ import type { BrowserExtractCardData } from '@/types';
 export function BrowserExtractCard({ data }: { data: BrowserExtractCardData }) {
   if (data.error) {
     return (
-      <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+      <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-push-card">
         <div className="px-3 py-2 border-b border-push-edge bg-[#0b1018]">
           <div className="flex items-center gap-2">
             <Globe className="h-4 w-4 text-push-fg-secondary shrink-0" />
@@ -26,7 +26,7 @@ export function BrowserExtractCard({ data }: { data: BrowserExtractCardData }) {
   }
 
   return (
-    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-push-card">
       <div className="px-3 py-2 border-b border-push-edge bg-[#0b1018]">
         <div className="flex items-center gap-2">
           <Globe className="h-4 w-4 text-push-fg-secondary shrink-0" />

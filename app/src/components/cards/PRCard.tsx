@@ -13,9 +13,9 @@ export function PRCard({ data }: { data: PRCardData }) {
   const { label, color, Icon } = statusConfig[data.state];
 
   return (
-    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-push-card">
       {/* Header */}
-      <div className="px-3 py-2.5 flex items-start gap-2">
+      <div className="px-3.5 py-3 flex items-start gap-2.5">
         <Icon className="h-4 w-4 mt-0.5 shrink-0 text-push-fg-secondary" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -70,7 +70,7 @@ export function PRCard({ data }: { data: PRCardData }) {
             <span>{data.files.length} file{data.files.length !== 1 ? 's' : ''} changed</span>
           </button>
           {filesExpanded && (
-            <div className="px-3 pb-2 space-y-0.5">
+            <div className="px-3 pb-2 space-y-0.5 expand-in">
               {data.files.map((f, i) => (
                 <div key={i} className="flex items-center gap-2 text-[12px]">
                   <span className="text-push-fg-dim font-mono w-12 text-right shrink-0">

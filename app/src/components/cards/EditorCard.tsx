@@ -28,12 +28,12 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
 
   return (
     <>
-      <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+      <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-push-card">
         {/* Header */}
         <div className="flex items-center">
           <button
             onClick={() => setExpanded((e) => !e)}
-            className="flex-1 px-3 py-2 flex items-center gap-2 hover:bg-[#151517] transition-colors min-w-0"
+            className="flex-1 px-3.5 py-3 flex items-center gap-2 hover:bg-[#151517] transition-colors duration-200 min-w-0"
           >
             <ChevronRight
               className={`h-3 w-3 text-push-fg-dim shrink-0 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
@@ -64,7 +64,7 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
 
         {/* CodeMirror body — read-only in inline card */}
         {expanded && (
-          <div className="border-t border-push-edge">
+          <div className="border-t border-push-edge expand-in">
             <CodeMirrorBody content={data.content} language={data.language} />
             {data.truncated && (
               <div className="px-3 py-1.5 border-t border-push-edge text-[11px] text-push-fg-dim italic">

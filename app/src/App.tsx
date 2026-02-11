@@ -1008,7 +1008,7 @@ function App() {
   return (
     <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
       {/* Top bar */}
-      <header className="mx-3 mt-2 flex items-center justify-between rounded-2xl border border-[#1b2230] bg-[linear-gradient(180deg,#070a11_0%,#03050a_100%)] px-3.5 py-2.5 shadow-[0_16px_36px_rgba(0,0,0,0.52)] backdrop-blur-xl">
+      <header className="mx-3 mt-2 flex items-center justify-between rounded-2xl border border-[#1a2030]/80 bg-[linear-gradient(180deg,#080c14_0%,#040710_100%)] px-3.5 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.4),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <RepoChatDrawer
@@ -1111,11 +1111,11 @@ function App() {
                 if (id) setShowFileBrowser(true);
               }}
               disabled={sandbox.status === 'creating'}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors duration-200 active:scale-95 ${
+              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-all duration-200 spring-press ${
                 sandbox.status === 'creating'
                   ? 'border-push-edge text-[#f59e0b] animate-pulse'
                   : sandbox.status === 'ready'
-                  ? 'border-[#244230] text-[#22c55e] hover:bg-[#0d1119]'
+                  ? 'border-[#244230] text-[#22c55e] hover:bg-[#0d1119] hover:shadow-push-sm'
                   : 'border-push-edge text-push-fg-dim hover:border-[#31425a] hover:text-[#d1d8e6] hover:bg-[#0d1119]'
               }`}
               aria-label="Open file browser"
@@ -1134,7 +1134,7 @@ function App() {
 
       {/* Sandbox error banner — shown when Modal call fails */}
       {isSandboxMode && sandbox.status === 'error' && sandbox.error && (
-        <div className="mx-4 mt-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2.5 flex items-center justify-between gap-2">
+        <div className="mx-4 mt-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in-down">
           <p className="text-xs text-red-400 min-w-0 truncate">{sandbox.error}</p>
           <div className="flex items-center gap-2 shrink-0">
             <button
@@ -1164,7 +1164,7 @@ function App() {
       )}
 
       {!isSandboxMode && activeRepo && projectInstructionsChecked && !agentsMdContent && (
-        <div className="mx-4 mt-3 rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] px-3 py-3 shadow-[0_12px_28px_rgba(0,0,0,0.35)]">
+        <div className="mx-4 mt-3 rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] px-3.5 py-3.5 shadow-push-card animate-fade-in-down">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-medium text-[#e4e4e7]">No AGENTS.md found</p>

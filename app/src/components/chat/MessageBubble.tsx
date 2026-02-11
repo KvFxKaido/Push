@@ -261,7 +261,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
       )}
 
       {expanded && (
-        <div className="mt-1.5 ml-4 pl-3 border-l border-push-edge max-h-[300px] overflow-y-auto">
+        <div className="mt-1.5 ml-4 pl-3 border-l border-push-edge max-h-[300px] overflow-y-auto expand-in">
           <p className="text-[12px] text-push-fg-dim leading-relaxed whitespace-pre-wrap break-words">
             {thinking}
           </p>
@@ -395,11 +395,11 @@ export const MessageBubble = memo(function MessageBubble({
     const hasAttachments = message.attachments && message.attachments.length > 0;
 
     return (
-      <div className="flex justify-end px-4 py-1 group/user">
-        <div className="opacity-0 group-hover/user:opacity-100 transition-opacity duration-150 flex items-start pt-2 mr-1">
+      <div className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up">
+        <div className="opacity-0 group-hover/user:opacity-100 transition-opacity duration-200 flex items-start pt-2 mr-1.5">
           <CopyButton text={message.content} />
         </div>
-        <div className="max-w-[85%] rounded-2xl rounded-br-md border border-[#22324d] bg-[linear-gradient(180deg,#112039_0%,#0c182d_100%)] px-4 py-2.5 shadow-[0_12px_24px_rgba(0,0,0,0.35)]">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md border border-[#22324d] bg-[linear-gradient(180deg,#112039_0%,#0c182d_100%)] px-4 py-3 shadow-push-md">
           {hasAttachments && (
             <div className="flex flex-wrap gap-2 mb-2">
               {message.attachments!.map((att) => (
@@ -418,7 +418,7 @@ export const MessageBubble = memo(function MessageBubble({
   }
 
   return (
-    <div className="flex items-start gap-2.5 px-4 py-1 group/assistant">
+    <div className="flex items-start gap-2.5 px-4 py-1.5 group/assistant animate-fade-in">
       <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#1e2634] bg-[linear-gradient(180deg,#0d1119_0%,#070a10_100%)]">
         <svg
           width="10"
@@ -455,12 +455,12 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
         {!message.isToolCall && hasContent && !isStreaming && (
-          <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-150 mt-1">
+          <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-200 mt-1.5">
             <CopyButton text={message.content} />
           </div>
         )}
         {visibleCards.length > 0 && (
-          <div className="mt-1">
+          <div className="mt-1.5">
             {visibleCards.map((card, i) => (
               <CardRenderer
                 key={i}

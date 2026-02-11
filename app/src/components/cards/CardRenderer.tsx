@@ -28,7 +28,7 @@ interface CardRendererProps {
   onAction?: (action: CardAction) => void;
 }
 
-export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRendererProps) {
+function renderCard(card: ChatCard, messageId?: string, cardIndex?: number, onAction?: (action: CardAction) => void) {
   switch (card.type) {
     case 'pr':
       return <PRCard data={card.data} />;
@@ -98,4 +98,10 @@ export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRende
     default:
       return null;
   }
+}
+
+export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRendererProps) {
+  const inner = renderCard(card, messageId, cardIndex, onAction);
+  if (!inner) return null;
+  return <div className="animate-card-expand">{inner}</div>;
 }

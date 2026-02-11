@@ -7,11 +7,11 @@ export function FileCard({ data }: { data: FileCardData }) {
   const lineCount = data.content.split('\n').length;
 
   return (
-    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-push-card">
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="w-full px-3 py-2 flex items-center gap-2 hover:bg-[#151517] transition-colors"
+        className="w-full px-3.5 py-3 flex items-center gap-2 hover:bg-[#151517] transition-colors duration-200"
       >
         <ChevronRight
           className={`h-3 w-3 text-push-fg-dim shrink-0 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
@@ -32,7 +32,7 @@ export function FileCard({ data }: { data: FileCardData }) {
 
       {/* Code content */}
       {expanded && (
-        <div className="border-t border-push-edge">
+        <div className="border-t border-push-edge expand-in">
           <pre className="px-3 py-2 overflow-x-auto max-h-[400px] overflow-y-auto">
             <code className="font-mono text-[12px] text-[#e4e4e7] leading-relaxed whitespace-pre">
               {data.content}

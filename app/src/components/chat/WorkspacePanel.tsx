@@ -178,8 +178,8 @@ export function WorkspacePanel({
       {/* Panel */}
       <div
         style={panelStyle}
-        className={`fixed z-50 bg-[linear-gradient(180deg,#05070b_0%,#020306_100%)] border-[#151b26] transition-transform duration-300 ease-out flex flex-col
-          inset-y-0 right-0 w-[90vw] max-w-[420px] rounded-l-2xl border-l shadow-[0_24px_64px_rgba(0,0,0,0.72)] pb-[env(safe-area-inset-bottom)] md:pb-0
+        className={`fixed z-50 bg-[linear-gradient(180deg,#05070b_0%,#020306_100%)] border-[#151b26] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] flex flex-col
+          inset-y-0 right-0 w-[90vw] max-w-[420px] rounded-l-2xl border-l shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] pb-[env(safe-area-inset-bottom)] md:pb-0
           ${isOpen ? 'translate-x-0' : 'translate-x-full'}
         `}
       >

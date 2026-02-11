@@ -26,7 +26,7 @@ function triggerDownload(base64: string, filename: string): void {
 
 export function SandboxDownloadCard({ data }: SandboxDownloadCardProps) {
   return (
-    <div className="rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] overflow-hidden shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+    <div className="my-2.5 rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] overflow-hidden shadow-push-card">
       <div className="px-3 py-2.5 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <Download className="h-4 w-4 text-emerald-400 flex-shrink-0" />

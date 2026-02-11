@@ -88,7 +88,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
   };
 
   return (
-    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-push-card">
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${headerBg(data.conclusion)}`}>
         {headerIcon(data.conclusion)}
@@ -112,7 +112,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
             {/* Job header — clickable */}
             <button
               onClick={() => toggleJob(idx)}
-              className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-[#0d1119] transition-colors"
+              className="w-full px-3.5 py-3 flex items-center gap-2 text-left hover:bg-[#0d1119] transition-colors duration-200"
             >
               {expanded.has(idx)
                 ? <ChevronDown className="h-3 w-3 shrink-0 text-push-fg-dim" />
@@ -129,7 +129,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
 
             {/* Steps — shown when expanded */}
             {expanded.has(idx) && job.steps.length > 0 && (
-              <div className="px-3 pb-2 pl-10 space-y-0.5">
+              <div className="px-3 pb-2 pl-10 space-y-0.5 expand-in">
                 {job.steps.map((step) => (
                   <div key={step.number} className="flex items-center gap-2 min-h-[22px]">
                     {stepIcon(step)}

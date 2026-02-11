@@ -70,7 +70,7 @@ function timeAgo(dateStr: string): string {
 
 export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
   return (
-    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-push-card">
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${headerBg(data.runs)}`}>
         {headerIcon(data.runs)}

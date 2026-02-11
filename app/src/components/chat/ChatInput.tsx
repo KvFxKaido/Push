@@ -261,7 +261,7 @@ export function ChatInput({
 
   return (
     <div className="safe-area-bottom sticky bottom-0 z-10 px-3 pb-3">
-      <div className="relative overflow-hidden rounded-[24px] border border-[#171c25] bg-[linear-gradient(180deg,#0a0d13_0%,#04060a_100%)] shadow-[0_20px_52px_rgba(0,0,0,0.68)] backdrop-blur-xl">
+      <div className="relative overflow-hidden rounded-[24px] border border-[#171c25]/90 bg-[linear-gradient(180deg,#0a0d13_0%,#04060a_100%)] shadow-[0_12px_40px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] backdrop-blur-xl">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-white/[0.03] to-transparent" />
 
         {/* Attachment preview */}
@@ -295,7 +295,7 @@ export function ChatInput({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
-              className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-200 active:scale-95 ${
+              className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-200 spring-press ${
                 isStreaming
                   ? 'cursor-not-allowed border-[#1f2430] text-[#545c6e]'
                   : 'border-push-edge bg-[#080b10]/95 text-[#8891a1] hover:border-push-edge-hover hover:bg-[#0d1119] hover:text-[#e2e8f0]'
@@ -333,7 +333,7 @@ export function ChatInput({
                   side="top"
                   align="start"
                   sideOffset={10}
-                  className="w-[250px] rounded-xl border border-[#1f2531] bg-[linear-gradient(180deg,#05070b_0%,#020306_100%)] p-2 text-[#d7deeb] shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
+                  className="w-[250px] rounded-xl border border-[#1f2531] bg-[linear-gradient(180deg,#05070b_0%,#020306_100%)] p-2.5 text-[#d7deeb] shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] animate-scale-in"
                 >
                   <div className="space-y-2.5 px-1 py-1">
                     <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-1.5">
@@ -495,11 +495,11 @@ export function ChatInput({
             type="button"
             onClick={handleButtonClick}
             disabled={!isStreaming && !canSend}
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-all duration-200 active:scale-95 ${
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-all duration-200 spring-press ${
               isStreaming
                 ? 'border-red-400/50 bg-red-500/20 text-red-300 hover:bg-red-500/30'
                 : canSend
-                  ? 'border-push-sky/60 bg-push-sky/15 text-[#7dd3fc] shadow-[0_0_20px_rgba(56,189,248,0.25)] hover:bg-push-sky/25 hover:text-[#bae6fd]'
+                  ? 'border-push-sky/60 bg-push-sky/15 text-[#7dd3fc] shadow-[0_0_20px_rgba(56,189,248,0.2)] hover:bg-push-sky/25 hover:text-[#bae6fd] hover:shadow-[0_0_28px_rgba(56,189,248,0.3)]'
                   : 'cursor-not-allowed border-[#262c38] bg-[#151a22] text-[#576176]'
             }`}
             aria-label={isStreaming ? 'Stop generating' : 'Send message'}

@@ -51,7 +51,7 @@ export function OnboardingScreen({
       <div className="w-full max-w-sm">
         {/* Logo + tagline */}
         <div className="text-center mb-10">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[#1e2634] bg-[linear-gradient(180deg,#0d1119_0%,#070a10_100%)] shadow-[0_12px_30px_rgba(0,0,0,0.55)]">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[#1e2634] bg-[linear-gradient(180deg,#0d1119_0%,#070a10_100%)] shadow-push-lg animate-fade-in-up">
             <svg
               width="22"
               height="22"
@@ -76,7 +76,7 @@ export function OnboardingScreen({
         </div>
 
         {/* Auth section */}
-        <div className="space-y-3">
+        <div className="space-y-3 stagger-in">
           {validatedUser && !error ? (
             <div className="flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
               <div className="h-2 w-2 rounded-full bg-emerald-500" />
@@ -104,7 +104,7 @@ export function OnboardingScreen({
               <button
                 onClick={handleConnect}
                 disabled={!pat.trim() || loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] disabled:opacity-40 disabled:pointer-events-none spring-press"
               >
                 {loading ? (
                   <>
@@ -146,7 +146,7 @@ export function OnboardingScreen({
               <button
                 onClick={handleConnectInstallation}
                 disabled={!installationId.replace(/\D/g, '') || loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] disabled:opacity-40 disabled:pointer-events-none spring-press"
               >
                 {loading ? (
                   <>
@@ -183,7 +183,7 @@ export function OnboardingScreen({
               <button
                 onClick={onConnectOAuth}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] disabled:opacity-40 disabled:pointer-events-none spring-press"
               >
                 {loading ? (
                   <>
@@ -214,7 +214,7 @@ export function OnboardingScreen({
               <button
                 onClick={onInstallApp}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] active:scale-[0.98]"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] spring-press"
               >
                 <Github className="h-4 w-4" />
                 Install GitHub App
@@ -223,7 +223,7 @@ export function OnboardingScreen({
               {/* PAT fallback */}
               <button
                 onClick={() => setShowPatInput(true)}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] active:scale-[0.98]"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] spring-press"
               >
                 <Key className="h-4 w-4" />
                 Use Personal Access Token
@@ -249,7 +249,7 @@ export function OnboardingScreen({
 
           <button
             onClick={onSandboxMode}
-            className="w-full rounded-xl border border-emerald-500/25 bg-emerald-900/10 px-4 py-3 text-sm font-medium text-emerald-300 transition-all duration-200 hover:border-emerald-500/45 hover:bg-emerald-800/20 active:scale-[0.98]"
+            className="w-full rounded-xl border border-emerald-500/25 bg-emerald-900/10 px-4 py-3 text-sm font-medium text-emerald-300 transition-all duration-200 hover:border-emerald-500/45 hover:bg-emerald-800/20 spring-press"
           >
             Try it now — no account needed
           </button>

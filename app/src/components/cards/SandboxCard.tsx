@@ -7,11 +7,11 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
   const isSuccess = data.exitCode === 0;
 
   return (
-    <div className="my-2 max-w-full overflow-hidden rounded-lg border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-[0_10px_28px_rgba(0,0,0,0.38)]">
+    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] shadow-push-card">
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="w-full px-3 py-2.5 flex items-center gap-2 hover:bg-[#0d1119] transition-colors"
+        className="w-full px-3.5 py-3 flex items-center gap-2.5 hover:bg-[#0d1119] transition-colors duration-200"
       >
         <Terminal className="h-4 w-4 shrink-0 text-push-fg-secondary" />
         <code className="flex-1 text-[13px] text-[#e4e4e7] font-mono text-left truncate">
@@ -42,7 +42,7 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
 
       {/* Output */}
       {expanded && (
-        <div className="border-t border-push-edge">
+        <div className="border-t border-push-edge expand-in">
           {data.stdout && (
             <pre className="px-3 py-2 overflow-x-auto">
               <code className="font-mono text-[12px] text-push-fg-secondary leading-relaxed whitespace-pre-wrap break-all">

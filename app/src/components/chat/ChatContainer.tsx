@@ -77,7 +77,7 @@ function EmptyState({
             />
           </svg>
         </button>
-        <h2 className="text-lg font-semibold text-[#fafafa] mb-2">
+        <h2 className="text-lg font-semibold text-[#fafafa] mb-2.5">
           {activeRepo ? activeRepo.name : isSandboxMode ? 'Sandbox' : 'Push'}
         </h2>
         <p className="text-sm leading-relaxed text-push-fg-secondary">
@@ -87,12 +87,12 @@ function EmptyState({
             ? 'Ephemeral workspace — write code, run commands, and prototype ideas from scratch.'
             : 'AI coding agent with direct repo access. Review PRs, explore codebases, and ship changes — all from here.'}
         </p>
-        <div className="mt-6 flex flex-col gap-2">
+        <div className="mt-6 flex flex-col gap-2.5 stagger-in">
           {suggestions.map((suggestion) => (
             <button
               key={suggestion}
               onClick={() => onSuggestion?.(suggestion)}
-              className="cursor-pointer rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] px-4 py-2.5 text-left text-sm text-push-fg-secondary shadow-[0_10px_28px_rgba(0,0,0,0.38)] transition-colors duration-200 hover:border-[#31425a] hover:text-[#f0f4ff] active:scale-[0.99]"
+              className="cursor-pointer rounded-xl border border-push-edge bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)] px-4 py-3 text-left text-sm text-push-fg-secondary shadow-push-card card-hover spring-press hover:border-[#31425a] hover:text-[#f0f4ff] hover:shadow-push-card-hover"
             >
               {suggestion}
             </button>
@@ -174,7 +174,7 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
         className="flex-1 overflow-y-auto overscroll-contain"
       >
         <div className="flex-1" />
-        <div className="py-4 space-y-1">
+        <div className="py-4 space-y-1.5">
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} onCardAction={onCardAction} />
           ))}
@@ -194,11 +194,11 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
           border border-push-edge
           bg-[linear-gradient(180deg,#090d14_0%,#06090f_100%)]
           text-push-fg-secondary
-          shadow-[0_12px_28px_rgba(0,0,0,0.5)]
-          transition-all duration-200 ease-in-out
-          hover:border-[#31425a] hover:text-[#f0f4ff]
-          active:scale-95
-          ${showScrollButton ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'}
+          shadow-push-lg backdrop-blur-sm
+          transition-all duration-300 cubic-bezier(0.16, 1, 0.3, 1)
+          hover:border-[#31425a] hover:text-[#f0f4ff] hover:shadow-push-xl
+          spring-press
+          ${showScrollButton ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-3 pointer-events-none'}
         `}
         aria-label="Scroll to bottom"
       >
