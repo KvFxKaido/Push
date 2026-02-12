@@ -9,7 +9,7 @@
 
 import type { ToolExecutionResult } from '@/types';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
-import { detectSandboxToolCall, executeSandboxToolCall, type SandboxToolCall } from './sandbox-tools';
+import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
 import { detectWebSearchToolCall, executeWebSearch, type WebSearchToolCall } from './web-search-tools';
 import { getActiveProvider } from './orchestrator';
@@ -193,6 +193,15 @@ export async function executeAnyToolCall(
     default:
       return { text: '[Tool Error] Unknown tool source.' };
   }
+}
+
+/**
+ * Check if text contains a tool call for a tool that exists with the sandbox_ prefix
+ * but is not actually implemented. Returns the tool name, or null if no such tool found.
+ * Used by useChat to inject a specific "tool does not exist" error message.
+ */
+export function detectUnimplementedToolCall(text: string): string | null {
+  return getUnrecognizedSandboxToolName(text);
 }
 
 /**

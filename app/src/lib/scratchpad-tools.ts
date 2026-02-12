@@ -109,22 +109,37 @@ function isScratchpadTool(obj: unknown): obj is { tool: 'set_scratchpad' | 'appe
 
 /**
  * Execute a scratchpad tool call.
- * Returns text for the LLM to acknowledge the action.
+ * Returns { text, ok } — text for the LLM to acknowledge the action,
+ * ok indicates whether the operation succeeded.
  */
 export function executeScratchpadToolCall(
   call: ScratchpadToolCall,
   currentContent: string,
   onReplace: (content: string) => void,
   onAppend: (content: string) => void,
-): string {
+): { text: string; ok: boolean } {
   // Security: enforce content length limit
   if (call.content.length > MAX_CONTENT_LENGTH) {
-    return `[Scratchpad error: content exceeds ${MAX_CONTENT_LENGTH} char limit (got ${call.content.length})]`;
+    return {
+      text: `[Scratchpad error: content exceeds ${MAX_CONTENT_LENGTH} char limit (got ${call.content.length}). Reduce content size and retry.]`,
+      ok: false,
+    };
   }
 
   if (call.tool === 'set_scratchpad') {
-    onReplace(call.content);
-    return `[Scratchpad updated — replaced content (${call.content.length} chars)]`;
+    try {
+      onReplace(call.content);
+      return {
+        text: `[Scratchpad updated — replaced content (${call.content.length} chars)]`,
+        ok: true,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        text: `[Scratchpad error: failed to update — ${msg}]`,
+        ok: false,
+      };
+    }
   }
 
   if (call.tool === 'append_scratchpad') {
@@ -134,14 +149,28 @@ export function executeScratchpadToolCall(
 
     // Security: check combined length for append
     if (newLength > MAX_CONTENT_LENGTH) {
-      return `[Scratchpad error: combined content would exceed ${MAX_CONTENT_LENGTH} char limit (would be ${newLength})]`;
+      return {
+        text: `[Scratchpad error: combined content would exceed ${MAX_CONTENT_LENGTH} char limit (would be ${newLength}). Clear some content first, or use set_scratchpad to replace.]`,
+        ok: false,
+      };
     }
 
-    onAppend(call.content);
-    return `[Scratchpad updated — appended content (now ${newLength} chars)]`;
+    try {
+      onAppend(call.content);
+      return {
+        text: `[Scratchpad updated — appended content (now ${newLength} chars)]`,
+        ok: true,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        text: `[Scratchpad error: failed to append — ${msg}]`,
+        ok: false,
+      };
+    }
   }
 
-  return '[Scratchpad tool error: unknown action]';
+  return { text: '[Scratchpad tool error: unknown action]', ok: false };
 }
 
 /**

@@ -125,6 +125,20 @@ export interface AttachmentData {
   thumbnail?: string;   // small preview for images
 }
 
+/** Provenance metadata attached to tool result messages for audit trail. */
+export interface ToolMeta {
+  /** The tool that was executed (e.g. 'sandbox_write_file', 'delegate_coder'). */
+  toolName: string;
+  /** Tool dispatch source ('github' | 'sandbox' | 'delegate' | 'scratchpad' | 'web-search'). */
+  source: string;
+  /** Wall-clock execution time in milliseconds. */
+  durationMs: number;
+  /** Whether the tool returned an error. */
+  isError?: boolean;
+  /** Who/what triggered the execution: 'assistant' (model emitted tool call) | 'system' (auto-action like CI fetch). */
+  triggeredBy: 'assistant' | 'system';
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -136,6 +150,8 @@ export interface ChatMessage {
   attachments?: AttachmentData[];  // User-attached files
   isToolCall?: boolean;    // Assistant message that requested a tool
   isToolResult?: boolean;  // Synthetic user message carrying tool data
+  /** Provenance metadata — present on tool result messages for audit trail. */
+  toolMeta?: ToolMeta;
 }
 
 // Discriminated union for rich inline cards

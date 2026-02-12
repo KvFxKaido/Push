@@ -281,6 +281,49 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
 
 // --- Detection ---
 
+/** The set of tool names that are actually implemented and wired up. */
+const IMPLEMENTED_SANDBOX_TOOLS = new Set([
+  'sandbox_exec', 'sandbox_read_file', 'sandbox_search', 'sandbox_write_file',
+  'sandbox_list_dir', 'sandbox_diff', 'sandbox_prepare_commit', 'sandbox_push',
+  'sandbox_run_tests', 'sandbox_check_types', 'sandbox_browser_screenshot',
+  'sandbox_browser_extract', 'sandbox_download', 'sandbox_save_draft',
+  'promote_to_github',
+  // Compatibility aliases
+  'read_sandbox_file', 'search_sandbox', 'list_sandbox_dir', 'sandbox_commit',
+]);
+
+/**
+ * Check if a tool name looks like a sandbox tool but is not implemented.
+ * Returns the unrecognized name, or null if the tool is known.
+ */
+export function getUnrecognizedSandboxToolName(text: string): string | null {
+  // Check fenced code blocks
+  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
+  let match;
+
+  while ((match = fenceRegex.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1].trim());
+      const toolName = getToolName(asRecord(parsed)?.tool);
+      if (toolName.startsWith('sandbox_') && !IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) {
+        return toolName;
+      }
+    } catch {
+      // Not valid JSON
+    }
+  }
+
+  // Bare JSON fallback
+  for (const parsed of extractBareToolJsonObjects(text)) {
+    const toolName = getToolName(asRecord(parsed)?.tool);
+    if (toolName.startsWith('sandbox_') && !IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) {
+      return toolName;
+    }
+  }
+
+  return null;
+}
+
 export function detectSandboxToolCall(text: string): SandboxToolCall | null {
   // Match fenced JSON blocks
   const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;

@@ -14,6 +14,7 @@ import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } 
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 
 const CODER_ROUND_TIMEOUT_MS = 180_000; // 180s max per streaming round (large file rewrites need headroom)
+const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
 
 // Size limits to prevent 413 errors from provider APIs
 const MAX_TOOL_RESULT_SIZE = 24_000;  // Max chars per tool result (~400 lines visible per read)
@@ -97,6 +98,16 @@ export async function runCoderAgent(
   for (let round = 0; ; round++) {
     if (signal?.aborted) {
       throw new DOMException('Coder cancelled by user.', 'AbortError');
+    }
+
+    // Circuit breaker: prevent runaway delegation loops
+    if (round >= MAX_CODER_ROUNDS) {
+      onStatus('Coder stopped', `Hit ${MAX_CODER_ROUNDS} round limit`);
+      return {
+        summary: `[Coder stopped after ${MAX_CODER_ROUNDS} rounds — task may be incomplete. Review sandbox state with sandbox_diff.]`,
+        cards: allCards,
+        rounds: round,
+      };
     }
 
     rounds = round + 1;
@@ -197,12 +208,37 @@ export async function runCoderAgent(
       isToolResult: true,
     });
 
-    // Safety check: if context is getting too large, truncate oldest non-system messages
+    // Safety check: if context is getting too large, summarize and trim oldest messages.
+    // Preserves the initial task + recent context, inserts a summary of dropped messages.
     const totalSize = estimateMessagesSize(messages);
     if (totalSize > MAX_TOTAL_CONTEXT_SIZE) {
-      // Keep system prompt (implied) and last 4 message pairs
-      const keepCount = Math.min(9, messages.length); // system + 4 pairs = 9
-      messages.splice(0, messages.length - keepCount);
+      const keepCount = Math.min(9, messages.length);
+      const dropCount = messages.length - keepCount;
+      if (dropCount > 0) {
+        // Build a brief summary of what was dropped so the model doesn't lose context
+        const droppedToolNames: string[] = [];
+        for (let di = 0; di < dropCount; di++) {
+          const m = messages[di];
+          if (m.isToolResult) {
+            const toolMatch = m.content.match(/\[Tool Result — (\S+)\]/);
+            if (toolMatch) droppedToolNames.push(toolMatch[1]);
+          }
+        }
+        const summaryContent = [
+          `[Context trimmed — ${dropCount} earlier messages removed to stay within context budget]`,
+          droppedToolNames.length > 0
+            ? `Tools executed in trimmed context: ${[...new Set(droppedToolNames)].join(', ')}`
+            : '',
+          `Remaining context starts at round ${round + 1}. Re-read any files you need before making further edits.`,
+        ].filter(Boolean).join('\n');
+
+        messages.splice(0, dropCount, {
+          id: `coder-context-summary-${round}`,
+          role: 'user',
+          content: summaryContent,
+          timestamp: Date.now(),
+        });
+      }
     }
   }
 
