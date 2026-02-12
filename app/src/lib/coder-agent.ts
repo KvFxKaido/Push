@@ -13,12 +13,12 @@ import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 
-const CODER_ROUND_TIMEOUT_MS = 90_000; // 90s max per streaming round
+const CODER_ROUND_TIMEOUT_MS = 180_000; // 180s max per streaming round (large file rewrites need headroom)
 
 // Size limits to prevent 413 errors from provider APIs
-const MAX_TOOL_RESULT_SIZE = 8000;   // Max chars per tool result
-const MAX_AGENTS_MD_SIZE = 4000;     // Max chars for AGENTS.md
-const MAX_TOTAL_CONTEXT_SIZE = 60000; // Rough limit for total message content
+const MAX_TOOL_RESULT_SIZE = 24_000;  // Max chars per tool result (~400 lines visible per read)
+const MAX_AGENTS_MD_SIZE = 4000;      // Max chars for AGENTS.md
+const MAX_TOTAL_CONTEXT_SIZE = 120_000; // Rough limit for total message content
 
 /**
  * Truncate content with a marker if it exceeds max length.
