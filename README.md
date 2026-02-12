@@ -56,6 +56,15 @@ npm install
 npm run dev
 ```
 
+For local auth/sandbox routes (`/api/*`), run the Worker in a second terminal:
+
+```bash
+cd /home/ishaw/projects/Push
+npx wrangler dev --port 8787
+```
+
+`vite.config.ts` proxies `/api` to `http://127.0.0.1:8787` by default. Override with `VITE_API_PROXY_TARGET` if needed.
+
 Create `app/.env` for local development, or paste keys in the Settings UI at runtime. Push works with AI services that include API access in their subscriptions:
 
 ```env

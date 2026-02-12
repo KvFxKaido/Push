@@ -1566,6 +1566,28 @@ async function handleGitHubAppOAuth(request: Request, env: Env): Promise<Respons
     }
 
     const userToken = tokenData.access_token;
+    let oauthUser: { login: string; avatar_url: string } | null = null;
+    try {
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `Bearer ${userToken}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'Push-App/1.0.0',
+        },
+      });
+      if (userRes.ok) {
+        const userData = await userRes.json() as { login?: unknown; avatar_url?: unknown };
+        if (typeof userData.login === 'string' && userData.login.trim()) {
+          oauthUser = {
+            login: userData.login,
+            avatar_url: typeof userData.avatar_url === 'string' ? userData.avatar_url : '',
+          };
+        }
+      }
+    } catch {
+      // Identity enrichment is best-effort and should not block auth.
+    }
 
     // Step 2: Find user's installations for this app
     const installRes = await fetch('https://api.github.com/user/installations', {
@@ -1585,7 +1607,12 @@ async function handleGitHubAppOAuth(request: Request, env: Env): Promise<Respons
 
     const installData = await installRes.json() as {
       total_count: number;
-      installations: Array<{ id: number; app_id: number; app_slug: string }>;
+      installations: Array<{
+        id: number;
+        app_id: number;
+        app_slug: string;
+        account?: { login?: unknown; avatar_url?: unknown };
+      }>;
     };
 
     // Find installation matching our app
@@ -1601,6 +1628,16 @@ async function handleGitHubAppOAuth(request: Request, env: Env): Promise<Respons
     }
 
     const installationId = String(installation.id);
+    const installationAccount =
+      installation.account && typeof installation.account.login === 'string'
+        ? {
+            login: installation.account.login,
+            avatar_url:
+              typeof installation.account.avatar_url === 'string'
+                ? installation.account.avatar_url
+                : '',
+          }
+        : null;
 
     // Step 3: Check allowlist (if configured)
     const allowedInstallationIds = (env.GITHUB_ALLOWED_INSTALLATION_IDS || '')
@@ -1619,6 +1656,7 @@ async function handleGitHubAppOAuth(request: Request, env: Env): Promise<Respons
       token: instTokenData.token,
       expires_at: instTokenData.expires_at,
       installation_id: installationId,
+      user: oauthUser || installationAccount,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1678,7 +1716,11 @@ async function handleGitHubAppToken(request: Request, env: Env): Promise<Respons
   try {
     const jwt = await generateGitHubAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
     const tokenData = await exchangeForInstallationToken(jwt, installationId);
-    return Response.json(tokenData);
+    const installationAccount = await fetchInstallationAccount(jwt, installationId);
+    return Response.json({
+      ...tokenData,
+      user: installationAccount,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[github/app-token] Error:', message);
@@ -1804,4 +1846,36 @@ async function exchangeForInstallationToken(
   }
 
   return await response.json() as { token: string; expires_at: string };
+}
+
+async function fetchInstallationAccount(
+  jwt: string,
+  installationId: string
+): Promise<{ login: string; avatar_url: string } | null> {
+  const response = await fetch(
+    `https://api.github.com/app/installations/${encodeURIComponent(installationId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'Push-App/1.0.0',
+      },
+    }
+  );
+  if (!response.ok) {
+    return null;
+  }
+
+  const data = await response.json() as {
+    account?: { login?: unknown; avatar_url?: unknown };
+  };
+  if (!data.account || typeof data.account.login !== 'string') {
+    return null;
+  }
+
+  return {
+    login: data.account.login,
+    avatar_url: typeof data.account.avatar_url === 'string' ? data.account.avatar_url : '',
+  };
 }

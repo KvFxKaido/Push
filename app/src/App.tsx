@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { FolderOpen, Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2 } from 'lucide-react';
+import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
@@ -35,8 +35,7 @@ import {
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
-import { WorkspacePanelButton } from '@/components/chat/WorkspacePanelButton';
-import { WorkspacePanel } from '@/components/chat/WorkspacePanel';
+import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { OnboardingScreen } from '@/sections/OnboardingScreen';
 import { HomeScreen } from '@/sections/HomeScreen';
@@ -118,7 +117,7 @@ const AGENTS_MD_TEMPLATE = `# AGENTS.md
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
   const scratchpad = useScratchpad(activeRepo?.full_name ?? null);
-  const [isWorkspacePanelOpen, setIsWorkspacePanelOpen] = useState(false);
+  const [isWorkspaceHubOpen, setIsWorkspaceHubOpen] = useState(false);
   const [isSandboxMode, setIsSandboxMode] = useState(false);
   const sandbox = useSandbox(isSandboxMode ? '' : (activeRepo?.full_name ?? null));
   const {
@@ -1128,6 +1127,129 @@ function App() {
     }
   }, []);
 
+  // ----- Shared overlays -----
+
+  const isConnected = Boolean(token) || isDemo || isSandboxMode;
+
+  const settingsSheet = (
+    <SettingsSheet
+      open={settingsOpen}
+      onOpenChange={setSettingsOpen}
+      side="left"
+      settingsTab={settingsTab}
+      setSettingsTab={setSettingsTab}
+      auth={{
+        isConnected,
+        isDemo,
+        isAppAuth,
+        installationId,
+        token,
+        patToken,
+        validatedUser,
+        appLoading,
+        appError,
+        connectApp,
+        installApp,
+        showInstallIdInput,
+        setShowInstallIdInput,
+        installIdInput,
+        setInstallIdInput,
+        setInstallationIdManually,
+        allowlistSecretCmd,
+        copyAllowlistCommand,
+        onDisconnect: handleDisconnect,
+      }}
+      profile={{
+        displayNameDraft,
+        setDisplayNameDraft,
+        onDisplayNameBlur: handleDisplayNameBlur,
+        bioDraft,
+        setBioDraft,
+        onBioBlur: handleBioBlur,
+        profile,
+        clearProfile,
+        validatedUser,
+      }}
+      ai={{
+        activeProviderLabel,
+        activeBackend,
+        setActiveBackend,
+        isProviderLocked,
+        lockedProvider,
+        lockedModel,
+        availableProviders,
+        setPreferredProvider,
+        clearPreferredProvider,
+        hasOllamaKey,
+        ollamaModel,
+        setOllamaModel,
+        ollamaModelOptions,
+        ollamaModelsLoading,
+        ollamaModelsError,
+        ollamaModelsUpdatedAt,
+        isOllamaModelLocked,
+        refreshOllamaModels,
+        ollamaKeyInput,
+        setOllamaKeyInput,
+        setOllamaKey,
+        clearOllamaKey,
+        hasKimiKey,
+        kimiKeyInput,
+        setKimiKeyInput,
+        setKimiKey,
+        clearKimiKey,
+        hasMistralKey,
+        hasZaiKey,
+        mistralModel,
+        setMistralModel,
+        mistralModelOptions,
+        mistralModelsLoading,
+        mistralModelsError,
+        mistralModelsUpdatedAt,
+        isMistralModelLocked,
+        refreshMistralModels,
+        mistralKeyInput,
+        setMistralKeyInput,
+        setMistralKey,
+        clearMistralKey,
+        zaiModel,
+        setZaiModel,
+        zaiModelOptions,
+        isZaiModelLocked,
+        zaiKeyInput,
+        setZaiKeyInput,
+        setZaiKey: setZaiKey,
+        clearZaiKey,
+        hasTavilyKey,
+        tavilyKeyInput,
+        setTavilyKeyInput,
+        setTavilyKey,
+        clearTavilyKey,
+      }}
+      workspace={{
+        contextMode,
+        updateContextMode,
+        sandboxStartMode,
+        updateSandboxStartMode,
+        sandboxStatus: sandbox.status,
+        sandboxId: sandbox.sandboxId,
+        sandboxError: sandbox.error,
+        sandboxState,
+        sandboxStateLoading,
+        fetchSandboxState,
+        protectMainGlobal: protectMain.globalDefault,
+        setProtectMainGlobal: protectMain.setGlobalDefault,
+        protectMainRepoOverride: protectMain.repoOverride,
+        setProtectMainRepoOverride: protectMain.setRepoOverride,
+        activeRepoFullName: activeRepo?.full_name ?? null,
+      }}
+      data={{
+        activeRepo,
+        deleteAllChats,
+      }}
+    />
+  );
+
   // ----- Screen routing -----
 
   if (screen === 'onboarding') {
@@ -1150,20 +1272,24 @@ function App() {
 
   if (screen === 'home') {
     return (
-      <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
-        <HomeScreen
-          repos={repos}
-          loading={reposLoading}
-          error={reposError}
-          conversations={conversations}
-          activeRepo={activeRepo}
-          onSelectRepo={handleSelectRepo}
-          onResumeConversation={handleResumeConversationFromHome}
-          onDisconnect={handleDisconnect}
-          onSandboxMode={handleSandboxMode}
-          user={validatedUser}
-        />
-      </div>
+      <>
+        <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+          <HomeScreen
+            repos={repos}
+            loading={reposLoading}
+            error={reposError}
+            conversations={conversations}
+            activeRepo={activeRepo}
+            onSelectRepo={handleSelectRepo}
+            onResumeConversation={handleResumeConversationFromHome}
+            onOpenSettings={handleOpenSettingsFromDrawer}
+            onDisconnect={handleDisconnect}
+            onSandboxMode={handleSandboxMode}
+            user={validatedUser}
+          />
+        </div>
+        {settingsSheet}
+      </>
     );
   }
 
@@ -1184,7 +1310,6 @@ function App() {
 
   // ----- Chat screen -----
 
-  const isConnected = Boolean(token) || isDemo || isSandboxMode;
   const snapshotAgeLabel = latestSnapshot ? formatSnapshotAge(latestSnapshot.createdAt) : null;
   const snapshotIsStale = latestSnapshot ? (Date.now() - latestSnapshot.createdAt) > SNAPSHOT_STALE_MS : false;
 
@@ -1438,37 +1563,23 @@ function App() {
           </div>
         )}
         <div className="flex items-center gap-2">
-          {/* File browser */}
           {(activeRepo || isSandboxMode) && (
             <button
-              onClick={async () => {
-                if (sandbox.status === 'ready') {
-                  setShowFileBrowser(true);
-                  return;
-                }
-                if (sandbox.status === 'creating') return;
-                const id = await ensureSandbox();
-                if (id) setShowFileBrowser(true);
-              }}
-              disabled={sandbox.status === 'creating'}
-              className={`flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.06] bg-[#0a0e16]/80 backdrop-blur-xl transition-all duration-200 spring-press ${
-                sandbox.status === 'creating'
-                  ? 'text-[#f59e0b] animate-pulse'
-                  : sandbox.status === 'ready'
-                  ? 'text-[#22c55e] hover:text-[#4ade80]'
-                  : 'text-push-fg-dim hover:text-[#d1d8e6]'
-              }`}
-              aria-label="Open file browser"
-              title={sandbox.status === 'creating' ? 'Starting sandbox...' : sandbox.status === 'ready' ? 'File browser' : 'Open file browser (starts sandbox)'}
+              onClick={() => setIsWorkspaceHubOpen(true)}
+              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.06] bg-[#0a0e16]/80 text-[#8891a1] backdrop-blur-xl transition-all duration-200 hover:text-[#e2e8f0] spring-press"
+              aria-label="Open workspace hub"
+              title="Workspace"
             >
-              <FolderOpen className="h-4 w-4" />
+              <PanelRight className="h-4 w-4" />
+              {(scratchpad.hasContent || agentStatus.active) && (
+                <span
+                  className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-push-sky ${
+                    agentStatus.active ? 'animate-pulse shadow-[0_0_6px_rgba(56,189,248,0.5)]' : ''
+                  }`}
+                />
+              )}
             </button>
           )}
-          <WorkspacePanelButton
-            onClick={() => setIsWorkspacePanelOpen(o => !o)}
-            scratchpadHasContent={scratchpad.hasContent}
-            agentActive={agentStatus.active}
-          />
         </div>
         <div className="pointer-events-none absolute inset-x-0 top-full h-8 bg-gradient-to-b from-black to-transparent" />
       </header>
@@ -1579,141 +1690,43 @@ function App() {
         }}
       />
 
-      {/* Workspace panel (console + scratchpad) */}
-      <WorkspacePanel
-        isOpen={isWorkspacePanelOpen}
-        onClose={() => setIsWorkspacePanelOpen(false)}
+      <WorkspaceHubSheet
+        open={isWorkspaceHubOpen}
+        onOpenChange={setIsWorkspaceHubOpen}
         messages={messages}
-        content={scratchpad.content}
-        memories={scratchpad.memories}
+        sandboxId={sandbox.sandboxId}
+        sandboxStatus={sandbox.status}
+        ensureSandbox={ensureSandbox}
+        repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
+        protectMainEnabled={protectMain.isProtected}
+        scratchpadContent={scratchpad.content}
+        scratchpadMemories={scratchpad.memories}
         activeMemoryId={scratchpad.activeMemoryId}
-        onContentChange={scratchpad.setContent}
-        onClear={scratchpad.clear}
-        onSaveMemory={scratchpad.saveMemory}
-        onLoadMemory={scratchpad.loadMemory}
-        onDeleteMemory={scratchpad.deleteMemory}
+        onScratchpadContentChange={scratchpad.setContent}
+        onScratchpadClear={scratchpad.clear}
+        onScratchpadSaveMemory={scratchpad.saveMemory}
+        onScratchpadLoadMemory={scratchpad.loadMemory}
+        onScratchpadDeleteMemory={scratchpad.deleteMemory}
+        branchProps={{
+          currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
+          defaultBranch: activeRepo?.default_branch,
+          availableBranches: displayBranches,
+          branchesLoading: repoBranchesLoading,
+          onSwitchBranch: setCurrentBranch,
+          onRefreshBranches: activeRepo
+            ? () => { void loadRepoBranches(activeRepo.full_name); }
+            : () => {},
+          onShowBranchCreate: () => setShowBranchCreate(true),
+          onShowMergeFlow: () => setShowMergeFlow(true),
+          onDeleteBranch: handleDeleteBranch,
+        }}
       />
 
       {/* Toast notifications */}
       <Toaster position="bottom-center" />
 
       {/* Settings Sheet */}
-      <SettingsSheet
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        side="left"
-        settingsTab={settingsTab}
-        setSettingsTab={setSettingsTab}
-        auth={{
-          isConnected,
-          isDemo,
-          isAppAuth,
-          installationId,
-          token,
-          patToken,
-          validatedUser,
-          appLoading,
-          appError,
-          connectApp,
-          installApp,
-          showInstallIdInput,
-          setShowInstallIdInput,
-          installIdInput,
-          setInstallIdInput,
-          setInstallationIdManually,
-          allowlistSecretCmd,
-          copyAllowlistCommand,
-          onDisconnect: handleDisconnect,
-        }}
-        profile={{
-          displayNameDraft,
-          setDisplayNameDraft,
-          onDisplayNameBlur: handleDisplayNameBlur,
-          bioDraft,
-          setBioDraft,
-          onBioBlur: handleBioBlur,
-          profile,
-          clearProfile,
-          validatedUser,
-        }}
-        ai={{
-          activeProviderLabel,
-          activeBackend,
-          setActiveBackend,
-          isProviderLocked,
-          lockedProvider,
-          lockedModel,
-          availableProviders,
-          setPreferredProvider,
-          clearPreferredProvider,
-          hasOllamaKey,
-          ollamaModel,
-          setOllamaModel,
-          ollamaModelOptions,
-          ollamaModelsLoading,
-          ollamaModelsError,
-          ollamaModelsUpdatedAt,
-          isOllamaModelLocked,
-          refreshOllamaModels,
-          ollamaKeyInput,
-          setOllamaKeyInput,
-          setOllamaKey,
-          clearOllamaKey,
-          hasKimiKey,
-          kimiKeyInput,
-          setKimiKeyInput,
-          setKimiKey,
-          clearKimiKey,
-          hasMistralKey,
-          hasZaiKey,
-          mistralModel,
-          setMistralModel,
-          mistralModelOptions,
-          mistralModelsLoading,
-          mistralModelsError,
-          mistralModelsUpdatedAt,
-          isMistralModelLocked,
-          refreshMistralModels,
-          mistralKeyInput,
-          setMistralKeyInput,
-          setMistralKey,
-          clearMistralKey,
-          zaiModel,
-          setZaiModel,
-          zaiModelOptions,
-          isZaiModelLocked,
-          zaiKeyInput,
-          setZaiKeyInput,
-          setZaiKey: setZaiKey,
-          clearZaiKey,
-          hasTavilyKey,
-          tavilyKeyInput,
-          setTavilyKeyInput,
-          setTavilyKey,
-          clearTavilyKey,
-        }}
-        workspace={{
-          contextMode,
-          updateContextMode,
-          sandboxStartMode,
-          updateSandboxStartMode,
-          sandboxStatus: sandbox.status,
-          sandboxId: sandbox.sandboxId,
-          sandboxError: sandbox.error,
-          sandboxState,
-          sandboxStateLoading,
-          fetchSandboxState,
-          protectMainGlobal: protectMain.globalDefault,
-          setProtectMainGlobal: protectMain.setGlobalDefault,
-          protectMainRepoOverride: protectMain.repoOverride,
-          setProtectMainRepoOverride: protectMain.setRepoOverride,
-          activeRepoFullName: activeRepo?.full_name ?? null,
-        }}
-        data={{
-          activeRepo,
-          deleteAllChats,
-        }}
-      />
+      {settingsSheet}
 
       {/* Branch creation sheet */}
       {activeRepo && (

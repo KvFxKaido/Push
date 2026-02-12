@@ -22,6 +22,10 @@ type UseGitHubAuth = {
   validatedUser: GitHubUser | null;
 };
 
+function isNetworkFetchError(err: unknown): boolean {
+  return err instanceof TypeError && /failed to fetch|networkerror|load failed/i.test(err.message);
+}
+
 async function validateToken(pat: string): Promise<GitHubUser | null> {
   try {
     const res = await fetch('https://api.github.com/user', {
@@ -177,6 +181,12 @@ export function useGitHubAuth(): UseGitHubAuth {
         if (user) setValidatedUser(user);
       })
       .catch((err: Error) => {
+        if (isNetworkFetchError(err)) {
+          setError(
+            'GitHub OAuth error: Could not reach your OAuth proxy. Check `VITE_GITHUB_OAUTH_PROXY` and local network access.',
+          );
+          return;
+        }
         setError(`GitHub OAuth error: ${err.message}`);
       })
       .finally(() => {

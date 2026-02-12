@@ -237,7 +237,7 @@ export function RepoChatDrawer({
     const messageCount = chat.messages.filter((m) => !m.isToolResult).length;
 
     return (
-      <div key={chat.id} className={`flex items-center gap-1.5 rounded-lg ${isActiveChat ? 'bg-push-surface-raised' : 'hover:bg-push-surface-raised'}`}>
+      <div key={chat.id} className={`flex items-center gap-1.5 rounded-lg transition-all duration-200 ${isActiveChat ? 'bg-push-surface-raised' : 'hover:bg-push-surface-raised hover:translate-y-[-0.5px]'}`}>
         {isEditing ? (
           <form
             onSubmit={(e) => {
@@ -356,7 +356,7 @@ export function RepoChatDrawer({
                     onNewChat();
                     setOpen(false);
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg active:scale-95"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary spring-press transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   New chat
@@ -367,7 +367,7 @@ export function RepoChatDrawer({
                       onBrowseRepos();
                       setOpen(false);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 py-1.5 text-xs font-medium text-push-link transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg active:scale-95"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 py-1.5 text-xs font-medium text-push-link spring-press transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg"
                   >
                     <House className="h-3.5 w-3.5" />
                     Home
@@ -379,7 +379,7 @@ export function RepoChatDrawer({
                       onSandboxMode();
                       setOpen(false);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-900/15 px-2.5 py-1.5 text-xs font-medium text-emerald-300 transition-all duration-200 hover:border-emerald-500/50 hover:text-emerald-200 active:scale-95"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-900/15 px-2.5 py-1.5 text-xs font-medium text-emerald-300 spring-press transition-all duration-200 hover:border-emerald-500/50 hover:text-emerald-200"
                   >
                     <Box className="h-3.5 w-3.5" />
                     Sandbox
@@ -391,7 +391,7 @@ export function RepoChatDrawer({
                       onExitSandboxMode();
                       setOpen(false);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg active:scale-95"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary spring-press transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg"
                   >
                     <X className="h-3.5 w-3.5" />
                     Exit sandbox
@@ -410,12 +410,12 @@ export function RepoChatDrawer({
             </SheetHeader>
 
             <div className="flex-1 overflow-y-auto p-3">
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 stagger-in">
                 {filteredRepoRows.map(({ repo, chats }) => {
                   const isExpanded = isSearching || (expandedRepos[repo.full_name] ?? (activeRepo?.full_name === repo.full_name));
                   const isActiveRepo = activeRepo?.id === repo.id;
                   return (
-                    <div key={repo.id} className="rounded-xl border border-push-edge bg-push-surface">
+                    <div key={repo.id} className="rounded-xl border border-push-edge bg-push-surface card-hover spring-press">
                       <button
                         onClick={() => toggleRepo(repo.full_name, isExpanded)}
                         className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors ${
@@ -651,10 +651,15 @@ export function RepoChatDrawer({
             </div>
 
             {onOpenSettings && (
-              <div className="border-t border-push-edge px-3 py-2.5">
+              <div className="flex items-center justify-between border-t border-push-edge px-3 py-2.5">
+                <div className="flex h-6 w-6 items-center justify-center rounded-lg border border-[#1e2634]/60 bg-push-grad-icon opacity-40">
+                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" className="text-push-accent">
+                    <path d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                  </svg>
+                </div>
                 <button
                   onClick={() => setPanel('settings')}
-                  className="inline-flex items-center gap-2 rounded-xl border border-push-edge bg-[#080b10]/95 px-3 py-1.5 text-xs font-medium text-push-fg-secondary transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg active:scale-95"
+                  className="inline-flex items-center gap-2 rounded-xl border border-push-edge bg-[#080b10]/95 px-3 py-1.5 text-xs font-medium text-push-fg-secondary spring-press transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg"
                 >
                   <Settings className="h-3.5 w-3.5" />
                   Settings
@@ -681,10 +686,10 @@ export function RepoChatDrawer({
             </div>
 
             <div className="flex-1 overflow-y-auto p-3">
-              <div className="space-y-2">
+              <div className="space-y-2 stagger-in">
                 <button
                   onClick={() => openSettingsTab('you')}
-                  className="flex w-full items-center gap-2 rounded-xl border border-push-edge bg-push-surface px-3 py-2.5 text-left transition-colors hover:border-push-edge-hover hover:bg-push-surface-raised"
+                  className="flex w-full items-center gap-2 rounded-xl border border-push-edge bg-push-surface px-3 py-2.5 text-left card-hover spring-press hover:border-push-edge-hover hover:shadow-push-card-hover"
                 >
                   <UserRound className="h-4 w-4 text-push-link" />
                   <div className="min-w-0">
@@ -695,7 +700,7 @@ export function RepoChatDrawer({
 
                 <button
                   onClick={() => openSettingsTab('workspace')}
-                  className="flex w-full items-center gap-2 rounded-xl border border-push-edge bg-push-surface px-3 py-2.5 text-left transition-colors hover:border-push-edge-hover hover:bg-push-surface-raised"
+                  className="flex w-full items-center gap-2 rounded-xl border border-push-edge bg-push-surface px-3 py-2.5 text-left card-hover spring-press hover:border-push-edge-hover hover:shadow-push-card-hover"
                 >
                   <FolderCog className="h-4 w-4 text-push-link" />
                   <div className="min-w-0">
@@ -706,7 +711,7 @@ export function RepoChatDrawer({
 
                 <button
                   onClick={() => openSettingsTab('ai')}
-                  className="flex w-full items-center gap-2 rounded-xl border border-push-edge bg-push-surface px-3 py-2.5 text-left transition-colors hover:border-push-edge-hover hover:bg-push-surface-raised"
+                  className="flex w-full items-center gap-2 rounded-xl border border-push-edge bg-push-surface px-3 py-2.5 text-left card-hover spring-press hover:border-push-edge-hover hover:shadow-push-card-hover"
                 >
                   <Cpu className="h-4 w-4 text-push-link" />
                   <div className="min-w-0">

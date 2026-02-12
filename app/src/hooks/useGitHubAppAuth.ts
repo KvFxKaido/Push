@@ -5,6 +5,7 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-st
 const INSTALLATION_ID_KEY = 'github_app_installation_id';
 const TOKEN_KEY = 'github_app_token';
 const TOKEN_EXPIRY_KEY = 'github_app_token_expiry';
+const USER_KEY = 'github_app_user';
 
 // Refresh token 5 minutes before expiry
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -21,6 +22,7 @@ type TokenResponse = {
   expires_at: string;
   permissions: Record<string, string>;
   repository_selection: string;
+  user?: GitHubUser | null;
 };
 
 type UseGitHubAppAuth = {
@@ -35,6 +37,19 @@ type UseGitHubAppAuth = {
   validatedUser: GitHubUser | null;
   isAppAuth: boolean;
 };
+
+function isNetworkFetchError(err: unknown): boolean {
+  return err instanceof TypeError && /failed to fetch|networkerror|load failed/i.test(err.message);
+}
+
+function formatProxyUnavailableError(route: string): string {
+  return [
+    `Cannot reach ${route}.`,
+    'Local API proxy is unavailable.',
+    'Run Worker dev server in another terminal: `cd /home/ishaw/projects/Push && npx wrangler dev --port 8787`.',
+    'If your Worker runs on a different port, set `VITE_API_PROXY_TARGET` in `app/.env`.',
+  ].join(' ');
+}
 
 function formatAppTokenError(status: number, errorMessage: string): string {
   if (status === 403 && errorMessage.includes('installation_id is not allowed')) {
@@ -57,12 +72,34 @@ function getGitHubAppRedirectUri(): string {
   return new URL('/', window.location.origin).toString();
 }
 
+function parseStoredUser(raw: string | null): GitHubUser | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { login?: unknown; avatar_url?: unknown };
+    if (typeof parsed.login !== 'string' || !parsed.login.trim()) return null;
+    return {
+      login: parsed.login,
+      avatar_url: typeof parsed.avatar_url === 'string' ? parsed.avatar_url : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchAppToken(installationId: string): Promise<TokenResponse> {
-  const res = await fetch('/api/github/app-token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ installation_id: installationId }),
-  });
+  let res: Response;
+  try {
+    res = await fetch('/api/github/app-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ installation_id: installationId }),
+    });
+  } catch (err) {
+    if (isNetworkFetchError(err)) {
+      throw new Error(formatProxyUnavailableError('/api/github/app-token'));
+    }
+    throw err instanceof Error ? err : new Error(String(err));
+  }
 
   if (!res.ok) {
     const rawBody = await res.text().catch(() => '');
@@ -85,11 +122,19 @@ async function fetchAppToken(installationId: string): Promise<TokenResponse> {
 }
 
 async function fetchAppOAuth(code: string): Promise<TokenResponse & { installation_id: string }> {
-  const res = await fetch('/api/github/app-oauth', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-  });
+  let res: Response;
+  try {
+    res = await fetch('/api/github/app-oauth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+  } catch (err) {
+    if (isNetworkFetchError(err)) {
+      throw new Error(formatProxyUnavailableError('/api/github/app-oauth'));
+    }
+    throw err instanceof Error ? err : new Error(String(err));
+  }
 
   if (!res.ok) {
     const rawBody = await res.text().catch(() => '');
@@ -144,10 +189,21 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [validatedUser, setValidatedUser] = useState<GitHubUser | null>(null);
+  const [validatedUser, setValidatedUser] = useState<GitHubUser | null>(
+    () => parseStoredUser(safeStorageGet(USER_KEY))
+  );
 
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountInitialized = useRef(false);
+
+  const saveValidatedUser = useCallback((user: GitHubUser | null) => {
+    setValidatedUser(user);
+    if (user) {
+      safeStorageSet(USER_KEY, JSON.stringify(user));
+    } else {
+      safeStorageRemove(USER_KEY);
+    }
+  }, []);
 
   // Schedule token refresh before expiry
   const scheduleRefresh = useCallback((expiresAt: string, instId: string) => {
@@ -196,10 +252,15 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
       setToken(data.token);
       setTokenExpiry(data.expires_at);
 
-      // Validate and get user info
-      const user = await validateToken(data.token);
-      if (user) {
-        setValidatedUser(user);
+      const userFromResponse = data.user && data.user.login ? data.user : null;
+      if (userFromResponse) {
+        saveValidatedUser(userFromResponse);
+      } else {
+        // Fallback for environments that don't provide user metadata.
+        const user = await validateToken(data.token);
+        if (user) {
+          saveValidatedUser(user);
+        }
       }
 
       // Schedule refresh
@@ -212,7 +273,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     } finally {
       setLoading(false);
     }
-  }, [scheduleRefresh]);
+  }, [saveValidatedUser, scheduleRefresh]);
 
   // Handle OAuth code callback (auto-connect flow)
   const handleOAuthCallback = useCallback(async (code: string) => {
@@ -230,9 +291,14 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
       setToken(data.token);
       setTokenExpiry(data.expires_at);
 
-      const user = await validateToken(data.token);
-      if (user) {
-        setValidatedUser(user);
+      const userFromResponse = data.user && data.user.login ? data.user : null;
+      if (userFromResponse) {
+        saveValidatedUser(userFromResponse);
+      } else {
+        const user = await validateToken(data.token);
+        if (user) {
+          saveValidatedUser(user);
+        }
       }
 
       scheduleRefresh(data.expires_at, data.installation_id);
@@ -242,7 +308,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     } finally {
       setLoading(false);
     }
-  }, [scheduleRefresh]);
+  }, [saveValidatedUser, scheduleRefresh]);
 
   // Handle installation callback from GitHub (install flow) or OAuth code callback (connect flow)
   useEffect(() => {
@@ -285,7 +351,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
         // Token still valid — validate user and schedule refresh
         validateToken(storedToken).then((user) => {
           if (user) {
-            setValidatedUser(user);
+            saveValidatedUser(user);
             scheduleRefresh(storedExpiry, storedInstId);
           } else {
             // Token invalid — try to refresh
@@ -298,7 +364,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
 
     // Token expired or missing — fetch new one
     fetchAndSetToken(storedInstId);
-  }, [fetchAndSetToken, scheduleRefresh]);
+  }, [fetchAndSetToken, saveValidatedUser, scheduleRefresh]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -307,7 +373,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
         clearTimeout(refreshTimeoutRef.current);
       }
     };
-  }, []);
+  }, [saveValidatedUser]);
 
   const connect = useCallback(() => {
     // Redirect to GitHub OAuth for auto-connect (finds existing installation automatically)
@@ -350,11 +416,12 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     safeStorageRemove(INSTALLATION_ID_KEY);
     safeStorageRemove(TOKEN_KEY);
     safeStorageRemove(TOKEN_EXPIRY_KEY);
+    safeStorageRemove(USER_KEY);
     setInstallationId('');
     setToken('');
     setTokenExpiry('');
-    setValidatedUser(null);
-  }, []);
+    saveValidatedUser(null);
+  }, [saveValidatedUser]);
 
   return {
     token,

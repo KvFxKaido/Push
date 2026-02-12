@@ -11,6 +11,7 @@ import { useState, useCallback } from 'react';
 import { getSandboxDiff, execInSandbox } from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
 import { getActiveProvider } from '@/lib/orchestrator';
+import { parseDiffStats } from '@/lib/diff-utils';
 import type { DiffPreviewCardData, AuditVerdictCardData } from '@/types';
 
 export type CommitPushPhase =
@@ -29,25 +30,6 @@ interface CommitPushState {
   auditVerdict: AuditVerdictCardData | null;
   error: string | null;
   commitMessage: string;
-}
-
-function parseDiffStats(diff: string): { filesChanged: number; additions: number; deletions: number } {
-  const files = new Set<string>();
-  let additions = 0;
-  let deletions = 0;
-
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('diff --git')) {
-      const match = line.match(/b\/(.+)$/);
-      if (match) files.add(match[1]);
-    } else if (line.startsWith('+') && !line.startsWith('+++')) {
-      additions++;
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      deletions++;
-    }
-  }
-
-  return { filesChanged: files.size, additions, deletions };
 }
 
 export function useCommitPush(sandboxId: string) {

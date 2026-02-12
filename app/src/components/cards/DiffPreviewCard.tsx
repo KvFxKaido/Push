@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ChevronRight, FileDiff } from 'lucide-react';
 import type { DiffPreviewCardData } from '@/types';
 
-function DiffLine({ line, index }: { line: string; index: number }) {
+export function DiffLine({ line, index }: { line: string; index: number }) {
   let className = 'font-mono text-[12px] leading-relaxed px-3 whitespace-pre-wrap break-all';
 
   if (line.startsWith('+') && !line.startsWith('+++')) {

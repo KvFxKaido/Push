@@ -5,6 +5,13 @@ import { inspectAttr } from 'kimi-plugin-inspect-react'
 
 // https://vite.dev/config/
 const API_PROXY_TARGET = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8787';
+const API_PROXY_ORIGIN = (() => {
+  try {
+    return new URL(API_PROXY_TARGET).origin;
+  } catch {
+    return API_PROXY_TARGET;
+  }
+})();
 const SRC_ROOT = path.resolve(__dirname, './src');
 
 function packageChunkName(moduleId: string): string | null {
@@ -153,6 +160,13 @@ export default defineConfig({
       '/api': {
         target: API_PROXY_TARGET,
         changeOrigin: true,
+        configure(proxy) {
+          proxy.on('proxyReq', (proxyReq) => {
+            // Ensure Worker origin validation passes in local dev/tunnel contexts.
+            proxyReq.setHeader('Origin', API_PROXY_ORIGIN);
+            proxyReq.setHeader('Referer', `${API_PROXY_ORIGIN}/`);
+          });
+        },
       },
     },
   },
