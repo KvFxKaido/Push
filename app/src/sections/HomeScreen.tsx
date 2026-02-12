@@ -1,8 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   Box,
-  Check,
-  ChevronDown,
   GitBranch,
   GitCommit,
   GitPullRequest,
@@ -21,6 +19,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { fetchRepoBranches } from '@/lib/github-tools';
 import type { ActiveRepo, Conversation, GitHubUser, RepoWithActivity } from '@/types';
 
 interface HomeScreenProps {
@@ -29,12 +28,7 @@ interface HomeScreenProps {
   error?: string | null;
   conversations: Record<string, Conversation>;
   activeRepo: ActiveRepo | null;
-  onSelectRepo: (repo: RepoWithActivity) => void;
-  onSelectBranch?: (branch: string) => void;
-  availableBranches?: { name: string; isDefault: boolean; isProtected: boolean }[];
-  branchesLoading?: boolean;
-  branchesError?: string | null;
-  onRefreshBranches?: () => void;
+  onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
   onDisconnect: () => void;
   onSandboxMode: () => void;
@@ -88,6 +82,12 @@ type RepoChatMeta = {
   lastChatAt: number;
 };
 
+type RepoBranchOption = {
+  name: string;
+  isDefault: boolean;
+  isProtected: boolean;
+};
+
 export function HomeScreen({
   repos,
   loading,
@@ -95,11 +95,6 @@ export function HomeScreen({
   conversations,
   activeRepo,
   onSelectRepo,
-  onSelectBranch,
-  availableBranches = [],
-  branchesLoading = false,
-  branchesError = null,
-  onRefreshBranches,
   onResumeConversation,
   onDisconnect,
   onSandboxMode,
@@ -107,21 +102,30 @@ export function HomeScreen({
 }: HomeScreenProps) {
   const [showAllRepos, setShowAllRepos] = useState(false);
   const [search, setSearch] = useState('');
-  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [openRepoBranchMenu, setOpenRepoBranchMenu] = useState<string | null>(null);
+  const [repoBranchesByRepo, setRepoBranchesByRepo] = useState<Record<string, RepoBranchOption[]>>({});
+  const [repoBranchLoadingByRepo, setRepoBranchLoadingByRepo] = useState<Record<string, boolean>>({});
+  const [repoBranchErrorByRepo, setRepoBranchErrorByRepo] = useState<Record<string, string | null>>({});
 
-  const currentBranch = activeRepo?.current_branch || activeRepo?.default_branch || null;
-  const homeBranchOptions = useMemo(() => {
-    if (!currentBranch) return availableBranches;
-    if (availableBranches.some((b) => b.name === currentBranch)) return availableBranches;
-    return [
-      {
-        name: currentBranch,
-        isDefault: currentBranch === (activeRepo?.default_branch || 'main'),
-        isProtected: false,
-      },
-      ...availableBranches,
-    ];
-  }, [activeRepo?.default_branch, availableBranches, currentBranch]);
+  const loadBranchesForRepo = useCallback(async (repoFullName: string, force: boolean = false) => {
+    if (!force && (repoBranchLoadingByRepo[repoFullName] || repoBranchesByRepo[repoFullName]?.length)) {
+      return;
+    }
+    setRepoBranchLoadingByRepo((prev) => ({ ...prev, [repoFullName]: true }));
+    setRepoBranchErrorByRepo((prev) => ({ ...prev, [repoFullName]: null }));
+    try {
+      const { branches } = await fetchRepoBranches(repoFullName, 300);
+      setRepoBranchesByRepo((prev) => ({ ...prev, [repoFullName]: branches }));
+    } catch (err) {
+      setRepoBranchesByRepo((prev) => ({ ...prev, [repoFullName]: [] }));
+      setRepoBranchErrorByRepo((prev) => ({
+        ...prev,
+        [repoFullName]: err instanceof Error ? err.message : 'Failed to load branches',
+      }));
+    } finally {
+      setRepoBranchLoadingByRepo((prev) => ({ ...prev, [repoFullName]: false }));
+    }
+  }, [repoBranchLoadingByRepo, repoBranchesByRepo]);
 
   const repoChatMeta = useMemo(() => {
     const meta = new Map<string, RepoChatMeta>();
@@ -182,69 +186,169 @@ export function HomeScreen({
     const chatMeta = repoChatMeta.get(repo.full_name);
     const isActiveRepo = activeRepo?.full_name === repo.full_name;
     const activeBranch = isActiveRepo ? activeRepo?.current_branch : undefined;
+    const branchOptions = (() => {
+      const loaded = repoBranchesByRepo[repo.full_name] || [];
+      if (loaded.some((b) => b.name === repo.default_branch)) return loaded;
+      return [
+        {
+          name: repo.default_branch,
+          isDefault: true,
+          isProtected: false,
+        },
+        ...loaded,
+      ];
+    })();
+    const isBranchMenuOpen = openRepoBranchMenu === repo.full_name;
+    const branchesLoading = Boolean(repoBranchLoadingByRepo[repo.full_name]);
+    const branchesError = repoBranchErrorByRepo[repo.full_name] || null;
+
     return (
-      <button
+      <div
         key={repo.id}
-        onClick={() => onSelectRepo(repo)}
-        className="flex w-full flex-col gap-1.5 rounded-xl border border-push-edge bg-push-grad-card p-3.5 text-left shadow-[0_10px_28px_rgba(0,0,0,0.38)] transition-all duration-200 hover:border-[#31425a] hover:bg-[#0d1119] active:scale-[0.99]"
+        className="rounded-xl border border-push-edge bg-push-grad-card p-3.5 shadow-[0_10px_28px_rgba(0,0,0,0.38)] transition-all duration-200 hover:border-[#31425a] hover:bg-[#0d1119]"
       >
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium text-push-fg">
-            {repo.name}
-          </span>
-          {repo.private && (
-            <Lock className="h-3 w-3 shrink-0 text-[#52525b]" />
-          )}
-          {repo.activity.has_new_activity && (
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-push-accent" />
-          )}
-        </div>
+        <button
+          onClick={() => onSelectRepo(repo)}
+          className="flex w-full flex-col gap-1.5 text-left active:scale-[0.99]"
+        >
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium text-push-fg">
+              {repo.name}
+            </span>
+            {repo.private && (
+              <Lock className="h-3 w-3 shrink-0 text-[#52525b]" />
+            )}
+            {repo.activity.has_new_activity && (
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-push-accent" />
+            )}
+          </div>
 
-        {/* Branch badge — shows the last active branch for the active repo */}
-        {activeBranch && activeBranch !== repo.default_branch && (
-          <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[#1a1f2e] px-1.5 py-0.5 text-[11px] text-[#9db8df]">
-            <GitBranch className="h-3 w-3" />
-            <span className="max-w-[160px] truncate">{activeBranch}</span>
-          </span>
-        )}
+          {/* Branch badge — shows the last active branch for the active repo */}
+          {activeBranch && activeBranch !== repo.default_branch && (
+            <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[#1a1f2e] px-1.5 py-0.5 text-[11px] text-[#9db8df]">
+              <GitBranch className="h-3 w-3" />
+              <span className="max-w-[160px] truncate">{activeBranch}</span>
+            </span>
+          )}
 
-        {repo.description && (
-          <p className="line-clamp-1 text-xs text-[#788396]">
-            {repo.description}
-          </p>
-        )}
+          {repo.description && (
+            <p className="line-clamp-1 text-xs text-[#788396]">
+              {repo.description}
+            </p>
+          )}
 
-        <div className="flex items-center gap-3 text-xs text-[#5f6b80]">
-          {repo.language && (
-            <span className="flex items-center gap-1">
-              <span
-                className="inline-block h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: LANG_COLORS[repo.language] || '#8b8b8b' }}
-              />
-              {repo.language}
+          <div className="flex items-center gap-3 text-xs text-[#5f6b80]">
+            {repo.language && (
+              <span className="flex items-center gap-1">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: LANG_COLORS[repo.language] || '#8b8b8b' }}
+                />
+                {repo.language}
+              </span>
+            )}
+            {repo.activity.open_prs > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[#58a6ff]">
+                <GitPullRequest className="h-3 w-3" />
+                {repo.activity.open_prs}
+              </span>
+            )}
+            {repo.activity.recent_commits > 0 && (
+              <span className="flex items-center gap-1">
+                <GitCommit className="h-3 w-3" />
+                {repo.activity.recent_commits}
+              </span>
+            )}
+            {chatMeta && (
+              <span className="flex items-center gap-1 text-[#84bfff]">
+                <History className="h-3 w-3" />
+                {chatMeta.chatCount}
+              </span>
+            )}
+            <span>{timeAgoFromDate(repo.pushed_at)}</span>
+          </div>
+        </button>
+
+        <DropdownMenu
+          open={isBranchMenuOpen}
+          onOpenChange={(open) => {
+            setOpenRepoBranchMenu(open ? repo.full_name : null);
+            if (open) {
+              void loadBranchesForRepo(repo.full_name);
+            }
+          }}
+        >
+          <DropdownMenuTrigger className="mt-2 flex h-8 w-full items-center justify-between rounded-lg border border-push-edge bg-push-surface px-2.5 text-xs text-[#9db8df] transition-colors hover:border-[#31425a] hover:bg-[#0d1119]">
+            <span className="inline-flex min-w-0 items-center gap-1">
+              <GitBranch className="h-3 w-3 text-[#5f6b80]" />
+              <span className="truncate">Open on branch</span>
             </span>
-          )}
-          {repo.activity.open_prs > 0 && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[#58a6ff]">
-              <GitPullRequest className="h-3 w-3" />
-              {repo.activity.open_prs}
-            </span>
-          )}
-          {repo.activity.recent_commits > 0 && (
-            <span className="flex items-center gap-1">
-              <GitCommit className="h-3 w-3" />
-              {repo.activity.recent_commits}
-            </span>
-          )}
-          {chatMeta && (
-            <span className="flex items-center gap-1 text-[#84bfff]">
-              <History className="h-3 w-3" />
-              {chatMeta.chatCount}
-            </span>
-          )}
-          <span>{timeAgoFromDate(repo.pushed_at)}</span>
-        </div>
-      </button>
+            <span className="truncate text-[11px] text-[#788396]">{repo.default_branch}</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            sideOffset={8}
+            className="w-[240px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
+          >
+            <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
+              {repo.name} Branches
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator className="bg-push-edge" />
+
+            {branchesLoading && (
+              <DropdownMenuItem disabled className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading branches...
+              </DropdownMenuItem>
+            )}
+
+            {!branchesLoading && branchesError && (
+              <>
+                <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400">
+                  Failed to load branches
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    void loadBranchesForRepo(repo.full_name, true);
+                  }}
+                  className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-[#0d1119]"
+                >
+                  Retry
+                </DropdownMenuItem>
+              </>
+            )}
+
+            {!branchesLoading && !branchesError && branchOptions.length === 0 && (
+              <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
+                No branches found
+              </DropdownMenuItem>
+            )}
+
+            {!branchesLoading && !branchesError && branchOptions.map((branch) => (
+              <DropdownMenuItem
+                key={branch.name}
+                onSelect={() => onSelectRepo(repo, branch.name)}
+                className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-[#0d1119]"
+              >
+                <span className="min-w-0 flex-1 truncate text-xs text-push-fg-secondary">
+                  {branch.name}
+                </span>
+                {branch.isDefault && (
+                  <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[10px] text-[#58a6ff]">
+                    default
+                  </span>
+                )}
+                {branch.isProtected && (
+                  <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-[10px] text-[#fca5a5]">
+                    protected
+                  </span>
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     );
   };
 
@@ -256,95 +360,6 @@ export function HomeScreen({
             <span className="truncate text-sm font-medium text-push-fg">
               {user.login}
             </span>
-          )}
-          {activeRepo && onSelectBranch && (
-            <DropdownMenu
-              open={branchMenuOpen}
-              onOpenChange={(open) => {
-                setBranchMenuOpen(open);
-                if (open && onRefreshBranches && !branchesLoading && homeBranchOptions.length === 0) {
-                  onRefreshBranches();
-                }
-              }}
-            >
-              <DropdownMenuTrigger className="flex items-center gap-1 rounded-full border border-push-edge bg-push-surface px-2 py-1 text-[11px] text-[#9db8df] transition-colors hover:border-[#31425a] hover:bg-[#0d1119]">
-                <GitBranch className="h-3 w-3 text-[#5f6b80]" />
-                <span className="max-w-[100px] truncate">{currentBranch || activeRepo.default_branch}</span>
-                <ChevronDown className={`h-3 w-3 text-[#5f6b80] transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                sideOffset={8}
-                className="w-[240px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
-              >
-                <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
-                  {activeRepo.name} Branches
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator className="bg-push-edge" />
-
-                {branchesLoading && (
-                  <DropdownMenuItem disabled className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Loading branches...
-                  </DropdownMenuItem>
-                )}
-
-                {!branchesLoading && branchesError && (
-                  <>
-                    <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400">
-                      Failed to load branches
-                    </DropdownMenuItem>
-                    {onRefreshBranches && (
-                      <DropdownMenuItem
-                        onSelect={(e) => {
-                          e.preventDefault();
-                          onRefreshBranches();
-                        }}
-                        className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-[#0d1119]"
-                      >
-                        Retry
-                      </DropdownMenuItem>
-                    )}
-                  </>
-                )}
-
-                {!branchesLoading && !branchesError && homeBranchOptions.length === 0 && (
-                  <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
-                    No branches found
-                  </DropdownMenuItem>
-                )}
-
-                {!branchesLoading && !branchesError && homeBranchOptions.map((branch) => {
-                  const isActiveBranch = branch.name === currentBranch;
-                  return (
-                    <DropdownMenuItem
-                      key={branch.name}
-                      onSelect={() => {
-                        if (!isActiveBranch) onSelectBranch(branch.name);
-                      }}
-                      className={`mx-1 flex items-center gap-2 rounded-lg px-3 py-2 ${
-                        isActiveBranch ? 'bg-[#101621]' : 'hover:bg-[#0d1119]'
-                      }`}
-                    >
-                      <span className={`min-w-0 flex-1 truncate text-xs ${isActiveBranch ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
-                        {branch.name}
-                      </span>
-                      {branch.isDefault && (
-                        <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[10px] text-[#58a6ff]">
-                          default
-                        </span>
-                      )}
-                      {branch.isProtected && (
-                        <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-[10px] text-[#fca5a5]">
-                          protected
-                        </span>
-                      )}
-                      {isActiveBranch && <Check className="h-3.5 w-3.5 text-push-link" />}
-                    </DropdownMenuItem>
-                  );
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
           )}
           <div className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
         </div>

@@ -747,14 +747,14 @@ function App() {
 
   // Repo selection from picker
   const handleSelectRepo = useCallback(
-    (repo: RepoWithActivity) => {
+    (repo: RepoWithActivity, branch?: string) => {
       setActiveRepo({
         id: repo.id,
         name: repo.name,
         full_name: repo.full_name,
         owner: repo.owner,
         default_branch: repo.default_branch,
-        current_branch: repo.default_branch,
+        current_branch: branch || repo.default_branch,
         private: repo.private,
       });
     },
@@ -1158,17 +1158,6 @@ function App() {
           conversations={conversations}
           activeRepo={activeRepo}
           onSelectRepo={handleSelectRepo}
-          onSelectBranch={setCurrentBranch}
-          availableBranches={displayBranches}
-          branchesLoading={repoBranchesLoading}
-          branchesError={repoBranchesError}
-          onRefreshBranches={
-            activeRepo
-              ? () => {
-                  void loadRepoBranches(activeRepo.full_name);
-                }
-              : undefined
-          }
           onResumeConversation={handleResumeConversationFromHome}
           onDisconnect={handleDisconnect}
           onSandboxMode={handleSandboxMode}
