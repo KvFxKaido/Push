@@ -798,8 +798,23 @@ export function SettingsSheet({
               <label className="text-xs font-medium text-push-fg-secondary">Ollama</label>
               {ai.hasOllamaKey ? (
                 <div className="space-y-2">
-                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
                     <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        ai.clearOllamaKey();
+                        if (ai.activeBackend === 'ollama') {
+                          ai.clearPreferredProvider();
+                          ai.setActiveBackend(null);
+                        }
+                      }}
+                      className="text-push-fg-dim hover:text-red-400 transition-colors"
+                      aria-label="Remove Ollama key"
+                      title="Remove key"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
@@ -845,20 +860,6 @@ export function SettingsSheet({
                       Current chat remains locked to {ai.lockedModel}. Default applies on new chats.
                     </p>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      ai.clearOllamaKey();
-                      if (ai.activeBackend === 'ollama') {
-                        ai.clearPreferredProvider();
-                        ai.setActiveBackend(null);
-                      }
-                    }}
-                    className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
-                  >
-                    Remove key
-                  </Button>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -901,25 +902,24 @@ export function SettingsSheet({
               <label className="text-xs font-medium text-push-fg-secondary">Kimi</label>
               {ai.hasKimiKey ? (
                 <div className="space-y-2">
-                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2">
-                    <p className="text-sm text-push-fg-secondary font-mono">
-                      Key Saved
-                    </p>
+                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+                    <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        ai.clearKimiKey();
+                        if (ai.activeBackend === 'moonshot') {
+                          ai.clearPreferredProvider();
+                          ai.setActiveBackend(null);
+                        }
+                      }}
+                      className="text-push-fg-dim hover:text-red-400 transition-colors"
+                      aria-label="Remove Kimi key"
+                      title="Remove key"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      ai.clearKimiKey();
-                      if (ai.activeBackend === 'moonshot') {
-                        ai.clearPreferredProvider();
-                        ai.setActiveBackend(null);
-                      }
-                    }}
-                    className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
-                  >
-                    Remove key
-                  </Button>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -927,7 +927,7 @@ export function SettingsSheet({
                     type="password"
                     value={ai.kimiKeyInput}
                     onChange={(e) => ai.setKimiKeyInput(e.target.value)}
-                    placeholder="sk-kimi-..."
+                    placeholder="Kimi key"
                     className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && ai.kimiKeyInput.trim()) {
@@ -951,7 +951,7 @@ export function SettingsSheet({
                     Save Kimi key
                   </Button>
                   <p className="text-xs text-push-fg-dim">
-                    Kimi For Coding API key (starts with sk-kimi-).
+                    Kimi For Coding API key.
                   </p>
                 </div>
               )}
@@ -962,8 +962,23 @@ export function SettingsSheet({
               <label className="text-xs font-medium text-push-fg-secondary">Mistral</label>
               {ai.hasMistralKey ? (
                 <div className="space-y-2">
-                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
                     <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        ai.clearMistralKey();
+                        if (ai.activeBackend === 'mistral') {
+                          ai.clearPreferredProvider();
+                          ai.setActiveBackend(null);
+                        }
+                      }}
+                      className="text-push-fg-dim hover:text-red-400 transition-colors"
+                      aria-label="Remove Mistral key"
+                      title="Remove key"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
@@ -1009,20 +1024,6 @@ export function SettingsSheet({
                       Current chat remains locked to {ai.lockedModel}. Default applies on new chats.
                     </p>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      ai.clearMistralKey();
-                      if (ai.activeBackend === 'mistral') {
-                        ai.clearPreferredProvider();
-                        ai.setActiveBackend(null);
-                      }
-                    }}
-                    className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
-                  >
-                    Remove key
-                  </Button>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1068,8 +1069,23 @@ export function SettingsSheet({
               <label className="text-xs font-medium text-push-fg-secondary">Z.ai</label>
               {ai.hasZaiKey ? (
                 <div className="space-y-2">
-                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
                     <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        ai.clearZaiKey();
+                        if (ai.activeBackend === 'zai') {
+                          ai.clearPreferredProvider();
+                          ai.setActiveBackend(null);
+                        }
+                      }}
+                      className="text-push-fg-dim hover:text-red-400 transition-colors"
+                      aria-label="Remove Z.ai key"
+                      title="Remove key"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
@@ -1094,20 +1110,6 @@ export function SettingsSheet({
                   <p className="text-xs text-push-fg-dim">
                     Uses subscription-based API keys from platform.z.ai.
                   </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      ai.clearZaiKey();
-                      if (ai.activeBackend === 'zai') {
-                        ai.clearPreferredProvider();
-                        ai.setActiveBackend(null);
-                      }
-                    }}
-                    className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
-                  >
-                    Remove key
-                  </Button>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1156,17 +1158,18 @@ export function SettingsSheet({
             <div className="space-y-2">
               {ai.hasTavilyKey ? (
                 <div className="space-y-2">
-                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
                     <p className="text-sm text-push-fg-secondary font-mono">Tavily Key Saved</p>
+                    <button
+                      type="button"
+                      onClick={() => ai.clearTavilyKey()}
+                      className="text-push-fg-dim hover:text-red-400 transition-colors"
+                      aria-label="Remove Tavily key"
+                      title="Remove key"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => ai.clearTavilyKey()}
-                    className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
-                  >
-                    Remove key
-                  </Button>
                 </div>
               ) : (
                 <div className="space-y-2">
