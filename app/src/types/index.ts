@@ -174,6 +174,9 @@ export interface ToolExecutionResult {
     warning?: string;
     htmlUrl?: string;
   };
+  /** When set, the sandbox has switched to this branch (e.g. draft checkout).
+   *  The app should sync its active branch state without tearing down the sandbox. */
+  branchSwitch?: string;
 }
 
 export interface PRCardData {

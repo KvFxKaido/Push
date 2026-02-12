@@ -249,6 +249,9 @@ export interface UsageHandler {
 export interface ChatRuntimeHandlers {
   onSandboxPromoted?: (repo: ActiveRepo) => void;
   bindSandboxSessionToRepo?: (repoFullName: string, branch?: string) => void;
+  /** Called when a sandbox tool (e.g. sandbox_save_draft) switches branches internally.
+   *  The app should update its branch state without tearing down the sandbox. */
+  onBranchSwitch?: (branch: string) => void;
 }
 
 export function useChat(
@@ -978,6 +981,11 @@ export function useChat(
               promotedRepo.default_branch,
             );
             runtimeHandlersRef.current?.onSandboxPromoted?.(promotedRepo);
+          }
+
+          // Sync app branch state when sandbox switches branches (e.g. draft checkout)
+          if (toolExecResult.branchSwitch) {
+            runtimeHandlersRef.current?.onBranchSwitch?.(toolExecResult.branchSwitch);
           }
 
           // Attach card to the assistant message that triggered the tool call

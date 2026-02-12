@@ -1168,7 +1168,12 @@ export async function executeSandboxToolCall(
           truncated: draftDiffResult.truncated,
         };
 
-        return { text: draftLines.join('\n'), card: { type: 'diff-preview', data: draftCardData } };
+        return {
+          text: draftLines.join('\n'),
+          card: { type: 'diff-preview', data: draftCardData },
+          // Propagate branch switch to app state so chat/merge context stays in sync
+          ...(needsNewBranch ? { branchSwitch: activeDraftBranch } : {}),
+        };
       }
 
       case 'promote_to_github': {

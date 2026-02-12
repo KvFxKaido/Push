@@ -162,6 +162,12 @@ function App() {
         setIsSandboxMode(false);
         toast.success(`Promoted to GitHub: ${repo.full_name}`);
       },
+      onBranchSwitch: (branch) => {
+        // Sandbox already switched to this branch internally (e.g. draft checkout).
+        // Suppress the next teardown so we just sync state without destroying the sandbox.
+        skipBranchTeardownRef.current = true;
+        setCurrentBranch(branch);
+      },
     },
     {
       currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
@@ -912,7 +918,9 @@ function App() {
 
   // Branch switching: tear down sandbox when current_branch changes so it recreates on the new branch.
   // Uses a ref to track previous branch and skip the initial mount.
+  // skipBranchTeardownRef suppresses teardown when the sandbox itself switched branches (e.g. draft checkout).
   const prevBranchRef = useRef<string | undefined>(activeRepo?.current_branch);
+  const skipBranchTeardownRef = useRef(false);
   useEffect(() => {
     const currentBranchValue = activeRepo?.current_branch;
     const prevBranch = prevBranchRef.current;
@@ -924,6 +932,14 @@ function App() {
     if (isSandboxMode) return;
     // Only tear down if there was a previous branch (not initial repo selection)
     if (prevBranch === undefined) return;
+
+    // When the sandbox already switched branches (e.g. sandbox_save_draft created a draft branch),
+    // skip teardown — the sandbox is already on the correct branch.
+    if (skipBranchTeardownRef.current) {
+      console.log(`[App] Branch changed: ${prevBranch} → ${currentBranchValue} (sandbox-initiated, skipping teardown)`);
+      skipBranchTeardownRef.current = false;
+      return;
+    }
 
     console.log(`[App] Branch changed: ${prevBranch} → ${currentBranchValue}, tearing down sandbox`);
     void sandbox.stop();
