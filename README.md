@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 - **Scratchpad** — shared notepad for accumulating ideas, requirements, and decisions throughout a session
 - **User identity** — tell the agent your name, bio, and GitHub login so it knows who it's working with
 - **Streaming** — responses arrive token-by-token with visible thinking
-- **Branch & merge** — create branches, commit freely, merge via GitHub PR with Auditor review — all from the chat
+- **Branch & merge** — create branches, commit freely, merge via GitHub PR with Auditor review — from chat context and the workspace hub
 - **Protect Main** — optional setting blocks direct commits to `main`, requiring a branch for all work
 - **Sandbox Mode** — Start coding immediately without GitHub auth. Ephemeral workspace that auto-expires after 30 minutes. Download your work before it disappears.
 
@@ -41,7 +41,7 @@ The app is free. The AI requires a subscription — but you pick which one, and 
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Kimi For Coding, Mistral Vibe, or Ollama Cloud — subscription-based, generous API allowances |
+| AI | Kimi For Coding, Mistral Vibe, Ollama Cloud, or Z.ai — subscription-based, generous API allowances |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -71,6 +71,7 @@ Create `app/.env` for local development, or paste keys in the Settings UI at run
 VITE_MOONSHOT_API_KEY=...              # Kimi For Coding (API access included with subscription)
 VITE_MISTRAL_API_KEY=...              # Mistral Vibe (API access included with subscription)
 VITE_OLLAMA_API_KEY=...               # Ollama Cloud (API access included with subscription)
+VITE_ZAI_API_KEY=...                  # Z.ai (API access included with subscription)
 VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)
 VITE_GITHUB_TOKEN=...                 # Optional — PAT for GitHub API access
 VITE_GITHUB_CLIENT_ID=...             # Optional — GitHub App OAuth client ID
@@ -124,9 +125,9 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Coder** — autonomous code implementation in sandbox (runs until done, with 90s per-round timeout)
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Three AI backends are supported: **Kimi For Coding**, **Mistral Vibe**, and **Ollama Cloud**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+Four AI backends are supported: **Kimi For Coding**, **Mistral Vibe**, **Ollama Cloud**, and **Z.ai**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
 
-There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
+There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, console, scratchpad, and commit/push are unified in the **Workspace Hub**. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
 
 ## Browserbase Status
 
@@ -154,7 +155,7 @@ Push/
 │   ├── worker.ts          # Cloudflare Worker — Kimi/Ollama/Mistral proxy + sandbox proxy
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── chat/           # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspacePanel, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
+│   │   │   ├── chat/           # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
 │   │   │   ├── cards/          # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
 │   │   │   ├── filebrowser/    # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/             # shadcn/ui component library

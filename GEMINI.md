@@ -9,7 +9,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Type:** AI Coding Agent / Web Application (PWA)
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards).
-*   **AI Backend:** Multi-provider support (Kimi, Ollama, Mistral) via OpenAI-compatible SSE streaming.
+*   **AI Backend:** Multi-provider support (Kimi, Ollama, Mistral, Z.ai) via OpenAI-compatible SSE streaming.
 
 ## Tech Stack
 
@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 | **Styling** | Tailwind CSS 3, shadcn/ui (Radix primitives) |
 | **Backend** | Cloudflare Workers (TypeScript) |
 | **Sandbox** | Modal (Serverless Python Containers) |
-| **AI Integration** | OpenAI-compatible Streaming (Kimi, Ollama, Mistral) |
+| **AI Integration** | OpenAI-compatible Streaming (Kimi, Ollama, Mistral, Z.ai) |
 | **APIs** | GitHub REST API |
 
 ## Architecture
@@ -37,7 +37,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Browser Tools (Optional):** Sandbox-backed webpage screenshot + text extraction via Browserbase.
 *   **User Identity:** Display name, bio, and GitHub login set in Settings. Stored in localStorage via `useUserProfile` hook. Injected into Orchestrator and Coder system prompts via `buildUserIdentityBlock()`.
 *   **Scratchpad:** Shared persistent notepad for user/AI collaboration.
-*   **Active Branch Model:** There is always exactly one Active Branch per repo session — commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Branch creation via header "Create Branch" action (on main); feature branches show "Merge into main" instead.
+*   **Active Branch Model:** There is always exactly one Active Branch per repo session — commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Branch switching is available in history drawer, home page, and workspace selector. Branch creation via workspace/header action on main; feature branches show "Merge into main". Non-default inactive branches can be deleted in the workspace selector.
 *   **Merge Flow (GitHub PR Merge):** All merges go through GitHub — Push never runs `git merge` locally. Five-step ritual: (1) check for clean working tree, (2) find or create PR via GitHub API, (3) Auditor reviews PR diff with SAFE/UNSAFE verdict, (4) check merge eligibility, (5) merge via GitHub API (merge commit strategy). Post-merge: switch to main, optionally delete branch. Merge conflicts and branch protection are surfaced, never bypassed.
 *   **Protect Main:** Optional setting that blocks direct commits to `main`, requiring a branch for all work. Global default (on/off) plus per-repo override (inherit/always/never). Stored in localStorage via `useProtectMain` hook. No-op in Sandbox Mode.
 *   **Branch-Scoped Chats:** Conversations are permanently bound to the branch on which they were created. History drawer groups chats by branch. After merge, branch chats receive a closure message; deleted branches marked `(Merged + Deleted)`.
@@ -51,7 +51,7 @@ Push/
 ├── app/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspacePanel, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
+│   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
 │   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
 │   │   │   ├── filebrowser/ # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/        # shadcn/ui library
@@ -114,7 +114,7 @@ Push/
 ### Environment
 Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI.
 
-Key variables: `VITE_MOONSHOT_API_KEY` (Kimi), `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
+Key variables: `VITE_MOONSHOT_API_KEY` (Kimi), `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_ZAI_API_KEY` (Z.ai), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
 
 ## Coding Conventions
 *   **TypeScript:** Strict mode enabled. Explicit return types required on exported functions.

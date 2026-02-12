@@ -34,7 +34,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **AI backends:** Four providers — **Kimi For Coding** (`api.kimi.com`), **Ollama Cloud** (`ollama.com`), **Mistral Vibe** (`api.mistral.ai`), and **Z.ai** (`api.z.ai`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI. The active backend serves all three roles. Provider selection is locked per chat after the first user message. Default Ollama model is `gemini-3-flash-preview`. Default Mistral model is `devstral-small-latest`.
 
-**Onboarding & state machine:** Users connect with GitHub App (recommended) or GitHub PAT, then select an active repo before chatting. Demo mode is an escape hatch with mock data. Sandbox Mode lets users start an ephemeral workspace without any GitHub auth. State machine: `onboarding → repo-picker → chat` (plus `file-browser` when sandbox files are open). The `isSandboxMode` flag bypasses auth and repo selection.
+**Onboarding & state machine:** Users connect with GitHub App (recommended) or GitHub PAT, then select an active repo before chatting. Demo mode is an escape hatch with mock data. Sandbox Mode lets users start an ephemeral workspace without any GitHub auth. State machine: `onboarding → home → chat` (plus `file-browser` when sandbox files are open). The `isSandboxMode` flag bypasses auth and repo selection.
 
 **Tool protocol:** Tools are prompt-engineered — the system prompt defines available tools and JSON format. The orchestrator detects JSON tool blocks in responses, executes them against GitHub's API, injects results as synthetic messages, and re-calls the LLM. Both the Orchestrator and Coder tool loops are unbounded — they continue until the model stops emitting tool calls (or the user aborts). Sandbox tools use the same JSON block pattern, detected by a unified tool dispatch layer.
 
@@ -50,15 +50,15 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Auditor gate:** Every `sandbox_commit` runs through the Auditor first. The Auditor reviews the diff and returns a binary verdict (SAFE/UNSAFE). UNSAFE blocks the commit. The Auditor defaults to UNSAFE on any error (fail-safe).
 
-**Repo hard lock:** The Orchestrator only sees the active repo in its context. Other repos are stripped entirely. Repo switching is UI-only via the header dropdown.
+**Repo hard lock:** The Orchestrator only sees the active repo in its context. Other repos are stripped entirely. Repo switching is UI-driven (home repo cards + history drawer), never implicit from model output.
 
 **User identity:** Users can set a display name, bio, and GitHub login in Settings (About You tab). Stored in localStorage via `useUserProfile` hook (standalone getter + React hook pattern). Injected into both Orchestrator and Coder system prompts via `buildUserIdentityBlock()` in orchestrator.ts. Bio content is escaped to prevent prompt injection via identity block boundaries.
 
-**Scratchpad:** A shared notepad that both the user and the LLM can read/write. User opens via button in ChatInput, the LLM updates via `set_scratchpad` / `append_scratchpad` tools. Content persists in localStorage and is always injected into the system prompt. Content is escaped to prevent prompt injection.
+**Scratchpad:** A shared notepad that both the user and the LLM can read/write. User accesses it in the Workspace Hub `Scratchpad` tab, and the LLM updates it via `set_scratchpad` / `append_scratchpad` tools. Content persists in localStorage and is always injected into the system prompt. Content is escaped to prevent prompt injection.
 
 **Rolling window:** Context is managed by token budget, not fixed message count. The app summarizes older tool-heavy messages first, then trims oldest message pairs if still over budget, while keeping tool call/result pairs together.
 
-**Active Branch model:** There is always exactly one Active Branch per repo session. It is the sandbox branch, chat context branch, commit target, push target, and diff base. Switching branches is atomic and explicit — it tears down the current sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer and home page. Branch creation happens only via the header "Create Branch" action (available on main). On feature branches, the header shows "Merge into main" instead.
+**Active Branch model:** There is always exactly one Active Branch per repo session. It is the sandbox branch, chat context branch, commit target, push target, and diff base. Switching branches is atomic and explicit — it tears down the current sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer, home page, and workspace branch selector. Branch creation happens via the workspace/header branch action on main; on feature branches, that action becomes "Merge into main". Non-default inactive branches can be deleted from the workspace branch selector.
 
 **Merge flow (GitHub PR merge):** All merges go through GitHub — Push never runs `git merge` locally. "Merge into main" is a five-step ritual: (1) check for clean working tree (commit & push if dirty), (2) find or create a Pull Request via GitHub API, (3) Auditor reviews the PR diff (`main...active`) with a SAFE/UNSAFE verdict, (4) check merge eligibility (mergeable state, CI, reviews), (5) merge via GitHub API (merge commit strategy, no fast-forward). Post-merge: user can switch to main and optionally delete the branch. Merge conflicts and branch protection are surfaced, never bypassed. PRs are only created as part of this merge ritual — no standalone "create PR" action.
 
@@ -74,7 +74,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 ```
 app/src/
-  components/chat/        # Chat UI (ChatContainer, ChatInput, MessageBubble, AgentStatusBar, AttachmentPreview, ContextMeter, WorkspacePanel, WorkspacePanelButton, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet)
+  components/chat/        # Chat UI (ChatContainer, ChatInput, MessageBubble, AgentStatusBar, AttachmentPreview, ContextMeter, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet)
   components/cards/       # Rich inline cards (PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, SandboxDownloadCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, EditorPanel, FileCard, FileListCard, BrowserExtractCard, BrowserScreenshotCard, BranchListCard, CIStatusCard, CommitListCard, CommitFilesCard, PRListCard, TypeCheckCard, WorkflowRunsCard, WorkflowLogsCard, SandboxStateCard, CardRenderer)
   components/filebrowser/ # File browser UI (FileActionsSheet, CommitPushSheet, FileEditor, UploadButton)
   components/ui/          # shadcn/ui component library

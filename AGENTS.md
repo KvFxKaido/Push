@@ -77,7 +77,7 @@ Ephemeral workspace with no GitHub repo. Entry via onboarding or repo picker. Gi
 
 ### Active Branch Model
 
-There is always exactly one Active Branch per repo session — it is the commit target, push target, diff base, and chat context. Switching branches is atomic and explicit — it tears down the sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer and home page. Branch creation happens only via the header "Create Branch" action (available on main). On feature branches, the header shows "Merge into main" instead.
+There is always exactly one Active Branch per repo session — it is the commit target, push target, diff base, and chat context. Switching branches is atomic and explicit — it tears down the sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer, home page, and workspace branch selector. Branch creation happens via the workspace/header branch action on main; on feature branches, that action becomes "Merge into main". Non-default inactive branches can be deleted from the workspace branch selector.
 
 ### Merge Flow (GitHub PR Merge)
 
@@ -129,7 +129,7 @@ Push/
 │   ├── src/
 │   │   ├── App.tsx        # Root component, screen state machine
 │   │   ├── components/
-│   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspacePanel, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
+│   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
 │   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
 │   │   │   ├── filebrowser/  # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/        # shadcn/ui component library
