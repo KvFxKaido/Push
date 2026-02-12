@@ -39,6 +39,10 @@ interface ChatInputProps {
     isMistralModelLocked: boolean;
     refreshMistralModels: () => void;
     onSelectMistralModel: (model: string) => void;
+    zaiModel: string;
+    zaiModelOptions: string[];
+    isZaiModelLocked: boolean;
+    onSelectZaiModel: (model: string) => void;
   };
 }
 
@@ -230,7 +234,7 @@ export function ChatInput({
     if (selectedProvider === 'ollama') return providerControls.ollamaModel;
     if (selectedProvider === 'mistral') return providerControls.mistralModel;
     if (selectedProvider === 'moonshot') return 'k2.5';
-    if (selectedProvider === 'zai') return 'glm-4.5';
+    if (selectedProvider === 'zai') return providerControls.zaiModel;
     return 'demo';
   })();
 
@@ -460,6 +464,26 @@ export function ChatInput({
                             <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isMistralModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'zai' && (
+                        <>
+                          <select
+                            value={providerControls.zaiModel}
+                            disabled={!canChangeModel || providerControls.zaiModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectZaiModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {providerControls.zaiModelOptions.map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.isZaiModelLocked && (
                             <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

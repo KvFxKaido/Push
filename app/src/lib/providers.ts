@@ -9,6 +9,15 @@ export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 export const MISTRAL_DEFAULT_MODEL = 'devstral-small-latest';
 export const ZAI_DEFAULT_MODEL = 'glm-4.5';
 
+export const ZAI_MODELS: string[] = [
+  'glm-4.5',
+  'glm-4.5-flash',
+  'glm-4.6',
+  'glm-4.7',
+  'glm-4.7-flash',
+  'glm-5',
+];
+
 export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'moonshot',

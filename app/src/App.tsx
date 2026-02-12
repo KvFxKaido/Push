@@ -12,7 +12,7 @@ import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
 import { useZaiConfig } from '@/hooks/useZaiConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
-import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, type PreferredProvider } from '@/lib/providers';
+import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, ZAI_MODELS, type PreferredProvider } from '@/lib/providers';
 import { getActiveProvider, getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import { fetchOllamaModels, fetchMistralModels } from '@/lib/model-catalog';
 import { useSandbox } from '@/hooks/useSandbox';
@@ -217,7 +217,7 @@ function App() {
   const { setKey: setKimiKey, clearKey: clearKimiKey, hasKey: hasKimiKey } = useMoonshotKey();
   const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
-  const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey } = useZaiConfig();
+  const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey, model: zaiModel, setModel: setZaiModel } = useZaiConfig();
   const { setKey: setTavilyKey, clearKey: clearTavilyKey, hasKey: hasTavilyKey } = useTavilyConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('you');
@@ -294,6 +294,7 @@ function App() {
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
   const isMistralModelLocked = isModelLocked && lockedProvider === 'mistral';
+  const isZaiModelLocked = isModelLocked && lockedProvider === 'zai';
 
   const refreshOllamaModels = useCallback(async () => {
     if (!hasOllamaKey || ollamaModelsLoading) return;
@@ -405,6 +406,12 @@ function App() {
     if (mistralModel && !set.has(mistralModel)) return [mistralModel, ...mistralModels];
     return mistralModels;
   }, [mistralModels, mistralModel]);
+
+  const zaiModelOptions = useMemo(() => {
+    const set = new Set(ZAI_MODELS);
+    if (zaiModel && !set.has(zaiModel)) return [zaiModel, ...ZAI_MODELS];
+    return [...ZAI_MODELS];
+  }, [zaiModel]);
 
   const copyAllowlistCommand = useCallback(async () => {
     try {
@@ -769,6 +776,11 @@ function App() {
     ensureUnlockedChatForProviderChange();
     setMistralModel(model);
   }, [ensureUnlockedChatForProviderChange, setMistralModel]);
+
+  const handleSelectZaiModelFromChat = useCallback((model: string) => {
+    ensureUnlockedChatForProviderChange();
+    setZaiModel(model);
+  }, [ensureUnlockedChatForProviderChange, setZaiModel]);
 
   // Disconnect: clear everything (both auth methods)
   const handleDisconnect = useCallback(() => {
@@ -1488,6 +1500,10 @@ function App() {
           isMistralModelLocked,
           refreshMistralModels,
           onSelectMistralModel: handleSelectMistralModelFromChat,
+          zaiModel,
+          zaiModelOptions,
+          isZaiModelLocked,
+          onSelectZaiModel: handleSelectZaiModelFromChat,
         }}
       />
 
@@ -1590,6 +1606,10 @@ function App() {
           setMistralKeyInput,
           setMistralKey,
           clearMistralKey,
+          zaiModel,
+          setZaiModel,
+          zaiModelOptions,
+          isZaiModelLocked,
           zaiKeyInput,
           setZaiKeyInput,
           setZaiKey: setZaiKey,

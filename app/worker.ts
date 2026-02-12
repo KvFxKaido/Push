@@ -995,7 +995,7 @@ async function handleZaiChat(request: Request, env: Env): Promise<Response> {
   try {
     let upstream: Response;
     try {
-      upstream = await fetch('https://api.z.ai/api/paas/v4/chat/completions', {
+      upstream = await fetch('https://api.z.ai/api/coding/paas/v4/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

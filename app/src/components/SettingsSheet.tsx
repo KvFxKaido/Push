@@ -103,6 +103,10 @@ export interface SettingsAIProps {
   clearMistralKey: () => void;
   // Z.ai
   hasZaiKey: boolean;
+  zaiModel: string;
+  setZaiModel: (v: string) => void;
+  zaiModelOptions: string[];
+  isZaiModelLocked: boolean;
   zaiKeyInput: string;
   setZaiKeyInput: (v: string) => void;
   setZaiKey: (v: string) => void;
@@ -1067,6 +1071,26 @@ export function SettingsSheet({
                   <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2">
                     <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
                   </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
+                    <select
+                      value={ai.zaiModel}
+                      onChange={(e) => ai.setZaiModel(e.target.value)}
+                      disabled={ai.zaiModelOptions.length === 0}
+                      className="flex-1 rounded-md border border-push-edge bg-push-surface px-2 py-1 text-xs text-push-fg font-mono focus:outline-none focus:border-push-sky/50 disabled:opacity-50"
+                    >
+                      {ai.zaiModelOptions.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {ai.isZaiModelLocked && ai.lockedModel && (
+                    <p className="text-xs text-amber-400">
+                      Current chat remains locked to {ai.lockedModel}. Default applies on new chats.
+                    </p>
+                  )}
                   <p className="text-xs text-push-fg-dim">
                     Uses subscription-based API keys from platform.z.ai.
                   </p>
