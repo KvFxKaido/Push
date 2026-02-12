@@ -9,7 +9,7 @@ import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import { browserToolEnabled } from '@/lib/feature-flags';
-import { getMistralModelName, getOllamaModelName } from '@/lib/providers';
+import { getMistralModelName, getOllamaModelName, getZaiModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
@@ -31,6 +31,8 @@ function getCurrentModelForProvider(provider: AIProviderType | ActiveProvider): 
       return getMistralModelName();
     case 'moonshot':
       return KIMI_LOCKED_MODEL;
+    case 'zai':
+      return getZaiModelName();
     default:
       return undefined;
   }

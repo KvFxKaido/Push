@@ -9,6 +9,7 @@ interface Env {
   MOONSHOT_API_KEY?: string;
   OLLAMA_API_KEY?: string;
   MISTRAL_API_KEY?: string;
+  ZAI_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   BROWSERBASE_API_KEY?: string;
   BROWSERBASE_PROJECT_ID?: string;
@@ -87,6 +88,11 @@ export default {
     // API route: model catalog proxy to Mistral
     if (url.pathname === '/api/mistral/models' && request.method === 'GET') {
       return handleMistralModels(request, env);
+    }
+
+    // API route: streaming proxy to Z.ai (SSE, OpenAI-compatible)
+    if (url.pathname === '/api/zai/chat' && request.method === 'POST') {
+      return handleZaiChat(request, env);
     }
 
     // API route: Ollama web search proxy
@@ -426,6 +432,7 @@ interface HealthStatus {
     kimi: { status: 'ok' | 'unconfigured'; configured: boolean };
     ollama: { status: 'ok' | 'unconfigured'; configured: boolean };
     mistral: { status: 'ok' | 'unconfigured'; configured: boolean };
+    zai: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
     github_app_oauth: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -437,6 +444,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   const kimiConfigured = Boolean(env.MOONSHOT_API_KEY);
   const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
   const mistralConfigured = Boolean(env.MISTRAL_API_KEY);
+  const zaiConfigured = Boolean(env.ZAI_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -454,7 +462,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     }
   }
 
-  const hasAnyLlm = kimiConfigured || ollamaConfigured || mistralConfigured;
+  const hasAnyLlm = kimiConfigured || ollamaConfigured || mistralConfigured || zaiConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -467,6 +475,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       kimi: { status: kimiConfigured ? 'ok' : 'unconfigured', configured: kimiConfigured },
       ollama: { status: ollamaConfigured ? 'ok' : 'unconfigured', configured: ollamaConfigured },
       mistral: { status: mistralConfigured ? 'ok' : 'unconfigured', configured: mistralConfigured },
+      zai: { status: zaiConfigured ? 'ok' : 'unconfigured', configured: zaiConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
       github_app_oauth: { status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET) },
@@ -883,6 +892,88 @@ async function handleMistralChat(request: Request, env: Env): Promise<Response> 
     const error = isTimeout ? 'Mistral request timed out after 120 seconds' : message;
     console.error(`[api/mistral/chat] Unhandled: ${message}`);
     return Response.json({ error }, { status });
+  }
+}
+
+
+
+// --- Z.ai streaming proxy ---
+
+async function handleZaiChat(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const now = Date.now();
+  cleanupRateLimitStore(now);
+  const ip = getClientIp(request);
+  const rateLimit = checkRateLimit(ip, now);
+  if (!rateLimit.allowed) {
+    return Response.json({ error: 'Rate limit exceeded' }, { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } });
+  }
+
+  if (!env.ZAI_API_KEY) {
+    return Response.json(
+      { error: 'Z.ai API key not configured. Add it in Settings or set ZAI_API_KEY on the Worker.' },
+      { status: 500 },
+    );
+  }
+
+  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
+  if (!bodyResult.ok) {
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  }
+
+  console.log(`[api/zai/chat] Forwarding request (${bodyResult.text.length} bytes)`);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120_000);
+
+  try {
+    let upstream: Response;
+    try {
+      upstream = await fetch('https://api.z.ai/api/paas/v4/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.ZAI_API_KEY}`,
+        },
+        body: bodyResult.text,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    console.log(`[api/zai/chat] Upstream responded: ${upstream.status}`);
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      console.error(`[api/zai/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
+      return Response.json(
+        { error: `Z.ai API error ${upstream.status}: ${errBody.slice(0, 200)}` },
+        { status: upstream.status },
+      );
+    }
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: {
+        'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
+    });
+  } catch (error) {
+    clearTimeout(timeoutId);
+    const message = error instanceof Error ? error.message : String(error);
+    const isTimeout = error instanceof Error && error.name === 'AbortError';
+    const finalError = isTimeout ? 'Z.ai request timed out after 120 seconds' : message;
+    console.error(`[api/zai/chat] Unhandled: ${finalError}`);
+    return Response.json({ error: finalError }, { status: 502 });
   }
 }
 

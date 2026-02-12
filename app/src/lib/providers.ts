@@ -7,6 +7,7 @@ export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 
 // Valid Mistral model names via Mistral API
 export const MISTRAL_DEFAULT_MODEL = 'devstral-small-latest';
+export const ZAI_DEFAULT_MODEL = 'glm-4.5';
 
 export const PROVIDERS: AIProviderConfig[] = [
   {
@@ -98,6 +99,36 @@ export const PROVIDERS: AIProviderConfig[] = [
       },
     ],
   },
+  {
+    type: 'zai',
+    name: 'Z.ai',
+    description: 'Z.ai API — GLM models (OpenAI-compatible)',
+    envKey: 'VITE_ZAI_API_KEY',
+    envUrl: 'https://platform.z.ai',
+    models: [
+      {
+        id: ZAI_DEFAULT_MODEL,
+        name: 'GLM 4.5 (Orchestrator)',
+        provider: 'zai',
+        role: 'orchestrator',
+        context: 131_072,
+      },
+      {
+        id: ZAI_DEFAULT_MODEL,
+        name: 'GLM 4.5 (Coder)',
+        provider: 'zai',
+        role: 'coder',
+        context: 131_072,
+      },
+      {
+        id: ZAI_DEFAULT_MODEL,
+        name: 'GLM 4.5 (Auditor)',
+        provider: 'zai',
+        role: 'auditor',
+        context: 131_072,
+      },
+    ],
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -125,6 +156,10 @@ export function getModelForRole(
   // For Mistral, overlay the user-selected model name at runtime
   if (type === 'mistral') {
     const userModel = getMistralModelName();
+    return { ...model, id: userModel };
+  }
+  if (type === 'zai') {
+    const userModel = getZaiModelName();
     return { ...model, id: userModel };
   }
   return model;
@@ -161,16 +196,30 @@ export function setMistralModelName(model: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Z.ai — runtime model name (stored in localStorage)
+// ---------------------------------------------------------------------------
+
+const ZAI_MODEL_KEY = 'zai_model';
+
+export function getZaiModelName(): string {
+  return safeStorageGet(ZAI_MODEL_KEY) || ZAI_DEFAULT_MODEL;
+}
+
+export function setZaiModelName(model: string): void {
+  safeStorageSet(ZAI_MODEL_KEY, model.trim());
+}
+
+// ---------------------------------------------------------------------------
 // Provider preference — user picks which backend to use
 // ---------------------------------------------------------------------------
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'moonshot' | 'ollama' | 'mistral';
+export type PreferredProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (stored === 'moonshot' || stored === 'ollama' || stored === 'mistral') return stored;
+  if (stored === 'moonshot' || stored === 'ollama' || stored === 'mistral' || stored === 'zai') return stored;
   return null;
 }
 

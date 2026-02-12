@@ -49,6 +49,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   moonshot: 'Kimi',
   ollama: 'Ollama',
   mistral: 'Mistral',
+  zai: 'Z.ai',
   demo: 'Demo',
 };
 
@@ -56,6 +57,7 @@ const PROVIDER_ICONS: Record<AIProviderType, string> = {
   moonshot: '🌙',
   ollama: '🦙',
   mistral: '🌪️',
+  zai: '🧠',
   demo: '⚡',
 };
 
@@ -228,6 +230,7 @@ export function ChatInput({
     if (selectedProvider === 'ollama') return providerControls.ollamaModel;
     if (selectedProvider === 'mistral') return providerControls.mistralModel;
     if (selectedProvider === 'moonshot') return 'k2.5';
+    if (selectedProvider === 'zai') return 'glm-4.5';
     return 'demo';
   })();
 

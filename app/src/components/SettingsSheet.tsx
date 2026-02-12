@@ -17,6 +17,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
   moonshot: 'Kimi',
   mistral: 'Mistral',
+  zai: 'Z.ai',
   demo: 'Demo',
 };
 
@@ -100,6 +101,12 @@ export interface SettingsAIProps {
   setMistralKeyInput: (v: string) => void;
   setMistralKey: (v: string) => void;
   clearMistralKey: () => void;
+  // Z.ai
+  hasZaiKey: boolean;
+  zaiKeyInput: string;
+  setZaiKeyInput: (v: string) => void;
+  setZaiKey: (v: string) => void;
+  clearZaiKey: () => void;
   // Tavily
   hasTavilyKey: boolean;
   tavilyKeyInput: string;
@@ -705,7 +712,7 @@ export function SettingsSheet({
               <div className="flex items-center gap-1.5">
                 <div
                   className={`h-2 w-2 rounded-full ${
-                    ai.hasOllamaKey || ai.hasKimiKey || ai.hasMistralKey ? 'bg-emerald-500' : 'bg-push-fg-dim'
+                    ai.hasOllamaKey || ai.hasKimiKey || ai.hasMistralKey || ai.hasZaiKey ? 'bg-emerald-500' : 'bg-push-fg-dim'
                   }`}
                 />
                 <span className="text-xs text-push-fg-secondary">
@@ -1050,6 +1057,69 @@ export function SettingsSheet({
             </div>
 
           </div>
+
+
+            {/* Z.ai */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-push-fg-secondary">Z.ai</label>
+              {ai.hasZaiKey ? (
+                <div className="space-y-2">
+                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+                    <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
+                  </div>
+                  <p className="text-xs text-push-fg-dim">
+                    Uses subscription-based API keys from platform.z.ai.
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      ai.clearZaiKey();
+                      if (ai.activeBackend === 'zai') {
+                        ai.clearPreferredProvider();
+                        ai.setActiveBackend(null);
+                      }
+                    }}
+                    className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
+                  >
+                    Remove key
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    type="password"
+                    value={ai.zaiKeyInput}
+                    onChange={(e) => ai.setZaiKeyInput(e.target.value)}
+                    placeholder="Z.ai API key"
+                    className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && ai.zaiKeyInput.trim()) {
+                        ai.setZaiKey(ai.zaiKeyInput.trim());
+                        ai.setZaiKeyInput('');
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (ai.zaiKeyInput.trim()) {
+                        ai.setZaiKey(ai.zaiKeyInput.trim());
+                        ai.setZaiKeyInput('');
+                      }
+                    }}
+                    disabled={!ai.zaiKeyInput.trim()}
+                    className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
+                  >
+                    Save Z.ai key
+                  </Button>
+                  <p className="text-xs text-push-fg-dim">
+                    Z.ai API keys are available through subscription plans.
+                  </p>
+                </div>
+              )}
+            </div>
 
           {/* Web Search (Tavily) */}
           <div className="space-y-3 pt-2 border-t border-push-edge">

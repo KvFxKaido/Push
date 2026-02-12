@@ -10,6 +10,7 @@ import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useMoonshotKey } from '@/hooks/useMoonshotKey';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
+import { useZaiConfig } from '@/hooks/useZaiConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, type PreferredProvider } from '@/lib/providers';
 import { getActiveProvider, getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
@@ -216,6 +217,7 @@ function App() {
   const { setKey: setKimiKey, clearKey: clearKimiKey, hasKey: hasKimiKey } = useMoonshotKey();
   const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
+  const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey } = useZaiConfig();
   const { setKey: setTavilyKey, clearKey: clearTavilyKey, hasKey: hasTavilyKey } = useTavilyConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('you');
@@ -226,6 +228,7 @@ function App() {
   const [kimiKeyInput, setKimiKeyInput] = useState('');
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [mistralKeyInput, setMistralKeyInput] = useState('');
+  const [zaiKeyInput, setZaiKeyInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
@@ -239,7 +242,7 @@ function App() {
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
-  const availableProviders = ([['moonshot', 'Kimi', hasKimiKey], ['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey]] as const).filter(([, , has]) => has);
+  const availableProviders = ([['moonshot', 'Kimi', hasKimiKey], ['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey], ['zai', 'Z.ai', hasZaiKey]] as const).filter(([, , has]) => has);
   
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
@@ -1574,6 +1577,7 @@ function App() {
           setKimiKey,
           clearKimiKey,
           hasMistralKey,
+          hasZaiKey,
           mistralModel,
           setMistralModel,
           mistralModelOptions,
@@ -1586,6 +1590,10 @@ function App() {
           setMistralKeyInput,
           setMistralKey,
           clearMistralKey,
+          zaiKeyInput,
+          setZaiKeyInput,
+          setZaiKey: setZaiKey,
+          clearZaiKey,
           hasTavilyKey,
           tavilyKeyInput,
           setTavilyKeyInput,

@@ -145,6 +145,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/mistral/, ''),
       },
+      '/zai': {
+        target: 'https://api.z.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/zai/, ''),
+      },
       '/api': {
         target: API_PROXY_TARGET,
         changeOrigin: true,

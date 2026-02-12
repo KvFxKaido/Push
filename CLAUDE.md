@@ -19,6 +19,7 @@ npm run dev
   - Kimi For Coding (Kimi K2.5 via api.kimi.com, OpenAI-compatible SSE)
   - Ollama Cloud (open models on cloud GPUs via ollama.com, OpenAI-compatible SSE)
   - Mistral Vibe (Devstral via api.mistral.ai, OpenAI-compatible SSE)
+  - Z.ai (GLM via api.z.ai, OpenAI-compatible SSE)
 - Modal (serverless containers) for sandbox code execution
 - Cloudflare Workers (streaming proxy + sandbox proxy)
 - PWA with service worker and offline support
@@ -31,7 +32,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 - **Coder** — Code implementation and execution engine. Writes, edits, and runs code in a sandbox.
 - **Auditor** — Risk specialist, pre-commit gate, binary verdict. Cannot be bypassed.
 
-**AI backends:** Three providers — **Kimi For Coding** (`api.kimi.com`), **Ollama Cloud** (`ollama.com`), and **Mistral Vibe** (`api.mistral.ai`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI. The active backend serves all three roles. Provider selection is locked per chat after the first user message. Default Ollama model is `gemini-3-flash-preview`. Default Mistral model is `devstral-small-latest`.
+**AI backends:** Four providers — **Kimi For Coding** (`api.kimi.com`), **Ollama Cloud** (`ollama.com`), **Mistral Vibe** (`api.mistral.ai`), and **Z.ai** (`api.z.ai`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI. The active backend serves all three roles. Provider selection is locked per chat after the first user message. Default Ollama model is `gemini-3-flash-preview`. Default Mistral model is `devstral-small-latest`.
 
 **Onboarding & state machine:** Users connect with GitHub App (recommended) or GitHub PAT, then select an active repo before chatting. Demo mode is an escape hatch with mock data. Sandbox Mode lets users start an ephemeral workspace without any GitHub auth. State machine: `onboarding → repo-picker → chat` (plus `file-browser` when sandbox files are open). The `isSandboxMode` flag bypasses auth and repo selection.
 
@@ -82,7 +83,7 @@ app/src/
   sections/               # Screen components (OnboardingScreen, RepoPicker, FileBrowser, HomeScreen)
   types/                  # TypeScript type definitions
   App.tsx                 # Root component, screen state machine
-app/worker.ts        # Cloudflare Worker — streaming proxy to Kimi/Ollama/Mistral + sandbox proxy to Modal
+app/worker.ts        # Cloudflare Worker — streaming proxy to Kimi/Ollama/Mistral/Z.ai + sandbox proxy to Modal
 sandbox/app.py       # Modal Python App — sandbox web endpoints (file ops, exec/git, browser tools, archive download)
 sandbox/requirements.txt
 wrangler.jsonc       # Cloudflare Workers config (repo root)
@@ -90,7 +91,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 ## Key Files
 
-- `lib/orchestrator.ts` — System prompt, multi-backend streaming (Kimi + Ollama + Mistral SSE), think-token parsing, provider routing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
+- `lib/orchestrator.ts` — System prompt, multi-backend streaming (Kimi + Ollama + Mistral + Z.ai SSE), think-token parsing, provider routing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
 - `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks), `delegate_coder`, `fetchProjectInstructions` (reads AGENTS.md/CLAUDE.md from repos via API), branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`)
 - `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt
 - `lib/sandbox-client.ts` — HTTP client for `/api/sandbox/*` endpoints (thin fetch wrappers)
@@ -99,9 +100,9 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `lib/coder-agent.ts` — Coder sub-agent loop (unbounded rounds, 90s timeout per round, uses active backend)
 - `lib/auditor-agent.ts` — Auditor review + verdict (fail-safe to UNSAFE, uses active backend)
 - `lib/workspace-context.ts` — Builds active repo context for system prompt injection
-- `lib/providers.ts` — AI provider configs (Kimi + Ollama + Mistral), role-to-model mapping, backend preference
+- `lib/providers.ts` — AI provider configs (Kimi + Ollama + Mistral + Z.ai), role-to-model mapping, backend preference
 - `lib/web-search-tools.ts` — Web search tool definitions (Tavily, Ollama native search, DuckDuckGo fallback; Mistral handles search natively via Agents API)
-- `lib/model-catalog.ts` — Manages Ollama/Mistral model lists and selection
+- `lib/model-catalog.ts` — Manages Ollama/Mistral model lists and selection (Z.ai currently uses default model)
 - `lib/prompts.ts` — Prompt building utilities
 - `lib/feature-flags.ts` — Feature flag system
 - `lib/snapshot-manager.ts` — Workspace snapshot management and recovery
@@ -128,6 +129,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `hooks/useOllamaConfig.ts` — Ollama backend configuration and model selection
 - `hooks/useMoonshotKey.ts` — Kimi/Moonshot API key management
 - `hooks/useMistralConfig.ts` — Mistral backend configuration and model selection
+- `hooks/useZaiConfig.ts` — Z.ai backend configuration
 - `hooks/useTavilyConfig.ts` — Tavily web search API key management
 - `hooks/useUsageTracking.ts` — Usage analytics tracking
 - `hooks/use-mobile.ts` — Mobile viewport detection
@@ -137,7 +139,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 Environment variables are defined in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI at runtime. Without any API keys the app runs in demo mode with mock data.
 
-Key variables: `VITE_MOONSHOT_API_KEY` (Kimi), `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
+Key variables: `VITE_MOONSHOT_API_KEY` (Kimi), `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_ZAI_API_KEY` (Z.ai), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
 
 ## Design Principles
 

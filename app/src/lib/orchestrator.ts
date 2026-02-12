@@ -6,9 +6,10 @@ import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { getMoonshotKey } from '@/hooks/useMoonshotKey';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
+import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
-import { getOllamaModelName, getMistralModelName, getPreferredProvider } from './providers';
+import { getOllamaModelName, getMistralModelName, getPreferredProvider, getZaiModelName } from './providers';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -68,6 +69,10 @@ const OLLAMA_API_URL = import.meta.env.DEV
 const MISTRAL_API_URL = import.meta.env.DEV
   ? '/mistral/v1/chat/completions'
   : '/api/mistral/chat';
+
+const ZAI_API_URL = import.meta.env.DEV
+  ? '/zai/api/paas/v4/chat/completions'
+  : '/api/zai/chat';
 
 // Mistral Agents API — enables native web search via agent with web_search tool.
 // Dev: Vite proxy rewrites /mistral/ → https://api.mistral.ai/.
@@ -162,7 +167,7 @@ function normalizeModelName(model?: string): string {
 }
 
 export function getContextBudget(
-  provider?: 'moonshot' | 'ollama' | 'mistral' | 'demo',
+  provider?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'demo',
   model?: string,
 ): ContextBudget {
   const normalizedModel = normalizeModelName(model);
@@ -526,7 +531,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'moonshot' | 'ollama' | 'mistral',
+  providerType?: 'moonshot' | 'ollama' | 'mistral' | 'zai',
   providerModel?: string,
 ): LLMMessage[] {
   // Build system prompt: base + user identity + workspace context + tool protocol + optional sandbox tools + scratchpad
@@ -562,7 +567,7 @@ function toLLMMessages(
   // Ollama: model outputs JSON → we execute via Ollama's search REST API.
   // Kimi (moonshot): model outputs JSON → we execute via free DuckDuckGo SERP.
   // Mistral: handles search natively via Agents API (no prompt needed here).
-  if (providerType === 'ollama' || providerType === 'moonshot') {
+  if (providerType === 'ollama' || providerType === 'moonshot' || providerType === 'zai') {
     systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
   }
 
@@ -793,7 +798,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'moonshot' | 'ollama' | 'mistral';
+  providerType?: 'moonshot' | 'ollama' | 'mistral' | 'zai';
   /** Override the fetch URL (e.g., Mistral Agents API uses a different endpoint) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -1297,11 +1302,67 @@ export async function streamMistralChat(
   );
 }
 
+
+
+export async function streamZaiChat(
+  messages: ChatMessage[],
+  onToken: (token: string, meta?: ChunkMetadata) => void,
+  onDone: (usage?: StreamUsage) => void,
+  onError: (error: Error) => void,
+  onThinkingToken?: (token: string | null) => void,
+  workspaceContext?: string,
+  hasSandbox?: boolean,
+  modelOverride?: string,
+  systemPromptOverride?: string,
+  scratchpadContent?: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const apiKey = getZaiKey();
+  if (!apiKey) {
+    onError(new Error('Z.ai API key not configured'));
+    return;
+  }
+
+  return streamSSEChat(
+    {
+      name: 'Z.ai',
+      apiUrl: ZAI_API_URL,
+      apiKey,
+      model: modelOverride || getZaiModelName(),
+      connectTimeoutMs: 30_000,
+      idleTimeoutMs: 60_000,
+      stallTimeoutMs: 30_000,
+      totalTimeoutMs: 180_000,
+      errorMessages: {
+        keyMissing: 'Z.ai API key not configured',
+        connect: (s) => `Z.ai API didn't respond within ${s}s — server may be down.`,
+        idle: (s) => `Z.ai API stream stalled — no data for ${s}s.`,
+        stall: (s) => `Z.ai API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
+        total: (s) => `Z.ai API response exceeded ${s}s total time limit.`,
+        network: 'Cannot reach Z.ai — network error. Check your connection.',
+      },
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length']),
+      providerType: 'zai',
+    },
+    messages,
+    onToken,
+    onDone,
+    onError,
+    onThinkingToken,
+    workspaceContext,
+    hasSandbox,
+    systemPromptOverride,
+    scratchpadContent,
+    signal,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'moonshot' | 'ollama' | 'mistral' | 'demo';
+export type ActiveProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'demo';
 
 /**
  * Determine which provider is active.
@@ -1316,16 +1377,19 @@ export function getActiveProvider(): ActiveProvider {
   const hasOllama = Boolean(getOllamaKey());
   const hasKimi = Boolean(getMoonshotKey());
   const hasMistral = Boolean(getMistralKey());
+  const hasZai = Boolean(getZaiKey());
 
   // Honour explicit preference when the key is available
   if (preferred === 'ollama' && hasOllama) return 'ollama';
   if (preferred === 'moonshot' && hasKimi) return 'moonshot';
   if (preferred === 'mistral' && hasMistral) return 'mistral';
+  if (preferred === 'zai' && hasZai) return 'zai';
 
   // No preference (or preferred key was removed) — first available
   if (hasKimi) return 'moonshot';
   if (hasOllama) return 'ollama';
   if (hasMistral) return 'mistral';
+  if (hasZai) return 'zai';
   return 'demo';
 }
 
@@ -1337,6 +1401,7 @@ export function getProviderStreamFn(provider: ActiveProvider) {
   switch (provider) {
     case 'ollama':  return { providerType: 'ollama' as const,  streamFn: streamOllamaChat };
     case 'mistral': return { providerType: 'mistral' as const, streamFn: streamMistralChat };
+    case 'zai': return { providerType: 'zai' as const, streamFn: streamZaiChat };
     default:        return { providerType: 'moonshot' as const, streamFn: streamMoonshotChat };
   }
 }
@@ -1379,6 +1444,10 @@ export async function streamChat(
 
   if (provider === 'mistral') {
     return streamMistralChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'zai') {
+    return streamZaiChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);

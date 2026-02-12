@@ -18,7 +18,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: Kimi K2.5, Ollama, Mistral (user picks, all roles) |
+| AI | Multi-backend: Kimi K2.5, Ollama, Mistral, Z.ai (user picks, all roles) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -37,13 +37,14 @@ The active backend serves all three roles. The user picks a backend in Settings;
 
 ### AI Backends
 
-Three providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/kimi/chat`, `/api/ollama/chat`, `/api/mistral/chat`.
+Four providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/kimi/chat`, `/api/ollama/chat`, `/api/mistral/chat`, `/api/zai/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
 | **Kimi For Coding** | k2.5 |
 | **Ollama Cloud** | gemini-3-flash-preview |
 | **Mistral Vibe** | devstral-small-latest |
+| **Z.ai** | glm-4.5 |
 
 ### Tool Protocol
 
@@ -161,7 +162,7 @@ Push/
 | `lib/workspace-context.ts` | Active repo context builder |
 | `lib/providers.ts` | AI provider config and role model mapping |
 | `lib/web-search-tools.ts` | Web search tools (Tavily, Ollama native, DuckDuckGo fallback) |
-| `lib/model-catalog.ts` | Ollama/Mistral model lists and selection |
+| `lib/model-catalog.ts` | Ollama/Mistral model lists and selection (Z.ai currently uses default model) |
 | `lib/prompts.ts` | Prompt building utilities |
 | `lib/feature-flags.ts` | Feature flag system |
 | `lib/snapshot-manager.ts` | Workspace snapshot management and recovery |
@@ -193,6 +194,7 @@ Push/
 | `hooks/useOllamaConfig.ts` | Ollama backend configuration and model selection |
 | `hooks/useMoonshotKey.ts` | Kimi/Moonshot API key management |
 | `hooks/useMistralConfig.ts` | Mistral backend configuration and model selection |
+| `hooks/useZaiConfig.ts` | Z.ai backend configuration |
 | `hooks/useTavilyConfig.ts` | Tavily web search API key management |
 | `hooks/useUsageTracking.ts` | Usage analytics tracking |
 | `hooks/use-mobile.ts` | Mobile viewport detection |
