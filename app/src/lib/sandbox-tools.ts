@@ -36,11 +36,17 @@ import {
 import { runAuditor } from './auditor-agent';
 import { browserToolEnabled } from './feature-flags';
 import { recordBrowserMetric } from './browser-metrics';
+import { recordWriteFileMetric } from './edit-metrics';
 import { safeStorageGet } from './safe-storage';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
 const APP_TOKEN_STORAGE_KEY = 'github_app_token';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
+const sandboxFileVersions = new Map<string, string>();
+
+function fileVersionKey(sandboxId: string, path: string): string {
+  return `${sandboxId}:${path}`;
+}
 
 // --- Browser tool error taxonomy ---
 
@@ -165,7 +171,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_exec'; args: { command: string; workdir?: string } }
   | { tool: 'sandbox_read_file'; args: { path: string } }
   | { tool: 'sandbox_search'; args: { query: string; path?: string } }
-  | { tool: 'sandbox_write_file'; args: { path: string; content: string } }
+  | { tool: 'sandbox_write_file'; args: { path: string; content: string; expected_version?: string } }
   | { tool: 'sandbox_list_dir'; args: { path?: string } }
   | { tool: 'sandbox_diff'; args: Record<string, never> }
   | { tool: 'sandbox_prepare_commit'; args: { message: string } }
@@ -212,7 +218,14 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
     return { tool: 'sandbox_search', args: { query: args.query, path: typeof args.path === 'string' ? args.path : undefined } };
   }
   if (tool === 'sandbox_write_file' && typeof args.path === 'string' && typeof args.content === 'string') {
-    return { tool: 'sandbox_write_file', args: { path: args.path, content: args.content } };
+    return {
+      tool: 'sandbox_write_file',
+      args: {
+        path: args.path,
+        content: args.content,
+        expected_version: typeof args.expected_version === 'string' ? args.expected_version : undefined,
+      },
+    };
   }
   if (tool === 'sandbox_list_dir' || tool === 'list_sandbox_dir') {
     return { tool: 'sandbox_list_dir', args: { path: typeof args.path === 'string' ? args.path : undefined } };
@@ -363,15 +376,24 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_read_file': {
         const result = await readFromSandbox(sandboxId, call.args.path) as FileReadResult & { error?: string };
+        const cacheKey = fileVersionKey(sandboxId, call.args.path);
 
         // Handle directory or read errors (e.g. "cat: /path: Is a directory")
         if (result.error) {
+          sandboxFileVersions.delete(cacheKey);
           return { text: formatSandboxError(result.error, call.args.path) };
+        }
+
+        if (typeof result.version === 'string' && result.version) {
+          sandboxFileVersions.set(cacheKey, result.version);
+        } else {
+          sandboxFileVersions.delete(cacheKey);
         }
 
         const lines: string[] = [
           `[Tool Result — sandbox_read_file]`,
           `File: ${call.args.path}`,
+          `Version: ${result.version || 'unknown'}`,
           result.truncated ? `(truncated)\n` : '',
           result.content,
         ];
@@ -396,6 +418,7 @@ export async function executeSandboxToolCall(
               content: result.content,
               language,
               truncated: result.truncated,
+              version: typeof result.version === 'string' ? result.version : undefined,
               source: 'sandbox' as const,
               sandboxId,
             },
@@ -494,32 +517,86 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_write_file': {
-        const result = await writeToSandbox(sandboxId, call.args.path, call.args.content);
+        const writeStart = Date.now();
+        const cacheKey = fileVersionKey(sandboxId, call.args.path);
+        const expectedVersion = call.args.expected_version || sandboxFileVersions.get(cacheKey);
 
-        if (!result.ok) {
-          const detail = result.error || 'Unknown error';
-          return { text: formatSandboxError(detail, call.args.path) };
+        try {
+          const result = await writeToSandbox(sandboxId, call.args.path, call.args.content, expectedVersion);
+
+          if (!result.ok) {
+            if (result.code === 'STALE_FILE') {
+              if (typeof result.current_version === 'string' && result.current_version) {
+                sandboxFileVersions.set(cacheKey, result.current_version);
+              }
+              recordWriteFileMetric({
+                durationMs: Date.now() - writeStart,
+                outcome: 'stale',
+                errorCode: 'STALE_FILE',
+              });
+              const expected = result.expected_version || expectedVersion || 'unknown';
+              const current = result.current_version || 'missing';
+              return {
+                text: [
+                  `[Tool Error — sandbox_write_file]`,
+                  `Stale write rejected for ${call.args.path}.`,
+                  `Expected version: ${expected}`,
+                  `Current version: ${current}`,
+                  `Re-read the file with sandbox_read_file, apply edits to the latest content, then retry.`,
+                ].join('\n'),
+              };
+            }
+
+            const errorCode = result.code || 'WRITE_FAILED';
+            recordWriteFileMetric({
+              durationMs: Date.now() - writeStart,
+              outcome: 'error',
+              errorCode,
+            });
+            const detail = result.error || 'Unknown error';
+            return { text: formatSandboxError(detail, call.args.path) };
+          }
+
+          if (typeof result.new_version === 'string' && result.new_version) {
+            sandboxFileVersions.set(cacheKey, result.new_version);
+          }
+
+          // Post-write verification: check that git sees the change
+          const verifyResult = await execInSandbox(
+            sandboxId,
+            `cd /workspace && git status --porcelain -- '${call.args.path.replace(/'/g, "'\\''")}'`,
+          );
+          const gitSees = verifyResult.stdout.trim();
+
+          const lines: string[] = [
+            `[Tool Result — sandbox_write_file]`,
+            `Wrote ${call.args.path} (${result.bytes_written ?? call.args.content.length} bytes)`,
+          ];
+          if (result.new_version) {
+            lines.push(`New version: ${result.new_version}`);
+          }
+
+          if (!gitSees && call.args.path.startsWith('/workspace/')) {
+            lines.push(`⚠ Warning: git reports no changes for this file. The content may be identical to the original.`);
+          } else if (!call.args.path.startsWith('/workspace')) {
+            lines.push(`⚠ Note: File is outside /workspace — git will not track this file.`);
+          }
+
+          recordWriteFileMetric({
+            durationMs: Date.now() - writeStart,
+            outcome: 'success',
+          });
+          return { text: lines.join('\n') };
+        } catch (writeErr) {
+          const errMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+          const errCode = errMsg.match(/\(([A-Z_]+)\)/)?.[1] || 'WRITE_EXCEPTION';
+          recordWriteFileMetric({
+            durationMs: Date.now() - writeStart,
+            outcome: 'error',
+            errorCode: errCode,
+          });
+          throw writeErr;
         }
-
-        // Post-write verification: check that git sees the change
-        const verifyResult = await execInSandbox(
-          sandboxId,
-          `cd /workspace && git status --porcelain -- '${call.args.path.replace(/'/g, "'\\''")}'`,
-        );
-        const gitSees = verifyResult.stdout.trim();
-
-        const lines: string[] = [
-          `[Tool Result — sandbox_write_file]`,
-          `Wrote ${call.args.path} (${result.bytes_written ?? call.args.content.length} bytes)`,
-        ];
-
-        if (!gitSees && call.args.path.startsWith('/workspace/')) {
-          lines.push(`⚠ Warning: git reports no changes for this file. The content may be identical to the original.`);
-        } else if (!call.args.path.startsWith('/workspace')) {
-          lines.push(`⚠ Note: File is outside /workspace — git will not track this file.`);
-        }
-
-        return { text: lines.join('\n') };
       }
 
       case 'sandbox_diff': {
@@ -1296,7 +1373,7 @@ Additional tools available when sandbox is active:
 - sandbox_read_file(path) — Read a single file from the sandbox filesystem. Only works on files — fails on directories.
 - sandbox_search(query, path?) — Search file contents in the sandbox (uses rg/grep). Fast way to locate functions, symbols, and strings before editing.
 - sandbox_list_dir(path?) — List files and folders in a sandbox directory (default: /workspace). Use this to explore the project structure before reading specific files.
-- sandbox_write_file(path, content) — Write or overwrite a file in the sandbox
+- sandbox_write_file(path, content, expected_version?) — Write or overwrite a file in the sandbox. If expected_version is provided, stale writes are rejected.
 - sandbox_diff() — Get the git diff of all uncommitted changes
 - sandbox_prepare_commit(message) — Prepare a commit for review. Gets diff, runs Auditor. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
 - sandbox_push() — Retry a failed push. Use this only if a push failed after approval. No Auditor needed (commit was already audited).
@@ -1325,6 +1402,7 @@ Sandbox rules:
 - The repo is cloned to /workspace — use that as the working directory
 - You can install packages, run tests, build, lint — anything you'd do in a terminal
 - For multi-step tasks (edit + test), use multiple tool calls in sequence
+- Prefer read → write flows for edits. Use expected_version from sandbox_read_file to avoid stale overwrites.
 ${BROWSER_RULES_BLOCK}- sandbox_diff shows what you've changed — review before committing
 - sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.
 - If the push fails after a successful commit, use sandbox_push() to retry

@@ -19,7 +19,6 @@ import urllib.parse
 import urllib.error
 import ipaddress
 import socket
-from playwright.sync_api import sync_playwright
 
 app = modal.App("push-sandbox")
 
@@ -75,6 +74,26 @@ try:
     print(json.dumps({"ok": True, "entries": entries}))
 except Exception as exc:
     print(json.dumps({"ok": False, "error": str(exc)}))
+"""
+
+FILE_VERSION_SCRIPT = """
+import hashlib
+import pathlib
+import sys
+
+target = pathlib.Path(sys.argv[1])
+
+if not target.exists() or not target.is_file():
+    print("")
+    sys.exit(0)
+
+try:
+    payload = target.read_bytes()
+except Exception as exc:
+    print(str(exc), file=sys.stderr)
+    sys.exit(1)
+
+print(hashlib.sha256(payload).hexdigest())
 """
 
 
@@ -134,6 +153,16 @@ def _validate_owner_token(sb: modal.Sandbox, provided_token: str) -> bool:
         return False
     expected = p.stdout.read().strip()
     return bool(expected) and hmac.compare_digest(expected, str(provided_token))
+
+
+def _get_file_version(sb: modal.Sandbox, path: str) -> tuple[str | None, str | None]:
+    p = sb.exec("python3", "-c", FILE_VERSION_SCRIPT, path)
+    p.wait()
+    if p.returncode != 0:
+        stderr = p.stderr.read().strip()
+        return None, f"Version check failed: {stderr or 'unknown error'}"
+    version = p.stdout.read().strip()
+    return (version or None), None
 
 
 def _is_blocked_browser_target(url: str) -> tuple[bool, str]:
@@ -327,12 +356,31 @@ def file_ops(data: dict):
             return {"error": f"Read failed: {stderr}", "content": ""}
 
         content = p.stdout.read()
-        return {"content": content[:50_000], "truncated": len(content) > 50_000}
+        version, version_error = _get_file_version(sb, path)
+        if version_error:
+            return {"error": version_error, "content": ""}
+        return {"content": content[:50_000], "truncated": len(content) > 50_000, "version": version}
 
     if action == "write":
         content = str(data.get("content", ""))
+        expected_version_raw = data.get("expected_version")
+        expected_version = expected_version_raw.strip() if isinstance(expected_version_raw, str) else ""
         if not path:
             return {"ok": False, "error": "Missing sandbox_id or path"}
+
+        current_version = None
+        if expected_version:
+            current_version, version_error = _get_file_version(sb, path)
+            if version_error:
+                return {"ok": False, "error": version_error}
+            if current_version != expected_version:
+                return {
+                    "ok": False,
+                    "error": "Stale file version. Re-read the file before writing.",
+                    "code": "STALE_FILE",
+                    "expected_version": expected_version,
+                    "current_version": current_version,
+                }
 
         safe_path = path.replace("'", "'\\''")
 
@@ -359,9 +407,13 @@ def file_ops(data: dict):
             return {"ok": False, "error": "Verification failed — file may not have been written"}
 
         written_bytes = p.stdout.read().strip()
+        new_version, version_error = _get_file_version(sb, path)
+        if version_error:
+            return {"ok": False, "error": version_error}
         return {
             "ok": True,
             "bytes_written": int(written_bytes) if written_bytes.isdigit() else 0,
+            "new_version": new_version,
         }
 
     if action == "hydrate":
@@ -521,6 +573,8 @@ def get_diff(data: dict):
 @modal.fastapi_endpoint(method="POST")
 def browser_screenshot(data: dict):
     """Browser screenshot endpoint (Browserbase-backed; wiring scaffold)."""
+    from playwright.sync_api import sync_playwright
+
     sandbox_id = data.get("sandbox_id")
     owner_token = data.get("owner_token", "")
     url = str(data.get("url", "")).strip()
@@ -642,6 +696,8 @@ def browser_screenshot(data: dict):
 @modal.fastapi_endpoint(method="POST")
 def browser_extract(data: dict):
     """Browser extract endpoint (Browserbase-backed text extraction)."""
+    from playwright.sync_api import sync_playwright
+
     sandbox_id = data.get("sandbox_id")
     owner_token = data.get("owner_token", "")
     url = str(data.get("url", "")).strip()

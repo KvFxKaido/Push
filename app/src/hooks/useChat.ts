@@ -4,7 +4,7 @@ import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget,
 import { detectAnyToolCall, executeAnyToolCall, detectMalformedToolAttempt } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent } from '@/lib/coder-agent';
-import { execInSandbox } from '@/lib/sandbox-client';
+import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
 import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
@@ -1359,6 +1359,51 @@ export function useChat(
             });
           } catch {
             // Best-effort refresh
+          } finally {
+            setAgentStatus({ active: false, phase: '' });
+          }
+          break;
+        }
+
+        case 'editor-save': {
+          setAgentStatus({ active: true, phase: 'Saving file...' });
+          try {
+            const writeResult = await writeToSandbox(
+              action.sandboxId,
+              action.path,
+              action.content,
+              action.expectedVersion,
+            );
+
+            if (!writeResult.ok) {
+              if (writeResult.code === 'STALE_FILE') {
+                const expected = writeResult.expected_version || action.expectedVersion || 'unknown';
+                const current = writeResult.current_version || 'missing';
+                injectSyntheticMessage(
+                  chatId,
+                  `Save blocked for ${action.path}: file changed since last read (expected ${expected}, current ${current}). Re-open and retry.`,
+                );
+              } else {
+                injectSyntheticMessage(chatId, `Save failed for ${action.path}: ${writeResult.error || 'Unknown error'}`);
+              }
+              break;
+            }
+
+            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+              if (card.type !== 'editor') return card;
+              return {
+                ...card,
+                data: {
+                  ...card.data,
+                  content: action.content,
+                  truncated: false,
+                  version: typeof writeResult.new_version === 'string' ? writeResult.new_version : card.data.version,
+                },
+              };
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            injectSyntheticMessage(chatId, `Save failed for ${action.path}: ${message}`);
           } finally {
             setAgentStatus({ active: false, phase: '' });
           }

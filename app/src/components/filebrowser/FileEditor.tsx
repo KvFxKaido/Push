@@ -12,14 +12,14 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { ArrowLeft, Save, RotateCcw, AlertCircle, Check, FileCode } from 'lucide-react';
 import { toast } from 'sonner';
 import { getFileEditability, isBinaryContent, formatFileSize } from '@/lib/file-utils';
-import { readFromSandbox } from '@/lib/sandbox-client';
+import { readFromSandbox, type WriteResult } from '@/lib/sandbox-client';
 import type { FileEntry } from '@/types';
 
 interface FileEditorProps {
   file: FileEntry;
   sandboxId: string;
   onBack: () => void;
-  onSave: (path: string, content: string) => Promise<void>;
+  onSave: (path: string, content: string, expectedVersion?: string) => Promise<WriteResult>;
 }
 
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB
@@ -33,6 +33,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  const [fileVersion, setFileVersion] = useState<string | undefined>(undefined);
 
   const editability = useMemo(() => getFileEditability(file.path, file.size), [file]);
   const language = editability.language || 'text';
@@ -43,7 +44,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
     setError(null);
 
     try {
-      const data = await readFromSandbox(sandboxId, file.path) as { content?: string };
+      const data = await readFromSandbox(sandboxId, file.path) as { content?: string; version?: string | null };
       
       if (!data.content) {
         throw new Error('File is empty or could not be read');
@@ -62,6 +63,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
 
       setContent(data.content);
       setOriginalContent(data.content);
+      setFileVersion(typeof data.version === 'string' ? data.version : undefined);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load file';
       setError(message);
@@ -89,7 +91,10 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
 
     setSaving(true);
     try {
-      await onSave(file.path, content);
+      const saveResult = await onSave(file.path, content, fileVersion);
+      if (typeof saveResult.new_version === 'string') {
+        setFileVersion(saveResult.new_version);
+      }
       toast.success('File saved');
       onBack();
     } catch (err) {

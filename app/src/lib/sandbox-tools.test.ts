@@ -17,10 +17,12 @@ const {
   mockBrowserToolEnabled,
   mockBrowserScreenshotInSandbox,
   mockBrowserExtractInSandbox,
+  mockRecordWriteFileMetric,
 } = vi.hoisted(() => ({
   mockBrowserToolEnabled: { value: true },
   mockBrowserScreenshotInSandbox: vi.fn(),
   mockBrowserExtractInSandbox: vi.fn(),
+  mockRecordWriteFileMetric: vi.fn(),
 }));
 
 // Mock the feature-flags module so we can control browserToolEnabled per test.
@@ -52,6 +54,10 @@ vi.mock('./browser-metrics', () => ({
   recordBrowserMetric: vi.fn(),
 }));
 
+vi.mock('./edit-metrics', () => ({
+  recordWriteFileMetric: (...args: unknown[]) => mockRecordWriteFileMetric(...args),
+}));
+
 // Mock tool-dispatch for extractBareToolJsonObjects.
 // We provide a real implementation since the detection tests rely on it.
 vi.mock('./tool-dispatch', async () => {
@@ -66,6 +72,7 @@ import {
   detectSandboxToolCall,
   executeSandboxToolCall,
 } from './sandbox-tools';
+import * as sandboxClient from './sandbox-client';
 
 // ---------------------------------------------------------------------------
 // 1. Tool validation -- sandbox_browser_screenshot
@@ -173,6 +180,25 @@ describe('validateSandboxToolCall -- promote_to_github', () => {
       args: { repo_name: '   ' },
     });
     expect(result).toBeNull();
+  });
+});
+
+describe('validateSandboxToolCall -- sandbox_write_file', () => {
+  it('accepts optional expected_version', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_write_file',
+      args: {
+        path: '/workspace/src/example.ts',
+        content: 'export const value = 1;',
+        expected_version: 'abc123',
+      },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.tool).toBe('sandbox_write_file');
+    if (result?.tool === 'sandbox_write_file') {
+      expect(result.args.expected_version).toBe('abc123');
+    }
   });
 });
 
@@ -739,5 +765,109 @@ describe('executeSandboxToolCall -- sandbox_browser_extract', () => {
     expect(result.text).toContain('Content truncated: yes');
     const data = result.card!.data as import('@/types').BrowserExtractCardData;
     expect(data.truncated).toBe(true);
+  });
+});
+
+describe('executeSandboxToolCall -- stale write handling', () => {
+  beforeEach(() => {
+    mockBrowserToolEnabled.value = true;
+    mockRecordWriteFileMetric.mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+  });
+
+  it('reuses cached file version from read when write omits expected_version', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const x = 1;',
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: false,
+      code: 'STALE_FILE',
+      error: 'Stale file version',
+      expected_version: 'v1',
+      current_version: 'v2',
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/example.ts' } },
+      'sb-123',
+    );
+
+    const writeResult = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/src/example.ts', content: 'export const x = 2;' } },
+      'sb-123',
+    );
+
+    expect(sandboxClient.writeToSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      '/workspace/src/example.ts',
+      'export const x = 2;',
+      'v1',
+    );
+    expect(writeResult.text).toContain('Stale write rejected');
+    expect(writeResult.text).toContain('Expected version: v1');
+    expect(writeResult.text).toContain('Current version: v2');
+    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'stale',
+      errorCode: 'STALE_FILE',
+      durationMs: expect.any(Number),
+    }));
+  });
+});
+
+describe('executeSandboxToolCall -- write metrics', () => {
+  beforeEach(() => {
+    mockBrowserToolEnabled.value = true;
+    mockRecordWriteFileMetric.mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+  });
+
+  it('records success metrics for sandbox_write_file', async () => {
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      bytes_written: 10,
+      new_version: 'v2',
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'M src/example.ts\n',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/src/example.ts', content: 'const x=1;' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Wrote /workspace/src/example.ts');
+    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'success',
+      durationMs: expect.any(Number),
+    }));
+  });
+
+  it('records non-stale error metrics for sandbox_write_file', async () => {
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: false,
+      code: 'WRITE_FAILED',
+      error: 'disk full',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/src/example.ts', content: 'const x=1;' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error]');
+    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'error',
+      errorCode: 'WRITE_FAILED',
+      durationMs: expect.any(Number),
+    }));
   });
 });

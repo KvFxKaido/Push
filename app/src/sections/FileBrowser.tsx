@@ -110,8 +110,17 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
     setEditingFile(file);
   }, []);
 
-  const handleSaveFile = useCallback(async (path: string, content: string) => {
-    await writeToSandbox(sandboxId, path, content);
+  const handleSaveFile = useCallback(async (path: string, content: string, expectedVersion?: string) => {
+    const result = await writeToSandbox(sandboxId, path, content, expectedVersion);
+    if (!result.ok) {
+      if (result.code === 'STALE_FILE') {
+        const expected = result.expected_version || expectedVersion || 'unknown';
+        const current = result.current_version || 'missing';
+        throw new Error(`File changed since last read (expected ${expected}, current ${current}). Re-open and retry.`);
+      }
+      throw new Error(result.error || 'Save failed');
+    }
+    return result;
   }, [sandboxId]);
 
   const handleUpload = useCallback((fileList: FileList) => {

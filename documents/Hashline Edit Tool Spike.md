@@ -2,8 +2,18 @@
 
 ## Status
 - Last updated: 2026-02-12
-- State: Exploratory — not yet implemented
+- State: Exploratory for hashline; prerequisite hardening partially implemented
 - Source of truth: This document
+
+## Implemented So Far (Pre-Hashline)
+
+- File-level staleness detection is live for `sandbox_write_file`:
+  - `sandbox_read_file` returns a SHA-256 content version.
+  - `sandbox_write_file` accepts `expected_version` and rejects stale writes (`STALE_FILE`).
+  - Editor and tool flows pass/consume versions and avoid blind overwrite.
+- Baseline write telemetry is in place:
+  - In-memory metrics for `sandbox_write_file` outcome (`success`, `stale`, `error`) and latency.
+  - Enables before/after comparison when hashline edit tools are introduced.
 
 ## Context
 
@@ -34,7 +44,7 @@ Push has unique advantages for testing hashline:
 - Complete file replacement only
 - Model must reproduce entire file perfectly
 - No anchoring mechanism
-- No staleness detection
+- File-level staleness detection (version-based CAS) implemented
 - Whitespace/indentation mismatches common
 
 **Problems:**
@@ -347,7 +357,7 @@ Add property/fuzz tests in `sandbox/test_hashline.py`:
 
 ## Total Implementation Effort
 
-**Estimated:** 20-28 hours (3-4 focused work sessions)
+**Estimated (remaining):** 18-25 hours (3-4 focused work sessions)
 
 Breakdown:
 - Backend hashline utils + endpoint + EOL handling: 5-7h
@@ -356,7 +366,7 @@ Breakdown:
 - File read annotation + range reads: 2-3h
 - Prompt engineering: 1h
 - Testing (unit + property/fuzz tests): 4-6h
-- Telemetry instrumentation: 2-3h
+- Telemetry instrumentation: **done (pre-hashline baseline for write-file path)**
 
 **Prerequisite:** Run micro-test (1-2h) to validate that each provider can emit valid hashline edits from prompt examples before committing to the full build.
 
@@ -440,7 +450,7 @@ For a 500-line file, that's 4-5KB of annotation against `MAX_TOOL_RESULT_SIZE` o
 - Implement backend hashline utils + endpoint
 - Implement frontend tool + client
 - Add Worker route
-- **Add telemetry instrumentation from day 1** (edit success/failure rate, staleness frequency, token counts, latency) — Week 3 comparison is meaningless without baseline data
+- Telemetry instrumentation already added for `sandbox_write_file` baseline. Extend metrics for `sandbox_edit_file` in this phase.
 - Manual testing with real sandbox
 
 ### Week 2: Integration

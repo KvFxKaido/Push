@@ -24,6 +24,8 @@ export interface ExecResult {
 export interface FileReadResult {
   content: string;
   truncated: boolean;
+  /** SHA-256 of full file content at read time */
+  version?: string | null;
 }
 
 export interface DiffResult {
@@ -299,19 +301,25 @@ export async function readFromSandbox(
 export interface WriteResult {
   ok: boolean;
   error?: string;
+  code?: string;
   bytes_written?: number;
+  expected_version?: string;
+  current_version?: string | null;
+  new_version?: string | null;
 }
 
 export async function writeToSandbox(
   sandboxId: string,
   path: string,
   content: string,
+  expectedVersion?: string,
 ): Promise<WriteResult> {
   return sandboxFetch<WriteResult>('write', {
     ...withOwnerToken({}),
     sandbox_id: sandboxId,
     path,
     content,
+    expected_version: expectedVersion,
   });
 }
 
