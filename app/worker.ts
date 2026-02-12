@@ -904,14 +904,22 @@ async function handleMistralChat(request: Request, env: Env): Promise<Response> 
  * Z.ai requires HMAC-SHA256 signed JWTs instead of raw Bearer tokens.
  */
 async function generateZaiJWT(apiKey: string): Promise<string> {
-  const dotIndex = apiKey.indexOf('.');
-  if (dotIndex === -1) {
-    // Not in id.secret format — return as-is (may already be a token)
-    return apiKey;
+  const normalized = apiKey.trim().replace(/^Bearer\s+/i, '');
+  const segments = normalized.split('.');
+
+  if (segments.length === 3) {
+    // Already a JWT
+    return normalized;
   }
 
-  const id = apiKey.slice(0, dotIndex);
-  const secret = apiKey.slice(dotIndex + 1);
+  const dotIndex = normalized.indexOf('.');
+  if (dotIndex === -1) {
+    // Not in id.secret format — return as-is
+    return normalized;
+  }
+
+  const id = normalized.slice(0, dotIndex);
+  const secret = normalized.slice(dotIndex + 1);
   const now = Date.now();
 
   const encodeBase64Url = (str: string): string =>
@@ -951,18 +959,20 @@ async function handleZaiChat(request: Request, env: Env): Promise<Response> {
     return Response.json({ error: 'Rate limit exceeded' }, { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } });
   }
 
-  // Prefer server-side secret; fall back to client-provided Authorization header.
-  // If using a server-side key, generate a JWT from it (Z.ai requires JWT auth).
-  // Client-side keys are already converted to JWTs by the app before sending.
+  // Prefer client-provided Authorization when present, so a stale Worker secret
+  // does not override user-configured keys from Settings.
+  // Fall back to the server-side secret (converted to a JWT) when no client key exists.
   const serverKey = env.ZAI_API_KEY;
   const clientAuth = request.headers.get('Authorization');
   let authHeader: string | null;
 
-  if (serverKey) {
+  if (clientAuth) {
+    authHeader = clientAuth;
+  } else if (serverKey) {
     const jwt = await generateZaiJWT(serverKey);
     authHeader = `Bearer ${jwt}`;
   } else {
-    authHeader = clientAuth;
+    authHeader = null;
   }
 
   if (!authHeader) {
