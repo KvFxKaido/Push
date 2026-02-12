@@ -6,8 +6,8 @@ Use this file to quickly identify which planning docs are authoritative vs histo
 
 - `Browserbase Integration Spike.md`
   - Status: Active reference for browser tool implementation and hardening tasks.
-- `Memvid Integration Proposal.md`
-  - Status: Consolidated draft for memory strategy.
+- `Hashline Edit Tool Spike.md`
+  - Status: Exploratory proposal for more stable line-addressed file edits.
 - `Sandbox mode.md`
   - Status: v1 implemented. Contains original spec + implementation notes.
 - `SECURITY_AUDIT.md`
@@ -19,11 +19,14 @@ Use this file to quickly identify which planning docs are authoritative vs histo
   - Status: Deprecated pointer.
   - Canonical roadmap lives at `../ROADMAP.md`.
 
-## Historical
+## Archive
 
-- `Scratchpad Implementation Plan.md`
-  - Status: Historical/superseded.
-  - Contains an addendum describing what shipped instead.
+- `archive/Workspace Hub Sprint Plan.md`
+  - Status: Historical/superseded by implementation and `../ROADMAP.md`.
+- `archive/PR and Branch Awareness.md`
+  - Status: Historical planning reference; branch model now codified in root docs and code.
+- `archive/Memvid Integration Proposal.md`
+  - Status: Historical proposal; relevant shipped pieces are reflected elsewhere.
 
 ## Promotion Rule
 
