@@ -1304,6 +1304,41 @@ export async function streamMistralChat(
 
 
 
+/**
+ * Generate a JWT for the Z.ai (ZhipuAI) API from an API key in `{id}.{secret}` format.
+ * Z.ai requires HMAC-SHA256 signed JWTs instead of raw Bearer tokens.
+ */
+async function generateZaiJWT(apiKey: string): Promise<string> {
+  const dotIndex = apiKey.indexOf('.');
+  if (dotIndex === -1) {
+    // Not in id.secret format — return as-is (may already be a token)
+    return apiKey;
+  }
+
+  const id = apiKey.slice(0, dotIndex);
+  const secret = apiKey.slice(dotIndex + 1);
+  const now = Date.now();
+
+  const encodeBase64Url = (str: string): string =>
+    btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+  const header = JSON.stringify({ alg: 'HS256', sign_type: 'SIGN' });
+  const payload = JSON.stringify({ api_key: id, exp: now + 3_600_000, timestamp: now });
+  const signingInput = `${encodeBase64Url(header)}.${encodeBase64Url(payload)}`;
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signingInput)));
+  const encodedSig = encodeBase64Url(Array.from(sig, (b) => String.fromCharCode(b)).join(''));
+
+  return `${signingInput}.${encodedSig}`;
+}
+
 export async function streamZaiChat(
   messages: ChatMessage[],
   onToken: (token: string, meta?: ChunkMetadata) => void,
@@ -1323,11 +1358,14 @@ export async function streamZaiChat(
     return;
   }
 
+  // Z.ai requires JWT auth — generate from the {id}.{secret} API key
+  const jwt = await generateZaiJWT(apiKey);
+
   return streamSSEChat(
     {
       name: 'Z.ai',
       apiUrl: ZAI_API_URL,
-      apiKey,
+      apiKey: jwt,
       model: modelOverride || getZaiModelName(),
       connectTimeoutMs: 30_000,
       idleTimeoutMs: 60_000,

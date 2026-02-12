@@ -897,6 +897,43 @@ async function handleMistralChat(request: Request, env: Env): Promise<Response> 
 
 
 
+// --- Z.ai JWT generation ---
+
+/**
+ * Generate a JWT for the Z.ai (ZhipuAI) API from an API key in `{id}.{secret}` format.
+ * Z.ai requires HMAC-SHA256 signed JWTs instead of raw Bearer tokens.
+ */
+async function generateZaiJWT(apiKey: string): Promise<string> {
+  const dotIndex = apiKey.indexOf('.');
+  if (dotIndex === -1) {
+    // Not in id.secret format — return as-is (may already be a token)
+    return apiKey;
+  }
+
+  const id = apiKey.slice(0, dotIndex);
+  const secret = apiKey.slice(dotIndex + 1);
+  const now = Date.now();
+
+  const encodeBase64Url = (str: string): string =>
+    btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+  const header = JSON.stringify({ alg: 'HS256', sign_type: 'SIGN' });
+  const payload = JSON.stringify({ api_key: id, exp: now + 3_600_000, timestamp: now });
+  const signingInput = `${encodeBase64Url(header)}.${encodeBase64Url(payload)}`;
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signingInput)));
+  const encodedSig = encodeBase64Url(Array.from(sig, (b) => String.fromCharCode(b)).join(''));
+
+  return `${signingInput}.${encodedSig}`;
+}
+
 // --- Z.ai streaming proxy ---
 
 async function handleZaiChat(request: Request, env: Env): Promise<Response> {
@@ -914,10 +951,19 @@ async function handleZaiChat(request: Request, env: Env): Promise<Response> {
     return Response.json({ error: 'Rate limit exceeded' }, { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } });
   }
 
-  // Prefer server-side secret; fall back to client-provided Authorization header
+  // Prefer server-side secret; fall back to client-provided Authorization header.
+  // If using a server-side key, generate a JWT from it (Z.ai requires JWT auth).
+  // Client-side keys are already converted to JWTs by the app before sending.
   const serverKey = env.ZAI_API_KEY;
   const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
+  let authHeader: string | null;
+
+  if (serverKey) {
+    const jwt = await generateZaiJWT(serverKey);
+    authHeader = `Bearer ${jwt}`;
+  } else {
+    authHeader = clientAuth;
+  }
 
   if (!authHeader) {
     return Response.json(
