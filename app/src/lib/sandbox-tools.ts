@@ -1108,8 +1108,11 @@ export async function executeSandboxToolCall(
         const currentBranchResult = await execInSandbox(sandboxId, 'cd /workspace && git branch --show-current');
         const currentBranch = currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : '';
 
-        // Step 3: Determine draft branch name
+        // Step 3: Determine draft branch name — must start with draft/ (unaudited path)
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        if (call.args.branch_name && !call.args.branch_name.startsWith('draft/')) {
+          return { text: '[Tool Error — sandbox_save_draft]\nbranch_name must start with "draft/". This tool skips Auditor review and is restricted to draft branches. Use sandbox_prepare_commit for non-draft branches.' };
+        }
         const draftBranchName = call.args.branch_name || `draft/${currentBranch || 'main'}-${timestamp}`;
 
         // Step 4: Create draft branch if not already on one
