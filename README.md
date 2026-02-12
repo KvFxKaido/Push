@@ -41,7 +41,7 @@ The app is free. The AI requires a subscription — but you pick which one, and 
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Kimi For Coding, Mistral Vibe, or Ollama Cloud — subscription-based, unlimited API |
+| AI | Kimi For Coding, Mistral Vibe, or Ollama Cloud — subscription-based, generous API allowances |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -59,9 +59,9 @@ npm run dev
 Create `app/.env` for local development, or paste keys in the Settings UI at runtime. Push works with AI services that include API access in their subscriptions:
 
 ```env
-VITE_MOONSHOT_API_KEY=...              # Kimi For Coding (unlimited API with subscription)
-VITE_MISTRAL_API_KEY=...              # Mistral Vibe (unlimited API with subscription)
-VITE_OLLAMA_API_KEY=...               # Ollama Cloud (unlimited API with subscription)
+VITE_MOONSHOT_API_KEY=...              # Kimi For Coding (API access included with subscription)
+VITE_MISTRAL_API_KEY=...              # Mistral Vibe (API access included with subscription)
+VITE_OLLAMA_API_KEY=...               # Ollama Cloud (API access included with subscription)
 VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)
 VITE_GITHUB_TOKEN=...                 # Optional — PAT for GitHub API access
 VITE_GITHUB_CLIENT_ID=...             # Optional — GitHub App OAuth client ID
