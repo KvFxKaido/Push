@@ -291,7 +291,7 @@ export function ChatInput({
             placeholder={repoName ? `Ask about ${repoName}...` : 'Ask about code...'}
             disabled={isStreaming}
             rows={1}
-            className="w-full resize-none overflow-hidden bg-transparent px-1 pb-2 text-[15px] leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-[15px] leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </div>
 
