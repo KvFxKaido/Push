@@ -1,22 +1,21 @@
-import { useState } from 'react';
-import { FileCode, ChevronRight } from 'lucide-react';
+import { FileCode } from 'lucide-react';
 import type { FileCardData } from '@/types';
+import { useExpandable } from '@/hooks/useExpandable';
 import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { ExpandChevron, ExpandableCardPanel } from './expandable';
 
 export function FileCard({ data }: { data: FileCardData }) {
-  const [expanded, setExpanded] = useState(true);
+  const { expanded, toggleExpanded } = useExpandable(true);
   const lineCount = data.content.split('\n').length;
 
   return (
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <button
-        onClick={() => setExpanded((e) => !e)}
+        onClick={toggleExpanded}
         className="w-full px-3.5 py-3 flex items-center gap-2 hover:bg-[#151517] transition-colors duration-200"
       >
-        <ChevronRight
-          className={`h-3 w-3 text-push-fg-dim shrink-0 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
-        />
+        <ExpandChevron expanded={expanded} className="shrink-0" />
         <FileCode className="h-3.5 w-3.5 text-push-fg-secondary shrink-0" />
         <span className="text-[13px] text-push-fg font-mono truncate">
           {data.path}
@@ -32,20 +31,18 @@ export function FileCard({ data }: { data: FileCardData }) {
       </button>
 
       {/* Code content */}
-      {expanded && (
-        <div className="border-t border-push-edge expand-in">
-          <pre className="px-3 py-2 overflow-x-auto max-h-[400px] overflow-y-auto">
-            <code className="font-mono text-[12px] text-[#e4e4e7] leading-relaxed whitespace-pre">
-              {data.content}
-            </code>
-          </pre>
-          {data.truncated && (
-            <div className="px-3 py-1.5 border-t border-push-edge text-[11px] text-push-fg-dim italic">
-              Content truncated at 5K characters
-            </div>
-          )}
-        </div>
-      )}
+      <ExpandableCardPanel expanded={expanded}>
+        <pre className="px-3 py-2 overflow-x-auto max-h-[400px] overflow-y-auto">
+          <code className="font-mono text-[12px] text-[#e4e4e7] leading-relaxed whitespace-pre">
+            {data.content}
+          </code>
+        </pre>
+        {data.truncated && (
+          <div className="px-3 py-1.5 border-t border-push-edge text-[11px] text-push-fg-dim italic">
+            Content truncated at 5K characters
+          </div>
+        )}
+      </ExpandableCardPanel>
     </div>
   );
 }
