@@ -365,6 +365,16 @@ export interface AgentStatus {
   detail?: string;
 }
 
+export type AgentStatusSource = 'orchestrator' | 'coder' | 'auditor' | 'system';
+
+export interface AgentStatusEvent {
+  id: string;
+  timestamp: number;
+  source: AgentStatusSource;
+  phase: string;
+  detail?: string;
+}
+
 export interface Conversation {
   id: string;
   title: string;
