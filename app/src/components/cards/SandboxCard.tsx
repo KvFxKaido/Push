@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { ChevronRight, Terminal, CheckCircle2, XCircle, Copy, Download, Check } from 'lucide-react';
+import { Terminal, CheckCircle2, XCircle, Copy, Download, Check } from 'lucide-react';
 import type { SandboxCardData } from '@/types';
+import { useExpandable } from '@/hooks/useExpandable';
 import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { ExpandChevron, ExpandableCardPanel } from './expandable';
 
 export function SandboxCard({ data }: { data: SandboxCardData }) {
-  const [expanded, setExpanded] = useState(data.exitCode !== 0);
+  const { expanded, toggleExpanded } = useExpandable(data.exitCode !== 0);
   const [copied, setCopied] = useState(false);
   const isSuccess = data.exitCode === 0;
 
@@ -37,7 +39,7 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <button
-        onClick={() => setExpanded((e) => !e)}
+        onClick={toggleExpanded}
         className="w-full px-3.5 py-3 flex items-center gap-2.5 hover:bg-[#0d1119] transition-colors duration-200"
       >
         <Terminal className="h-4 w-4 shrink-0 text-push-fg-secondary" />
@@ -79,41 +81,37 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
               {data.exitCode}
             </span>
           )}
-          <ChevronRight
-            className={`h-3 w-3 text-push-fg-dim transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
-          />
+          <ExpandChevron expanded={expanded} />
         </div>
       </button>
 
       {/* Output */}
-      {expanded && (
-        <div className="border-t border-push-edge expand-in">
-          {data.stdout && (
-            <pre className="px-3 py-2 overflow-x-auto">
-              <code className="font-mono text-[12px] text-push-fg-secondary leading-relaxed whitespace-pre-wrap break-all">
-                {data.stdout}
-              </code>
-            </pre>
-          )}
-          {data.stderr && (
-            <pre className="px-3 py-2 bg-[#05080e] overflow-x-auto">
-              <code className="font-mono text-[12px] text-[#ef4444]/70 leading-relaxed whitespace-pre-wrap break-all">
-                {data.stderr}
-              </code>
-            </pre>
-          )}
-          {data.truncated && (
-            <div className="px-3 py-1.5 text-[11px] text-push-fg-dim italic border-t border-push-edge">
-              Output truncated
-            </div>
-          )}
-          {!data.stdout && !data.stderr && (
-            <div className="px-3 py-2 text-[12px] text-push-fg-dim italic">
-              No output
-            </div>
-          )}
-        </div>
-      )}
+      <ExpandableCardPanel expanded={expanded}>
+        {data.stdout && (
+          <pre className="px-3 py-2 overflow-x-auto">
+            <code className="font-mono text-[12px] text-push-fg-secondary leading-relaxed whitespace-pre-wrap break-all">
+              {data.stdout}
+            </code>
+          </pre>
+        )}
+        {data.stderr && (
+          <pre className="px-3 py-2 bg-[#05080e] overflow-x-auto">
+            <code className="font-mono text-[12px] text-[#ef4444]/70 leading-relaxed whitespace-pre-wrap break-all">
+              {data.stderr}
+            </code>
+          </pre>
+        )}
+        {data.truncated && (
+          <div className="px-3 py-1.5 text-[11px] text-push-fg-dim italic border-t border-push-edge">
+            Output truncated
+          </div>
+        )}
+        {!data.stdout && !data.stderr && (
+          <div className="px-3 py-2 text-[12px] text-push-fg-dim italic">
+            No output
+          </div>
+        )}
+      </ExpandableCardPanel>
     </div>
   );
 }
