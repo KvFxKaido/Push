@@ -1,17 +1,39 @@
 import { useMemo, useState } from 'react';
 import { Copy, Download, Check } from 'lucide-react';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
-import type { ChatMessage } from '@/types';
+import type { AgentStatusEvent, AgentStatusSource, ChatMessage } from '@/types';
 
 interface HubConsoleTabProps {
   messages: ChatMessage[];
+  agentEvents: AgentStatusEvent[];
 }
 
-export function HubConsoleTab({ messages }: HubConsoleTabProps) {
+interface ConsoleLogItem {
+  type: 'call' | 'result' | 'status';
+  content: string;
+  timestamp: number;
+  source?: AgentStatusSource;
+  detail?: string;
+}
+
+function getSourceLabel(source: AgentStatusSource): string {
+  switch (source) {
+    case 'coder':
+      return 'Coder';
+    case 'auditor':
+      return 'Auditor';
+    case 'system':
+      return 'System';
+    default:
+      return 'Orchestrator';
+  }
+}
+
+export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
   const [copied, setCopied] = useState(false);
 
   const logs = useMemo(() => {
-    const items: Array<{ type: 'call' | 'result'; content: string; timestamp: number }> = [];
+    const items: ConsoleLogItem[] = [];
     messages.forEach((m) => {
       if (m.role === 'assistant') {
         const toolCall = detectAnyToolCall(m.content);
@@ -27,13 +49,28 @@ export function HubConsoleTab({ messages }: HubConsoleTabProps) {
         items.push({ type: 'result', content: m.content, timestamp: m.timestamp });
       }
     });
-    return items;
-  }, [messages]);
+
+    agentEvents.forEach((event) => {
+      items.push({
+        type: 'status',
+        content: event.phase,
+        detail: event.detail,
+        source: event.source,
+        timestamp: event.timestamp,
+      });
+    });
+
+    return items.sort((a, b) => a.timestamp - b.timestamp);
+  }, [messages, agentEvents]);
 
   const getFormattedLogs = () => {
     return logs
       .map((log) => {
         const date = new Date(log.timestamp).toISOString();
+        if (log.type === 'status' && log.source) {
+          const detail = log.detail ? ` — ${log.detail}` : '';
+          return `[${date}] [${getSourceLabel(log.source)}] ${log.content}${detail}`;
+        }
         return `[${date}] ${log.type === 'call' ? '' : '  '}${log.content}`;
       })
       .join('\n');
@@ -67,7 +104,7 @@ export function HubConsoleTab({ messages }: HubConsoleTabProps) {
       {/* Sticky Header */}
       <div className="sticky top-0 z-10 flex items-center justify-between border-b border-push-edge bg-push-bg-primary/80 px-3 py-2 backdrop-blur-md">
         <span className="text-[11px] font-medium uppercase tracking-wider text-push-fg-dim">
-          Tool Console
+          Agent Console
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -96,13 +133,21 @@ export function HubConsoleTab({ messages }: HubConsoleTabProps) {
           {logs.map((log, idx) => (
             <div
               key={`${log.timestamp}-${idx}`}
-              className={log.type === 'call' ? 'text-push-fg-secondary' : 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'}
+              className={
+                log.type === 'call'
+                  ? 'text-push-fg-secondary'
+                  : log.type === 'result'
+                  ? 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'
+                  : 'ml-2 border-l border-push-edge/70 pl-2 text-[#86c5ff]'
+              }
             >
+              {log.type === 'status' && log.source ? `[${getSourceLabel(log.source)}] ` : ''}
               {log.content}
+              {log.type === 'status' && log.detail ? ` — ${log.detail}` : ''}
             </div>
           ))}
           {logs.length === 0 && (
-            <p className="text-push-fg-dim">No tool logs yet.</p>
+            <p className="text-push-fg-dim">No console logs yet.</p>
           )}
         </div>
       </div>
