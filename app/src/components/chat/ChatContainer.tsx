@@ -163,13 +163,17 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
     // Always scroll to bottom when user sends a new message
     if (isNewMessage && lastMessage.role === 'user') {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      setIsAtBottom(true);
     } else {
       // For assistant messages (streaming), only scroll if user is near bottom
       const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      const isNearBottom = distanceFromBottom < 150;
+      const isNearBottom = distanceFromBottom < AUTO_SCROLL_THRESHOLD_PX;
 
       if (isNearBottom) {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        setIsAtBottom(true);
+      } else {
+        setIsAtBottom(false);
       }
     }
 
