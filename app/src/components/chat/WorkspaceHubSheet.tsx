@@ -470,62 +470,6 @@ export function WorkspaceHubSheet({
               </div>
             </div>
 
-            {/* Commit bar (shown on Files/Diff tabs) */}
-            {showCommitBar && (
-              <div className="mt-2">
-                <div className="flex items-center gap-1.5">
-                  <input
-                    value={commitMessage}
-                    onChange={(e) => setCommitMessage(e.target.value)}
-                    placeholder="Commit message"
-                    disabled={commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error'}
-                    className="h-8 min-w-0 flex-1 rounded-lg border border-push-edge bg-push-surface px-2.5 text-xs text-push-fg-secondary outline-none transition-colors placeholder:text-push-fg-dim focus:border-push-sky/50 disabled:opacity-50"
-                  />
-                  <button
-                    onClick={() => {
-                      if (commitPhase === 'success' || commitPhase === 'error') {
-                        setCommitPhase('idle');
-                        setCommitError(null);
-                        return;
-                      }
-                      void runCommitAndPush();
-                    }}
-                    disabled={
-                      (commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error') ||
-                      !sandboxReady
-                    }
-                    className={`flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] transition-colors disabled:opacity-50 ${
-                      commitPhase === 'success'
-                        ? 'border-emerald-500/50 bg-emerald-950/35 text-emerald-300'
-                        : commitPhase === 'error'
-                        ? 'border-red-500/40 bg-red-950/20 text-red-300'
-                        : 'border-push-edge bg-[#080b10]/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
-                    }`}
-                  >
-                    {commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error' ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : commitPhase === 'success' ? (
-                      <Check className="h-3.5 w-3.5" />
-                    ) : (
-                      <GitCommitHorizontal className="h-3.5 w-3.5" />
-                    )}
-                    {commitPhase === 'idle'
-                      ? 'Commit & Push'
-                      : commitPhase === 'success' || commitPhase === 'error'
-                      ? 'Reset'
-                      : PHASE_LABELS[commitPhase]}
-                  </button>
-                </div>
-                {blockedByProtectMain && (
-                  <p className="mt-1 text-[10px] text-amber-300">
-                    Protect Main is enabled for {branchProps.defaultBranch}.
-                  </p>
-                )}
-                {commitPhase === 'error' && commitError && (
-                  <p className="mt-1 text-[10px] text-red-300">{commitError}</p>
-                )}
-              </div>
-            )}
           </header>
 
           {/* Branch switch confirmation overlay */}
@@ -574,6 +518,63 @@ export function WorkspaceHubSheet({
               })}
             </div>
           </div>
+
+          {/* Commit bar (shown on Files/Diff tabs, below tab bar) */}
+          {showCommitBar && (
+            <div className="border-b border-push-edge px-3 py-2">
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={commitMessage}
+                  onChange={(e) => setCommitMessage(e.target.value)}
+                  placeholder="Commit message"
+                  disabled={commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error'}
+                  className="h-8 min-w-0 flex-1 rounded-lg border border-push-edge bg-push-surface px-2.5 text-xs text-push-fg-secondary outline-none transition-colors placeholder:text-push-fg-dim focus:border-push-sky/50 disabled:opacity-50"
+                />
+                <button
+                  onClick={() => {
+                    if (commitPhase === 'success' || commitPhase === 'error') {
+                      setCommitPhase('idle');
+                      setCommitError(null);
+                      return;
+                    }
+                    void runCommitAndPush();
+                  }}
+                  disabled={
+                    (commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error') ||
+                    !sandboxReady
+                  }
+                  className={`flex h-8 items-center gap-1 rounded-lg border px-2 text-[11px] transition-colors disabled:opacity-50 ${
+                    commitPhase === 'success'
+                      ? 'border-emerald-500/50 bg-emerald-950/35 text-emerald-300'
+                      : commitPhase === 'error'
+                      ? 'border-red-500/40 bg-red-950/20 text-red-300'
+                      : 'border-push-edge bg-[#080b10]/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
+                  }`}
+                >
+                  {commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : commitPhase === 'success' ? (
+                    <Check className="h-3.5 w-3.5" />
+                  ) : (
+                    <GitCommitHorizontal className="h-3.5 w-3.5" />
+                  )}
+                  {commitPhase === 'idle'
+                    ? 'Commit & Push'
+                    : commitPhase === 'success' || commitPhase === 'error'
+                    ? 'Reset'
+                    : PHASE_LABELS[commitPhase]}
+                </button>
+              </div>
+              {blockedByProtectMain && (
+                <p className="mt-1 text-[10px] text-amber-300">
+                  Protect Main is enabled for {branchProps.defaultBranch}.
+                </p>
+              )}
+              {commitPhase === 'error' && commitError && (
+                <p className="mt-1 text-[10px] text-red-300">{commitError}</p>
+              )}
+            </div>
+          )}
 
           {/* Tab content */}
           <div
