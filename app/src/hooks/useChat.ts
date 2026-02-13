@@ -1,5 +1,20 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardAction, CommitReviewCardData, ChatCard, AttachmentData, AIProviderType, SandboxStateCardData, ActiveRepo, ToolMeta } from '@/types';
+import type {
+  ChatMessage,
+  AgentStatus,
+  AgentStatusEvent,
+  AgentStatusSource,
+  Conversation,
+  ToolExecutionResult,
+  CardAction,
+  CommitReviewCardData,
+  ChatCard,
+  AttachmentData,
+  AIProviderType,
+  SandboxStateCardData,
+  ActiveRepo,
+  ToolMeta,
+} from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, detectMalformedToolAttempt, detectUnimplementedToolCall } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
@@ -16,6 +31,8 @@ const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
 const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
+const MAX_AGENT_EVENTS_PER_CHAT = 200;
+const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
 
 function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -279,6 +296,8 @@ export function useChat(
   const [activeChatId, setActiveChatId] = useState<string>(() => loadActiveChatId(conversations));
   const [isStreaming, setIsStreaming] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
+  const [agentEventsByChat, setAgentEventsByChat] = useState<Record<string, AgentStatusEvent[]>>({});
+  const activeChatIdRef = useRef(activeChatId);
   const abortRef = useRef(false);
   // Track processed message content to prevent duplicate tokens during streaming glitches
   const processedContentRef = useRef<Set<string>>(new Set());
@@ -307,10 +326,77 @@ export function useChat(
   const branchInfoRef = useRef(branchInfo);
   branchInfoRef.current = branchInfo;
 
+  useEffect(() => {
+    activeChatIdRef.current = activeChatId;
+  }, [activeChatId]);
+
+  const appendAgentEvent = useCallback(
+    (chatId: string, status: AgentStatus, source: AgentStatusSource = 'orchestrator') => {
+      const phase = status.phase.trim();
+      if (!chatId || !phase) return;
+      const detail = status.detail?.trim();
+      const now = Date.now();
+
+      setAgentEventsByChat((prev) => {
+        const existing = prev[chatId] || [];
+        const last = existing[existing.length - 1];
+        if (
+          last &&
+          last.source === source &&
+          last.phase === phase &&
+          (last.detail || '') === (detail || '') &&
+          now - last.timestamp < AGENT_EVENT_DEDUPE_WINDOW_MS
+        ) {
+          return prev;
+        }
+
+        const nextEvent: AgentStatusEvent = {
+          id: createId(),
+          timestamp: now,
+          source,
+          phase,
+          detail: detail || undefined,
+        };
+
+        const next = [...existing, nextEvent];
+        if (next.length > MAX_AGENT_EVENTS_PER_CHAT) {
+          next.splice(0, next.length - MAX_AGENT_EVENTS_PER_CHAT);
+        }
+
+        return { ...prev, [chatId]: next };
+      });
+    },
+    [],
+  );
+
+  const updateAgentStatus = useCallback(
+    (
+      status: AgentStatus,
+      options?: {
+        chatId?: string;
+        source?: AgentStatusSource;
+        log?: boolean;
+      },
+    ) => {
+      setAgentStatus(status);
+      if (options?.log === false || !status.active) return;
+      const phase = status.phase.trim();
+      if (!phase) return;
+      const targetChatId = options?.chatId || activeChatIdRef.current;
+      if (!targetChatId) return;
+      appendAgentEvent(targetChatId, { ...status, phase }, options?.source || 'orchestrator');
+    },
+    [appendAgentEvent],
+  );
+
   // Derived state
   const messages = useMemo(
     () => conversations[activeChatId]?.messages ?? [],
     [conversations, activeChatId],
+  );
+  const agentEvents = useMemo(
+    () => agentEventsByChat[activeChatId] ?? [],
+    [agentEventsByChat, activeChatId],
   );
   const conversationProvider = conversations[activeChatId]?.provider;
   const conversationModel = conversations[activeChatId]?.model;
@@ -425,12 +511,12 @@ export function useChat(
     if (cancelStatusTimerRef.current !== null) {
       window.clearTimeout(cancelStatusTimerRef.current);
     }
-    setAgentStatus({ active: true, phase: 'Cancelled' });
+    updateAgentStatus({ active: true, phase: 'Cancelled' });
     cancelStatusTimerRef.current = window.setTimeout(() => {
-      setAgentStatus({ active: false, phase: '' });
+      updateAgentStatus({ active: false, phase: '' });
       cancelStatusTimerRef.current = null;
     }, 1200);
-  }, []);
+  }, [updateAgentStatus]);
 
   useEffect(() => {
     return () => {
@@ -498,6 +584,12 @@ export function useChat(
 
   const deleteChat = useCallback(
     (id: string) => {
+      setAgentEventsByChat((prev) => {
+        if (!prev[id]) return prev;
+        const updated = { ...prev };
+        delete updated[id];
+        return updated;
+      });
       setConversations((prev) => {
         const updated = { ...prev };
         delete updated[id];
@@ -541,12 +633,15 @@ export function useChat(
     const chatBranch = currentRepo ? (branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || 'main') : undefined;
     setConversations((prev) => {
       const kept: Record<string, Conversation> = {};
+      const removedIds: string[] = [];
       for (const [cid, conv] of Object.entries(prev)) {
         const belongsToCurrentRepo = currentRepo
           ? conv.repoFullName === currentRepo
           : !conv.repoFullName;
         if (!belongsToCurrentRepo) {
           kept[cid] = conv;
+        } else {
+          removedIds.push(cid);
         }
       }
 
@@ -564,6 +659,20 @@ export function useChat(
       setActiveChatId(id);
       saveActiveChatId(id);
       saveConversations(kept);
+
+      if (removedIds.length > 0) {
+        setAgentEventsByChat((prevEvents) => {
+          let changed = false;
+          const next = { ...prevEvents };
+          for (const removedId of removedIds) {
+            if (next[removedId]) {
+              delete next[removedId];
+              changed = true;
+            }
+          }
+          return changed ? next : prevEvents;
+        });
+      }
       return kept;
     });
   }, []);
@@ -635,7 +744,7 @@ export function useChat(
       const shouldAutoStartSandbox = sandboxStartMode === 'always'
         || (sandboxStartMode === 'smart' && shouldPrewarmSandbox(text.trim(), attachments));
       if (!sandboxIdRef.current && ensureSandboxRef.current && shouldAutoStartSandbox) {
-        setAgentStatus({ active: true, phase: 'Starting sandbox...' });
+        updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
         try {
           const prewarmedId = await ensureSandboxRef.current();
           if (prewarmedId) {
@@ -670,7 +779,10 @@ export function useChat(
             });
           }
 
-          setAgentStatus({ active: true, phase: round === 0 ? 'Thinking...' : 'Responding...' });
+          updateAgentStatus(
+            { active: true, phase: round === 0 ? 'Thinking...' : 'Responding...' },
+            { chatId },
+          );
 
           let accumulated = '';
           let thinkingAccumulated = '';
@@ -688,7 +800,7 @@ export function useChat(
                 if (processedContentRef.current.has(contentKey)) return;
                 processedContentRef.current.add(contentKey);
                 accumulated += token;
-                setAgentStatus({ active: true, phase: 'Responding...' });
+                updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
                 setConversations((prev) => {
                   const conv = prev[chatId];
                   if (!conv) return prev;
@@ -711,7 +823,7 @@ export function useChat(
               (token) => {
                 if (abortRef.current) return;
                 if (token === null) {
-                  setAgentStatus({ active: true, phase: 'Responding...' });
+                  updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
                   return;
                 }
                 // Simple dedup for thinking tokens
@@ -719,7 +831,7 @@ export function useChat(
                 if (processedContentRef.current.has(thinkingKey)) return;
                 processedContentRef.current.add(thinkingKey);
                 thinkingAccumulated += token;
-                setAgentStatus({ active: true, phase: 'Reasoning...' });
+                updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
                 setConversations((prev) => {
                   const conv = prev[chatId];
                   if (!conv) return prev;
@@ -880,14 +992,14 @@ export function useChat(
           // Execute tool — track timing for provenance
           const toolExecStart = Date.now();
           const statusLabel = getToolStatusLabel(toolCall);
-          setAgentStatus({ active: true, phase: statusLabel });
+          updateAgentStatus({ active: true, phase: statusLabel }, { chatId });
 
           let toolExecResult: ToolExecutionResult;
 
           // Lazy auto-spin: create sandbox on demand when a sandbox/delegate tool is needed
           if ((toolCall.source === 'sandbox' || toolCall.source === 'delegate') && !sandboxIdRef.current) {
             if (ensureSandboxRef.current) {
-              setAgentStatus({ active: true, phase: 'Starting sandbox...' });
+              updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
               const newId = await ensureSandboxRef.current();
               if (newId) {
                 sandboxIdRef.current = newId;
@@ -954,7 +1066,10 @@ export function useChat(
                     // Orchestrator's LLM with recent chat history for context.
                     const handleCheckpoint = async (question: string, context: string): Promise<string> => {
                       const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
-                      setAgentStatus({ active: true, phase: `${prefix}Coder checkpoint`, detail: question });
+                      updateAgentStatus(
+                        { active: true, phase: `${prefix}Coder checkpoint`, detail: question },
+                        { chatId, source: 'coder' },
+                      );
 
                       const answer = await generateCheckpointAnswer(
                         question,
@@ -963,7 +1078,10 @@ export function useChat(
                         abortControllerRef.current?.signal,
                       );
 
-                      setAgentStatus({ active: true, phase: `${prefix}Coder resuming...` });
+                      updateAgentStatus(
+                        { active: true, phase: `${prefix}Coder resuming...` },
+                        { chatId, source: 'coder' },
+                      );
                       return answer;
                     };
 
@@ -973,7 +1091,10 @@ export function useChat(
                       delegateArgs.files || [],
                       (phase, detail) => {
                         const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
-                        setAgentStatus({ active: true, phase: `${prefix}${phase}`, detail });
+                        updateAgentStatus(
+                          { active: true, phase: `${prefix}${phase}`, detail },
+                          { chatId, source: 'coder' },
+                        );
                       },
                       agentsMdRef.current || undefined,
                       abortControllerRef.current?.signal,
@@ -1155,12 +1276,12 @@ export function useChat(
       } finally {
         setIsStreaming(false);
         if (cancelStatusTimerRef.current === null) {
-          setAgentStatus({ active: false, phase: '' });
+          updateAgentStatus({ active: false, phase: '' });
         }
         abortControllerRef.current = null;
       }
     },
-    [activeChatId, conversations, isStreaming, createNewChat],
+    [activeChatId, conversations, isStreaming, createNewChat, updateAgentStatus],
   );
 
   // --- Card action handler (Phase 4 — commit review + CI) ---
@@ -1274,7 +1395,10 @@ export function useChat(
             return { ...card, data: { ...card.data, status: 'approved', commitMessage: action.commitMessage } as CommitReviewCardData };
           });
 
-          setAgentStatus({ active: true, phase: 'Committing & pushing...' });
+          updateAgentStatus(
+            { active: true, phase: 'Committing & pushing...' },
+            { chatId, source: 'system' },
+          );
 
           try {
             const normalizedCommitMessage = action.commitMessage.replace(/[\r\n]+/g, ' ').trim();
@@ -1360,7 +1484,7 @@ export function useChat(
               }, 3000);
             }
           } finally {
-            setAgentStatus({ active: false, phase: '' });
+            updateAgentStatus({ active: false, phase: '' });
           }
           break;
         }
@@ -1378,7 +1502,10 @@ export function useChat(
           const repo = repoRef.current;
           if (!repo) return;
 
-          setAgentStatus({ active: true, phase: 'Refreshing CI status...' });
+          updateAgentStatus(
+            { active: true, phase: 'Refreshing CI status...' },
+            { chatId, source: 'system' },
+          );
           try {
             const ciResult = await executeToolCall(
               { tool: 'fetch_checks', args: { repo, ref: 'HEAD' } },
@@ -1390,13 +1517,16 @@ export function useChat(
           } catch {
             // Best-effort
           } finally {
-            setAgentStatus({ active: false, phase: '' });
+            updateAgentStatus({ active: false, phase: '' });
           }
           break;
         }
 
         case 'sandbox-state-refresh': {
-          setAgentStatus({ active: true, phase: 'Refreshing sandbox state...' });
+          updateAgentStatus(
+            { active: true, phase: 'Refreshing sandbox state...' },
+            { chatId, source: 'system' },
+          );
           try {
             const statusResult = await execInSandbox(
               action.sandboxId,
@@ -1449,13 +1579,16 @@ export function useChat(
           } catch {
             // Best-effort refresh
           } finally {
-            setAgentStatus({ active: false, phase: '' });
+            updateAgentStatus({ active: false, phase: '' });
           }
           break;
         }
 
         case 'editor-save': {
-          setAgentStatus({ active: true, phase: 'Saving file...' });
+          updateAgentStatus(
+            { active: true, phase: 'Saving file...' },
+            { chatId, source: 'system' },
+          );
           try {
             const writeResult = await writeToSandbox(
               action.sandboxId,
@@ -1494,13 +1627,13 @@ export function useChat(
             const message = err instanceof Error ? err.message : String(err);
             injectSyntheticMessage(chatId, `Save failed for ${action.path}: ${message}`);
           } finally {
-            setAgentStatus({ active: false, phase: '' });
+            updateAgentStatus({ active: false, phase: '' });
           }
           break;
         }
       }
     },
-    [activeChatId, updateCardInMessage, injectSyntheticMessage],
+    [activeChatId, updateCardInMessage, injectSyntheticMessage, updateAgentStatus],
   );
 
   return {
@@ -1508,6 +1641,7 @@ export function useChat(
     messages,
     sendMessage,
     agentStatus,
+    agentEvents,
     isStreaming,
     lockedProvider,
     isProviderLocked,
