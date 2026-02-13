@@ -25,7 +25,8 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
-| Browser Tools Rollout Hardening | planned | Validate browser tool reliability on real mobile networks before broader enablement | Cellular QA complete (iOS + Android), error/latency within target, rollout gate decision recorded |
+| Harness Reliability Program (Tracks A-E) | in_progress | Execute harness-first reliability roadmap: edit reliability experiments, read efficiency, tool-loop robustness, background resilience design, and operator visibility improvements | Hashline micro-test gate result recorded; baseline reliability metrics captured; go/hold/kill decision logged for next harness experiment |
+| Background Coding Jobs Design | planned | Turn background coding draft into implementation-ready Worker/DO job contract for mobile lock/background resilience | API contract approved (`start/status/events/cancel`), Durable Object binding plan drafted, and UI job-card status model defined |
 | Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
 | Roadmap Hygiene Automation | planned | Lightweight template/checklist for promoting `documents/` ideas into this file | New roadmap items consistently include scope + acceptance criteria |
