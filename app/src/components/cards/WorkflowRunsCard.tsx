@@ -1,69 +1,29 @@
-import { CheckCircle2, XCircle, Clock, MinusCircle, GitBranch, Play } from 'lucide-react';
-import type { WorkflowRunsCardData, WorkflowRunItem } from '@/types';
+import { GitBranch, Play } from 'lucide-react';
+import type { WorkflowRunsCardData } from '@/types';
+import { timeAgo, CARD_SHELL_CLASS } from '@/lib/utils';
+import {
+  checkToneBgClass,
+  checkToneColorClass,
+  getCheckTone,
+  getWorkflowRunsHeaderTone,
+  renderCheckToneIcon,
+} from './ci-status-helpers';
 
 interface WorkflowRunsCardProps {
   data: WorkflowRunsCardData;
 }
 
-function runStatusIcon(run: WorkflowRunItem) {
-  if (run.status !== 'completed') {
-    return <Clock className="h-3.5 w-3.5 shrink-0 text-[#f59e0b]" />;
-  }
-  switch (run.conclusion) {
-    case 'success':
-      return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#22c55e]" />;
-    case 'failure':
-      return <XCircle className="h-3.5 w-3.5 shrink-0 text-[#ef4444]" />;
-    case 'cancelled':
-    case 'timed_out':
-      return <XCircle className="h-3.5 w-3.5 shrink-0 text-[#f59e0b]" />;
-    default:
-      return <MinusCircle className="h-3.5 w-3.5 shrink-0 text-push-fg-secondary" />;
-  }
-}
-
-function headerBg(runs: WorkflowRunItem[]): string {
-  if (runs.length === 0) return 'bg-push-fg-dim/10';
-  const first = runs[0];
-  if (first.status !== 'completed') return 'bg-[#f59e0b]/5';
-  switch (first.conclusion) {
-    case 'success': return 'bg-[#22c55e]/5';
-    case 'failure': return 'bg-[#ef4444]/5';
-    default: return 'bg-push-fg-dim/10';
-  }
-}
-
-function headerColor(runs: WorkflowRunItem[]): string {
-  if (runs.length === 0) return 'text-push-fg-secondary';
-  const first = runs[0];
-  if (first.status !== 'completed') return 'text-[#f59e0b]';
-  switch (first.conclusion) {
-    case 'success': return 'text-[#22c55e]';
-    case 'failure': return 'text-[#ef4444]';
-    default: return 'text-push-fg-secondary';
-  }
-}
-
-function headerIcon(runs: WorkflowRunItem[]) {
-  if (runs.length === 0) return <Play className="h-4 w-4 shrink-0 text-push-fg-dim" />;
-  const first = runs[0];
-  if (first.status !== 'completed') return <Clock className="h-4 w-4 shrink-0 text-[#f59e0b]" />;
-  switch (first.conclusion) {
-    case 'success': return <CheckCircle2 className="h-4 w-4 shrink-0 text-[#22c55e]" />;
-    case 'failure': return <XCircle className="h-4 w-4 shrink-0 text-[#ef4444]" />;
-    default: return <MinusCircle className="h-4 w-4 shrink-0 text-push-fg-secondary" />;
-  }
-}
-
-import { timeAgo, CARD_SHELL_CLASS } from '@/lib/utils';
-
 export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
+  const headerTone = getWorkflowRunsHeaderTone(data.runs);
+
   return (
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
-      <div className={`px-3 py-2.5 flex items-center gap-2 ${headerBg(data.runs)}`}>
-        {headerIcon(data.runs)}
-        <span className={`text-sm font-medium ${headerColor(data.runs)}`}>
+      <div className={`px-3 py-2.5 flex items-center gap-2 ${checkToneBgClass(headerTone)}`}>
+        {data.runs.length === 0
+          ? <Play className="h-4 w-4 shrink-0 text-push-fg-dim" />
+          : renderCheckToneIcon(headerTone, 'h-4 w-4 shrink-0')}
+        <span className={`text-sm font-medium ${checkToneColorClass(headerTone)}`}>
           Workflow Runs
         </span>
         {data.workflow && (
@@ -81,7 +41,7 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
         <div className="px-3 py-2 space-y-1.5">
           {data.runs.map((run) => (
             <div key={run.id} className="flex items-start gap-2 min-h-[28px]">
-              <div className="mt-0.5">{runStatusIcon(run)}</div>
+              <div className="mt-0.5">{renderCheckToneIcon(getCheckTone(run.status, run.conclusion), 'h-3.5 w-3.5 shrink-0')}</div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[13px] text-[#e4e4e7] truncate">
