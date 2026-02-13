@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronRight, Terminal, CheckCircle2, XCircle, Copy, Download, Check } from 'lucide-react';
 import type { SandboxCardData } from '@/types';
+import { CARD_SHELL_CLASS } from '@/lib/utils';
 
 export function SandboxCard({ data }: { data: SandboxCardData }) {
   const [expanded, setExpanded] = useState(data.exitCode !== 0);
@@ -33,7 +34,7 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
   };
 
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}

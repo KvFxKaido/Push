@@ -10,7 +10,7 @@
  * - Content length is capped to prevent DoS via localStorage exhaustion
  */
 
-import { extractBareToolJsonObjects } from './tool-dispatch';
+import { detectToolFromText } from './utils';
 
 // Max scratchpad content size (50KB) — prevents localStorage exhaustion and context bloat
 const MAX_CONTENT_LENGTH = 50_000;
@@ -59,41 +59,12 @@ Add to the existing content (good for incremental updates):
  * Detect a scratchpad tool call in text.
  */
 export function detectScratchpadToolCall(text: string): ScratchpadToolCall | null {
-  // Check fenced code blocks first
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
-  let match;
-
-  while ((match = fenceRegex.exec(text)) !== null) {
-    const parsed = tryParseScratchpadTool(match[1].trim());
-    if (parsed) return parsed;
-  }
-
-  // Bare JSON fallback
-  for (const parsed of extractBareToolJsonObjects(text)) {
+  return detectToolFromText<ScratchpadToolCall>(text, (parsed) => {
     if (isScratchpadTool(parsed)) {
-      return {
-        tool: parsed.tool,
-        content: parsed.content,
-      };
+      return { tool: parsed.tool, content: parsed.content };
     }
-  }
-
-  return null;
-}
-
-function tryParseScratchpadTool(jsonStr: string): ScratchpadToolCall | null {
-  try {
-    const parsed = JSON.parse(jsonStr);
-    if (isScratchpadTool(parsed)) {
-      return {
-        tool: parsed.tool,
-        content: parsed.content,
-      };
-    }
-  } catch {
-    // Not valid JSON
-  }
-  return null;
+    return null;
+  });
 }
 
 function isScratchpadTool(obj: unknown): obj is { tool: 'set_scratchpad' | 'append_scratchpad'; content: string } {

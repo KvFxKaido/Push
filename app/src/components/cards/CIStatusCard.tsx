@@ -1,5 +1,6 @@
 import { CheckCircle2, XCircle, Clock, MinusCircle, RefreshCw, Activity } from 'lucide-react';
 import type { CIStatusCardData, CICheck, CardAction } from '@/types';
+import { CARD_SHELL_CLASS, ciStatusColor, ciStatusBg } from '@/lib/utils';
 
 interface CIStatusCardProps {
   data: CIStatusCardData;
@@ -23,23 +24,8 @@ function overallIcon(overall: CIStatusCardData['overall']) {
   }
 }
 
-function overallColor(overall: CIStatusCardData['overall']): string {
-  switch (overall) {
-    case 'success': return 'text-[#22c55e]';
-    case 'failure': return 'text-[#ef4444]';
-    case 'pending': return 'text-[#f59e0b]';
-    default: return 'text-push-fg-secondary';
-  }
-}
-
-function overallBg(overall: CIStatusCardData['overall']): string {
-  switch (overall) {
-    case 'success': return 'bg-[#22c55e]/5';
-    case 'failure': return 'bg-[#ef4444]/5';
-    case 'pending': return 'bg-[#f59e0b]/5';
-    default: return 'bg-push-fg-dim/10';
-  }
-}
+const overallColor = (overall: CIStatusCardData['overall']) => ciStatusColor(overall);
+const overallBg = (overall: CIStatusCardData['overall']) => ciStatusBg(overall);
 
 function checkIcon(check: CICheck) {
   if (check.status !== 'completed') {
@@ -67,7 +53,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
   );
 
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${overallBg(data.overall)}`}>
         {overallIcon(data.overall)}

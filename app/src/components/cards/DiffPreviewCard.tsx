@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronRight, FileDiff } from 'lucide-react';
 import type { DiffPreviewCardData } from '@/types';
+import { CARD_SHELL_CLASS } from '@/lib/utils';
 
 export function DiffLine({ line, index }: { line: string; index: number }) {
   let className = 'font-mono text-[12px] leading-relaxed px-3 whitespace-pre-wrap break-all';
@@ -29,7 +30,7 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
   const lines = data.diff.split('\n');
 
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}

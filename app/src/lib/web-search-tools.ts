@@ -14,7 +14,7 @@
  */
 
 import type { ToolExecutionResult, WebSearchResult, WebSearchCardData } from '@/types';
-import { extractBareToolJsonObjects } from './tool-dispatch';
+import { detectToolFromText } from './utils';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getTavilyKey } from '@/hooks/useTavilyConfig';
 
@@ -66,36 +66,12 @@ You can search the web for current information by outputting a JSON tool block:
  * Detect a web_search tool call in the model's output text.
  */
 export function detectWebSearchToolCall(text: string): WebSearchToolCall | null {
-  // Check fenced code blocks first
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
-  let match;
-
-  while ((match = fenceRegex.exec(text)) !== null) {
-    const parsed = tryParseWebSearchTool(match[1].trim());
-    if (parsed) return parsed;
-  }
-
-  // Bare JSON fallback (handles nested objects via brace-counting)
-  for (const parsed of extractBareToolJsonObjects(text)) {
-    if (isWebSearchTool(parsed)) {
-      const args = (parsed as { args: { query: string } }).args;
-      return { tool: 'web_search', args: { query: args.query } };
-    }
-  }
-
-  return null;
-}
-
-function tryParseWebSearchTool(jsonStr: string): WebSearchToolCall | null {
-  try {
-    const parsed = JSON.parse(jsonStr);
+  return detectToolFromText<WebSearchToolCall>(text, (parsed) => {
     if (isWebSearchTool(parsed)) {
       return { tool: 'web_search', args: { query: parsed.args.query } };
     }
-  } catch {
-    // Not valid JSON
-  }
-  return null;
+    return null;
+  });
 }
 
 function isWebSearchTool(obj: unknown): obj is { tool: 'web_search'; args: { query: string } } {

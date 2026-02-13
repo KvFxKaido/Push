@@ -24,11 +24,7 @@ export interface ChunkMetadata {
   chunkIndex: number;
 }
 
-type JsonRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): JsonRecord | null {
-  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
-}
+import { asRecord } from './utils';
 
 function parseProviderError(parsed: unknown, fallback: string, includeTopLevelMessage = false): string {
   const record = asRecord(parsed);

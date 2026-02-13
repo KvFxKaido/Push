@@ -175,48 +175,34 @@ export function getModelForRole(
 }
 
 // ---------------------------------------------------------------------------
-// Ollama — runtime model name (stored in localStorage)
+// Runtime model name — factory + per-provider instances
 // ---------------------------------------------------------------------------
 
-const OLLAMA_MODEL_KEY = 'ollama_model';
-
-export function getOllamaModelName(): string {
-  return safeStorageGet(OLLAMA_MODEL_KEY) || OLLAMA_DEFAULT_MODEL;
+function createModelNameStorage(
+  storageKey: string,
+  defaultModel: string,
+  onSet?: () => void,
+): { get: () => string; set: (model: string) => void } {
+  return {
+    get: () => safeStorageGet(storageKey) || defaultModel,
+    set: (model: string) => {
+      safeStorageSet(storageKey, model.trim());
+      onSet?.();
+    },
+  };
 }
 
-export function setOllamaModelName(model: string): void {
-  safeStorageSet(OLLAMA_MODEL_KEY, model.trim());
-}
+const ollamaModel = createModelNameStorage('ollama_model', OLLAMA_DEFAULT_MODEL);
+export const getOllamaModelName = ollamaModel.get;
+export const setOllamaModelName = ollamaModel.set;
 
-// ---------------------------------------------------------------------------
-// Mistral — runtime model name (stored in localStorage)
-// ---------------------------------------------------------------------------
+const mistralModel = createModelNameStorage('mistral_model', MISTRAL_DEFAULT_MODEL, () => resetMistralAgent());
+export const getMistralModelName = mistralModel.get;
+export const setMistralModelName = mistralModel.set;
 
-const MISTRAL_MODEL_KEY = 'mistral_model';
-
-export function getMistralModelName(): string {
-  return safeStorageGet(MISTRAL_MODEL_KEY) || MISTRAL_DEFAULT_MODEL;
-}
-
-export function setMistralModelName(model: string): void {
-  safeStorageSet(MISTRAL_MODEL_KEY, model.trim());
-  // Invalidate cached Mistral agent — it was created with the old model
-  resetMistralAgent();
-}
-
-// ---------------------------------------------------------------------------
-// Z.ai — runtime model name (stored in localStorage)
-// ---------------------------------------------------------------------------
-
-const ZAI_MODEL_KEY = 'zai_model';
-
-export function getZaiModelName(): string {
-  return safeStorageGet(ZAI_MODEL_KEY) || ZAI_DEFAULT_MODEL;
-}
-
-export function setZaiModelName(model: string): void {
-  safeStorageSet(ZAI_MODEL_KEY, model.trim());
-}
+const zaiModel = createModelNameStorage('zai_model', ZAI_DEFAULT_MODEL);
+export const getZaiModelName = zaiModel.get;
+export const setZaiModelName = zaiModel.set;
 
 // ---------------------------------------------------------------------------
 // Provider preference — user picks which backend to use

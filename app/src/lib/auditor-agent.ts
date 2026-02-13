@@ -13,12 +13,9 @@ import type { ChatMessage, AuditVerdictCardData } from '@/types';
 import { getActiveProvider, getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
 
-const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
-type JsonRecord = Record<string, unknown>;
+import { asRecord, streamWithTimeout } from './utils';
 
-function asRecord(value: unknown): JsonRecord | null {
-  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
-}
+const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
 
 const AUDITOR_SYSTEM_PROMPT = `You are the Auditor agent for Push, a mobile AI coding assistant. Your sole job is to review code diffs for safety.
 
@@ -91,32 +88,25 @@ export async function runAuditor(
     },
   ];
 
-  let accumulated = '';
-
-  const streamError = await new Promise<Error | null>((resolve) => {
-    let settled = false;
-    const settle = (v: Error | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(v);
-    };
-    const timer = setTimeout(() => {
-      settle(new Error(`Auditor timed out after ${AUDITOR_TIMEOUT_MS / 1000}s — model may be unresponsive.`));
-    }, AUDITOR_TIMEOUT_MS);
-
-    streamFn(
-      messages,
-      (token) => { accumulated += token; },
-      () => settle(null),
-      (error) => settle(error),
-      undefined, // no thinking tokens
-      undefined, // no workspace context
-      false,     // no sandbox
-      auditorModelId,
-      AUDITOR_SYSTEM_PROMPT,
-    );
-  });
+  const { promise: streamErrorPromise, getAccumulated } = streamWithTimeout(
+    AUDITOR_TIMEOUT_MS,
+    `Auditor timed out after ${AUDITOR_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
+    (onToken, onDone, onError) => {
+      streamFn(
+        messages,
+        onToken,
+        onDone,
+        onError,
+        undefined, // no thinking tokens
+        undefined, // no workspace context
+        false,     // no sandbox
+        auditorModelId,
+        AUDITOR_SYSTEM_PROMPT,
+      );
+    },
+  );
+  const streamError = await streamErrorPromise;
+  const accumulated = getAccumulated();
 
   if (streamError) {
     // Error → fail-safe to unsafe

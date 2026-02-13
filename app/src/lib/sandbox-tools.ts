@@ -21,7 +21,7 @@ import type {
   BrowserExtractCardData,
   BrowserToolError,
 } from '@/types';
-import { extractBareToolJsonObjects } from './tool-dispatch';
+import { detectToolFromText, asRecord } from './utils';
 import {
   execInSandbox,
   readFromSandbox,
@@ -186,12 +186,6 @@ export type SandboxToolCall =
 
 // --- Validation ---
 
-type JsonRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): JsonRecord | null {
-  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
-}
-
 function getToolName(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -297,61 +291,23 @@ const IMPLEMENTED_SANDBOX_TOOLS = new Set([
  * Returns the unrecognized name, or null if the tool is known.
  */
 export function getUnrecognizedSandboxToolName(text: string): string | null {
-  // Check fenced code blocks
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
-  let match;
-
-  while ((match = fenceRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1].trim());
-      const toolName = getToolName(asRecord(parsed)?.tool);
-      if (toolName.startsWith('sandbox_') && !IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) {
-        return toolName;
-      }
-    } catch {
-      // Not valid JSON
-    }
-  }
-
-  // Bare JSON fallback
-  for (const parsed of extractBareToolJsonObjects(text)) {
+  return detectToolFromText<string>(text, (parsed) => {
     const toolName = getToolName(asRecord(parsed)?.tool);
     if (toolName.startsWith('sandbox_') && !IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) {
       return toolName;
     }
-  }
-
-  return null;
+    return null;
+  });
 }
 
 export function detectSandboxToolCall(text: string): SandboxToolCall | null {
-  // Match fenced JSON blocks
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
-  let match;
-
-  while ((match = fenceRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1].trim());
-      const toolName = getToolName(asRecord(parsed)?.tool);
-      if (toolName.startsWith('sandbox_') || ['read_sandbox_file', 'search_sandbox', 'list_sandbox_dir', 'promote_to_github'].includes(toolName)) {
-        const result = validateSandboxToolCall(parsed);
-        if (result) return result;
-      }
-    } catch {
-      // Not valid JSON
-    }
-  }
-
-  // Bare JSON fallback (brace-counting handles nested objects)
-  for (const parsed of extractBareToolJsonObjects(text)) {
+  return detectToolFromText<SandboxToolCall>(text, (parsed) => {
     const toolName = getToolName(asRecord(parsed)?.tool);
     if (toolName.startsWith('sandbox_') || ['read_sandbox_file', 'search_sandbox', 'list_sandbox_dir', 'promote_to_github'].includes(toolName)) {
-      const result = validateSandboxToolCall(parsed);
-      if (result) return result;
+      return validateSandboxToolCall(parsed);
     }
-  }
-
-  return null;
+    return null;
+  });
 }
 
 function shellEscape(value: string): string {

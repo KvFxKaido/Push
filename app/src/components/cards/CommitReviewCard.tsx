@@ -3,6 +3,7 @@ import { Check, X, Loader2, AlertCircle, GitCommit } from 'lucide-react';
 import type { CommitReviewCardData, CardAction } from '@/types';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
+import { CARD_SHELL_CLASS } from '@/lib/utils';
 
 interface CommitReviewCardProps {
   data: CommitReviewCardData;
@@ -23,7 +24,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
   const isBusy = isApproved || isPushing;
 
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${
         isCommitted ? 'bg-[#22c55e]/5' :

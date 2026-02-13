@@ -1,21 +1,10 @@
 import { GitPullRequest } from 'lucide-react';
 import type { PRListCardData } from '@/types';
-
-function timeAgo(dateStr: string): string {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
-}
+import { timeAgo, CARD_SHELL_CLASS } from '@/lib/utils';
 
 export function PRListCard({ data }: { data: PRListCardData }) {
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className="px-3 py-2 flex items-center gap-2 border-b border-push-edge">
         <GitPullRequest className="h-3.5 w-3.5 text-push-fg-secondary" />

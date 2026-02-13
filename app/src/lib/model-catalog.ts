@@ -9,9 +9,7 @@ const MISTRAL_MODELS_URL = import.meta.env.DEV
   ? '/mistral/v1/models'
   : '/api/mistral/models';
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
-}
+import { asRecord } from './utils';
 
 function normalizeModelList(payload: unknown): string[] {
   const ids = new Set<string>();

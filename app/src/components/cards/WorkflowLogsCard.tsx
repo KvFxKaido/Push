@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CheckCircle2, XCircle, Clock, MinusCircle, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 import type { WorkflowLogsCardData, WorkflowJob, WorkflowJobStep } from '@/types';
+import { CARD_SHELL_CLASS } from '@/lib/utils';
 
 interface WorkflowLogsCardProps {
   data: WorkflowLogsCardData;
@@ -88,7 +89,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
   };
 
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${headerBg(data.conclusion)}`}>
         {headerIcon(data.conclusion)}

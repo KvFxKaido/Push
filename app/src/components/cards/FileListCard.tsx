@@ -1,5 +1,6 @@
 import { Folder, FileText } from 'lucide-react';
 import type { FileListCardData } from '@/types';
+import { CARD_SHELL_CLASS } from '@/lib/utils';
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -12,7 +13,7 @@ export function FileListCard({ data }: { data: FileListCardData }) {
   const files = data.entries.filter((e) => e.type === 'file');
 
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className="px-3 py-2 flex items-center gap-2 border-b border-push-edge">
         <Folder className="h-3.5 w-3.5 text-push-fg-secondary" />

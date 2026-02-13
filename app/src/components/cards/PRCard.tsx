@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronRight, GitPullRequest, GitMerge } from 'lucide-react';
 import type { PRCardData } from '@/types';
+import { CARD_SHELL_CLASS } from '@/lib/utils';
 
 const statusConfig = {
   open: { label: 'Open', color: 'bg-[#22c55e]/15 text-[#22c55e]', Icon: GitPullRequest },
@@ -13,7 +14,7 @@ export function PRCard({ data }: { data: PRCardData }) {
   const { label, color, Icon } = statusConfig[data.state];
 
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className="px-3.5 py-3 flex items-start gap-2.5">
         <Icon className="h-4 w-4 mt-0.5 shrink-0 text-push-fg-secondary" />

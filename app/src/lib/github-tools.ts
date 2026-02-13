@@ -7,7 +7,7 @@
  */
 
 import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData } from '@/types';
-import { extractBareToolJsonObjects } from './tool-dispatch';
+import { asRecord, detectToolFromText } from './utils';
 import { safeStorageGet } from './safe-storage';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
@@ -36,12 +36,6 @@ export type ToolCall =
   | { tool: 'delete_branch'; args: { repo: string; branch_name: string } }
   | { tool: 'check_pr_mergeable'; args: { repo: string; pr_number: number } }
   | { tool: 'find_existing_pr'; args: { repo: string; head_branch: string; base_branch?: string } };
-
-type JsonRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): JsonRecord | null {
-  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
-}
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -331,32 +325,13 @@ function validateToolCall(parsed: unknown): ToolCall | null {
  * ```
  */
 export function detectToolCall(text: string): ToolCall | null {
-  // Match fenced JSON blocks: ```json ... ``` or ``` ... ```
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
-  let match;
-
-  while ((match = fenceRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1].trim());
-      if (parsed.tool && parsed.args) {
-        const result = validateToolCall(parsed);
-        if (result) return result;
-      }
-    } catch {
-      // Not valid JSON, skip this block
-    }
-  }
-
-  // Bare JSON fallback (brace-counting handles nested objects)
-  for (const parsed of extractBareToolJsonObjects(text)) {
+  return detectToolFromText<ToolCall>(text, (parsed) => {
     const parsedObj = asRecord(parsed);
     if (parsedObj?.tool && parsedObj?.args) {
-      const result = validateToolCall(parsed);
-      if (result) return result;
+      return validateToolCall(parsed);
     }
-  }
-
-  return null;
+    return null;
+  });
 }
 
 // --- Execution ---

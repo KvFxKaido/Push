@@ -1,5 +1,6 @@
 import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import type { AuditVerdictCardData } from '@/types';
+import { CARD_SHELL_CLASS } from '@/lib/utils';
 
 const riskColors = {
   low: 'bg-[#22c55e]/15 text-[#22c55e]',
@@ -11,7 +12,7 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
   const isSafe = data.verdict === 'safe';
 
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Verdict header */}
       <div className={`px-3.5 py-3 flex items-center gap-2.5 ${isSafe ? 'bg-[#22c55e]/5' : 'bg-[#ef4444]/5'}`}>
         {isSafe ? (

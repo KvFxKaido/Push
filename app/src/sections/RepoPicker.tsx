@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Search, Lock, LogOut, Loader2, GitPullRequest, GitCommit, Box } from 'lucide-react';
 import type { RepoWithActivity, GitHubUser } from '@/types';
+import { timeAgo } from '@/lib/utils';
 
 interface RepoPickerProps {
   repos: RepoWithActivity[];
@@ -31,16 +32,6 @@ const LANG_COLORS: Record<string, string> = {
   'C#': '#178600',
 };
 
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return `${Math.floor(days / 30)}mo ago`;
-}
 
 export function RepoPicker({
   repos,

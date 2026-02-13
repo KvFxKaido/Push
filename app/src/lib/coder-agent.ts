@@ -16,7 +16,7 @@ import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
-import { extractBareToolJsonObjects } from './tool-dispatch';
+import { detectToolFromText, asRecord, streamWithTimeout } from './utils';
 import { getSandboxDiff } from './sandbox-client';
 
 const CODER_ROUND_TIMEOUT_MS = 180_000; // 180s max per streaming round (large file rewrites need headroom)
@@ -59,48 +59,22 @@ type CoderCheckpointCall = {
  * Uses the same fenced-JSON + bare-JSON fallback pattern as other tools.
  */
 function detectCheckpointCall(text: string): CoderCheckpointCall | null {
-  // Check fenced JSON blocks
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
-  let match;
-
-  while ((match = fenceRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1].trim()) as Record<string, unknown>;
-      if (parsed && typeof parsed === 'object' && parsed.tool === 'coder_checkpoint') {
-        const args = parsed.args as Record<string, unknown> | undefined;
-        if (args && typeof args.question === 'string' && args.question.trim()) {
-          return {
-            tool: 'coder_checkpoint',
-            args: {
-              question: args.question.trim(),
-              context: typeof args.context === 'string' ? args.context : undefined,
-            },
-          };
-        }
-      }
-    } catch {
-      // Not valid JSON
-    }
-  }
-
-  // Bare JSON fallback (brace-counting handles nested objects)
-  for (const parsed of extractBareToolJsonObjects(text)) {
-    const obj = parsed as Record<string, unknown>;
-    if (obj.tool === 'coder_checkpoint') {
-      const args = obj.args as Record<string, unknown> | undefined;
+  return detectToolFromText<CoderCheckpointCall>(text, (parsed) => {
+    const obj = asRecord(parsed);
+    if (obj?.tool === 'coder_checkpoint') {
+      const args = asRecord(obj.args);
       if (args && typeof args.question === 'string' && args.question.trim()) {
         return {
           tool: 'coder_checkpoint',
           args: {
-            question: args.question.trim(),
+            question: (args.question as string).trim(),
             context: typeof args.context === 'string' ? args.context : undefined,
           },
         };
       }
     }
-  }
-
-  return null;
+    return null;
+  });
 }
 
 /**
@@ -155,35 +129,27 @@ Rules:
     timestamp: Date.now(),
   });
 
-  let accumulated = '';
-
-  const streamError = await new Promise<Error | null>((resolve) => {
-    let settled = false;
-    const settle = (v: Error | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(v);
-    };
-    const timer = setTimeout(
-      () => settle(new Error('Checkpoint response timed out')),
-      CHECKPOINT_ANSWER_TIMEOUT_MS,
-    );
-
-    streamFn(
-      messages,
-      (token) => { accumulated += token; },
-      () => settle(null),
-      (error) => settle(error),
-      undefined,
-      undefined,
-      false,
-      modelId,
-      checkpointSystemPrompt,
-      undefined,
-      signal,
-    );
-  });
+  const { promise: streamErrorPromise, getAccumulated } = streamWithTimeout(
+    CHECKPOINT_ANSWER_TIMEOUT_MS,
+    'Checkpoint response timed out',
+    (onToken, onDone, onError) => {
+      streamFn(
+        messages,
+        onToken,
+        onDone,
+        onError,
+        undefined,
+        undefined,
+        false,
+        modelId,
+        checkpointSystemPrompt,
+        undefined,
+        signal,
+      );
+    },
+  );
+  const streamError = await streamErrorPromise;
+  const accumulated = getAccumulated();
 
   if (streamError || !accumulated.trim()) {
     return 'The Orchestrator could not generate a response. Try a different approach or simplify your current step.';
@@ -335,36 +301,29 @@ export async function runCoderAgent(
     rounds = round + 1;
     onStatus('Coder working...', `Round ${rounds}`);
 
-    let accumulated = '';
-
     // Stream Coder response via the active provider, with a per-round timeout
     // to prevent indefinite hangs (e.g., Ollama keep-alives with no content)
-    const streamError = await new Promise<Error | null>((resolve) => {
-      let settled = false;
-      const settle = (v: Error | null) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(roundTimer);
-        resolve(v);
-      };
-      const roundTimer = setTimeout(() => {
-        settle(new Error(`Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`));
-      }, CODER_ROUND_TIMEOUT_MS);
-
-      streamFn(
-        messages,
-        (token) => { accumulated += token; },
-        () => settle(null),
-        (error) => settle(error),
-        undefined, // no thinking tokens needed
-        undefined, // no workspace context (Coder uses sandbox)
-        true,      // hasSandbox
-        coderModelId,
-        systemPrompt,
-        undefined, // no scratchpad needed
-        signal,
-      );
-    });
+    const { promise: roundStreamPromise, getAccumulated: getRoundAccumulated } = streamWithTimeout(
+      CODER_ROUND_TIMEOUT_MS,
+      `Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
+      (onToken, onDone, onError) => {
+        streamFn(
+          messages,
+          onToken,
+          onDone,
+          onError,
+          undefined, // no thinking tokens needed
+          undefined, // no workspace context (Coder uses sandbox)
+          true,      // hasSandbox
+          coderModelId,
+          systemPrompt,
+          undefined, // no scratchpad needed
+          signal,
+        );
+      },
+    );
+    const streamError = await roundStreamPromise;
+    const accumulated = getRoundAccumulated();
 
     if (streamError) {
       throw streamError;

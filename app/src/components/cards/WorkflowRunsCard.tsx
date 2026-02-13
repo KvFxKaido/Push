@@ -55,22 +55,11 @@ function headerIcon(runs: WorkflowRunItem[]) {
   }
 }
 
-function timeAgo(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diffMs = now - then;
-  const mins = Math.floor(diffMs / 60_000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
+import { timeAgo, CARD_SHELL_CLASS } from '@/lib/utils';
 
 export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${headerBg(data.runs)}`}>
         {headerIcon(data.runs)}

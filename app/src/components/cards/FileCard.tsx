@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { FileCode, ChevronRight } from 'lucide-react';
 import type { FileCardData } from '@/types';
+import { CARD_SHELL_CLASS } from '@/lib/utils';
 
 export function FileCard({ data }: { data: FileCardData }) {
   const [expanded, setExpanded] = useState(true);
   const lineCount = data.content.split('\n').length;
 
   return (
-    <div className="my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <button
         onClick={() => setExpanded((e) => !e)}

@@ -14,73 +14,10 @@ import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-
 import { detectWebSearchToolCall, executeWebSearch, type WebSearchToolCall } from './web-search-tools';
 import { getActiveProvider } from './orchestrator';
 import { execInSandbox } from './sandbox-client';
+import { asRecord, detectToolFromText, extractBareToolJsonObjects } from './utils';
 
-// ---------------------------------------------------------------------------
-// Shared: brace-counting JSON extractor (handles nested objects)
-// ---------------------------------------------------------------------------
-
-/**
- * Extract bare JSON objects containing a "tool" key from text.
- * Uses brace-counting instead of regex so nested objects like
- * {"tool":"x","args":{"repo":"a/b","path":"c"}} are captured correctly.
- */
-type JsonRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): JsonRecord | null {
-  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
-}
-
-export function extractBareToolJsonObjects(text: string): unknown[] {
-  const results: unknown[] = [];
-  let i = 0;
-
-  while (i < text.length) {
-    const braceIdx = text.indexOf('{', i);
-    if (braceIdx === -1) break;
-
-    // Brace-count to find the matching closing }
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    let end = -1;
-
-    for (let j = braceIdx; j < text.length; j++) {
-      const ch = text[j];
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\' && inString) { escaped = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (ch === '{') depth++;
-      if (ch === '}') {
-        depth--;
-        if (depth === 0) { end = j; break; }
-      }
-    }
-
-    if (end === -1) {
-      // Unclosed brace — skip it and keep scanning. An unmatched {
-      // in prose or a code snippet shouldn't prevent us from finding
-      // a valid tool-call JSON later in the text.
-      i = braceIdx + 1;
-      continue;
-    }
-
-    const candidate = text.slice(braceIdx, end + 1);
-    try {
-      const parsed = JSON.parse(candidate);
-      const parsedObj = asRecord(parsed);
-      if (parsedObj && typeof parsedObj.tool === 'string') {
-        results.push(parsed);
-      }
-    } catch {
-      // Not valid JSON — skip
-    }
-
-    i = end + 1;
-  }
-
-  return results;
-}
+// Re-export for backwards compatibility — other modules import from here
+export { extractBareToolJsonObjects };
 
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
@@ -217,30 +154,7 @@ export function detectMalformedToolAttempt(text: string): boolean {
 // --- delegate_coder detection ---
 
 function detectDelegateCoder(text: string): AnyToolCall | null {
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
-  let match;
-
-  while ((match = fenceRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1].trim());
-      const parsedObj = asRecord(parsed);
-      const args = asRecord(parsedObj?.args);
-      const task = typeof args?.task === 'string' ? args.task : undefined;
-      const tasks = Array.isArray(args?.tasks) ? args.tasks.filter((v): v is string => typeof v === 'string') : undefined;
-      const files = Array.isArray(args?.files) ? args.files.filter((v): v is string => typeof v === 'string') : undefined;
-      if (parsedObj?.tool === 'delegate_coder' && (task || (tasks && tasks.length > 0))) {
-        return {
-          source: 'delegate',
-          call: { tool: 'delegate_coder', args: { task, tasks, files } },
-        };
-      }
-    } catch {
-      // Not valid JSON
-    }
-  }
-
-  // Bare JSON fallback (brace-counting handles nested objects)
-  for (const parsed of extractBareToolJsonObjects(text)) {
+  return detectToolFromText<AnyToolCall>(text, (parsed) => {
     const parsedObj = asRecord(parsed);
     const args = asRecord(parsedObj?.args);
     const task = typeof args?.task === 'string' ? args.task : undefined;
@@ -252,7 +166,6 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
         call: { tool: 'delegate_coder', args: { task, tasks, files } },
       };
     }
-  }
-
-  return null;
+    return null;
+  });
 }

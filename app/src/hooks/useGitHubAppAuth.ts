@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GitHubUser } from '../types';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { isNetworkFetchError, validateGitHubToken as validateToken } from '@/lib/utils';
 
 const INSTALLATION_ID_KEY = 'github_app_installation_id';
 const TOKEN_KEY = 'github_app_token';
@@ -37,10 +38,6 @@ type UseGitHubAppAuth = {
   validatedUser: GitHubUser | null;
   isAppAuth: boolean;
 };
-
-function isNetworkFetchError(err: unknown): boolean {
-  return err instanceof TypeError && /failed to fetch|networkerror|load failed/i.test(err.message);
-}
 
 function formatProxyUnavailableError(route: string): string {
   return [
@@ -161,22 +158,6 @@ async function fetchAppOAuth(code: string): Promise<TokenResponse & { installati
   }
 
   return res.json();
-}
-
-async function validateToken(token: string): Promise<GitHubUser | null> {
-  try {
-    const res = await fetch('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-      },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return { login: data.login, avatar_url: data.avatar_url };
-  } catch {
-    return null;
-  }
 }
 
 export function useGitHubAppAuth(): UseGitHubAppAuth {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GitHubUser } from '../types';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { isNetworkFetchError, validateGitHubToken as validateToken } from '@/lib/utils';
 
 const STORAGE_KEY = 'github_access_token';
 const STATE_KEY = 'github_oauth_state';
@@ -21,26 +22,6 @@ type UseGitHubAuth = {
   setTokenManually: (token: string) => Promise<boolean>;
   validatedUser: GitHubUser | null;
 };
-
-function isNetworkFetchError(err: unknown): boolean {
-  return err instanceof TypeError && /failed to fetch|networkerror|load failed/i.test(err.message);
-}
-
-async function validateToken(pat: string): Promise<GitHubUser | null> {
-  try {
-    const res = await fetch('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${pat}`,
-        Accept: 'application/vnd.github+json',
-      },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return { login: data.login, avatar_url: data.avatar_url };
-  } catch {
-    return null;
-  }
-}
 
 function getOAuthRedirectUri(): string {
   const configured = OAUTH_REDIRECT_URI.trim();
