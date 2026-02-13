@@ -109,6 +109,83 @@ export function ciStatusBg(status: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
+// JSON repair — best-effort recovery for common LLM garbling patterns
+// Only runs when JSON.parse fails (fallback, not hot path).
+// ---------------------------------------------------------------------------
+
+/**
+ * Attempt to repair common JSON garbling from LLM output.
+ * Returns the parsed object if it has a "tool" string key, otherwise null.
+ *
+ * Handles:
+ * - Trailing commas before } or ]
+ * - Single quotes (only when no double quotes present in value positions)
+ * - Unquoted keys: {tool: "x"} → {"tool": "x"}
+ */
+export function repairToolJson(candidate: string): Record<string, unknown> | null {
+  let repaired = candidate;
+
+  // 1. Strip trailing commas before } or ]
+  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+  // 2. Single quotes → double quotes (only if string uses single-quote style throughout)
+  if (repaired.includes("'") && !/"\s*:/.test(repaired)) {
+    repaired = repaired.replace(/'/g, '"');
+  }
+
+  // 3. Unquoted keys: {tool: "x", args: {...}} → {"tool": "x", "args": {...}}
+  repaired = repaired.replace(/([{,])\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
+
+  try {
+    const parsed = JSON.parse(repaired);
+    if (parsed && typeof parsed === 'object' && typeof parsed.tool === 'string') {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Repair wasn't enough
+  }
+  return null;
+}
+
+/**
+ * Detect if text ends with a truncated tool call (unbalanced braces after
+ * a {"tool" pattern). Returns the tool name if found.
+ */
+export function detectTruncatedToolCall(text: string): { toolName: string } | null {
+  // Find the last occurrence of a tool-call-like pattern
+  const toolPattern = /\{\s*"?'?tool"?'?\s*:\s*["']([^"']+)["']/g;
+  let lastMatch: RegExpExecArray | null = null;
+  let m: RegExpExecArray | null;
+
+  while ((m = toolPattern.exec(text)) !== null) {
+    lastMatch = m;
+  }
+
+  if (!lastMatch) return null;
+
+  // Check if braces are unbalanced from that point (depth > 0 = truncated)
+  const remainder = text.slice(lastMatch.index);
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (const ch of remainder) {
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    if (ch === '}') depth--;
+  }
+
+  if (depth > 0) {
+    return { toolName: lastMatch[1] };
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Bare JSON extraction (brace-counting, moved from tool-dispatch.ts)
 // ---------------------------------------------------------------------------
 
