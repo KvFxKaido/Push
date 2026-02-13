@@ -4,6 +4,10 @@
  * Uses the active provider (Kimi / Ollama / Mistral) with the role-specific
  * model resolved via providers.ts. The Coder can read files, write files,
  * run commands, and get diffs — all within the sandbox. Runs until done (no round cap).
+ *
+ * Interactive Checkpoints: The Coder can pause mid-task to ask the Orchestrator
+ * for guidance via coder_checkpoint. This prevents the Coder from spinning
+ * endlessly on errors or ambiguity.
  */
 
 import type { ChatMessage, ChatCard } from '@/types';
@@ -12,9 +16,13 @@ import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { extractBareToolJsonObjects } from './tool-dispatch';
+import { getSandboxDiff } from './sandbox-client';
 
 const CODER_ROUND_TIMEOUT_MS = 180_000; // 180s max per streaming round (large file rewrites need headroom)
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
+const MAX_CHECKPOINTS = 3;  // Max interactive checkpoint pauses per task
+const CHECKPOINT_ANSWER_TIMEOUT_MS = 30_000; // 30s for Orchestrator checkpoint response
 
 // Size limits to prevent 413 errors from provider APIs
 const MAX_TOOL_RESULT_SIZE = 24_000;  // Max chars per tool result (~400 lines visible per read)
@@ -37,6 +45,188 @@ function estimateMessagesSize(messages: ChatMessage[]): number {
   return messages.reduce((sum, m) => sum + m.content.length, 0);
 }
 
+// ---------------------------------------------------------------------------
+// Interactive Checkpoint support
+// ---------------------------------------------------------------------------
+
+type CoderCheckpointCall = {
+  tool: 'coder_checkpoint';
+  args: { question: string; context?: string };
+};
+
+/**
+ * Detect a coder_checkpoint tool call in the Coder's response text.
+ * Uses the same fenced-JSON + bare-JSON fallback pattern as other tools.
+ */
+function detectCheckpointCall(text: string): CoderCheckpointCall | null {
+  // Check fenced JSON blocks
+  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
+  let match;
+
+  while ((match = fenceRegex.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1].trim()) as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object' && parsed.tool === 'coder_checkpoint') {
+        const args = parsed.args as Record<string, unknown> | undefined;
+        if (args && typeof args.question === 'string' && args.question.trim()) {
+          return {
+            tool: 'coder_checkpoint',
+            args: {
+              question: args.question.trim(),
+              context: typeof args.context === 'string' ? args.context : undefined,
+            },
+          };
+        }
+      }
+    } catch {
+      // Not valid JSON
+    }
+  }
+
+  // Bare JSON fallback (brace-counting handles nested objects)
+  for (const parsed of extractBareToolJsonObjects(text)) {
+    const obj = parsed as Record<string, unknown>;
+    if (obj.tool === 'coder_checkpoint') {
+      const args = obj.args as Record<string, unknown> | undefined;
+      if (args && typeof args.question === 'string' && args.question.trim()) {
+        return {
+          tool: 'coder_checkpoint',
+          args: {
+            question: args.question.trim(),
+            context: typeof args.context === 'string' ? args.context : undefined,
+          },
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Generate a checkpoint answer from the Orchestrator's perspective.
+ * Makes a focused LLM call using the active provider to answer the Coder's question,
+ * incorporating recent chat history for user intent context.
+ */
+export async function generateCheckpointAnswer(
+  question: string,
+  coderContext: string,
+  recentChatHistory?: ChatMessage[],
+  signal?: AbortSignal,
+): Promise<string> {
+  const activeProvider = getActiveProvider();
+  if (activeProvider === 'demo') {
+    return 'No AI provider configured. Try a different approach.';
+  }
+
+  const { streamFn } = getProviderStreamFn(activeProvider);
+  const roleModel = getModelForRole(activeProvider, 'orchestrator');
+  const modelId = roleModel?.id;
+
+  const checkpointSystemPrompt = `You are the Orchestrator agent for Push, answering a question from the Coder agent who has paused mid-task.
+
+Rules:
+- Give a direct, actionable answer to unblock the Coder
+- If the Coder is stuck on an error, suggest specific debugging steps or workarounds
+- If the Coder can't find a file, suggest where to look or alternative approaches
+- If the task is ambiguous, clarify the intent based on the user's original request
+- Keep your response under 300 words — the Coder needs quick guidance, not an essay
+- Do NOT emit tool calls — your response goes directly back to the Coder as text`;
+
+  const messages: ChatMessage[] = [];
+
+  // Include recent chat history for user intent context (trimmed)
+  if (recentChatHistory) {
+    for (const msg of recentChatHistory.slice(-4)) {
+      messages.push({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content.slice(0, 2000),
+        timestamp: msg.timestamp,
+      });
+    }
+  }
+
+  // Add the checkpoint question
+  messages.push({
+    id: 'checkpoint-question',
+    role: 'user',
+    content: `The Coder agent has paused and is asking for your guidance:\n\nQuestion: ${question}${coderContext ? `\n\nCoder's context: ${coderContext}` : ''}`,
+    timestamp: Date.now(),
+  });
+
+  let accumulated = '';
+
+  const streamError = await new Promise<Error | null>((resolve) => {
+    let settled = false;
+    const settle = (v: Error | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const timer = setTimeout(
+      () => settle(new Error('Checkpoint response timed out')),
+      CHECKPOINT_ANSWER_TIMEOUT_MS,
+    );
+
+    streamFn(
+      messages,
+      (token) => { accumulated += token; },
+      () => settle(null),
+      (error) => settle(error),
+      undefined,
+      undefined,
+      false,
+      modelId,
+      checkpointSystemPrompt,
+      undefined,
+      signal,
+    );
+  });
+
+  if (streamError || !accumulated.trim()) {
+    return 'The Orchestrator could not generate a response. Try a different approach or simplify your current step.';
+  }
+
+  return accumulated.trim();
+}
+
+/**
+ * Fetch a compact sandbox state summary (changed files + stats).
+ * Used to auto-sync sandbox state back to the Orchestrator after Coder finishes.
+ */
+async function fetchSandboxStateSummary(sandboxId: string): Promise<string> {
+  try {
+    const diffResult = await getSandboxDiff(sandboxId);
+    if (!diffResult.diff) {
+      return '\n\n[Sandbox State] No uncommitted changes.';
+    }
+
+    const changedFiles: string[] = [];
+    let additions = 0;
+    let deletions = 0;
+    for (const line of diffResult.diff.split('\n')) {
+      if (line.startsWith('diff --git')) {
+        const m = line.match(/b\/(.+)$/);
+        if (m) changedFiles.push(m[1]);
+      } else if (line.startsWith('+') && !line.startsWith('+++')) {
+        additions++;
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        deletions++;
+      }
+    }
+
+    return `\n\n[Sandbox State] ${changedFiles.length} file(s) changed, +${additions} -${deletions}. Files: ${changedFiles.join(', ')}`;
+  } catch {
+    return '';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Coder system prompt
+// ---------------------------------------------------------------------------
+
 const CODER_SYSTEM_PROMPT = `You are the Coder agent for Push, a mobile AI coding assistant. Your job is to implement coding tasks.
 
 Rules:
@@ -48,7 +238,19 @@ Rules:
 - When done, use sandbox_diff to show what you changed, then sandbox_prepare_commit to propose a commit
 - Respond with a brief summary of what you did
 
+Interactive Checkpoints:
+- You have access to coder_checkpoint(question, context?) to pause and ask the Orchestrator for guidance
+- Use it when you're stuck: repeated errors (2+ times for the same issue), missing files, ambiguous requirements, or uncertain about the right approach
+- Do NOT spin endlessly on the same error — checkpoint early to save rounds
+- Format: {"tool": "coder_checkpoint", "args": {"question": "your question here", "context": "optional details about what you've tried"}}
+- The Orchestrator sees the user's full chat history and can provide context you don't have
+- You get up to ${MAX_CHECKPOINTS} checkpoints per task — use them wisely
+
 ${SANDBOX_TOOL_PROTOCOL}`;
+
+// ---------------------------------------------------------------------------
+// Main Coder agent loop
+// ---------------------------------------------------------------------------
 
 export async function runCoderAgent(
   task: string,
@@ -57,7 +259,8 @@ export async function runCoderAgent(
   onStatus: (phase: string, detail?: string) => void,
   agentsMd?: string,
   signal?: AbortSignal,
-): Promise<{ summary: string; cards: ChatCard[]; rounds: number }> {
+  onCheckpoint?: (question: string, context: string) => Promise<string>,
+): Promise<{ summary: string; cards: ChatCard[]; rounds: number; checkpoints: number }> {
   // Resolve provider and model for the 'coder' role via providers.ts
   const activeProvider = getActiveProvider();
   if (activeProvider === 'demo') {
@@ -84,6 +287,7 @@ export async function runCoderAgent(
 
   const allCards: ChatCard[] = [];
   let rounds = 0;
+  let checkpointCount = 0;
 
   // Build initial messages
   const messages: ChatMessage[] = [
@@ -103,10 +307,13 @@ export async function runCoderAgent(
     // Circuit breaker: prevent runaway delegation loops
     if (round >= MAX_CODER_ROUNDS) {
       onStatus('Coder stopped', `Hit ${MAX_CODER_ROUNDS} round limit`);
+      // Auto-fetch sandbox state for Orchestrator context
+      const sandboxState = await fetchSandboxStateSummary(sandboxId);
       return {
-        summary: `[Coder stopped after ${MAX_CODER_ROUNDS} rounds — task may be incomplete. Review sandbox state with sandbox_diff.]`,
+        summary: `[Coder stopped after ${MAX_CODER_ROUNDS} rounds — task may be incomplete. Review sandbox state with sandbox_diff.]${sandboxState}`,
         cards: allCards,
         rounds: round,
+        checkpoints: checkpointCount,
       };
     }
 
@@ -156,10 +363,70 @@ export async function runCoderAgent(
       timestamp: Date.now(),
     });
 
+    // Reasoning Sync: surface a snippet of the Coder's reasoning in the status bar
+    // so the Orchestrator/user can see what the Coder is thinking before tool execution
+    const reasoningLines = accumulated.split('\n').filter(l => l.trim() && !l.trim().startsWith('{') && !l.trim().startsWith('```'));
+    const reasoningSnippet = reasoningLines.slice(0, 2).join(' ').slice(0, 150).trim();
+    if (reasoningSnippet) {
+      onStatus('Coder reasoning', reasoningSnippet);
+    }
+
     // Check for sandbox tool call
     const toolCall = detectSandboxToolCall(accumulated);
 
     if (!toolCall) {
+      // Check for interactive checkpoint (Coder asking Orchestrator for guidance)
+      const checkpoint = detectCheckpointCall(accumulated);
+      if (checkpoint) {
+        if (signal?.aborted) {
+          throw new DOMException('Coder cancelled by user.', 'AbortError');
+        }
+
+        if (onCheckpoint && checkpointCount < MAX_CHECKPOINTS) {
+          checkpointCount++;
+          onStatus('Coder checkpoint', checkpoint.args.question);
+
+          try {
+            const answer = await onCheckpoint(
+              checkpoint.args.question,
+              checkpoint.args.context || '',
+            );
+
+            // Inject checkpoint answer into Coder's message history
+            const wrappedAnswer = `[CHECKPOINT RESPONSE — guidance from the Orchestrator]\n${answer}\n[/CHECKPOINT RESPONSE]`;
+            messages.push({
+              id: `coder-checkpoint-answer-${round}`,
+              role: 'user',
+              content: wrappedAnswer,
+              timestamp: Date.now(),
+            });
+
+            onStatus('Coder resuming...', `After checkpoint ${checkpointCount}`);
+            continue;
+          } catch (cpErr) {
+            // If checkpoint answer generation fails, inject a generic fallback
+            const errMsg = cpErr instanceof Error ? cpErr.message : 'unknown error';
+            messages.push({
+              id: `coder-checkpoint-fallback-${round}`,
+              role: 'user',
+              content: `[CHECKPOINT RESPONSE]\nCould not get guidance from the Orchestrator (${errMsg}). Try a different approach or simplify your current step.\n[/CHECKPOINT RESPONSE]`,
+              timestamp: Date.now(),
+            });
+            continue;
+          }
+        } else if (checkpointCount >= MAX_CHECKPOINTS) {
+          // Checkpoint limit reached
+          messages.push({
+            id: `coder-checkpoint-limit-${round}`,
+            role: 'user',
+            content: `[CHECKPOINT RESPONSE]\nCheckpoint limit reached (${MAX_CHECKPOINTS} max). Complete the task with what you have, or summarize what's blocking you.\n[/CHECKPOINT RESPONSE]`,
+            timestamp: Date.now(),
+          });
+          continue;
+        }
+        // If no onCheckpoint callback, fall through to treat as "done" (backward compatible)
+      }
+
       // Check for web search tool call (Ollama only — Mistral handles search natively)
       const webSearch = detectWebSearchToolCall(accumulated);
       if (webSearch) {
@@ -182,7 +449,14 @@ export async function runCoderAgent(
       }
 
       // No tool call — Coder is done, accumulated is the summary
-      return { summary: accumulated, cards: allCards, rounds };
+      // Auto-fetch sandbox state for Orchestrator context (Shared Sandbox State)
+      const sandboxState = await fetchSandboxStateSummary(sandboxId);
+      return {
+        summary: accumulated + sandboxState,
+        cards: allCards,
+        rounds,
+        checkpoints: checkpointCount,
+      };
     }
 
     // Execute sandbox tool

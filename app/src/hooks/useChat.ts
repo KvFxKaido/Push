@@ -3,7 +3,7 @@ import type { ChatMessage, AgentStatus, Conversation, ToolExecutionResult, CardA
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, detectMalformedToolAttempt, detectUnimplementedToolCall } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
-import { runCoderAgent } from '@/lib/coder-agent';
+import { runCoderAgent, generateCheckpointAnswer } from '@/lib/coder-agent';
 import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
 import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
@@ -944,9 +944,29 @@ export function useChat(
                   const allCards: ChatCard[] = [];
                   const summaries: string[] = [];
                   let totalRounds = 0;
+                  let totalCheckpoints = 0;
 
                   for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
                     const task = taskList[taskIndex];
+
+                    // Interactive Checkpoint callback: when the Coder pauses to ask
+                    // the Orchestrator for guidance, this generates an answer using the
+                    // Orchestrator's LLM with recent chat history for context.
+                    const handleCheckpoint = async (question: string, context: string): Promise<string> => {
+                      const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
+                      setAgentStatus({ active: true, phase: `${prefix}Coder checkpoint`, detail: question });
+
+                      const answer = await generateCheckpointAnswer(
+                        question,
+                        context,
+                        apiMessages.slice(-6), // recent chat for user intent context
+                        abortControllerRef.current?.signal,
+                      );
+
+                      setAgentStatus({ active: true, phase: `${prefix}Coder resuming...` });
+                      return answer;
+                    };
+
                     const coderResult = await runCoderAgent(
                       task,
                       currentSandboxId,
@@ -957,8 +977,10 @@ export function useChat(
                       },
                       agentsMdRef.current || undefined,
                       abortControllerRef.current?.signal,
+                      handleCheckpoint,
                     );
                     totalRounds += coderResult.rounds;
+                    totalCheckpoints += coderResult.checkpoints;
                     summaries.push(
                       taskList.length > 1
                         ? `Task ${taskIndex + 1}: ${coderResult.summary}`
@@ -988,8 +1010,11 @@ export function useChat(
                     });
                   }
 
+                  const checkpointNote = totalCheckpoints > 0
+                    ? `, ${totalCheckpoints} checkpoint${totalCheckpoints !== 1 ? 's' : ''}`
+                    : '';
                   toolExecResult = {
-                    text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''})`,
+                    text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})`,
                   };
                 }
               } catch (err) {
