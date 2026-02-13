@@ -108,12 +108,21 @@ function stripToolCallPayload(content: string): string {
         const parsed = JSON.parse(String(block).trim());
         return isToolCallObject(parsed) ? '' : full;
       } catch {
+        // Garbled JSON inside a fence — strip if it looks like a tool call
+        if (/["']?tool["']?\s*:\s*["']/.test(String(block))) {
+          return '';
+        }
         return full;
       }
     },
   );
 
-  return stripBareToolCallJson(withoutToolFences)
+  let stripped = stripBareToolCallJson(withoutToolFences);
+
+  // Strip trailing truncated tool JSON (unbalanced { with "tool":"..." at the end)
+  stripped = stripped.replace(/\{[^{}]*["']?tool["']?\s*:\s*["'][^"']*["'][^}]*$/s, '');
+
+  return stripped
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
