@@ -189,7 +189,9 @@ Rules:
     return 'The Orchestrator could not generate a response. Try a different approach or simplify your current step.';
   }
 
-  return accumulated.trim();
+  // Truncate checkpoint answers like tool results to prevent context bloat
+  const MAX_CHECKPOINT_ANSWER_SIZE = 4000;
+  return truncateContent(accumulated.trim(), MAX_CHECKPOINT_ANSWER_SIZE, 'checkpoint answer');
 }
 
 /**
@@ -199,6 +201,12 @@ Rules:
 async function fetchSandboxStateSummary(sandboxId: string): Promise<string> {
   try {
     const diffResult = await getSandboxDiff(sandboxId);
+
+    // Check for diff retrieval error before claiming sandbox is clean
+    if (diffResult.error) {
+      return `\n\n[Sandbox State] Could not retrieve diff: ${diffResult.error}`;
+    }
+
     if (!diffResult.diff) {
       return '\n\n[Sandbox State] No uncommitted changes.';
     }
@@ -217,9 +225,16 @@ async function fetchSandboxStateSummary(sandboxId: string): Promise<string> {
       }
     }
 
-    return `\n\n[Sandbox State] ${changedFiles.length} file(s) changed, +${additions} -${deletions}. Files: ${changedFiles.join(', ')}`;
-  } catch {
-    return '';
+    // Limit file list to prevent bloat on large refactors
+    const MAX_FILES_LISTED = 10;
+    const fileList = changedFiles.length > MAX_FILES_LISTED
+      ? `${changedFiles.slice(0, MAX_FILES_LISTED).join(', ')} (+${changedFiles.length - MAX_FILES_LISTED} more)`
+      : changedFiles.join(', ');
+
+    return `\n\n[Sandbox State] ${changedFiles.length} file(s) changed, +${additions} -${deletions}. Files: ${fileList}`;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `\n\n[Sandbox State] Failed to fetch diff: ${msg}`;
   }
 }
 
@@ -364,8 +379,12 @@ export async function runCoderAgent(
     });
 
     // Reasoning Sync: surface a snippet of the Coder's reasoning in the status bar
-    // so the Orchestrator/user can see what the Coder is thinking before tool execution
-    const reasoningLines = accumulated.split('\n').filter(l => l.trim() && !l.trim().startsWith('{') && !l.trim().startsWith('```'));
+    // so the Orchestrator/user can see what the Coder is thinking before tool execution.
+    // Trim each line before filtering to correctly handle indented code blocks.
+    const reasoningLines = accumulated.split('\n').filter(l => {
+      const trimmed = l.trim();
+      return trimmed && !trimmed.startsWith('{') && !trimmed.startsWith('```') && !trimmed.startsWith('//') && !trimmed.startsWith('#');
+    });
     const reasoningSnippet = reasoningLines.slice(0, 2).join(' ').slice(0, 150).trim();
     if (reasoningSnippet) {
       onStatus('Coder reasoning', reasoningSnippet);
@@ -404,7 +423,12 @@ export async function runCoderAgent(
             onStatus('Coder resuming...', `After checkpoint ${checkpointCount}`);
             continue;
           } catch (cpErr) {
-            // If checkpoint answer generation fails, inject a generic fallback
+            // Propagate AbortError to allow proper task cancellation
+            const isAbort = cpErr instanceof DOMException && cpErr.name === 'AbortError';
+            if (isAbort || signal?.aborted) {
+              throw new DOMException('Coder cancelled by user.', 'AbortError');
+            }
+            // For non-abort errors, inject a generic fallback so the Coder can continue
             const errMsg = cpErr instanceof Error ? cpErr.message : 'unknown error';
             messages.push({
               id: `coder-checkpoint-fallback-${round}`,
