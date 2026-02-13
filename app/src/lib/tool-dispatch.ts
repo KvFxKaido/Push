@@ -9,12 +9,12 @@
 
 import type { ToolExecutionResult } from '@/types';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
-import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, type SandboxToolCall } from './sandbox-tools';
+import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, IMPLEMENTED_SANDBOX_TOOLS, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
 import { detectWebSearchToolCall, executeWebSearch, type WebSearchToolCall } from './web-search-tools';
 import { getActiveProvider } from './orchestrator';
 import { execInSandbox } from './sandbox-client';
-import { asRecord, detectToolFromText, extractBareToolJsonObjects } from './utils';
+import { asRecord, detectToolFromText, extractBareToolJsonObjects, repairToolJson, detectTruncatedToolCall } from './utils';
 
 // Re-export for backwards compatibility — other modules import from here
 export { extractBareToolJsonObjects };
@@ -141,14 +141,123 @@ export function detectUnimplementedToolCall(text: string): string | null {
   return getUnrecognizedSandboxToolName(text);
 }
 
+// ---------------------------------------------------------------------------
+// Known tool names — union of all tool subsystems
+// ---------------------------------------------------------------------------
+
+const GITHUB_TOOL_NAMES = new Set([
+  'fetch_pr', 'list_prs', 'list_commits', 'read_file', 'list_directory',
+  'list_branches', 'fetch_checks', 'search_files', 'list_commit_files',
+  'trigger_workflow', 'get_workflow_runs', 'get_workflow_logs',
+  'create_branch', 'create_pr', 'merge_pr', 'delete_branch',
+  'check_pr_mergeable', 'find_existing_pr',
+]);
+
+const OTHER_TOOL_NAMES = new Set([
+  'delegate_coder', 'set_scratchpad', 'append_scratchpad', 'web_search',
+]);
+
+const KNOWN_TOOL_NAMES = new Set([
+  ...IMPLEMENTED_SANDBOX_TOOLS,
+  ...GITHUB_TOOL_NAMES,
+  ...OTHER_TOOL_NAMES,
+]);
+
+// ---------------------------------------------------------------------------
+// Diagnosis result type
+// ---------------------------------------------------------------------------
+
+export interface ToolCallDiagnosis {
+  reason: 'truncated' | 'validation_failed' | 'malformed_json';
+  toolName: string | null;
+  errorMessage: string;
+}
+
+// ---------------------------------------------------------------------------
+// diagnoseToolCallFailure — replaces detectMalformedToolAttempt
+// Three-phase check, only runs when detectAnyToolCall returned null.
+// ---------------------------------------------------------------------------
+
 /**
- * Check if text contains what looks like a tool call attempt that failed to parse.
- * Returns true if there's a {"tool": or "tool": pattern but detectAnyToolCall returned null.
- * Used by useChat to inject error feedback so the LLM can retry.
+ * Diagnose why a tool call was not detected. Returns a specific error
+ * message if the text looks like a failed tool call attempt, or null
+ * if the text is genuinely not a tool call.
  */
-export function detectMalformedToolAttempt(text: string): boolean {
-  // Look for patterns that strongly suggest an intended tool call
-  return /[{,]\s*"tool"\s*:\s*"/.test(text);
+export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null {
+  // Phase 1: Truncation — JSON cut off mid-stream
+  const truncated = detectTruncatedToolCall(text);
+  if (truncated) {
+    return {
+      reason: 'truncated',
+      toolName: truncated.toolName,
+      errorMessage: `Your tool call for "${truncated.toolName}" was truncated (JSON cut off). Please retry with the complete JSON block.`,
+    };
+  }
+
+  // Phase 2: Validation failure — JSON parses (or repairs), has a known tool name,
+  // but the subsystem validator rejected it (wrong/missing args)
+  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
+  let fenceMatch;
+  while ((fenceMatch = fenceRegex.exec(text)) !== null) {
+    const toolName = extractKnownToolName(fenceMatch[1].trim());
+    if (toolName) {
+      return {
+        reason: 'validation_failed',
+        toolName,
+        errorMessage: `Your call to "${toolName}" has invalid or missing arguments. Check the tool protocol and retry with the correct argument format.`,
+      };
+    }
+  }
+
+  for (const parsed of extractBareToolJsonObjects(text)) {
+    const obj = asRecord(parsed);
+    if (obj && typeof obj.tool === 'string' && KNOWN_TOOL_NAMES.has(obj.tool)) {
+      return {
+        reason: 'validation_failed',
+        toolName: obj.tool,
+        errorMessage: `Your call to "${obj.tool}" has invalid or missing arguments. Check the tool protocol and retry with the correct argument format.`,
+      };
+    }
+  }
+
+  // Phase 3: Broad pattern match — garbled JSON that neither parsed nor repaired
+  const broadPattern = /[{,]\s*["']?tool["']?\s*:\s*["']/;
+  if (broadPattern.test(text)) {
+    // Try to extract the tool name from the garbled text
+    const nameMatch = text.match(/["']?tool["']?\s*:\s*["']([^"']+)["']/);
+    const toolName = nameMatch?.[1] || null;
+    return {
+      reason: 'malformed_json',
+      toolName,
+      errorMessage: toolName
+        ? `Your tool call for "${toolName}" had malformed JSON. Please retry with valid JSON using the exact format from the tool protocol.`
+        : `Your last tool call had malformed JSON and could not be parsed. Please retry with valid JSON using the exact format from the tool protocol.`,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Try to extract a known tool name from a JSON-like string.
+ * Attempts JSON.parse first, then repair.
+ */
+function extractKnownToolName(text: string): string | null {
+  // Try direct parse
+  try {
+    const parsed = JSON.parse(text);
+    const obj = asRecord(parsed);
+    if (obj && typeof obj.tool === 'string' && KNOWN_TOOL_NAMES.has(obj.tool)) {
+      return obj.tool;
+    }
+  } catch {
+    // Try repair
+    const repaired = repairToolJson(text);
+    if (repaired && typeof repaired.tool === 'string' && KNOWN_TOOL_NAMES.has(repaired.tool)) {
+      return repaired.tool;
+    }
+  }
+  return null;
 }
 
 // --- delegate_coder detection ---

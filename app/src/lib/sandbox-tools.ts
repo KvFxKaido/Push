@@ -276,7 +276,7 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
 // --- Detection ---
 
 /** The set of tool names that are actually implemented and wired up. */
-const IMPLEMENTED_SANDBOX_TOOLS = new Set([
+export const IMPLEMENTED_SANDBOX_TOOLS = new Set([
   'sandbox_exec', 'sandbox_read_file', 'sandbox_search', 'sandbox_write_file',
   'sandbox_list_dir', 'sandbox_diff', 'sandbox_prepare_commit', 'sandbox_push',
   'sandbox_run_tests', 'sandbox_check_types', 'sandbox_browser_screenshot',
