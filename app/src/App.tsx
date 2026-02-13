@@ -81,6 +81,13 @@ function snapshotStagePercent(stage: HydrateProgress['stage']): number {
   }
 }
 
+function includeSelectedModel(models: string[], selectedModel: string | null | undefined): string[] {
+  if (!selectedModel) return [...models];
+  const available = new Set(models);
+  if (available.has(selectedModel)) return [...models];
+  return [selectedModel, ...models];
+}
+
 const AGENTS_MD_TEMPLATE = `# AGENTS.md
 
 ## Project Overview
@@ -297,37 +304,59 @@ function App() {
   const isMistralModelLocked = isModelLocked && lockedProvider === 'mistral';
   const isZaiModelLocked = isModelLocked && lockedProvider === 'zai';
 
-  const refreshOllamaModels = useCallback(async () => {
-    if (!hasOllamaKey || ollamaModelsLoading) return;
-    setOllamaModelsLoading(true);
-    setOllamaModelsError(null);
+  const refreshModels = useCallback(async (params: {
+    hasKey: boolean;
+    isLoading: boolean;
+    setLoading: (value: boolean) => void;
+    setError: (value: string | null) => void;
+    setModels: (models: string[]) => void;
+    setUpdatedAt: (value: number) => void;
+    fetchModels: () => Promise<string[]>;
+    emptyMessage: string;
+    failureMessage: string;
+  }) => {
+    if (!params.hasKey || params.isLoading) return;
+    params.setLoading(true);
+    params.setError(null);
     try {
-      const models = await fetchOllamaModels();
-      setOllamaModels(models);
-      setOllamaModelsUpdatedAt(Date.now());
-      if (models.length === 0) setOllamaModelsError('No models returned by Ollama.');
+      const models = await params.fetchModels();
+      params.setModels(models);
+      params.setUpdatedAt(Date.now());
+      if (models.length === 0) params.setError(params.emptyMessage);
     } catch (err) {
-      setOllamaModelsError(err instanceof Error ? err.message : 'Failed to load Ollama models.');
+      params.setError(err instanceof Error ? err.message : params.failureMessage);
     } finally {
-      setOllamaModelsLoading(false);
+      params.setLoading(false);
     }
-  }, [hasOllamaKey, ollamaModelsLoading]);
+  }, []);
+
+  const refreshOllamaModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: hasOllamaKey,
+      isLoading: ollamaModelsLoading,
+      setLoading: setOllamaModelsLoading,
+      setError: setOllamaModelsError,
+      setModels: setOllamaModels,
+      setUpdatedAt: setOllamaModelsUpdatedAt,
+      fetchModels: fetchOllamaModels,
+      emptyMessage: 'No models returned by Ollama.',
+      failureMessage: 'Failed to load Ollama models.',
+    });
+  }, [hasOllamaKey, ollamaModelsLoading, refreshModels]);
 
   const refreshMistralModels = useCallback(async () => {
-    if (!hasMistralKey || mistralModelsLoading) return;
-    setMistralModelsLoading(true);
-    setMistralModelsError(null);
-    try {
-      const models = await fetchMistralModels();
-      setMistralModels(models);
-      setMistralModelsUpdatedAt(Date.now());
-      if (models.length === 0) setMistralModelsError('No models returned by Mistral.');
-    } catch (err) {
-      setMistralModelsError(err instanceof Error ? err.message : 'Failed to load Mistral models.');
-    } finally {
-      setMistralModelsLoading(false);
-    }
-  }, [hasMistralKey, mistralModelsLoading]);
+    await refreshModels({
+      hasKey: hasMistralKey,
+      isLoading: mistralModelsLoading,
+      setLoading: setMistralModelsLoading,
+      setError: setMistralModelsError,
+      setModels: setMistralModels,
+      setUpdatedAt: setMistralModelsUpdatedAt,
+      fetchModels: fetchMistralModels,
+      emptyMessage: 'No models returned by Mistral.',
+      failureMessage: 'Failed to load Mistral models.',
+    });
+  }, [hasMistralKey, mistralModelsLoading, refreshModels]);
 
   const loadRepoBranches = useCallback(async (repoFullName: string) => {
     const seq = ++branchFetchSeqRef.current;
@@ -440,21 +469,15 @@ function App() {
   }, [profile.bio]);
 
   const ollamaModelOptions = useMemo(() => {
-    const set = new Set(ollamaModels);
-    if (ollamaModel && !set.has(ollamaModel)) return [ollamaModel, ...ollamaModels];
-    return ollamaModels;
+    return includeSelectedModel(ollamaModels, ollamaModel);
   }, [ollamaModels, ollamaModel]);
 
   const mistralModelOptions = useMemo(() => {
-    const set = new Set(mistralModels);
-    if (mistralModel && !set.has(mistralModel)) return [mistralModel, ...mistralModels];
-    return mistralModels;
+    return includeSelectedModel(mistralModels, mistralModel);
   }, [mistralModels, mistralModel]);
 
   const zaiModelOptions = useMemo(() => {
-    const set = new Set(ZAI_MODELS);
-    if (zaiModel && !set.has(zaiModel)) return [zaiModel, ...ZAI_MODELS];
-    return [...ZAI_MODELS];
+    return includeSelectedModel(ZAI_MODELS, zaiModel);
   }, [zaiModel]);
 
   const copyAllowlistCommand = useCallback(async () => {
