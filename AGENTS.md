@@ -11,6 +11,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 - Repo-locked context — agent only sees the selected repo
 - Live pipeline — every agent step visible in real time
 - Show, don't dump — rich inline cards instead of walls of text
+- Harness-first reliability — prioritize tool-loop and execution quality over model churn
 
 ## Tech Stack
 

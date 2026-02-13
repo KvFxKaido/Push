@@ -8,7 +8,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 
 *   **Type:** AI Coding Agent / Web Application (PWA)
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile.
-*   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards).
+*   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
 *   **AI Backend:** Multi-provider support (Kimi, Ollama, Mistral, Z.ai, MiniMax) via OpenAI-compatible SSE streaming.
 
 ## Tech Stack

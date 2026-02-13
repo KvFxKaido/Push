@@ -1,6 +1,6 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-02-12
+Last updated: 2026-02-13
 
 This is the single source of truth for active product and engineering direction.
 
@@ -52,6 +52,7 @@ Only decisions promoted into this file should be treated as implementation commi
 | 2026-02-12 | Workspace shell consolidated into one mobile hub trigger with `Files`, `Diff`, `Console`, and `Scratchpad` tabs | `documents/Workspace Hub Sprint Plan.md` + implementation session |
 | 2026-02-12 | Branch selection now surfaces existing branches across Home/workspace, with in-context delete from the workspace selector | Implementation session |
 | 2026-02-12 | Home header simplified to compact account menu with Settings + guarded Disconnect and GitHub avatar | Implementation session |
+| 2026-02-13 | Harness-first reliability promoted as canonical planning focus; browser tooling treated as one capability within harness work, not a standalone roadmap pillar | `documents/Harness Reliability Plan.md` |
 
 ## Promotion Checklist (Draft -> Canonical)
 
