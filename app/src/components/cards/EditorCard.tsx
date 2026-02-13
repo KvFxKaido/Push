@@ -9,11 +9,13 @@
  */
 
 import { useState, useMemo } from 'react';
-import { FileCode, ChevronRight, Maximize2 } from 'lucide-react';
+import { FileCode, Maximize2 } from 'lucide-react';
 import type { EditorCardData, CardAction } from '@/types';
 import { useCodeMirror } from '@/hooks/useCodeMirror';
+import { useExpandable } from '@/hooks/useExpandable';
 import { EditorPanel } from './EditorPanel';
 import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { ExpandChevron, ExpandableCardPanel } from './expandable';
 
 interface EditorCardProps {
   data: EditorCardData;
@@ -23,7 +25,7 @@ interface EditorCardProps {
 }
 
 export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardProps) {
-  const [expanded, setExpanded] = useState(true);
+  const { expanded, toggleExpanded } = useExpandable(true);
   const [panelOpen, setPanelOpen] = useState(false);
   const lineCount = useMemo(() => data.content.split('\n').length, [data.content]);
 
@@ -33,12 +35,10 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
         {/* Header */}
         <div className="flex items-center">
           <button
-            onClick={() => setExpanded((e) => !e)}
+            onClick={toggleExpanded}
             className="flex-1 px-3.5 py-3 flex items-center gap-2 hover:bg-[#151517] transition-colors duration-200 min-w-0"
           >
-            <ChevronRight
-              className={`h-3 w-3 text-push-fg-dim shrink-0 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
-            />
+            <ExpandChevron expanded={expanded} className="shrink-0" />
             <FileCode className="h-3.5 w-3.5 text-push-fg-secondary shrink-0" />
             <span className="text-[13px] text-push-fg font-mono truncate">
               {data.path}
@@ -64,16 +64,14 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
         </div>
 
         {/* CodeMirror body — read-only in inline card */}
-        {expanded && (
-          <div className="border-t border-push-edge expand-in">
-            <CodeMirrorBody content={data.content} language={data.language} />
-            {data.truncated && (
-              <div className="px-3 py-1.5 border-t border-push-edge text-[11px] text-push-fg-dim italic">
-                Content truncated at 5K characters
-              </div>
-            )}
-          </div>
-        )}
+        <ExpandableCardPanel expanded={expanded}>
+          <CodeMirrorBody content={data.content} language={data.language} />
+          {data.truncated && (
+            <div className="px-3 py-1.5 border-t border-push-edge text-[11px] text-push-fg-dim italic">
+              Content truncated at 5K characters
+            </div>
+          )}
+        </ExpandableCardPanel>
       </div>
 
       {/* Full-screen panel */}
