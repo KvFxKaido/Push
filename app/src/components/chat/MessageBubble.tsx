@@ -466,7 +466,11 @@ export const MessageBubble = memo(function MessageBubble({
   const isError = message.status === 'error';
   const isStreaming = message.status === 'streaming';
   const hasThinking = Boolean(message.thinking);
-  const hasContent = Boolean(message.content);
+  const displayContentText = useMemo(
+    () => (message.isToolCall ? stripToolCallPayload(message.content) : message.content),
+    [message.content, message.isToolCall],
+  );
+  const hasContent = Boolean(displayContentText.trim());
 
   const visibleCards = useMemo(
     () => (message.cards || []).filter((card) => card.type !== 'sandbox-state'),
@@ -474,8 +478,8 @@ export const MessageBubble = memo(function MessageBubble({
   );
 
   const content = useMemo(
-    () => formatContent(message.content),
-    [message.content],
+    () => formatContent(displayContentText),
+    [displayContentText],
   );
 
   // Hide tool result messages — they now live in the Console drawer
@@ -484,9 +488,8 @@ export const MessageBubble = memo(function MessageBubble({
   }
 
   // Hide tool call messages only when they have no cards.
-  // Some tools (e.g. browser screenshots) attach cards to the tool-call
-  // message itself; keep those visible so the card can render.
-  if (message.isToolCall && visibleCards.length === 0) {
+  // If the model included user-facing text before the JSON call, keep it visible.
+  if (message.isToolCall && !hasContent && visibleCards.length === 0) {
     return null;
   }
 
@@ -499,19 +502,19 @@ export const MessageBubble = memo(function MessageBubble({
           <CopyButton text={message.content} />
         </div>
         <div className="max-w-[85%] rounded-2xl rounded-br-md border border-[#22324d] bg-[linear-gradient(180deg,#112039_0%,#0c182d_100%)] px-4 py-3 shadow-push-md">
-          {hasAttachments && (
-            <div className="flex flex-wrap gap-2 mb-2">
-              {message.attachments!.map((att) => (
-                <AttachmentBadge key={att.id} attachment={att} />
-              ))}
-            </div>
-          )}
-          {message.content && (
-            <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-push-fg">
-              {message.content}
-            </p>
-          )}
-        </div>
+        {hasAttachments && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {message.attachments!.map((att) => (
+              <AttachmentBadge key={att.id} attachment={att} />
+            ))}
+          </div>
+        )}
+        {hasContent && (
+          <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-push-fg">
+            {displayContentText}
+          </p>
+        )}
+      </div>
       </div>
     );
   }
@@ -541,7 +544,7 @@ export const MessageBubble = memo(function MessageBubble({
             isStreaming={isStreaming && !hasContent}
           />
         )}
-        {!message.isToolCall && (
+        {hasContent && (
           <div
             className={`text-[15px] leading-relaxed break-words ${
               isError ? 'text-red-400' : 'text-[#d1d8e6]'
@@ -553,9 +556,9 @@ export const MessageBubble = memo(function MessageBubble({
             )}
           </div>
         )}
-        {!message.isToolCall && hasContent && !isStreaming && (
+        {hasContent && !isStreaming && (
           <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-200 mt-1.5">
-            <CopyButton text={message.content} />
+            <CopyButton text={displayContentText} />
           </div>
         )}
         {visibleCards.length > 0 && (
