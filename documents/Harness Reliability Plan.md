@@ -164,6 +164,25 @@ Evaluation cadence:
 - Decision: `go` / `hold` / `kill`
 - Notes:
 
+## External Review Checklist (PWA-GPT)
+
+Source: external PWA-focused review (2026-02-13).  
+Decision labels: `accept`, `partial`, `reject`.
+
+| Recommendation | Decision | Why | Next Step |
+|---|---|---|---|
+| Narrow primary persona to power users (solo founder, lead dev, CTO in motion) | accept | Tightens product narrative and onboarding clarity | Update README/onboarding copy to explicitly target power users |
+| Emphasize true differentiators (role-separation, branch-scoped chats, provider-agnostic backends) | accept | Already core strengths; should be foregrounded consistently | Keep these three as top-level positioning in root docs and pitch copy |
+| Treat PWA as first-class feature (offline, push, background sync) | partial | Good direction, but API support is inconsistent on mobile (especially iOS) | Prioritize reliable pieces first: offline scratchpad/read-only history + completion notifications |
+| Move long-running orchestration to server-side jobs | accept | Client-driven loops pause when app backgrounds/locks | Execute `Background Coding Jobs Design` roadmap item (`start/status/events/cancel`) |
+| Add explicit service worker cache strategy | partial | Useful, but must avoid stale execution state and broken live sessions | Add a documented cache policy pass for app shell/static/api paths before broad SW changes |
+| Harden pre-merge safeguards and surface checks clearly | partial | Most merge safeguards exist; visibility can improve | Add clearer merge-flow UI states for stale base, CI required, and branch protection blocks |
+| Add provider tool-call compliance validation + scoring | accept | Directly aligns with harness reliability goals | Add malformed-call and recovery metrics by provider/model in settings/debug view |
+| Make chat less central over time | reject | Push remains chat-first by product principle | Keep chat as interface, but continue shifting execution UX toward card-first actions |
+| Make Workspace Hub feel like mission control | accept | Fits mobile execution-control positioning | Prioritize Hub v2 diff ergonomics + status visibility |
+| Build-in-public growth metrics and signature feature ideation | hold | Valuable for growth, but secondary to reliability work | Revisit after harness tracks A-D show measurable stability gains |
+| Keep surface area small; hide complexity under the hood | accept | Matches biggest current risk (feature sprawl) | Enforce explicit non-goals and kill criteria for each harness experiment |
+
 ## Immediate Next Action
 
 Run the hashline provider micro-test and make a go/no-go call in one review.  
