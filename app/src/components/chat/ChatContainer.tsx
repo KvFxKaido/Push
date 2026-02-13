@@ -183,8 +183,11 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
 
   const scrollToBottom = () => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    setShowScrollButton(false);
+    setIsAtBottom(true);
+    setIsUserScrolling(false);
   };
+
+  const showScrollButton = !isAtBottom && !isUserScrolling;
 
   if (messages.length === 0) {
     return (
@@ -214,7 +217,7 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
       <button
         onClick={scrollToBottom}
         className={`
-          absolute left-1/2 -translate-x-1/2 bottom-12
+          absolute left-1/2 -translate-x-1/2 bottom-8
           flex items-center justify-center
           w-10 h-10
           rounded-full
