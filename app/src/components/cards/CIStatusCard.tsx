@@ -1,6 +1,7 @@
-import { CheckCircle2, XCircle, Clock, MinusCircle, RefreshCw, Activity } from 'lucide-react';
+import { RefreshCw, Activity } from 'lucide-react';
 import type { CIStatusCardData, CICheck, CardAction } from '@/types';
 import { CARD_SHELL_CLASS, ciStatusColor, ciStatusBg } from '@/lib/utils';
+import { getCheckTone, renderCheckToneIcon } from './ci-status-helpers';
 
 interface CIStatusCardProps {
   data: CIStatusCardData;
@@ -10,41 +11,22 @@ interface CIStatusCardProps {
 }
 
 function overallIcon(overall: CIStatusCardData['overall']) {
-  switch (overall) {
-    case 'success':
-      return <CheckCircle2 className="h-4 w-4 shrink-0 text-[#22c55e]" />;
-    case 'failure':
-      return <XCircle className="h-4 w-4 shrink-0 text-[#ef4444]" />;
-    case 'pending':
-      return <Clock className="h-4 w-4 shrink-0 text-[#f59e0b]" />;
-    case 'neutral':
-      return <MinusCircle className="h-4 w-4 shrink-0 text-push-fg-secondary" />;
-    case 'no-checks':
-      return <Activity className="h-4 w-4 shrink-0 text-push-fg-dim" />;
+  if (overall === 'no-checks') {
+    return <Activity className="h-4 w-4 shrink-0 text-push-fg-dim" />;
   }
+
+  return renderCheckToneIcon(overall, 'h-4 w-4 shrink-0');
 }
 
 const overallColor = (overall: CIStatusCardData['overall']) => ciStatusColor(overall);
 const overallBg = (overall: CIStatusCardData['overall']) => ciStatusBg(overall);
 
 function checkIcon(check: CICheck) {
-  if (check.status !== 'completed') {
-    return <Clock className="h-3 w-3 shrink-0 text-[#f59e0b]" />;
-  }
-  switch (check.conclusion) {
-    case 'success':
-      return <CheckCircle2 className="h-3 w-3 shrink-0 text-[#22c55e]" />;
-    case 'failure':
-      return <XCircle className="h-3 w-3 shrink-0 text-[#ef4444]" />;
-    case 'cancelled':
-    case 'timed_out':
-      return <XCircle className="h-3 w-3 shrink-0 text-[#f59e0b]" />;
-    case 'skipped':
-    case 'neutral':
-      return <MinusCircle className="h-3 w-3 shrink-0 text-push-fg-dim" />;
-    default:
-      return <MinusCircle className="h-3 w-3 shrink-0 text-push-fg-dim" />;
-  }
+  return renderCheckToneIcon(
+    getCheckTone(check.status, check.conclusion),
+    'h-3 w-3 shrink-0',
+    { neutralClassName: 'text-push-fg-dim', unknownClassName: 'text-push-fg-dim' },
+  );
 }
 
 export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusCardProps) {
