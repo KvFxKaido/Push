@@ -148,7 +148,9 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
     };
   }, [updateBottomState]);
 
-  // Auto-scroll to bottom when new messages arrive or content streams in
+  // Auto-scroll to bottom when new messages arrive or content streams in.
+  // State (isAtBottom) is managed by the scroll event handler above —
+  // scrollIntoView triggers scroll events that feed into updateBottomState.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -160,30 +162,19 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
     const isNewMessage = lastMessage &&
       (!previousLastMessage || lastMessage.id !== previousLastMessage.id);
 
-    let shouldBeAtBottom: boolean;
-
     // Always scroll to bottom when user sends a new message
     if (isNewMessage && lastMessage.role === 'user') {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-      shouldBeAtBottom = true;
     } else {
       // For assistant messages (streaming), only scroll if user is near bottom
       const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      const isNearBottom = distanceFromBottom < AUTO_SCROLL_THRESHOLD_PX;
-
-      if (isNearBottom) {
+      if (distanceFromBottom < AUTO_SCROLL_THRESHOLD_PX) {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
-      shouldBeAtBottom = isNearBottom;
     }
-
-    // Defer state update to avoid synchronous setState in effect body
-    const rafId = requestAnimationFrame(() => setIsAtBottom(shouldBeAtBottom));
 
     // Update ref to track the last message
     lastMessageRef.current = lastMessage;
-
-    return () => cancelAnimationFrame(rafId);
   }, [messages, lastMessageContent]);
 
   const scrollToBottom = () => {
