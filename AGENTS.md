@@ -58,7 +58,7 @@ The Orchestrator can delegate complex coding tasks to the Coder sub-agent via `d
 
 Current harness priorities are tracked in `documents/Harness Reliability Plan.md`:
 - edit reliability experiments (hashline-gated)
-- read/context efficiency for edit flows
+- read/context efficiency for edit flows (Track B phase 1 shipped: `sandbox_read_file` line ranges, numbered range output, out-of-bounds empty-range warning)
 - tool-loop robustness
 - background execution design for mobile lock/background
 - operator visibility and failure diagnostics

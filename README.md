@@ -140,8 +140,9 @@ Current harness priorities from `documents/Harness Reliability Plan.md`:
 
 - [x] stale-write protection + write-path telemetry baseline
 - [x] improved operator visibility (Coder status events in console, cleaner dialogue/tool display)
+- [x] read-path efficiency phase 1 (`sandbox_read_file` range args, line-numbered range output, out-of-bounds empty-range warning)
 - [ ] hashline edit reliability gate (provider compliance micro-test before build)
-- [ ] read-path efficiency for edit flows (line-range reads + annotation discipline)
+- [ ] read-path efficiency phase 2 (default full-read cap + payload/truncation telemetry)
 - [ ] server-side background run model for mobile lock/background resilience
 
 ## Project Structure

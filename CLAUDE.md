@@ -41,7 +41,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Browser tools (optional):** `sandbox_browser_screenshot` and `sandbox_browser_extract`, prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true`, routed through Worker endpoints. Browser session credentials are injected server-side by the Worker.
 
-**Harness focus (current):** Reliability improvements are prioritized over model churn. Active tracks are defined in `documents/Harness Reliability Plan.md` (edit reliability experiments, read efficiency, tool-loop robustness, background execution design, and operator visibility).
+**Harness focus (current):** Reliability improvements are prioritized over model churn. Active tracks are defined in `documents/Harness Reliability Plan.md` (edit reliability experiments, read efficiency, tool-loop robustness, background execution design, and operator visibility). Track B phase 1 is shipped: `sandbox_read_file` now supports line ranges with numbered range output and out-of-bounds empty-range warnings.
 
 **Web search tools:** The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). Mistral handles search natively via its Agents API. API keys are configurable at runtime via Settings.
 

@@ -1,6 +1,6 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-02-13
+Last updated: 2026-02-14
 
 This is the single source of truth for active product and engineering direction.
 
@@ -41,6 +41,7 @@ Only decisions promoted into this file should be treated as implementation commi
 | Workspace Hub v1 | done | Single top-right workspace trigger with full-screen hub tabs (`Files`, `Diff`, `Console`, `Scratchpad`) and integrated commit/push controls | Hub opens reliably on mobile; tab flows work; commit/push confirmations and protect-main guard enforced |
 | Branch UX Consolidation (Phase 1) | done | Branch selector shows existing branches (not just app-created), includes delete action in selector, and home cards support branch selection | User can open repos on specific branches from Home and manage branch switching/deletion from workspace context |
 | Home Header Simplification | done | Replaced ambiguous top header strip with compact account menu (settings/disconnect) and profile avatar | Home uses less vertical space and account controls remain discoverable |
+| Sandbox Read Efficiency (Track B Phase 1) | done | Added `sandbox_read_file` line-range args, range line numbering for tool output, and explicit warning for out-of-bounds empty ranges | Agent can request targeted ranges and gets clear warning signal when range is beyond file content; editor card content remains clean |
 
 ## Decision Log
 
@@ -54,6 +55,7 @@ Only decisions promoted into this file should be treated as implementation commi
 | 2026-02-12 | Branch selection now surfaces existing branches across Home/workspace, with in-context delete from the workspace selector | Implementation session |
 | 2026-02-12 | Home header simplified to compact account menu with Settings + guarded Disconnect and GitHub avatar | Implementation session |
 | 2026-02-13 | Harness-first reliability promoted as canonical planning focus; browser tooling treated as one capability within harness work, not a standalone roadmap pillar | `documents/Harness Reliability Plan.md` |
+| 2026-02-14 | Track B phase 1 shipped: `sandbox_read_file` supports line ranges with numbered tool output and out-of-bounds empty-range warnings | `documents/Harness Reliability Plan.md` + implementation session |
 
 ## Promotion Checklist (Draft -> Canonical)
 

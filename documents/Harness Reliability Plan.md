@@ -41,6 +41,11 @@ Hashline remains a candidate within this larger plan.
   - `diagnoseToolCallFailure` replaces the narrow `detectMalformedToolAttempt` regex with three-phase diagnosis (truncated → validation failure → broad pattern match).
   - Garbled assistant messages now marked `isToolCall: true` so `stripToolCallPayload` hides raw JSON from users.
   - Error feedback is specific (names the tool, describes the failure mode) — model can self-correct in one retry instead of looping.
+- **Range-aware file reads** (shipped 2026-02-14):
+  - `sandbox_read_file` supports optional `start_line` and `end_line`.
+  - Range reads include line-number prefixes in tool text while editor cards stay clean.
+  - Invalid ranges are rejected early (`start_line > end_line`, non-positive/invalid values).
+  - Empty out-of-bounds range reads now return a clear warning instead of silent blank output.
 
 ## Main Harness Opportunities
 
@@ -84,12 +89,15 @@ Kill criteria:
 Problem:
 - Edit flows over-read large files; tokens and truncation pressure increase.
 
-Scope:
-- Add `start_line` and `end_line` optional args to `sandbox_read_file`.
-- Include line-number prefix in read output (`cat -n` style) so the model can reference locations in subsequent edits.
-- Default to full-file read (capped at ~2000 lines, matching Claude Code's default). Lines > 2000 chars truncated.
-- Keep annotation opt-in and targeted to edit flows.
-- Ensure UI continues to show clean, non-annotated text.
+Done (2026-02-14):
+- [x] Added `start_line` and `end_line` optional args to `sandbox_read_file`.
+- [x] Added line-number prefix in range read tool output (`cat -n` style) for model orientation.
+- [x] Kept UI editor card content clean (no injected line numbers).
+- [x] Added explicit warning when a requested range is out-of-bounds and returns no content.
+
+Remaining scope:
+- Add default full-file read cap (~2000 lines, matching Claude Code's default). Lines > 2000 chars truncated.
+- Keep annotation targeted to edit flows and verify no token-overhead regression.
 
 Pattern from Claude Code:
 - Model needs line numbers in *read output* to orient edits, but should not use them as *edit targets*. Read with line numbers → edit with content-anchored references. This is exactly what hashline does.
@@ -166,7 +174,7 @@ Now:
 
 Next:
 1. If gate passes: implement Track A MVP behind flag (include fuzzy matching + structured error detail).
-2. Implement Track B line-range reads with `cat -n` style output (small, broadly useful).
+2. Finalize Track B safeguards (2000-line full-read cap + payload/truncation telemetry).
 3. Expand `toolMeta` coverage on remaining error paths (Track E).
 
 Later:
