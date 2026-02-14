@@ -417,6 +417,7 @@ export async function executeSandboxToolCall(
         // For range reads: add cat -n style line numbers to the tool result text
         // (the model uses these for edit targeting; the card stays clean)
         let toolResultContent: string;
+        let emptyRangeWarning = '';
         if (isRangeRead && result.content) {
           const contentLines = result.content.split('\n');
           // If content ends with a trailing newline, the last split element is empty — don't number it
@@ -427,6 +428,10 @@ export async function executeSandboxToolCall(
           toolResultContent = linesToNumber
             .map((line, idx) => `${String(rangeStart + idx).padStart(padWidth)}\t${line}`)
             .join('\n');
+        } else if (isRangeRead && !result.content) {
+          // Range extends beyond file — no content returned
+          toolResultContent = '';
+          emptyRangeWarning = `No content in requested range (lines ${rangeStart}-${rangeEnd ?? '∞'}). The file may be shorter than expected. Use sandbox_read_file without line range to see the full file.`;
         } else {
           toolResultContent = result.content;
         }
@@ -439,9 +444,10 @@ export async function executeSandboxToolCall(
           `[Tool Result — sandbox_read_file]`,
           fileLabel,
           `Version: ${result.version || 'unknown'}`,
-          result.truncated ? `(truncated)\n` : '',
+          result.truncated ? `(truncated)` : '',
+          emptyRangeWarning,
           toolResultContent,
-        ];
+        ].filter(Boolean);
 
         // Guess language from extension
         const ext = call.args.path.split('.').pop()?.toLowerCase() || '';
