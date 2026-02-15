@@ -53,8 +53,11 @@ function loadSession(): PersistedSandboxSession | null {
   }
 }
 
-function clearSession(): void {
+function clearSession(sandboxId?: string): void {
   safeStorageRemove(SANDBOX_SESSION_KEY);
+  if (sandboxId) {
+    setSandboxOwnerToken(null, sandboxId);
+  }
   setSandboxOwnerToken(null);
 }
 
@@ -88,19 +91,20 @@ export function useSandbox(activeRepoFullName?: string | null) {
     if (!saved) return;
 
     if (saved.repoFullName !== activeRepoFullName) {
-      clearSession();
+      clearSession(saved.sandboxId);
       return;
     }
 
     const ageMs = Date.now() - saved.createdAt;
     if (ageMs > SANDBOX_MAX_AGE_MS) {
-      clearSession();
+      clearSession(saved.sandboxId);
       return;
     }
 
     let cancelled = false;
     reconnectingRef.current = true;
     setSandboxOwnerToken(saved.ownerToken);
+    setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
 
     const reconnectPromise = execInSandbox(saved.sandboxId, 'true')
       .then((result) => {
@@ -112,11 +116,11 @@ export function useSandbox(activeRepoFullName?: string | null) {
           console.log('[useSandbox] Reconnected to saved sandbox:', saved.sandboxId);
           return saved.sandboxId;
         }
-        clearSession();
+        clearSession(saved.sandboxId);
         return null;
       })
       .catch(() => {
-        if (!cancelled) clearSession();
+        if (!cancelled) clearSession(saved.sandboxId);
         return null;
       })
       .finally(() => {
@@ -140,7 +144,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
     if (activeRepoFullName == null) return;
     const saved = loadSession();
     if (saved && saved.repoFullName !== activeRepoFullName) {
-      clearSession();
+      clearSession(saved.sandboxId);
       if (sandboxIdRef.current && status === 'ready') {
         sandboxIdRef.current = null;
         setSandboxId(null);
@@ -216,7 +220,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
     } catch {
       // Best effort — container will auto-terminate anyway
     } finally {
-      clearSession();
+      clearSession(id);
     }
 
     setSandboxId(null);

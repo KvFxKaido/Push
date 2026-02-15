@@ -355,11 +355,15 @@ export async function getSandboxDiff(
 export async function cleanupSandbox(
   sandboxId: string,
 ): Promise<{ ok: boolean }> {
+  const tokenForSandbox = getSandboxOwnerToken(sandboxId);
   const result = await sandboxFetch<{ ok: boolean }>('cleanup', {
-    ...withOwnerToken({}),
+    ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
   });
-  setSandboxOwnerToken(null);
+  setSandboxOwnerToken(null, sandboxId);
+  if (tokenForSandbox && sandboxOwnerToken === tokenForSandbox) {
+    setSandboxOwnerToken(null);
+  }
   return result;
 }
 
