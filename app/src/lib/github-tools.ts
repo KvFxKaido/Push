@@ -1606,7 +1606,7 @@ Available tools:
 - read_file(repo, path, branch?) — Read a single file's contents (default: repo's default branch). Only works on files — fails on directories.
 - list_directory(repo, path?, branch?) — List files and folders in a directory (default path: repo root). Use this to browse the repo structure before reading specific files.
 - list_branches(repo) — List branches with default/protected status
-- delegate_coder(task?, tasks?, files?) — Delegate coding to the Coder agent (requires sandbox). Use "task" for one task, or "tasks" array for batch independent tasks.
+- delegate_coder(task?, tasks?, files?) — Delegate coding to the Coder agent (requires sandbox). Use "task" for one task, or "tasks" array for batch independent tasks. Batch tasks may run in isolated worker sandboxes for parallel execution.
 - fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
 - search_files(repo, query, path?, branch?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/"). Note: GitHub code search indexes the default branch; branch filter is best-effort.
 - list_commit_files(repo, ref) — List files changed in a commit without the full diff. Lighter than fetch_pr. ref can be SHA, branch, or tag.

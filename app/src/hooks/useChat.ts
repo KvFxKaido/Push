@@ -1268,57 +1268,161 @@ export function useChat(
                   const summaries: string[] = [];
                   let totalRounds = 0;
                   let totalCheckpoints = 0;
+                  let parallelIsolationNote = '';
 
-                  for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
-                    const task = taskList[taskIndex];
+                  const canRunParallelDelegates = (
+                    taskList.length > 1
+                    && taskList.length <= MAX_PARALLEL_DELEGATE_TASKS
+                    && Boolean(repoRef.current)
+                  );
 
-                    // Interactive Checkpoint callback: when the Coder pauses to ask
-                    // the Orchestrator for guidance, this generates an answer using the
-                    // Orchestrator's LLM with recent chat history for context.
-                    const handleCheckpoint = async (question: string, context: string): Promise<string> => {
-                      const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
-                      updateAgentStatus(
-                        { active: true, phase: `${prefix}Coder checkpoint`, detail: question },
-                        { chatId, source: 'coder' },
+                  if (canRunParallelDelegates) {
+                    const sourceRepo = repoRef.current!;
+                    const sourceBranch = branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || 'main';
+                    const authToken = getGitHubAuthToken();
+
+                    updateAgentStatus(
+                      { active: true, phase: 'Preparing parallel coder workers...' },
+                      { chatId, source: 'coder' },
+                    );
+
+                    const snapshot = await downloadFromSandbox(currentSandboxId, '/workspace');
+                    if (!snapshot.ok || !snapshot.archiveBase64) {
+                      throw new Error(snapshot.error || 'Failed to capture workspace snapshot for parallel delegation.');
+                    }
+                    const snapshotArchiveBase64 = snapshot.archiveBase64;
+
+                    const workerSandboxIds: string[] = [];
+                    try {
+                      const parallelResults = await Promise.all(
+                        taskList.map(async (task, taskIndex) => {
+                          const prefix = `[${taskIndex + 1}/${taskList.length}] `;
+                          updateAgentStatus(
+                            { active: true, phase: `${prefix}Starting worker sandbox...` },
+                            { chatId, source: 'coder' },
+                          );
+
+                          const workerSession = await createSandbox(sourceRepo, sourceBranch, authToken);
+                          if (workerSession.status === 'error' || !workerSession.sandboxId) {
+                            throw new Error(workerSession.error || `Failed to create worker sandbox for task ${taskIndex + 1}.`);
+                          }
+                          const workerSandboxId = workerSession.sandboxId;
+                          workerSandboxIds.push(workerSandboxId);
+
+                          const restore = await hydrateSnapshotInSandbox(workerSandboxId, snapshotArchiveBase64, '/workspace');
+                          if (!restore.ok) {
+                            throw new Error(restore.error || `Failed to restore worker snapshot for task ${taskIndex + 1}.`);
+                          }
+
+                          const handleCheckpoint = async (question: string, context: string): Promise<string> => {
+                            updateAgentStatus(
+                              { active: true, phase: `${prefix}Coder checkpoint`, detail: question },
+                              { chatId, source: 'coder' },
+                            );
+
+                            const answer = await generateCheckpointAnswer(
+                              question,
+                              context,
+                              apiMessages.slice(-6),
+                              abortControllerRef.current?.signal,
+                            );
+
+                            updateAgentStatus(
+                              { active: true, phase: `${prefix}Coder resuming...` },
+                              { chatId, source: 'coder' },
+                            );
+                            return answer;
+                          };
+
+                          const coderResult = await runCoderAgent(
+                            task,
+                            workerSandboxId,
+                            delegateArgs.files || [],
+                            (phase, detail) => {
+                              updateAgentStatus(
+                                { active: true, phase: `${prefix}${phase}`, detail },
+                                { chatId, source: 'coder' },
+                              );
+                            },
+                            agentsMdRef.current || undefined,
+                            abortControllerRef.current?.signal,
+                            handleCheckpoint,
+                          );
+
+                          return { taskIndex, coderResult };
+                        }),
                       );
 
-                      const answer = await generateCheckpointAnswer(
-                        question,
-                        context,
-                        apiMessages.slice(-6), // recent chat for user intent context
-                        abortControllerRef.current?.signal,
-                      );
+                      parallelResults
+                        .sort((a, b) => a.taskIndex - b.taskIndex)
+                        .forEach(({ taskIndex, coderResult }) => {
+                          totalRounds += coderResult.rounds;
+                          totalCheckpoints += coderResult.checkpoints;
+                          summaries.push(`Task ${taskIndex + 1}: ${coderResult.summary}`);
+                        });
 
-                      updateAgentStatus(
-                        { active: true, phase: `${prefix}Coder resuming...` },
-                        { chatId, source: 'coder' },
-                      );
-                      return answer;
-                    };
+                      parallelIsolationNote = '\n[Note] Parallel delegate tasks ran in isolated worker sandboxes and were not auto-merged into the active workspace.';
+                    } finally {
+                      await Promise.all(workerSandboxIds.map(async (id) => {
+                        try {
+                          await cleanupSandbox(id);
+                        } catch {
+                          // Best effort cleanup for worker sandboxes.
+                        }
+                      }));
+                    }
+                  } else {
+                    for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
+                      const task = taskList[taskIndex];
 
-                    const coderResult = await runCoderAgent(
-                      task,
-                      currentSandboxId,
-                      delegateArgs.files || [],
-                      (phase, detail) => {
+                      // Interactive Checkpoint callback: when the Coder pauses to ask
+                      // the Orchestrator for guidance, this generates an answer using the
+                      // Orchestrator's LLM with recent chat history for context.
+                      const handleCheckpoint = async (question: string, context: string): Promise<string> => {
                         const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
                         updateAgentStatus(
-                          { active: true, phase: `${prefix}${phase}`, detail },
+                          { active: true, phase: `${prefix}Coder checkpoint`, detail: question },
                           { chatId, source: 'coder' },
                         );
-                      },
-                      agentsMdRef.current || undefined,
-                      abortControllerRef.current?.signal,
-                      handleCheckpoint,
-                    );
-                    totalRounds += coderResult.rounds;
-                    totalCheckpoints += coderResult.checkpoints;
-                    summaries.push(
-                      taskList.length > 1
-                        ? `Task ${taskIndex + 1}: ${coderResult.summary}`
-                        : coderResult.summary,
-                    );
-                    allCards.push(...coderResult.cards);
+
+                        const answer = await generateCheckpointAnswer(
+                          question,
+                          context,
+                          apiMessages.slice(-6), // recent chat for user intent context
+                          abortControllerRef.current?.signal,
+                        );
+
+                        updateAgentStatus(
+                          { active: true, phase: `${prefix}Coder resuming...` },
+                          { chatId, source: 'coder' },
+                        );
+                        return answer;
+                      };
+
+                      const coderResult = await runCoderAgent(
+                        task,
+                        currentSandboxId,
+                        delegateArgs.files || [],
+                        (phase, detail) => {
+                          const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
+                          updateAgentStatus(
+                            { active: true, phase: `${prefix}${phase}`, detail },
+                            { chatId, source: 'coder' },
+                          );
+                        },
+                        agentsMdRef.current || undefined,
+                        abortControllerRef.current?.signal,
+                        handleCheckpoint,
+                      );
+                      totalRounds += coderResult.rounds;
+                      totalCheckpoints += coderResult.checkpoints;
+                      summaries.push(
+                        taskList.length > 1
+                          ? `Task ${taskIndex + 1}: ${coderResult.summary}`
+                          : coderResult.summary,
+                      );
+                      allCards.push(...coderResult.cards);
+                    }
                   }
 
                   // Attach all Coder cards to the assistant message
@@ -1346,7 +1450,7 @@ export function useChat(
                     ? `, ${totalCheckpoints} checkpoint${totalCheckpoints !== 1 ? 's' : ''}`
                     : '';
                   toolExecResult = {
-                    text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})`,
+                    text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})${parallelIsolationNote}`,
                   };
                 }
               } catch (err) {
