@@ -104,20 +104,30 @@ const DEFAULT_TIMEOUT_MS = 30_000; // 30s for most operations
 const EXEC_TIMEOUT_MS = 120_000;   // 120s for command execution
 const BROWSER_TIMEOUT_MS = 90_000; // 90s for remote browser navigation + capture
 let sandboxOwnerToken: string | null = null;
+const sandboxOwnerTokensById = new Map<string, string>();
 
-export function setSandboxOwnerToken(token: string | null): void {
-  sandboxOwnerToken = token && token.trim() ? token.trim() : null;
+export function setSandboxOwnerToken(token: string | null, sandboxId?: string): void {
+  const normalized = token && token.trim() ? token.trim() : null;
+  if (sandboxId) {
+    if (normalized) sandboxOwnerTokensById.set(sandboxId, normalized);
+    else sandboxOwnerTokensById.delete(sandboxId);
+  }
+  if (sandboxId === undefined) {
+    sandboxOwnerToken = normalized;
+  }
 }
 
-export function getSandboxOwnerToken(): string | null {
+export function getSandboxOwnerToken(sandboxId?: string): string | null {
+  if (sandboxId) return sandboxOwnerTokensById.get(sandboxId) || null;
   return sandboxOwnerToken;
 }
 
-function withOwnerToken(body: Record<string, unknown>): Record<string, unknown> {
-  if (!sandboxOwnerToken) {
+function withOwnerToken(body: Record<string, unknown>, sandboxId?: string): Record<string, unknown> {
+  const token = (sandboxId ? sandboxOwnerTokensById.get(sandboxId) : null) || sandboxOwnerToken;
+  if (!token) {
     throw new Error('Sandbox access token missing. Start or reconnect the sandbox session.');
   }
-  return { ...body, owner_token: sandboxOwnerToken };
+  return { ...body, owner_token: token };
 }
 
 // --- Retry configuration ---
@@ -265,6 +275,7 @@ export async function createSandbox(
   }
 
   setSandboxOwnerToken(data.owner_token);
+  setSandboxOwnerToken(data.owner_token, data.sandbox_id);
   return { sandboxId: data.sandbox_id, ownerToken: data.owner_token, status: 'ready' };
 }
 
@@ -280,7 +291,7 @@ export async function execInSandbox(
       sandbox_id: sandboxId,
       command,
       workdir: workdir || '/workspace',
-    }),
+    }, sandboxId),
     EXEC_TIMEOUT_MS,
   );
   return {
@@ -298,7 +309,7 @@ export async function readFromSandbox(
   endLine?: number,
 ): Promise<FileReadResult> {
   const body: Record<string, unknown> = {
-    ...withOwnerToken({}),
+    ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
   };
@@ -324,7 +335,7 @@ export async function writeToSandbox(
   expectedVersion?: string,
 ): Promise<WriteResult> {
   return sandboxFetch<WriteResult>('write', {
-    ...withOwnerToken({}),
+    ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
     content,
@@ -336,7 +347,7 @@ export async function getSandboxDiff(
   sandboxId: string,
 ): Promise<DiffResult> {
   return sandboxFetch<DiffResult>('diff', {
-    ...withOwnerToken({}),
+    ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
   });
 }
@@ -376,7 +387,7 @@ export async function downloadFromSandbox(
     format?: string;
     error?: string;
   }>('download', {
-    ...withOwnerToken({}),
+    ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
     format: 'tar.gz',
@@ -407,7 +418,7 @@ export async function hydrateSnapshotInSandbox(
     restored_files?: number;
     error?: string;
   }>('restore', {
-    ...withOwnerToken({}),
+    ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     archive_base64: archiveBase64,
     path,
@@ -435,7 +446,7 @@ export async function listDirectory(
   path: string = '/workspace',
 ): Promise<FileEntry[]> {
   const data = await sandboxFetch<{ entries: FileEntry[]; error?: string }>('list', {
-    ...withOwnerToken({}),
+    ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
   });
@@ -448,7 +459,7 @@ export async function deleteFromSandbox(
   path: string,
 ): Promise<void> {
   const data = await sandboxFetch<{ ok: boolean; error?: string }>('delete', {
-    ...withOwnerToken({}),
+    ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
   });
@@ -477,7 +488,7 @@ export async function browserScreenshotInSandbox(
   return sandboxFetch<BrowserScreenshotResult>(
     'browser-screenshot',
     {
-      ...withOwnerToken({}),
+      ...withOwnerToken({}, sandboxId),
       sandbox_id: sandboxId,
       url,
       full_page: fullPage,
@@ -496,7 +507,7 @@ export async function browserExtractInSandbox(
   return sandboxFetch<BrowserExtractResult>(
     'browser-extract',
     {
-      ...withOwnerToken({}),
+      ...withOwnerToken({}, sandboxId),
       sandbox_id: sandboxId,
       url,
       instruction: instruction || '',
