@@ -1,6 +1,6 @@
 # Background Coder Tasks Plan
 
-Date: 2026-02-13  
+Date: 2026-02-13 (Updated: 2026-02-15)  
 Status: Draft  
 Owner: Push
 
@@ -13,6 +13,15 @@ Allow long-running coding tasks to continue when the mobile app is backgrounded 
 - Current orchestrator + tool loop runs in the browser client.
 - Mobile browsers aggressively suspend background JS/network work.
 - Result: coding sessions can stall when users switch apps or lock screen.
+
+**2026-02-15 Research Findings:**
+- Browser Background Sync API is **unsuitable** for Push's use case:
+  - Service workers get killed on long tasks (coding sessions need 5-30 min)
+  - iOS Safari has limited/no Background Sync support (Push is mobile-first)
+  - 24-hour retention limits don't fit multi-hour sessions
+  - Battery-conscious throttling aggressively kills background tasks
+- **Server-side execution is the correct architecture** for long-running coding tasks
+- Background Sync API should only be used for small, quick operations (e.g., commit notification queue)
 
 ## Scope (MVP)
 
@@ -59,7 +68,12 @@ Out of scope (MVP):
   - elapsed time
   - latest step/status line
   - open/resume button
-- On reconnect, UI polls or streams events from `/api/jobs/:id/events`.
+- On reconnect, UI streams events from `/api/jobs/:id/events` (SSE preferred over polling for battery efficiency).
+
+**Client-side queue management (small ops only):**
+- Use IndexedDB to queue small, quick actions (e.g., "commit completed" notifications)
+- Use Background Sync API for retry on reconnect (not for coding tasks)
+- Fallback to manual retry UI if Background Sync unsupported
 
 ## Data Model (initial)
 
@@ -155,9 +169,10 @@ End-user setup:
 ## Open Questions
 
 - Should background jobs be allowed for all tools or only coder delegation initially?
-- Polling vs SSE for event delivery in mobile conditions?
+- ~~Polling vs SSE for event delivery in mobile conditions?~~ **RESOLVED: SSE preferred** (battery-friendly, auto-reconnect, event replay from last-seen ID)
 - What retention window for completed jobs (24h, 7d, configurable)?
 - Should completed jobs auto-post a synthetic assistant summary into chat?
+- Should we add native Push Notifications for job completion? (Phase 4 enhancement)
 
 ## Acceptance Criteria (Product)
 
@@ -166,3 +181,68 @@ End-user setup:
 - Reopen app and recover job state/progress.
 - Completed job exposes summary + changed files/diff path.
 - User can cancel active background job from UI.
+
+## Implementation Patterns (from 2025-2026 PWA Research)
+
+### Server-Side Job Architecture (Primary)
+```
+Mobile Client (PWA)
+  ├─ Creates job request with pre-approved tool allowlist
+  ├─ SSE connection for real-time progress
+  └─ Auto-reconnect on wake/foreground with last event ID
+
+Cloudflare Durable Object
+  ├─ Job orchestration + state machine
+  ├─ Append-only event log with replay capability
+  └─ SSE stream (clients reconnect via last-seen event ID)
+
+Modal Container (Coder Agent)
+  ├─ Runs unbounded tool loops
+  ├─ Checkpoints progress to DO event log
+  └─ Continues execution even if client sleeps
+```
+
+### Client-Side Queue (Small Ops Only)
+```
+IndexedDB Queue
+  ├─ Store pending actions before server submission
+  ├─ Retry failed job creations on reconnect
+  └─ Cache job results for offline viewing
+
+Background Sync API (when supported)
+  ├─ Queue small ops: commit notifications, like actions
+  ├─ 24-hour max retention window
+  └─ Fallback to manual retry UI if unsupported
+```
+
+### Key Design Decisions
+
+**✅ DO with SSE** (not polling)
+- Battery-friendly for mobile
+- Auto-reconnect with event replay
+- DO can buffer missed events during client sleep
+
+**✅ Pre-approved tool allowlist at job start**
+- No runtime permission prompts during background execution
+- Declared in `POST /api/jobs/start` request body
+- Auditor review happens before job submission, not during
+
+**✅ Context compaction within background jobs**
+- 60KB context cap per Coder round (existing safeguard)
+- Checkpoint summaries to event log for reconnecting clients
+- Clients reconstruct progress without replaying every tool call
+
+**❌ Don't use Background Sync API for coding tasks**
+- Service workers killed on long operations (5-30 min coding sessions)
+- iOS Safari has limited/no support
+- Battery/memory throttling on mobile devices
+
+**❌ Don't rely on client-side retry hell**
+- Move complexity to server-side DO orchestration
+- Client only responsible for job creation and reconnection
+
+### References
+- [Microsoft: Synchronize and update a PWA in the background](https://learn.microsoft.com/en-us/microsoft-edge/progressive-web-apps/how-to/background-syncs)
+- [MDN: Offline and background operation - PWAs](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Offline_and_background_operation)
+- [Advanced PWA Playbook: Background Sync](https://rishikc.com/articles/advanced-pwa-features-offline-push-background-sync/)
+- [OneUptime: Background Sync in React PWAs (Jan 2026)](https://oneuptime.com/blog/post/2026-01-15-background-sync-react-pwa/view)
