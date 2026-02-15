@@ -1162,7 +1162,14 @@ export function useChat(
             if (toolCall.source === 'github' && !toolRepoFullName) {
               toolExecResult = { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
             } else {
-              toolExecResult = await executeAnyToolCall(toolCall, toolRepoFullName || '', sandboxIdRef.current, isMainProtectedRef.current, branchInfoRef.current?.defaultBranch);
+              toolExecResult = await executeAnyToolCall(
+                toolCall,
+                toolRepoFullName || '',
+                sandboxIdRef.current,
+                isMainProtectedRef.current,
+                branchInfoRef.current?.defaultBranch,
+                lockedProviderForChat,
+              );
             }
           }
 
