@@ -892,6 +892,7 @@ export function useChat(
                 toolMeta: {
                   toolName: unimplementedTool,
                   source: 'sandbox',
+                  provider: lockedProviderForChat,
                   durationMs: 0,
                   isError: true,
                   triggeredBy: 'assistant',
@@ -931,6 +932,7 @@ export function useChat(
                 toolMeta: {
                   toolName: diagnosis.toolName || 'unknown',
                   source: 'sandbox',
+                  provider: lockedProviderForChat,
                   durationMs: 0,
                   isError: true,
                   triggeredBy: 'assistant',
@@ -1254,6 +1256,7 @@ export function useChat(
           const toolMeta: ToolMeta = {
             toolName: getToolName(toolCall),
             source: toolCall.source,
+            provider: lockedProviderForChat,
             durationMs: toolExecDurationMs,
             isError: toolExecResult.text.includes('[Tool Error]'),
             triggeredBy: 'assistant',
