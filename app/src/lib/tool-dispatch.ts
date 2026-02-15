@@ -12,7 +12,7 @@ import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, IMPLEMENTED_SANDBOX_TOOLS, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
 import { detectWebSearchToolCall, executeWebSearch, type WebSearchToolCall } from './web-search-tools';
-import { getActiveProvider } from './orchestrator';
+import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { execInSandbox } from './sandbox-client';
 import { asRecord, detectToolFromText, extractBareToolJsonObjects, repairToolJson, detectTruncatedToolCall } from './utils';
 
@@ -87,6 +87,7 @@ export async function executeAnyToolCall(
   sandboxId: string | null,
   isMainProtected?: boolean,
   defaultBranch?: string,
+  activeProvider?: ActiveProvider,
 ): Promise<ToolExecutionResult> {
   // Enforce Protect Main: block commit/push tools when on the default branch
   if (isMainProtected && toolCall.source === 'sandbox' && PROTECTED_MAIN_TOOLS.has(toolCall.call.tool) && sandboxId) {
