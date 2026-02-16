@@ -139,20 +139,43 @@ def _issue_owner_token(sb: modal.Sandbox) -> str | None:
 def _validate_owner_token(sb: modal.Sandbox, provided_token: str) -> bool:
     if not provided_token:
         return False
-    p = sb.exec(
-        "python3",
-        "-c",
-        (
-            "import pathlib;"
-            f"p=pathlib.Path('{OWNER_TOKEN_FILE}');"
-            "print(p.read_text(encoding='utf-8') if p.exists() else '')"
-        ),
-    )
-    p.wait()
-    if p.returncode != 0:
+    try:
+        p = sb.exec(
+            "python3",
+            "-c",
+            (
+                "import pathlib;"
+                f"p=pathlib.Path('{OWNER_TOKEN_FILE}');"
+                "print(p.read_text(encoding='utf-8') if p.exists() else '')"
+            ),
+        )
+        p.wait()
+        if p.returncode != 0:
+            return False
+        expected = p.stdout.read().strip()
+        return bool(expected) and hmac.compare_digest(expected, str(provided_token))
+    except Exception:
+        # Sandbox may no longer exist / be reachable.
         return False
-    expected = p.stdout.read().strip()
-    return bool(expected) and hmac.compare_digest(expected, str(provided_token))
+
+
+def _format_sandbox_lookup_error(exc: Exception) -> str:
+    detail = str(exc).strip()
+    lowered = detail.lower()
+    if "not found" in lowered or "does not exist" in lowered or "no such" in lowered:
+        return "Sandbox not found or expired. Start a new sandbox session."
+    if "terminated" in lowered or "closed" in lowered:
+        return "Sandbox is no longer running. Start a new sandbox session."
+    if detail:
+        return f"Sandbox unavailable: {detail}"
+    return "Sandbox unavailable. Start a new sandbox session."
+
+
+def _load_sandbox(sandbox_id: str) -> tuple[modal.Sandbox | None, str | None]:
+    try:
+        return modal.Sandbox.from_id(sandbox_id), None
+    except Exception as exc:
+        return None, _format_sandbox_lookup_error(exc)
 
 
 def _get_file_version(sb: modal.Sandbox, path: str) -> tuple[str | None, str | None]:
@@ -305,11 +328,31 @@ def exec_command(data: dict):
     workdir = data.get("workdir", "/workspace")
 
     if not sandbox_id or not command:
-        return {"error": "Missing sandbox_id or command", "exit_code": -1}
+        return {
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -1,
+            "truncated": False,
+            "error": "Missing sandbox_id or command",
+        }
 
-    sb = modal.Sandbox.from_id(sandbox_id)
+    sb, sandbox_error = _load_sandbox(str(sandbox_id))
+    if not sb:
+        return {
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -1,
+            "truncated": False,
+            "error": sandbox_error or "Sandbox unavailable",
+        }
     if not _validate_owner_token(sb, owner_token):
-        return {"error": "Unauthorized sandbox access", "exit_code": -1}
+        return {
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -1,
+            "truncated": False,
+            "error": "Unauthorized sandbox access",
+        }
     p = sb.exec("bash", "-c", f"cd {workdir} && {command}")
     p.wait()
 
@@ -338,7 +381,15 @@ def file_ops(data: dict):
     if action not in ("read", "write", "list", "delete", "hydrate"):
         return {"error": f"Unknown file operation: {action}"}
 
-    sb = modal.Sandbox.from_id(sandbox_id)
+    sb, sandbox_error = _load_sandbox(str(sandbox_id))
+    if not sb:
+        error_message = sandbox_error or "Sandbox unavailable"
+        if action in ("write", "delete", "hydrate"):
+            return {"ok": False, "error": error_message}
+        if action == "read":
+            return {"error": error_message, "content": ""}
+        return {"error": error_message, "entries": []}
+
     if not _validate_owner_token(sb, owner_token):
         if action in ("write", "delete", "hydrate"):
             return {"ok": False, "error": "Unauthorized sandbox access"}
@@ -568,7 +619,9 @@ def get_diff(data: dict):
     if not sandbox_id:
         return {"error": "Missing sandbox_id", "diff": ""}
 
-    sb = modal.Sandbox.from_id(sandbox_id)
+    sb, sandbox_error = _load_sandbox(str(sandbox_id))
+    if not sb:
+        return {"error": sandbox_error or "Sandbox unavailable", "diff": ""}
     if not _validate_owner_token(sb, owner_token):
         return {"error": "Unauthorized sandbox access", "diff": ""}
 
@@ -620,7 +673,9 @@ def browser_screenshot(data: dict):
     if not sandbox_id or not url:
         return {"ok": False, "error": "Missing sandbox_id or url"}
 
-    sb = modal.Sandbox.from_id(sandbox_id)
+    sb, sandbox_error = _load_sandbox(str(sandbox_id))
+    if not sb:
+        return {"ok": False, "error": sandbox_error or "Sandbox unavailable"}
     if not _validate_owner_token(sb, owner_token):
         return {"ok": False, "error": "Unauthorized sandbox access"}
 
@@ -744,7 +799,9 @@ def browser_extract(data: dict):
     if not sandbox_id or not url:
         return {"ok": False, "error": "Missing sandbox_id or url"}
 
-    sb = modal.Sandbox.from_id(sandbox_id)
+    sb, sandbox_error = _load_sandbox(str(sandbox_id))
+    if not sb:
+        return {"ok": False, "error": sandbox_error or "Sandbox unavailable"}
     if not _validate_owner_token(sb, owner_token):
         return {"ok": False, "error": "Unauthorized sandbox access"}
 
@@ -873,7 +930,9 @@ def cleanup(data: dict):
     if not sandbox_id:
         return {"ok": False, "error": "Missing sandbox_id"}
 
-    sb = modal.Sandbox.from_id(sandbox_id)
+    sb, sandbox_error = _load_sandbox(str(sandbox_id))
+    if not sb:
+        return {"ok": False, "error": sandbox_error or "Sandbox unavailable"}
     if not _validate_owner_token(sb, owner_token):
         return {"ok": False, "error": "Unauthorized sandbox access"}
     sb.terminate()
@@ -900,7 +959,9 @@ def create_archive(data: dict):
     if resolved_path != "/workspace" and not resolved_path.startswith("/workspace/"):
         return {"ok": False, "error": "Path must be within /workspace"}
 
-    sb = modal.Sandbox.from_id(sandbox_id)
+    sb, sandbox_error = _load_sandbox(str(sandbox_id))
+    if not sb:
+        return {"ok": False, "error": sandbox_error or "Sandbox unavailable"}
     if not _validate_owner_token(sb, owner_token):
         return {"ok": False, "error": "Unauthorized sandbox access"}
 

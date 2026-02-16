@@ -49,7 +49,7 @@ Six providers, all using OpenAI-compatible SSE streaming. Any single API key is 
 | **MiniMax** | MiniMax-M2.5 |
 | **OpenRouter** | claude-sonnet-4.5 |
 
-**OpenRouter** provides access to 50+ models through a single API. Push includes 15 curated models: Claude Sonnet 4.5 & Opus 4.5, GPT-4o/Turbo/o1, 3 Codex variants, Gemini 3 Flash/Pro, Grok 4.1, Kimi K2.5, GLM-5, MiniMax M2.5, and DeepSeek v3.2.
+**OpenRouter** provides access to 50+ models through a single API. Push includes 15 curated models: Claude Sonnet 4.5, Opus 4.6, and Haiku 4.5, GPT-4o/Turbo/o1, 3 Codex variants, Gemini 3 Flash/Pro, Grok 4.1, Kimi K2.5, GLM-5, and MiniMax M2.5.
 
 ### Tool Protocol
 

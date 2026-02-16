@@ -34,7 +34,8 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5';
 export const OPENROUTER_MODELS: string[] = [
   // Claude 4 series
   'anthropic/claude-sonnet-4.5',
-  'anthropic/claude-opus-4.5',
+  'anthropic/claude-opus-4.6',
+  'anthropic/claude-haiku-4.5',
   // OpenAI GPT-4 & o1
   'openai/gpt-4o',
   'openai/gpt-4-turbo',
@@ -51,7 +52,6 @@ export const OPENROUTER_MODELS: string[] = [
   'moonshotai/kimi-k2.5',
   'z-ai/glm-5',
   'minimax/minimax-m2.5',
-  'deepseek/deepseek-v3.2',
 ];
 
 export const PROVIDERS: AIProviderConfig[] = [
