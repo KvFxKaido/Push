@@ -12,10 +12,11 @@ import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
 import { useZaiConfig } from '@/hooks/useZaiConfig';
 import { useMiniMaxConfig } from '@/hooks/useMiniMaxConfig';
+import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
-import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, ZAI_MODELS, MINIMAX_MODELS, type PreferredProvider } from '@/lib/providers';
+import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, ZAI_MODELS, MINIMAX_MODELS, OPENROUTER_MODELS, type PreferredProvider } from '@/lib/providers';
 import { getActiveProvider, getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
-import { fetchOllamaModels, fetchMistralModels } from '@/lib/model-catalog';
+import { fetchOllamaModels, fetchMistralModels, fetchOpenRouterModels } from '@/lib/model-catalog';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useUserProfile } from '@/hooks/useUserProfile';
@@ -227,6 +228,7 @@ function App() {
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
   const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey, model: zaiModel, setModel: setZaiModel } = useZaiConfig();
   const { setKey: setMiniMaxKey, clearKey: clearMiniMaxKey, hasKey: hasMiniMaxKey, model: miniMaxModel, setModel: setMiniMaxModel } = useMiniMaxConfig();
+  const { setKey: setOpenRouterKey, clearKey: clearOpenRouterKey, hasKey: hasOpenRouterKey, model: openRouterModel, setModel: setOpenRouterModel } = useOpenRouterConfig();
   const { setKey: setTavilyKey, clearKey: clearTavilyKey, hasKey: hasTavilyKey } = useTavilyConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('you');
@@ -239,20 +241,25 @@ function App() {
   const [mistralKeyInput, setMistralKeyInput] = useState('');
   const [zaiKeyInput, setZaiKeyInput] = useState('');
   const [miniMaxKeyInput, setMiniMaxKeyInput] = useState('');
+  const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [mistralModels, setMistralModels] = useState<string[]>([]);
+  const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
   const [mistralModelsLoading, setMistralModelsLoading] = useState(false);
+  const [openRouterModelsLoading, setOpenRouterModelsLoading] = useState(false);
   const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
   const [mistralModelsError, setMistralModelsError] = useState<string | null>(null);
+  const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
   const [ollamaModelsUpdatedAt, setOllamaModelsUpdatedAt] = useState<number | null>(null);
   const [mistralModelsUpdatedAt, setMistralModelsUpdatedAt] = useState<number | null>(null);
+  const [openRouterModelsUpdatedAt, setOpenRouterModelsUpdatedAt] = useState<number | null>(null);
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
-  const availableProviders = ([['moonshot', 'Kimi', hasKimiKey], ['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey], ['zai', 'Z.ai', hasZaiKey], ['minimax', 'MiniMax', hasMiniMaxKey]] as const).filter(([, , has]) => has);
+  const availableProviders = ([['moonshot', 'Kimi', hasKimiKey], ['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey], ['zai', 'Z.ai', hasZaiKey], ['minimax', 'MiniMax', hasMiniMaxKey], ['openrouter', 'OpenRouter', hasOpenRouterKey]] as const).filter(([, , has]) => has);
   
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
@@ -363,6 +370,20 @@ function App() {
     });
   }, [hasMistralKey, mistralModelsLoading, refreshModels]);
 
+  const refreshOpenRouterModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: hasOpenRouterKey,
+      isLoading: openRouterModelsLoading,
+      setLoading: setOpenRouterModelsLoading,
+      setError: setOpenRouterModelsError,
+      setModels: setOpenRouterModels,
+      setUpdatedAt: setOpenRouterModelsUpdatedAt,
+      fetchModels: fetchOpenRouterModels,
+      emptyMessage: 'No models returned by OpenRouter.',
+      failureMessage: 'Failed to load OpenRouter models.',
+    });
+  }, [hasOpenRouterKey, openRouterModelsLoading, refreshModels]);
+
   const loadRepoBranches = useCallback(async (repoFullName: string) => {
     const seq = ++branchFetchSeqRef.current;
     setRepoBranchesLoading(true);
@@ -449,6 +470,14 @@ function App() {
     }
   }, [hasMistralKey, mistralModels.length, mistralModelsLoading, refreshMistralModels]);
 
+  // OpenRouter: Don't auto-fetch models (large list can cause UI freeze)
+  // Users can manually refresh via the refresh button if needed
+  // useEffect(() => {
+  //   if (hasOpenRouterKey && openRouterModels.length === 0 && !openRouterModelsLoading) {
+  //     refreshOpenRouterModels();
+  //   }
+  // }, [hasOpenRouterKey, openRouterModels.length, openRouterModelsLoading, refreshOpenRouterModels]);
+
   useEffect(() => {
     if (!hasOllamaKey) {
       setOllamaModels([]);
@@ -464,6 +493,14 @@ function App() {
       setMistralModelsUpdatedAt(null);
     }
   }, [hasMistralKey]);
+
+  useEffect(() => {
+    if (!hasOpenRouterKey) {
+      setOpenRouterModels([]);
+      setOpenRouterModelsError(null);
+      setOpenRouterModelsUpdatedAt(null);
+    }
+  }, [hasOpenRouterKey]);
 
   useEffect(() => {
     setDisplayNameDraft(profile.displayName);
@@ -862,6 +899,11 @@ function App() {
     ensureUnlockedChatForProviderChange();
     setMiniMaxModel(model);
   }, [ensureUnlockedChatForProviderChange, setMiniMaxModel]);
+
+  const handleSelectOpenRouterModelFromChat = useCallback((model: string) => {
+    ensureUnlockedChatForProviderChange();
+    setOpenRouterModel(model);
+  }, [ensureUnlockedChatForProviderChange, setOpenRouterModel]);
 
   // Disconnect: clear everything (both auth methods)
   const handleDisconnect = useCallback(() => {
@@ -1266,6 +1308,19 @@ function App() {
         setMiniMaxKeyInput,
         setMiniMaxKey,
         clearMiniMaxKey,
+        hasOpenRouterKey,
+        openRouterModel,
+        setOpenRouterModel,
+        openRouterModelOptions: openRouterModels.length > 0 ? openRouterModels : OPENROUTER_MODELS,
+        openRouterModelsLoading,
+        openRouterModelsError,
+        openRouterModelsUpdatedAt,
+        isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
+        refreshOpenRouterModels,
+        openRouterKeyInput,
+        setOpenRouterKeyInput,
+        setOpenRouterKey,
+        clearOpenRouterKey,
         hasTavilyKey,
         tavilyKeyInput,
         setTavilyKeyInput,
@@ -1737,6 +1792,10 @@ function App() {
           miniMaxModelOptions,
           isMiniMaxModelLocked,
           onSelectMiniMaxModel: handleSelectMiniMaxModelFromChat,
+          openRouterModel,
+          openRouterModelOptions: openRouterModels.length > 0 ? openRouterModels : OPENROUTER_MODELS,
+          isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
+          onSelectOpenRouterModel: handleSelectOpenRouterModelFromChat,
         }}
       />
 

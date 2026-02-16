@@ -11,6 +11,7 @@ interface Env {
   MISTRAL_API_KEY?: string;
   ZAI_API_KEY?: string;
   MINIMAX_API_KEY?: string;
+  OPENROUTER_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   BROWSERBASE_API_KEY?: string;
   BROWSERBASE_PROJECT_ID?: string;
@@ -99,6 +100,16 @@ export default {
     // API route: streaming proxy to MiniMax (SSE, OpenAI-compatible)
     if (url.pathname === '/api/minimax/chat' && request.method === 'POST') {
       return handleMiniMaxChat(request, env);
+    }
+
+    // API route: streaming proxy to OpenRouter (SSE, OpenAI-compatible)
+    if (url.pathname === '/api/openrouter/chat' && request.method === 'POST') {
+      return handleOpenRouterChat(request, env);
+    }
+
+    // API route: model catalog proxy to OpenRouter
+    if (url.pathname === '/api/openrouter/models' && request.method === 'GET') {
+      return handleOpenRouterModels(request, env);
     }
 
     // API route: Ollama web search proxy
@@ -1130,6 +1141,167 @@ async function handleMiniMaxChat(request: Request, env: Env): Promise<Response> 
     const finalError = isTimeout ? 'MiniMax request timed out after 120 seconds' : message;
     console.error(`[api/minimax/chat] Unhandled: ${finalError}`);
     return Response.json({ error: finalError }, { status: 502 });
+  }
+}
+
+// --- OpenRouter Chat streaming proxy ---
+
+async function handleOpenRouterChat(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const now = Date.now();
+  cleanupRateLimitStore(now);
+  const rateLimit = checkRateLimit(getClientIp(request), now);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
+    );
+  }
+
+  // Prefer server-side secret; fall back to client-provided Authorization header
+  const serverKey = env.OPENROUTER_API_KEY;
+  const clientAuth = request.headers.get('Authorization');
+  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
+
+  if (!authHeader) {
+    return Response.json(
+      { error: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.' },
+      { status: 401 },
+    );
+  }
+
+  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
+  if (!bodyResult.ok) {
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  }
+
+  console.log(`[api/openrouter/chat] Forwarding request (${bodyResult.text.length} bytes)`);
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 min for long responses
+    let upstream: Response;
+
+    try {
+      upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authHeader,
+          'HTTP-Referer': requestUrl.origin,
+          'X-Title': 'Push',
+        },
+        body: bodyResult.text,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    console.log(`[api/openrouter/chat] Upstream responded: ${upstream.status}`);
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      console.error(`[api/openrouter/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
+      return Response.json(
+        { error: `OpenRouter API error ${upstream.status}: ${errBody.slice(0, 200)}` },
+        { status: upstream.status },
+      );
+    }
+
+    // SSE streaming: pipe upstream body straight through
+    if (upstream.body) {
+      return new Response(upstream.body, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    // Non-streaming fallback
+    const data: unknown = await upstream.json();
+    return Response.json(data);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    const status = isTimeout ? 504 : 500;
+    const error = isTimeout ? 'OpenRouter request timed out after 120 seconds' : message;
+    console.error(`[api/openrouter/chat] Unhandled: ${message}`);
+    return Response.json({ error }, { status });
+  }
+}
+
+async function handleOpenRouterModels(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const now = Date.now();
+  cleanupRateLimitStore(now);
+  const rateLimit = checkRateLimit(getClientIp(request), now);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
+    );
+  }
+
+  const serverKey = env.OPENROUTER_API_KEY;
+  const clientAuth = request.headers.get('Authorization');
+  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
+
+  if (!authHeader) {
+    return Response.json(
+      { error: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.' },
+      { status: 401 },
+    );
+  }
+
+  console.log('[api/openrouter/models] Fetching model list');
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    let upstream: Response;
+
+    try {
+      upstream = await fetch('https://openrouter.ai/api/v1/models', {
+        method: 'GET',
+        headers: {
+          'Authorization': authHeader,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      return Response.json(
+        { error: `OpenRouter API error ${upstream.status}: ${errBody.slice(0, 200)}` },
+        { status: upstream.status },
+      );
+    }
+
+    const data: unknown = await upstream.json();
+    return Response.json(data);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    const status = isTimeout ? 504 : 500;
+    const error = isTimeout ? 'OpenRouter model list timed out after 30 seconds' : message;
+    return Response.json({ error }, { status });
   }
 }
 

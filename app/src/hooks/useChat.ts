@@ -31,7 +31,7 @@ import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import { browserToolEnabled } from '@/lib/feature-flags';
-import { getMistralModelName, getOllamaModelName, getZaiModelName } from '@/lib/providers';
+import { getMistralModelName, getOllamaModelName, getZaiModelName, getMiniMaxModelName, getOpenRouterModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
@@ -85,6 +85,10 @@ function getCurrentModelForProvider(provider: AIProviderType | ActiveProvider): 
       return KIMI_LOCKED_MODEL;
     case 'zai':
       return getZaiModelName();
+    case 'minimax':
+      return getMiniMaxModelName();
+    case 'openrouter':
+      return getOpenRouterModelName();
     default:
       return undefined;
   }

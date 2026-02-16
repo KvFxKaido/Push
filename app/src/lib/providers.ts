@@ -28,6 +28,32 @@ export const MINIMAX_MODELS: string[] = [
   'MiniMax-M2',
 ];
 
+// OpenRouter default model — Claude Sonnet 4.5
+export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5';
+
+export const OPENROUTER_MODELS: string[] = [
+  // Claude 4 series
+  'anthropic/claude-sonnet-4.5',
+  'anthropic/claude-opus-4.5',
+  // OpenAI GPT-4 & o1
+  'openai/gpt-4o',
+  'openai/gpt-4-turbo',
+  'openai/o1',
+  // OpenAI Codex
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.2-codex',
+  'openai/gpt-5.1-codex',
+  // Google Gemini
+  'google/gemini-3-flash-preview',
+  'google/gemini-3-pro-preview',
+  // Others
+  'x-ai/grok-4.1-fast',
+  'moonshotai/kimi-k2.5',
+  'z-ai/glm-5',
+  'minimax/minimax-m2.5',
+  'deepseek/deepseek-v3.2',
+];
+
 export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'moonshot',
@@ -178,6 +204,36 @@ export const PROVIDERS: AIProviderConfig[] = [
       },
     ],
   },
+  {
+    type: 'openrouter',
+    name: 'OpenRouter',
+    description: 'OpenRouter — Access 50+ models including Claude, GPT-4, Gemini (OpenAI-compatible)',
+    envKey: 'VITE_OPENROUTER_API_KEY',
+    envUrl: 'https://openrouter.ai',
+    models: [
+      {
+        id: OPENROUTER_DEFAULT_MODEL,
+        name: 'OpenRouter (Orchestrator)',
+        provider: 'openrouter',
+        role: 'orchestrator',
+        context: 200_000,
+      },
+      {
+        id: OPENROUTER_DEFAULT_MODEL,
+        name: 'OpenRouter (Coder)',
+        provider: 'openrouter',
+        role: 'coder',
+        context: 200_000,
+      },
+      {
+        id: OPENROUTER_DEFAULT_MODEL,
+        name: 'OpenRouter (Auditor)',
+        provider: 'openrouter',
+        role: 'auditor',
+        context: 200_000,
+      },
+    ],
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -213,6 +269,10 @@ export function getModelForRole(
   }
   if (type === 'minimax') {
     const userModel = getMiniMaxModelName();
+    return { ...model, id: userModel };
+  }
+  if (type === 'openrouter') {
+    const userModel = getOpenRouterModelName();
     return { ...model, id: userModel };
   }
   return model;
@@ -252,17 +312,21 @@ const miniMaxModel = createModelNameStorage('minimax_model', MINIMAX_DEFAULT_MOD
 export const getMiniMaxModelName = miniMaxModel.get;
 export const setMiniMaxModelName = miniMaxModel.set;
 
+const openRouterModel = createModelNameStorage('openrouter_model', OPENROUTER_DEFAULT_MODEL);
+export const getOpenRouterModelName = openRouterModel.get;
+export const setOpenRouterModelName = openRouterModel.set;
+
 // ---------------------------------------------------------------------------
 // Provider preference — user picks which backend to use
 // ---------------------------------------------------------------------------
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax';
+export type PreferredProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (stored === 'moonshot' || stored === 'ollama' || stored === 'mistral' || stored === 'zai' || stored === 'minimax') return stored;
+  if (stored === 'moonshot' || stored === 'ollama' || stored === 'mistral' || stored === 'zai' || stored === 'minimax' || stored === 'openrouter') return stored;
   return null;
 }
 

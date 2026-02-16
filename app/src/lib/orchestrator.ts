@@ -8,9 +8,10 @@ import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getMiniMaxKey } from '@/hooks/useMiniMaxConfig';
+import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
-import { getOllamaModelName, getMistralModelName, getPreferredProvider, getZaiModelName, getMiniMaxModelName } from './providers';
+import { getOllamaModelName, getMistralModelName, getPreferredProvider, getZaiModelName, getMiniMaxModelName, getOpenRouterModelName } from './providers';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -168,7 +169,7 @@ function normalizeModelName(model?: string): string {
 }
 
 export function getContextBudget(
-  provider?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'demo',
+  provider?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo',
   model?: string,
 ): ContextBudget {
   const normalizedModel = normalizeModelName(model);
@@ -532,7 +533,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax',
+  providerType?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter',
   providerModel?: string,
 ): LLMMessage[] {
   // Build system prompt: base + user identity + workspace context + tool protocol + optional sandbox tools + scratchpad
@@ -799,7 +800,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax';
+  providerType?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
   /** Override the fetch URL (e.g., Mistral Agents API uses a different endpoint) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -1471,11 +1472,65 @@ export async function streamMiniMaxChat(
   );
 }
 
+export async function streamOpenRouterChat(
+  messages: ChatMessage[],
+  onToken: (token: string, meta?: ChunkMetadata) => void,
+  onDone: (usage?: StreamUsage) => void,
+  onError: (error: Error) => void,
+  onThinkingToken?: (token: string | null) => void,
+  workspaceContext?: string,
+  hasSandbox?: boolean,
+  modelOverride?: string,
+  systemPromptOverride?: string,
+  scratchpadContent?: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const apiKey = getOpenRouterKey();
+  if (!apiKey) {
+    onError(new Error('OpenRouter API key not configured'));
+    return;
+  }
+
+  return streamSSEChat(
+    {
+      name: 'OpenRouter',
+      apiUrl: '/api/openrouter/chat',
+      apiKey,
+      model: modelOverride || getOpenRouterModelName(),
+      connectTimeoutMs: 30_000,
+      idleTimeoutMs: 60_000,
+      stallTimeoutMs: 30_000,
+      totalTimeoutMs: 180_000,
+      errorMessages: {
+        keyMissing: 'OpenRouter API key not configured',
+        connect: (s) => `OpenRouter API didn't respond within ${s}s — server may be down.`,
+        idle: (s) => `OpenRouter API stream stalled — no data for ${s}s.`,
+        stall: (s) => `OpenRouter API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
+        total: (s) => `OpenRouter API response exceeded ${s}s total time limit.`,
+        network: 'Cannot reach OpenRouter — network error. Check your connection.',
+      },
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (chunk) => hasFinishReason(chunk, ['stop', 'length', 'end_turn']),
+      providerType: 'openrouter',
+    },
+    messages,
+    onToken,
+    onDone,
+    onError,
+    onThinkingToken,
+    workspaceContext,
+    hasSandbox,
+    systemPromptOverride,
+    scratchpadContent,
+    signal,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'demo';
+export type ActiveProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo';
 
 /**
  * Determine which provider is active.
@@ -1492,6 +1547,7 @@ export function getActiveProvider(): ActiveProvider {
   const hasMistral = Boolean(getMistralKey());
   const hasZai = Boolean(getZaiKey());
   const hasMiniMax = Boolean(getMiniMaxKey());
+  const hasOpenRouter = Boolean(getOpenRouterKey());
 
   // Honour explicit preference when the key is available
   if (preferred === 'ollama' && hasOllama) return 'ollama';
@@ -1499,6 +1555,7 @@ export function getActiveProvider(): ActiveProvider {
   if (preferred === 'mistral' && hasMistral) return 'mistral';
   if (preferred === 'zai' && hasZai) return 'zai';
   if (preferred === 'minimax' && hasMiniMax) return 'minimax';
+  if (preferred === 'openrouter' && hasOpenRouter) return 'openrouter';
 
   // No preference (or preferred key was removed) — first available
   if (hasKimi) return 'moonshot';
@@ -1506,6 +1563,7 @@ export function getActiveProvider(): ActiveProvider {
   if (hasMistral) return 'mistral';
   if (hasZai) return 'zai';
   if (hasMiniMax) return 'minimax';
+  if (hasOpenRouter) return 'openrouter';
   return 'demo';
 }
 
@@ -1519,6 +1577,7 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'mistral': return { providerType: 'mistral' as const, streamFn: streamMistralChat };
     case 'zai': return { providerType: 'zai' as const, streamFn: streamZaiChat };
     case 'minimax': return { providerType: 'minimax' as const, streamFn: streamMiniMaxChat };
+    case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
     default:        return { providerType: 'moonshot' as const, streamFn: streamMoonshotChat };
   }
 }
@@ -1569,6 +1628,10 @@ export async function streamChat(
 
   if (provider === 'minimax') {
     return streamMiniMaxChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'openrouter') {
+    return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);

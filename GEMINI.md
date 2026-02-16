@@ -9,7 +9,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Type:** AI Coding Agent / Web Application (PWA)
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** Multi-provider support (Kimi, Ollama, Mistral, Z.ai, MiniMax) via OpenAI-compatible SSE streaming.
+*   **AI Backend:** Multi-provider support (Kimi, Ollama, Mistral, Z.ai, MiniMax, OpenRouter) via OpenAI-compatible SSE streaming.
 
 ## Tech Stack
 
@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 | **Styling** | Tailwind CSS 3, shadcn/ui (Radix primitives) |
 | **Backend** | Cloudflare Workers (TypeScript) |
 | **Sandbox** | Modal (Serverless Python Containers) |
-| **AI Integration** | OpenAI-compatible Streaming (Kimi, Ollama, Mistral, Z.ai, MiniMax) |
+| **AI Integration** | OpenAI-compatible Streaming (Kimi, Ollama, Mistral, Z.ai, MiniMax, OpenRouter) |
 | **APIs** | GitHub REST API |
 
 ## Architecture
@@ -91,7 +91,7 @@ Push/
 ### Prerequisites
 *   Node.js & npm
 *   Python (for Modal sandbox deployment)
-*   API Keys: Kimi/Ollama/Mistral/Z.ai/MiniMax (AI), GitHub (Auth/API)
+*   API Keys: Kimi/Ollama/Mistral/Z.ai/MiniMax/OpenRouter (AI), GitHub (Auth/API)
 
 ### Setup & Run
 1.  **Install Frontend Dependencies:**

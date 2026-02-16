@@ -162,6 +162,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/minimax/, ''),
       },
+      '/openrouter': {
+        target: 'https://openrouter.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/openrouter/, ''),
+      },
       '/api': {
         target: API_PROXY_TARGET,
         changeOrigin: true,

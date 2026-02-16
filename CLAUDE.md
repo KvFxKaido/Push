@@ -21,6 +21,7 @@ npm run dev
   - Mistral Vibe (Devstral via api.mistral.ai, OpenAI-compatible SSE)
   - Z.ai (GLM via api.z.ai, OpenAI-compatible SSE)
   - MiniMax (MiniMax-M2.5 via api.minimax.io, OpenAI-compatible SSE)
+  - OpenRouter (50+ models via openrouter.ai, OpenAI-compatible SSE)
 - Modal (serverless containers) for sandbox code execution
 - Cloudflare Workers (streaming proxy + sandbox proxy)
 - PWA with service worker and offline support
@@ -33,7 +34,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 - **Coder** — Code implementation and execution engine. Writes, edits, and runs code in a sandbox.
 - **Auditor** — Risk specialist, pre-commit gate, binary verdict. Cannot be bypassed.
 
-**AI backends:** Five providers — **Kimi For Coding** (`api.kimi.com`), **Ollama Cloud** (`ollama.com`), **Mistral Vibe** (`api.mistral.ai`), **Z.ai** (`api.z.ai`), and **MiniMax** (`api.minimax.io`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI. The active backend serves all three roles. Provider selection is locked per chat after the first user message. Default Ollama model is `gemini-3-flash-preview`. Default Mistral model is `devstral-small-latest`. Default MiniMax model is `MiniMax-M2.5`. MiniMax clamps temperature to `(0.0, 1.0]`.
+**AI backends:** Six providers — **Kimi For Coding** (`api.kimi.com`), **Ollama Cloud** (`ollama.com`), **Mistral Vibe** (`api.mistral.ai`), **Z.ai** (`api.z.ai`), **MiniMax** (`api.minimax.io`), and **OpenRouter** (`openrouter.ai`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI. The active backend serves all three roles. Provider selection is locked per chat after the first user message. Default Ollama model is `gemini-3-flash-preview`. Default Mistral model is `devstral-small-latest`. Default MiniMax model is `MiniMax-M2.5`. Default OpenRouter model is `claude-sonnet-4.5`. MiniMax clamps temperature to `(0.0, 1.0]`. OpenRouter provides access to 50+ models through a single API — Push includes 15 curated models: Claude Sonnet 4.5 & Opus 4.5, GPT-4o/Turbo/o1, 3 Codex variants (5.3/5.2/5.1), Gemini 3 Flash/Pro, Grok 4.1, Kimi K2.5, GLM-5, MiniMax M2.5, and DeepSeek v3.2.
 
 **Onboarding & state machine:** Users connect with GitHub App (recommended) or GitHub PAT, then select an active repo before chatting. Demo mode is an escape hatch with mock data. Sandbox Mode lets users start an ephemeral workspace without any GitHub auth. State machine: `onboarding → home → chat` (plus `file-browser` when sandbox files are open). The `isSandboxMode` flag bypasses auth and repo selection.
 

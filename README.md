@@ -15,7 +15,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 - **Delegate implementation** — Orchestrator can hand coding work to Coder in a live sandbox
 - **Gate risky changes** — Auditor enforces a SAFE/UNSAFE pre-commit verdict
 - **Stay repo-locked** — active chat context is bound to one repo and one active branch
-- **Use your existing AI stack** — pick Kimi, Mistral, Ollama Cloud, Z.ai, or MiniMax
+- **Use your existing AI stack** — pick Kimi, Mistral, Ollama Cloud, Z.ai, MiniMax, or OpenRouter
 - **Merge from mobile** — branch, commit, push, and merge through GitHub PR flow
 - **Fallback to sandbox-only mode** — start without GitHub auth and export your workspace anytime
 
@@ -45,7 +45,7 @@ The app is free. AI usage depends on your provider subscription, and you choose 
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Kimi For Coding, Mistral Vibe, Ollama Cloud, Z.ai, or MiniMax — subscription-based, generous API allowances |
+| AI | Kimi For Coding, Mistral Vibe, Ollama Cloud, Z.ai, MiniMax, or OpenRouter — flexible provider choice |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -69,14 +69,15 @@ npx wrangler dev --port 8787
 
 `vite.config.ts` proxies `/api` to `http://127.0.0.1:8787` by default. Override with `VITE_API_PROXY_TARGET` if needed.
 
-Create `app/.env` for local development, or paste keys in the Settings UI at runtime. Push works with AI services that include API access in their subscriptions:
+Create `app/.env` for local development, or paste keys in the Settings UI at runtime:
 
 ```env
-VITE_MOONSHOT_API_KEY=...              # Kimi For Coding (API access included with subscription)
-VITE_MISTRAL_API_KEY=...              # Mistral Vibe (API access included with subscription)
-VITE_OLLAMA_API_KEY=...               # Ollama Cloud (API access included with subscription)
-VITE_ZAI_API_KEY=...                  # Z.ai (API access included with subscription)
-VITE_MINIMAX_API_KEY=...              # MiniMax (API access included with subscription)
+VITE_MOONSHOT_API_KEY=...              # Kimi For Coding
+VITE_MISTRAL_API_KEY=...              # Mistral Vibe
+VITE_OLLAMA_API_KEY=...               # Ollama Cloud
+VITE_ZAI_API_KEY=...                  # Z.ai
+VITE_MINIMAX_API_KEY=...              # MiniMax
+VITE_OPENROUTER_API_KEY=...           # OpenRouter (50+ models via pay-per-use)
 VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)
 VITE_GITHUB_TOKEN=...                 # Optional — PAT for GitHub API access
 VITE_GITHUB_CLIENT_ID=...             # Optional — GitHub App OAuth client ID
@@ -113,7 +114,7 @@ Use it for quick experiments, learning the interface, or when you're on a device
 
 ## Production
 
-Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding, `/api/ollama/chat` to Ollama Cloud, `/api/mistral/chat` to Mistral Vibe, `/api/zai/chat` to Z.ai, `/api/minimax/chat` to MiniMax, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/kimi/chat` to Kimi For Coding, `/api/ollama/chat` to Ollama Cloud, `/api/mistral/chat` to Mistral Vibe, `/api/zai/chat` to Z.ai, `/api/minimax/chat` to MiniMax, `/api/openrouter/chat` to OpenRouter, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 For browser tools, set Worker secrets `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`. The Worker injects them server-side for `/api/sandbox/browser-screenshot` and `/api/sandbox/browser-extract` so browser credentials never reach the client.
 
@@ -130,7 +131,9 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Coder** — autonomous code implementation in sandbox (runs until done, with 90s per-round timeout)
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Five AI backends are supported: **Kimi For Coding**, **Mistral Vibe**, **Ollama Cloud**, **Z.ai**, and **MiniMax**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+Five AI backends are supported: **Kimi For Coding**, **Mistral Vibe**, **Ollama Cloud**, **Z.ai**, **MiniMax**, and **OpenRouter**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+
+**OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 15 models covering all major providers.
 
 There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, console, scratchpad, and commit/push are unified in the **Workspace Hub**. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
 

@@ -47,6 +47,10 @@ interface ChatInputProps {
     miniMaxModelOptions: string[];
     isMiniMaxModelLocked: boolean;
     onSelectMiniMaxModel: (model: string) => void;
+    openRouterModel: string;
+    openRouterModelOptions: string[];
+    isOpenRouterModelLocked: boolean;
+    onSelectOpenRouterModel: (model: string) => void;
   };
 }
 
@@ -59,6 +63,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   mistral: 'Mistral',
   zai: 'Z.ai',
   minimax: 'MiniMax',
+  openrouter: 'OpenRouter',
   demo: 'Demo',
 };
 
@@ -68,6 +73,7 @@ const PROVIDER_ICONS: Record<AIProviderType, string> = {
   mistral: '🌪️',
   zai: '🧠',
   minimax: '〰️',
+  openrouter: '🔀',
   demo: '⚡',
 };
 
@@ -242,6 +248,7 @@ export function ChatInput({
     if (selectedProvider === 'moonshot') return 'k2.5';
     if (selectedProvider === 'zai') return providerControls.zaiModel;
     if (selectedProvider === 'minimax') return providerControls.miniMaxModel;
+    if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
     return 'demo';
   })();
 
@@ -511,6 +518,26 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.isMiniMaxModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'openrouter' && (
+                        <>
+                          <select
+                            value={providerControls.openRouterModel}
+                            disabled={!canChangeModel || providerControls.openRouterModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectOpenRouterModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {providerControls.openRouterModelOptions.map((model) => (
+                              <option key={model} value={model}>
+                                {model.replace(/^[^/]+\//, '')}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.isOpenRouterModelLocked && (
                             <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

@@ -1,5 +1,6 @@
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
+import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 
 const OLLAMA_MODELS_URL = import.meta.env.DEV
   ? '/ollama/v1/models'
@@ -8,6 +9,10 @@ const OLLAMA_MODELS_URL = import.meta.env.DEV
 const MISTRAL_MODELS_URL = import.meta.env.DEV
   ? '/mistral/v1/models'
   : '/api/mistral/models';
+
+const OPENROUTER_MODELS_URL = import.meta.env.DEV
+  ? '/openrouter/v1/models'
+  : '/api/openrouter/models';
 
 import { asRecord } from './utils';
 
@@ -71,4 +76,8 @@ export async function fetchOllamaModels(): Promise<string[]> {
 
 export async function fetchMistralModels(): Promise<string[]> {
   return fetchProviderModels(MISTRAL_MODELS_URL, getMistralKey(), 'Mistral');
+}
+
+export async function fetchOpenRouterModels(): Promise<string[]> {
+  return fetchProviderModels(OPENROUTER_MODELS_URL, getOpenRouterKey(), 'OpenRouter');
 }

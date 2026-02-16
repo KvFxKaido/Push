@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: Kimi K2.5, Ollama, Mistral, Z.ai, MiniMax (user picks, all roles) |
+| AI | Multi-backend: Kimi K2.5, Ollama, Mistral, Z.ai, MiniMax, OpenRouter (user picks, all roles) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -38,7 +38,7 @@ The active backend serves all three roles. The user picks a backend in Settings;
 
 ### AI Backends
 
-Five providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/kimi/chat`, `/api/ollama/chat`, `/api/mistral/chat`, `/api/zai/chat`, `/api/minimax/chat`.
+Six providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/kimi/chat`, `/api/ollama/chat`, `/api/mistral/chat`, `/api/zai/chat`, `/api/minimax/chat`, `/api/openrouter/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
@@ -47,6 +47,9 @@ Five providers, all using OpenAI-compatible SSE streaming. Any single API key is
 | **Mistral Vibe** | devstral-small-latest |
 | **Z.ai** | glm-4.5 |
 | **MiniMax** | MiniMax-M2.5 |
+| **OpenRouter** | claude-sonnet-4.5 |
+
+**OpenRouter** provides access to 50+ models through a single API. Push includes 15 curated models: Claude Sonnet 4.5 & Opus 4.5, GPT-4o/Turbo/o1, 3 Codex variants, Gemini 3 Flash/Pro, Grok 4.1, Kimi K2.5, GLM-5, MiniMax M2.5, and DeepSeek v3.2.
 
 ### Tool Protocol
 

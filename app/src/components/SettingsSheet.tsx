@@ -19,6 +19,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   mistral: 'Mistral',
   zai: 'Z.ai',
   minimax: 'MiniMax',
+  openrouter: 'OpenRouter',
   demo: 'Demo',
 };
 
@@ -122,6 +123,20 @@ export interface SettingsAIProps {
   setMiniMaxKeyInput: (v: string) => void;
   setMiniMaxKey: (v: string) => void;
   clearMiniMaxKey: () => void;
+  // OpenRouter
+  hasOpenRouterKey: boolean;
+  openRouterModel: string;
+  setOpenRouterModel: (v: string) => void;
+  openRouterModelOptions: string[];
+  openRouterModelsLoading: boolean;
+  openRouterModelsError: string | null;
+  openRouterModelsUpdatedAt: number | null;
+  isOpenRouterModelLocked: boolean;
+  refreshOpenRouterModels: () => void;
+  openRouterKeyInput: string;
+  setOpenRouterKeyInput: (v: string) => void;
+  setOpenRouterKey: (v: string) => void;
+  clearOpenRouterKey: () => void;
   // Tavily
   hasTavilyKey: boolean;
   tavilyKeyInput: string;
@@ -1237,6 +1252,86 @@ export function SettingsSheet({
                 </div>
               )}
             </div>
+
+          {/* OpenRouter */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-push-fg-secondary">OpenRouter</label>
+            {ai.hasOpenRouterKey ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+                  <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      ai.clearOpenRouterKey();
+                      if (ai.activeBackend === 'openrouter') {
+                        ai.clearPreferredProvider();
+                        ai.setActiveBackend(null);
+                      }
+                    }}
+                    className="text-push-fg-dim hover:text-red-400 transition-colors"
+                    aria-label="Remove OpenRouter key"
+                    title="Remove key"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
+                  <select
+                    value={ai.openRouterModel}
+                    onChange={(e) => ai.setOpenRouterModel(e.target.value)}
+                    disabled={ai.openRouterModelOptions.length === 0}
+                    className="flex-1 rounded-md border border-push-edge bg-push-surface px-2 py-1 text-xs text-push-fg font-mono focus:outline-none focus:border-push-sky/50 disabled:opacity-50"
+                  >
+                    {ai.openRouterModelOptions.map((model) => (
+                      <option key={model} value={model}>
+                        {model.replace(/^[^/]+\//, '')}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {ai.isOpenRouterModelLocked && ai.lockedModel && (
+                  <p className="text-xs text-amber-400">
+                    Current chat remains locked to {ai.lockedModel}. Default applies on new chats.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <input
+                  type="password"
+                  value={ai.openRouterKeyInput}
+                  onChange={(e) => ai.setOpenRouterKeyInput(e.target.value)}
+                  placeholder="OpenRouter API key"
+                  className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && ai.openRouterKeyInput.trim()) {
+                      ai.setOpenRouterKey(ai.openRouterKeyInput.trim());
+                      ai.setOpenRouterKeyInput('');
+                    }
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    if (ai.openRouterKeyInput.trim()) {
+                      ai.setOpenRouterKey(ai.openRouterKeyInput.trim());
+                      ai.setOpenRouterKeyInput('');
+                    }
+                  }}
+                  disabled={!ai.openRouterKeyInput.trim()}
+                  className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
+                >
+                  Save OpenRouter key
+                </Button>
+                <p className="text-xs text-push-fg-dim">
+                  OpenRouter API key from openrouter.ai. Access 50+ models including Claude, GPT-4, Codex.
+                </p>
+              </div>
+            )}
+          </div>
 
           {/* Web Search (Tavily) */}
           <div className="space-y-3 pt-2 border-t border-push-edge">
