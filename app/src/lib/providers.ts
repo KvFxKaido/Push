@@ -36,9 +36,9 @@ export const OPENROUTER_MODELS: string[] = [
   'anthropic/claude-sonnet-4.5',
   'anthropic/claude-opus-4.6',
   'anthropic/claude-haiku-4.5',
-  // OpenAI GPT-4 & o1
-  'openai/gpt-4o',
-  'openai/gpt-4-turbo',
+  // OpenAI GPT-5 & o1
+  'openai/gpt-5.2',
+  'openai/gpt-5-mini',
   'openai/o1',
   // OpenAI Codex
   'openai/gpt-5.3-codex',
