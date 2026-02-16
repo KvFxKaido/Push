@@ -18,11 +18,13 @@ const {
   mockBrowserScreenshotInSandbox,
   mockBrowserExtractInSandbox,
   mockRecordWriteFileMetric,
+  mockRecordReadFileMetric,
 } = vi.hoisted(() => ({
   mockBrowserToolEnabled: { value: true },
   mockBrowserScreenshotInSandbox: vi.fn(),
   mockBrowserExtractInSandbox: vi.fn(),
   mockRecordWriteFileMetric: vi.fn(),
+  mockRecordReadFileMetric: vi.fn(),
 }));
 
 // Mock the feature-flags module so we can control browserToolEnabled per test.
@@ -56,6 +58,7 @@ vi.mock('./browser-metrics', () => ({
 
 vi.mock('./edit-metrics', () => ({
   recordWriteFileMetric: (...args: unknown[]) => mockRecordWriteFileMetric(...args),
+  recordReadFileMetric: (...args: unknown[]) => mockRecordReadFileMetric(...args),
 }));
 
 // Mock tool-dispatch for extractBareToolJsonObjects.
@@ -772,6 +775,7 @@ describe('executeSandboxToolCall -- stale write handling', () => {
   beforeEach(() => {
     mockBrowserToolEnabled.value = true;
     mockRecordWriteFileMetric.mockReset();
+    mockRecordReadFileMetric.mockReset();
     vi.mocked(sandboxClient.execInSandbox).mockReset();
     vi.mocked(sandboxClient.readFromSandbox).mockReset();
     vi.mocked(sandboxClient.writeToSandbox).mockReset();
@@ -814,6 +818,78 @@ describe('executeSandboxToolCall -- stale write handling', () => {
       outcome: 'stale',
       errorCode: 'STALE_FILE',
       durationMs: expect.any(Number),
+    }));
+  });
+});
+
+describe('executeSandboxToolCall -- read metrics', () => {
+  beforeEach(() => {
+    mockBrowserToolEnabled.value = true;
+    mockRecordReadFileMetric.mockReset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+  });
+
+  it('records full-read payload metrics on success', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const x = 1;',
+      truncated: false,
+      version: 'v1',
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/example.ts' } },
+      'sb-123',
+    );
+
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'success',
+      isRangeRead: false,
+      payloadChars: 19,
+      truncated: false,
+      emptyRange: false,
+    }));
+  });
+
+  it('records empty range reads for out-of-bounds line windows', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      truncated: false,
+      version: 'v1',
+      start_line: 999,
+      end_line: 1100,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/example.ts', start_line: 999, end_line: 1100 } },
+      'sb-123',
+    );
+
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'success',
+      isRangeRead: true,
+      payloadChars: 0,
+      truncated: false,
+      emptyRange: true,
+    }));
+  });
+
+  it('records read errors', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      truncated: false,
+      error: 'Read failed: no such file',
+    } as unknown as sandboxClient.FileReadResult);
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/missing.ts' } },
+      'sb-123',
+    );
+
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'error',
+      isRangeRead: false,
+      payloadChars: 0,
+      errorCode: 'READ_ERROR',
     }));
   });
 });

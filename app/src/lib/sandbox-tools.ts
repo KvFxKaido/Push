@@ -36,7 +36,7 @@ import {
 import { runAuditor } from './auditor-agent';
 import { browserToolEnabled } from './feature-flags';
 import { recordBrowserMetric } from './browser-metrics';
-import { recordWriteFileMetric } from './edit-metrics';
+import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { safeStorageGet } from './safe-storage';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
@@ -391,12 +391,19 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_read_file': {
+        const isRangeRead = call.args.start_line !== undefined || call.args.end_line !== undefined;
         const result = await readFromSandbox(sandboxId, call.args.path, call.args.start_line, call.args.end_line) as FileReadResult & { error?: string };
         const cacheKey = fileVersionKey(sandboxId, call.args.path);
 
         // Handle directory or read errors (e.g. "cat: /path: Is a directory")
         if (result.error) {
           sandboxFileVersions.delete(cacheKey);
+          recordReadFileMetric({
+            outcome: 'error',
+            payloadChars: 0,
+            isRangeRead,
+            errorCode: 'READ_ERROR',
+          });
           return { text: formatSandboxError(result.error, call.args.path) };
         }
 
@@ -406,7 +413,6 @@ export async function executeSandboxToolCall(
           sandboxFileVersions.delete(cacheKey);
         }
 
-        const isRangeRead = call.args.start_line !== undefined || call.args.end_line !== undefined;
         const rangeStart = typeof result.start_line === 'number'
           ? result.start_line
           : call.args.start_line ?? 1;
@@ -448,6 +454,15 @@ export async function executeSandboxToolCall(
           emptyRangeWarning,
           toolResultContent,
         ].filter(Boolean);
+
+        const emptyRange = isRangeRead && !result.content;
+        recordReadFileMetric({
+          outcome: 'success',
+          payloadChars: result.content.length,
+          isRangeRead,
+          truncated: Boolean(result.truncated),
+          emptyRange,
+        });
 
         // Guess language from extension
         const ext = call.args.path.split('.').pop()?.toLowerCase() || '';

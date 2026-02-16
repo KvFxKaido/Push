@@ -24,6 +24,31 @@ export interface WriteMetricResult {
   errorCode?: string;
 }
 
+export interface ReadFileMetrics {
+  count: number;
+  successCount: number;
+  errorCount: number;
+  fullReadCount: number;
+  rangeReadCount: number;
+  truncatedCount: number;
+  emptyRangeCount: number;
+  totalPayloadChars: number;
+  minPayloadChars: number;
+  maxPayloadChars: number;
+  errorsByCode: Record<string, number>;
+}
+
+export type ReadOutcome = 'success' | 'error';
+
+export interface ReadMetricResult {
+  outcome: ReadOutcome;
+  payloadChars: number;
+  isRangeRead: boolean;
+  truncated?: boolean;
+  emptyRange?: boolean;
+  errorCode?: string;
+}
+
 function emptyWriteMetrics(): WriteFileMetrics {
   return {
     count: 0,
@@ -38,6 +63,7 @@ function emptyWriteMetrics(): WriteFileMetrics {
 }
 
 let metrics: WriteFileMetrics = emptyWriteMetrics();
+let readMetrics: ReadFileMetrics = emptyReadMetrics();
 
 /**
  * Record a completed sandbox_write_file operation.
@@ -75,3 +101,65 @@ export function resetWriteFileMetrics(): void {
   metrics = emptyWriteMetrics();
 }
 
+function emptyReadMetrics(): ReadFileMetrics {
+  return {
+    count: 0,
+    successCount: 0,
+    errorCount: 0,
+    fullReadCount: 0,
+    rangeReadCount: 0,
+    truncatedCount: 0,
+    emptyRangeCount: 0,
+    totalPayloadChars: 0,
+    minPayloadChars: Infinity,
+    maxPayloadChars: 0,
+    errorsByCode: {},
+  };
+}
+
+/**
+ * Record a completed sandbox_read_file operation.
+ */
+export function recordReadFileMetric(result: ReadMetricResult): void {
+  const payloadChars = Number.isFinite(result.payloadChars)
+    ? Math.max(0, Math.floor(result.payloadChars))
+    : 0;
+
+  readMetrics.count++;
+  if (result.isRangeRead) readMetrics.rangeReadCount++;
+  else readMetrics.fullReadCount++;
+
+  readMetrics.totalPayloadChars += payloadChars;
+  readMetrics.minPayloadChars = Math.min(readMetrics.minPayloadChars, payloadChars);
+  readMetrics.maxPayloadChars = Math.max(readMetrics.maxPayloadChars, payloadChars);
+
+  if (result.outcome === 'success') {
+    readMetrics.successCount++;
+    if (result.truncated) readMetrics.truncatedCount++;
+    if (result.emptyRange) readMetrics.emptyRangeCount++;
+  } else {
+    readMetrics.errorCount++;
+    const code = result.errorCode || 'UNKNOWN';
+    readMetrics.errorsByCode[code] = (readMetrics.errorsByCode[code] || 0) + 1;
+  }
+
+  const readType = result.isRangeRead ? 'range' : 'full';
+  const outcome = result.outcome;
+  const flags = [
+    result.truncated ? 'truncated' : '',
+    result.emptyRange ? 'empty_range' : '',
+    result.errorCode ? result.errorCode : '',
+  ].filter(Boolean).join(' ');
+  console.debug(`[edit] read_file ${readType} ${outcome} chars=${payloadChars}${flags ? ` ${flags}` : ''}`);
+}
+
+export function getReadFileMetrics(): ReadFileMetrics {
+  return {
+    ...readMetrics,
+    errorsByCode: { ...readMetrics.errorsByCode },
+  };
+}
+
+export function resetReadFileMetrics(): void {
+  readMetrics = emptyReadMetrics();
+}

@@ -33,6 +33,7 @@ import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import { browserToolEnabled } from '@/lib/feature-flags';
 import { getMistralModelName, getOllamaModelName, getZaiModelName, getMiniMaxModelName, getOpenRouterModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
@@ -1126,6 +1127,12 @@ export function useChat(
             // Diagnose why tool detection failed — truncated, bad args, or garbled JSON
             const diagnosis = diagnoseToolCallFailure(accumulated);
             if (diagnosis) {
+              recordMalformedToolCallMetric({
+                provider: lockedProviderForChat,
+                model: resolvedModelForChat,
+                reason: diagnosis.reason,
+                toolName: diagnosis.toolName,
+              });
               console.warn(`[Push] Tool call diagnosis: ${diagnosis.reason}${diagnosis.toolName ? ` (${diagnosis.toolName})` : ''}`);
               const errorMsg: ChatMessage = {
                 id: createId(),
