@@ -705,7 +705,7 @@ export async function executeSandboxToolCall(
                 outcome: 'stale',
                 errorCode: 'STALE_FILE',
               });
-              const expected = result.expected_version || expectedVersion || 'unknown';
+              const expected = result.expected_version || freshVersion || 'unknown';
               const current = result.current_version || 'missing';
               return {
                 text: [
