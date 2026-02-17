@@ -117,12 +117,17 @@ export function executeScratchpadToolCall(
   onReplace: (content: string) => void,
   onAppend: (content: string) => void,
 ): { text: string; ok: boolean } {
-  // read_scratchpad — return current content
+  // read_scratchpad — return current content (capped to avoid duplicating the
+  // full scratchpad that's already in the system prompt and blowing context)
   if (call.tool === 'read_scratchpad') {
     if (!currentContent.trim()) {
       return { text: '[Scratchpad is empty — no content yet]', ok: true };
     }
-    return { text: `[Scratchpad content (${currentContent.length} chars)]\n${currentContent}`, ok: true };
+    const READ_CAP = 2_000;
+    const preview = currentContent.length > READ_CAP
+      ? currentContent.slice(0, READ_CAP) + `\n\n[...truncated at ${READ_CAP} chars — full content (${currentContent.length} chars) is in the system prompt]`
+      : currentContent;
+    return { text: `[Scratchpad content (${currentContent.length} chars)]\n${preview}`, ok: true };
   }
 
   // Security: enforce content length limit
