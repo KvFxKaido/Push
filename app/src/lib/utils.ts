@@ -310,9 +310,15 @@ export function streamWithTimeout(
       clearTimeout(timer);
       resolve(v);
     };
-    const timer = setTimeout(() => settle(new Error(timeoutMessage)), timeoutMs);
+    // Activity-based timeout: resets on every token so actively-streaming
+    // responses aren't killed. Only fires after `timeoutMs` of silence.
+    let timer = setTimeout(() => settle(new Error(timeoutMessage)), timeoutMs);
     run(
-      (token) => { accumulated += token; },
+      (token) => {
+        accumulated += token;
+        clearTimeout(timer);
+        timer = setTimeout(() => settle(new Error(timeoutMessage)), timeoutMs);
+      },
       () => settle(null),
       (error) => settle(error),
     );

@@ -19,7 +19,7 @@ import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } f
 import { detectToolFromText, asRecord, streamWithTimeout } from './utils';
 import { getSandboxDiff } from './sandbox-client';
 
-const CODER_ROUND_TIMEOUT_MS = 180_000; // 180s max per streaming round (large file rewrites need headroom)
+const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — resets on each token)
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
 const MAX_CHECKPOINTS = 3;  // Max interactive checkpoint pauses per task
 const CHECKPOINT_ANSWER_TIMEOUT_MS = 30_000; // 30s for Orchestrator checkpoint response
