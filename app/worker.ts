@@ -385,6 +385,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
       // Provide actionable error messages based on status code
       let code = 'MODAL_ERROR';
       let details = errBody.slice(0, 200);
+      const lowerBody = errBody.toLowerCase();
 
       if (upstream.status === 404) {
         code = 'MODAL_NOT_FOUND';
@@ -392,6 +393,20 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
       } else if (upstream.status === 401 || upstream.status === 403) {
         code = 'MODAL_AUTH_FAILED';
         details = 'Modal authentication failed. Check that your Modal tokens are valid and the app is deployed under the correct account.';
+      } else if (upstream.status === 500) {
+        // Parse 500 error bodies for known patterns to give more specific codes
+        if (lowerBody.includes('not found') || lowerBody.includes('does not exist') || lowerBody.includes('no such')) {
+          code = 'MODAL_NOT_FOUND';
+          details = 'Sandbox not found or expired. The container may have been terminated.';
+        } else if (lowerBody.includes('terminated') || lowerBody.includes('closed')) {
+          code = 'MODAL_NOT_FOUND';
+          details = 'Sandbox has been terminated. Start a new sandbox session.';
+        } else if (lowerBody.includes('timeout') || lowerBody.includes('timed out')) {
+          code = 'MODAL_TIMEOUT';
+          details = 'Modal operation timed out internally.';
+        } else {
+          details = errBody.slice(0, 200) || 'Internal Server Error';
+        }
       } else if (upstream.status === 502 || upstream.status === 503) {
         code = 'MODAL_UNAVAILABLE';
         details = 'Modal is temporarily unavailable. The container may be cold-starting. Try again in a few seconds.';

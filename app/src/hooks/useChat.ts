@@ -1308,21 +1308,59 @@ export function useChat(
                       const parallelResults = await Promise.all(
                         taskList.map(async (task, taskIndex) => {
                           const prefix = `[${taskIndex + 1}/${taskList.length}] `;
+
+                          // Stagger worker setup to avoid thundering-herd on Modal endpoints.
+                          // Concurrent sandbox creates + restores can overwhelm Modal's web
+                          // endpoint cold-start capacity, causing 500s.
+                          if (taskIndex > 0) {
+                            await new Promise<void>(r => setTimeout(r, taskIndex * 1500));
+                          }
+
                           updateAgentStatus(
                             { active: true, phase: `${prefix}Starting worker sandbox...` },
                             { chatId, source: 'coder' },
                           );
 
-                          const workerSession = await createSandbox(sourceRepo, sourceBranch, authToken);
-                          if (workerSession.status === 'error' || !workerSession.sandboxId) {
-                            throw new Error(workerSession.error || `Failed to create worker sandbox for task ${taskIndex + 1}.`);
-                          }
-                          const workerSandboxId = workerSession.sandboxId;
-                          workerSandboxIds.push(workerSandboxId);
+                          // Create worker sandbox + restore snapshot.
+                          // If restore fails (e.g. Modal 500 under load), retry once with
+                          // a fresh sandbox before giving up.
+                          let workerSandboxId = '';
+                          for (let setupAttempt = 0; setupAttempt < 2; setupAttempt++) {
+                            const workerSession = await createSandbox(sourceRepo, sourceBranch, authToken);
+                            if (workerSession.status === 'error' || !workerSession.sandboxId) {
+                              throw new Error(workerSession.error || `Failed to create worker sandbox for task ${taskIndex + 1}.`);
+                            }
+                            const candidateId = workerSession.sandboxId;
+                            workerSandboxIds.push(candidateId);
 
-                          const restore = await hydrateSnapshotInSandbox(workerSandboxId, snapshotArchiveBase64, '/workspace');
-                          if (!restore.ok) {
-                            throw new Error(restore.error || `Failed to restore worker snapshot for task ${taskIndex + 1}.`);
+                            try {
+                              const restore = await hydrateSnapshotInSandbox(candidateId, snapshotArchiveBase64, '/workspace');
+                              if (!restore.ok) {
+                                throw new Error(restore.error || `Failed to restore worker snapshot for task ${taskIndex + 1}.`);
+                              }
+                              workerSandboxId = candidateId;
+                              break; // Restore succeeded
+                            } catch (restoreErr) {
+                              // Clean up the failed worker sandbox
+                              try { await cleanupSandbox(candidateId); } catch { /* best effort */ }
+                              const idx = workerSandboxIds.indexOf(candidateId);
+                              if (idx !== -1) workerSandboxIds.splice(idx, 1);
+
+                              if (setupAttempt === 0) {
+                                // First attempt failed — retry with a fresh sandbox
+                                updateAgentStatus(
+                                  { active: true, phase: `${prefix}Retrying worker setup...` },
+                                  { chatId, source: 'coder' },
+                                );
+                                continue;
+                              }
+                              // Second attempt also failed — propagate
+                              throw restoreErr;
+                            }
+                          }
+
+                          if (!workerSandboxId) {
+                            throw new Error(`Worker sandbox setup failed for task ${taskIndex + 1} after retries.`);
                           }
 
                           const handleCheckpoint = async (question: string, context: string): Promise<string> => {

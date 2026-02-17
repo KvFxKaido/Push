@@ -141,7 +141,7 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Determines if an error is retryable (network issues, timeouts, 5xx errors).
- * Non-retryable: 4xx client errors, configuration errors.
+ * Non-retryable: 4xx client errors, configuration errors, dead sandbox errors.
  */
 function isRetryableError(err: unknown, statusCode?: number): boolean {
   // Timeout errors are retryable (original AbortError)
@@ -159,8 +159,13 @@ function isRetryableError(err: unknown, statusCode?: number): boolean {
     return true;
   }
 
-  // 5xx server errors are retryable
+  // 5xx server errors are retryable, but not if the sandbox is gone —
+  // the Worker returns MODAL_NOT_FOUND for dead/expired sandboxes even
+  // on 500 status codes, and retrying won't bring them back.
   if (statusCode && statusCode >= 500) {
+    if (err instanceof Error && err.message.includes('MODAL_NOT_FOUND')) {
+      return false;
+    }
     return true;
   }
 
