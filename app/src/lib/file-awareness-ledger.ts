@@ -240,15 +240,11 @@ export class FileAwarenessLedger {
     const key = this.normalizePath(path);
     const entry = this.entries.get(key);
 
-    // New file creation — always allowed
+    // No ledger entry or explicitly never_read — block the write.
+    // Missing entries are treated the same as never_read: the model hasn't
+    // read the file, so it shouldn't overwrite it.  New file creation is
+    // handled by the auto-expand path (read fails → file doesn't exist → allow).
     if (!entry || entry.kind === 'never_read') {
-      // If the file doesn't exist in the ledger at all, it's likely a new file.
-      // But if the entry is explicitly never_read, the file exists but wasn't read.
-      if (!entry) {
-        this._metrics.allowedTotal++;
-        return { allowed: true };
-      }
-      // File exists but was never read — block
       this._metrics.blockedTotal++;
       this._metrics.blockedByNeverRead++;
       return {

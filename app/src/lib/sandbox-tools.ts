@@ -610,7 +610,6 @@ export async function executeSandboxToolCall(
       case 'sandbox_write_file': {
         const writeStart = Date.now();
         const cacheKey = fileVersionKey(sandboxId, call.args.path);
-        const expectedVersion = call.args.expected_version || sandboxFileVersions.get(cacheKey);
 
         // --- Edit Guard: check that the model has read this file ---
         const guardVerdict = fileLedger.checkWriteAllowed(call.args.path);
@@ -650,18 +649,26 @@ export async function executeSandboxToolCall(
                 };
               }
             } else {
-              // Auto-read failed — return the original guard error
-              recordWriteFileMetric({
-                durationMs: Date.now() - writeStart,
-                outcome: 'error',
-                errorCode: 'EDIT_GUARD_BLOCKED',
-              });
-              return {
-                text: [
-                  `[Tool Error — sandbox_write_file]`,
-                  `Edit guard: ${guardVerdict.reason}`,
-                ].join('\n'),
-              };
+              // Auto-read failed — the file may not exist (new file creation).
+              // If the error looks like a missing file, allow the write.
+              const errMsg = typeof autoReadResult.error === 'string' ? autoReadResult.error.toLowerCase() : '';
+              if (errMsg.includes('no such file') || errMsg.includes('not found') || errMsg.includes('does not exist')) {
+                fileLedger.recordCreation(call.args.path);
+                fileLedger.recordAutoExpandSuccess();
+                console.debug(`[edit-guard] File "${call.args.path}" does not exist — allowing new file creation.`);
+              } else {
+                recordWriteFileMetric({
+                  durationMs: Date.now() - writeStart,
+                  outcome: 'error',
+                  errorCode: 'EDIT_GUARD_BLOCKED',
+                });
+                return {
+                  text: [
+                    `[Tool Error — sandbox_write_file]`,
+                    `Edit guard: ${guardVerdict.reason}`,
+                  ].join('\n'),
+                };
+              }
             }
           } catch {
             // Auto-read threw — return the original guard error
@@ -679,11 +686,14 @@ export async function executeSandboxToolCall(
           }
         }
 
+        // After auto-expand, the version cache may have been updated — refresh.
+        const freshVersion = call.args.expected_version || sandboxFileVersions.get(cacheKey);
+
         // Stale warning (soft — doesn't block, just informs)
         const staleWarning = fileLedger.getStaleWarning(call.args.path);
 
         try {
-          const result = await writeToSandbox(sandboxId, call.args.path, call.args.content, expectedVersion);
+          const result = await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion);
 
           if (!result.ok) {
             if (result.code === 'STALE_FILE') {
