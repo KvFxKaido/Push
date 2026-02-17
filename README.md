@@ -52,6 +52,17 @@ The app is free. AI usage depends on your provider subscription, and you choose 
 | Deploy | Cloudflare Workers + Assets |
 | PWA | Service Worker, Web App Manifest |
 
+## Reliability & Harness
+
+Push prioritizes harness reliability over raw model capability. Current shipped features:
+
+- **Range-aware file reads** — `sandbox_read_file` supports `start_line`/`end_line` with line-numbered output for precise context
+- **Garbled tool-call recovery** — three-phase diagnosis, JSON repair, and truncation detection so models self-correct in one retry
+- **Pre-commit audit gate** — Auditor agent enforces SAFE/UNSAFE verdict before any commit lands
+- **Execution provenance** — tool-result metadata tracks every sandbox operation for traceability
+
+Next up: hashline edit experiments (content-addressed line references for safer edits) and server-side background execution for mobile resilience. See `documents/Harness Reliability Plan.md` for the full plan.
+
 ## Getting Started
 
 ```bash
@@ -144,6 +155,7 @@ Current harness priorities from `documents/Harness Reliability Plan.md`:
 - [x] stale-write protection + write-path telemetry baseline
 - [x] improved operator visibility (Coder status events in console, cleaner dialogue/tool display)
 - [x] read-path efficiency phase 1 (`sandbox_read_file` range args, line-numbered range output, out-of-bounds empty-range warning)
+- [x] garbled tool-call recovery (three-phase diagnosis, JSON repair, truncation detection, specific error feedback)
 - [ ] hashline edit reliability gate (provider compliance micro-test before build)
 - [ ] read-path efficiency phase 2 (default full-read cap + payload/truncation telemetry)
 - [ ] server-side background run model for mobile lock/background resilience

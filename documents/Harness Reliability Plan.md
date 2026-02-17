@@ -1,8 +1,8 @@
 # Push Harness Reliability Plan (Hashline Included)
 
 ## Status
-- Last updated: 2026-02-14
-- State: Active planning
+- Last updated: 2026-02-16
+- State: Track B Phase 1 complete, Track A gated, Track C ongoing
 - Intent: Improve coding task success by upgrading the harness, not just swapping models
 
 ## Why this doc changed
@@ -84,7 +84,7 @@ Kill criteria:
 - one week of dogfooding shows no meaningful gain
 - annotation overhead causes frequent regressions
 
-### Track B: Read/Context Efficiency for Editing
+### Track B: Read/Context Efficiency for Editing ✅ COMPLETE
 
 Problem:
 - Edit flows over-read large files; tokens and truncation pressure increase.
@@ -94,6 +94,8 @@ Done (2026-02-14):
 - [x] Added line-number prefix in range read tool output (`cat -n` style) for model orientation.
 - [x] Kept UI editor card content clean (no injected line numbers).
 - [x] Added explicit warning when a requested range is out-of-bounds and returns no content.
+
+**Phase 1 shipped** (commits 7d9fa5f, 19e6f49) — range reads with line numbers, out-of-bounds warnings, clean editor cards.
 
 Remaining scope:
 - Add default full-file read cap (~2000 lines, matching Claude Code's default). Lines > 2000 chars truncated.
@@ -172,6 +174,8 @@ Now:
 2. Add Track C malformed-call rate metric by provider/model (small — instrument `diagnoseToolCallFailure`).
 3. Add minimal instrumentation needed for Track A/B comparison.
 
+> Track B Phase 1 and Track C Phase 1 are ✅ complete (shipped 2026-02-14).
+
 Next:
 1. If gate passes: implement Track A MVP behind flag (include fuzzy matching + structured error detail).
 2. Finalize Track B safeguards (2000-line full-read cap + payload/truncation telemetry).
@@ -200,7 +204,9 @@ Evaluation cadence:
 - 1-week dogfood window per enabled experiment
 - go/hold/kill review at end of each window
 
-## Decision Log Template (for each experiment)
+## Decision Log
+
+### Template (for each experiment)
 
 - Experiment:
 - Date enabled:
@@ -209,6 +215,26 @@ Evaluation cadence:
 - Result:
 - Decision: `go` / `hold` / `kill`
 - Notes:
+
+### Track B Phase 1 — Range-aware file reads
+
+- Experiment: Track B Phase 1 — Range-aware file reads
+- Date enabled: 2026-02-14
+- Cohort/flag: Global (no flag)
+- Baseline: Full-file reads only, no line-range support
+- Result: Shipped `start_line`/`end_line` args, line-numbered range output, out-of-bounds warning
+- Decision: `go` (Phase 1 complete, Phase 2 planned)
+- Notes: Commits 7d9fa5f, 19e6f49. Matches Claude Code's `cat -n` pattern.
+
+### Track C Phase 1 — Garbled tool-call recovery
+
+- Experiment: Track C Phase 1 — Garbled tool-call recovery
+- Date enabled: 2026-02-14
+- Cohort/flag: Global (no flag)
+- Baseline: Narrow regex detection, generic error messages, raw JSON visible in chat
+- Result: Three-phase diagnosis, JSON repair, truncation detection, specific error feedback, garbled messages hidden from UI
+- Decision: `go` (Phase 1 complete, metrics instrumentation next)
+- Notes: Shipped same day as Track B. Covers `repairToolJson`, `detectTruncatedToolCall`, `diagnoseToolCallFailure`.
 
 ## External Review Checklist (PWA-GPT)
 
