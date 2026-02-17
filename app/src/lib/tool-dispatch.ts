@@ -155,7 +155,7 @@ const GITHUB_TOOL_NAMES = new Set([
 ]);
 
 const OTHER_TOOL_NAMES = new Set([
-  'delegate_coder', 'set_scratchpad', 'append_scratchpad', 'web_search',
+  'delegate_coder', 'set_scratchpad', 'append_scratchpad', 'read_scratchpad', 'web_search',
 ]);
 
 const KNOWN_TOOL_NAMES = new Set([

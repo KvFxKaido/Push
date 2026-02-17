@@ -602,9 +602,9 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
 
   // Decode base64 content
   let content = atob(data.content.replace(/\n/g, ''));
-  const truncated = content.length > 5_000;
+  const truncated = content.length > 15_000;
   if (truncated) {
-    content = content.slice(0, 5_000) + '\n\n[...truncated at 5K chars]';
+    content = content.slice(0, 15_000) + '\n\n[...truncated at 15K chars — use search_files to find specific content, or sandbox_read_file with line ranges for targeted reading]';
   }
 
   // Guess language from extension
@@ -622,7 +622,7 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
     `[Tool Result — read_file]`,
     `File: ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''}`,
     `Size: ${data.size} bytes | Language: ${language}`,
-    truncated ? `(truncated to 5K chars)\n` : '',
+    truncated ? `(truncated to 15K chars)\n` : '',
     `\`\`\`${language}`,
     content,
     '```',
@@ -831,8 +831,24 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
 
   if (!res.ok) {
     // GitHub's code search requires authentication and has rate limits
+    if (res.status === 401) {
+      throw new Error('GitHub token is invalid or expired — re-authenticate in Settings.');
+    }
     if (res.status === 403) {
-      throw new Error('Code search requires authentication — ensure your GitHub token is set.');
+      // Parse response for specific reason (rate limit vs auth vs scope)
+      let detail = '';
+      try {
+        const errBody = await res.json();
+        detail = errBody.message || '';
+      } catch { /* ignore parse errors */ }
+
+      if (detail.toLowerCase().includes('rate limit')) {
+        throw new Error(`GitHub API rate limit exceeded for code search. Wait a moment and retry.\n${detail}`);
+      }
+      if (!headers['Authorization']) {
+        throw new Error('Code search requires authentication — connect your GitHub account in Settings or set a Personal Access Token.');
+      }
+      throw new Error(`Code search forbidden (403) — your token may lack the required scope. GitHub says: ${detail || 'no details provided'}`);
     }
     if (res.status === 422) {
       throw new Error('Invalid search query. Try a simpler pattern.');
@@ -895,8 +911,8 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
   for (const [filePath, fileMatches] of byFile) {
     lines.push(`📄 ${filePath}`);
     for (const m of fileMatches.slice(0, 3)) {
-      if (m.line > 0) {
-        lines.push(`    L${m.line}: ${m.content}`);
+      if (m.content && m.content !== '(match in file)') {
+        lines.push(m.line > 0 ? `    L${m.line}: ${m.content}` : `    ${m.content}`);
       }
     }
     if (fileMatches.length > 3) {

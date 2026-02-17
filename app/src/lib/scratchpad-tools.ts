@@ -16,7 +16,7 @@ import { detectToolFromText } from './utils';
 const MAX_CONTENT_LENGTH = 50_000;
 
 export interface ScratchpadToolCall {
-  tool: 'set_scratchpad' | 'append_scratchpad';
+  tool: 'set_scratchpad' | 'append_scratchpad' | 'read_scratchpad';
   content: string;
 }
 
@@ -42,6 +42,12 @@ Add to the existing content (good for incremental updates):
 {"tool": "append_scratchpad", "content": "## New Section\\n- Added item"}
 \`\`\`
 
+### read_scratchpad
+Read the current scratchpad content (useful to verify before overwriting):
+\`\`\`json
+{"tool": "read_scratchpad"}
+\`\`\`
+
 **When to use:**
 - User says "add this to the scratchpad" or "note this down"
 - Consolidating decisions from the conversation
@@ -57,11 +63,21 @@ Add to the existing content (good for incremental updates):
 
 /**
  * Detect a scratchpad tool call in text.
+ * Handles both flat format: {"tool": "set_scratchpad", "content": "..."}
+ * and args-wrapped format: {"tool": "set_scratchpad", "args": {"content": "..."}}
  */
 export function detectScratchpadToolCall(text: string): ScratchpadToolCall | null {
   return detectToolFromText<ScratchpadToolCall>(text, (parsed) => {
+    // read_scratchpad — no content needed
+    if (isReadScratchpadTool(parsed)) {
+      return { tool: 'read_scratchpad', content: '' };
+    }
     if (isScratchpadTool(parsed)) {
       return { tool: parsed.tool, content: parsed.content };
+    }
+    // Handle args-wrapped format: {"tool": "set_scratchpad", "args": {"content": "..."}}
+    if (isScratchpadToolWrapped(parsed)) {
+      return { tool: parsed.tool, content: (parsed.args as { content: string }).content };
     }
     return null;
   });
@@ -78,6 +94,18 @@ function isScratchpadTool(obj: unknown): obj is { tool: 'set_scratchpad' | 'appe
   );
 }
 
+function isReadScratchpadTool(obj: unknown): obj is { tool: 'read_scratchpad' } {
+  return typeof obj === 'object' && obj !== null && 'tool' in obj && obj.tool === 'read_scratchpad';
+}
+
+function isScratchpadToolWrapped(obj: unknown): obj is { tool: 'set_scratchpad' | 'append_scratchpad'; args: { content: string } } {
+  if (typeof obj !== 'object' || obj === null) return false;
+  if (!('tool' in obj) || (obj.tool !== 'set_scratchpad' && obj.tool !== 'append_scratchpad')) return false;
+  if (!('args' in obj) || typeof (obj as { args: unknown }).args !== 'object' || (obj as { args: unknown }).args === null) return false;
+  const args = (obj as { args: { content?: unknown } }).args;
+  return typeof args.content === 'string';
+}
+
 /**
  * Execute a scratchpad tool call.
  * Returns { text, ok } — text for the LLM to acknowledge the action,
@@ -89,6 +117,14 @@ export function executeScratchpadToolCall(
   onReplace: (content: string) => void,
   onAppend: (content: string) => void,
 ): { text: string; ok: boolean } {
+  // read_scratchpad — return current content
+  if (call.tool === 'read_scratchpad') {
+    if (!currentContent.trim()) {
+      return { text: '[Scratchpad is empty — no content yet]', ok: true };
+    }
+    return { text: `[Scratchpad content (${currentContent.length} chars)]\n${currentContent}`, ok: true };
+  }
+
   // Security: enforce content length limit
   if (call.content.length > MAX_CONTENT_LENGTH) {
     return {
