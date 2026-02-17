@@ -1867,6 +1867,7 @@ Available tools:
 - find_existing_pr(repo, head_branch, base_branch?) — Find an open PR for a branch. base_branch defaults to "main". Use to avoid creating duplicate PRs.
 
 Rules:
+- CRITICAL: To use a tool, you MUST output the fenced JSON block. Do NOT describe or narrate tool usage in prose (e.g. "I'll delegate to the coder" or "Let me read the file"). The system can ONLY detect and execute tool calls from JSON blocks. If you write about using a tool without the JSON block, nothing will happen.
 - Output ONLY the JSON block when requesting a tool — no other text in the same message
 - For independent read-only queries, you may output multiple JSON tool blocks in one message. They can be executed in parallel.
 - Wait for the tool result before continuing your response

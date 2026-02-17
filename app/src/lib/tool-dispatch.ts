@@ -169,7 +169,7 @@ const KNOWN_TOOL_NAMES = new Set([
 // ---------------------------------------------------------------------------
 
 export interface ToolCallDiagnosis {
-  reason: 'truncated' | 'validation_failed' | 'malformed_json';
+  reason: 'truncated' | 'validation_failed' | 'malformed_json' | 'natural_language_intent';
   toolName: string | null;
   errorMessage: string;
 }
@@ -236,6 +236,12 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
     };
   }
 
+  // Phase 4: Natural language tool intent — model described using a tool
+  // without emitting JSON (e.g. "I'll delegate to the coder" or
+  // "Let me run sandbox_exec").
+  const nlIntent = detectNaturalLanguageToolIntent(text);
+  if (nlIntent) return nlIntent;
+
   return null;
 }
 
@@ -278,4 +284,133 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
     }
     return null;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Natural language tool intent detection
+// ---------------------------------------------------------------------------
+// Some models (e.g. Codex via OpenRouter) describe wanting to use a tool in
+// prose without emitting the JSON block. This detector catches common
+// phrasing patterns and nudges the model to emit proper tool-call JSON.
+
+/** Intent action verbs that signal the model wants to do something NOW. */
+const INTENT_VERBS = `(?:I(?:'ll|\\s+will|\\s+am\\s+going\\s+to)|Let\\s+me|I'm\\s+going\\s+to|Going\\s+to|Now\\s+I(?:'ll|\\s+will))`;
+
+interface NLIntentPattern {
+  regex: RegExp;
+  toolName: string;
+  exampleJson: string;
+}
+
+/**
+ * Patterns that match natural language expressions of tool-use intent.
+ * Each includes the tool name and an example JSON to nudge the model.
+ *
+ * We use case-insensitive matching. The patterns require an action-verb
+ * prefix (e.g. "I'll", "Let me") to avoid false-positives when the model
+ * is merely explaining what a tool does.
+ */
+const NL_INTENT_PATTERNS: NLIntentPattern[] = [
+  // delegate_coder — most common failure case
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:to\\s+)?(?:the\\s+)?coder`, 'i'),
+    toolName: 'delegate_coder',
+    exampleJson: '{"tool": "delegate_coder", "args": {"task": "describe the task here"}}',
+  },
+  {
+    regex: /\bdelegat(?:e|ing)\s+(?:this\s+)?(?:task\s+)?(?:to\s+)?(?:the\s+)?coder\s+agent/i,
+    toolName: 'delegate_coder',
+    exampleJson: '{"tool": "delegate_coder", "args": {"task": "describe the task here"}}',
+  },
+  // sandbox_exec
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:run|execute|use\\s+sandbox_exec)`, 'i'),
+    toolName: 'sandbox_exec',
+    exampleJson: '{"tool": "sandbox_exec", "args": {"command": "your command here"}}',
+  },
+  // sandbox_read_file
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:read|open|view|look\\s+at)\\s+(?:the\\s+)?(?:file|contents)`, 'i'),
+    toolName: 'sandbox_read_file',
+    exampleJson: '{"tool": "sandbox_read_file", "args": {"path": "/workspace/path/to/file"}}',
+  },
+  // sandbox_write_file
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:write|create|update|modify|edit)\\s+(?:the\\s+)?file`, 'i'),
+    toolName: 'sandbox_write_file',
+    exampleJson: '{"tool": "sandbox_write_file", "args": {"path": "/workspace/path/to/file", "content": "file content"}}',
+  },
+  // sandbox_search
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+search\\s+(?:the\\s+)?(?:code(?:base)?|project|repo|sandbox|files)`, 'i'),
+    toolName: 'sandbox_search',
+    exampleJson: '{"tool": "sandbox_search", "args": {"query": "search term"}}',
+  },
+  // sandbox_diff
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:check|get|view|show)\\s+(?:the\\s+)?diff`, 'i'),
+    toolName: 'sandbox_diff',
+    exampleJson: '{"tool": "sandbox_diff", "args": {}}',
+  },
+  // sandbox_prepare_commit
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:commit|prepare\\s+(?:a\\s+)?commit)`, 'i'),
+    toolName: 'sandbox_prepare_commit',
+    exampleJson: '{"tool": "sandbox_prepare_commit", "args": {"message": "feat: describe your changes"}}',
+  },
+  // Generic: model mentions a known tool name by name without JSON
+  // e.g. "I'll use sandbox_list_dir to explore the structure"
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:use|call|invoke|try)\\s+(sandbox_\\w+|read_file|list_directory|search_files|grep_file|delegate_coder|web_search|fetch_pr|list_prs|list_commits|list_branches)`, 'i'),
+    toolName: '', // filled dynamically from capture group
+    exampleJson: '', // filled dynamically
+  },
+];
+
+/**
+ * Detect natural language expressions of tool-call intent.
+ * Returns a diagnosis when the model described wanting to use a tool
+ * but didn't emit a JSON block.
+ */
+function detectNaturalLanguageToolIntent(text: string): ToolCallDiagnosis | null {
+  // Skip if text already contains JSON-like structures — those are handled
+  // by the earlier phases (truncation, validation, malformed).
+  if (/\{\s*"?'?tool/.test(text)) return null;
+
+  const normalized = text.trim();
+  // Don't match very short responses — too likely to false-positive
+  if (normalized.length < 15) return null;
+
+  for (const pattern of NL_INTENT_PATTERNS) {
+    const match = pattern.regex.exec(normalized);
+    if (!match) continue;
+
+    // For the generic "I'll use <tool_name>" pattern, extract the tool name
+    let toolName = pattern.toolName;
+    let exampleJson = pattern.exampleJson;
+    if (!toolName && match[1]) {
+      toolName = match[1];
+      // Build a generic example for the matched tool
+      if (KNOWN_TOOL_NAMES.has(toolName)) {
+        exampleJson = `{"tool": "${toolName}", "args": {}}`;
+      } else {
+        continue; // Not a real tool name — skip
+      }
+    }
+
+    if (!toolName) continue;
+
+    return {
+      reason: 'natural_language_intent',
+      toolName,
+      errorMessage: `You described wanting to use "${toolName}" but didn't output the required JSON tool block. `
+        + `To call a tool, output ONLY a fenced JSON block like this:\n\n`
+        + '```json\n'
+        + `${exampleJson}\n`
+        + '```\n\n'
+        + `Do not describe the tool call in prose — output the JSON block directly.`,
+    };
+  }
+
+  return null;
 }

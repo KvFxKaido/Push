@@ -5,7 +5,7 @@
  * tool-call compliance across backends without external telemetry.
  */
 
-export type MalformedToolCallReason = 'truncated' | 'validation_failed' | 'malformed_json';
+export type MalformedToolCallReason = 'truncated' | 'validation_failed' | 'malformed_json' | 'natural_language_intent';
 
 export interface MalformedToolCallMetricInput {
   provider?: string;
@@ -18,6 +18,7 @@ interface ReasonCounts {
   truncated: number;
   validation_failed: number;
   malformed_json: number;
+  natural_language_intent: number;
 }
 
 interface ModelMalformedMetrics {
@@ -43,6 +44,7 @@ function emptyReasonCounts(): ReasonCounts {
     truncated: 0,
     validation_failed: 0,
     malformed_json: 0,
+    natural_language_intent: 0,
   };
 }
 
