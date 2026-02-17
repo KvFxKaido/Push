@@ -686,7 +686,7 @@ async function executeReadFile(repo: string, path: string, branch?: string, star
       text: lines.join('\n'),
       card: {
         type: 'editor',
-        data: { path, content: sliced.join('\n'), language, truncated, source: 'github' as const, repo },
+        data: { path, content: truncated ? displayContent : sliced.join('\n'), language, truncated, source: 'github' as const, repo },
       },
     };
   }

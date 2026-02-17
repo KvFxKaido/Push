@@ -207,7 +207,7 @@ export function useRepos() {
       const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
       const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
       const hasInstallationId = Boolean(safeStorageGet(APP_INSTALLATION_ID_KEY));
-      const isGitHubAppAuth = Boolean(!oauthToken && appToken && hasInstallationId);
+      const isGitHubAppAuth = Boolean(appToken && hasInstallationId);
 
       if (!headers['Authorization']) {
         // No token — use mock data
