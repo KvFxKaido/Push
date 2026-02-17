@@ -1305,7 +1305,10 @@ export function useChat(
 
                     const workerSandboxIds: string[] = [];
                     try {
-                      const parallelResults = await Promise.all(
+                      // Use allSettled so every worker sandbox ID is tracked
+                      // before the finally cleanup runs — prevents orphaned
+                      // sandboxes when one task fails while others still set up.
+                      const settledResults = await Promise.allSettled(
                         taskList.map(async (task, taskIndex) => {
                           const prefix = `[${taskIndex + 1}/${taskList.length}] `;
 
@@ -1341,10 +1344,10 @@ export function useChat(
                               workerSandboxId = candidateId;
                               break; // Restore succeeded
                             } catch (restoreErr) {
-                              // Clean up the failed worker sandbox
+                              // Best-effort cleanup of the failed worker sandbox.
+                              // Keep the ID in workerSandboxIds — if this cleanup
+                              // fails, the finally block will retry it.
                               try { await cleanupSandbox(candidateId); } catch { /* best effort */ }
-                              const idx = workerSandboxIds.indexOf(candidateId);
-                              if (idx !== -1) workerSandboxIds.splice(idx, 1);
 
                               if (setupAttempt === 0) {
                                 // First attempt failed — retry with a fresh sandbox
@@ -1402,7 +1405,14 @@ export function useChat(
                         }),
                       );
 
-                      parallelResults
+                      // Rethrow first failure — allSettled guarantees all worker
+                      // IDs are registered in workerSandboxIds before finally runs.
+                      const rejected = settledResults.find(r => r.status === 'rejected');
+                      if (rejected && rejected.status === 'rejected') throw rejected.reason;
+
+                      settledResults
+                        .filter((r): r is PromiseFulfilledResult<{ taskIndex: number; coderResult: { summary: string; cards: ChatCard[]; rounds: number; checkpoints: number } }> => r.status === 'fulfilled')
+                        .map(r => r.value)
                         .sort((a, b) => a.taskIndex - b.taskIndex)
                         .forEach(({ taskIndex, coderResult }) => {
                           totalRounds += coderResult.rounds;
