@@ -311,7 +311,7 @@ interface NLIntentPattern {
  * is merely explaining what a tool does.
  */
 const NL_INTENT_PATTERNS: NLIntentPattern[] = [
-  // delegate_coder — most common failure case
+  // delegate_coder — most common failure case (e.g. Codex says "I'll delegate to the coder")
   {
     regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:to\\s+)?(?:the\\s+)?coder`, 'i'),
     toolName: 'delegate_coder',
@@ -322,44 +322,9 @@ const NL_INTENT_PATTERNS: NLIntentPattern[] = [
     toolName: 'delegate_coder',
     exampleJson: '{"tool": "delegate_coder", "args": {"task": "describe the task here"}}',
   },
-  // sandbox_exec
-  {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:run|execute|use\\s+sandbox_exec)`, 'i'),
-    toolName: 'sandbox_exec',
-    exampleJson: '{"tool": "sandbox_exec", "args": {"command": "your command here"}}',
-  },
-  // sandbox_read_file
-  {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:read|open|view|look\\s+at)\\s+(?:the\\s+)?(?:file|contents)`, 'i'),
-    toolName: 'sandbox_read_file',
-    exampleJson: '{"tool": "sandbox_read_file", "args": {"path": "/workspace/path/to/file"}}',
-  },
-  // sandbox_write_file
-  {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:write|create|update|modify|edit)\\s+(?:the\\s+)?file`, 'i'),
-    toolName: 'sandbox_write_file',
-    exampleJson: '{"tool": "sandbox_write_file", "args": {"path": "/workspace/path/to/file", "content": "file content"}}',
-  },
-  // sandbox_search
-  {
-    regex: new RegExp(`${INTENT_VERBS}\\s+search\\s+(?:the\\s+)?(?:code(?:base)?|project|repo|sandbox|files)`, 'i'),
-    toolName: 'sandbox_search',
-    exampleJson: '{"tool": "sandbox_search", "args": {"query": "search term"}}',
-  },
-  // sandbox_diff
-  {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:check|get|view|show)\\s+(?:the\\s+)?diff`, 'i'),
-    toolName: 'sandbox_diff',
-    exampleJson: '{"tool": "sandbox_diff", "args": {}}',
-  },
-  // sandbox_prepare_commit
-  {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:commit|prepare\\s+(?:a\\s+)?commit)`, 'i'),
-    toolName: 'sandbox_prepare_commit',
-    exampleJson: '{"tool": "sandbox_prepare_commit", "args": {"message": "feat: describe your changes"}}',
-  },
-  // Generic: model mentions a known tool name by name without JSON
-  // e.g. "I'll use sandbox_list_dir to explore the structure"
+  // Generic: model mentions a known tool name by its exact name without JSON
+  // e.g. "I'll use sandbox_exec to run the tests"
+  // This is safe because it requires the actual tool identifier in the text.
   {
     regex: new RegExp(`${INTENT_VERBS}\\s+(?:use|call|invoke|try)\\s+(sandbox_\\w+|read_file|list_directory|search_files|grep_file|delegate_coder|web_search|fetch_pr|list_prs|list_commits|list_branches)`, 'i'),
     toolName: '', // filled dynamically from capture group
