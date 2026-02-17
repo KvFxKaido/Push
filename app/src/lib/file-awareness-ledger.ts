@@ -84,35 +84,6 @@ function mergeRanges(ranges: LineRange[]): LineRange[] {
   return merged;
 }
 
-/**
- * Check whether `ranges` fully cover `[targetStart, targetEnd]`.
- * Returns uncovered sub-ranges, or empty array if fully covered.
- */
-function findUncoveredRanges(
-  ranges: LineRange[],
-  targetStart: number,
-  targetEnd: number,
-): LineRange[] {
-  const merged = mergeRanges(ranges);
-  const uncovered: LineRange[] = [];
-  let cursor = targetStart;
-
-  for (const r of merged) {
-    if (r.start > cursor) {
-      // Gap before this range
-      uncovered.push({ start: cursor, end: Math.min(r.start - 1, targetEnd) });
-    }
-    cursor = Math.max(cursor, r.end + 1);
-    if (cursor > targetEnd) break;
-  }
-
-  if (cursor <= targetEnd) {
-    uncovered.push({ start: cursor, end: targetEnd });
-  }
-
-  return uncovered;
-}
-
 // ---------------------------------------------------------------------------
 // Signature extraction (Phase 2)
 // ---------------------------------------------------------------------------
