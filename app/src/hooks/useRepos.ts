@@ -204,7 +204,6 @@ export function useRepos() {
 
     try {
       const headers = getAuthHeaders();
-      const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
       const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
       const hasInstallationId = Boolean(safeStorageGet(APP_INSTALLATION_ID_KEY));
       const isGitHubAppAuth = Boolean(appToken && hasInstallationId);
