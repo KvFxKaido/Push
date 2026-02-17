@@ -90,7 +90,7 @@ const BASE_DELAY_MS = 1000; // 1s initial delay for exponential backoff
 export function getGitHubHeaders(): Record<string, string> {
   const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
   const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
-  const authToken = oauthToken || appToken || GITHUB_TOKEN;
+  const authToken = appToken || oauthToken || GITHUB_TOKEN;
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.v3+json',
   };
