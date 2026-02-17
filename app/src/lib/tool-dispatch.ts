@@ -147,7 +147,7 @@ export function detectUnimplementedToolCall(text: string): string | null {
 // ---------------------------------------------------------------------------
 
 const GITHUB_TOOL_NAMES = new Set([
-  'fetch_pr', 'list_prs', 'list_commits', 'read_file', 'list_directory',
+  'fetch_pr', 'list_prs', 'list_commits', 'read_file', 'grep_file', 'list_directory',
   'list_branches', 'fetch_checks', 'search_files', 'list_commit_files',
   'trigger_workflow', 'get_workflow_runs', 'get_workflow_logs',
   'create_branch', 'create_pr', 'merge_pr', 'delete_branch',

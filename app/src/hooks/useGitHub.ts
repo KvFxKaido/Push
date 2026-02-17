@@ -37,7 +37,7 @@ export function useGitHub() {
     try {
       const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
       const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
-      const authToken = oauthToken || appToken || GITHUB_TOKEN;
+      const authToken = appToken || oauthToken || GITHUB_TOKEN;
       const headers: Record<string, string> = {
         'Accept': 'application/vnd.github.v3+json',
       };

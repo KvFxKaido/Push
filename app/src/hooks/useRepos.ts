@@ -12,7 +12,7 @@ const PUSHED_STORAGE_KEY = 'repo_last_pushed';
 function getAuthHeaders(): Record<string, string> {
   const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
   const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
-  const authToken = oauthToken || appToken || GITHUB_TOKEN;
+  const authToken = appToken || oauthToken || GITHUB_TOKEN;
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.v3+json',
   };
@@ -204,10 +204,9 @@ export function useRepos() {
 
     try {
       const headers = getAuthHeaders();
-      const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
       const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
       const hasInstallationId = Boolean(safeStorageGet(APP_INSTALLATION_ID_KEY));
-      const isGitHubAppAuth = Boolean(!oauthToken && appToken && hasInstallationId);
+      const isGitHubAppAuth = Boolean(appToken && hasInstallationId);
 
       if (!headers['Authorization']) {
         // No token — use mock data

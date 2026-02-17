@@ -33,7 +33,7 @@ interface PersistedSandboxSession {
 }
 
 function getGitHubToken(): string {
-  return safeStorageGet(OAUTH_STORAGE_KEY) || safeStorageGet(APP_TOKEN_STORAGE_KEY) || GITHUB_TOKEN;
+  return safeStorageGet(APP_TOKEN_STORAGE_KEY) || safeStorageGet(OAUTH_STORAGE_KEY) || GITHUB_TOKEN;
 }
 
 function saveSession(session: PersistedSandboxSession): void {

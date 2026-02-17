@@ -20,7 +20,8 @@ export type ToolCall =
   | { tool: 'fetch_pr'; args: { repo: string; pr: number } }
   | { tool: 'list_prs'; args: { repo: string; state?: string } }
   | { tool: 'list_commits'; args: { repo: string; count?: number } }
-  | { tool: 'read_file'; args: { repo: string; path: string; branch?: string } }
+  | { tool: 'read_file'; args: { repo: string; path: string; branch?: string; start_line?: number; end_line?: number } }
+  | { tool: 'grep_file'; args: { repo: string; path: string; pattern: string; branch?: string } }
   | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string } }
   | { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[] } }
@@ -43,6 +44,14 @@ function asString(value: unknown): string | undefined {
 
 function asStringArray(value: unknown): string[] | undefined {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined;
+}
+
+/** Parse a positive integer arg (1-based line numbers). Returns undefined if absent, null if invalid. */
+function asPositiveInt(value: unknown): number | undefined | null {
+  if (value === undefined || value === null) return undefined;
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim().length > 0 ? Number(value) : Number.NaN;
+  if (!Number.isInteger(n) || n < 1) return null;
+  return n;
 }
 
 const ACCESS_DENIED_MESSAGE =
@@ -81,7 +90,7 @@ const BASE_DELAY_MS = 1000; // 1s initial delay for exponential backoff
 export function getGitHubHeaders(): Record<string, string> {
   const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
   const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
-  const authToken = oauthToken || appToken || GITHUB_TOKEN;
+  const authToken = appToken || oauthToken || GITHUB_TOKEN;
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.v3+json',
   };
@@ -255,7 +264,14 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     return { tool: 'list_commits', args: { repo, count: args.count !== undefined ? Number(args.count) : undefined } };
   }
   if (tool === 'read_file' && repo && asString(args.path)) {
-    return { tool: 'read_file', args: { repo, path: asString(args.path)!, branch } };
+    const startLine = asPositiveInt(args.start_line);
+    const endLine = asPositiveInt(args.end_line);
+    if (startLine === null || endLine === null) return null; // invalid line args
+    if (startLine !== undefined && endLine !== undefined && startLine > endLine) return null;
+    return { tool: 'read_file', args: { repo, path: asString(args.path)!, branch, start_line: startLine, end_line: endLine } };
+  }
+  if (tool === 'grep_file' && repo && asString(args.path) && asString(args.pattern)) {
+    return { tool: 'grep_file', args: { repo, path: asString(args.path)!, pattern: asString(args.pattern)!, branch } };
   }
   if (tool === 'list_directory' && repo) {
     return { tool: 'list_directory', args: { repo, path: asString(args.path), branch } };
@@ -570,7 +586,7 @@ async function executeListCommits(repo: string, count: number = 10): Promise<Too
   };
 }
 
-async function executeReadFile(repo: string, path: string, branch?: string): Promise<ToolExecutionResult> {
+async function executeReadFile(repo: string, path: string, branch?: string, startLine?: number, endLine?: number): Promise<ToolExecutionResult> {
   const headers = getGitHubHeaders();
   const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
 
@@ -601,11 +617,7 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
   }
 
   // Decode base64 content
-  let content = atob(data.content.replace(/\n/g, ''));
-  const truncated = content.length > 15_000;
-  if (truncated) {
-    content = content.slice(0, 15_000) + '\n\n[...truncated at 15K chars — use search_files to find specific content, or sandbox_read_file with line ranges for targeted reading]';
-  }
+  const fullContent = atob(data.content.replace(/\n/g, ''));
 
   // Guess language from extension
   const ext = path.split('.').pop()?.toLowerCase() || '';
@@ -617,6 +629,76 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
     toml: 'toml', sql: 'sql', c: 'c', cpp: 'cpp', h: 'c',
   };
   const language = langMap[ext] || ext;
+
+  const isRangeRead = startLine !== undefined || endLine !== undefined;
+
+  if (isRangeRead) {
+    // Line-range read: split into lines, slice the requested range, add line numbers
+    const allLines = fullContent.split('\n');
+    const totalLines = allLines.length;
+    const rangeStart = startLine ?? 1;
+    const rangeEnd = endLine ?? totalLines;
+
+    // Slice to requested range (1-indexed → 0-indexed)
+    const sliced = allLines.slice(rangeStart - 1, rangeEnd);
+
+    if (sliced.length === 0) {
+      return {
+        text: [
+          `[Tool Result — read_file]`,
+          `File: ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''} (${totalLines} lines total)`,
+          `No content in requested range (lines ${rangeStart}-${rangeEnd}). The file has ${totalLines} lines.`,
+        ].join('\n'),
+      };
+    }
+
+    // Add cat -n style line numbers
+    const maxLineNum = rangeStart + sliced.length - 1;
+    const padWidth = String(maxLineNum).length;
+    const numberedContent = sliced
+      .map((line, idx) => `${String(rangeStart + idx).padStart(padWidth)}\t${line}`)
+      .join('\n');
+
+    const rangeChars = sliced.join('\n').length;
+    const truncated = rangeChars > 30_000;
+    let displayContent = numberedContent;
+    if (truncated) {
+      // Truncate by lines to keep line numbers intact
+      const truncLines = numberedContent.split('\n');
+      let charCount = 0;
+      let cutIdx = truncLines.length;
+      for (let i = 0; i < truncLines.length; i++) {
+        charCount += truncLines[i].length + 1;
+        if (charCount > 30_000) { cutIdx = i; break; }
+      }
+      displayContent = truncLines.slice(0, cutIdx).join('\n') + `\n\n[...truncated — showing ${cutIdx} of ${sliced.length} lines in range]`;
+    }
+
+    const lines: string[] = [
+      `[Tool Result — read_file]`,
+      `Lines ${rangeStart}-${Math.min(rangeEnd, totalLines)} of ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''} (${totalLines} lines total)`,
+      `Language: ${language}`,
+      truncated ? `(truncated)\n` : '',
+      displayContent,
+    ].filter(Boolean);
+
+    return {
+      text: lines.join('\n'),
+      card: {
+        type: 'editor',
+        data: { path, content: truncated ? displayContent : sliced.join('\n'), language, truncated, source: 'github' as const, repo },
+      },
+    };
+  }
+
+  // Full-file read (original behavior)
+  let content = fullContent;
+  const truncated = content.length > 15_000;
+  if (truncated) {
+    // Count total lines before truncation so the model knows the file size
+    const totalLines = fullContent.split('\n').length;
+    content = content.slice(0, 15_000) + `\n\n[...truncated at 15K chars — file has ${totalLines} lines. Use read_file with start_line/end_line to read specific ranges, search_files to find content, or grep_file for pattern matching.]`;
+  }
 
   const lines: string[] = [
     `[Tool Result — read_file]`,
@@ -632,6 +714,118 @@ async function executeReadFile(repo: string, path: string, branch?: string): Pro
     text: lines.join('\n'),
     card: { type: 'editor', data: { path, content, language, truncated, source: 'github' as const, repo } },
   };
+}
+
+async function executeGrepFile(repo: string, path: string, pattern: string, branch?: string): Promise<ToolExecutionResult> {
+  const headers = getGitHubHeaders();
+  const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}${ref}`,
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `${path} on ${repo}`, branch));
+  }
+
+  const data = await res.json();
+
+  if (Array.isArray(data)) {
+    return {
+      text: `[Tool Error] "${path}" is a directory. grep_file only works on individual files. Use search_files to search across a directory.`,
+    };
+  }
+
+  if (data.type !== 'file' || !data.content) {
+    throw new Error(`${path} is not a readable file`);
+  }
+
+  const fullContent = atob(data.content.replace(/\n/g, ''));
+  const allLines = fullContent.split('\n');
+
+  // Try as regex first, fall back to case-insensitive substring
+  let matcher: (line: string) => boolean;
+  try {
+    const regex = new RegExp(pattern, 'i');
+    matcher = (line: string) => regex.test(line);
+  } catch {
+    const lowerPattern = pattern.toLowerCase();
+    matcher = (line: string) => line.toLowerCase().includes(lowerPattern);
+  }
+
+  // Collect matching lines with 1 line of context above and below
+  const matchLineNums = new Set<number>();
+  for (let i = 0; i < allLines.length; i++) {
+    if (matcher(allLines[i])) {
+      matchLineNums.add(i);
+    }
+  }
+
+  if (matchLineNums.size === 0) {
+    return {
+      text: [
+        `[Tool Result — grep_file]`,
+        `No matches for "${pattern}" in ${path} (${allLines.length} lines scanned).`,
+      ].join('\n'),
+    };
+  }
+
+  // Build output with context lines (±1 line around each match)
+  const contextLineNums = new Set<number>();
+  for (const lineNum of matchLineNums) {
+    if (lineNum > 0) contextLineNums.add(lineNum - 1);
+    contextLineNums.add(lineNum);
+    if (lineNum < allLines.length - 1) contextLineNums.add(lineNum + 1);
+  }
+  const sortedNums = [...contextLineNums].sort((a, b) => a - b);
+
+  // Format with line numbers, grouping contiguous ranges
+  const padWidth = String(sortedNums[sortedNums.length - 1] + 1).length;
+  const outputLines: string[] = [];
+  let prevNum = -2;
+  const MAX_OUTPUT_MATCHES = 100;
+  let matchesShown = 0;
+  for (const num of sortedNums) {
+    if (matchLineNums.has(num)) matchesShown++;
+    if (matchesShown > MAX_OUTPUT_MATCHES && !matchLineNums.has(num)) continue;
+    if (matchesShown > MAX_OUTPUT_MATCHES) {
+      outputLines.push(`\n[...truncated — showing first ${MAX_OUTPUT_MATCHES} of ${matchLineNums.size} matches]`);
+      break;
+    }
+    if (num > prevNum + 1 && outputLines.length > 0) {
+      outputLines.push('  ---');
+    }
+    const lineNum1 = num + 1; // 1-indexed
+    const marker = matchLineNums.has(num) ? '>' : ' ';
+    outputLines.push(`${marker}${String(lineNum1).padStart(padWidth)}\t${allLines[num]}`);
+    prevNum = num;
+  }
+
+  const lines: string[] = [
+    `[Tool Result — grep_file]`,
+    `${matchLineNums.size} match${matchLineNums.size !== 1 ? 'es' : ''} for "${pattern}" in ${path}${branch ? ` (branch: ${branch})` : ''} (${allLines.length} lines total)`,
+    '',
+    ...outputLines,
+  ];
+
+  // Build FileSearchCardData for the UI card
+  const matchItems: FileSearchMatch[] = [];
+  for (const num of matchLineNums) {
+    if (matchItems.length >= 50) break;
+    matchItems.push({ path, line: num + 1, content: allLines[num].trim().slice(0, 200) });
+  }
+
+  const cardData: FileSearchCardData = {
+    repo,
+    query: pattern,
+    path,
+    matches: matchItems,
+    totalCount: matchLineNums.size,
+    truncated: matchLineNums.size > MAX_OUTPUT_MATCHES,
+  };
+
+  return { text: lines.join('\n'), card: { type: 'file-search', data: cardData } };
 }
 
 async function executeListDirectory(repo: string, path: string = '', branch?: string): Promise<ToolExecutionResult> {
@@ -863,27 +1057,38 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
     return { text: `[Tool Result — search_files]\nNo files found matching "${query}"${path ? ` in ${path}` : ''}.` };
   }
 
-  // Parse search results — GitHub returns file info, we need to extract line matches
+  // Parse search results — GitHub returns file info with text_matches fragments
   const matches: FileSearchMatch[] = [];
   const truncated = totalCount > 25;
+
+  // Track per-file context fragments for richer output
+  const fileContexts = new Map<string, string[]>();
 
   for (const item of data.items || []) {
     // Each item has: name, path, sha, html_url, and text_matches (if available)
     const textMatches = item.text_matches || [];
     if (textMatches.length > 0) {
+      const fragments: string[] = [];
       for (const tm of textMatches) {
-        // Text matches have fragments with line info
+        // text_matches have fragment (surrounding text) and matches (character offsets)
         const fragment = tm.fragment || '';
-        const lines = fragment.split('\n');
-        for (let i = 0; i < lines.length && matches.length < 50; i++) {
-          if (lines[i].toLowerCase().includes(query.toLowerCase())) {
+        const fragLines = fragment.split('\n');
+        // Keep the full fragment as context
+        if (fragment.trim()) {
+          fragments.push(fragment.trim());
+        }
+        for (let i = 0; i < fragLines.length && matches.length < 80; i++) {
+          if (fragLines[i].toLowerCase().includes(query.toLowerCase())) {
             matches.push({
               path: item.path,
-              line: 0, // GitHub doesn't provide exact line numbers for text_matches
-              content: lines[i].trim().slice(0, 200),
+              line: 0, // GitHub code search doesn't provide absolute line numbers
+              content: fragLines[i].trim().slice(0, 300),
             });
           }
         }
+      }
+      if (fragments.length > 0) {
+        fileContexts.set(item.path, fragments);
       }
     } else {
       // No text_matches — just show the file path
@@ -910,14 +1115,36 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
 
   for (const [filePath, fileMatches] of byFile) {
     lines.push(`📄 ${filePath}`);
-    for (const m of fileMatches.slice(0, 3)) {
-      if (m.content && m.content !== '(match in file)') {
-        lines.push(m.line > 0 ? `    L${m.line}: ${m.content}` : `    ${m.content}`);
+    // Show context fragments if available (richer than individual match lines)
+    const contexts = fileContexts.get(filePath);
+    if (contexts && contexts.length > 0) {
+      for (const ctx of contexts.slice(0, 2)) {
+        // Indent and show the fragment as a context block
+        const ctxLines = ctx.split('\n').slice(0, 5); // Cap at 5 lines per fragment
+        for (const cl of ctxLines) {
+          lines.push(`    ${cl.slice(0, 200)}`);
+        }
+        if (ctx.split('\n').length > 5) {
+          lines.push(`    ...`);
+        }
+      }
+    } else {
+      // Fallback: show individual match lines
+      for (const m of fileMatches.slice(0, 5)) {
+        if (m.content && m.content !== '(match in file)') {
+          lines.push(`    ${m.content}`);
+        }
       }
     }
-    if (fileMatches.length > 3) {
-      lines.push(`    ...and ${fileMatches.length - 3} more matches`);
+    if (fileMatches.length > 5) {
+      lines.push(`    ...and ${fileMatches.length - 5} more matches`);
     }
+  }
+
+  // Add hint for deeper investigation
+  if (byFile.size > 0) {
+    lines.push('');
+    lines.push(`Tip: Use grep_file(repo, path, pattern) to search within a specific file with line numbers and context.`);
   }
 
   const cardData: FileSearchCardData = {
@@ -1565,7 +1792,9 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
       case 'list_commits':
         return await executeListCommits(call.args.repo, call.args.count);
       case 'read_file':
-        return await executeReadFile(call.args.repo, call.args.path, call.args.branch);
+        return await executeReadFile(call.args.repo, call.args.path, call.args.branch, call.args.start_line, call.args.end_line);
+      case 'grep_file':
+        return await executeGrepFile(call.args.repo, call.args.path, call.args.pattern, call.args.branch);
       case 'list_directory':
         return await executeListDirectory(call.args.repo, call.args.path, call.args.branch);
       case 'list_branches':
@@ -1619,7 +1848,8 @@ Available tools:
 - fetch_pr(repo, pr) — Fetch full PR details with diff
 - list_prs(repo, state?) — List PRs (default state: "open")
 - list_commits(repo, count?) — List recent commits (default: 10, max: 30)
-- read_file(repo, path, branch?) — Read a single file's contents (default: repo's default branch). Only works on files — fails on directories.
+- read_file(repo, path, branch?, start_line?, end_line?) — Read a single file's contents (default: repo's default branch). Only works on files — fails on directories. Use start_line/end_line (1-indexed) to read a specific line range — essential for large files. Range reads include line numbers for reference.
+- grep_file(repo, path, pattern, branch?) — Search within a single file for a pattern (regex or substring). Returns matching lines with line numbers and ±1 line of context. Use this to locate functions, variables, or patterns in a specific file without reading the entire file. Much faster than read_file for large files when you know what you're looking for.
 - list_directory(repo, path?, branch?) — List files and folders in a directory (default path: repo root). Use this to browse the repo structure before reading specific files.
 - list_branches(repo) — List branches with default/protected status
 - delegate_coder(task?, tasks?, files?) — Delegate coding to the Coder agent (requires sandbox). Use "task" for one task, or "tasks" array for batch independent tasks. Batch tasks may run in isolated worker sandboxes for parallel execution.
@@ -1645,11 +1875,13 @@ Rules:
 - If the user asks about a PR, repo, commits, files, or branches, use the appropriate tool to get real data
 - Never fabricate data — always use a tool to fetch it
 - For "what changed recently?" or "recent activity" use list_commits
-- For "show me [filename]" use read_file (only for individual files)
+- For "show me [filename]" use read_file (only for individual files). For large files (80KB+), use start_line/end_line to read specific sections, or grep_file to find what you need first.
+- For large files: use grep_file to locate the relevant lines, then read_file with start_line/end_line to read the surrounding context. This is much more efficient than reading the entire file.
 - To explore the project structure or find files, use list_directory FIRST, then read_file on specific files
 - IMPORTANT: read_file only works on files, not directories. If you need to see what's inside a folder, always use list_directory.
 - For "what branches exist?" use list_branches
-- For "find [pattern]" or "where is [thing]" use search_files — saves multiple round-trips vs manual browsing
+- For "find [pattern] in [file]" use grep_file — returns matching lines with line numbers and context
+- For "find [pattern]" or "where is [thing]" across the repo use search_files — saves multiple round-trips vs manual browsing
 - For "what files changed in [commit]" use list_commit_files — lighter than fetch_pr when you just need the file list
 - For "deploy" or "run workflow" use trigger_workflow, then suggest get_workflow_runs to check status
 - For "show CI runs" or "what workflows ran" use get_workflow_runs
