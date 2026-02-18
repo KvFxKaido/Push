@@ -479,6 +479,7 @@ Connect your GitHub account in settings to get started, or just ask me anything 
 interface LLMMessageContentText {
   type: 'text';
   text: string;
+  cache_control?: { type: "ephemeral" };
 }
 
 interface LLMMessageContentImage {
@@ -574,7 +575,9 @@ function toLLMMessages(
   }
 
   const llmMessages: LLMMessage[] = [
-    { role: 'system', content: systemContent },
+    providerType === "openrouter" 
+      ? { role: "system", content: [{ type: "text", text: systemContent, cache_control: { type: "ephemeral" } }] as LLMMessageContent[] }
+      : { role: "system", content: systemContent },
   ];
 
   // Smart context management — summarize old messages instead of dropping
@@ -623,6 +626,25 @@ function toLLMMessages(
         role: msg.role === 'user' ? 'user' : 'assistant',
         content: msg.content,
       });
+    }
+  }
+
+  // Prompt Caching for OpenRouter: cache the entire prefix up to the last user message
+  if (providerType === "openrouter" && llmMessages.length > 0) {
+    for (let i = llmMessages.length - 1; i >= 0; i--) {
+      if (llmMessages[i].role === "user") {
+        const lastMsg = llmMessages[i];
+        if (typeof lastMsg.content === "string") {
+          lastMsg.content = [{ type: "text", text: lastMsg.content, cache_control: { type: "ephemeral" } }];
+        } else if (Array.isArray(lastMsg.content)) {
+          // Already an array (e.g. from attachments), tag the last part
+          const lastPart = lastMsg.content[lastMsg.content.length - 1];
+          if (lastPart.type === "text") {
+            lastPart.cache_control = { type: "ephemeral" };
+          }
+        }
+        break;
+      }
     }
   }
 
