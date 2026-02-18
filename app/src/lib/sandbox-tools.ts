@@ -38,7 +38,7 @@ import { browserToolEnabled } from './feature-flags';
 import { recordBrowserMetric } from './browser-metrics';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger, extractSignatures } from './file-awareness-ledger';
-import { applyHashlineEdits, type HashlineOp } from "./hashline";
+import { applyHashlineEdits, calculateLineHash, type HashlineOp } from "./hashline";
 import { safeStorageGet } from './safe-storage';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
@@ -434,26 +434,24 @@ export async function executeSandboxToolCall(
           ? result.end_line
           : call.args.end_line;
 
-        // For range reads: add cat -n style line numbers to the tool result text
-        // (the model uses these for edit targeting; the card stays clean)
+        // For every read: add hashline anchors and line numbers to the tool result text
         let toolResultContent: string;
         let emptyRangeWarning = '';
-        if (isRangeRead && result.content) {
+        if (result.content) {
           const contentLines = result.content.split('\n');
           // If content ends with a trailing newline, the last split element is empty — don't number it
           const hasTrailingNewline = result.content.endsWith('\n') && contentLines.length > 1;
           const linesToNumber = hasTrailingNewline ? contentLines.slice(0, -1) : contentLines;
           const maxLineNum = Math.max(rangeStart, rangeStart + linesToNumber.length - 1);
           const padWidth = String(maxLineNum).length;
+
+          const hashPromises = linesToNumber.map(line => calculateLineHash(line));
+          const lineHashes = await Promise.all(hashPromises);
+
           toolResultContent = linesToNumber
-            .map((line, idx) => `${String(rangeStart + idx).padStart(padWidth)}\t${line}`)
+            .map((line, idx) => `[${lineHashes[idx]}] ${String(rangeStart + idx).padStart(padWidth)}\t${line}`)
             .join('\n');
         } else if (isRangeRead && !result.content) {
-          // Range extends beyond file — no content returned
-          toolResultContent = '';
-          emptyRangeWarning = `No content in requested range (lines ${rangeStart}-${rangeEnd ?? '∞'}). The file may be shorter than expected. Use sandbox_read_file without line range to see the full file.`;
-        } else {
-          toolResultContent = result.content;
         }
 
         // --- File Awareness Ledger: record what the model has seen ---
