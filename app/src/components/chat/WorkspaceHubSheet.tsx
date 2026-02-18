@@ -619,7 +619,7 @@ export function WorkspaceHubSheet({
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => onOpenChange(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-[#080b10]/95 text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#1b2230] bg-push-grad-input text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg-secondary hover:brightness-110"
                   aria-label="Close workspace hub"
                 >
                   <X className="h-4 w-4" />
@@ -638,7 +638,7 @@ export function WorkspaceHubSheet({
               <div className="mt-2 flex items-center gap-2">
                 <button
                   onClick={confirmBranchSwitch}
-                  className="rounded-lg border border-push-edge bg-[#080b10]/95 px-3 py-1.5 text-xs text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:text-push-fg"
+                  className="rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-1.5 text-xs text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
                 >
                   Switch
                 </button>
@@ -662,10 +662,10 @@ export function WorkspaceHubSheet({
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
-                    className={`flex min-h-[42px] items-center justify-center gap-1 rounded-lg px-1 text-[11px] transition-colors ${
+                    className={`flex min-h-[42px] items-center justify-center gap-1 rounded-lg px-1 text-[11px] transition-all ${
                       active
-                        ? 'border border-push-edge-hover bg-[#0d1119] text-push-fg'
-                        : 'border border-transparent text-push-fg-dim hover:bg-[#080b10]/80 hover:text-push-fg-secondary'
+                        ? 'border border-[#31425a] bg-push-grad-input text-push-fg shadow-[0_8px_20px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl'
+                        : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
                     }`}
                   >
                     <Icon className="h-3.5 w-3.5" />
@@ -685,7 +685,7 @@ export function WorkspaceHubSheet({
                   onChange={(e) => setCommitMessage(e.target.value)}
                   placeholder="Commit message"
                   disabled={commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error'}
-                  className="h-8 min-w-0 flex-1 rounded-lg border border-push-edge bg-push-surface px-2.5 text-xs text-push-fg-secondary outline-none transition-colors placeholder:text-push-fg-dim focus:border-push-sky/50 disabled:opacity-50"
+                  className="h-8 min-w-0 flex-1 rounded-lg border border-[#1b2230] bg-push-grad-input px-2.5 text-xs text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all placeholder:text-push-fg-dim focus:border-push-sky/50 disabled:opacity-50"
                 />
                 <button
                   onClick={() => void suggestCommitMessage()}
@@ -695,7 +695,7 @@ export function WorkspaceHubSheet({
                     !sandboxReady
                   }
                   title="Suggest commit message from current diff"
-                  className="flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+                  className="flex h-8 items-center gap-1 rounded-lg border border-[#1b2230] bg-push-grad-input px-2 text-[11px] text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg-secondary hover:brightness-110 disabled:opacity-50"
                 >
                   {suggestingCommitMessage ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -722,7 +722,7 @@ export function WorkspaceHubSheet({
                       ? 'border-emerald-500/50 bg-emerald-950/35 text-emerald-300'
                       : commitPhase === 'error'
                       ? 'border-red-500/40 bg-red-950/20 text-red-300'
-                      : 'border-push-edge bg-[#080b10]/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
+                      : 'border-[#1b2230] bg-push-grad-input text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl hover:border-push-edge-hover hover:text-push-fg-secondary hover:brightness-110'
                   }`}
                 >
                   {commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error' ? (

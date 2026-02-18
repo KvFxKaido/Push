@@ -346,7 +346,7 @@ export function RepoChatDrawer({
                     onNewChat();
                     setOpen(false);
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary spring-press transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#1b2230] bg-push-grad-input px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   New chat
@@ -357,7 +357,7 @@ export function RepoChatDrawer({
                       onBrowseRepos();
                       setOpen(false);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 py-1.5 text-xs font-medium text-push-link spring-press transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#1b2230] bg-push-grad-input px-2.5 py-1.5 text-xs font-medium text-push-link shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
                   >
                     <House className="h-3.5 w-3.5" />
                     Home
@@ -369,7 +369,7 @@ export function RepoChatDrawer({
                       onSandboxMode();
                       setOpen(false);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-900/15 px-2.5 py-1.5 text-xs font-medium text-emerald-300 spring-press transition-all duration-200 hover:border-emerald-500/50 hover:text-emerald-200"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-[linear-gradient(180deg,rgba(9,25,18,0.95)_0%,rgba(4,10,7,0.98)_100%)] px-2.5 py-1.5 text-xs font-medium text-emerald-300 shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] spring-press transition-all duration-200 hover:border-emerald-500/55 hover:text-emerald-200 hover:brightness-110"
                   >
                     <Box className="h-3.5 w-3.5" />
                     Sandbox
@@ -381,7 +381,7 @@ export function RepoChatDrawer({
                       onExitSandboxMode();
                       setOpen(false);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary spring-press transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#1b2230] bg-push-grad-input px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
                   >
                     <X className="h-3.5 w-3.5" />
                     Exit sandbox
@@ -394,7 +394,7 @@ export function RepoChatDrawer({
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search repos and chats"
-                  className="h-8 w-full rounded-xl border border-push-edge bg-push-surface pl-8 pr-2.5 text-xs text-push-fg-secondary outline-none placeholder:text-push-fg-dim/70 focus:border-push-sky/50 transition-colors"
+                  className="h-8 w-full rounded-xl border border-[#1b2230] bg-push-grad-input pl-8 pr-2.5 text-xs text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none placeholder:text-push-fg-dim/70 transition-all focus:border-push-sky/50"
                 />
               </div>
             </SheetHeader>
@@ -405,7 +405,7 @@ export function RepoChatDrawer({
                   const isExpanded = isSearching || (expandedRepos[repo.full_name] ?? (activeRepo?.full_name === repo.full_name));
                   const isActiveRepo = activeRepo?.id === repo.id;
                   return (
-                    <div key={repo.id} className="rounded-xl border border-push-edge bg-push-surface card-hover spring-press">
+                    <div key={repo.id} className="rounded-xl border border-[#1b2230] bg-push-grad-input shadow-[0_10px_22px_rgba(0,0,0,0.32),0_2px_6px_rgba(0,0,0,0.2)] card-hover spring-press">
                       <button
                         onClick={() => toggleRepo(repo.full_name, isExpanded)}
                         className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors ${
