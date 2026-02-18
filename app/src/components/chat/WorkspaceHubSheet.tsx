@@ -489,9 +489,10 @@ export function WorkspaceHubSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full border-l border-[#151b26] bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.65)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden"
+        className="w-[94vw] rounded-l-2xl border-l border-[#151b26] bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden"
       >
-        <div className="flex h-dvh flex-col">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tl-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
+        <div className="relative flex h-dvh flex-col overflow-hidden rounded-l-2xl">
           {/* ---- Header ---- */}
           <header className="border-b border-push-edge px-3 py-3">
             <div className="flex items-center justify-between gap-2">
