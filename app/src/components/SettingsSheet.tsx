@@ -191,10 +191,10 @@ interface ProviderKeySectionProps {
   setKeyInput: (v: string) => void;
   saveKey: () => void;
   clearKey: () => void;
-  activeBackend: string | null;
-  backendId: string;
+  activeBackend: PreferredProvider | null;
+  backendId: PreferredProvider | 'tavily';
   clearPreferredProvider: () => void;
-  setActiveBackend: (v: string | null) => void;
+  setActiveBackend: (v: PreferredProvider | null) => void;
   placeholder: string;
   saveLabel: string;
   hint: string;
