@@ -1,6 +1,6 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-02-14
+Last updated: 2026-02-17
 
 This is the single source of truth for active product and engineering direction.
 
@@ -25,7 +25,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
-| Harness Reliability Program (Tracks A-E) | in_progress | Execute harness-first reliability roadmap: edit reliability experiments, read efficiency, tool-loop robustness, background resilience design, and operator visibility improvements | Hashline micro-test gate result recorded; baseline reliability metrics captured; go/hold/kill decision logged for next harness experiment |
+| Harness Reliability Program (Tracks A-E) | in_progress | Execute harness-first reliability roadmap: edit reliability experiments, read efficiency, tool-loop robustness, background resilience design, and operator visibility improvements | Hashline protocol & truncation-aware safety live (Tracks A/B); Track D (Background Jobs) & Track E (Visibility) ongoing |
 | Background Coding Jobs Design | planned | Turn background coding draft into implementation-ready Worker/DO job contract for mobile lock/background resilience | API contract approved (`start/status/events/cancel`), Durable Object binding plan drafted, and UI job-card status model defined |
 | Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
@@ -56,6 +56,7 @@ Only decisions promoted into this file should be treated as implementation commi
 | 2026-02-12 | Home header simplified to compact account menu with Settings + guarded Disconnect and GitHub avatar | Implementation session |
 | 2026-02-13 | Harness-first reliability promoted as canonical planning focus; browser tooling treated as one capability within harness work, not a standalone roadmap pillar | `documents/Harness Reliability Plan.md` |
 | 2026-02-14 | Track B phase 1 shipped: `sandbox_read_file` supports line ranges with numbered tool output and out-of-bounds empty-range warnings | `documents/Harness Reliability Plan.md` + implementation session |
+| 2026-02-17 | Activated Hashline protocol (`sandbox_edit_file`) in the harness to replace full-file rewrites with surgical edits | Implementation session |
 
 ## Promotion Checklist (Draft -> Canonical)
 
