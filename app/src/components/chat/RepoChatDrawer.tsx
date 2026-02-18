@@ -641,15 +641,15 @@ export function RepoChatDrawer({
             </div>
 
             {onOpenSettings && (
-              <div className="flex items-center justify-between border-t border-push-edge px-3 py-2.5">
-                <div className="flex h-6 w-6 items-center justify-center rounded-lg border border-[#1e2634]/60 bg-push-grad-icon opacity-40">
+              <div className="flex items-center justify-between border-t border-push-edge bg-[linear-gradient(180deg,rgba(7,10,15,0.92)_0%,rgba(3,5,9,0.98)_100%)] px-3 py-2.5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#1b2230] bg-push-grad-icon text-push-accent shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)]">
                   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" className="text-push-accent">
                     <path d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
                   </svg>
                 </div>
                 <button
                   onClick={() => setPanel('settings')}
-                  className="inline-flex items-center gap-2 rounded-xl border border-push-edge bg-[#080b10]/95 px-3 py-1.5 text-xs font-medium text-push-fg-secondary spring-press transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-raised hover:text-push-fg"
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#1b2230] bg-push-grad-input px-3 py-1.5 text-xs font-medium text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
                 >
                   <Settings className="h-3.5 w-3.5" />
                   Settings

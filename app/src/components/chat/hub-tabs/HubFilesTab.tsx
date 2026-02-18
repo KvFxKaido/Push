@@ -77,7 +77,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
             });
           }}
           disabled={startingSandbox || sandboxStatus === 'creating'}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-push-edge bg-[#080b10]/95 px-3 text-xs text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:text-push-fg disabled:opacity-50"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#1b2230] bg-push-grad-input px-3 text-xs text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 disabled:opacity-50"
         >
           {(startingSandbox || sandboxStatus === 'creating') && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {startingSandbox || sandboxStatus === 'creating' ? 'Starting sandbox...' : 'Start sandbox'}
