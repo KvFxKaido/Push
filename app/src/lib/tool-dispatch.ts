@@ -51,6 +51,11 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   const githubCall = detectToolCall(text);
   if (githubCall) return { source: 'github', call: githubCall };
 
+  // Last resort: try to recover bare JSON args (missing {"tool":..,"args":..} wrapper).
+  // Some models emit just the arguments object without the required wrapper format.
+  const recovered = tryRecoverBareToolArgs(text);
+  if (recovered) return recovered;
+
   return null;
 }
 
@@ -236,6 +241,28 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
     };
   }
 
+  // Phase 3.5: Bare JSON args — JSON objects that parse correctly but have no
+  // 'tool' key, and their keys match known tool argument patterns. This catches
+  // models that emit just the arguments without the {"tool":..,"args":..} wrapper.
+  // (Only reached if tryRecoverBareToolArgs in detectAnyToolCall failed to
+  // auto-recover — e.g. the inferred tool didn't pass validation.)
+  const bareObjects = extractAllBareJsonObjects(text);
+  for (const obj of bareObjects) {
+    if (typeof obj.tool === 'string') continue; // already handled by earlier phases
+    const inferred = inferToolFromArgs(obj);
+    if (inferred) {
+      return {
+        reason: 'validation_failed',
+        toolName: inferred,
+        errorMessage: `Your response contains what looks like "${inferred}" arguments but is missing the required wrapper format. Use this structure:\n\n`
+          + '```json\n'
+          + `{"tool": "${inferred}", "args": ${JSON.stringify(obj)}}\n`
+          + '```\n\n'
+          + 'Always wrap tool calls in {"tool": "...", "args": {...}} format.',
+      };
+    }
+  }
+
   // Phase 4: Natural language tool intent — model described using a tool
   // without emitting JSON (e.g. "I'll delegate to the coder" or
   // "Let me run sandbox_exec").
@@ -264,6 +291,130 @@ function extractKnownToolName(text: string): string | null {
       return repaired.tool;
     }
   }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Bare JSON recovery — models sometimes emit just the args object without
+// the required {"tool":"..","args":{..}} wrapper. These helpers detect
+// the pattern and auto-recover valid tool calls.
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract ALL top-level JSON objects from text, regardless of whether they
+ * have a 'tool' key. Used for bare-args recovery.
+ */
+function extractAllBareJsonObjects(text: string): Record<string, unknown>[] {
+  const results: Record<string, unknown>[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const braceIdx = text.indexOf('{', i);
+    if (braceIdx === -1) break;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+
+    for (let j = braceIdx; j < text.length; j++) {
+      const ch = text[j];
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\' && inString) { escaped = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      if (ch === '}') { depth--; if (depth === 0) { end = j; break; } }
+    }
+
+    if (end === -1) { i = braceIdx + 1; continue; }
+
+    try {
+      const parsed = JSON.parse(text.slice(braceIdx, end + 1));
+      const obj = asRecord(parsed);
+      if (obj) results.push(obj);
+    } catch { /* not valid JSON — skip */ }
+
+    i = end + 1;
+  }
+  return results;
+}
+
+/**
+ * Infer which tool a bare JSON args object belongs to, based on its keys.
+ * Returns the tool name, or null if the args don't match any known pattern.
+ */
+function inferToolFromArgs(args: Record<string, unknown>): string | null {
+  const hasRepo = typeof args.repo === 'string';
+  const hasPath = typeof args.path === 'string';
+  const hasCommand = typeof args.command === 'string';
+  const hasContent = typeof args.content === 'string';
+  const hasPattern = typeof args.pattern === 'string';
+  const hasQuery = typeof args.query === 'string';
+  const hasPr = args.pr !== undefined;
+  const hasSha = typeof args.sha === 'string';
+  const hasRef = typeof args.ref === 'string';
+  const hasEdits = Array.isArray(args.edits);
+  const hasMessage = typeof args.message === 'string';
+  const hasFilePath = typeof args.file_path === 'string';
+  const hasWorkflow = typeof args.workflow === 'string';
+  const hasRunId = args.run_id !== undefined;
+
+  // GitHub tools — identified by the 'repo' key
+  if (hasRepo) {
+    if (hasPath && hasPattern) return 'grep_file';
+    if (hasPath) return 'read_file';
+    if (hasQuery) return 'search_files';
+    if (hasPr) return 'fetch_pr';
+    if (hasSha) return 'list_commit_files';
+    if (hasRef && hasWorkflow) return null; // ambiguous
+    if (hasRef) return 'fetch_checks';
+    if (hasWorkflow && hasRunId) return 'get_workflow_logs';
+    if (hasWorkflow) return 'trigger_workflow';
+    // Ambiguous repo-only calls (list_directory, list_branches, list_prs, etc.) — skip
+    return null;
+  }
+
+  // Sandbox tools — no 'repo' key
+  if (hasCommand) return 'sandbox_exec';
+  if ((hasPath || hasFilePath) && hasEdits) return 'sandbox_edit_file';
+  if ((hasPath || hasFilePath) && hasContent) return 'sandbox_write_file';
+  if ((hasPath || hasFilePath) && !hasContent && !hasMessage) return 'sandbox_read_file';
+  if (hasQuery && !hasRepo) return 'web_search';
+  if (hasMessage && !hasRepo) return 'sandbox_prepare_commit';
+
+  return null;
+}
+
+/**
+ * Try to recover valid tool calls from bare JSON args objects.
+ * Wraps inferred args in the {"tool":..,"args":..} format and validates
+ * through the normal detection pipeline.
+ */
+function tryRecoverBareToolArgs(text: string): AnyToolCall | null {
+  const objects = extractAllBareJsonObjects(text);
+
+  for (const obj of objects) {
+    // Skip objects that already have a 'tool' key — those went through normal detection
+    if (typeof obj.tool === 'string') continue;
+
+    const toolName = inferToolFromArgs(obj);
+    if (!toolName) continue;
+
+    // Wrap as proper tool call JSON and validate through existing detectors
+    const wrappedJson = JSON.stringify({ tool: toolName, args: obj });
+
+    if (GITHUB_TOOL_NAMES.has(toolName)) {
+      const call = detectToolCall(wrappedJson);
+      if (call) return { source: 'github', call };
+    } else if (toolName.startsWith('sandbox_')) {
+      const call = detectSandboxToolCall(wrappedJson);
+      if (call) return { source: 'sandbox', call };
+    } else if (toolName === 'web_search') {
+      const call = detectWebSearchToolCall(wrappedJson);
+      if (call) return { source: 'web-search', call };
+    }
+  }
+
   return null;
 }
 
