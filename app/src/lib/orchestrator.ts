@@ -1011,6 +1011,35 @@ async function streamSSEChatOnce(
     const parser = createThinkTokenParser((token) => chunker.push(token), onThinkingToken);
     let usage: StreamUsage | undefined;
 
+    // Accumulate native tool calls (name + arguments) by index.
+    // Some providers (e.g. Ollama serving Kimi K2.5) send tool calls via the
+    // OpenAI tool_calls delta field instead of regular content. The name arrives
+    // in the first chunk and arguments stream incrementally across subsequent
+    // chunks. We collect everything and reconstruct Push's text-based tool
+    // format before flushing.
+    const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
+
+    /** Flush accumulated native tool calls as fenced JSON blocks into the parser. */
+    const flushNativeToolCalls = () => {
+      if (pendingNativeToolCalls.size === 0) return;
+      for (const [, tc] of pendingNativeToolCalls) {
+        if (tc.name) {
+          try {
+            const parsedArgs = tc.args ? JSON.parse(tc.args) : {};
+            const toolJson = JSON.stringify({ tool: tc.name, args: parsedArgs });
+            parser.push('\n```json\n' + toolJson + '\n```\n');
+          } catch {
+            // Args didn't parse — wrap name + raw args as best-effort
+            parser.push('\n```json\n' + JSON.stringify({ tool: tc.name, args: {} }) + '\n```\n');
+          }
+        } else if (tc.args) {
+          // No name — fall back to bare args (will be caught by bare-JSON recovery)
+          parser.push(tc.args);
+        }
+      }
+      pendingNativeToolCalls.clear();
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -1025,6 +1054,7 @@ async function streamSSEChatOnce(
         if (!trimmed) continue;
 
         if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
+          flushNativeToolCalls();
           parser.flush();
           chunker.flush();
           onDone(usage);
@@ -1061,21 +1091,28 @@ async function streamSSEChatOnce(
           }
 
           // Handle native tool calls (Ollama may route these separately even when
-          // tools array is not sent in the request)
+          // tools array is not sent in the request — e.g. Kimi K2.5 via Ollama Cloud).
+          // Accumulate name + arguments by index, then reconstruct as fenced JSON
+          // when the stream ends so Push's text-based tool protocol can detect them.
           const toolCalls = choice.delta?.tool_calls;
           if (toolCalls) {
             for (const tc of toolCalls) {
+              const idx = typeof tc.index === 'number' ? tc.index : 0;
               const fnCall = tc.function;
-              if (fnCall?.name || fnCall?.arguments) {
-                // Convert back to text so Push's text-based tool protocol can parse it
-                const text = fnCall.arguments || '';
-                if (text) parser.push(text);
+              if (!fnCall) continue;
+
+              if (!pendingNativeToolCalls.has(idx)) {
+                pendingNativeToolCalls.set(idx, { name: '', args: '' });
               }
+              const entry = pendingNativeToolCalls.get(idx)!;
+              if (fnCall.name) entry.name = fnCall.name;
+              if (fnCall.arguments) entry.args += fnCall.arguments;
             }
             if (stallTimeoutMs) resetStallTimer();
           }
 
           if (checkFinishReason(choice)) {
+            flushNativeToolCalls();
             parser.flush();
             chunker.flush();
             onDone(usage);
@@ -1087,6 +1124,7 @@ async function streamSSEChatOnce(
       }
     }
 
+    flushNativeToolCalls();
     parser.flush();
     chunker.flush();
     onDone(usage);
@@ -1230,7 +1268,7 @@ export async function streamOllamaChat(
         network: 'Cannot reach Ollama Cloud — network error. Check your connection.',
       },
       parseError: (p, f) => parseProviderError(p, f),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls']),
       shouldResetStallOnReasoning: true,
       providerType: 'ollama',
     },

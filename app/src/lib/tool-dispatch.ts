@@ -359,6 +359,15 @@ function inferToolFromArgs(args: Record<string, unknown>): string | null {
   const hasWorkflow = typeof args.workflow === 'string';
   const hasRunId = args.run_id !== undefined;
 
+  const hasCount = args.count !== undefined;
+  const hasState = typeof args.state === 'string';
+  const hasBranchName = typeof args.branch_name === 'string';
+  const hasTitle = typeof args.title === 'string';
+  const hasHead = typeof args.head === 'string';
+  const hasBase = typeof args.base === 'string';
+  const hasPrNumber = args.pr_number !== undefined;
+  const hasHeadBranch = typeof args.head_branch === 'string';
+
   // GitHub tools — identified by the 'repo' key
   if (hasRepo) {
     if (hasPath && hasPattern) return 'grep_file';
@@ -370,7 +379,16 @@ function inferToolFromArgs(args: Record<string, unknown>): string | null {
     if (hasRef) return 'fetch_checks';
     if (hasWorkflow && hasRunId) return 'get_workflow_logs';
     if (hasWorkflow) return 'trigger_workflow';
-    // Ambiguous repo-only calls (list_directory, list_branches, list_prs, etc.) — skip
+    // Disambiguate repo-only patterns using secondary keys
+    if (hasCount && !hasState) return 'list_commits';
+    if (hasState) return 'list_prs';
+    if (hasBranchName && hasTitle) return 'create_pr';
+    if (hasBranchName && !hasTitle) return 'create_branch';
+    if (hasPrNumber && typeof args.merge_method === 'string') return 'merge_pr';
+    if (hasPrNumber) return 'check_pr_mergeable';
+    if (hasHeadBranch) return 'find_existing_pr';
+    if (hasTitle && hasHead && hasBase) return 'create_pr';
+    // Still ambiguous (list_directory, list_branches, list_commits w/o count) — skip
     return null;
   }
 
