@@ -947,3 +947,162 @@ describe('executeSandboxToolCall -- write metrics', () => {
     }));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Edit Guard Tests (Copilot PR #81 Review)
+// ---------------------------------------------------------------------------
+
+// Import fileLedger to reset state between tests
+import { fileLedger } from './file-awareness-ledger';
+
+describe('Edit Guard and Auto-Expand', () => {
+  beforeEach(() => {
+    // Reset the file ledger state before each test
+    fileLedger.reset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    mockRecordWriteFileMetric.mockReset();
+  });
+
+  it('blocks write when file never read', async () => {
+    // Auto-expand fails with a non-ENOENT error
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      version: '',
+      truncated: false,
+      error: 'permission denied',
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/never-read.ts', content: 'const x = 1;' },
+      },
+      'sb-test',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_write_file]');
+    expect(result.text).toContain('Edit guard');
+  });
+
+  it('auto-expand allows write after successful auto-read', async () => {
+    // Auto-expand succeeds
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'existing content\nmore lines',
+      version: 'v1',
+      truncated: false,
+    });
+
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      bytes_written: 15,
+      new_version: 'v2',
+    });
+
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'M /workspace/auto-expanded.ts\n',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/auto-expanded.ts', content: 'const x = 1;' },
+      },
+      'sb-test',
+    );
+
+    // The write should succeed after auto-expand
+    expect(result.text).toContain('Wrote /workspace/auto-expanded.ts');
+    expect(result.text).not.toContain('[Tool Error');
+  });
+
+  it('auto-expand allows new-file creation on ENOENT', async () => {
+    // Auto-read fails with ENOENT (file doesn't exist)
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      version: '',
+      truncated: false,
+      error: 'no such file or directory',
+    });
+
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      bytes_written: 15,
+      new_version: 'v1',
+    });
+
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'A /workspace/new-file.ts\n',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/new-file.ts', content: 'const x = 1;' },
+      },
+      'sb-test',
+    );
+
+    // New file creation should succeed
+    expect(result.text).toContain('Wrote /workspace/new-file.ts');
+    expect(result.text).not.toContain('[Tool Error');
+  });
+});
+
+describe('Signature Extraction', () => {
+  beforeEach(() => {
+    // Reset the file ledger state before each test
+    fileLedger.reset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    mockRecordReadFileMetric.mockReset();
+  });
+
+  it('appends signature hints only when result.truncated is true', async () => {
+    // Mock a truncated read with content containing functions
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export function foo() {}\nexport function bar() {}\nexport class MyClass {}',
+      version: 'v1',
+      truncated: true,
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_read_file',
+        args: { path: '/workspace/truncated.ts' },
+      },
+      'sb-test',
+    );
+
+    // Should contain truncated marker and signature hints
+    expect(result.text).toContain('(truncated)');
+    expect(result.text).toContain('[Truncated content');
+  });
+
+  it('does NOT append signature hints when result.truncated is false', async () => {
+    // Mock a non-truncated read
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export function foo() {}\nexport function bar() {}',
+      version: 'v1',
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_read_file',
+        args: { path: '/workspace/complete.ts' },
+      },
+      'sb-test',
+    );
+
+    // Should not contain truncated marker or signature hints
+    expect(result.text).not.toContain('(truncated)');
+    expect(result.text).not.toContain('[Truncated content');
+  });
+});

@@ -107,22 +107,23 @@ const SIGNATURE_PATTERNS: RegExp[] = [
  * a targeted range read on the first try instead of guessing.
  */
 export function extractSignatures(content: string): string | null {
-  const hits: string[] = [];
+  const hits = new Set<string>();
   for (const pattern of SIGNATURE_PATTERNS) {
     // Reset lastIndex for each use (patterns have /g flag)
     pattern.lastIndex = 0;
     let match;
     while ((match = pattern.exec(content)) !== null) {
       const full = match[0].trim();
-      if (full && !hits.includes(full)) {
-        hits.push(full);
+      if (full) {
+        hits.add(full);
       }
     }
   }
-  if (hits.length === 0) return null;
+  if (hits.size === 0) return null;
   // Cap at 8 signatures to keep the notice compact
-  const capped = hits.slice(0, 8);
-  const suffix = hits.length > 8 ? `, +${hits.length - 8} more` : '';
+  const hitsArray = Array.from(hits);
+  const capped = hitsArray.slice(0, 8);
+  const suffix = hitsArray.length > 8 ? `, +${hitsArray.length - 8} more` : '';
   return `contains: ${capped.join(', ')}${suffix}`;
 }
 
