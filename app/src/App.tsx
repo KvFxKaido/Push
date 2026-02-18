@@ -1419,7 +1419,8 @@ function App() {
       {/* Top bar */}
       <header className="relative z-10 flex items-center justify-between px-3 pt-3 pb-2">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-white/[0.06] bg-[#0a0e16]/80 py-1.5 pl-1.5 pr-3 backdrop-blur-xl">
+          <div className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-full border border-[#1b2230] bg-push-grad-input py-1.5 pl-1.5 pr-3 shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
             <RepoChatDrawer
               repos={repos}
               activeRepo={activeRepo}
@@ -1531,7 +1532,7 @@ function App() {
                 }
               }}
             >
-              <DropdownMenuTrigger className="pointer-events-auto flex items-center gap-1 rounded-full border border-white/[0.06] bg-[#0a0e16]/90 px-2 py-1 backdrop-blur-xl transition-colors hover:border-[#31425a] hover:bg-[#0d1119]">
+              <DropdownMenuTrigger className="pointer-events-auto flex items-center gap-1 rounded-full border border-[#1b2230] bg-push-grad-input px-2 py-1 shadow-[0_10px_28px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.25)] backdrop-blur-xl transition-all hover:border-[#31425a] hover:brightness-110">
                 <GitBranch className="h-3 w-3 text-[#5f6b80]" />
                 <span className="max-w-[100px] truncate text-[10px] font-medium text-[#8b96aa]">
                   {currentBranch}
@@ -1667,7 +1668,7 @@ function App() {
           {(activeRepo || isSandboxMode) && (
             <button
               onClick={() => setIsWorkspaceHubOpen(true)}
-              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.06] bg-[#0a0e16]/80 text-[#8891a1] backdrop-blur-xl transition-all duration-200 hover:text-[#e2e8f0] spring-press"
+              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-[#1b2230] bg-push-grad-input text-[#8891a1] shadow-[0_10px_26px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] hover:brightness-110 spring-press"
               aria-label="Open workspace hub"
               title="Workspace"
             >
