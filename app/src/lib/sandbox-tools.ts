@@ -185,6 +185,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_browser_extract'; args: { url: string; instruction?: string } }
   | { tool: 'sandbox_download'; args: { path?: string } }
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
+  | { tool: 'promote_to_github'; args: { repo_name: string; description?: string; private?: boolean } }
 
 // --- Validation ---
 
@@ -625,7 +626,6 @@ export async function executeSandboxToolCall(
       }
 
       case "sandbox_edit_file": {
-        const editStart = Date.now();
         const { path, edits, expected_version } = call.args;
 
         // 1. Read the current file content
@@ -638,7 +638,7 @@ export async function executeSandboxToolCall(
         const editResult = await applyHashlineEdits(readResult.content, edits);
 
         if (editResult.failed > 0) {
-          return { 
+          return {
             text: [
               `[Tool Error — sandbox_edit_file]`,
               `Failed to apply ${editResult.failed} of ${edits.length} edits.`,
@@ -649,15 +649,16 @@ export async function executeSandboxToolCall(
           };
         }
 
-        // 3. Delegate to write_file logic by modifying the call object (simplified implementation)
-        // We explicitly re-trigger the sandbox_write_file case logic by updating call
-        (call as any).tool = "sandbox_write_file";
-        (call as any).args = { 
-          path, 
-          content: editResult.content, 
-          expected_version: expected_version || readResult.version 
+        // 3. Delegate to sandbox_write_file with the edited content
+        const writeCall: SandboxToolCall = {
+          tool: 'sandbox_write_file' as const,
+          args: {
+            path,
+            content: editResult.content,
+            expected_version: expected_version || readResult.version || undefined,
+          },
         };
-        // Fall through to the next case (sandbox_write_file handled below)
+        return executeSandboxToolCall(writeCall, sandboxId);
       }
 
       case 'sandbox_write_file': {

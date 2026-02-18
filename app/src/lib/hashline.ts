@@ -27,7 +27,7 @@ export async function calculateLineHash(line: string): Promise<string> {
  * Apply a set of hashline edits to file content.
  */
 export async function applyHashlineEdits(originalContent: string, edits: HashlineOp[]): Promise<HashlineEditResult> {
-  let resultLines = originalContent.split('\n');
+  const resultLines = originalContent.split('\n');
   let appliedCount = 0;
   let failedCount = 0;
   const errors: string[] = [];
