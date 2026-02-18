@@ -19,12 +19,21 @@ const {
   mockBrowserExtractInSandbox,
   mockRecordWriteFileMetric,
   mockRecordReadFileMetric,
+  mockFileLedger,
 } = vi.hoisted(() => ({
   mockBrowserToolEnabled: { value: true },
   mockBrowserScreenshotInSandbox: vi.fn(),
   mockBrowserExtractInSandbox: vi.fn(),
   mockRecordWriteFileMetric: vi.fn(),
   mockRecordReadFileMetric: vi.fn(),
+  mockFileLedger: {
+    checkWriteAllowed: vi.fn().mockReturnValue({ allowed: true }),
+    recordRead: vi.fn(),
+    recordCreation: vi.fn(),
+    recordAutoExpandAttempt: vi.fn(),
+    recordAutoExpandSuccess: vi.fn(),
+    getStaleWarning: vi.fn().mockReturnValue(null),
+  },
 }));
 
 // Mock the feature-flags module so we can control browserToolEnabled per test.
@@ -61,6 +70,14 @@ vi.mock('./edit-metrics', () => ({
   recordReadFileMetric: (...args: unknown[]) => mockRecordReadFileMetric(...args),
 }));
 
+vi.mock('./file-awareness-ledger', async () => {
+  const actual = await vi.importActual<typeof import('./file-awareness-ledger')>('./file-awareness-ledger');
+  return {
+    fileLedger: mockFileLedger,
+    extractSignatures: actual.extractSignatures,
+  };
+});
+
 // Mock tool-dispatch for extractBareToolJsonObjects.
 // We provide a real implementation since the detection tests rely on it.
 vi.mock('./tool-dispatch', async () => {
@@ -76,6 +93,7 @@ import {
   executeSandboxToolCall,
 } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
+import { extractSignatures } from './file-awareness-ledger';
 
 // ---------------------------------------------------------------------------
 // 1. Tool validation -- sandbox_browser_screenshot
@@ -945,5 +963,363 @@ describe('executeSandboxToolCall -- write metrics', () => {
       errorCode: 'WRITE_FAILED',
       durationMs: expect.any(Number),
     }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Edit Guard Tests -- File Awareness Ledger Integration
+// ---------------------------------------------------------------------------
+
+describe('Edit Guard -- File Awareness Ledger', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockBrowserToolEnabled.value = true;
+    mockFileLedger.checkWriteAllowed.mockReset();
+    mockFileLedger.recordRead.mockReset();
+    mockFileLedger.recordCreation.mockReset();
+    mockFileLedger.recordAutoExpandAttempt.mockReset();
+    mockFileLedger.recordAutoExpandSuccess.mockReset();
+    mockFileLedger.getStaleWarning.mockReset();
+    mockFileLedger.checkWriteAllowed.mockReturnValue({ allowed: true });
+    mockFileLedger.getStaleWarning.mockReturnValue(null);
+  });
+
+  it('blocks write when file has never been read', async () => {
+    mockFileLedger.checkWriteAllowed.mockReturnValue({
+      allowed: false,
+      reason: 'File "test.txt" has not been read yet. Use sandbox_read_file to read it before writing.',
+    });
+
+    // Auto-read should fail (file doesn't exist)
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      error: 'No such file or directory',
+      content: '',
+      version: '',
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/test.txt', content: 'hello' } },
+      'sb-123',
+    );
+
+    expect(mockFileLedger.checkWriteAllowed).toHaveBeenCalledWith('/workspace/test.txt');
+    expect(mockFileLedger.recordAutoExpandAttempt).toHaveBeenCalled();
+  });
+
+  it('allows write after successful auto-expand', async () => {
+    // First guard check fails
+    mockFileLedger.checkWriteAllowed
+      .mockReturnValueOnce({
+        allowed: false,
+        reason: 'File "test.txt" has not been read yet.',
+      })
+      // Second check (after auto-expand) succeeds
+      .mockReturnValueOnce({ allowed: true });
+
+    // Auto-read succeeds
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'existing content',
+      version: 'v1',
+      truncated: false,
+    });
+
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      version: 'v2',
+    });
+
+    // Mock git status check
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'M test.txt',
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/test.txt', content: 'new content' } },
+      'sb-123',
+    );
+
+    expect(mockFileLedger.recordAutoExpandAttempt).toHaveBeenCalled();
+    expect(mockFileLedger.recordAutoExpandSuccess).toHaveBeenCalled();
+    expect(mockFileLedger.recordRead).toHaveBeenCalledWith('/workspace/test.txt', {
+      truncated: false,
+      totalLines: 1,
+    });
+    expect(result.text).toContain('Wrote /workspace/test.txt');
+  });
+
+  it('allows new file creation when auto-expand detects ENOENT', async () => {
+    mockFileLedger.checkWriteAllowed.mockReturnValue({
+      allowed: false,
+      reason: 'File "newfile.txt" has not been read yet.',
+    });
+
+    // Auto-read fails with "no such file"
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      error: 'cat: /workspace/newfile.txt: No such file or directory',
+      content: '',
+      version: '',
+    });
+
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      version: 'v1',
+    });
+
+    // Mock git status check
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'A newfile.txt',
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/newfile.txt', content: 'new content' } },
+      'sb-123',
+    );
+
+    expect(mockFileLedger.recordAutoExpandAttempt).toHaveBeenCalled();
+    expect(mockFileLedger.recordAutoExpandSuccess).toHaveBeenCalled();
+    expect(mockFileLedger.recordCreation).toHaveBeenCalledWith('/workspace/newfile.txt');
+    expect(result.text).toContain('Wrote /workspace/newfile.txt');
+  });
+
+  it('blocks write when auto-expand succeeds but file is still partially read', async () => {
+    // Both guard checks fail (file too large, truncated)
+    mockFileLedger.checkWriteAllowed.mockReturnValue({
+      allowed: false,
+      reason: 'File "large.txt" was only partially read.',
+    });
+
+    // Auto-read succeeds but is truncated
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'partial content...',
+      version: 'v1',
+      truncated: true,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/large.txt', content: 'new content' } },
+      'sb-123',
+    );
+
+    expect(mockFileLedger.recordAutoExpandAttempt).toHaveBeenCalled();
+    expect(mockFileLedger.recordRead).toHaveBeenCalled();
+    expect(result.text).toContain('Edit guard');
+    expect(result.text).toContain('too large to fully load');
+  });
+
+  it('treats empty file content as valid during auto-expand', async () => {
+    // First guard check fails
+    mockFileLedger.checkWriteAllowed
+      .mockReturnValueOnce({
+        allowed: false,
+        reason: 'File "empty.txt" has not been read yet.',
+      })
+      // Second check (after auto-expand) succeeds
+      .mockReturnValueOnce({ allowed: true });
+
+    // Auto-read succeeds with empty content
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      version: 'v1',
+      truncated: false,
+    });
+
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      version: 'v2',
+    });
+
+    // Mock git status check
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'M empty.txt',
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/empty.txt', content: 'new content' } },
+      'sb-123',
+    );
+
+    expect(mockFileLedger.recordAutoExpandSuccess).toHaveBeenCalled();
+    expect(result.text).toContain('Wrote /workspace/empty.txt');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. Signature Extraction Tests
+// ---------------------------------------------------------------------------
+
+describe('extractSignatures', () => {
+  it('extracts JavaScript function signatures', () => {
+    const content = `
+      export function foo() {}
+      async function bar() {}
+      function baz() {}
+    `;
+    const result = extractSignatures(content);
+    expect(result).toContain('function foo');
+    expect(result).toContain('function bar');
+    expect(result).toContain('function baz');
+  });
+
+  it('extracts TypeScript class and interface signatures', () => {
+    const content = `
+      export class MyClass {}
+      interface IFoo {}
+      export type Alias = string;
+    `;
+    const result = extractSignatures(content);
+    expect(result).toContain('class MyClass');
+    expect(result).toContain('interface IFoo');
+    expect(result).toContain('type Alias');
+  });
+
+  it('extracts Python function and class signatures', () => {
+    const content = `
+      def hello():
+          pass
+      class MyPyClass:
+          pass
+    `;
+    const result = extractSignatures(content);
+    expect(result).toContain('def hello');
+    expect(result).toContain('class MyPyClass');
+  });
+
+  it('deduplicates signatures using a Set', () => {
+    const content = `
+      function foo() {}
+      function foo() {}
+      function bar() {}
+    `;
+    const result = extractSignatures(content);
+    expect(result).toBeDefined();
+    // Count occurrences of 'function foo' in result - should only appear once
+    const matches = result?.match(/function foo/g);
+    expect(matches).toHaveLength(1);
+  });
+
+  it('returns null when no signatures are found', () => {
+    const content = 'const x = 1; const y = 2;';
+    const result = extractSignatures(content);
+    expect(result).toBeNull();
+  });
+
+  it('caps output at 8 signatures', () => {
+    const content = `
+      function a() {}
+      function b() {}
+      function c() {}
+      function d() {}
+      function e() {}
+      function f() {}
+      function g() {}
+      function h() {}
+      function i() {}
+      function j() {}
+    `;
+    const result = extractSignatures(content);
+    expect(result).toContain('+2 more');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. Read File Tests -- Range Read Recording
+// ---------------------------------------------------------------------------
+
+describe('sandbox_read_file -- File Awareness Ledger Recording', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFileLedger.recordRead.mockReset();
+  });
+
+  it('records full file read when no range is specified', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'line 1\nline 2\nline 3',
+      version: 'v1',
+      truncated: false,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/test.txt' } },
+      'sb-123',
+    );
+
+    expect(mockFileLedger.recordRead).toHaveBeenCalledWith('/workspace/test.txt', {
+      startLine: undefined,
+      endLine: undefined,
+      truncated: false,
+      totalLines: 3,
+    });
+  });
+
+  it('records open-ended range starting at line 1 as full read when not truncated', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'line 1\nline 2\nline 3',
+      version: 'v1',
+      truncated: false,
+      start_line: 1,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/test.txt', start_line: 1 } },
+      'sb-123',
+    );
+
+    // Should record as full read (no startLine/endLine) since start=1 and not truncated
+    expect(mockFileLedger.recordRead).toHaveBeenCalledWith('/workspace/test.txt', {
+      startLine: undefined,
+      endLine: undefined,
+      truncated: false,
+      totalLines: 3,
+    });
+  });
+
+  it('records open-ended range starting at line 1 as partial read when truncated', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'line 1\nline 2\nline 3',
+      version: 'v1',
+      truncated: true,
+      start_line: 1,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/test.txt', start_line: 1 } },
+      'sb-123',
+    );
+
+    // Should record as partial read since truncated
+    expect(mockFileLedger.recordRead).toHaveBeenCalledWith('/workspace/test.txt', {
+      startLine: 1,
+      endLine: 3,
+      truncated: true,
+      totalLines: 3,
+    });
+  });
+
+  it('records specific line range as partial read', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'line 10\nline 11\nline 12',
+      version: 'v1',
+      truncated: false,
+      start_line: 10,
+      end_line: 12,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/test.txt', start_line: 10, end_line: 12 } },
+      'sb-123',
+    );
+
+    expect(mockFileLedger.recordRead).toHaveBeenCalledWith('/workspace/test.txt', {
+      startLine: 10,
+      endLine: 12,
+      truncated: false,
+      totalLines: 3,
+    });
   });
 });

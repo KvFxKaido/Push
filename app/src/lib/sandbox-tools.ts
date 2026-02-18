@@ -37,6 +37,7 @@ import { runAuditor } from './auditor-agent';
 import { browserToolEnabled } from './feature-flags';
 import { recordBrowserMetric } from './browser-metrics';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
+import { fileLedger, extractSignatures } from './file-awareness-ledger';
 import { safeStorageGet } from './safe-storage';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
@@ -442,6 +443,31 @@ export async function executeSandboxToolCall(
           toolResultContent = result.content;
         }
 
+        // --- File Awareness Ledger: record what the model has seen ---
+        const contentLineCount = result.content ? result.content.split('\n').length : 0;
+        if (!emptyRangeWarning) {
+          // Special case: open-ended range starting at line 1 with no truncation = full file read
+          const isFullFileRead = !isRangeRead || (rangeStart === 1 && rangeEnd === undefined && !result.truncated);
+          fileLedger.recordRead(call.args.path, {
+            startLine: isRangeRead && !isFullFileRead ? rangeStart : undefined,
+            endLine: isRangeRead && !isFullFileRead ? (rangeEnd ?? rangeStart + contentLineCount - 1) : undefined,
+            truncated: Boolean(result.truncated),
+            totalLines: contentLineCount,
+          });
+        }
+
+        // --- Phase 2: Signature extraction for truncated reads ---
+        // When content is truncated, extract structural signatures from the
+        // visible portion so the model knows what functions/classes exist
+        // beyond the truncation point. Appended to the truncation notice.
+        let signatureHint = '';
+        if (result.truncated && result.content) {
+          const sigs = extractSignatures(result.content);
+          if (sigs) {
+            signatureHint = `[Truncated content ${sigs}]`;
+          }
+        }
+
         const fileLabel = isRangeRead
           ? `Lines ${rangeStart}-${rangeEnd ?? '∞'} of ${call.args.path}`
           : `File: ${call.args.path}`;
@@ -451,6 +477,7 @@ export async function executeSandboxToolCall(
           fileLabel,
           `Version: ${result.version || 'unknown'}`,
           result.truncated ? `(truncated)` : '',
+          signatureHint,
           emptyRangeWarning,
           toolResultContent,
         ].filter(Boolean);
@@ -585,10 +612,90 @@ export async function executeSandboxToolCall(
       case 'sandbox_write_file': {
         const writeStart = Date.now();
         const cacheKey = fileVersionKey(sandboxId, call.args.path);
-        const expectedVersion = call.args.expected_version || sandboxFileVersions.get(cacheKey);
+
+        // --- Edit Guard: check that the model has read this file ---
+        const guardVerdict = fileLedger.checkWriteAllowed(call.args.path);
+        if (!guardVerdict.allowed) {
+          // Phase 3: Scoped Auto-Expand — try to auto-read the file and allow the write
+          fileLedger.recordAutoExpandAttempt();
+          try {
+            const autoReadResult = await readFromSandbox(sandboxId, call.args.path) as FileReadResult & { error?: string };
+            if (!autoReadResult.error && autoReadResult.content !== undefined) {
+              // Record the auto-read in the ledger
+              const autoLineCount = autoReadResult.content.split('\n').length;
+              fileLedger.recordRead(call.args.path, {
+                truncated: Boolean(autoReadResult.truncated),
+                totalLines: autoLineCount,
+              });
+              // Update version cache
+              if (typeof autoReadResult.version === 'string' && autoReadResult.version) {
+                sandboxFileVersions.set(cacheKey, autoReadResult.version);
+              }
+              fileLedger.recordAutoExpandSuccess();
+              console.debug(`[edit-guard] Auto-expanded "${call.args.path}" (${autoLineCount} lines) — proceeding with write.`);
+              // Re-check guard after auto-expand (should pass now unless still partial)
+              const retryVerdict = fileLedger.checkWriteAllowed(call.args.path);
+              if (!retryVerdict.allowed) {
+                // Still blocked after auto-expand (e.g. truncated partial read)
+                recordWriteFileMetric({
+                  durationMs: Date.now() - writeStart,
+                  outcome: 'error',
+                  errorCode: 'EDIT_GUARD_BLOCKED',
+                });
+                return {
+                  text: [
+                    `[Tool Error — sandbox_write_file]`,
+                    `Edit guard: ${retryVerdict.reason}`,
+                    `The file was auto-read but is too large to fully load. Use sandbox_read_file with start_line/end_line to read the sections you need to edit, then retry.`,
+                  ].join('\n'),
+                };
+              }
+            } else {
+              // Auto-read failed — the file may not exist (new file creation).
+              // If the error looks like a missing file, allow the write.
+              const errMsg = typeof autoReadResult.error === 'string' ? autoReadResult.error.toLowerCase() : '';
+              if (errMsg.includes('no such file') || errMsg.includes('not found') || errMsg.includes('does not exist')) {
+                fileLedger.recordCreation(call.args.path);
+                fileLedger.recordAutoExpandSuccess();
+                console.debug(`[edit-guard] File "${call.args.path}" does not exist — allowing new file creation.`);
+              } else {
+                recordWriteFileMetric({
+                  durationMs: Date.now() - writeStart,
+                  outcome: 'error',
+                  errorCode: 'EDIT_GUARD_BLOCKED',
+                });
+                return {
+                  text: [
+                    `[Tool Error — sandbox_write_file]`,
+                    `Edit guard: ${guardVerdict.reason}`,
+                  ].join('\n'),
+                };
+              }
+            }
+          } catch {
+            // Auto-read threw — return the original guard error
+            recordWriteFileMetric({
+              durationMs: Date.now() - writeStart,
+              outcome: 'error',
+              errorCode: 'EDIT_GUARD_BLOCKED',
+            });
+            return {
+              text: [
+                `[Tool Error — sandbox_write_file]`,
+                `Edit guard: ${guardVerdict.reason}`,
+              ].join('\n'),
+            };
+          }
+        }
+
+        // After auto-expand, the version cache may have been updated — refresh.
+        const freshVersion = call.args.expected_version || sandboxFileVersions.get(cacheKey);
+
+        // Stale warning (soft — doesn't block, just informs)
+        const staleWarning = fileLedger.getStaleWarning(call.args.path);
 
         try {
-          const result = await writeToSandbox(sandboxId, call.args.path, call.args.content, expectedVersion);
+          const result = await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion);
 
           if (!result.ok) {
             if (result.code === 'STALE_FILE') {
@@ -600,7 +707,7 @@ export async function executeSandboxToolCall(
                 outcome: 'stale',
                 errorCode: 'STALE_FILE',
               });
-              const expected = result.expected_version || expectedVersion || 'unknown';
+              const expected = result.expected_version || freshVersion || 'unknown';
               const current = result.current_version || 'missing';
               return {
                 text: [
@@ -647,6 +754,14 @@ export async function executeSandboxToolCall(
           } else if (!call.args.path.startsWith('/workspace')) {
             lines.push(`⚠ Note: File is outside /workspace — git will not track this file.`);
           }
+
+          // Stale warning from edit guard (soft, non-blocking)
+          if (staleWarning) {
+            lines.push(`⚠ ${staleWarning}`);
+          }
+
+          // Record successful write — model now "owns" this file content
+          fileLedger.recordCreation(call.args.path);
 
           recordWriteFileMetric({
             durationMs: Date.now() - writeStart,
