@@ -293,7 +293,7 @@ export function HomeScreen({
             }
           }}
         >
-          <DropdownMenuTrigger className="mt-2 flex h-8 w-full items-center justify-between rounded-lg border border-push-edge bg-push-surface px-2.5 text-xs text-[#9db8df] transition-colors hover:border-[#31425a] hover:bg-[#0d1119]">
+          <DropdownMenuTrigger className="mt-2 flex h-8 w-full items-center justify-between rounded-lg border border-[#1b2230] bg-push-grad-input px-2.5 text-xs text-[#9db8df] shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:brightness-110">
             <span className="inline-flex min-w-0 items-center gap-1">
               <GitBranch className="h-3 w-3 text-[#5f6b80]" />
               <span className="truncate">Open on branch</span>
@@ -491,14 +491,14 @@ export function HomeScreen({
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={onSandboxMode}
-              className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-[linear-gradient(180deg,rgba(6,14,10,0.92)_0%,rgba(4,8,6,0.95)_100%)] px-3 py-2.5 text-sm font-medium text-emerald-300 spring-press transition-all duration-200 hover:border-emerald-500/35 hover:bg-emerald-900/20"
+              className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-[linear-gradient(180deg,rgba(9,25,18,0.95)_0%,rgba(4,10,7,0.98)_100%)] px-3 py-2.5 text-sm font-medium text-emerald-300 shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] spring-press transition-all duration-200 hover:border-emerald-500/45 hover:brightness-110"
             >
               <Box className="h-4 w-4" />
               New Sandbox
             </button>
             <button
               onClick={() => setShowAllRepos((v) => !v)}
-              className="flex items-center gap-2 rounded-xl border border-push-edge bg-push-surface px-3 py-2.5 text-sm font-medium text-[#9fb0c8] spring-press transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0]"
+              className="flex items-center gap-2 rounded-xl border border-[#1b2230] bg-push-grad-input px-3 py-2.5 text-sm font-medium text-[#9fb0c8] shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] hover:brightness-110"
             >
               <Search className="h-4 w-4" />
               {showAllRepos ? 'Hide All Repos' : 'Browse All Repos'}
@@ -534,7 +534,7 @@ export function HomeScreen({
                   placeholder="Search repositories..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full rounded-xl border border-push-edge bg-push-surface py-2.5 pl-10 pr-4 text-sm text-push-fg placeholder:text-[#4f596d] outline-none transition-colors duration-200 focus:border-push-sky/50"
+                  className="w-full rounded-xl border border-[#1b2230] bg-push-grad-input py-2.5 pl-10 pr-4 text-sm text-push-fg placeholder:text-[#4f596d] shadow-[0_10px_24px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all duration-200 focus:border-push-sky/50"
                 />
               </div>
               {filteredRepos.length === 0 ? (
