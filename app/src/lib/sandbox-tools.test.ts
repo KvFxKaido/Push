@@ -76,6 +76,7 @@ import {
   executeSandboxToolCall,
 } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
+import { fileLedger } from './file-awareness-ledger';
 
 // ---------------------------------------------------------------------------
 // 1. Tool validation -- sandbox_browser_screenshot
@@ -945,5 +946,153 @@ describe('executeSandboxToolCall -- write metrics', () => {
       errorCode: 'WRITE_FAILED',
       durationMs: expect.any(Number),
     }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Edit guard behaviors
+// ---------------------------------------------------------------------------
+
+describe('executeSandboxToolCall -- edit guard', () => {
+  beforeEach(() => {
+    mockRecordWriteFileMetric.mockReset();
+    mockRecordReadFileMetric.mockReset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    fileLedger.reset();
+  });
+
+  it('blocks write to a file that was never read', async () => {
+    // readFromSandbox is called during auto-expand — make it return an error
+    // so the auto-expand also fails (not a missing-file error)
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      truncated: false,
+      error: 'permission denied',
+    } as unknown as sandboxClient.FileReadResult);
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/src/foo.ts', content: 'new content' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edit guard');
+    expect(result.text).toContain('has not been read yet');
+  });
+
+  it('auto-expand allows write after successful auto-read', async () => {
+    // File has NOT been read (no ledger entry). The auto-expand will
+    // read it, record it, and then the write should succeed.
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'existing content\nline 2\n',
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      bytes_written: 20,
+      new_version: 'v2',
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'M src/foo.ts\n',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/src/foo.ts', content: 'updated content' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Wrote /workspace/src/foo.ts');
+    expect(result.text).not.toContain('Edit guard');
+  });
+
+  it('auto-expand allows new-file creation when file does not exist', async () => {
+    // Auto-expand read returns a "no such file" error → treated as new file creation
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      truncated: false,
+      error: 'cat: /workspace/src/new.ts: No such file or directory',
+    } as unknown as sandboxClient.FileReadResult);
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      bytes_written: 15,
+      new_version: 'v1',
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '?? src/new.ts\n',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/src/new.ts', content: 'brand new file' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Wrote /workspace/src/new.ts');
+    expect(result.text).not.toContain('Edit guard');
+  });
+
+  it('appends signature hints only when read result is truncated', async () => {
+    // Non-truncated read — no signature hint
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export function hello() {}\nexport class Foo {}\n',
+      truncated: false,
+      version: 'v1',
+    });
+
+    const fullResult = await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/full.ts' } },
+      'sb-123',
+    );
+    expect(fullResult.text).not.toContain('[Truncated content contains:');
+
+    // Truncated read — should get signature hint
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export function hello() {}\nexport class Foo {}\n',
+      truncated: true,
+      version: 'v1',
+    });
+
+    const truncResult = await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/big.ts' } },
+      'sb-123',
+    );
+    expect(truncResult.text).toContain('[Truncated content contains:');
+  });
+
+  it('auto-expand handles empty files correctly (content is empty string)', async () => {
+    // Empty file — content is '' which is falsy, but should still be treated
+    // as a successful read (the file exists but is empty).
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      bytes_written: 10,
+      new_version: 'v2',
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'M src/empty.ts\n',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/src/empty.ts', content: 'new content' } },
+      'sb-123',
+    );
+
+    // Should succeed — the empty file was read, auto-expand should work
+    expect(result.text).toContain('Wrote /workspace/src/empty.ts');
+    expect(result.text).not.toContain('Edit guard');
   });
 });

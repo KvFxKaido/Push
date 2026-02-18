@@ -107,6 +107,7 @@ const SIGNATURE_PATTERNS: RegExp[] = [
  * a targeted range read on the first try instead of guessing.
  */
 export function extractSignatures(content: string): string | null {
+  const seen = new Set<string>();
   const hits: string[] = [];
   for (const pattern of SIGNATURE_PATTERNS) {
     // Reset lastIndex for each use (patterns have /g flag)
@@ -114,7 +115,8 @@ export function extractSignatures(content: string): string | null {
     let match;
     while ((match = pattern.exec(content)) !== null) {
       const full = match[0].trim();
-      if (full && !hits.includes(full)) {
+      if (full && !seen.has(full)) {
+        seen.add(full);
         hits.push(full);
       }
     }
