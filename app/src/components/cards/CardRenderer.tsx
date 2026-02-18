@@ -20,6 +20,7 @@ import { BrowserExtractCard } from './BrowserExtractCard';
 import { SandboxDownloadCard } from './SandboxDownloadCard';
 import { WorkflowRunsCard } from './WorkflowRunsCard';
 import { WorkflowLogsCard } from './WorkflowLogsCard';
+import { WebSearchCard } from './WebSearchCard';
 
 interface CardRendererProps {
   card: ChatCard;
@@ -95,6 +96,8 @@ function renderCard(card: ChatCard, messageId?: string, cardIndex?: number, onAc
       return <WorkflowRunsCard data={card.data} />;
     case 'workflow-logs':
       return <WorkflowLogsCard data={card.data} />;
+    case 'web-search':
+      return <WebSearchCard data={card.data} />;
     default:
       return null;
   }
