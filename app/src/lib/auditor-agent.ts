@@ -14,6 +14,7 @@ import { getActiveProvider, getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
 
 import { asRecord, streamWithTimeout } from './utils';
+import { parseDiffStats } from './diff-utils';
 
 const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
 
@@ -42,22 +43,11 @@ Review criteria:
 
 Be strict. When in doubt, lean toward UNSAFE. False positives are acceptable; false negatives are not.`;
 
-function parseDiffFileCount(diff: string): number {
-  const files = new Set<string>();
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('diff --git')) {
-      const match = line.match(/b\/(.+)$/);
-      if (match) files.add(match[1]);
-    }
-  }
-  return files.size;
-}
-
 export async function runAuditor(
   diff: string,
   onStatus: (phase: string) => void,
 ): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
-  const filesReviewed = parseDiffFileCount(diff);
+  const filesReviewed = parseDiffStats(diff).filesChanged;
 
   // Fail-safe: require an active AI provider with a valid key
   const activeProvider = getActiveProvider();

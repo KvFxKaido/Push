@@ -34,6 +34,7 @@ import {
   type FileReadResult,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
+import { parseDiffStats } from './diff-utils';
 import { browserToolEnabled } from './feature-flags';
 import { recordBrowserMetric } from './browser-metrics';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
@@ -345,26 +346,7 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
-// --- Diff parsing helper ---
-
-function parseDiffStats(diff: string): { filesChanged: number; additions: number; deletions: number } {
-  const files = new Set<string>();
-  let additions = 0;
-  let deletions = 0;
-
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('diff --git')) {
-      const match = line.match(/b\/(.+)$/);
-      if (match) files.add(match[1]);
-    } else if (line.startsWith('+') && !line.startsWith('+++')) {
-      additions++;
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      deletions++;
-    }
-  }
-
-  return { filesChanged: files.size, additions, deletions };
-}
+// --- Diff parsing (shared via diff-utils) ---
 
 // --- Execution ---
 

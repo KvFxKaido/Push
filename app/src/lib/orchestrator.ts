@@ -1171,200 +1171,25 @@ async function streamSSEChatOnce(
 
 
 // ---------------------------------------------------------------------------
-// Kimi For Coding streaming (SSE — OpenAI-compatible)
+// Provider streaming — consolidated via registry + factory
 // ---------------------------------------------------------------------------
 
 }
 
-export async function streamMoonshotChat(
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
-  hasSandbox?: boolean,
-  modelOverride?: string,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  const apiKey = getMoonshotKey();
-  if (!apiKey) {
-    onError(new Error('Moonshot API key not configured'));
-    return;
-  }
-
-  return streamSSEChat(
-    {
-      name: 'Moonshot',
-      apiUrl: KIMI_API_URL,
-      apiKey,
-      model: modelOverride || KIMI_MODEL,
-      connectTimeoutMs: 30_000,
-      idleTimeoutMs: 60_000,
-      errorMessages: {
-        keyMissing: 'Moonshot API key not configured',
-        connect: (s) => `Kimi API didn't respond within ${s}s — server may be down.`,
-        idle: (s) => `Kimi API stream stalled — no data for ${s}s.`,
-        network: 'Cannot reach Moonshot — network error. Check your connection.',
-      },
-      parseError: (p, f) => parseProviderError(p, f),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'tool_calls']),
-      providerType: 'moonshot',
-    },
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    systemPromptOverride,
-    scratchpadContent,
-    signal,
-  );
+/** Build a standard set of timeout error messages for a provider. */
+function buildErrorMessages(name: string, connectHint = 'server may be down.'): StreamProviderConfig['errorMessages'] {
+  return {
+    keyMissing: `${name} API key not configured`,
+    connect: (s) => `${name} API didn't respond within ${s}s — ${connectHint}`,
+    idle: (s) => `${name} API stream stalled — no data for ${s}s.`,
+    stall: (s) => `${name} API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
+    total: (s) => `${name} API response exceeded ${s}s total time limit.`,
+    network: `Cannot reach ${name} — network error. Check your connection.`,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Ollama Cloud streaming (SSE — OpenAI-compatible)
-// ---------------------------------------------------------------------------
-
-export async function streamOllamaChat(
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
-  hasSandbox?: boolean,
-  modelOverride?: string,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  const apiKey = getOllamaKey();
-  if (!apiKey) {
-    onError(new Error('Ollama Cloud API key not configured'));
-    return;
-  }
-
-  return streamSSEChat(
-    {
-      name: 'Ollama Cloud',
-      apiUrl: OLLAMA_API_URL,
-      apiKey,
-      model: modelOverride || getOllamaModelName(),
-      connectTimeoutMs: 30_000,
-      idleTimeoutMs: 45_000,
-      stallTimeoutMs: 30_000,
-      totalTimeoutMs: 180_000,
-      errorMessages: {
-        keyMissing: 'Ollama Cloud API key not configured',
-        connect: (s) => `Ollama Cloud didn't respond within ${s}s — server may be cold-starting.`,
-        idle: (s) => `Ollama Cloud stream stalled — no data for ${s}s.`,
-        stall: (s) => `Ollama Cloud stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
-        total: (s) => `Ollama Cloud response exceeded ${s}s total time limit.`,
-        network: 'Cannot reach Ollama Cloud — network error. Check your connection.',
-      },
-      parseError: (p, f) => parseProviderError(p, f),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls']),
-      shouldResetStallOnReasoning: true,
-      providerType: 'ollama',
-    },
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    systemPromptOverride,
-    scratchpadContent,
-    signal,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Mistral Vibe streaming (SSE — OpenAI-compatible)
-// ---------------------------------------------------------------------------
-
-export async function streamMistralChat(
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
-  hasSandbox?: boolean,
-  modelOverride?: string,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  const apiKey = getMistralKey();
-  if (!apiKey) {
-    onError(new Error('Mistral API key not configured'));
-    return;
-  }
-
-  const model = modelOverride || getMistralModelName();
-
-  // Try to create/reuse a Mistral agent with web_search for native search.
-  // On failure, fall back to regular chat completions (no search but chat works).
-  let agentApiUrl: string | undefined;
-  let agentBodyTransform: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined;
-
-  try {
-    const agentId = await ensureMistralAgent(apiKey, model);
-    agentApiUrl = MISTRAL_AGENTS_COMPLETIONS_URL;
-    agentBodyTransform = (body) => ({
-      agent_id: agentId,
-      messages: body.messages,
-      stream: true,
-    });
-  } catch (err) {
-    console.warn('[Push] Mistral agent creation failed, falling back to chat completions:', err);
-  }
-
-  return streamSSEChat(
-    {
-      name: 'Mistral',
-      apiUrl: MISTRAL_API_URL,
-      apiKey,
-      model,
-      connectTimeoutMs: 30_000,
-      idleTimeoutMs: 60_000,
-      stallTimeoutMs: 30_000,
-      totalTimeoutMs: 180_000,
-      errorMessages: {
-        keyMissing: 'Mistral API key not configured',
-        connect: (s) => `Mistral API didn't respond within ${s}s — server may be down.`,
-        idle: (s) => `Mistral API stream stalled — no data for ${s}s.`,
-        stall: (s) => `Mistral API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
-        total: (s) => `Mistral API response exceeded ${s}s total time limit.`,
-        network: 'Cannot reach Mistral — network error. Check your connection.',
-      },
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length']),
-      providerType: 'mistral',
-      apiUrlOverride: agentApiUrl,
-      bodyTransform: agentBodyTransform,
-    },
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    systemPromptOverride,
-    scratchpadContent,
-    signal,
-  );
-}
-
-
+/** Standard timeout config used by most providers. */
+const STANDARD_TIMEOUTS = { connectTimeoutMs: 30_000, idleTimeoutMs: 60_000, stallTimeoutMs: 30_000, totalTimeoutMs: 180_000 } as const;
 
 /**
  * Generate a JWT for the Z.ai (ZhipuAI) API from an API key in `{id}.{secret}` format.
@@ -1409,104 +1234,109 @@ async function generateZaiJWT(apiKey: string): Promise<string> {
   return `${signingInput}.${encodedSig}`;
 }
 
-export async function streamZaiChat(
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
-  hasSandbox?: boolean,
-  modelOverride?: string,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  const apiKey = getZaiKey();
-  if (!apiKey) {
-    onError(new Error('Z.ai API key not configured'));
-    return;
-  }
-
-  // Z.ai requires JWT auth — generate from the {id}.{secret} API key
-  const jwt = await generateZaiJWT(apiKey);
-
-  return streamSSEChat(
-    {
-      name: 'Z.ai',
-      apiUrl: ZAI_API_URL,
-      apiKey: jwt,
-      model: modelOverride || getZaiModelName(),
-      connectTimeoutMs: 30_000,
-      idleTimeoutMs: 60_000,
-      stallTimeoutMs: 30_000,
-      totalTimeoutMs: 180_000,
-      errorMessages: {
-        keyMissing: 'Z.ai API key not configured',
-        connect: (s) => `Z.ai API didn't respond within ${s}s — server may be down.`,
-        idle: (s) => `Z.ai API stream stalled — no data for ${s}s.`,
-        stall: (s) => `Z.ai API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
-        total: (s) => `Z.ai API response exceeded ${s}s total time limit.`,
-        network: 'Cannot reach Z.ai — network error. Check your connection.',
-      },
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length']),
-      providerType: 'zai',
-    },
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    systemPromptOverride,
-    scratchpadContent,
-    signal,
-  );
+interface ProviderStreamEntry {
+  getKey: () => string | null;
+  buildConfig: (apiKey: string, modelOverride?: string) => Promise<StreamProviderConfig> | StreamProviderConfig;
 }
 
-// ---------------------------------------------------------------------------
-// MiniMax streaming
-// ---------------------------------------------------------------------------
+const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
+  moonshot: {
+    getKey: getMoonshotKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'Moonshot',
+      apiUrl: KIMI_API_URL,
+      apiKey,
+      model: modelOverride || KIMI_MODEL,
+      connectTimeoutMs: 30_000,
+      idleTimeoutMs: 60_000,
+      errorMessages: buildErrorMessages('Kimi'),
+      parseError: (p, f) => parseProviderError(p, f),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'tool_calls']),
+      providerType: 'moonshot',
+    }),
+  },
+  ollama: {
+    getKey: getOllamaKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'Ollama Cloud',
+      apiUrl: OLLAMA_API_URL,
+      apiKey,
+      model: modelOverride || getOllamaModelName(),
+      connectTimeoutMs: 30_000,
+      idleTimeoutMs: 45_000,
+      stallTimeoutMs: 30_000,
+      totalTimeoutMs: 180_000,
+      errorMessages: buildErrorMessages('Ollama Cloud', 'server may be cold-starting.'),
+      parseError: (p, f) => parseProviderError(p, f),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls']),
+      shouldResetStallOnReasoning: true,
+      providerType: 'ollama',
+    }),
+  },
+  mistral: {
+    getKey: getMistralKey,
+    buildConfig: async (apiKey, modelOverride) => {
+      const model = modelOverride || getMistralModelName();
 
-export async function streamMiniMaxChat(
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
-  hasSandbox?: boolean,
-  modelOverride?: string,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  const apiKey = getMiniMaxKey();
-  if (!apiKey) {
-    onError(new Error('MiniMax API key not configured'));
-    return;
-  }
+      // Try to create/reuse a Mistral agent with web_search for native search.
+      // On failure, fall back to regular chat completions (no search but chat works).
+      let agentApiUrl: string | undefined;
+      let agentBodyTransform: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined;
 
-  return streamSSEChat(
-    {
+      try {
+        const agentId = await ensureMistralAgent(apiKey, model);
+        agentApiUrl = MISTRAL_AGENTS_COMPLETIONS_URL;
+        agentBodyTransform = (body) => ({
+          agent_id: agentId,
+          messages: body.messages,
+          stream: true,
+        });
+      } catch (err) {
+        console.warn('[Push] Mistral agent creation failed, falling back to chat completions:', err);
+      }
+
+      return {
+        name: 'Mistral',
+        apiUrl: MISTRAL_API_URL,
+        apiKey,
+        model,
+        ...STANDARD_TIMEOUTS,
+        errorMessages: buildErrorMessages('Mistral'),
+        parseError: (p, f) => parseProviderError(p, f, true),
+        checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length']),
+        providerType: 'mistral' as const,
+        apiUrlOverride: agentApiUrl,
+        bodyTransform: agentBodyTransform,
+      };
+    },
+  },
+  zai: {
+    getKey: getZaiKey,
+    buildConfig: async (apiKey, modelOverride) => {
+      // Z.ai requires JWT auth — generate from the {id}.{secret} API key
+      const jwt = await generateZaiJWT(apiKey);
+      return {
+        name: 'Z.ai',
+        apiUrl: ZAI_API_URL,
+        apiKey: jwt,
+        model: modelOverride || getZaiModelName(),
+        ...STANDARD_TIMEOUTS,
+        errorMessages: buildErrorMessages('Z.ai'),
+        parseError: (p, f) => parseProviderError(p, f, true),
+        checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length']),
+        providerType: 'zai' as const,
+      };
+    },
+  },
+  minimax: {
+    getKey: getMiniMaxKey,
+    buildConfig: (apiKey, modelOverride) => ({
       name: 'MiniMax',
       apiUrl: MINIMAX_API_URL,
       apiKey,
       model: modelOverride || getMiniMaxModelName(),
-      connectTimeoutMs: 30_000,
-      idleTimeoutMs: 60_000,
-      stallTimeoutMs: 30_000,
-      totalTimeoutMs: 180_000,
-      errorMessages: {
-        keyMissing: 'MiniMax API key not configured',
-        connect: (s) => `MiniMax API didn't respond within ${s}s — server may be down.`,
-        idle: (s) => `MiniMax API stream stalled — no data for ${s}s.`,
-        stall: (s) => `MiniMax API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
-        total: (s) => `MiniMax API response exceeded ${s}s total time limit.`,
-        network: 'Cannot reach MiniMax — network error. Check your connection.',
-      },
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('MiniMax'),
       parseError: (p, f) => parseProviderError(p, f, true),
       checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length']),
       providerType: 'minimax',
@@ -1518,21 +1348,27 @@ export async function streamMiniMaxChat(
         }
         return body;
       },
-    },
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    systemPromptOverride,
-    scratchpadContent,
-    signal,
-  );
-}
+    }),
+  },
+  openrouter: {
+    getKey: getOpenRouterKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'OpenRouter',
+      apiUrl: '/api/openrouter/chat',
+      apiKey,
+      model: modelOverride || getOpenRouterModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('OpenRouter'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
+      providerType: 'openrouter',
+    }),
+  },
+};
 
-export async function streamOpenRouterChat(
+/** Core streaming function — looks up provider config and delegates to streamSSEChat. */
+async function streamProviderChat(
+  providerType: string,
   messages: ChatMessage[],
   onToken: (token: string, meta?: ChunkMetadata) => void,
   onDone: (usage?: StreamUsage) => void,
@@ -1545,46 +1381,48 @@ export async function streamOpenRouterChat(
   scratchpadContent?: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const apiKey = getOpenRouterKey();
-  if (!apiKey) {
-    onError(new Error('OpenRouter API key not configured'));
+  const entry = PROVIDER_STREAM_CONFIGS[providerType];
+  if (!entry) {
+    onError(new Error(`Unknown provider: ${providerType}`));
     return;
   }
 
+  const apiKey = entry.getKey();
+  if (!apiKey) {
+    onError(new Error(`${providerType.charAt(0).toUpperCase() + providerType.slice(1)} API key not configured`));
+    return;
+  }
+
+  const config = await entry.buildConfig(apiKey, modelOverride);
+
   return streamSSEChat(
-    {
-      name: 'OpenRouter',
-      apiUrl: '/api/openrouter/chat',
-      apiKey,
-      model: modelOverride || getOpenRouterModelName(),
-      connectTimeoutMs: 30_000,
-      idleTimeoutMs: 60_000,
-      stallTimeoutMs: 30_000,
-      totalTimeoutMs: 180_000,
-      errorMessages: {
-        keyMissing: 'OpenRouter API key not configured',
-        connect: (s) => `OpenRouter API didn't respond within ${s}s — server may be down.`,
-        idle: (s) => `OpenRouter API stream stalled — no data for ${s}s.`,
-        stall: (s) => `OpenRouter API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
-        total: (s) => `OpenRouter API response exceeded ${s}s total time limit.`,
-        network: 'Cannot reach OpenRouter — network error. Check your connection.',
-      },
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (chunk) => hasFinishReason(chunk, ['stop', 'length', 'end_turn']),
-      providerType: 'openrouter',
-    },
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    systemPromptOverride,
-    scratchpadContent,
-    signal,
+    config, messages, onToken, onDone, onError, onThinkingToken,
+    workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal,
   );
 }
+
+// --- Thin wrappers preserving existing exports ---
+
+type StreamChatFn = (
+  messages: ChatMessage[],
+  onToken: (token: string, meta?: ChunkMetadata) => void,
+  onDone: (usage?: StreamUsage) => void,
+  onError: (error: Error) => void,
+  onThinkingToken?: (token: string | null) => void,
+  workspaceContext?: string,
+  hasSandbox?: boolean,
+  modelOverride?: string,
+  systemPromptOverride?: string,
+  scratchpadContent?: string,
+  signal?: AbortSignal,
+) => Promise<void>;
+
+export const streamMoonshotChat: StreamChatFn = (...args) => streamProviderChat('moonshot', ...args);
+export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
+export const streamMistralChat: StreamChatFn = (...args) => streamProviderChat('mistral', ...args);
+export const streamZaiChat: StreamChatFn = (...args) => streamProviderChat('zai', ...args);
+export const streamMiniMaxChat: StreamChatFn = (...args) => streamProviderChat('minimax', ...args);
+export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
 
 // ---------------------------------------------------------------------------
 // Active provider detection

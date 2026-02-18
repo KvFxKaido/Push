@@ -1,14 +1,10 @@
 import { Download } from 'lucide-react';
 import type { SandboxDownloadCardData } from '@/types';
+import { formatSize } from '@/lib/diff-utils';
+import { CARD_SHELL_CLASS } from '@/lib/utils';
 
 interface SandboxDownloadCardProps {
   data: SandboxDownloadCardData;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function triggerDownload(base64: string, filename: string): void {
@@ -26,7 +22,7 @@ function triggerDownload(base64: string, filename: string): void {
 
 export function SandboxDownloadCard({ data }: SandboxDownloadCardProps) {
   return (
-    <div className="my-2.5 rounded-xl border border-push-edge bg-push-grad-card overflow-hidden shadow-push-card">
+    <div className={CARD_SHELL_CLASS}>
       <div className="px-3 py-2.5 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <Download className="h-4 w-4 text-emerald-400 flex-shrink-0" />
@@ -35,7 +31,7 @@ export function SandboxDownloadCard({ data }: SandboxDownloadCardProps) {
               Workspace archive
             </p>
             <p className="text-[10px] text-push-fg-dim">
-              {formatBytes(data.sizeBytes)} &middot; {data.format}
+              {formatSize(data.sizeBytes)} &middot; {data.format}
             </p>
           </div>
         </div>

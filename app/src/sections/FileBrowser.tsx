@@ -28,18 +28,12 @@ import { FileEditor } from '@/components/filebrowser/FileEditor';
 import { getFileEditability } from '@/lib/file-utils';
 import { writeToSandbox } from '@/lib/sandbox-client';
 import type { FileEntry } from '@/types';
+import { formatSize } from '@/lib/diff-utils';
 
 interface FileBrowserProps {
   sandboxId: string;
   repoName: string;
   onBack: () => void;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes === 0) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
@@ -157,7 +151,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
           <MessageSquare className="h-4 w-4" />
         </button>
 
-        {/* Breadcrumbs — scrollable on narrow screens */}
+        {/* Breadcrumbs \u2014 scrollable on narrow screens */}
         <nav className="flex-1 min-w-0 overflow-x-auto" aria-label="File path">
           <ol className="flex items-center gap-1 text-sm whitespace-nowrap">
             <li>
@@ -209,7 +203,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         {status === 'loading' && files.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-[#788396]">
             <Loader2 className="h-5 w-5 animate-spin" />
-            <span className="text-sm">Loading…</span>
+            <span className="text-sm">Loading\u2026</span>
           </div>
         ) : status === 'error' ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center">
@@ -254,7 +248,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         )}
       </div>
 
-      {/* Commit FAB — positioned left of upload FAB */}
+      {/* Commit FAB \u2014 positioned left of upload FAB */}
       <button
         onClick={() => setCommitSheetOpen(true)}
         disabled={status === 'loading'}

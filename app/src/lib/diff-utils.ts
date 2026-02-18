@@ -8,6 +8,7 @@ export interface DiffStats {
   filesChanged: number;
   additions: number;
   deletions: number;
+  fileNames: string[];
 }
 
 export interface FileDiff {
@@ -34,7 +35,7 @@ export function parseDiffStats(diff: string): DiffStats {
     }
   }
 
-  return { filesChanged: files.size, additions, deletions };
+  return { filesChanged: files.size, additions, deletions, fileNames: [...files] };
 }
 
 /** Split a unified diff into per-file sections with stats. */

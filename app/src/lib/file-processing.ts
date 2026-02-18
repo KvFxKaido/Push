@@ -5,6 +5,8 @@
 
 import type { AttachmentData } from '@/types';
 
+export { formatSize as formatFileSize } from './diff-utils';
+
 // Size limits
 const MAX_IMAGE_SIZE = 400 * 1024;    // 400KB per image (base64 grows ~33%)
 const MAX_TEXT_SIZE = 50 * 1024;       // 50KB per text file
@@ -181,11 +183,3 @@ export function getTotalAttachmentSize(attachments: AttachmentData[]): number {
   }, 0);
 }
 
-/**
- * Format file size for display.
- */
-export function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}

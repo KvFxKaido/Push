@@ -182,6 +182,171 @@ export interface SettingsSheetProps {
   data: SettingsDataProps;
 }
 
+// ── Provider Key Section ─────────────────────────────────────────────
+
+interface ProviderKeySectionProps {
+  label: string;
+  hasKey: boolean;
+  keyInput: string;
+  setKeyInput: (v: string) => void;
+  saveKey: () => void;
+  clearKey: () => void;
+  activeBackend: string | null;
+  backendId: string;
+  clearPreferredProvider: () => void;
+  setActiveBackend: (v: string | null) => void;
+  placeholder: string;
+  saveLabel: string;
+  hint: string;
+  savedHint?: string;
+  model?: {
+    value: string;
+    set: (v: string) => void;
+    options: string[];
+    isLocked: boolean;
+    lockedModel: string | null;
+    labelTransform?: (model: string) => string;
+  };
+  refresh?: {
+    trigger: () => void;
+    loading: boolean;
+    error: string | null;
+    updatedAt: number | null;
+  };
+}
+
+function ProviderKeySection({
+  label,
+  hasKey,
+  keyInput,
+  setKeyInput,
+  saveKey,
+  clearKey,
+  activeBackend,
+  backendId,
+  clearPreferredProvider,
+  setActiveBackend,
+  placeholder,
+  saveLabel,
+  hint,
+  savedHint,
+  model,
+  refresh,
+}: ProviderKeySectionProps) {
+  if (hasKey) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+          <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
+          <button
+            type="button"
+            onClick={() => {
+              clearKey();
+              if (activeBackend === backendId) {
+                clearPreferredProvider();
+                setActiveBackend(null);
+              }
+            }}
+            className="text-push-fg-dim hover:text-red-400 transition-colors"
+            aria-label={`Remove ${label} key`}
+            title="Remove key"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        {model && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
+            <select
+              value={model.value}
+              onChange={(e) => model.set(e.target.value)}
+              disabled={model.options.length === 0 || (refresh?.loading ?? false)}
+              className="flex-1 rounded-md border border-push-edge bg-push-surface px-2 py-1 text-xs text-push-fg font-mono focus:outline-none focus:border-push-sky/50 disabled:opacity-50"
+            >
+              {model.options.length === 0 ? (
+                <option value={model.value}>{model.labelTransform ? model.labelTransform(model.value) : model.value}</option>
+              ) : (
+                model.options.map((m) => (
+                  <option key={m} value={m}>
+                    {model.labelTransform ? model.labelTransform(m) : m}
+                  </option>
+                ))
+              )}
+            </select>
+            {refresh && (
+              <button
+                type="button"
+                onClick={refresh.trigger}
+                disabled={refresh.loading}
+                className="rounded-md border border-push-edge bg-push-surface p-1.5 text-push-fg-secondary hover:text-push-fg disabled:opacity-50"
+                aria-label={`Refresh ${label} models`}
+                title={`Refresh ${label} models`}
+              >
+                {refresh.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              </button>
+            )}
+          </div>
+        )}
+        {refresh?.error && (
+          <p className="text-xs text-amber-400">
+            {refresh.error}
+          </p>
+        )}
+        {refresh?.updatedAt && (
+          <p className="text-xs text-push-fg-dim">
+            Updated {new Date(refresh.updatedAt).toLocaleTimeString()}
+          </p>
+        )}
+        {model?.isLocked && model.lockedModel && (
+          <p className="text-xs text-amber-400">
+            Current chat remains locked to {model.lockedModel}. Default applies on new chats.
+          </p>
+        )}
+        {savedHint && (
+          <p className="text-xs text-push-fg-dim">
+            {savedHint}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <input
+        type="password"
+        value={keyInput}
+        onChange={(e) => setKeyInput(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && keyInput.trim()) {
+            saveKey();
+            setKeyInput('');
+          }
+        }}
+      />
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          if (keyInput.trim()) {
+            saveKey();
+            setKeyInput('');
+          }
+        }}
+        disabled={!keyInput.trim()}
+        className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
+      >
+        {saveLabel}
+      </Button>
+      <p className="text-xs text-push-fg-dim">
+        {hint}
+      </p>
+    </div>
+  );
+}
+
 // ── Component ────────────────────────────────────────────────────────
 
 export function SettingsSheet({
@@ -822,269 +987,87 @@ export function SettingsSheet({
             {/* Ollama */}
             <div className="space-y-2">
               <label className="text-xs font-medium text-push-fg-secondary">Ollama</label>
-              {ai.hasOllamaKey ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
-                    <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        ai.clearOllamaKey();
-                        if (ai.activeBackend === 'ollama') {
-                          ai.clearPreferredProvider();
-                          ai.setActiveBackend(null);
-                        }
-                      }}
-                      className="text-push-fg-dim hover:text-red-400 transition-colors"
-                      aria-label="Remove Ollama key"
-                      title="Remove key"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
-                    <select
-                      value={ai.ollamaModel}
-                      onChange={(e) => ai.setOllamaModel(e.target.value)}
-                      disabled={ai.ollamaModelOptions.length === 0 || ai.ollamaModelsLoading}
-                      className="flex-1 rounded-md border border-push-edge bg-push-surface px-2 py-1 text-xs text-push-fg font-mono focus:outline-none focus:border-push-sky/50 disabled:opacity-50"
-                    >
-                      {ai.ollamaModelOptions.length === 0 ? (
-                        <option value={ai.ollamaModel}>{ai.ollamaModel}</option>
-                      ) : (
-                        ai.ollamaModelOptions.map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={ai.refreshOllamaModels}
-                      disabled={ai.ollamaModelsLoading}
-                      className="rounded-md border border-push-edge bg-push-surface p-1.5 text-push-fg-secondary hover:text-push-fg disabled:opacity-50"
-                      aria-label="Refresh Ollama models"
-                      title="Refresh Ollama models"
-                    >
-                      {ai.ollamaModelsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                    </button>
-                  </div>
-                  {ai.ollamaModelsError && (
-                    <p className="text-xs text-amber-400">
-                      {ai.ollamaModelsError}
-                    </p>
-                  )}
-                  {ai.ollamaModelsUpdatedAt && (
-                    <p className="text-xs text-push-fg-dim">
-                      Updated {new Date(ai.ollamaModelsUpdatedAt).toLocaleTimeString()}
-                    </p>
-                  )}
-                  {ai.isOllamaModelLocked && ai.lockedModel && (
-                    <p className="text-xs text-amber-400">
-                      Current chat remains locked to {ai.lockedModel}. Default applies on new chats.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    value={ai.ollamaKeyInput}
-                    onChange={(e) => ai.setOllamaKeyInput(e.target.value)}
-                    placeholder="Ollama API key"
-                    className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && ai.ollamaKeyInput.trim()) {
-                        ai.setOllamaKey(ai.ollamaKeyInput.trim());
-                        ai.setOllamaKeyInput('');
-                      }
-                    }}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (ai.ollamaKeyInput.trim()) {
-                        ai.setOllamaKey(ai.ollamaKeyInput.trim());
-                        ai.setOllamaKeyInput('');
-                      }
-                    }}
-                    disabled={!ai.ollamaKeyInput.trim()}
-                    className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
-                  >
-                    Save Ollama key
-                  </Button>
-                  <p className="text-xs text-push-fg-dim">
-                    Ollama API key (local or cloud).
-                  </p>
-                </div>
-              )}
+              <ProviderKeySection
+                label="Ollama"
+                hasKey={ai.hasOllamaKey}
+                keyInput={ai.ollamaKeyInput}
+                setKeyInput={ai.setOllamaKeyInput}
+                saveKey={() => ai.setOllamaKey(ai.ollamaKeyInput.trim())}
+                clearKey={ai.clearOllamaKey}
+                activeBackend={ai.activeBackend}
+                backendId="ollama"
+                clearPreferredProvider={ai.clearPreferredProvider}
+                setActiveBackend={ai.setActiveBackend}
+                placeholder="Ollama API key"
+                saveLabel="Save Ollama key"
+                hint="Ollama API key (local or cloud)."
+                model={{
+                  value: ai.ollamaModel,
+                  set: ai.setOllamaModel,
+                  options: ai.ollamaModelOptions,
+                  isLocked: ai.isOllamaModelLocked,
+                  lockedModel: ai.lockedModel,
+                }}
+                refresh={{
+                  trigger: ai.refreshOllamaModels,
+                  loading: ai.ollamaModelsLoading,
+                  error: ai.ollamaModelsError,
+                  updatedAt: ai.ollamaModelsUpdatedAt,
+                }}
+              />
             </div>
 
             {/* Kimi */}
             <div className="space-y-2">
               <label className="text-xs font-medium text-push-fg-secondary">Kimi</label>
-              {ai.hasKimiKey ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
-                    <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        ai.clearKimiKey();
-                        if (ai.activeBackend === 'moonshot') {
-                          ai.clearPreferredProvider();
-                          ai.setActiveBackend(null);
-                        }
-                      }}
-                      className="text-push-fg-dim hover:text-red-400 transition-colors"
-                      aria-label="Remove Kimi key"
-                      title="Remove key"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    value={ai.kimiKeyInput}
-                    onChange={(e) => ai.setKimiKeyInput(e.target.value)}
-                    placeholder="Kimi key"
-                    className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && ai.kimiKeyInput.trim()) {
-                        ai.setKimiKey(ai.kimiKeyInput.trim());
-                        ai.setKimiKeyInput('');
-                      }
-                    }}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (ai.kimiKeyInput.trim()) {
-                        ai.setKimiKey(ai.kimiKeyInput.trim());
-                        ai.setKimiKeyInput('');
-                      }
-                    }}
-                    disabled={!ai.kimiKeyInput.trim()}
-                    className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
-                  >
-                    Save Kimi key
-                  </Button>
-                  <p className="text-xs text-push-fg-dim">
-                    Kimi For Coding API key.
-                  </p>
-                </div>
-              )}
+              <ProviderKeySection
+                label="Kimi"
+                hasKey={ai.hasKimiKey}
+                keyInput={ai.kimiKeyInput}
+                setKeyInput={ai.setKimiKeyInput}
+                saveKey={() => ai.setKimiKey(ai.kimiKeyInput.trim())}
+                clearKey={ai.clearKimiKey}
+                activeBackend={ai.activeBackend}
+                backendId="moonshot"
+                clearPreferredProvider={ai.clearPreferredProvider}
+                setActiveBackend={ai.setActiveBackend}
+                placeholder="Kimi key"
+                saveLabel="Save Kimi key"
+                hint="Kimi For Coding API key."
+              />
             </div>
 
             {/* Mistral */}
             <div className="space-y-2">
               <label className="text-xs font-medium text-push-fg-secondary">Mistral</label>
-              {ai.hasMistralKey ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
-                    <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        ai.clearMistralKey();
-                        if (ai.activeBackend === 'mistral') {
-                          ai.clearPreferredProvider();
-                          ai.setActiveBackend(null);
-                        }
-                      }}
-                      className="text-push-fg-dim hover:text-red-400 transition-colors"
-                      aria-label="Remove Mistral key"
-                      title="Remove key"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
-                    <select
-                      value={ai.mistralModel}
-                      onChange={(e) => ai.setMistralModel(e.target.value)}
-                      disabled={ai.mistralModelOptions.length === 0 || ai.mistralModelsLoading}
-                      className="flex-1 rounded-md border border-push-edge bg-push-surface px-2 py-1 text-xs text-push-fg font-mono focus:outline-none focus:border-push-sky/50 disabled:opacity-50"
-                    >
-                      {ai.mistralModelOptions.length === 0 ? (
-                        <option value={ai.mistralModel}>{ai.mistralModel}</option>
-                      ) : (
-                        ai.mistralModelOptions.map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={ai.refreshMistralModels}
-                      disabled={ai.mistralModelsLoading}
-                      className="rounded-md border border-push-edge bg-push-surface p-1.5 text-push-fg-secondary hover:text-push-fg disabled:opacity-50"
-                      aria-label="Refresh Mistral models"
-                      title="Refresh Mistral models"
-                    >
-                      {ai.mistralModelsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                    </button>
-                  </div>
-                  {ai.mistralModelsError && (
-                    <p className="text-xs text-amber-400">
-                      {ai.mistralModelsError}
-                    </p>
-                  )}
-                  {ai.mistralModelsUpdatedAt && (
-                    <p className="text-xs text-push-fg-dim">
-                      Updated {new Date(ai.mistralModelsUpdatedAt).toLocaleTimeString()}
-                    </p>
-                  )}
-                  {ai.isMistralModelLocked && ai.lockedModel && (
-                    <p className="text-xs text-amber-400">
-                      Current chat remains locked to {ai.lockedModel}. Default applies on new chats.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    value={ai.mistralKeyInput}
-                    onChange={(e) => ai.setMistralKeyInput(e.target.value)}
-                    placeholder="Mistral API key"
-                    className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && ai.mistralKeyInput.trim()) {
-                        ai.setMistralKey(ai.mistralKeyInput.trim());
-                        ai.setMistralKeyInput('');
-                      }
-                    }}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (ai.mistralKeyInput.trim()) {
-                        ai.setMistralKey(ai.mistralKeyInput.trim());
-                        ai.setMistralKeyInput('');
-                      }
-                    }}
-                    disabled={!ai.mistralKeyInput.trim()}
-                    className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
-                  >
-                    Save Mistral key
-                  </Button>
-                  <p className="text-xs text-push-fg-dim">
-                    Mistral API key from console.mistral.ai.
-                  </p>
-                </div>
-              )}
+              <ProviderKeySection
+                label="Mistral"
+                hasKey={ai.hasMistralKey}
+                keyInput={ai.mistralKeyInput}
+                setKeyInput={ai.setMistralKeyInput}
+                saveKey={() => ai.setMistralKey(ai.mistralKeyInput.trim())}
+                clearKey={ai.clearMistralKey}
+                activeBackend={ai.activeBackend}
+                backendId="mistral"
+                clearPreferredProvider={ai.clearPreferredProvider}
+                setActiveBackend={ai.setActiveBackend}
+                placeholder="Mistral API key"
+                saveLabel="Save Mistral key"
+                hint="Mistral API key from console.mistral.ai."
+                model={{
+                  value: ai.mistralModel,
+                  set: ai.setMistralModel,
+                  options: ai.mistralModelOptions,
+                  isLocked: ai.isMistralModelLocked,
+                  lockedModel: ai.lockedModel,
+                }}
+                refresh={{
+                  trigger: ai.refreshMistralModels,
+                  loading: ai.mistralModelsLoading,
+                  error: ai.mistralModelsError,
+                  updatedAt: ai.mistralModelsUpdatedAt,
+                }}
+              />
             </div>
 
           </div>
@@ -1093,244 +1076,90 @@ export function SettingsSheet({
             {/* Z.ai */}
             <div className="space-y-2">
               <label className="text-xs font-medium text-push-fg-secondary">Z.ai</label>
-              {ai.hasZaiKey ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
-                    <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        ai.clearZaiKey();
-                        if (ai.activeBackend === 'zai') {
-                          ai.clearPreferredProvider();
-                          ai.setActiveBackend(null);
-                        }
-                      }}
-                      className="text-push-fg-dim hover:text-red-400 transition-colors"
-                      aria-label="Remove Z.ai key"
-                      title="Remove key"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
-                    <select
-                      value={ai.zaiModel}
-                      onChange={(e) => ai.setZaiModel(e.target.value)}
-                      disabled={ai.zaiModelOptions.length === 0}
-                      className="flex-1 rounded-md border border-push-edge bg-push-surface px-2 py-1 text-xs text-push-fg font-mono focus:outline-none focus:border-push-sky/50 disabled:opacity-50"
-                    >
-                      {ai.zaiModelOptions.map((model) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {ai.isZaiModelLocked && ai.lockedModel && (
-                    <p className="text-xs text-amber-400">
-                      Current chat remains locked to {ai.lockedModel}. Default applies on new chats.
-                    </p>
-                  )}
-                  <p className="text-xs text-push-fg-dim">
-                    Uses subscription-based API keys from platform.z.ai.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    value={ai.zaiKeyInput}
-                    onChange={(e) => ai.setZaiKeyInput(e.target.value)}
-                    placeholder="Z.ai API key"
-                    className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && ai.zaiKeyInput.trim()) {
-                        ai.setZaiKey(ai.zaiKeyInput.trim());
-                        ai.setZaiKeyInput('');
-                      }
-                    }}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (ai.zaiKeyInput.trim()) {
-                        ai.setZaiKey(ai.zaiKeyInput.trim());
-                        ai.setZaiKeyInput('');
-                      }
-                    }}
-                    disabled={!ai.zaiKeyInput.trim()}
-                    className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
-                  >
-                    Save Z.ai key
-                  </Button>
-                  <p className="text-xs text-push-fg-dim">
-                    Z.ai API keys are available through subscription plans.
-                  </p>
-                </div>
-              )}
+              <ProviderKeySection
+                label="Z.ai"
+                hasKey={ai.hasZaiKey}
+                keyInput={ai.zaiKeyInput}
+                setKeyInput={ai.setZaiKeyInput}
+                saveKey={() => ai.setZaiKey(ai.zaiKeyInput.trim())}
+                clearKey={ai.clearZaiKey}
+                activeBackend={ai.activeBackend}
+                backendId="zai"
+                clearPreferredProvider={ai.clearPreferredProvider}
+                setActiveBackend={ai.setActiveBackend}
+                placeholder="Z.ai API key"
+                saveLabel="Save Z.ai key"
+                hint="Z.ai API keys are available through subscription plans."
+                savedHint="Uses subscription-based API keys from platform.z.ai."
+                model={{
+                  value: ai.zaiModel,
+                  set: ai.setZaiModel,
+                  options: ai.zaiModelOptions,
+                  isLocked: ai.isZaiModelLocked,
+                  lockedModel: ai.lockedModel,
+                }}
+              />
             </div>
 
             {/* MiniMax */}
             <div className="space-y-2">
               <label className="text-xs font-medium text-push-fg-secondary">MiniMax</label>
-              {ai.hasMiniMaxKey ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
-                    <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        ai.clearMiniMaxKey();
-                        if (ai.activeBackend === 'minimax') {
-                          ai.clearPreferredProvider();
-                          ai.setActiveBackend(null);
-                        }
-                      }}
-                      className="text-push-fg-dim hover:text-red-400 transition-colors"
-                      aria-label="Remove MiniMax key"
-                      title="Remove key"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
-                    <select
-                      value={ai.miniMaxModel}
-                      onChange={(e) => ai.setMiniMaxModel(e.target.value)}
-                      disabled={ai.miniMaxModelOptions.length === 0}
-                      className="flex-1 rounded-md border border-push-edge bg-push-surface px-2 py-1 text-xs text-push-fg font-mono focus:outline-none focus:border-push-sky/50 disabled:opacity-50"
-                    >
-                      {ai.miniMaxModelOptions.map((model) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {ai.isMiniMaxModelLocked && ai.lockedModel && (
-                    <p className="text-xs text-amber-400">
-                      Current chat remains locked to {ai.lockedModel}. Default applies on new chats.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    value={ai.miniMaxKeyInput}
-                    onChange={(e) => ai.setMiniMaxKeyInput(e.target.value)}
-                    placeholder="MiniMax API key"
-                    className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && ai.miniMaxKeyInput.trim()) {
-                        ai.setMiniMaxKey(ai.miniMaxKeyInput.trim());
-                        ai.setMiniMaxKeyInput('');
-                      }
-                    }}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (ai.miniMaxKeyInput.trim()) {
-                        ai.setMiniMaxKey(ai.miniMaxKeyInput.trim());
-                        ai.setMiniMaxKeyInput('');
-                      }
-                    }}
-                    disabled={!ai.miniMaxKeyInput.trim()}
-                    className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
-                  >
-                    Save MiniMax key
-                  </Button>
-                  <p className="text-xs text-push-fg-dim">
-                    MiniMax API key from platform.minimax.io.
-                  </p>
-                </div>
-              )}
+              <ProviderKeySection
+                label="MiniMax"
+                hasKey={ai.hasMiniMaxKey}
+                keyInput={ai.miniMaxKeyInput}
+                setKeyInput={ai.setMiniMaxKeyInput}
+                saveKey={() => ai.setMiniMaxKey(ai.miniMaxKeyInput.trim())}
+                clearKey={ai.clearMiniMaxKey}
+                activeBackend={ai.activeBackend}
+                backendId="minimax"
+                clearPreferredProvider={ai.clearPreferredProvider}
+                setActiveBackend={ai.setActiveBackend}
+                placeholder="MiniMax API key"
+                saveLabel="Save MiniMax key"
+                hint="MiniMax API key from platform.minimax.io."
+                model={{
+                  value: ai.miniMaxModel,
+                  set: ai.setMiniMaxModel,
+                  options: ai.miniMaxModelOptions,
+                  isLocked: ai.isMiniMaxModelLocked,
+                  lockedModel: ai.lockedModel,
+                }}
+              />
             </div>
 
           {/* OpenRouter */}
           <div className="space-y-2">
             <label className="text-xs font-medium text-push-fg-secondary">OpenRouter</label>
-            {ai.hasOpenRouterKey ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
-                  <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      ai.clearOpenRouterKey();
-                      if (ai.activeBackend === 'openrouter') {
-                        ai.clearPreferredProvider();
-                        ai.setActiveBackend(null);
-                      }
-                    }}
-                    className="text-push-fg-dim hover:text-red-400 transition-colors"
-                    aria-label="Remove OpenRouter key"
-                    title="Remove key"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
-                  <select
-                    value={ai.openRouterModel}
-                    onChange={(e) => ai.setOpenRouterModel(e.target.value)}
-                    disabled={ai.openRouterModelOptions.length === 0}
-                    className="flex-1 rounded-md border border-push-edge bg-push-surface px-2 py-1 text-xs text-push-fg font-mono focus:outline-none focus:border-push-sky/50 disabled:opacity-50"
-                  >
-                    {ai.openRouterModelOptions.map((model) => (
-                      <option key={model} value={model}>
-                        {model.replace(/^[^/]+\//, '')}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {ai.isOpenRouterModelLocked && ai.lockedModel && (
-                  <p className="text-xs text-amber-400">
-                    Current chat remains locked to {ai.lockedModel}. Default applies on new chats.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <input
-                  type="password"
-                  value={ai.openRouterKeyInput}
-                  onChange={(e) => ai.setOpenRouterKeyInput(e.target.value)}
-                  placeholder="OpenRouter API key"
-                  className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && ai.openRouterKeyInput.trim()) {
-                      ai.setOpenRouterKey(ai.openRouterKeyInput.trim());
-                      ai.setOpenRouterKeyInput('');
-                    }
-                  }}
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    if (ai.openRouterKeyInput.trim()) {
-                      ai.setOpenRouterKey(ai.openRouterKeyInput.trim());
-                      ai.setOpenRouterKeyInput('');
-                    }
-                  }}
-                  disabled={!ai.openRouterKeyInput.trim()}
-                  className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
-                >
-                  Save OpenRouter key
-                </Button>
-                <p className="text-xs text-push-fg-dim">
-                  OpenRouter API key from openrouter.ai. Access 50+ models including Claude, GPT-4, Codex.
-                </p>
-              </div>
-            )}
+            <ProviderKeySection
+              label="OpenRouter"
+              hasKey={ai.hasOpenRouterKey}
+              keyInput={ai.openRouterKeyInput}
+              setKeyInput={ai.setOpenRouterKeyInput}
+              saveKey={() => ai.setOpenRouterKey(ai.openRouterKeyInput.trim())}
+              clearKey={ai.clearOpenRouterKey}
+              activeBackend={ai.activeBackend}
+              backendId="openrouter"
+              clearPreferredProvider={ai.clearPreferredProvider}
+              setActiveBackend={ai.setActiveBackend}
+              placeholder="OpenRouter API key"
+              saveLabel="Save OpenRouter key"
+              hint="OpenRouter API key from openrouter.ai. Access 50+ models including Claude, GPT-4, Codex."
+              model={{
+                value: ai.openRouterModel,
+                set: ai.setOpenRouterModel,
+                options: ai.openRouterModelOptions,
+                isLocked: ai.isOpenRouterModelLocked,
+                lockedModel: ai.lockedModel,
+                labelTransform: (m) => m.replace(/^[^/]+\//, ''),
+              }}
+              refresh={{
+                trigger: ai.refreshOpenRouterModels,
+                loading: ai.openRouterModelsLoading,
+                error: ai.openRouterModelsError,
+                updatedAt: ai.openRouterModelsUpdatedAt,
+              }}
+            />
           </div>
 
           {/* Web Search (Tavily) */}
@@ -1342,55 +1171,21 @@ export function SettingsSheet({
               <span className="text-xs text-push-fg-dim">Optional</span>
             </div>
             <div className="space-y-2">
-              {ai.hasTavilyKey ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
-                    <p className="text-sm text-push-fg-secondary font-mono">Tavily Key Saved</p>
-                    <button
-                      type="button"
-                      onClick={() => ai.clearTavilyKey()}
-                      className="text-push-fg-dim hover:text-red-400 transition-colors"
-                      aria-label="Remove Tavily key"
-                      title="Remove key"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    value={ai.tavilyKeyInput}
-                    onChange={(e) => ai.setTavilyKeyInput(e.target.value)}
-                    placeholder="tvly-..."
-                    className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && ai.tavilyKeyInput.trim()) {
-                        ai.setTavilyKey(ai.tavilyKeyInput.trim());
-                        ai.setTavilyKeyInput('');
-                      }
-                    }}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (ai.tavilyKeyInput.trim()) {
-                        ai.setTavilyKey(ai.tavilyKeyInput.trim());
-                        ai.setTavilyKeyInput('');
-                      }
-                    }}
-                    disabled={!ai.tavilyKeyInput.trim()}
-                    className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
-                  >
-                    Save Tavily key
-                  </Button>
-                  <p className="text-xs text-push-fg-dim">
-                    Not required — web search works without this. Add a Tavily API key for higher-quality, LLM-optimized results. Free tier: 1,000 searches/month.
-                  </p>
-                </div>
-              )}
+              <ProviderKeySection
+                label="Tavily"
+                hasKey={ai.hasTavilyKey}
+                keyInput={ai.tavilyKeyInput}
+                setKeyInput={ai.setTavilyKeyInput}
+                saveKey={() => ai.setTavilyKey(ai.tavilyKeyInput.trim())}
+                clearKey={ai.clearTavilyKey}
+                activeBackend={ai.activeBackend}
+                backendId="tavily"
+                clearPreferredProvider={ai.clearPreferredProvider}
+                setActiveBackend={ai.setActiveBackend}
+                placeholder="tvly-..."
+                saveLabel="Save Tavily key"
+                hint="Not required — web search works without this. Add a Tavily API key for higher-quality, LLM-optimized results. Free tier: 1,000 searches/month."
+              />
             </div>
           </div>
 

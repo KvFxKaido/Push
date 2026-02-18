@@ -2,6 +2,8 @@
  * File utilities for the file browser and editor.
  */
 
+export { formatSize as formatFileSize } from './diff-utils';
+
 // Extensions that are safe and reasonable to edit on mobile
 export const EDITABLE_EXTENSIONS = new Set([
   // Web
@@ -157,17 +159,6 @@ export function isBinaryContent(content: string): boolean {
 
   // If >10% non-printable, likely binary
   return (nonPrintable / sample.length) > 0.1;
-}
-
-/**
- * Format file size for display.
- */
-export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 /**

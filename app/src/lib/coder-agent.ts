@@ -11,6 +11,7 @@
  */
 
 import type { ChatMessage, ChatCard } from '@/types';
+import { parseDiffStats } from './diff-utils';
 import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
@@ -178,27 +179,15 @@ async function fetchSandboxStateSummary(sandboxId: string): Promise<string> {
       return '\n\n[Sandbox State] No uncommitted changes.';
     }
 
-    const changedFiles: string[] = [];
-    let additions = 0;
-    let deletions = 0;
-    for (const line of diffResult.diff.split('\n')) {
-      if (line.startsWith('diff --git')) {
-        const m = line.match(/b\/(.+)$/);
-        if (m) changedFiles.push(m[1]);
-      } else if (line.startsWith('+') && !line.startsWith('+++')) {
-        additions++;
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        deletions++;
-      }
-    }
+    const { fileNames, additions, deletions } = parseDiffStats(diffResult.diff);
 
     // Limit file list to prevent bloat on large refactors
     const MAX_FILES_LISTED = 10;
-    const fileList = changedFiles.length > MAX_FILES_LISTED
-      ? `${changedFiles.slice(0, MAX_FILES_LISTED).join(', ')} (+${changedFiles.length - MAX_FILES_LISTED} more)`
-      : changedFiles.join(', ');
+    const fileList = fileNames.length > MAX_FILES_LISTED
+      ? `${fileNames.slice(0, MAX_FILES_LISTED).join(', ')} (+${fileNames.length - MAX_FILES_LISTED} more)`
+      : fileNames.join(', ');
 
-    return `\n\n[Sandbox State] ${changedFiles.length} file(s) changed, +${additions} -${deletions}. Files: ${fileList}`;
+    return `\n\n[Sandbox State] ${fileNames.length} file(s) changed, +${additions} -${deletions}. Files: ${fileList}`;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return `\n\n[Sandbox State] Failed to fetch diff: ${msg}`;

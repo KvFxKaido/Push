@@ -89,31 +89,43 @@ function isWebSearchTool(obj: unknown): obj is { tool: 'web_search'; args: { que
 }
 
 // ---------------------------------------------------------------------------
-// Execution — calls Ollama's web search REST endpoint
+// Execution — shared core
 // ---------------------------------------------------------------------------
 
 const OLLAMA_SEARCH_URL = import.meta.env.DEV
   ? '/ollama/api/web_search'
   : '/api/ollama/search';
 
+// In both dev and prod, /api routes go through the Worker (or Vite proxy → Worker).
+const FREE_SEARCH_URL = '/api/search';
+
+// Tavily API key is kept client-side (same as AI provider keys) and sent to
+// the Worker in an Authorization header. Not required — DuckDuckGo works fine
+// as the default. Add a Tavily key in Settings for higher-quality results.
+const TAVILY_SEARCH_URL = '/api/search/tavily';
+
 const MAX_RESULT_SNIPPET_LENGTH = 500;
 const MAX_RESULTS = 5;
 
 /**
- * Execute a web search via the Ollama search API.
+ * Shared implementation for all web search backends.
+ * @param url       The search endpoint URL.
+ * @param query     The user's search query.
+ * @param headers   Optional extra headers (e.g. Authorization).
+ * @param errorPrefix Label used in the !response.ok error message (default "Search failed").
  */
-export async function executeOllamaWebSearch(query: string): Promise<ToolExecutionResult> {
-  const apiKey = getOllamaKey();
-  if (!apiKey) {
-    return { text: '[Tool Error — web_search] Ollama API key not configured.' };
-  }
-
+async function executeWebSearchCore(
+  url: string,
+  query: string,
+  headers?: Record<string, string>,
+  errorPrefix = 'Search failed',
+): Promise<ToolExecutionResult> {
   try {
-    const response = await fetch(OLLAMA_SEARCH_URL, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        ...headers,
       },
       body: JSON.stringify({ query }),
     });
@@ -121,7 +133,7 @@ export async function executeOllamaWebSearch(query: string): Promise<ToolExecuti
     if (!response.ok) {
       const errBody = await response.text().catch(() => '');
       return {
-        text: `[Tool Error — web_search] Search failed (${response.status}): ${errBody.slice(0, 200)}`,
+        text: `[Tool Error — web_search] ${errorPrefix} (${response.status}): ${errBody.slice(0, 200)}`,
       };
     }
 
@@ -153,11 +165,26 @@ export async function executeOllamaWebSearch(query: string): Promise<ToolExecuti
 }
 
 // ---------------------------------------------------------------------------
-// Execution — free web search via DuckDuckGo HTML scraping (no API key)
+// Execution — Ollama native search
 // ---------------------------------------------------------------------------
 
-// In both dev and prod, /api routes go through the Worker (or Vite proxy → Worker).
-const FREE_SEARCH_URL = '/api/search';
+/**
+ * Execute a web search via the Ollama search API.
+ */
+export async function executeOllamaWebSearch(query: string): Promise<ToolExecutionResult> {
+  const apiKey = getOllamaKey();
+  if (!apiKey) {
+    return { text: '[Tool Error — web_search] Ollama API key not configured.' };
+  }
+
+  return executeWebSearchCore(OLLAMA_SEARCH_URL, query, {
+    'Authorization': `Bearer ${apiKey}`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Execution — free web search via DuckDuckGo HTML scraping (no API key)
+// ---------------------------------------------------------------------------
 
 /**
  * Execute a web search via the free DuckDuckGo-backed endpoint.
@@ -165,55 +192,12 @@ const FREE_SEARCH_URL = '/api/search';
  * No API key needed — the Worker scrapes DuckDuckGo's HTML lite page.
  */
 export async function executeFreeWebSearch(query: string): Promise<ToolExecutionResult> {
-  try {
-    const response = await fetch(FREE_SEARCH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
-    });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      return {
-        text: `[Tool Error — web_search] Search failed (${response.status}): ${errBody.slice(0, 200)}`,
-      };
-    }
-
-    const data = (await response.json()) as { results?: WebSearchResult[] };
-    const results = (data.results || []).slice(0, MAX_RESULTS);
-
-    if (results.length === 0) {
-      return { text: `[Tool Result — web_search]\nNo results found for "${query}".` };
-    }
-
-    const formatted = results
-      .map(
-        (r, i) =>
-          `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content.slice(0, MAX_RESULT_SNIPPET_LENGTH)}`,
-      )
-      .join('\n\n');
-
-    const cardData: WebSearchCardData = { query, results };
-
-    return {
-      text: `[Tool Result — web_search]\nQuery: "${query}"\n${results.length} result${results.length > 1 ? 's' : ''}:\n\n${formatted}`,
-      card: { type: 'web-search', data: cardData },
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { text: `[Tool Error — web_search] ${message}` };
-  }
+  return executeWebSearchCore(FREE_SEARCH_URL, query);
 }
 
 // ---------------------------------------------------------------------------
 // Execution — Tavily search (optional premium upgrade, LLM-optimized results)
 // ---------------------------------------------------------------------------
-
-// Tavily API key is kept client-side (same as AI provider keys) and sent to
-// the Worker in an Authorization header. Not required — DuckDuckGo works fine
-// as the default. Add a Tavily key in Settings for higher-quality results.
-
-const TAVILY_SEARCH_URL = '/api/search/tavily';
 
 /**
  * Execute a web search via the Tavily API (proxied through Worker).
@@ -225,47 +209,9 @@ export async function executeTavilySearch(query: string): Promise<ToolExecutionR
     return { text: '[Tool Error — web_search] Tavily API key not configured.' };
   }
 
-  try {
-    const response = await fetch(TAVILY_SEARCH_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ query }),
-    });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      return {
-        text: `[Tool Error — web_search] Tavily search failed (${response.status}): ${errBody.slice(0, 200)}`,
-      };
-    }
-
-    const data = (await response.json()) as { results?: WebSearchResult[] };
-    const results = (data.results || []).slice(0, MAX_RESULTS);
-
-    if (results.length === 0) {
-      return { text: `[Tool Result — web_search]\nNo results found for "${query}".` };
-    }
-
-    const formatted = results
-      .map(
-        (r, i) =>
-          `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content.slice(0, MAX_RESULT_SNIPPET_LENGTH)}`,
-      )
-      .join('\n\n');
-
-    const cardData: WebSearchCardData = { query, results };
-
-    return {
-      text: `[Tool Result — web_search]\nQuery: "${query}"\n${results.length} result${results.length > 1 ? 's' : ''}:\n\n${formatted}`,
-      card: { type: 'web-search', data: cardData },
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { text: `[Tool Error — web_search] ${message}` };
-  }
+  return executeWebSearchCore(TAVILY_SEARCH_URL, query, {
+    'Authorization': `Bearer ${apiKey}`,
+  }, 'Tavily search failed');
 }
 
 // ---------------------------------------------------------------------------

@@ -269,6 +269,252 @@ async function readBodyText(
   return { ok: true, text: new TextDecoder().decode(merged) };
 }
 
+// ---------------------------------------------------------------------------
+// Shared handler preamble — origin check, rate limit, auth, optional body
+// ---------------------------------------------------------------------------
+
+type AuthBuilder = (env: Env, request: Request) => Promise<string | null> | (string | null);
+
+interface PreambleOk {
+  authHeader: string;
+  bodyText: string;
+}
+
+async function runPreamble(
+  request: Request,
+  env: Env,
+  opts: {
+    buildAuth: AuthBuilder;
+    keyMissingError?: string;
+    needsBody?: boolean;
+    maxBodyBytes?: number;
+  },
+): Promise<Response | PreambleOk> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const now = Date.now();
+  cleanupRateLimitStore(now);
+  const rateLimit = checkRateLimit(getClientIp(request), now);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
+    );
+  }
+
+  const authHeader = await opts.buildAuth(env, request);
+  if (!authHeader && opts.keyMissingError) {
+    return Response.json({ error: opts.keyMissingError }, { status: 401 });
+  }
+
+  let bodyText = '';
+  if (opts.needsBody !== false) {
+    const bodyResult = await readBodyText(request, opts.maxBodyBytes ?? MAX_BODY_SIZE_BYTES);
+    if (!bodyResult.ok) {
+      return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+    }
+    bodyText = bodyResult.text;
+  }
+
+  return { authHeader: authHeader ?? '', bodyText };
+}
+
+function standardAuth(envKey: keyof Env): AuthBuilder {
+  return (env, request) => {
+    const serverKey = env[envKey] as string | undefined;
+    const clientAuth = request.headers.get('Authorization');
+    return serverKey ? `Bearer ${serverKey}` : clientAuth;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Stream proxy factory — for SSE chat endpoints
+// ---------------------------------------------------------------------------
+
+interface StreamProxyConfig {
+  name: string;
+  logTag: string;
+  upstreamUrl: string | ((request: Request) => string);
+  timeoutMs: number;
+  buildAuth: AuthBuilder;
+  keyMissingError: string;
+  timeoutError: string;
+  extraFetchHeaders?: Record<string, string> | ((request: Request) => Record<string, string>);
+  preserveUpstreamHeaders?: boolean;
+}
+
+function createStreamProxyHandler(
+  config: StreamProxyConfig,
+): (request: Request, env: Env) => Promise<Response> {
+  return async (request, env) => {
+    const preamble = await runPreamble(request, env, {
+      buildAuth: config.buildAuth,
+      keyMissingError: config.keyMissingError,
+      needsBody: true,
+    });
+    if (preamble instanceof Response) return preamble;
+    const { authHeader, bodyText } = preamble;
+
+    console.log(`[${config.logTag}] Forwarding request (${bodyText.length} bytes)`);
+
+    const upstreamUrl = typeof config.upstreamUrl === 'function'
+      ? config.upstreamUrl(request)
+      : config.upstreamUrl;
+
+    const extraHeaders = typeof config.extraFetchHeaders === 'function'
+      ? config.extraFetchHeaders(request)
+      : (config.extraFetchHeaders ?? {});
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
+      let upstream: Response;
+
+      try {
+        upstream = await fetch(upstreamUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': authHeader,
+            ...extraHeaders,
+          },
+          body: bodyText,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      console.log(`[${config.logTag}] Upstream responded: ${upstream.status}`);
+
+      if (!upstream.ok) {
+        const errBody = await upstream.text().catch(() => '');
+        console.error(`[${config.logTag}] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
+        return Response.json(
+          { error: `${config.name} API error ${upstream.status}: ${errBody.slice(0, 200)}` },
+          { status: upstream.status },
+        );
+      }
+
+      if (config.preserveUpstreamHeaders) {
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: {
+            'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+          },
+        });
+      }
+
+      // Standard SSE streaming
+      if (upstream.body) {
+        return new Response(upstream.body, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        });
+      }
+
+      // Non-streaming fallback
+      const data: unknown = await upstream.json();
+      return Response.json(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isTimeout = err instanceof Error && err.name === 'AbortError';
+      const status = isTimeout ? 504 : 502;
+      const error = isTimeout ? config.timeoutError : message;
+      console.error(`[${config.logTag}] Unhandled: ${message}`);
+      return Response.json({ error }, { status });
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// JSON proxy factory — for model lists, search, agent creation
+// ---------------------------------------------------------------------------
+
+interface JsonProxyConfig {
+  name: string;
+  logTag: string;
+  upstreamUrl: string;
+  method?: 'GET' | 'POST';
+  timeoutMs: number;
+  buildAuth: AuthBuilder;
+  keyMissingError: string;
+  timeoutError: string;
+  needsBody?: boolean;
+  extraFetchHeaders?: Record<string, string>;
+}
+
+function createJsonProxyHandler(
+  config: JsonProxyConfig,
+): (request: Request, env: Env) => Promise<Response> {
+  const method = config.method ?? 'POST';
+  const needsBody = config.needsBody ?? (method === 'POST');
+
+  return async (request, env) => {
+    const preamble = await runPreamble(request, env, {
+      buildAuth: config.buildAuth,
+      keyMissingError: config.keyMissingError,
+      needsBody,
+    });
+    if (preamble instanceof Response) return preamble;
+    const { authHeader, bodyText } = preamble;
+
+    console.log(`[${config.logTag}] Forwarding request${needsBody ? ` (${bodyText.length} bytes)` : ''}`);
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
+      let upstream: Response;
+
+      try {
+        const fetchInit: RequestInit = {
+          method,
+          headers: {
+            'Authorization': authHeader,
+            ...(needsBody ? { 'Content-Type': 'application/json' } : {}),
+            ...(config.extraFetchHeaders ?? {}),
+          },
+          signal: controller.signal,
+        };
+        if (needsBody) fetchInit.body = bodyText;
+        upstream = await fetch(config.upstreamUrl, fetchInit);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!upstream.ok) {
+        const errBody = await upstream.text().catch(() => '');
+        console.error(`[${config.logTag}] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
+        return Response.json(
+          { error: `${config.name} error ${upstream.status}: ${errBody.slice(0, 200)}` },
+          { status: upstream.status },
+        );
+      }
+
+      const data: unknown = await upstream.json();
+      return Response.json(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isTimeout = err instanceof Error && err.name === 'AbortError';
+      const status = isTimeout ? 504 : 500;
+      const error = isTimeout ? config.timeoutError : message;
+      console.error(`[${config.logTag}] Error: ${message}`);
+      return Response.json({ error }, { status });
+    }
+  };
+}
+
 async function handleSandbox(request: Request, env: Env, requestUrl: URL, route: string): Promise<Response> {
   const modalFunction = SANDBOX_ROUTES[route];
   if (!modalFunction) {
@@ -524,411 +770,57 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   });
 }
 
-async function handleKimiChat(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
+const handleKimiChat = createStreamProxyHandler({
+  name: 'Kimi', logTag: 'api/kimi/chat',
+  upstreamUrl: 'https://api.kimi.com/coding/v1/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: standardAuth('MOONSHOT_API_KEY'),
+  keyMissingError: 'Kimi API key not configured. Add it in Settings or set MOONSHOT_API_KEY on the Worker.',
+  timeoutError: 'Kimi request timed out after 120 seconds',
+  extraFetchHeaders: { 'User-Agent': 'claude-code/1.0.0' },
+});
 
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
+// --- Ollama Cloud ---
 
-  // Prefer server-side secret; fall back to client-provided Authorization header
-  const serverKey = env.MOONSHOT_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
+const handleOllamaModels = createJsonProxyHandler({
+  name: 'Ollama Cloud API', logTag: 'api/ollama/models',
+  upstreamUrl: 'https://ollama.com/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('OLLAMA_API_KEY'),
+  keyMissingError: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
+  timeoutError: 'Ollama Cloud model list timed out after 30 seconds',
+});
 
-  if (!authHeader) {
-    return Response.json(
-      { error: 'Kimi API key not configured. Add it in Settings or set MOONSHOT_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
+const handleOllamaChat = createStreamProxyHandler({
+  name: 'Ollama Cloud API', logTag: 'api/ollama/chat',
+  upstreamUrl: 'https://ollama.com/v1/chat/completions',
+  timeoutMs: 180_000,
+  buildAuth: standardAuth('OLLAMA_API_KEY'),
+  keyMissingError: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
+  timeoutError: 'Ollama Cloud request timed out after 180 seconds',
+});
 
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
+// --- Mistral ---
 
-  console.log(`[api/kimi/chat] Forwarding request (${bodyResult.text.length} bytes)`);
+const handleMistralModels = createJsonProxyHandler({
+  name: 'Mistral API', logTag: 'api/mistral/models',
+  upstreamUrl: 'https://api.mistral.ai/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('MISTRAL_API_KEY'),
+  keyMissingError: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.',
+  timeoutError: 'Mistral model list timed out after 30 seconds',
+});
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 min for long responses
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://api.kimi.com/coding/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authHeader,
-          'User-Agent': 'claude-code/1.0.0',
-        },
-        body: bodyResult.text,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    console.log(`[api/kimi/chat] Upstream responded: ${upstream.status}`);
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/kimi/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
-      return Response.json(
-        { error: `Kimi API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    // SSE streaming: pipe upstream body straight through
-    if (upstream.body) {
-      return new Response(upstream.body, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-      });
-    }
-
-    // Non-streaming fallback
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'Kimi request timed out after 120 seconds' : message;
-    console.error(`[api/kimi/chat] Unhandled: ${message}`);
-    return Response.json({ error }, { status });
-  }
-}
-
-// --- Ollama Cloud streaming proxy ---
-
-async function handleOllamaModels(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  const serverKey = env.OLLAMA_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000);
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://ollama.com/v1/models', {
-        method: 'GET',
-        headers: {
-          'Authorization': authHeader,
-        },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      return Response.json(
-        { error: `Ollama Cloud API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'Ollama Cloud model list timed out after 30 seconds' : message;
-    return Response.json({ error }, { status });
-  }
-}
-
-async function handleOllamaChat(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  // Prefer server-side secret; fall back to client-provided Authorization header
-  const serverKey = env.OLLAMA_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
-
-  console.log(`[api/ollama/chat] Forwarding request (${bodyResult.text.length} bytes)`);
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180_000); // 3 min — Ollama Cloud can be slower
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://ollama.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authHeader,
-        },
-        body: bodyResult.text,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    console.log(`[api/ollama/chat] Upstream responded: ${upstream.status}`);
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/ollama/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
-      return Response.json(
-        { error: `Ollama Cloud API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    // SSE streaming: pipe upstream body straight through
-    if (upstream.body) {
-      return new Response(upstream.body, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-      });
-    }
-
-    // Non-streaming fallback
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'Ollama Cloud request timed out after 180 seconds' : message;
-    console.error(`[api/ollama/chat] Unhandled: ${message}`);
-    return Response.json({ error }, { status });
-  }
-}
-
-// --- Mistral Vibe streaming proxy ---
-
-async function handleMistralModels(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  const serverKey = env.MISTRAL_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000);
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://api.mistral.ai/v1/models', {
-        method: 'GET',
-        headers: {
-          'Authorization': authHeader,
-        },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      return Response.json(
-        { error: `Mistral API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'Mistral model list timed out after 30 seconds' : message;
-    return Response.json({ error }, { status });
-  }
-}
-
-async function handleMistralChat(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  // Prefer server-side secret; fall back to client-provided Authorization header
-  const serverKey = env.MISTRAL_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
-
-  console.log(`[api/mistral/chat] Forwarding request (${bodyResult.text.length} bytes)`);
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 min
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://api.mistral.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authHeader,
-        },
-        body: bodyResult.text,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    console.log(`[api/mistral/chat] Upstream responded: ${upstream.status}`);
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/mistral/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
-      return Response.json(
-        { error: `Mistral API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    // SSE streaming: pipe upstream body straight through
-    if (upstream.body) {
-      return new Response(upstream.body, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-      });
-    }
-
-    // Non-streaming fallback
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'Mistral request timed out after 120 seconds' : message;
-    console.error(`[api/mistral/chat] Unhandled: ${message}`);
-    return Response.json({ error }, { status });
-  }
-}
+const handleMistralChat = createStreamProxyHandler({
+  name: 'Mistral API', logTag: 'api/mistral/chat',
+  upstreamUrl: 'https://api.mistral.ai/v1/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: standardAuth('MISTRAL_API_KEY'),
+  keyMissingError: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.',
+  timeoutError: 'Mistral request timed out after 120 seconds',
+});
 
 
 
@@ -977,626 +869,120 @@ async function generateZaiJWT(apiKey: string): Promise<string> {
   return `${signingInput}.${encodedSig}`;
 }
 
-// --- Z.ai streaming proxy ---
+// --- Z.ai ---
 
-async function handleZaiChat(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const ip = getClientIp(request);
-  const rateLimit = checkRateLimit(ip, now);
-  if (!rateLimit.allowed) {
-    return Response.json({ error: 'Rate limit exceeded' }, { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } });
-  }
-
-  // Prefer client-provided Authorization when present, so a stale Worker secret
-  // does not override user-configured keys from Settings.
-  // Fall back to the server-side secret (converted to a JWT) when no client key exists.
-  const serverKey = env.ZAI_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  let authHeader: string | null;
-
-  if (clientAuth) {
-    authHeader = clientAuth;
-  } else if (serverKey) {
+const handleZaiChat = createStreamProxyHandler({
+  name: 'Z.ai API', logTag: 'api/zai/chat',
+  upstreamUrl: 'https://api.z.ai/api/coding/paas/v4/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: async (env, request) => {
+    const clientAuth = request.headers.get('Authorization');
+    if (clientAuth) return clientAuth;
+    const serverKey = env.ZAI_API_KEY;
+    if (!serverKey) return null;
     const jwt = await generateZaiJWT(serverKey);
-    authHeader = `Bearer ${jwt}`;
-  } else {
-    authHeader = null;
-  }
+    return `Bearer ${jwt}`;
+  },
+  keyMissingError: 'Z.ai API key not configured. Add it in Settings or set ZAI_API_KEY on the Worker.',
+  timeoutError: 'Z.ai request timed out after 120 seconds',
+  preserveUpstreamHeaders: true,
+});
 
-  if (!authHeader) {
-    return Response.json(
-      { error: 'Z.ai API key not configured. Add it in Settings or set ZAI_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
+// --- MiniMax ---
 
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
+const handleMiniMaxChat = createStreamProxyHandler({
+  name: 'MiniMax API', logTag: 'api/minimax/chat',
+  upstreamUrl: 'https://api.minimax.io/v1/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: (env, request) => {
+    const clientAuth = request.headers.get('Authorization');
+    return clientAuth || (env.MINIMAX_API_KEY ? `Bearer ${env.MINIMAX_API_KEY}` : null);
+  },
+  keyMissingError: 'MiniMax API key not configured. Add it in Settings or set MINIMAX_API_KEY on the Worker.',
+  timeoutError: 'MiniMax request timed out after 120 seconds',
+  preserveUpstreamHeaders: true,
+});
 
-  console.log(`[api/zai/chat] Forwarding request (${bodyResult.text.length} bytes)`);
+// --- OpenRouter ---
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 120_000);
+const handleOpenRouterChat = createStreamProxyHandler({
+  name: 'OpenRouter API', logTag: 'api/openrouter/chat',
+  upstreamUrl: 'https://openrouter.ai/api/v1/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: standardAuth('OPENROUTER_API_KEY'),
+  keyMissingError: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
+  timeoutError: 'OpenRouter request timed out after 120 seconds',
+  extraFetchHeaders: (request) => ({
+    'HTTP-Referer': new URL(request.url).origin,
+    'X-Title': 'Push',
+  }),
+});
 
-  try {
-    let upstream: Response;
-    try {
-      upstream = await fetch('https://api.z.ai/api/coding/paas/v4/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authHeader,
-        },
-        body: bodyResult.text,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    console.log(`[api/zai/chat] Upstream responded: ${upstream.status}`);
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/zai/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
-      return Response.json(
-        { error: `Z.ai API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: {
-        'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      },
-    });
-  } catch (error) {
-    clearTimeout(timeoutId);
-    const message = error instanceof Error ? error.message : String(error);
-    const isTimeout = error instanceof Error && error.name === 'AbortError';
-    const finalError = isTimeout ? 'Z.ai request timed out after 120 seconds' : message;
-    console.error(`[api/zai/chat] Unhandled: ${finalError}`);
-    return Response.json({ error: finalError }, { status: 502 });
-  }
-}
-
-// --- MiniMax streaming proxy ---
-
-async function handleMiniMaxChat(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const ip = getClientIp(request);
-  const rateLimit = checkRateLimit(ip, now);
-  if (!rateLimit.allowed) {
-    return Response.json({ error: 'Rate limit exceeded' }, { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } });
-  }
-
-  // Prefer client-provided Authorization when present.
-  // Fall back to the server-side secret when no client key exists.
-  const serverKey = env.MINIMAX_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = clientAuth || (serverKey ? `Bearer ${serverKey}` : null);
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'MiniMax API key not configured. Add it in Settings or set MINIMAX_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
-
-  console.log(`[api/minimax/chat] Forwarding request (${bodyResult.text.length} bytes)`);
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 120_000);
-
-  try {
-    let upstream: Response;
-    try {
-      upstream = await fetch('https://api.minimax.io/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authHeader,
-        },
-        body: bodyResult.text,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    console.log(`[api/minimax/chat] Upstream responded: ${upstream.status}`);
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/minimax/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
-      return Response.json(
-        { error: `MiniMax API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: {
-        'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      },
-    });
-  } catch (error) {
-    clearTimeout(timeoutId);
-    const message = error instanceof Error ? error.message : String(error);
-    const isTimeout = error instanceof Error && error.name === 'AbortError';
-    const finalError = isTimeout ? 'MiniMax request timed out after 120 seconds' : message;
-    console.error(`[api/minimax/chat] Unhandled: ${finalError}`);
-    return Response.json({ error: finalError }, { status: 502 });
-  }
-}
-
-// --- OpenRouter Chat streaming proxy ---
-
-async function handleOpenRouterChat(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  // Prefer server-side secret; fall back to client-provided Authorization header
-  const serverKey = env.OPENROUTER_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
-
-  console.log(`[api/openrouter/chat] Forwarding request (${bodyResult.text.length} bytes)`);
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 min for long responses
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authHeader,
-          'HTTP-Referer': requestUrl.origin,
-          'X-Title': 'Push',
-        },
-        body: bodyResult.text,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    console.log(`[api/openrouter/chat] Upstream responded: ${upstream.status}`);
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/openrouter/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
-      return Response.json(
-        { error: `OpenRouter API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    // SSE streaming: pipe upstream body straight through
-    if (upstream.body) {
-      return new Response(upstream.body, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-      });
-    }
-
-    // Non-streaming fallback
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'OpenRouter request timed out after 120 seconds' : message;
-    console.error(`[api/openrouter/chat] Unhandled: ${message}`);
-    return Response.json({ error }, { status });
-  }
-}
-
-async function handleOpenRouterModels(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  const serverKey = env.OPENROUTER_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  console.log('[api/openrouter/models] Fetching model list');
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000);
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://openrouter.ai/api/v1/models', {
-        method: 'GET',
-        headers: {
-          'Authorization': authHeader,
-        },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      return Response.json(
-        { error: `OpenRouter API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'OpenRouter model list timed out after 30 seconds' : message;
-    return Response.json({ error }, { status });
-  }
-}
+const handleOpenRouterModels = createJsonProxyHandler({
+  name: 'OpenRouter API', logTag: 'api/openrouter/models',
+  upstreamUrl: 'https://openrouter.ai/api/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('OPENROUTER_API_KEY'),
+  keyMissingError: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
+  timeoutError: 'OpenRouter model list timed out after 30 seconds',
+});
 
 // --- Ollama Web Search proxy ---
 
-async function handleOllamaSearch(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  const serverKey = env.OLLAMA_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
-
-  console.log(`[api/ollama/search] Forwarding search request (${bodyResult.text.length} bytes)`);
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000);
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://ollama.com/api/web_search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authHeader,
-        },
-        body: bodyResult.text,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      return Response.json(
-        { error: `Ollama search error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'Ollama search timed out after 30 seconds' : message;
-    console.error(`[api/ollama/search] Error: ${message}`);
-    return Response.json({ error }, { status });
-  }
-}
+const handleOllamaSearch = createJsonProxyHandler({
+  name: 'Ollama search', logTag: 'api/ollama/search',
+  upstreamUrl: 'https://ollama.com/api/web_search',
+  method: 'POST',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('OLLAMA_API_KEY'),
+  keyMissingError: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
+  timeoutError: 'Ollama search timed out after 30 seconds',
+});
 
 // --- Mistral Agents API proxies ---
 
-async function handleMistralAgentCreate(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
+const handleMistralAgentCreate = createJsonProxyHandler({
+  name: 'Mistral Agents API', logTag: 'api/mistral/agents',
+  upstreamUrl: 'https://api.mistral.ai/v1/agents',
+  method: 'POST',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('MISTRAL_API_KEY'),
+  keyMissingError: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.',
+  timeoutError: 'Mistral agent creation timed out after 30 seconds',
+});
 
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  const serverKey = env.MISTRAL_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
-
-  console.log(`[api/mistral/agents] Creating agent (${bodyResult.text.length} bytes)`);
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000);
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://api.mistral.ai/v1/agents', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authHeader,
-        },
-        body: bodyResult.text,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/mistral/agents] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
-      return Response.json(
-        { error: `Mistral Agents API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'Mistral agent creation timed out after 30 seconds' : message;
-    console.error(`[api/mistral/agents] Error: ${message}`);
-    return Response.json({ error }, { status });
-  }
-}
-
-async function handleMistralAgentChat(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  const serverKey = env.MISTRAL_API_KEY;
-  const clientAuth = request.headers.get('Authorization');
-  const authHeader = serverKey ? `Bearer ${serverKey}` : clientAuth;
-
-  if (!authHeader) {
-    return Response.json(
-      { error: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.' },
-      { status: 401 },
-    );
-  }
-
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
-
-  console.log(`[api/mistral/agents/chat] Forwarding request (${bodyResult.text.length} bytes)`);
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 min
-    let upstream: Response;
-
-    try {
-      upstream = await fetch('https://api.mistral.ai/v1/agents/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authHeader,
-        },
-        body: bodyResult.text,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    console.log(`[api/mistral/agents/chat] Upstream responded: ${upstream.status}`);
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/mistral/agents/chat] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
-      return Response.json(
-        { error: `Mistral Agents API error ${upstream.status}: ${errBody.slice(0, 200)}` },
-        { status: upstream.status },
-      );
-    }
-
-    // SSE streaming: pipe upstream body straight through
-    if (upstream.body) {
-      return new Response(upstream.body, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-      });
-    }
-
-    // Non-streaming fallback
-    const data: unknown = await upstream.json();
-    return Response.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const status = isTimeout ? 504 : 500;
-    const error = isTimeout ? 'Mistral agent chat timed out after 120 seconds' : message;
-    console.error(`[api/mistral/agents/chat] Error: ${message}`);
-    return Response.json({ error }, { status });
-  }
-}
+const handleMistralAgentChat = createStreamProxyHandler({
+  name: 'Mistral Agents API', logTag: 'api/mistral/agents/chat',
+  upstreamUrl: 'https://api.mistral.ai/v1/agents/completions',
+  timeoutMs: 120_000,
+  buildAuth: standardAuth('MISTRAL_API_KEY'),
+  keyMissingError: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.',
+  timeoutError: 'Mistral agent chat timed out after 120 seconds',
+});
 
 // --- Tavily web search proxy (optional premium upgrade) ---
 
 async function handleTavilySearch(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
+  const preamble = await runPreamble(request, env, {
+    buildAuth: (_env, req) => {
+      const auth = req.headers.get('Authorization');
+      return auth; // Tavily key comes from client only
+    },
+    keyMissingError: 'Missing Tavily API key in Authorization header',
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { authHeader, bodyText } = preamble;
 
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  // Tavily API key comes from the client (same pattern as AI provider keys)
-  const authHeader = request.headers.get('Authorization');
-  const apiKey = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const apiKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!apiKey) {
     return Response.json({ error: 'Missing Tavily API key in Authorization header' }, { status: 401 });
   }
 
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
-
   let query: string;
   try {
-    const parsed = JSON.parse(bodyResult.text) as { query?: string };
+    const parsed = JSON.parse(bodyText) as { query?: string };
     if (!parsed.query || typeof parsed.query !== 'string') {
       return Response.json({ error: 'Missing "query" field' }, { status: 400 });
     }
@@ -1615,9 +1001,7 @@ async function handleTavilySearch(request: Request, env: Env): Promise<Response>
     try {
       upstream = await fetch('https://api.tavily.com/search', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           api_key: apiKey,
           query,
@@ -1708,30 +1092,16 @@ function parseDuckDuckGoHTML(html: string): { title: string; url: string; conten
 }
 
 async function handleFreeSearch(request: Request, env: Env): Promise<Response> {
-  const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return Response.json({ error: originCheck.error }, { status: 403 });
-  }
-
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
-    return Response.json(
-      { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
-    );
-  }
-
-  const bodyResult = await readBodyText(request, MAX_BODY_SIZE_BYTES);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
-  }
+  const preamble = await runPreamble(request, env, {
+    buildAuth: () => null, // No auth needed for DuckDuckGo
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { bodyText } = preamble;
 
   let query: string;
   try {
-    const parsed = JSON.parse(bodyResult.text) as { query?: string };
+    const parsed = JSON.parse(bodyText) as { query?: string };
     if (!parsed.query || typeof parsed.query !== 'string') {
       return Response.json({ error: 'Missing "query" field' }, { status: 400 });
     }
@@ -1752,9 +1122,7 @@ async function handleFreeSearch(request: Request, env: Env): Promise<Response> {
         `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
         {
           method: 'GET',
-          headers: {
-            'User-Agent': 'Push/1.0 (AI Coding Assistant)',
-          },
+          headers: { 'User-Agent': 'Push/1.0 (AI Coding Assistant)' },
           signal: controller.signal,
         },
       );
