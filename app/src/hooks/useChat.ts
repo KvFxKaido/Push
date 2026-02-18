@@ -19,6 +19,7 @@ import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget,
 import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, extractBareToolJsonObjects } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent, generateCheckpointAnswer } from '@/lib/coder-agent';
+import { fileLedger } from '@/lib/file-awareness-ledger';
 import {
   execInSandbox,
   writeToSandbox,
@@ -838,6 +839,7 @@ export function useChat(
       try {
         for (let round = 0; ; round++) {
           if (abortRef.current) break;
+          fileLedger.advanceRound();
 
           if (round > 0) {
             const newAssistant: ChatMessage = {

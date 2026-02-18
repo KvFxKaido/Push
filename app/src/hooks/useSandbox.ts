@@ -14,6 +14,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { createSandbox, cleanupSandbox, execInSandbox, setSandboxOwnerToken, getSandboxOwnerToken } from '@/lib/sandbox-client';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { fileLedger } from '@/lib/file-awareness-ledger';
 
 export type SandboxStatus = 'idle' | 'creating' | 'ready' | 'error';
 
@@ -145,6 +146,8 @@ export function useSandbox(activeRepoFullName?: string | null) {
     const saved = loadSession();
     if (saved && saved.repoFullName !== activeRepoFullName) {
       clearSession(saved.sandboxId);
+      // Reset file awareness ledger — different repo = different files
+      fileLedger.reset();
       if (sandboxIdRef.current && status === 'ready') {
         sandboxIdRef.current = null;
         setSandboxId(null);
@@ -222,6 +225,9 @@ export function useSandbox(activeRepoFullName?: string | null) {
     } finally {
       clearSession(id);
     }
+
+    // Reset file awareness ledger — new sandbox = clean slate
+    fileLedger.reset();
 
     setSandboxId(null);
     setStatus('idle');

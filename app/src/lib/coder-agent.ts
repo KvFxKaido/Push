@@ -16,6 +16,7 @@ import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { fileLedger } from './file-awareness-ledger';
 import { detectToolFromText, asRecord, streamWithTimeout } from './utils';
 import { getSandboxDiff } from './sandbox-client';
 
@@ -299,6 +300,7 @@ export async function runCoderAgent(
     }
 
     rounds = round + 1;
+    fileLedger.advanceRound();
     onStatus('Coder working...', `Round ${rounds}`);
 
     // Stream Coder response via the active provider, with a per-round timeout

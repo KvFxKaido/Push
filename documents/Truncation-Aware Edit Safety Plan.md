@@ -1,7 +1,7 @@
 # Truncation-Aware Edit Safety
 
-**Status:** Draft — ready for promotion review  
-**Date:** 2026-02-17  
+**Status:** Implemented — all three phases shipped
+**Date:** 2026-02-17
 **Source:** Council session (GLM + Claude)  
 **Roadmap parent:** Harness Reliability Program (Track B — Read Efficiency)
 
