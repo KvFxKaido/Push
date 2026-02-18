@@ -445,10 +445,15 @@ export async function executeSandboxToolCall(
 
         // --- File Awareness Ledger: record what the model has seen ---
         const contentLineCount = result.content ? result.content.split('\n').length : 0;
+        // If start_line was provided without end_line and the result wasn't
+        // truncated, the server returned the entire file from that offset —
+        // treat it as a full read so the ledger doesn't false-positive as
+        // partial_read.
+        const effectivelyFullRead = isRangeRead && !rangeEnd && !result.truncated;
         if (!emptyRangeWarning) {
           fileLedger.recordRead(call.args.path, {
-            startLine: isRangeRead ? rangeStart : undefined,
-            endLine: isRangeRead ? (rangeEnd ?? rangeStart + contentLineCount - 1) : undefined,
+            startLine: (isRangeRead && !effectivelyFullRead) ? rangeStart : undefined,
+            endLine: (isRangeRead && !effectivelyFullRead) ? (rangeEnd ?? rangeStart + contentLineCount - 1) : undefined,
             truncated: Boolean(result.truncated),
             totalLines: contentLineCount,
           });
@@ -618,7 +623,7 @@ export async function executeSandboxToolCall(
           fileLedger.recordAutoExpandAttempt();
           try {
             const autoReadResult = await readFromSandbox(sandboxId, call.args.path) as FileReadResult & { error?: string };
-            if (!autoReadResult.error && autoReadResult.content) {
+            if (!autoReadResult.error && autoReadResult.content !== undefined) {
               // Record the auto-read in the ledger
               const autoLineCount = autoReadResult.content.split('\n').length;
               fileLedger.recordRead(call.args.path, {
