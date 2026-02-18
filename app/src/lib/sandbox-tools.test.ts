@@ -95,6 +95,9 @@ import {
 import * as sandboxClient from './sandbox-client';
 import { extractSignatures } from './file-awareness-ledger';
 
+// Type extensions for test mocks that include error handling
+type FileReadResultWithError = sandboxClient.FileReadResult & { error?: string };
+
 // ---------------------------------------------------------------------------
 // 1. Tool validation -- sandbox_browser_screenshot
 // ---------------------------------------------------------------------------
@@ -992,10 +995,10 @@ describe('Edit Guard -- File Awareness Ledger', () => {
 
     // Auto-read should fail (file doesn't exist)
     vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
-      error: 'No such file or directory',
       content: '',
-      version: '',
-    });
+      truncated: false,
+      error: 'No such file or directory',
+    } as FileReadResultWithError);
 
     await executeSandboxToolCall(
       { tool: 'sandbox_write_file', args: { path: '/workspace/test.txt', content: 'hello' } },
@@ -1025,7 +1028,7 @@ describe('Edit Guard -- File Awareness Ledger', () => {
 
     vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
       ok: true,
-      version: 'v2',
+      new_version: 'v2',
     });
 
     // Mock git status check
@@ -1033,6 +1036,7 @@ describe('Edit Guard -- File Awareness Ledger', () => {
       stdout: 'M test.txt',
       stderr: '',
       exitCode: 0,
+      truncated: false,
     });
 
     const result = await executeSandboxToolCall(
@@ -1057,14 +1061,14 @@ describe('Edit Guard -- File Awareness Ledger', () => {
 
     // Auto-read fails with "no such file"
     vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
-      error: 'cat: /workspace/newfile.txt: No such file or directory',
       content: '',
-      version: '',
-    });
+      truncated: false,
+      error: 'cat: /workspace/newfile.txt: No such file or directory',
+    } as FileReadResultWithError);
 
     vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
       ok: true,
-      version: 'v1',
+      new_version: 'v1',
     });
 
     // Mock git status check
@@ -1072,6 +1076,7 @@ describe('Edit Guard -- File Awareness Ledger', () => {
       stdout: 'A newfile.txt',
       stderr: '',
       exitCode: 0,
+      truncated: false,
     });
 
     const result = await executeSandboxToolCall(
@@ -1129,7 +1134,7 @@ describe('Edit Guard -- File Awareness Ledger', () => {
 
     vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
       ok: true,
-      version: 'v2',
+      new_version: 'v2',
     });
 
     // Mock git status check
@@ -1137,6 +1142,7 @@ describe('Edit Guard -- File Awareness Ledger', () => {
       stdout: 'M empty.txt',
       stderr: '',
       exitCode: 0,
+      truncated: false,
     });
 
     const result = await executeSandboxToolCall(
