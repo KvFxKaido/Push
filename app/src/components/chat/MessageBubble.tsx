@@ -119,6 +119,11 @@ function stripToolCallPayload(content: string): string {
 
   let stripped = stripBareToolCallJson(withoutToolFences);
 
+  // Strip leftover array wrappers that held tool calls (now empty brackets/commas)
+  stripped = stripped.replace(/\[\s*(?:,\s*)*\]/g, '');
+  // Strip trailing unclosed array bracket (streaming array of tool calls)
+  stripped = stripped.replace(/\[\s*(?:,\s*)*$/g, '');
+
   // Strip trailing truncated tool JSON (unbalanced { with "tool":"..." at the end)
   stripped = stripped.replace(/\{[^{}]*["']?tool["']?\s*:\s*["'][^"']*["'][^}]*$/s, '');
 
