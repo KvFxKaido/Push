@@ -972,7 +972,7 @@ describe('Edit Guard and Auto-Expand', () => {
       version: '',
       truncated: false,
       error: 'permission denied',
-    });
+    } as unknown as sandboxClient.FileReadResult);
 
     const result = await executeSandboxToolCall(
       {
@@ -1027,7 +1027,7 @@ describe('Edit Guard and Auto-Expand', () => {
       version: '',
       truncated: false,
       error: 'no such file or directory',
-    });
+    } as unknown as sandboxClient.FileReadResult);
 
     vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
       ok: true,
