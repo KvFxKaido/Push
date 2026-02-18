@@ -436,7 +436,7 @@ export async function executeSandboxToolCall(
 
         // For every read: add hashline anchors and line numbers to the tool result text
         let toolResultContent = '';
-        let emptyRangeWarning = '';
+        const emptyRangeWarning = '';
         if (result.content) {
           const contentLines = result.content.split('\n');
           // If content ends with a trailing newline, the last split element is empty — don't number it
@@ -451,7 +451,6 @@ export async function executeSandboxToolCall(
           toolResultContent = linesToNumber
             .map((line, idx) => `[${lineHashes[idx]}] ${String(rangeStart + idx).padStart(padWidth)}\t${line}`)
             .join('\n');
-        } else if (isRangeRead && !result.content) {
         }
 
         // --- File Awareness Ledger: record what the model has seen ---
