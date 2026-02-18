@@ -64,24 +64,24 @@ When the edit guard fires, the harness can optionally auto-re-read the missing r
 ## Shipping Sequence
 
 ### Phase 1: Edit Guard (MVP safety)
-- Implement ledger with range tracking
-- Wire guard into write/edit tool path
-- Handle exceptions: new file creation, model-authored files
-- Log trigger rate — this is the key decision metric
-- **Gate:** Guard shipping and trigger rate measured. If >15%, fast-track Phase 3.
+- [x] Implement ledger with range tracking
+- [x] Wire guard into write/edit tool path
+- [x] Handle exceptions: new file creation, model-authored files
+- [x] Log trigger rate — this is the key decision metric
+- [x] **Gate:** Guard shipping and trigger rate measured. If >15%, fast-track Phase 3.
 
 ### Phase 2: Signature Extraction (friction reducer)
-- Build regex extractor for TS + Python patterns
-- Validate against ~10 real Push files (check for misleading output)
-- Append signatures to truncation notices in read_file responses
-- Measure: does guard trigger rate drop?
-- **Gate:** Signatures validated as net-helpful (not producing junk that misleads the model).
+- [x] Build regex extractor for TS + Python patterns
+- [x] Validate against ~10 real Push files (check for misleading output)
+- [x] Append signatures to truncation notices in read_file responses
+- [x] Measure: does guard trigger rate drop?
+- [x] **Gate:** Signatures validated as net-helpful (not producing junk that misleads the model).
 
 ### Phase 3: Scoped Auto-Expand (UX fix)
-- On guard trigger, auto-re-read the missing range at expanded limit
-- Feed expanded content back to model; model retries edit
-- Measure: end-to-end edit success rate with guard + auto-expand
-- **Gate:** Auto-expand resolves >80% of guard triggers without user intervention.
+- [x] On guard trigger, auto-re-read the missing range at expanded limit
+- [x] Feed expanded content back to model; model retries edit
+- [x] Measure: end-to-end edit success rate with guard + auto-expand
+- [x] **Gate:** Auto-expand resolves >80% of guard triggers without user intervention.
 
 ## Non-Goals
 
