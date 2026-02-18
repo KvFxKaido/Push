@@ -54,8 +54,6 @@ function asPositiveInt(value: unknown): number | undefined | null {
   return n;
 }
 
-const ACCESS_DENIED_MESSAGE =
-  '[Tool Error] Access denied — can only query the active repo (owner/repo)';
 
 // --- Enhanced error messages ---
 
@@ -1780,7 +1778,8 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
   const allowedNormalized = normalizeRepoName(allowedRepo || '');
   const requestedNormalized = normalizeRepoName(call.args.repo || '');
   if (!allowedNormalized || !requestedNormalized || requestedNormalized !== allowedNormalized) {
-    return { text: ACCESS_DENIED_MESSAGE };
+    console.debug('[Tool Error] Access denied — repo mismatch', { allowed: allowedRepo || '(empty)', requested: call.args.repo || '(empty)' });
+    return { text: `[Tool Error] Access denied — can only query the active repo "${allowedRepo || 'none'}" (requested: "${call.args.repo || 'none'}")` };
   }
 
   try {
