@@ -435,7 +435,7 @@ export async function executeSandboxToolCall(
           : call.args.end_line;
 
         // For every read: add hashline anchors and line numbers to the tool result text
-        let toolResultContent: string;
+        let toolResultContent = '';
         let emptyRangeWarning = '';
         if (result.content) {
           const contentLines = result.content.split('\n');
