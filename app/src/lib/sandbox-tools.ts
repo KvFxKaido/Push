@@ -38,6 +38,7 @@ import { browserToolEnabled } from './feature-flags';
 import { recordBrowserMetric } from './browser-metrics';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger, extractSignatures } from './file-awareness-ledger';
+import { applyHashlineEdits, type HashlineOp } from "./hashline";
 import { safeStorageGet } from './safe-storage';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
@@ -172,6 +173,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_exec'; args: { command: string; workdir?: string } }
   | { tool: 'sandbox_read_file'; args: { path: string; start_line?: number; end_line?: number } }
   | { tool: 'sandbox_search'; args: { query: string; path?: string } }
+  | { tool: 'sandbox_edit_file'; args: { path: string; edits: HashlineOp[]; expected_version?: string } }
   | { tool: 'sandbox_write_file'; args: { path: string; content: string; expected_version?: string } }
   | { tool: 'sandbox_list_dir'; args: { path?: string } }
   | { tool: 'sandbox_diff'; args: Record<string, never> }
@@ -183,7 +185,6 @@ export type SandboxToolCall =
   | { tool: 'sandbox_browser_extract'; args: { url: string; instruction?: string } }
   | { tool: 'sandbox_download'; args: { path?: string } }
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
-  | { tool: 'promote_to_github'; args: { repo_name: string; description?: string; private?: boolean } };
 
 // --- Validation ---
 
@@ -236,6 +237,16 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
         path: args.path,
         content: args.content,
         expected_version: typeof args.expected_version === 'string' ? args.expected_version : undefined,
+      },
+    };
+  }
+  if (tool === "sandbox_edit_file" && typeof args.path === "string" && Array.isArray(args.edits)) {
+    return {
+      tool: "sandbox_edit_file",
+      args: {
+        path: args.path,
+        edits: args.edits as HashlineOp[],
+        expected_version: typeof args.expected_version === "string" ? args.expected_version : undefined,
       },
     };
   }
@@ -296,6 +307,7 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
 /** The set of tool names that are actually implemented and wired up. */
 export const IMPLEMENTED_SANDBOX_TOOLS = new Set([
   'sandbox_exec', 'sandbox_read_file', 'sandbox_search', 'sandbox_write_file',
+  "sandbox_edit_file",
   'sandbox_list_dir', 'sandbox_diff', 'sandbox_prepare_commit', 'sandbox_push',
   'sandbox_run_tests', 'sandbox_check_types', 'sandbox_browser_screenshot',
   'sandbox_browser_extract', 'sandbox_download', 'sandbox_save_draft',
@@ -610,6 +622,42 @@ export async function executeSandboxToolCall(
         };
 
         return { text: lines.join('\n'), card: { type: 'file-list', data: cardData } };
+      }
+
+      case "sandbox_edit_file": {
+        const editStart = Date.now();
+        const { path, edits, expected_version } = call.args;
+
+        // 1. Read the current file content
+        const readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        if (readResult.error) {
+          return { text: formatSandboxError(readResult.error, path) };
+        }
+
+        // 2. Apply hashline edits
+        const editResult = await applyHashlineEdits(readResult.content, edits);
+
+        if (editResult.failed > 0) {
+          return { 
+            text: [
+              `[Tool Error — sandbox_edit_file]`,
+              `Failed to apply ${editResult.failed} of ${edits.length} edits.`,
+              ...editResult.errors.map(e => `- ${e}`),
+              `No changes were saved. Review the file content and references then retry.`,
+              `No changes were saved. Review the file content and references then retry.`,
+            ].join("\n")
+          };
+        }
+
+        // 3. Delegate to write_file logic by modifying the call object (simplified implementation)
+        // We explicitly re-trigger the sandbox_write_file case logic by updating call
+        (call as any).tool = "sandbox_write_file";
+        (call as any).args = { 
+          path, 
+          content: editResult.content, 
+          expected_version: expected_version || readResult.version 
+        };
+        // Fall through to the next case (sandbox_write_file handled below)
       }
 
       case 'sandbox_write_file': {

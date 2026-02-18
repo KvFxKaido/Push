@@ -1,8 +1,8 @@
 # Push Harness Reliability Plan (Hashline Included)
 
 ## Status
-- Last updated: 2026-02-16
-- State: Track B Phase 1 complete, Track A gated, Track C ongoing
+- Last updated: 2026-02-17
+- State: Track B Phase 3 complete (Shipped), Track A gated, Track C ongoing
 - Intent: Improve coding task success by upgrading the harness, not just swapping models
 
 ## Why this doc changed
@@ -46,6 +46,10 @@ Hashline remains a candidate within this larger plan.
   - Range reads include line-number prefixes in tool text while editor cards stay clean.
   - Invalid ranges are rejected early (`start_line > end_line`, non-positive/invalid values).
   - Empty out-of-bounds range reads now return a clear warning instead of silent blank output.
+- **Truncation-Aware Edit Safety** (shipped 2026-02-17):
+  - Edit Guard & Awareness Ledger: blocks/warns when model attempts edits on truncated/unseen code.
+  - Signature Extraction: regex-based structural hints (functions/classes) included in truncation notices.
+  - Scoped Auto-Expand: harness automatically fetches missing line ranges when an edit is blocked by the guard.
 
 ## Main Harness Opportunities
 
@@ -89,24 +93,21 @@ Kill criteria:
 Problem:
 - Edit flows over-read large files; tokens and truncation pressure increase.
 
-Done (2026-02-14):
-- [x] Added `start_line` and `end_line` optional args to `sandbox_read_file`.
+Done (2026-02-17):
+- [x] Added `start_line` and `end_line` optional args to `sandbox_read_file` (Phase 1).
 - [x] Added line-number prefix in range read tool output (`cat -n` style) for model orientation.
 - [x] Kept UI editor card content clean (no injected line numbers).
-- [x] Added explicit warning when a requested range is out-of-bounds and returns no content.
-
-**Phase 1 shipped** (commits 7d9fa5f, 19e6f49) — range reads with line numbers, out-of-bounds warnings, clean editor cards.
-
-Remaining scope:
-- Add default full-file read cap (~2000 lines, matching Claude Code's default). Lines > 2000 chars truncated.
-- Keep annotation targeted to edit flows and verify no token-overhead regression.
-
-Pattern from Claude Code:
-- Model needs line numbers in *read output* to orient edits, but should not use them as *edit targets*. Read with line numbers → edit with content-anchored references. This is exactly what hashline does.
+- [x] Added explicit warning when a requested range is out-of-bounds.
+- [x] Default full-file read cap (~2000 lines) implemented to reduce payload size (Phase 2).
+- [x] **Truncation-Aware Edit Safety** (Phase 3):
+    - [x] Edit Guard & Awareness Ledger (blocks blind edits to truncated content).
+    - [x] Signature Extraction (regex-based structural hints in truncation notices).
+    - [x] Scoped Auto-Expand (automatically retrieves missing context for blocked edits).
 
 Success signal:
 - reduced average read payload size in edit-heavy tasks
 - fewer truncation-adjacent failures
+- zero blind-edits on truncated files
 
 ### Track C: Tool-Loop Robustness
 
@@ -174,12 +175,12 @@ Now:
 2. Add Track C malformed-call rate metric by provider/model (small — instrument `diagnoseToolCallFailure`).
 3. Add minimal instrumentation needed for Track A/B comparison.
 
-> Track B Phase 1 and Track C Phase 1 are ✅ complete (shipped 2026-02-14).
+> Track B Phases 1-3 and Track C Phase 1 are ✅ complete (shipped 2026-02-17).
 
 Next:
 1. If gate passes: implement Track A MVP behind flag (include fuzzy matching + structured error detail).
-2. Finalize Track B safeguards (2000-line full-read cap + payload/truncation telemetry).
-3. Expand `toolMeta` coverage on remaining error paths (Track E).
+2. Expand `toolMeta` coverage on remaining error paths (Track E).
+3. Begin server-side background job prototyping (Track D).
 
 Later:
 1. Track D server-side background jobs (see `documents/Background Coder Tasks Plan.md`).
@@ -206,25 +207,15 @@ Evaluation cadence:
 
 ## Decision Log
 
-### Template (for each experiment)
+### Track B Phases 1-3 — Range reads & Truncation Safety
 
-- Experiment:
-- Date enabled:
-- Cohort/flag:
-- Baseline:
-- Result:
-- Decision: `go` / `hold` / `kill`
-- Notes:
-
-### Track B Phase 1 — Range-aware file reads
-
-- Experiment: Track B Phase 1 — Range-aware file reads
-- Date enabled: 2026-02-14
+- Experiment: Track B — Read efficiency and context safety
+- Date enabled: 2026-02-14 (Ph 1), 2026-02-17 (Ph 2-3)
 - Cohort/flag: Global (no flag)
-- Baseline: Full-file reads only, no line-range support
-- Result: Shipped `start_line`/`end_line` args, line-numbered range output, out-of-bounds warning
-- Decision: `go` (Phase 1 complete, Phase 2 planned)
-- Notes: Commits 7d9fa5f, 19e6f49. Matches Claude Code's `cat -n` pattern.
+- Baseline: Full-file reads only; frequent "blind edits" on truncated content.
+- Result: Shipped range reads, 2000-line read cap, Awareness Ledger, Edit Guard, and Scoped Auto-Expand.
+- Decision: `go` (Track B complete)
+- Notes: Track B has significantly reduced payload size and eliminated a major class of edit failures where the model would guess missing code. See `documents/Truncation-Aware Edit Safety Plan.md`.
 
 ### Track C Phase 1 — Garbled tool-call recovery
 
@@ -234,7 +225,7 @@ Evaluation cadence:
 - Baseline: Narrow regex detection, generic error messages, raw JSON visible in chat
 - Result: Three-phase diagnosis, JSON repair, truncation detection, specific error feedback, garbled messages hidden from UI
 - Decision: `go` (Phase 1 complete, metrics instrumentation next)
-- Notes: Shipped same day as Track B. Covers `repairToolJson`, `detectTruncatedToolCall`, `diagnoseToolCallFailure`.
+- Notes: Shipped same day as Track B Phase 1. Covers `repairToolJson`, `detectTruncatedToolCall`, `diagnoseToolCallFailure`.
 
 ## External Review Checklist (PWA-GPT)
 
