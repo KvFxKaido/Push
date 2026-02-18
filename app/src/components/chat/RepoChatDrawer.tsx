@@ -315,7 +315,7 @@ export function RepoChatDrawer({
     <>
       <button
         onClick={() => setOpen(true)}
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.06] bg-[#0a0e16]/80 text-push-fg-secondary backdrop-blur-xl transition-colors duration-200 hover:text-push-fg active:scale-95"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-[#1b2230] bg-push-grad-input text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.4),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:text-push-fg hover:brightness-110 active:scale-95"
         aria-label="Open chats and repos"
         title="Chats and repos"
       >
