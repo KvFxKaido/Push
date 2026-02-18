@@ -1,3 +1,4 @@
+// Verified
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type {
   ChatMessage,
@@ -1086,7 +1087,7 @@ export function useChat(
           const toolCall = detectAnyToolCall(accumulated);
 
           if (!toolCall) {
-            // Check if the model tried to call an unimplemented tool (e.g. sandbox_edit_file)
+            // Check if the model tried to call an unimplemented tool (e.g. sandbox_not_implemented)
             const unimplementedTool = detectUnimplementedToolCall(accumulated);
             if (unimplementedTool) {
               console.warn(`[Push] Unimplemented tool call detected: ${unimplementedTool}`);
