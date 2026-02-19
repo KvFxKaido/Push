@@ -1461,11 +1461,11 @@ export function getActiveProvider(): ActiveProvider {
   const preferred = getPreferredProvider();
 
   // Honour explicit preference when the key is available
-  if (preferred && Boolean(PROVIDER_KEY_GETTERS[preferred]())) return preferred;
+  if (preferred && PROVIDER_KEY_GETTERS[preferred]()) return preferred;
 
   // No preference (or preferred key was removed) — first available
   for (const p of PROVIDER_FALLBACK_ORDER) {
-    if (Boolean(PROVIDER_KEY_GETTERS[p]())) return p;
+    if (PROVIDER_KEY_GETTERS[p]()) return p;
   }
   return 'demo';
 }
