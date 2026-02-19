@@ -38,11 +38,11 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Onboarding & state machine:** Users connect with GitHub App (recommended) or GitHub PAT, then select an active repo before chatting. Demo mode is an escape hatch with mock data. Sandbox Mode lets users start an ephemeral workspace without any GitHub auth. State machine: `onboarding → home → chat` (plus `file-browser` when sandbox files are open). The `isSandboxMode` flag bypasses auth and repo selection.
 
-**Tool protocol:** Tools are prompt-engineered — the system prompt defines available tools and JSON format. The orchestrator detects JSON tool blocks in responses, executes them against GitHub's API, injects results as synthetic messages, and re-calls the LLM. Both the Orchestrator and Coder tool loops are unbounded — they continue until the model stops emitting tool calls (or the user aborts). Sandbox tools use the same JSON block pattern, detected by a unified tool dispatch layer.
+**Tool protocol:** Tools are prompt-engineered — the system prompt defines available tools and JSON format. The orchestrator detects JSON tool blocks in responses, executes them against GitHub's API, injects results as synthetic messages, and re-calls the LLM. Both the Orchestrator and Coder tool loops are unbounded — they continue until the model stops emitting tool calls (or the user aborts). Sandbox tools use the same JSON block pattern, detected by a unified tool dispatch layer. Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message, splits them into parallel read-only calls and an optional trailing mutation — reads execute via `Promise.all()`, then the mutation runs. Tool results include structured error fields (`error_type`, `retryable`) via `classifyError()`, and a `[meta]` envelope with round number, context size, and sandbox dirty state.
 
 **Browser tools (optional):** `sandbox_browser_screenshot` and `sandbox_browser_extract`, prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true`, routed through Worker endpoints. Browser session credentials are injected server-side by the Worker.
 
-**Harness focus (current):** Reliability improvements are prioritized over model churn. Active tracks are defined in `documents/Harness Reliability Plan.md` (edit reliability, read efficiency, tool-loop robustness, background execution design, and operator visibility). Track B shipped: `sandbox_read_file` supports line ranges with numbered output and out-of-bounds warnings. `sandbox_edit_file` is active — edits are expressed as `HashlineOp[]` referencing 7-char content hashes (see `lib/hashline.ts`), which eliminates line-number drift and provides implicit staleness detection.
+**Harness focus (current):** Reliability improvements are prioritized over model churn. Active tracks are defined in `documents/Harness Reliability Plan.md` (edit reliability, read efficiency, tool-loop robustness, background execution design, and operator visibility). Track B shipped: `sandbox_read_file` supports line ranges with numbered output and out-of-bounds warnings. `sandbox_edit_file` is active — edits are expressed as `HashlineOp[]` referencing 7-char content hashes (see `lib/hashline.ts`), which eliminates line-number drift and provides implicit staleness detection. **Agent Experience Wishlist shipped** (see `documents/Agent Experience Wishlist.md`): 10 harness improvements — error taxonomy with retry semantics, structured malformed-call feedback, edit result diffs, multi-tool per turn, universal meta envelope, machine-checkable acceptance criteria, agent working memory, `sandbox_read_symbols`, and `sandbox_apply_patchset`.
 
 **Web search tools:** The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). Mistral handles search natively via its Agents API. API keys are configurable at runtime via Settings.
 
@@ -50,7 +50,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Sandbox Mode:** Ephemeral workspace with no GitHub repo. Entry via onboarding ("Try it now") or repo picker ("New Sandbox"). GitHub tools are blocked; only sandbox tools are available. Expiry warning at 5 min remaining. Download via header button, expiry banner, or `sandbox_download` AI tool (tar.gz archive). See `documents/Sandbox mode.md` for full spec.
 
-**Coder delegation:** The Orchestrator can delegate coding tasks to the Coder via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox (unbounded rounds, 90s timeout per round, 60KB context cap), then returns a summary + cards to the Orchestrator.
+**Coder delegation:** The Orchestrator can delegate coding tasks to the Coder via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox (unbounded rounds, 90s timeout per round, 60KB context cap), then returns a summary + cards to the Orchestrator. Delegation supports optional `acceptanceCriteria[]` — shell commands run after the Coder finishes to verify the task succeeded (pass/fail + output). The Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — plan, open tasks, files touched, assumptions, and errors are injected as a `[CODER_STATE]` block into every tool result, surviving context trimming.
 
 **Auditor gate:** Every `sandbox_commit` runs through the Auditor first. The Auditor reviews the diff and returns a binary verdict (SAFE/UNSAFE). UNSAFE blocks the commit. The Auditor defaults to UNSAFE on any error (fail-safe).
 
@@ -97,13 +97,13 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 - `lib/orchestrator.ts` — System prompt, multi-backend streaming (Kimi + Ollama + Mistral + Z.ai + MiniMax SSE), think-token parsing, provider routing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
 - `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks), `delegate_coder`, `fetchProjectInstructions` (reads AGENTS.md/CLAUDE.md from repos via API), branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`)
-- `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt; includes `sandbox_edit_file` (hashline-based edits)
+- `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt; includes `sandbox_edit_file` (hashline-based edits with diff output), `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (multi-file transactional edits), `classifyError()` (structured error taxonomy), `formatStructuredError()`
 - `lib/hashline.ts` — Hashline edit protocol: `calculateLineHash()` (7-char content hash per line), `applyHashlineEdits()`, `HashlineOp` type; underpins `sandbox_edit_file` and eliminates line-number drift
 - `lib/diff-utils.ts` — Canonical shared diff parsing: `parseDiffStats()`, `parseDiffIntoFiles()`, `formatSize()`; used by sandbox-tools, auditor-agent, coder-agent, FileListCard, SandboxDownloadCard, FileBrowser, file-utils, file-processing
-- `lib/sandbox-client.ts` — HTTP client for `/api/sandbox/*` endpoints (thin fetch wrappers)
+- `lib/sandbox-client.ts` — HTTP client for `/api/sandbox/*` endpoints (thin fetch wrappers), `mapSandboxErrorCode()` (maps Modal error codes to `ToolErrorType`)
 - `lib/scratchpad-tools.ts` — Scratchpad tool definitions (`set_scratchpad`, `append_scratchpad`), prompt injection escaping
-- `lib/tool-dispatch.ts` — Unified tool dispatch (GitHub + Sandbox + Scratchpad + delegation)
-- `lib/coder-agent.ts` — Coder sub-agent loop (unbounded rounds, 90s timeout per round, uses active backend)
+- `lib/tool-dispatch.ts` — Unified tool dispatch (GitHub + Sandbox + Scratchpad + delegation), `detectAllToolCalls()` (multi-tool detection with read/mutate split), `isReadOnlyToolCall()`, `DetectedToolCalls` type
+- `lib/coder-agent.ts` — Coder sub-agent loop (unbounded rounds, 90s timeout per round, uses active backend), `CoderWorkingMemory` + `coder_update_state` tool (compaction-safe internal state), `acceptanceCriteria` post-task verification, parallel read-only tool support
 - `lib/auditor-agent.ts` — Auditor review + verdict (fail-safe to UNSAFE, uses active backend)
 - `lib/workspace-context.ts` — Builds active repo context for system prompt injection
 - `lib/providers.ts` — AI provider configs (Kimi + Ollama + Mistral + Z.ai + MiniMax + OpenRouter), role-to-model mapping, backend preference
@@ -123,7 +123,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `lib/file-awareness-ledger.ts` — File Awareness Ledger: tracks what lines the model has read per file (`never_read` / `partial_read` / `fully_read` / `model_authored` / `stale`); part of Truncation-Aware Edit Safety (Track B)
 - `lib/tool-call-metrics.ts` — In-memory observability for malformed tool-call attempts by provider/model/reason
 - `lib/utils.ts` — General utility functions
-- `hooks/useChat.ts` — Chat state, message history, unified tool execution loop, Coder delegation, scratchpad integration
+- `hooks/useChat.ts` — Chat state, message history, unified tool execution loop (multi-tool dispatch, `[meta]` envelope injection, structured malformed-call feedback), Coder delegation (with `acceptanceCriteria` passthrough), scratchpad integration
 - `hooks/useUserProfile.ts` — User identity (name, bio, GitHub login), standalone getter + React hook, localStorage persistence
 - `hooks/useSandbox.ts` — Sandbox session lifecycle (idle → creating → ready → error), supports ephemeral mode
 - `hooks/useScratchpad.ts` — Shared notepad state, localStorage persistence, content size limits
@@ -147,7 +147,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `hooks/useExpandable.ts` — Generic expandable/collapsible UI state hook
 - `hooks/useUsageTracking.ts` — Usage analytics tracking
 - `hooks/use-mobile.ts` — Mobile viewport detection
-- `types/index.ts` — All shared TypeScript types (includes card data types for sandbox, diff preview, audit verdict)
+- `types/index.ts` — All shared TypeScript types (includes card data types for sandbox, diff preview, audit verdict; agent experience types: `ToolErrorType`, `StructuredToolError`, `ToolResultMeta`, `AcceptanceCriterion`, `CriterionResult`, `CoderWorkingMemory`)
 
 ## Environment
 

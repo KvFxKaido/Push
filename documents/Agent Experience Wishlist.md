@@ -2,7 +2,7 @@
 
 Date: 2026-02-19
 Author: Claude (agent-in-residence) + Council (Gemini + Codex)
-Status: **Open — prioritized, not scheduled**
+Status: **Shipped** (all 9 items implemented, 2026-02-19)
 
 ---
 
@@ -253,19 +253,19 @@ Dry-run returns what would change and flags conflicts. On `dryRun: false`, appli
 
 ## Priority Summary
 
-| Rank | Item | Effort | Council signal |
-|------|------|--------|----------------|
-| P0 | Multi-tool per turn (parallel read-only / serial mutating) | Medium | Both agree |
-| P0 | Error taxonomy + retry semantics | Low-Medium | Both flagged as missing |
-| P0 | Machine-checkable acceptance criteria | Medium | Both agree |
-| P1 | Universal `meta` envelope on every tool result | Low | Codex — strictly better than items 3+4 |
-| P1 | Agent-internal working memory (compaction-safe) | Medium | Both agree |
-| P1 | Edit result diff with hash/range info | Low | Both agree |
-| P1 | Structured malformed-call feedback to agent | Low | Codex re-read — closes Track C loop |
-| P2 | `sandbox_read_symbols` / find_references (AST tool) | Medium | Codex |
-| P2 | `sandbox_apply_patchset` (transactional multi-file edits) | Medium | Codex |
+| Rank | Item | Effort | Council signal | Status |
+|------|------|--------|----------------|--------|
+| P0 | Multi-tool per turn (parallel read-only / serial mutating) | Medium | Both agree | Shipped |
+| P0 | Error taxonomy + retry semantics | Low-Medium | Both flagged as missing | Shipped |
+| P0 | Machine-checkable acceptance criteria | Medium | Both agree | Shipped |
+| P1 | Universal `meta` envelope on every tool result | Low | Codex — strictly better than items 3+4 | Shipped |
+| P1 | Agent-internal working memory (compaction-safe) | Medium | Both agree | Shipped |
+| P1 | Edit result diff with hash/range info | Low | Both agree | Shipped |
+| P1 | Structured malformed-call feedback to agent | Low | Codex re-read — closes Track C loop | Shipped |
+| P2 | `sandbox_read_symbols` / find_references (AST tool) | Medium | Codex | Shipped |
+| P2 | `sandbox_apply_patchset` (transactional multi-file edits) | Medium | Codex | Shipped |
 
-**If only three things ship:** multi-tool per turn, error taxonomy, and machine-checkable acceptance criteria. These address the three failure modes that waste the most rounds: serial reads, bad retries, and silent task failure.
+All 9 items shipped in a single sprint (2026-02-19). Implementation details in the commit history.
 
 ---
 
