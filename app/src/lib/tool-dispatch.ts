@@ -228,26 +228,11 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
     }
   }
 
-  // Phase 3: Broad pattern match — garbled JSON that neither parsed nor repaired
-  const broadPattern = /[{,]\s*["']?tool["']?\s*:\s*["']/;
-  if (broadPattern.test(text)) {
-    // Try to extract the tool name from the garbled text
-    const nameMatch = text.match(/["']?tool["']?\s*:\s*["']([^"']+)["']/);
-    const toolName = nameMatch?.[1] || null;
-    return {
-      reason: 'malformed_json',
-      toolName,
-      errorMessage: toolName
-        ? `Your tool call for "${toolName}" had malformed JSON. Please retry with valid JSON using the exact format from the tool protocol.`
-        : `Your last tool call had malformed JSON and could not be parsed. Please retry with valid JSON using the exact format from the tool protocol.`,
-    };
-  }
+  // Phase 3: REMOVED — broad pattern /[{,]\s*["']?tool["']?\s*:\s*["']/ had too many
+  // false positives on legitimate prose and user-directed demonstrations.
 
-  // Phase 3.5: Bare JSON args — JSON objects that parse correctly but have no
-  // 'tool' key, and their keys match known tool argument patterns. This catches
-  // models that emit just the arguments without the {"tool":..,"args":..} wrapper.
-  // (Only reached if tryRecoverBareToolArgs in detectAnyToolCall failed to
-  // auto-recover — e.g. the inferred tool didn't pass validation.)
+  // Phase 3.5: Bare JSON args — telemetry only. Records the metric so we can track
+  // how often models emit bare args, but does NOT trigger a retry (too imprecise).
   const bareObjects = extractAllBareJsonObjects(text);
   for (const obj of bareObjects) {
     if (typeof obj.tool === 'string') continue; // already handled by earlier phases
@@ -261,15 +246,16 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
           + `{"tool": "${inferred}", "args": ${JSON.stringify(obj)}}\n`
           + '```\n\n'
           + 'Always wrap tool calls in {"tool": "...", "args": {...}} format.',
+        telemetryOnly: true,
       };
     }
   }
 
-  // Phase 4: Natural language tool intent — model described using a tool
-  // without emitting JSON (e.g. "I'll delegate to the coder" or
-  // "Let me run sandbox_exec").
+  // Phase 4: Natural language tool intent — telemetry only. Records intent misses
+  // for provider compliance tracking, but does NOT trigger a retry. The prompt
+  // already instructs models never to describe tool use in prose.
   const nlIntent = detectNaturalLanguageToolIntent(text);
-  if (nlIntent) return nlIntent;
+  if (nlIntent) return { ...nlIntent, telemetryOnly: true };
 
   return null;
 }
