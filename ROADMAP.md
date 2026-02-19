@@ -1,6 +1,6 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-02-17
+Last updated: 2026-02-19
 
 This is the single source of truth for active product and engineering direction.
 
@@ -25,7 +25,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
-| Harness Reliability Program (Tracks A-E) | in_progress | Execute harness-first reliability roadmap: edit reliability experiments, read efficiency, tool-loop robustness, background resilience design, and operator visibility improvements | Hashline protocol & truncation-aware safety live (Tracks A/B); Track D (Background Jobs) & Track E (Visibility) ongoing |
+| Harness Reliability Program (Tracks A-E) | in_progress | Execute harness-first reliability roadmap: edit reliability experiments, read efficiency, tool-loop robustness, background resilience design, and operator visibility improvements | Hashline protocol, truncation-aware safety, and Agent Experience Wishlist (Tracks A-C) live; Track D (Background Jobs) & Track E (Visibility) ongoing |
 | Background Coding Jobs Design | planned | Turn background coding draft into implementation-ready Worker/DO job contract for mobile lock/background resilience | API contract approved (`start/status/events/cancel`), Durable Object binding plan drafted, and UI job-card status model defined |
 | Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
@@ -35,6 +35,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
+| Agent Experience Wishlist (Track C) | done | Implement 10 harness improvements: structured error taxonomy, edit diffs, multi-tool per turn, universal meta envelope, and machine-readable tool-call feedback | All items shipped and verified in harness metrics (Commit 0336f11) |
 | Sandbox Mode v1 | done | Ephemeral Modal workspace for brainstorming/prototyping; primary onboarding entry point; tar.gz download export path | User can start sandbox from onboarding (no GitHub auth) or repo picker, edit/run files, and download workspace as tar.gz |
 | Repo Sync Reliability | done | Unified auth handling and complete repo pagination for PAT/OAuth + GitHub App paths | Authenticated flows do not silently fall back to demo; repo fetching paginates across accessible pages |
 | Sandbox Repo Promotion (v2) | done | In-app `promote_to_github` flow creates a repo, pushes sandbox branch, and transitions app context to repo mode | User can promote sandbox to GitHub without leaving chat; active workspace rebinds to promoted repo |
@@ -47,6 +48,8 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Date | Decision | Source |
 |---|---|---|
+| 2026-02-19 | Agent Experience Wishlist (Track C) fully implemented | Commit 0336f11 + follow-ups |
+| 2026-02-19 | OpenRouter catalog updated: Sonnet 4.6, Gemini 3.1 Pro Preview added; Codex 5.3 removed | Commits f323e1b, 4b97df9 |
 | 2026-02-09 | Root `ROADMAP.md` is canonical; `documents/` is draft space | Team decision in chat |
 | 2026-02-09 | Sandbox Mode vision: real ephemeral workspace + explicit promotion paths | `documents/Sandbox mode.md` |
 | 2026-02-08 | Sandbox v1 descoped: no in-app repo creation (latency/sync concerns); zip download is the only export path; onboarding entry point is v1 priority | `documents/Sandbox mode.md` revision |
