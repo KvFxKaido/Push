@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://push.sh/schemas/push-runtime-request-envelope.schema.json",
+  "title": "Push Runtime Request Envelope",
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "requestId",
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "v": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/protocolVersion"
+    },
+    "kind": {
+      "const": "request"
+    },
+    "requestId": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/requestId"
+    },
+    "type": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/requestType"
+    },
+    "sessionId": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/sessionId"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "hello"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/helloRequestPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "start_session"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/startSessionRequestPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "list_sessions"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/listSessionsRequestPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "attach_session"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sessionId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/attachSessionRequestPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "resume_session"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sessionId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/resumeSessionRequestPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "send_user_message"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sessionId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/sendUserMessageRequestPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "submit_approval"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sessionId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/submitApprovalRequestPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "cancel_run"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sessionId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/cancelRunRequestPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "ping"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/pingRequestPayload"
+          }
+        }
+      }
+    }
+  ]
+}

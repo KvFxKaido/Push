@@ -1,650 +1,316 @@
-# Push CLI Plan
+# Push CLI Plan (V2)
 
-Date: 2026-02-16  
+Date: 2026-02-19  
 Status: Draft  
 Owner: Push
 
-## Goal
+## Decision
 
-Build a terminal interface for Push that reuses the existing agent infrastructure (Orchestrator, Coder, Auditor) without duplicating core logic or creating a separate repo.
+Push CLI is an interactive product first, not a headless tool first.
 
-## Why CLI?
+Default experience:
+- Codex/Claude Code style interactive terminal UX
 
-- **Cost reduction** — Reuse existing AI subscriptions (Kimi, Mistral, Ollama, Z.ai, MiniMax) across mobile and desktop contexts
-- **Desktop workflows** — Some coding tasks are better suited for terminal/IDE integration
-- **No new subscriptions** — Push CLI uses the same backends as the mobile app
-- **Faster local operations** — Direct git operations without Worker proxy
-- **Offline capability** — Git operations work without network
+Optional mode:
+- Headless non-interactive execution for CI and automation
 
-## Core Insight: This Is NOT a Monorepo Problem
+Platform direction:
+- The same runtime powers CLI, web, and Android remote clients
+- Modal is an option, not a hard dependency
 
-ChatGPT was right: this is just separation of concerns.
+## Product Principles
 
-**We already have multiple projects in one repo:**
-```
-Push/
-  app/        (mobile UI + worker proxy)
-  sandbox/    (Modal backend)
-```
+1. Interactive by default
+- `push` launches a full TUI session with streaming, tool timeline, diffs, approvals, interrupt/resume, and checkpoints.
 
-Adding CLI is the same pattern — just another frontend for the same engine.
+2. One engine, multiple clients
+- CLI, web, and Android are clients of the same runtime protocol.
+- No duplicate orchestration logic per client.
 
-**We don't need:**
-- ❌ Turborepo, Nx, or pnpm workspaces (yet)
-- ❌ Complex build pipelines
-- ❌ Publishing `core` as npm package
-- ❌ Separate repos (leads to fragmentation)
+3. Headless is a mode, not a fork
+- `push run --headless` uses the same core runtime and tools.
+- Headless changes IO behavior only.
 
-**We just need:**
-- ✅ Extract UI-agnostic logic to `core/`
-- ✅ Use relative imports (no tooling required)
-- ✅ Abstract browser dependencies (storage, etc.)
+4. Modal optional
+- Sandbox provider is pluggable.
+- Local execution provider is first-class, Modal provider remains supported.
 
-## Current State Analysis
+## User Experience Targets
 
-**Good news:** `app/src/lib/` is already mostly UI-agnostic.
+### Interactive (`push`)
 
-Pure logic (no React, no DOM):
-- `orchestrator.ts`, `coder-agent.ts`, `auditor-agent.ts`
-- `github-tools.ts`, `sandbox-tools.ts`, `scratchpad-tools.ts`, `web-search-tools.ts`
-- `tool-dispatch.ts`
-- `providers.ts`, `model-catalog.ts`
-- `prompts.ts`, `diff-utils.ts`, `file-processing.ts`, `file-utils.ts`
-- `types/index.ts`
+Expected baseline:
+- Streaming answer tokens
+- Live tool-call timeline
+- Structured tool result cards rendered in terminal form
+- Diff preview before write/commit actions
+- Confirmation gates for destructive actions
+- Keyboard controls for interrupt, approve, retry, and inspect
+- Session resume by id
 
-Browser dependencies (need abstraction):
-- `safe-storage.ts` — Uses `localStorage`/`sessionStorage`
-- `orchestrator.ts` — Stores context mode in localStorage
-- `workspace-context.ts` — May have browser assumptions
-- `scratchpad-tools.ts` — References localStorage
+### Headless (`push run --headless`)
 
-All hooks in `app/src/hooks/` are React-specific (stay in app).
+Expected baseline:
+- Deterministic non-interactive run
+- JSON output option for scripts/CI
+- Exit codes tied to task success/failure and acceptance checks
 
-## Proposed Structure
+### Remote Attach (`push remote` and app integration)
 
-```
-Push/
-├── core/              # NEW: UI-agnostic engine
-│   ├── src/
-│   │   ├── agents/    # orchestrator, coder, auditor
-│   │   ├── tools/     # github, sandbox, scratchpad, web-search, tool-dispatch
-│   │   ├── providers/ # AI backend configs, model catalog
-│   │   ├── types/     # shared TypeScript types
-│   │   └── utils/     # prompts, diff, storage abstraction, file processing
-│   ├── package.json
-│   └── tsconfig.json
-├── app/               # EXISTING: Mobile PWA
-│   └── src/
-│       ├── lib/       # → Move most to ../core/src/
-│       ├── hooks/     # Keep (React-specific)
-│       ├── components/
-│       └── types/     # → Move to ../core/src/types/
-├── cli/               # NEW: Terminal interface
-│   ├── src/
-│   │   ├── commands/  # chat, code, commit, diff, branch, review
-│   │   ├── ui/        # terminal rendering (streams, cards, spinners)
-│   │   ├── config/    # ~/.push/config.json management
-│   │   └── index.ts   # CLI entry point
-│   ├── package.json
-│   └── tsconfig.json
-└── sandbox/           # EXISTING: Modal backend
-```
+Expected baseline:
+- Attach to an existing local runtime session
+- Read stream + send user inputs/tool approvals
+- Handles disconnect/reconnect without losing job state
 
-## Implementation Plan
+## Scope and Non-Goals
 
-### Phase 0: Storage Abstraction (30 minutes)
+In scope (MVP):
+- Interactive TUI experience
+- Runtime daemon process (`pushd`)
+- Session protocol for clients
+- Local sandbox provider + Modal sandbox provider
+- CLI client using runtime protocol
 
-Create `core/src/utils/storage.ts`:
+Out of scope (MVP):
+- Full cross-platform GUI rewrite
+- Complex plugin marketplace
+- Multi-user shared sessions
+- Perfect feature parity with all existing app cards on day one
 
-```typescript
-// Storage abstraction that CLI can override
-export interface Storage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-}
+## Architecture
 
-// Browser implementation (app uses this)
-export const browserStorage: Storage = {
-  getItem: (key) => localStorage.getItem(key),
-  setItem: (key, value) => localStorage.setItem(key, value),
-  removeItem: (key) => localStorage.removeItem(key)
-};
+## High-Level Model
 
-// CLI implementation (file-based)
-export function fileStorage(basePath: string): Storage {
-  // Read/write to ~/.push/${key}.json
-  return {
-    getItem: (key) => {
-      const path = join(basePath, `${key}.json`);
-      if (!existsSync(path)) return null;
-      return readFileSync(path, 'utf-8');
-    },
-    setItem: (key, value) => {
-      const path = join(basePath, `${key}.json`);
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, value, 'utf-8');
-    },
-    removeItem: (key) => {
-      const path = join(basePath, `${key}.json`);
-      if (existsSync(path)) unlinkSync(path);
-    }
-  };
-}
-```
+Components:
+- `push` (CLI client, interactive)
+- `push run --headless` (CLI client, non-interactive)
+- `pushd` (runtime daemon)
+- `app` remote client (future phase)
+- Providers behind interfaces:
+  - AI provider (`moonshot`, `ollama`, `mistral`, `zai`, `minimax`, `openrouter`)
+  - Sandbox provider (`local`, `modal`)
 
-Update functions that use localStorage to accept `storage` parameter.
+Flow:
+1. Client opens/attaches session in `pushd`
+2. Client sends user input event
+3. Runtime executes orchestrator/tool loop
+4. Runtime emits streaming events to subscribers
+5. Client renders events (TUI/app)
 
-### Phase 1: Extract Core (1 hour)
+## Runtime Responsibilities (`pushd`)
 
-Create `core/` directory and move files:
+- Session lifecycle and persistence metadata
+- Agent loop execution and cancellation
+- Tool dispatch and capability gating
+- Provider selection and fallback
+- Workspace state tracking
+- Acceptance criteria execution
+- Event broadcasting to one or more clients
 
-```bash
-mkdir -p core/src/{agents,tools,providers,types,utils}
+## Client Responsibilities (`push` / app)
 
-# Agents
-mv app/src/lib/orchestrator.ts      core/src/agents/
-mv app/src/lib/coder-agent.ts       core/src/agents/
-mv app/src/lib/auditor-agent.ts     core/src/agents/
+- Render stream/events
+- Collect user input and confirmations
+- Display cards/diffs in client-native UI
+- Keep minimal local state; runtime is source of truth
 
-# Tools
-mv app/src/lib/github-tools.ts      core/src/tools/
-mv app/src/lib/sandbox-tools.ts     core/src/tools/
-mv app/src/lib/scratchpad-tools.ts  core/src/tools/
-mv app/src/lib/web-search-tools.ts  core/src/tools/
-mv app/src/lib/tool-dispatch.ts     core/src/tools/
+## Protocol (MVP)
 
-# Providers
-mv app/src/lib/providers.ts         core/src/providers/
-mv app/src/lib/model-catalog.ts     core/src/providers/
+Transport options:
+- Local IPC for CLI to daemon (Unix socket or named pipe)
+- WebSocket/SSE adapter for remote app attach
 
-# Types
-mv app/src/types/index.ts           core/src/types/
-
-# Utils
-mv app/src/lib/prompts.ts           core/src/utils/
-mv app/src/lib/diff-utils.ts        core/src/utils/
-mv app/src/lib/file-processing.ts   core/src/utils/
-mv app/src/lib/file-utils.ts        core/src/utils/
-mv app/src/lib/safe-storage.ts      core/src/utils/storage.ts  # Rename + update
-```
-
-Update all internal imports within `core/` to use relative paths.
-
-**Files that stay in `app/src/lib/`:**
-- `codemirror-*` — Editor-specific
-- `browser-metrics.ts` — Browser-specific
-- `feature-flags.ts` — May reference env vars specific to Vite
-- `sandbox-start-mode.ts` — May have UI coupling
-- `snapshot-manager.ts` — May have UI coupling
-- `workspace-context.ts` — Needs review (may be portable)
-- `edit-metrics.ts` — Metrics specific to UI interactions
-- `utils.ts` — General utils (may split portable parts to core)
-- `worker-routes.test.ts` — Worker-specific
-
-### Phase 2: Update App Imports (15 minutes)
-
-Update imports in `app/src/` to point to `../../core/src/`:
-
-Example in `app/src/hooks/useChat.ts`:
-```typescript
-// Before:
-import { runOrchestrator } from '../lib/orchestrator';
-import { executeGitHubToolCall } from '../lib/github-tools';
-
-// After:
-import { runOrchestrator } from '../../../core/src/agents/orchestrator';
-import { executeGitHubToolCall } from '../../../core/src/tools/github-tools';
-import { browserStorage } from '../../../core/src/utils/storage';
-
-// Inject storage:
-runOrchestrator({ 
-  storage: browserStorage,
-  // ... other params
-})
-```
-
-### Phase 3: CLI Skeleton (2 hours)
-
-Create CLI structure:
-
-```bash
-mkdir -p cli/src/{commands,ui,config}
-cd cli && npm init -y
-npm install commander chalk ora@5 node-fetch
-npm install -D typescript @types/node
-```
-
-#### `cli/package.json`
+Core event envelope:
 
 ```json
 {
-  "name": "push-cli",
-  "version": "0.1.0",
-  "type": "module",
-  "bin": {
-    "push": "./dist/index.js"
-  },
-  "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "link": "npm link"
-  },
-  "dependencies": {
-    "commander": "^12.0.0",
-    "chalk": "^5.3.0",
-    "ora": "^5.4.1",
-    "node-fetch": "^3.3.2"
-  },
-  "devDependencies": {
-    "typescript": "~5.9.3",
-    "@types/node": "^24.10.1"
-  }
+  "sessionId": "sess_123",
+  "seq": 42,
+  "ts": 1760000000000,
+  "type": "tool_call",
+  "payload": {"tool": "sandbox_read_file", "args": {"path": "app/src/lib/orchestrator.ts"}}
 }
 ```
 
-#### `cli/src/index.ts`
+Event types (initial):
+- `session_started`
+- `assistant_token`
+- `assistant_done`
+- `thinking_token` (optional per provider)
+- `tool_call`
+- `tool_result`
+- `approval_required`
+- `approval_received`
+- `status`
+- `warning`
+- `error`
+- `run_complete`
 
-```typescript
-#!/usr/bin/env node
-import { Command } from 'commander';
-import { chatCommand } from './commands/chat.js';
-import { codeCommand } from './commands/code.js';
-import { diffCommand } from './commands/diff.js';
+Control messages (client to runtime):
+- `start_session`
+- `send_user_message`
+- `approve`
+- `deny`
+- `cancel_run`
+- `resume_session`
+- `attach_session`
 
-const program = new Command();
+## Provider Interfaces
 
-program
-  .name('push')
-  .description('AI coding agent for your repos')
-  .version('0.1.0');
+### AI Provider
 
-program
-  .command('chat <message>')
-  .description('Start a conversation about your code')
-  .option('-p, --provider <name>', 'AI provider (kimi, mistral, ollama, zai, minimax)')
-  .action(chatCommand);
+Contract:
 
-program
-  .command('code <task>')
-  .description('Delegate a coding task to the Coder agent')
-  .option('-p, --provider <name>', 'AI provider')
-  .action(codeCommand);
-
-program
-  .command('diff [base] [head]')
-  .description('Show diff with AI analysis')
-  .action(diffCommand);
-
-program
-  .command('branch <name>')
-  .description('Create a new branch')
-  .action((name) => {
-    console.log(`Creating branch: ${name}`);
-    // TODO: Use git + sandbox
-  });
-
-program
-  .command('commit <message>')
-  .description('Commit changes with AI review')
-  .action((message) => {
-    console.log(`Committing with: ${message}`);
-    // TODO: Run Auditor before commit
-  });
-
-program.parse();
-```
-
-#### `cli/src/commands/chat.ts`
-
-```typescript
-import { runOrchestrator } from '../../../core/src/agents/orchestrator.js';
-import { fileStorage } from '../../../core/src/utils/storage.js';
-import { renderStream } from '../ui/stream.js';
-import { loadConfig } from '../config/index.js';
-
-export async function chatCommand(message: string, options: any) {
-  const config = loadConfig();
-  const storage = fileStorage(config.dataDir);
-  const provider = options.provider || config.defaultProvider || 'kimi';
-
-  console.log(`Using provider: ${provider}\n`);
-
-  const stream = runOrchestrator({
-    storage,
-    provider,
-    messages: [{ role: 'user', content: message }],
-    repoContext: {
-      owner: 'current',  // TODO: Read from git
-      repo: 'current',
-      branch: 'main'     // TODO: Read from git
-    },
-    // ... other config
-  });
-
-  await renderStream(stream);
+```ts
+interface AIProvider {
+  id: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
+  streamChat(req: StreamRequest): AsyncIterable<ProviderChunk>;
 }
 ```
 
-#### `cli/src/ui/stream.ts`
+### Sandbox Provider
 
-```typescript
-import chalk from 'chalk';
-import ora from 'ora';
+Contract:
 
-export async function renderStream(stream: AsyncIterable<any>) {
-  let spinner: any = null;
-  
-  for await (const chunk of stream) {
-    switch (chunk.type) {
-      case 'think':
-        if (!spinner) spinner = ora('Thinking...').start();
-        spinner.text = chalk.dim(chunk.content);
-        break;
-        
-      case 'text':
-        if (spinner) { 
-          spinner.stop(); 
-          spinner = null; 
-        }
-        process.stdout.write(chunk.content);
-        break;
-        
-      case 'tool_call':
-        if (spinner) spinner.stop();
-        console.log(chalk.cyan(`\n🔧 ${chunk.tool}`));
-        console.log(chalk.dim(JSON.stringify(chunk.args, null, 2)));
-        spinner = ora('Executing...').start();
-        break;
-        
-      case 'tool_result':
-        spinner?.succeed(chalk.green('✓ Done'));
-        // Optionally show brief summary
-        if (chunk.summary) {
-          console.log(chalk.dim(chunk.summary));
-        }
-        spinner = null;
-        break;
-        
-      case 'error':
-        if (spinner) spinner.fail();
-        console.error(chalk.red(`\n❌ Error: ${chunk.message}`));
-        break;
-    }
-  }
-  
-  if (spinner) spinner.stop();
-  console.log(); // Final newline
+```ts
+interface SandboxProvider {
+  id: 'local' | 'modal';
+  createWorkspace(input: WorkspaceInput): Promise<WorkspaceHandle>;
+  exec(handle: WorkspaceHandle, command: string, opts?: ExecOpts): Promise<ExecResult>;
+  readFile(handle: WorkspaceHandle, path: string, range?: LineRange): Promise<FileReadResult>;
+  writeFile(handle: WorkspaceHandle, path: string, content: string, expectedVersion?: string): Promise<WriteResult>;
+  diff(handle: WorkspaceHandle): Promise<DiffResult>;
+  cleanup(handle: WorkspaceHandle): Promise<void>;
 }
 ```
 
-#### `cli/src/config/index.ts`
+Rule:
+- All tool behavior goes through the active sandbox provider.
+- Tool protocol remains stable; provider-specific behavior is hidden behind adapters.
 
-```typescript
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+## Execution Modes
 
-interface Config {
-  dataDir: string;
-  defaultProvider: string;
-  apiKeys: {
-    moonshot?: string;
-    mistral?: string;
-    ollama?: string;
-    zai?: string;
-    minimax?: string;
-  };
-}
+Mode selection:
+- Default: interactive TUI with local provider preferred
+- Optional: `--sandbox modal`
+- Optional: `--headless`
 
-const CONFIG_PATH = join(homedir(), '.push', 'config.json');
+Example commands:
+- `push` (interactive session)
+- `push chat "review recent commit"`
+- `push run --headless --task "fix failing tests" --json`
+- `push --sandbox modal`
+- `push remote attach <session-id>`
 
-export function loadConfig(): Config {
-  if (!existsSync(CONFIG_PATH)) {
-    return {
-      dataDir: join(homedir(), '.push'),
-      defaultProvider: 'kimi',
-      apiKeys: {}
-    };
-  }
-  
-  return JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
-}
+## Security Model
 
-export function saveConfig(config: Config): void {
-  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
-}
-```
+- Store tokens in OS keychain/credential store when possible
+- Fallback encrypted-at-rest file config only if keychain unavailable
+- Never echo secrets in event stream
+- Redact tokens from tool outputs and logs
+- Explicit approval gates for destructive ops
 
-### Phase 4: Testing (1 hour)
+## Incremental Implementation Plan
 
-```bash
-# Build CLI
-cd cli
-npm run build
-npm link
+Phase 0: Runtime Contract and Skeleton (3-5 days)
+- Define event protocol and message schemas
+- Add `pushd` skeleton with session manager
+- Add local IPC path and a minimal `push` client
 
-# Test basic chat
-push chat "what changed in the last commit"
+Deliverable:
+- `push` can start a session and print streamed assistant text from runtime mock
 
-# Test with provider selection
-push chat "review this code" --provider mistral
+Phase 1: Interactive TUI MVP (1-2 weeks)
+- Build terminal UI loop (input, stream output, status bar, tool timeline)
+- Add interrupt/cancel and resume support
+- Render basic tool results and errors
 
-# Test code delegation
-push code "add error handling to auth flow"
-```
+Deliverable:
+- Codex/Claude-style interactive experience without full card parity
 
-### Phase 5: Git Integration (2 hours)
+Phase 2: Real Agent Integration (1 week)
+- Connect runtime to existing orchestrator/tool dispatch logic
+- Wire provider config and key loading
+- Preserve current behavior for tool loop semantics
 
-Add git awareness to CLI:
+Deliverable:
+- End-to-end agent task execution in interactive CLI
 
-```bash
-npm install simple-git
-```
+Phase 3: Sandbox Provider Abstraction (1-2 weeks)
+- Introduce `SandboxProvider` interface
+- Implement `modal` adapter from existing sandbox client behavior
+- Implement `local` adapter (workspace-local exec/read/write/diff)
+- Capability checks surfaced as clear runtime warnings
 
-Read current repo/branch context:
-```typescript
-import simpleGit from 'simple-git';
+Deliverable:
+- Modal no longer required for local execution flows
 
-export async function getGitContext() {
-  const git = simpleGit();
-  const status = await git.status();
-  const remote = await git.remote(['get-url', 'origin']);
-  
-  // Parse owner/repo from remote URL
-  const match = remote.match(/github\.com[:/]([^/]+)\/([^.]+)/);
-  
-  return {
-    owner: match?.[1] || 'unknown',
-    repo: match?.[2] || 'unknown',
-    branch: status.current || 'main',
-    isClean: status.files.length === 0
-  };
-}
-```
+Phase 4: Headless Mode (3-5 days)
+- Add `push run --headless`
+- Add machine-readable JSON output and strict exit codes
 
-## MVP Commands
+Deliverable:
+- CI-friendly non-interactive execution on same engine
 
-### Essential (Phase 3)
-- `push chat <message>` — Start conversation with repo context
-- `push code <task>` — Delegate coding task to Coder agent
+Phase 5: Remote Client Support (1-2 weeks)
+- Add attach/read/write runtime endpoints for app client
+- Add reconnect and session ownership safeguards
 
-### Git Operations (Phase 5)
-- `push diff [base] [head]` — Show diff with AI context
-- `push branch <name>` — Create branch
-- `push commit <message>` — Commit with Auditor review
+Deliverable:
+- App can attach to local runtime session as remote UI
 
-### Later Enhancements
-- `push review <pr-number>` — Review PR
-- `push merge` — Merge current branch (with Auditor gate)
-- `push status` — Show repo status + active background jobs
-- `push config` — Manage ~/.push/config.json
-- `push watch` — File watcher + auto-commit on save
+## Migration Strategy from Current Code
 
-## Configuration
+1. Do not start with a large `core/` directory move.
+2. First create runtime boundary and protocol in-place.
+3. Extract modules only when shared by at least two clients and stable.
+4. Keep app behavior unchanged while runtime path matures.
 
-### `~/.push/config.json`
+Rationale:
+- Reduces early churn and import breakage risk
+- Validates architecture before structural refactor
 
-```json
-{
-  "dataDir": "~/.push",
-  "defaultProvider": "kimi",
-  "apiKeys": {
-    "moonshot": "sk-...",
-    "mistral": "...",
-    "ollama": "...",
-    "zai": "...",
-    "minimax": "..."
-  },
-  "github": {
-    "token": "ghp_..."
-  }
-}
-```
+## Risks and Mitigations
 
-### Per-Repo Config
+Risk: Runtime protocol churn breaks clients  
+Mitigation:
+- Versioned protocol messages and compatibility checks
 
-`.pushrc` (optional):
-```json
-{
-  "provider": "mistral",
-  "defaultBranch": "main",
-  "protectMain": true
-}
-```
+Risk: Local provider behavior diverges from Modal  
+Mitigation:
+- Shared tool-level contract tests against both providers
 
-## Authentication
+Risk: TUI quality misses interactive expectation  
+Mitigation:
+- Prioritize session UX loops before expanding command surface
 
-Two approaches:
+Risk: Secret leakage in logs/events  
+Mitigation:
+- Centralized redaction and log-level controls in runtime
 
-1. **Reuse app config** — Read API keys from `app/.env`
-2. **Separate CLI config** — Store in `~/.push/config.json`
+## Success Criteria
 
-Start with #2 (simpler, no coupling).
+- `push` interactive session feels production-usable for daily coding tasks
+- Tool loop is visible and interruptible
+- `push run --headless` works with stable JSON and exit codes
+- Same runtime session can be attached by another client
+- Local sandbox provider handles primary workflows without Modal
+- Modal remains available as optional provider
 
-## Terminal UI Guidelines
+## Open Decisions
 
-### Stream Rendering
-- **Think tokens** — Gray, dimmed, with spinner
-- **Text output** — Normal, streaming character-by-character feel
-- **Tool calls** — Cyan, with tool name + collapsed args
-- **Tool results** — Green checkmark, optional summary
-- **Errors** — Red, with clear error message
+1. IPC transport choice for local attach
+- Unix socket first is recommended; add TCP/WebSocket adapter later
 
-### Card Rendering
-Convert rich UI cards to terminal-friendly output:
+2. Session persistence depth
+- Recommended: persist metadata and checkpoints, not full token stream
 
-**DiffPreviewCard** → Syntax-highlighted diff
-```bash
-📄 src/auth.ts
-  + Added error handling
-  + Retry logic for token refresh
+3. Local provider isolation model
+- Recommended: workspace-scoped process sandboxing first, container isolation later
 
-  @@ -45,3 +45,8 @@
-  +  try {
-  +    await refreshToken();
-  +  } catch (err) {
-  +    console.error('Token refresh failed', err);
-  +  }
-```
+## Immediate Next Actions
 
-**PRCard** → Compact PR summary
-```bash
-PR #123: Add background jobs
-  ✓ CI passing
-  ⚠ 2 reviews required
-  📝 12 files changed (+450, -120)
-```
-
-**SandboxCard** → Execution summary
-```bash
-🐚 Sandbox
-  ✓ npm test (247 passed)
-  ✓ npm run build (0.8s)
-  📦 Workspace ready at /workspace
-```
-
-## Distribution
-
-### Development
-```bash
-cd cli
-npm link
-push chat "hello"
-```
-
-### npm Package (later)
-```bash
-npm install -g @push/cli
-```
-
-### Standalone Binary (much later)
-Use `pkg` or `nexe` to bundle Node.js + CLI into single binary.
-
-## Cost Comparison
-
-**Before:**
-- ❌ $125/mo Claude Pro (canceled)
-- ✅ Pay-as-you-go for Kimi/Mistral/Ollama/Z.ai/MiniMax
-
-**With Push CLI:**
-- ✅ Reuse same AI subscriptions (no new cost)
-- ✅ Reuse same Worker/Modal infrastructure
-- ✅ No desktop IDE subscription needed
-- ✅ Can work offline for git operations
-
-## Open Questions
-
-1. **Should CLI hit Worker endpoints or call providers directly?**
-   - Option A: Direct provider calls (lower latency, works offline)
-   - Option B: Proxy via Worker (unified logging, rate limiting)
-   - **Recommendation:** Start with A, add B as opt-in
-
-2. **Should CLI reuse Modal sandbox or run local Docker?**
-   - Option A: Reuse Modal (consistency with app)
-   - Option B: Local Docker (faster, no API roundtrip)
-   - **Recommendation:** Start with A, detect local Docker as optimization
-
-3. **Should CLI support all providers or subset?**
-   - **Recommendation:** Support all 5 (same as app)
-
-4. **Should CLI have interactive mode or command-only?**
-   - **Recommendation:** Start command-only, add interactive REPL later
-
-5. **Should background jobs be CLI-compatible?**
-   - **Recommendation:** Yes! `push code --background <task>` can poll DO for job status
-
-## Success Metrics
-
-- [ ] `push chat` works end-to-end
-- [ ] Streaming output feels native
-- [ ] Tool calls render clearly in terminal
-- [ ] Can switch providers via flag
-- [ ] Reads current repo/branch from git
-- [ ] Zero new AI subscription cost
-- [ ] Reuses 100% of core agent logic
-- [ ] `npm link` workflow is smooth
-
-## Timeline Estimate
-
-- **Phase 0:** Storage abstraction — 30 minutes
-- **Phase 1:** Extract core — 1 hour
-- **Phase 2:** Update app imports — 15 minutes
-- **Phase 3:** CLI skeleton — 2 hours
-- **Phase 4:** Testing — 1 hour
-- **Phase 5:** Git integration — 2 hours
-
-**Total MVP: ~7 hours**
-
-## Next Actions
-
-1. Validate storage abstraction approach
-2. Decide on direct provider calls vs Worker proxy
-3. Start with Phase 0 (storage abstraction)
-4. Test with single command (`push chat`) before expanding
-
-## References
-
-- Claude Code CLI — Reference for str_replace edit tool pattern
-- Codex CLI — Reference for background job architecture
-- GitHub Copilot CLI — Reference for streaming UX and task tool pattern
+1. Create `documents/Push Runtime Protocol.md` with schema and event examples.
+2. Scaffold `cli/` with two processes: `push` client and `pushd` runtime.
+3. Implement Phase 0 end-to-end with mocked provider stream.
+4. Implement Phase 1 interactive TUI controls before adding more commands.

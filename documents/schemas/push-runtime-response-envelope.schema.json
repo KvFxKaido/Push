@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://push.sh/schemas/push-runtime-response-envelope.schema.json",
+  "title": "Push Runtime Response Envelope",
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "requestId",
+    "type",
+    "ok"
+  ],
+  "properties": {
+    "v": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/protocolVersion"
+    },
+    "kind": {
+      "const": "response"
+    },
+    "requestId": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/requestId"
+    },
+    "type": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/requestType"
+    },
+    "sessionId": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/sessionId"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "./push-runtime-defs.schema.json#/$defs/protocolError"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "payload"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "error"
+        ]
+      }
+    },
+
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "type": {
+            "const": "hello"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/helloResponsePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "type": {
+            "const": "start_session"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/startSessionResponsePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "type": {
+            "const": "list_sessions"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/listSessionsResponsePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "type": {
+            "enum": [
+              "attach_session",
+              "resume_session"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sessionId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/attachSessionResponsePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "type": {
+            "const": "send_user_message"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sessionId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/sendUserMessageResponsePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "type": {
+            "const": "submit_approval"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sessionId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/submitApprovalResponsePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "type": {
+            "const": "cancel_run"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sessionId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/cancelRunResponsePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "type": {
+            "const": "ping"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/pingResponsePayload"
+          }
+        }
+      }
+    }
+  ]
+}

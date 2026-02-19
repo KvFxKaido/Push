@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://push.sh/schemas/push-runtime-envelope.schema.json",
+  "title": "Push Runtime Envelope (Request | Response | Event)",
+  "oneOf": [
+    {
+      "$ref": "./push-runtime-request-envelope.schema.json"
+    },
+    {
+      "$ref": "./push-runtime-response-envelope.schema.json"
+    },
+    {
+      "$ref": "./push-runtime-event-envelope.schema.json"
+    }
+  ]
+}

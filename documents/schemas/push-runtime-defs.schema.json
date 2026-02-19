@@ -1,0 +1,1029 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://push.sh/schemas/push-runtime-defs.schema.json",
+  "title": "Push Runtime Protocol Shared Definitions",
+  "$defs": {
+    "protocolVersion": {
+      "type": "string",
+      "const": "push.runtime.v1"
+    },
+    "requestType": {
+      "type": "string",
+      "enum": [
+        "hello",
+        "start_session",
+        "list_sessions",
+        "attach_session",
+        "resume_session",
+        "send_user_message",
+        "submit_approval",
+        "cancel_run",
+        "ping"
+      ]
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "session_started",
+        "session_snapshot",
+        "status",
+        "thinking_token",
+        "assistant_token",
+        "assistant_done",
+        "tool_call",
+        "tool_result",
+        "approval_required",
+        "approval_received",
+        "warning",
+        "error",
+        "run_complete"
+      ]
+    },
+    "sessionState": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running",
+        "awaiting_approval",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "runOutcome": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failed",
+        "cancelled",
+        "denied"
+      ]
+    },
+    "approvalDecision": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "deny"
+      ]
+    },
+    "provider": {
+      "type": "string",
+      "enum": [
+        "moonshot",
+        "ollama",
+        "mistral",
+        "zai",
+        "minimax",
+        "openrouter",
+        "demo"
+      ]
+    },
+    "sandboxProvider": {
+      "type": "string",
+      "enum": [
+        "local",
+        "modal"
+      ]
+    },
+    "requestId": {
+      "type": "string",
+      "pattern": "^req_[A-Za-z0-9._:-]+$"
+    },
+    "sessionId": {
+      "type": "string",
+      "pattern": "^sess_[A-Za-z0-9._:-]+$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^run_[A-Za-z0-9._:-]+$"
+    },
+    "clientMessageId": {
+      "type": "string",
+      "pattern": "^msg_[A-Za-z0-9._:-]+$"
+    },
+    "approvalId": {
+      "type": "string",
+      "pattern": "^appr_[A-Za-z0-9._:-]+$"
+    },
+    "attachToken": {
+      "type": "string",
+      "pattern": "^att_[A-Za-z0-9._:-]+$"
+    },
+    "protocolError": {
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "acceptanceCriterion": {
+      "type": "object",
+      "required": [
+        "id",
+        "check"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "check": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "criterionResult": {
+      "type": "object",
+      "required": [
+        "id",
+        "passed",
+        "exitCode",
+        "output"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "repoContext": {
+      "type": "object",
+      "required": [
+        "rootPath",
+        "currentBranch",
+        "defaultBranch"
+      ],
+      "properties": {
+        "rootPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "remoteUrl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "currentBranch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultBranch": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "replayInfo": {
+      "type": "object",
+      "required": [
+        "fromSeq",
+        "toSeq",
+        "completed",
+        "gap"
+      ],
+      "properties": {
+        "fromSeq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "toSeq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "gap": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sessionSummary": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "state",
+        "updatedAt",
+        "repo"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "state": {
+          "$ref": "#/$defs/sessionState"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repo": {
+          "type": "object",
+          "required": [
+            "rootPath",
+            "currentBranch"
+          ],
+          "properties": {
+            "rootPath": {
+              "type": "string"
+            },
+            "currentBranch": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "structuredToolError": {
+      "type": "object",
+      "required": [
+        "type",
+        "retryable",
+        "message"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "FILE_NOT_FOUND",
+            "EXEC_TIMEOUT",
+            "EXEC_NON_ZERO_EXIT",
+            "SANDBOX_UNREACHABLE",
+            "EDIT_HASH_MISMATCH",
+            "EDIT_CONTENT_NOT_FOUND",
+            "AUTH_FAILURE",
+            "RATE_LIMITED",
+            "STALE_FILE",
+            "EDIT_GUARD_BLOCKED",
+            "WRITE_FAILED",
+            "UNKNOWN"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "toolCallSource": {
+      "type": "string",
+      "enum": [
+        "github",
+        "sandbox",
+        "delegate",
+        "scratchpad",
+        "web-search",
+        "unknown"
+      ]
+    },
+
+    "helloRequestPayload": {
+      "type": "object",
+      "required": [
+        "clientName",
+        "clientVersion",
+        "capabilities"
+      ],
+      "properties": {
+        "clientName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clientVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "startSessionRequestPayload": {
+      "type": "object",
+      "required": [
+        "mode",
+        "provider",
+        "sandboxProvider",
+        "repo"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "interactive",
+            "headless"
+          ]
+        },
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "sandboxProvider": {
+          "$ref": "#/$defs/sandboxProvider"
+        },
+        "repo": {
+          "$ref": "#/$defs/repoContext"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "listSessionsRequestPayload": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "attachSessionRequestPayload": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "lastSeenSeq"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "lastSeenSeq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attachToken": {
+          "$ref": "#/$defs/attachToken"
+        }
+      },
+      "additionalProperties": false
+    },
+    "resumeSessionRequestPayload": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "lastSeenSeq"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "lastSeenSeq": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "sendUserMessageRequestPayload": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "clientMessageId",
+        "text"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "clientMessageId": {
+          "$ref": "#/$defs/clientMessageId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/acceptanceCriterion"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "submitApprovalRequestPayload": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "runId",
+        "approvalId",
+        "decision"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "runId": {
+          "$ref": "#/$defs/runId"
+        },
+        "approvalId": {
+          "$ref": "#/$defs/approvalId"
+        },
+        "decision": {
+          "$ref": "#/$defs/approvalDecision"
+        },
+        "comment": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cancelRunRequestPayload": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "runId"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "runId": {
+          "$ref": "#/$defs/runId"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pingRequestPayload": {
+      "type": "object",
+      "additionalProperties": false
+    },
+
+    "helloResponsePayload": {
+      "type": "object",
+      "required": [
+        "runtimeName",
+        "runtimeVersion",
+        "protocolVersion",
+        "capabilities"
+      ],
+      "properties": {
+        "runtimeName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocolVersion": {
+          "$ref": "#/$defs/protocolVersion"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "startSessionResponsePayload": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "state",
+        "attachToken"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "state": {
+          "$ref": "#/$defs/sessionState"
+        },
+        "attachToken": {
+          "$ref": "#/$defs/attachToken"
+        }
+      },
+      "additionalProperties": false
+    },
+    "listSessionsResponsePayload": {
+      "type": "object",
+      "required": [
+        "sessions"
+      ],
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sessionSummary"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "attachSessionResponsePayload": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "state",
+        "replay"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "state": {
+          "$ref": "#/$defs/sessionState"
+        },
+        "replay": {
+          "$ref": "#/$defs/replayInfo"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sendUserMessageResponsePayload": {
+      "type": "object",
+      "required": [
+        "runId",
+        "accepted"
+      ],
+      "properties": {
+        "runId": {
+          "$ref": "#/$defs/runId"
+        },
+        "accepted": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "submitApprovalResponsePayload": {
+      "type": "object",
+      "required": [
+        "accepted"
+      ],
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cancelRunResponsePayload": {
+      "type": "object",
+      "required": [
+        "accepted"
+      ],
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pingResponsePayload": {
+      "type": "object",
+      "required": [
+        "pong",
+        "ts"
+      ],
+      "properties": {
+        "pong": {
+          "type": "boolean"
+        },
+        "ts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "sessionStartedEventPayload": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "state",
+        "mode",
+        "provider",
+        "sandboxProvider"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "state": {
+          "$ref": "#/$defs/sessionState"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "interactive",
+            "headless"
+          ]
+        },
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "sandboxProvider": {
+          "$ref": "#/$defs/sandboxProvider"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sessionSnapshotEventPayload": {
+      "type": "object",
+      "required": [
+        "state",
+        "pendingApproval",
+        "meta"
+      ],
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/sessionState"
+        },
+        "activeRunId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/runId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastAssistantText": {
+          "type": "string"
+        },
+        "pendingApproval": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "meta": {
+          "type": "object",
+          "required": [
+            "provider",
+            "sandboxProvider"
+          ],
+          "properties": {
+            "provider": {
+              "$ref": "#/$defs/provider"
+            },
+            "sandboxProvider": {
+              "$ref": "#/$defs/sandboxProvider"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "statusEventPayload": {
+      "type": "object",
+      "required": [
+        "source",
+        "phase"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "thinkingTokenEventPayload": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "assistantTokenEventPayload": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "assistantDoneEventPayload": {
+      "type": "object",
+      "required": [
+        "messageId"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "toolCallEventPayload": {
+      "type": "object",
+      "required": [
+        "source",
+        "toolName",
+        "args"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/toolCallSource"
+        },
+        "toolName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "toolResultEventPayload": {
+      "type": "object",
+      "required": [
+        "source",
+        "toolName",
+        "durationMs",
+        "isError",
+        "text",
+        "structuredError"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/toolCallSource"
+        },
+        "toolName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        },
+        "structuredError": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/structuredToolError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvalRequiredEventPayload": {
+      "type": "object",
+      "required": [
+        "approvalId",
+        "kind",
+        "title",
+        "summary",
+        "details",
+        "options",
+        "expiresAt"
+      ],
+      "properties": {
+        "approvalId": {
+          "$ref": "#/$defs/approvalId"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details": {
+          "type": "object"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/approvalDecision"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "expiresAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvalReceivedEventPayload": {
+      "type": "object",
+      "required": [
+        "approvalId",
+        "decision",
+        "by"
+      ],
+      "properties": {
+        "approvalId": {
+          "$ref": "#/$defs/approvalId"
+        },
+        "decision": {
+          "$ref": "#/$defs/approvalDecision"
+        },
+        "by": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "warningEventPayload": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "errorEventPayload": {
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runCompleteEventPayload": {
+      "type": "object",
+      "required": [
+        "runId",
+        "outcome",
+        "summary"
+      ],
+      "properties": {
+        "runId": {
+          "$ref": "#/$defs/runId"
+        },
+        "outcome": {
+          "$ref": "#/$defs/runOutcome"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "acceptance": {
+          "type": "object",
+          "required": [
+            "total",
+            "passed",
+            "results"
+          ],
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "passed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/criterionResult"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "headless": {
+          "type": "object",
+          "required": [
+            "exitCodeHint"
+          ],
+          "properties": {
+            "exitCodeHint": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

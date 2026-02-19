@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://push.sh/schemas/push-runtime-event-envelope.schema.json",
+  "title": "Push Runtime Event Envelope",
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "sessionId",
+    "seq",
+    "ts",
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "v": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/protocolVersion"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "sessionId": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/sessionId"
+    },
+    "runId": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/runId"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "ts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "type": {
+      "$ref": "./push-runtime-defs.schema.json#/$defs/eventType"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "session_started"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/sessionStartedEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "session_snapshot"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/sessionSnapshotEventPayload"
+          }
+        }
+      }
+    },
+
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "status"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "runId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/statusEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "thinking_token"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "runId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/thinkingTokenEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "assistant_token"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "runId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/assistantTokenEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "assistant_done"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "runId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/assistantDoneEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tool_call"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "runId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/toolCallEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tool_result"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "runId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/toolResultEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "approval_required"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "runId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/approvalRequiredEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "approval_received"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "runId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/approvalReceivedEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "warning"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/warningEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/errorEventPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "run_complete"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "runId"
+        ],
+        "properties": {
+          "payload": {
+            "$ref": "./push-runtime-defs.schema.json#/$defs/runCompleteEventPayload"
+          }
+        }
+      }
+    }
+  ]
+}

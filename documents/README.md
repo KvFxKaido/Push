@@ -8,6 +8,12 @@ Use this file to quickly identify which planning docs are authoritative vs histo
   - Status: Active harness strategy and experiment roadmap (hashline included as one track).
 - `Background Coder Tasks Plan.md`
   - Status: Draft plan for server-side background coding runs and reconnectable job timelines.
+- `Push CLI Plan.md`
+  - Status: Active draft for interactive-first CLI and runtime architecture.
+- `Push Runtime Protocol.md`
+  - Status: Active draft protocol spec for `pushd` client/runtime messaging.
+- `schemas/` (see `schemas/README.md`)
+  - Status: Active draft JSON Schemas for runtime protocol envelopes and payloads.
 - `SECURITY_AUDIT.md`
   - Status: Security findings and mitigation history.
 
