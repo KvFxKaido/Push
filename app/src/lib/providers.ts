@@ -245,27 +245,6 @@ export function getDefaultModel(type: AIProviderType): AIModel | undefined {
   return provider?.models[0];
 }
 
-/** Runtime model-name getters for providers where the user can override the default. */
-const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
-  ollama:     getOllamaModelName,
-  mistral:    getMistralModelName,
-  zai:        getZaiModelName,
-  minimax:    getMiniMaxModelName,
-  openrouter: getOpenRouterModelName,
-};
-
-export function getModelForRole(
-  type: AIProviderType,
-  role: AgentRole,
-): AIModel | undefined {
-  const provider = getProvider(type);
-  const model = provider?.models.find((m) => m.role === role);
-  if (!model) return undefined;
-
-  const getter = MODEL_NAME_GETTERS[type];
-  return getter ? { ...model, id: getter() } : model;
-}
-
 // ---------------------------------------------------------------------------
 // Runtime model name — factory + per-provider instances
 // ---------------------------------------------------------------------------
@@ -303,6 +282,27 @@ export const setMiniMaxModelName = miniMaxModel.set;
 const openRouterModel = createModelNameStorage('openrouter_model', OPENROUTER_DEFAULT_MODEL);
 export const getOpenRouterModelName = openRouterModel.get;
 export const setOpenRouterModelName = openRouterModel.set;
+
+/** Runtime model-name getters for providers where the user can override the default. */
+const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
+  ollama: getOllamaModelName,
+  mistral: getMistralModelName,
+  zai: getZaiModelName,
+  minimax: getMiniMaxModelName,
+  openrouter: getOpenRouterModelName,
+};
+
+export function getModelForRole(
+  type: AIProviderType,
+  role: AgentRole,
+): AIModel | undefined {
+  const provider = getProvider(type);
+  const model = provider?.models.find((m) => m.role === role);
+  if (!model) return undefined;
+
+  const getter = MODEL_NAME_GETTERS[type];
+  return getter ? { ...model, id: getter() } : model;
+}
 
 // ---------------------------------------------------------------------------
 // Provider preference — user picks which backend to use

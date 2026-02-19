@@ -12,6 +12,7 @@ import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
 import { getOllamaModelName, getMistralModelName, getPreferredProvider, getZaiModelName, getMiniMaxModelName, getOpenRouterModelName } from './providers';
+import type { PreferredProvider } from './providers';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -1431,7 +1432,7 @@ export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderCha
 export type ActiveProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo';
 
 /** Key getter for each configurable provider. */
-const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string> = {
+const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
   moonshot:    getMoonshotKey,
   ollama:      getOllamaKey,
   mistral:     getMistralKey,

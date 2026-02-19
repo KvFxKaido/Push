@@ -1466,7 +1466,7 @@ export function useChat(
                           };
 
                           // Pass acceptance criteria to the last task (by index), matching sequential behavior
-                          const isLastTask = taskIndex === delegateTasks.length - 1;
+                          const isLastTask = taskIndex === taskList.length - 1;
                           const coderResult = await runCoderAgent(
                             task,
                             workerSandboxId,

@@ -1,6 +1,6 @@
 import { FileCode, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import type { TypeCheckCardData } from '@/types';
-import { CARD_SHELL_CLASS, CARD_TEXT_SUCCESS, CARD_TEXT_ERROR, CARD_HEADER_BG_SUCCESS, CARD_HEADER_BG_ERROR } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_TEXT_SUCCESS, CARD_TEXT_ERROR, CARD_HEADER_BG_SUCCESS, CARD_HEADER_BG_ERROR, CARD_LIST_CLASS } from '@/lib/utils';
 
 export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
   const passed = data.exitCode === 0;
