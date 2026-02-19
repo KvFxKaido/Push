@@ -13,13 +13,13 @@ describe('tool-call-metrics', () => {
   it('records malformed calls by provider/model/reason', () => {
     recordMalformedToolCallMetric({
       provider: 'openrouter',
-      model: 'anthropic/claude-sonnet-4.5',
+      model: 'anthropic/claude-sonnet-4.6',
       reason: 'malformed_json',
       toolName: 'sandbox_exec',
     });
     recordMalformedToolCallMetric({
       provider: 'openrouter',
-      model: 'anthropic/claude-sonnet-4.5',
+      model: 'anthropic/claude-sonnet-4.6',
       reason: 'validation_failed',
       toolName: 'sandbox_read_file',
     });
@@ -29,9 +29,9 @@ describe('tool-call-metrics', () => {
     expect(snapshot.reasons.malformed_json).toBe(1);
     expect(snapshot.reasons.validation_failed).toBe(1);
     expect(snapshot.byProvider.openrouter.count).toBe(2);
-    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.5'].count).toBe(2);
-    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.5'].byTool.sandbox_exec).toBe(1);
-    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.5'].byTool.sandbox_read_file).toBe(1);
+    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6'].count).toBe(2);
+    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6'].byTool.sandbox_exec).toBe(1);
+    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6'].byTool.sandbox_read_file).toBe(1);
   });
 
   it('falls back to unknown labels when provider/model/tool are missing', () => {

@@ -28,12 +28,12 @@ export const MINIMAX_MODELS: string[] = [
   'MiniMax-M2',
 ];
 
-// OpenRouter default model — Claude Sonnet 4.5
-export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5';
+// OpenRouter default model — Claude Sonnet 4.6
+export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 
 export const OPENROUTER_MODELS: string[] = [
   // Claude 4 series
-  'anthropic/claude-sonnet-4.5',
+  'anthropic/claude-sonnet-4.6',
   'anthropic/claude-opus-4.6',
   'anthropic/claude-haiku-4.5',
   // OpenAI GPT-5 & o1
@@ -46,7 +46,7 @@ export const OPENROUTER_MODELS: string[] = [
   'openai/gpt-5.1-codex',
   // Google Gemini
   'google/gemini-3-flash-preview',
-  'google/gemini-3-pro-preview',
+  'google/gemini-3.1-pro-preview',
   // Others
   'x-ai/grok-4.1-fast',
   'moonshotai/kimi-k2.5',
