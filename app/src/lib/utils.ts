@@ -59,6 +59,26 @@ export function timeAgoCompact(timestamp: number): string {
 export const CARD_SHELL_CLASS = 'my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card';
 
 // ---------------------------------------------------------------------------
+// Card status palette — shared across card components
+// ---------------------------------------------------------------------------
+
+export const CARD_TEXT_SUCCESS = 'text-[#22c55e]';
+export const CARD_TEXT_ERROR   = 'text-[#ef4444]';
+export const CARD_TEXT_WARNING = 'text-[#f59e0b]';
+
+/** Pill badge (opacity /15) — inline status tags e.g. "Open", "SAFE". */
+export const CARD_BADGE_SUCCESS = 'bg-[#22c55e]/15 text-[#22c55e]';
+export const CARD_BADGE_ERROR   = 'bg-[#ef4444]/15 text-[#ef4444]';
+export const CARD_BADGE_WARNING = 'bg-[#f59e0b]/15 text-[#f59e0b]';
+
+/** Header background band (opacity /10) — used for card header rows. */
+export const CARD_HEADER_BG_SUCCESS = 'bg-[#22c55e]/10';
+export const CARD_HEADER_BG_ERROR   = 'bg-[#ef4444]/10';
+
+/** Divider list container — applies divide-y/border token in one constant. */
+export const CARD_LIST_CLASS = 'divide-y divide-push-edge';
+
+// ---------------------------------------------------------------------------
 // Network error detection (previously duplicated in auth hooks)
 // ---------------------------------------------------------------------------
 
