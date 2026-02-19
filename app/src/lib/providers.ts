@@ -41,7 +41,6 @@ export const OPENROUTER_MODELS: string[] = [
   'openai/gpt-5-mini',
   'openai/o1',
   // OpenAI Codex
-  'openai/gpt-5.3-codex',
   'openai/gpt-5.2-codex',
   'openai/gpt-5.1-codex',
   // Google Gemini
