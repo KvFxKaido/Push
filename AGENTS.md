@@ -60,11 +60,11 @@ The Orchestrator can delegate complex coding tasks to the Coder sub-agent via `d
 ### Harness Focus
 
 Current harness priorities are tracked in `documents/Harness Reliability Plan.md`:
-- edit reliability experiments (hashline-gated)
-- read/context efficiency for edit flows (Track B phase 1 shipped: `sandbox_read_file` line ranges, numbered range output, out-of-bounds empty-range warning)
-- tool-loop robustness
+- edit reliability — **`sandbox_edit_file` + hashline protocol are shipped and active**; edits reference 7-char content hashes (`HashlineOp[]`) via `lib/hashline.ts`, eliminating line-number drift; `lib/file-awareness-ledger.ts` tracks per-file read coverage for edit safety
+- read/context efficiency — Track B shipped: `sandbox_read_file` line ranges, numbered range output, out-of-bounds empty-range warning
+- tool-loop robustness — `lib/tool-call-metrics.ts` captures malformed tool-call reasons by provider
 - background execution design for mobile lock/background
-- operator visibility and failure diagnostics
+- operator visibility and failure diagnostics — `lib/edit-metrics.ts` tracks write latency/stale/error counts
 
 ### Browser Tools (Optional)
 
@@ -167,7 +167,13 @@ Push/
 |------|---------|
 | `lib/orchestrator.ts` | SSE streaming, think-token parsing, token-budget context management |
 | `lib/github-tools.ts` | GitHub tool protocol, `delegate_coder`, `fetchProjectInstructions`, branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`) |
-| `lib/sandbox-tools.ts` | Sandbox tool definitions |
+| `lib/sandbox-tools.ts` | Sandbox tool definitions; includes `sandbox_edit_file` (hashline-based edits) |
+| `lib/hashline.ts` | Hashline edit protocol — `calculateLineHash()`, `applyHashlineEdits()`, `HashlineOp`; eliminates line-number drift |
+| `lib/diff-utils.ts` | Shared diff parsing — `parseDiffStats()`, `parseDiffIntoFiles()`, `formatSize()` |
+| `lib/safe-storage.ts` | Safe localStorage/sessionStorage wrappers |
+| `lib/edit-metrics.ts` | In-memory observability for sandbox write operations (latency, stale/error counts) |
+| `lib/file-awareness-ledger.ts` | Tracks model read coverage per file (`never_read` / `partial_read` / `fully_read` / `model_authored` / `stale`) for edit safety |
+| `lib/tool-call-metrics.ts` | In-memory observability for malformed tool-call attempts by provider/model/reason |
 | `lib/scratchpad-tools.ts` | Scratchpad tools, prompt injection escaping |
 | `lib/sandbox-client.ts` | HTTP client for `/api/sandbox/*` endpoints |
 | `lib/tool-dispatch.ts` | Unified dispatch for all tools |

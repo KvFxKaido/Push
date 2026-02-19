@@ -42,7 +42,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Browser tools (optional):** `sandbox_browser_screenshot` and `sandbox_browser_extract`, prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true`, routed through Worker endpoints. Browser session credentials are injected server-side by the Worker.
 
-**Harness focus (current):** Reliability improvements are prioritized over model churn. Active tracks are defined in `documents/Harness Reliability Plan.md` (edit reliability experiments, read efficiency, tool-loop robustness, background execution design, and operator visibility). Track B phase 1 is shipped: `sandbox_read_file` now supports line ranges with numbered range output and out-of-bounds empty-range warnings.
+**Harness focus (current):** Reliability improvements are prioritized over model churn. Active tracks are defined in `documents/Harness Reliability Plan.md` (edit reliability, read efficiency, tool-loop robustness, background execution design, and operator visibility). Track B shipped: `sandbox_read_file` supports line ranges with numbered output and out-of-bounds warnings. `sandbox_edit_file` is active — edits are expressed as `HashlineOp[]` referencing 7-char content hashes (see `lib/hashline.ts`), which eliminates line-number drift and provides implicit staleness detection.
 
 **Web search tools:** The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). Mistral handles search natively via its Agents API. API keys are configurable at runtime via Settings.
 
@@ -97,14 +97,16 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 - `lib/orchestrator.ts` — System prompt, multi-backend streaming (Kimi + Ollama + Mistral + Z.ai + MiniMax SSE), think-token parsing, provider routing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
 - `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks), `delegate_coder`, `fetchProjectInstructions` (reads AGENTS.md/CLAUDE.md from repos via API), branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`)
-- `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt
+- `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt; includes `sandbox_edit_file` (hashline-based edits)
+- `lib/hashline.ts` — Hashline edit protocol: `calculateLineHash()` (7-char content hash per line), `applyHashlineEdits()`, `HashlineOp` type; underpins `sandbox_edit_file` and eliminates line-number drift
+- `lib/diff-utils.ts` — Canonical shared diff parsing: `parseDiffStats()`, `parseDiffIntoFiles()`, `formatSize()`; used by sandbox-tools, auditor-agent, coder-agent, FileListCard, SandboxDownloadCard, FileBrowser, file-utils, file-processing
 - `lib/sandbox-client.ts` — HTTP client for `/api/sandbox/*` endpoints (thin fetch wrappers)
 - `lib/scratchpad-tools.ts` — Scratchpad tool definitions (`set_scratchpad`, `append_scratchpad`), prompt injection escaping
 - `lib/tool-dispatch.ts` — Unified tool dispatch (GitHub + Sandbox + Scratchpad + delegation)
 - `lib/coder-agent.ts` — Coder sub-agent loop (unbounded rounds, 90s timeout per round, uses active backend)
 - `lib/auditor-agent.ts` — Auditor review + verdict (fail-safe to UNSAFE, uses active backend)
 - `lib/workspace-context.ts` — Builds active repo context for system prompt injection
-- `lib/providers.ts` — AI provider configs (Kimi + Ollama + Mistral + Z.ai + MiniMax), role-to-model mapping, backend preference
+- `lib/providers.ts` — AI provider configs (Kimi + Ollama + Mistral + Z.ai + MiniMax + OpenRouter), role-to-model mapping, backend preference
 - `lib/web-search-tools.ts` — Web search tool definitions (Tavily, Ollama native search, DuckDuckGo fallback; Mistral handles search natively via Agents API)
 - `lib/model-catalog.ts` — Manages Ollama/Mistral model lists and selection (Z.ai currently uses default model)
 - `lib/prompts.ts` — Prompt building utilities
@@ -116,6 +118,10 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `lib/browser-metrics.ts` — Browser performance metrics tracking
 - `lib/codemirror-langs.ts` — CodeMirror language support configuration
 - `lib/codemirror-theme.ts` — CodeMirror editor theme
+- `lib/safe-storage.ts` — Safe localStorage/sessionStorage wrappers (null-safe, SSR-safe)
+- `lib/edit-metrics.ts` — In-memory observability for `sandbox_write_file` operations (latency, stale/error counts per session)
+- `lib/file-awareness-ledger.ts` — File Awareness Ledger: tracks what lines the model has read per file (`never_read` / `partial_read` / `fully_read` / `model_authored` / `stale`); part of Truncation-Aware Edit Safety (Track B)
+- `lib/tool-call-metrics.ts` — In-memory observability for malformed tool-call attempts by provider/model/reason
 - `lib/utils.ts` — General utility functions
 - `hooks/useChat.ts` — Chat state, message history, unified tool execution loop, Coder delegation, scratchpad integration
 - `hooks/useUserProfile.ts` — User identity (name, bio, GitHub login), standalone getter + React hook, localStorage persistence
