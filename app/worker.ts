@@ -394,8 +394,13 @@ function createStreamProxyHandler(
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
         console.error(`[${config.logTag}] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
+        // Strip HTML error pages (e.g. Cloudflare 403/503 pages) — return a clean message
+        const isHtml = /<\s*html[\s>]/i.test(errBody) || /<\s*!doctype/i.test(errBody);
+        const errDetail = isHtml
+          ? `HTTP ${upstream.status} (the server returned an HTML error page instead of JSON)`
+          : errBody.slice(0, 200);
         return Response.json(
-          { error: `${config.name} API error ${upstream.status}: ${errBody.slice(0, 200)}` },
+          { error: `${config.name} API error ${upstream.status}: ${errDetail}` },
           { status: upstream.status },
         );
       }

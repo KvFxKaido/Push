@@ -997,6 +997,10 @@ async function streamSSEChatOnce(
       } catch {
         detail = body ? body.slice(0, 200) : 'empty body';
       }
+      // Strip HTML error pages (e.g. Cloudflare 403/503 pages) — show a clean message instead
+      if (/<\s*html[\s>]/i.test(detail) || /<\s*!doctype/i.test(detail)) {
+        detail = `HTTP ${response.status} (the server returned an HTML error page instead of JSON)`;
+      }
       console.error(`[Push] ${name} error: ${response.status}`, detail);
       throw new Error(`${name} ${response.status}: ${detail}`);
     }
