@@ -1,6 +1,6 @@
 import { Globe, ExternalLink } from 'lucide-react';
 import type { WebSearchCardData } from '@/types';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_LIST_CLASS } from '@/lib/utils';
 
 export function WebSearchCard({ data }: { data: WebSearchCardData }) {
   return (
@@ -14,7 +14,7 @@ export function WebSearchCard({ data }: { data: WebSearchCardData }) {
       </div>
 
       {/* Results */}
-      <div className="divide-y divide-push-edge max-h-[300px] overflow-y-auto">
+      <div className={`${CARD_LIST_CLASS} max-h-[300px] overflow-y-auto`}>
         {data.results.map((result, i) => (
           <a
             key={i}

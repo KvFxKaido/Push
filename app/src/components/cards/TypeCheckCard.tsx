@@ -50,7 +50,7 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
 
       {/* Error list */}
       {data.errors.length > 0 && (
-        <div className="divide-y divide-push-edge max-h-[250px] overflow-y-auto">
+        <div className={`${CARD_LIST_CLASS} max-h-[250px] overflow-y-auto`}>
           {data.errors.slice(0, 15).map((err, i) => (
             <div key={i} className="px-3 py-1.5">
               <div className="flex items-center gap-2 text-[12px]">

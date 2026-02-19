@@ -32,7 +32,7 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
       </div>
 
       {/* File list */}
-      <div className="divide-y divide-push-edge max-h-[250px] overflow-y-auto">
+      <div className={`${CARD_LIST_CLASS} max-h-[250px] overflow-y-auto`}>
         {data.files.map((file) => (
           <div key={file.filename} className="px-3 py-1.5 flex items-center gap-2">
             {statusIcon(file.status)}

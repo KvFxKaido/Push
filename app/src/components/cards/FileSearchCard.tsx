@@ -1,6 +1,6 @@
 import { Search, FileText } from 'lucide-react';
 import type { FileSearchCardData } from '@/types';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_LIST_CLASS } from '@/lib/utils';
 
 export function FileSearchCard({ data }: { data: FileSearchCardData }) {
   // Group matches by file
@@ -27,7 +27,7 @@ export function FileSearchCard({ data }: { data: FileSearchCardData }) {
       </div>
 
       {/* Results grouped by file */}
-      <div className="divide-y divide-push-edge max-h-[300px] overflow-y-auto">
+      <div className={`${CARD_LIST_CLASS} max-h-[300px] overflow-y-auto`}>
         {Array.from(byFile.entries()).map(([filePath, matches]) => (
           <div key={filePath} className="px-3 py-2">
             <div className="flex items-center gap-1.5 mb-1">

@@ -1,6 +1,6 @@
 import { GitCommit } from 'lucide-react';
 import type { CommitListCardData } from '@/types';
-import { timeAgo, CARD_SHELL_CLASS } from '@/lib/utils';
+import { timeAgo, CARD_SHELL_CLASS, CARD_LIST_CLASS } from '@/lib/utils';
 
 export function CommitListCard({ data }: { data: CommitListCardData }) {
   return (
@@ -15,7 +15,7 @@ export function CommitListCard({ data }: { data: CommitListCardData }) {
       </div>
 
       {/* Commit list */}
-      <div className="divide-y divide-push-edge">
+      <div className={CARD_LIST_CLASS}>
         {data.commits.map((commit) => (
           <div key={commit.sha} className="px-3 py-2 flex items-start gap-2">
             <span className="text-[12px] text-push-link font-mono shrink-0 mt-0.5">

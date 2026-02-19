@@ -1,6 +1,6 @@
 import { GitBranch, Shield, Star } from 'lucide-react';
 import type { BranchListCardData } from '@/types';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_LIST_CLASS } from '@/lib/utils';
 
 export function BranchListCard({ data }: { data: BranchListCardData }) {
   return (
@@ -15,7 +15,7 @@ export function BranchListCard({ data }: { data: BranchListCardData }) {
       </div>
 
       {/* Branch list */}
-      <div className="divide-y divide-push-edge">
+      <div className={CARD_LIST_CLASS}>
         {data.branches.map((branch) => (
           <div
             key={branch.name}

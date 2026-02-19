@@ -1,6 +1,6 @@
 import { Folder, FileText } from 'lucide-react';
 import type { FileListCardData } from '@/types';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_LIST_CLASS } from '@/lib/utils';
 import { formatSize } from '@/lib/diff-utils';
 
 export function FileListCard({ data }: { data: FileListCardData }) {
@@ -26,7 +26,7 @@ export function FileListCard({ data }: { data: FileListCardData }) {
       </div>
 
       {/* Entry list */}
-      <div className="divide-y divide-push-edge">
+      <div className={CARD_LIST_CLASS}>
         {dirs.map((entry) => (
           <div key={entry.name} className="px-3 py-1.5 flex items-center gap-2">
             <Folder className="h-3.5 w-3.5 text-push-link shrink-0" />
