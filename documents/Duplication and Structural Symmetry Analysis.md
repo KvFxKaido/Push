@@ -2,13 +2,15 @@
 
 Analysis of repeated patterns, structural symmetry, and consolidation opportunities across the Push codebase. This document is observational — no behavior changes proposed.
 
+**Last audit: 2026-02-19 — ~75% of identified duplication has been consolidated.**
+
 ---
 
 ## 1. Provider Axis — The Six-Way Symmetry
 
 The codebase is organized around six AI providers (Kimi/Moonshot, Ollama, Mistral, Z.ai, MiniMax, OpenRouter). Each provider requires identical plumbing at every layer. This creates a **six-way structural symmetry** that repeats across files:
 
-### 1a. Config Hooks (already consolidated)
+### 1a. Config Hooks (already consolidated) — DONE
 
 Each provider has a thin config hook wrapping the shared `useApiKeyConfig` factory:
 
@@ -22,9 +24,9 @@ Each provider has a thin config hook wrapping the shared `useApiKeyConfig` facto
 | `useMiniMaxConfig.ts` | `useApiKeyWithModelConfig` | key + model |
 | `useOpenRouterConfig.ts` | `useApiKeyWithModelConfig` | key + model |
 
-**Status:** Well-factored. The `useApiKeyConfig.ts` factory eliminated the duplication. Each hook is a 12–20 line thin wrapper.
+**Status:** DONE. Well-factored. The `useApiKeyConfig.ts` factory eliminated the duplication. Each hook is a 12–20 line thin wrapper.
 
-### 1b. Provider Config — `providers.ts`
+### 1b. Provider Config — `providers.ts` — PARTIAL
 
 The `PROVIDERS` array repeats the same three-role model block (orchestrator/coder/auditor) for each of the six providers. Each entry is structurally identical:
 
@@ -44,70 +46,46 @@ Six providers × three roles = 18 model entries that share the same shape. The `
 
 The `createModelNameStorage` factory at the bottom already consolidates the five per-provider model-name storage getters/setters.
 
-### 1c. Orchestrator Streaming — `orchestrator.ts`
+**Status:** PARTIAL. `createModelNameStorage` is consolidated. `PROVIDERS` array and `getModelForRole()` if-chain remain as-is — structurally repetitive but functional.
 
-Six `stream*Chat` functions share identical signatures (11 parameters) and the same body structure:
+### 1c. Orchestrator Streaming — `orchestrator.ts` — DONE
 
-```
-1. Get API key  →  guard on missing
-2. (Optional provider-specific setup)
-3. Call streamSSEChat() with a provider config object
-```
+~~Six `stream*Chat` functions share identical signatures (11 parameters) and the same body structure.~~
 
-The config objects differ in: `name`, `apiUrl`, `apiKey`, `model`, timeout values, `errorMessages` (string templates with provider name substituted), and optional `bodyTransform`. The function bodies are 30–50 lines each, nearly identical except for the provider name in strings.
+~~**Already partially consolidated:** All six delegate to the shared `streamSSEChat()` engine. What remains duplicated is the per-provider wrapper function (~300 lines total for six wrappers).~~
 
-**Already partially consolidated:** All six delegate to the shared `streamSSEChat()` engine. What remains duplicated is the per-provider wrapper function (~300 lines total for six wrappers).
+**Status:** DONE. Fully consolidated via factory + registry pattern:
+- `PROVIDER_STREAM_CONFIGS` registry maps each provider to `{ getKey, buildConfig }`.
+- `buildErrorMessages(name, connectHint?)` factory generates all error messages — only provider name varies.
+- `streamProviderChat()` single entry point: looks up provider → fetches key → builds config → delegates to `streamSSEChat()`.
+- Six exports (`streamMoonshotChat`, etc.) are now **one-line lambdas** for backward compatibility.
+- ~300 lines of wrapper duplication reduced to ~12 lines of thin lambdas.
 
-**Structural symmetry:** Each error message set follows the same shape:
-```typescript
-errorMessages: {
-  keyMissing: '<Name> API key not configured',
-  connect: (s) => `<Name> API didn't respond within ${s}s ...`,
-  idle: (s) => `<Name> API stream stalled — no data for ${s}s.`,
-  stall: (s) => `<Name> API stream stalled — receiving data but no content for ${s}s. ...`,
-  total: (s) => `<Name> API response exceeded ${s}s total time limit.`,
-  network: 'Cannot reach <Name> — network error. Check your connection.',
-}
-```
+### 1d. Worker Proxy — `worker.ts` — DONE
 
-Only the provider name varies. A factory function taking just the provider name and timeout overrides could eliminate all six copies.
+~~The Cloudflare Worker repeats the same handler skeleton 15+ times across provider endpoints.~~
 
-### 1d. Worker Proxy — `worker.ts`
+~~**Estimated duplicated lines: ~400–450** out of ~2164 lines (~20% of the file).~~
 
-The Cloudflare Worker repeats the same handler skeleton 15+ times across provider endpoints. Every handler function has:
+**Status:** DONE. Fully consolidated via shared helpers and factories:
+- `runPreamble()` — handles origin validation, rate limiting, auth header building, and body reading for all handlers.
+- `createStreamProxyHandler()` — factory for SSE chat endpoints (Kimi, Ollama, Mistral, Z.ai, MiniMax, OpenRouter).
+- `createJsonProxyHandler()` — factory for model list and search endpoints.
+- `validateOrigin()`, `standardAuth()`, `getClientIp()`, `checkRateLimit()`, `readBodyText()` — all shared.
+- Each handler is now 1–5 lines instead of 40–50. ~400–450 lines of duplication eliminated.
+- The Z.ai/MiniMax consistency issues (Content-Type, clearTimeout) are resolved by the shared factories.
 
-```
-1. Origin validation    (~3 lines, 16 occurrences)
-2. Rate limiting        (~6 lines, 15 occurrences)
-3. Auth header build    (~8 lines, 12 occurrences)
-4. Body reading         (~3 lines, 13 occurrences)
-5. Timeout + fetch      (~10 lines, 15 occurrences)
-6. Upstream error       (~4 lines, 15 occurrences)
-7. SSE response headers (~5 lines, 7 occurrences)
-8. Exception catch      (~6 lines, 13 occurrences)
-```
+### 1e. Settings UI — `SettingsSheet.tsx` — DONE
 
-**Estimated duplicated lines: ~400–450** out of ~2164 lines (~20% of the file).
+~~Each provider's API key section repeats the same UI block (~40 lines per provider).~~
 
-**Specific inconsistencies found:**
-- Z.ai and MiniMax SSE responses preserve upstream `Content-Type` and add `X-Accel-Buffering`; other providers hardcode `text/event-stream`. No documented reason for the difference.
-- Z.ai and MiniMax handle `clearTimeout` in catch blocks; others use finally. Subtle behavioral inconsistency.
+~~The input/save/clear pattern is copied six times with only the provider name and prop names changing.~~
 
-### 1e. Settings UI — `SettingsSheet.tsx`
-
-Each provider's API key section repeats the same UI block (~40 lines per provider):
-
-```
-1. Label
-2. If key saved: "Key Saved" badge + trash icon + (optional model selector + refresh)
-3. If no key: password input + Enter handler + Save button + hint text
-```
-
-The input/save/clear pattern is copied six times with only the provider name and prop names changing. Providers with model selection (Ollama, Mistral, Z.ai, MiniMax, OpenRouter) additionally duplicate a model-select dropdown + refresh button block.
+**Status:** DONE. Shared `ProviderKeySection` component (~170 lines) handles key saving/clearing, model selection, model refresh (with loading/error states), and locked models. All 7 providers use it — each provider section is now 5–10 lines of config. ~240 lines of duplication eliminated.
 
 ---
 
-## 2. Tool Protocol — Detection/Execution Symmetry
+## 2. Tool Protocol — Detection/Execution Symmetry — DONE
 
 Each tool subsystem follows the same structural pattern:
 
@@ -127,57 +105,41 @@ execute*ToolCall(call, ...context): ToolExecutionResult
 | `web-search-tools.ts` | `detectWebSearchToolCall` | `executeWebSearch` | `detectToolFromText` |
 | `tool-dispatch.ts` | `detectAnyToolCall` (aggregator) | `executeAnyToolCall` (router) | — |
 
-**Status:** The `detectToolFromText<T>()` generic in `utils.ts` already eliminates the JSON-extraction duplication. Each tool module provides only its validator function. This layer is well-factored.
-
-The validation functions themselves (e.g., `isScratchpadTool`, `isWebSearchTool`, `validateSandboxToolCall`, `validateToolCall`) use slightly different validation styles — some use type guards, some use `asRecord()`. Harmonizing these would be a minor consistency improvement.
+**Status:** DONE. The `detectToolFromText<T>()` generic in `utils.ts` already eliminates the JSON-extraction duplication. Each tool module provides only its validator function. This layer is well-factored. All validators follow the same `(parsed: unknown) => T | null` signature.
 
 ---
 
-## 3. Web Search Execution — Triple Duplication
+## 3. Web Search Execution — ~~Triple Duplication~~ DONE
 
-Three functions in `web-search-tools.ts` are near-identical:
+~~Three functions in `web-search-tools.ts` are near-identical.~~
 
-| Function | URL | Auth | Lines |
-|----------|-----|------|-------|
-| `executeOllamaWebSearch` | `OLLAMA_SEARCH_URL` | Bearer (Ollama key) | 105–153 |
-| `executeFreeWebSearch` | `FREE_SEARCH_URL` | None | 167–206 |
-| `executeTavilySearch` | `TAVILY_SEARCH_URL` | Bearer (Tavily key) | 222–269 |
+~~Only three things differ: the URL, the authorization header, and the "key not configured" guard.~~
 
-Shared code (copied three times):
-- `fetch()` with POST + JSON body
-- `!response.ok` error handling with `errBody.slice(0, 200)`
-- Response parsing as `{ results?: WebSearchResult[] }`
-- Empty-results check
-- Result formatting (map with title/url/snippet)
-- Card data construction
-- Error catch with `err instanceof Error ? err.message : String(err)`
+**Status:** DONE. `executeWebSearchCore(url, query, headers?)` handles fetch, error handling, result formatting, and card data construction. Three backends are now thin wrappers (3–10 lines each):
+- `executeOllamaWebSearch` → calls core with Ollama URL + auth
+- `executeFreeWebSearch` → calls core with DuckDuckGo URL, no auth
+- `executeTavilySearch` → calls core with Tavily URL + auth
 
-Only three things differ: the URL, the authorization header, and the "key not configured" guard.
-
-A shared `executeWebSearchCore(url, query, headers?)` would reduce ~150 lines to ~50.
+~150 lines of duplication reduced to ~50.
 
 ---
 
-## 4. Diff Parsing — Triple Duplication
+## 4. Diff Parsing — ~~Triple Duplication~~ DONE
 
-Three functions across three files parse unified diffs with the same loop:
+~~Three functions across three files parse unified diffs with the same loop.~~
 
-| Function | File | Returns |
-|----------|------|---------|
-| `parseDiffStats()` | `sandbox-tools.ts:350–367` | `{ filesChanged, additions, deletions }` |
-| `parseDiffFileCount()` | `auditor-agent.ts:45–54` | `number` (file count only) |
-| inline in `fetchSandboxStateSummary()` | `coder-agent.ts:184–193` | builds summary string |
+~~A shared `parseDiffStats(diff)` in `diff-utils.ts` (which already exists but doesn't contain this) would serve all three callers.~~
 
-All three iterate `diff.split('\n')` looking for:
-- `diff --git` lines → extract file name via `/b\/(.+)$/`
-- `+` lines (not `+++`) → count additions
-- `-` lines (not `---`) → count deletions
+**Status:** DONE. `diff-utils.ts` now exports:
+- `parseDiffStats()` — counts files/additions/deletions
+- `parseDiffIntoFiles()` — splits diff into per-file sections
+- `formatSize()` — human-friendly byte labels
 
-A shared `parseDiffStats(diff)` in `diff-utils.ts` (which already exists but doesn't contain this) would serve all three callers.
+All three callers (`sandbox-tools.ts`, `auditor-agent.ts`, `coder-agent.ts`) import from `diff-utils.ts`. No inline diff parsing remains.
 
 ---
 
-## 5. Agent Module Symmetry — Coder vs Auditor
+## 5. Agent Module Symmetry — Coder vs Auditor — DONE
 
 Both agent modules follow the same lifecycle:
 
@@ -199,7 +161,7 @@ Both agent modules follow the same lifecycle:
 | Stream error check | lines 327–332 | lines 108–122 |
 | `truncateContent()` | defined locally (line 36) | not needed |
 
-The `streamWithTimeout` utility (in `utils.ts`) already consolidated what was previously duplicated. The remaining setup boilerplate (provider check → streamFn → model lookup) is ~10 lines per agent and not worth abstracting further.
+**Status:** DONE. The `streamWithTimeout` utility (in `utils.ts`) already consolidated what was previously duplicated. The remaining setup boilerplate (provider check → streamFn → model lookup) is ~10–12 lines per agent and not worth abstracting further.
 
 ---
 
@@ -207,28 +169,19 @@ The `streamWithTimeout` utility (in `utils.ts`) already consolidated what was pr
 
 27 card components share significant structural repetition:
 
-### 6a. Shell + Header (100% of cards)
+### 6a. Shell + Header (100% of cards) — PARTIAL
 
-Every card wraps in `CARD_SHELL_CLASS` and uses a header with:
-```tsx
-<div className="px-3.5 py-3 flex items-center gap-2.5">
-  <Icon className="h-4 w-4 shrink-0 text-push-fg-secondary" />
-  <span className="text-[13px] font-medium">...</span>
-</div>
-```
+Every card wraps in `CARD_SHELL_CLASS` (shared constant) and uses a header. Shell is consolidated; headers are manually implemented per card (no shared `CardHeader` component extracted yet).
 
-### 6b. Expandable Pattern (5 cards)
+**Remaining:** A shared `CardHeader` component taking icon + title could reduce boilerplate across 27 cards.
 
-PRCard, SandboxCard, DiffPreviewCard, FileCard, and EditorCard all repeat:
-```tsx
-const { expanded, toggleExpanded } = useExpandable(defaultValue);
-// Header with ExpandChevron + onClick={toggleExpanded}
-// ExpandableCardPanel with expanded={expanded}
-```
+### 6b. Expandable Pattern (5 cards) — DONE
 
-The `expandable.tsx` helper provides `ExpandChevron` and `ExpandableCardPanel`, but each card still wires the pattern manually.
+PRCard, SandboxCard, DiffPreviewCard, FileCard, and EditorCard all use the expandable pattern.
 
-### 6c. Status Badge (6 cards)
+**Status:** DONE. `expandable.tsx` exports `useExpandable`, `ExpandChevron`, and `ExpandableCardPanel` — all cards use these shared components. Wiring is minimal (~3 lines per card).
+
+### 6c. Status Badge (6 cards) — NOT DONE
 
 PRCard, AuditVerdictCard, SandboxCard, TestResultsCard, TypeCheckCard, and CIStatusCard each define independent status-to-color config objects:
 ```typescript
@@ -238,40 +191,29 @@ const statusConfig = {
 };
 ```
 
-The color values (`#22c55e` for success, `#ef4444` for error, `#f59e0b` for warning) are hardcoded identically across cards with no shared palette constant.
+**Status:** NOT DONE. The color values (`#22c55e` for success, `#ef4444` for error, `#f59e0b` for warning) are still hardcoded independently across cards. No shared palette constant exists.
 
-### 6d. List/Divider Pattern (8 cards)
+### 6d. List/Divider Pattern (8 cards) — NOT DONE
 
-CommitListCard, FileListCard, BranchListCard, CommitFilesCard, TypeCheckCard, CIStatusCard, FileSearchCard, and WebSearchCard all use:
-```tsx
-<div className="divide-y divide-push-edge">
-  {items.map((item) => (
-    <div className="px-3 py-1.5 flex items-center gap-2">
-      <Icon className="h-3.5 w-3.5" />
-      <span className="text-[13px] text-[#e4e4e7] truncate">...</span>
-    </div>
-  ))}
-</div>
-```
+CommitListCard, FileListCard, BranchListCard, CommitFilesCard, TypeCheckCard, CIStatusCard, FileSearchCard, and WebSearchCard all repeat the same `divide-y divide-push-edge` list markup.
 
-### 6e. Code Block Pattern (4 cards)
+**Status:** NOT DONE. No shared `CardList` or `CardListItem` component extracted. Each card still implements the pattern independently (~100 lines total across 8 cards).
 
-FileCard, SandboxCard, TestResultsCard, and CommitReviewCard duplicate:
-```tsx
-<pre className="px-3 py-2 overflow-x-auto ...">
-  <code className="font-mono text-[12px] text-push-fg-secondary leading-relaxed whitespace-pre-wrap break-all">
-    {content}
-  </code>
-</pre>
-```
+### 6e. Code Block Pattern (4 cards) — NOT DONE
 
-### 6f. Utility Duplication
+FileCard, SandboxCard, TestResultsCard, and CommitReviewCard duplicate the same `<pre><code>` block styling.
 
-`FileListCard` defines `formatSize(bytes)` and `SandboxDownloadCard` defines `formatBytes(bytes)` — nearly identical functions.
+**Status:** NOT DONE. No shared `CardCodeBlock` component exists. `<pre>` styling is duplicated across cards (~40 lines total).
+
+### 6f. Utility Duplication — DONE
+
+~~`FileListCard` defines `formatSize(bytes)` and `SandboxDownloadCard` defines `formatBytes(bytes)` — nearly identical functions.~~
+
+**Status:** DONE. Single `formatSize()` in `diff-utils.ts`, imported by both `FileListCard` and `SandboxDownloadCard`.
 
 ---
 
-## 7. Standalone Getter + React Hook Pattern
+## 7. Standalone Getter + React Hook Pattern — N/A (Intentional)
 
 Two hooks follow a "standalone getter for non-React code + React hook for UI" dual-export pattern:
 
@@ -282,13 +224,13 @@ Two hooks follow a "standalone getter for non-React code + React hook for UI" du
 
 This is a deliberate design pattern (documented in CLAUDE.md) for hooks whose state needs to be read from library code (like orchestrator.ts) that can't call React hooks. The config hooks use `createApiKeyGetter()` for the same purpose.
 
-**Status:** Consistent and intentional. No consolidation needed.
+**Status:** DONE (N/A). Consistent and intentional. No consolidation needed.
 
 ---
 
-## 8. `getActiveProvider()` — Linear Scan
+## 8. `getActiveProvider()` — Linear Scan — NOT DONE
 
-`orchestrator.ts:1603–1628` checks each provider in sequence:
+`getActiveProvider()` still checks each provider in a linear if-chain. `getProviderStreamFn()` is still a switch statement.
 
 ```typescript
 if (preferred === 'ollama' && hasOllama) return 'ollama';
@@ -299,25 +241,34 @@ if (preferred === 'minimax' && hasMiniMax) return 'minimax';
 if (preferred === 'openrouter' && hasOpenRouter) return 'openrouter';
 ```
 
-Each new provider requires adding a line here, in `getProviderStreamFn()`, in the `PROVIDERS` array, and in `getModelForRole()`. A registry/map pattern would make adding providers a single-point change.
+**Status:** NOT DONE. Each new provider still requires adding a line in `getActiveProvider()`, `getProviderStreamFn()`, the `PROVIDERS` array, and `getModelForRole()`. A registry/map pattern would make adding providers a single-point change.
 
 ---
 
 ## Summary — Consolidation Opportunity Map
 
+**Audit date: 2026-02-19 — 10 of 14 areas fully consolidated (~75%).**
+
 | Area | Severity | Lines Affected | Status |
 |------|----------|----------------|--------|
-| Config hooks (useApiKeyConfig) | — | ~120 | **Already consolidated** |
-| Model name storage (createModelNameStorage) | — | ~30 | **Already consolidated** |
-| Tool detection (detectToolFromText) | — | ~100 | **Already consolidated** |
-| Stream timeout (streamWithTimeout) | — | ~60 | **Already consolidated** |
-| Web search execution (3 functions) | High | ~150 | Duplicated |
-| Diff parsing (3 locations) | Medium | ~50 | Duplicated |
-| Worker handler boilerplate | High | ~400–450 | Duplicated |
-| Orchestrator stream wrappers | Medium | ~300 | Partially consolidated (config objects vary) |
-| Settings UI key sections | Medium | ~240 | Duplicated |
-| Card status badge colors | Low | ~60 | Duplicated (no shared palette) |
-| Card list/divider pattern | Low | ~100 | Repeated structural pattern |
-| Card code block pattern | Low | ~40 | Repeated structural pattern |
-| `formatSize`/`formatBytes` | Low | ~20 | Duplicated utility |
-| Provider registration (multi-point) | Low | ~30 | Linear chains in 4 places |
+| Config hooks (useApiKeyConfig) | — | ~120 | **DONE** |
+| Model name storage (createModelNameStorage) | — | ~30 | **DONE** |
+| Tool detection (detectToolFromText) | — | ~100 | **DONE** |
+| Stream timeout (streamWithTimeout) | — | ~60 | **DONE** |
+| Web search execution (3 functions) | ~~High~~ | ~150 | **DONE** — `executeWebSearchCore()` |
+| Diff parsing (3 locations) | ~~Medium~~ | ~50 | **DONE** — `diff-utils.ts` |
+| Worker handler boilerplate | ~~High~~ | ~400–450 | **DONE** — `runPreamble()` + `createStreamProxyHandler()` + `createJsonProxyHandler()` |
+| Orchestrator stream wrappers | ~~Medium~~ | ~300 | **DONE** — `PROVIDER_STREAM_CONFIGS` registry + `buildErrorMessages()` factory |
+| Settings UI key sections | ~~Medium~~ | ~240 | **DONE** — shared `ProviderKeySection` component |
+| `formatSize`/`formatBytes` | ~~Low~~ | ~20 | **DONE** — single `formatSize()` in `diff-utils.ts` |
+| Card status badge colors | Low | ~60 | NOT DONE — no shared palette |
+| Card list/divider pattern | Low | ~100 | NOT DONE — repeated structural pattern |
+| Card code block pattern | Low | ~40 | NOT DONE — repeated structural pattern |
+| Provider registration (multi-point) | Low | ~30 | NOT DONE — linear chains in 4 places |
+
+### Remaining duplication (~230 lines, all low-severity)
+
+1. **Card status badge colors** (~60 lines) — 6 cards hardcode `#22c55e`/`#ef4444`/`#f59e0b` independently
+2. **Card list/divider pattern** (~100 lines) — 8 cards repeat `divide-y divide-push-edge` + item markup
+3. **Card code block pattern** (~40 lines) — 4 cards duplicate `<pre><code>` styling
+4. **Provider registration** (~30 lines) — `getActiveProvider()` + `getProviderStreamFn()` + `getModelForRole()` are linear chains
