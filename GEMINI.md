@@ -30,12 +30,13 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Auditor:** Pre-commit safety gate. Reviews diffs and issues a binary SAFE/UNSAFE verdict.
 
 ### Key Systems
-*   **Tool Protocol:** Prompt-engineered JSON tool blocks for GitHub and Sandbox interactions.
+*   **Tool Protocol:** Prompt-engineered JSON tool blocks for GitHub and Sandbox interactions. Multi-tool dispatch (`detectAllToolCalls()`) splits read-only calls (parallel) from mutations (serial). Tool results include structured error fields (`error_type`, `retryable`), a `[meta]` envelope (round, context size, sandbox state), and `[TOOL_CALL_PARSE_ERROR]` headers for malformed-call feedback.
 *   **Sandbox:** Persistent Linux environment (via Modal) for cloning repos, running tests, and editing files.
 *   **Sandbox Mode:** Ephemeral workspace (no GitHub repo). Entry via onboarding or repo picker. GitHub tools blocked; 30-min lifetime with expiry warning. Download as tar.gz.
 *   **Web Search Tools:** Mid-conversation web search via Tavily (premium), Ollama native search, or DuckDuckGo fallback. Mistral handles search natively via Agents API.
 *   **Browser Tools (Optional):** Sandbox-backed webpage screenshot + text extraction (server-side browser credentials injected by Worker).
-*   **Harness Focus:** Active reliability tracks (including hashline experiments, read efficiency, tool-loop robustness, and background execution design) are tracked in `documents/Harness Reliability Plan.md`. Track B phase 1 is shipped: `sandbox_read_file` now supports line ranges with numbered range output and out-of-bounds empty-range warnings.
+*   **Coder Delegation:** Orchestrator delegates via `delegate_coder`. Supports `acceptanceCriteria[]` (shell commands run post-task). Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — survives context trimming.
+*   **Harness Focus:** Active reliability tracks are tracked in `documents/Harness Reliability Plan.md`. Track B complete (range reads, edit guard, auto-expand). **Agent Experience Wishlist shipped** (`documents/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`.
 *   **User Identity:** Display name, bio, and GitHub login set in Settings. Stored in localStorage via `useUserProfile` hook. Injected into Orchestrator and Coder system prompts via `buildUserIdentityBlock()`.
 *   **Scratchpad:** Shared persistent notepad for user/AI collaboration.
 *   **Active Branch Model:** There is always exactly one Active Branch per repo session — commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Branch switching is available in history drawer, home page, and workspace selector. Branch creation via workspace/header action on main; feature branches show "Merge into main". Non-default inactive branches can be deleted in the workspace selector.
@@ -59,10 +60,11 @@ Push/
 │   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useZaiConfig, useMiniMaxConfig, useTavilyConfig, useUsageTracking, etc.)
 │   │   ├── lib/           # Core Logic
 │   │   │   ├── orchestrator.ts    # Agent coordination & streaming
-│   │   │   ├── coder-agent.ts     # Coder sub-agent loop
+│   │   │   ├── coder-agent.ts     # Coder sub-agent loop, working memory, acceptance criteria
 │   │   │   ├── auditor-agent.ts   # Auditor safety gate
 │   │   │   ├── github-tools.ts    # GitHub API tools, branch/merge/PR operations
-│   │   │   ├── sandbox-tools.ts   # Sandbox interaction tools
+│   │   │   ├── sandbox-tools.ts   # Sandbox tools, error taxonomy, sandbox_read_symbols, sandbox_apply_patchset
+│   │   │   ├── tool-dispatch.ts   # Unified dispatch, detectAllToolCalls(), multi-tool support
 │   │   │   ├── web-search-tools.ts # Web search (Tavily, Ollama native, DuckDuckGo)
 │   │   │   ├── model-catalog.ts   # Ollama/Mistral model lists (Z.ai and MiniMax use static lists)
 │   │   │   ├── prompts.ts         # Prompt building utilities

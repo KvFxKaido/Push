@@ -55,7 +55,9 @@ Six providers, all using OpenAI-compatible SSE streaming. Any single API key is 
 
 Tools are prompt-engineered — the system prompt defines available tools and JSON format. The agent emits JSON tool blocks, the client executes them, injects results as synthetic messages, and re-calls the LLM. Both the Orchestrator and Coder tool loops are unbounded. The Coder has a 90s per-round timeout and 60KB context cap as safety nets.
 
-The Orchestrator can delegate complex coding tasks to the Coder sub-agent via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox, then returns results to the Orchestrator.
+Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message, splits them into parallel read-only calls and an optional trailing mutation — reads execute via `Promise.all()`, then the mutation runs. Tool results include structured error fields (`error_type`, `retryable`) via `classifyError()`, a `[meta]` envelope with round number, context size, and sandbox dirty state, and malformed-call feedback includes a `[TOOL_CALL_PARSE_ERROR]` header with structured diagnosis.
+
+The Orchestrator can delegate complex coding tasks to the Coder sub-agent via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox, then returns results to the Orchestrator. Delegation supports optional `acceptanceCriteria[]` — shell commands run post-task to verify success. The Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state`, injected as a `[CODER_STATE]` block into every tool result to survive context trimming.
 
 ### Harness Focus
 
@@ -65,6 +67,7 @@ Current harness priorities are tracked in `documents/Harness Reliability Plan.md
 - tool-loop robustness — `lib/tool-call-metrics.ts` captures malformed tool-call reasons by provider
 - background execution design for mobile lock/background
 - operator visibility and failure diagnostics — `lib/edit-metrics.ts` tracks write latency/stale/error counts
+- **Agent Experience Wishlist shipped** (see `documents/Agent Experience Wishlist.md`): error taxonomy with retry semantics (`classifyError()`), structured malformed-call feedback (`[TOOL_CALL_PARSE_ERROR]`), edit result diffs, multi-tool per turn (`detectAllToolCalls()`), universal meta envelope (`[meta]` line on every tool result), machine-checkable acceptance criteria, agent working memory (`CoderWorkingMemory`), `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (multi-file transactional edits)
 
 ### Browser Tools (Optional)
 
@@ -167,7 +170,7 @@ Push/
 |------|---------|
 | `lib/orchestrator.ts` | SSE streaming, think-token parsing, token-budget context management |
 | `lib/github-tools.ts` | GitHub tool protocol, `delegate_coder`, `fetchProjectInstructions`, branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`) |
-| `lib/sandbox-tools.ts` | Sandbox tool definitions; includes `sandbox_edit_file` (hashline-based edits) |
+| `lib/sandbox-tools.ts` | Sandbox tool definitions; includes `sandbox_edit_file` (hashline-based edits with diff output), `sandbox_read_symbols`, `sandbox_apply_patchset`, `classifyError()` (error taxonomy) |
 | `lib/hashline.ts` | Hashline edit protocol — `calculateLineHash()`, `applyHashlineEdits()`, `HashlineOp`; eliminates line-number drift |
 | `lib/diff-utils.ts` | Shared diff parsing — `parseDiffStats()`, `parseDiffIntoFiles()`, `formatSize()` |
 | `lib/safe-storage.ts` | Safe localStorage/sessionStorage wrappers |
@@ -175,9 +178,9 @@ Push/
 | `lib/file-awareness-ledger.ts` | Tracks model read coverage per file (`never_read` / `partial_read` / `fully_read` / `model_authored` / `stale`) for edit safety |
 | `lib/tool-call-metrics.ts` | In-memory observability for malformed tool-call attempts by provider/model/reason |
 | `lib/scratchpad-tools.ts` | Scratchpad tools, prompt injection escaping |
-| `lib/sandbox-client.ts` | HTTP client for `/api/sandbox/*` endpoints |
-| `lib/tool-dispatch.ts` | Unified dispatch for all tools |
-| `lib/coder-agent.ts` | Coder autonomous loop (uses active backend) |
+| `lib/sandbox-client.ts` | HTTP client for `/api/sandbox/*` endpoints, `mapSandboxErrorCode()` |
+| `lib/tool-dispatch.ts` | Unified dispatch for all tools, `detectAllToolCalls()` (multi-tool with read/mutate split), `isReadOnlyToolCall()` |
+| `lib/coder-agent.ts` | Coder autonomous loop (uses active backend), working memory (`coder_update_state`), acceptance criteria, parallel reads |
 | `lib/auditor-agent.ts` | Auditor review + verdict (fail-safe, uses active backend) |
 | `lib/workspace-context.ts` | Active repo context builder |
 | `lib/providers.ts` | AI provider config and role model mapping |
@@ -198,7 +201,7 @@ Push/
 
 | File | Purpose |
 |------|---------|
-| `hooks/useChat.ts` | Chat state, message history, tool execution loop |
+| `hooks/useChat.ts` | Chat state, message history, tool execution loop (multi-tool dispatch, `[meta]` envelope, structured malformed-call feedback), Coder delegation with `acceptanceCriteria` |
 | `hooks/useSandbox.ts` | Sandbox session lifecycle |
 | `hooks/useScratchpad.ts` | Shared notepad state, localStorage persistence |
 | `hooks/useGitHubAuth.ts` | PAT validation, OAuth flow |

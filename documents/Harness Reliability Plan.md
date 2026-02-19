@@ -1,8 +1,8 @@
 # Push Harness Reliability Plan (Hashline Included)
 
 ## Status
-- Last updated: 2026-02-17
-- State: Track B Phase 3 complete (Shipped), Track A gated, Track C ongoing
+- Last updated: 2026-02-19
+- State: Track B complete, Track A shipped (hashline active), Track C extended (structured feedback shipped), Agent Experience Wishlist shipped (9 items)
 - Intent: Improve coding task success by upgrading the harness, not just swapping models
 
 ## Why this doc changed
@@ -126,6 +126,9 @@ Remaining scope:
 - Surface provider compliance data in settings or debug view.
 - Consider native function calling for providers that support it (reduces prompt-engineering tax, but must coexist with JSON-block providers).
 
+Done (2026-02-19, Agent Experience Wishlist):
+- [x] Structured malformed-call feedback to agent — `[TOOL_CALL_PARSE_ERROR]` header with `error_type`, `detected_tool`, and `problem` fields injected into correction messages. Closes the loop between Track C telemetry and agent behavior.
+
 Context note:
 - Both Claude Code and Codex CLI avoid this problem entirely via native API-level function calling. Push's prompt-engineered protocol is the cost of provider-agnostic design. The garbled recovery layer is the right investment; tracking per-provider compliance rates will show where the cost is highest.
 
@@ -164,28 +167,34 @@ Scope:
 - Preserve actionable logs for "why task failed" analysis.
 - Expand `toolMeta` to all error paths (not just garbled calls) — every tool failure should carry enough metadata for post-hoc debugging without reading the full conversation.
 
+Done (2026-02-19, Agent Experience Wishlist):
+- [x] Structured error taxonomy — `classifyError()` maps every tool failure to a `ToolErrorType` with `retryable` flag. All error paths in `executeSandboxToolCall()` include `structuredError`.
+- [x] Universal meta envelope — `[meta] round=N ctx=Xkb/120kb dirty=bool files=N` injected into every tool result in both Orchestrator and Coder loops. Per-round sandbox status cached.
+- [x] Edit result diff — `sandbox_edit_file` returns before/after versions and git diff hunks instead of a bare success message.
+
 Success signal:
 - faster root-cause diagnosis for failed tasks
 - lower "mystery failure" incidents during dogfooding
 
 ## Prioritization (Now / Next / Later)
 
+> Track A hashline is shipped and active. Track B complete. Track C Phase 1 + structured feedback shipped.
+> Agent Experience Wishlist shipped (2026-02-19): 9 items across error taxonomy, multi-tool dispatch, meta envelope, acceptance criteria, working memory, and two new tools.
+
 Now:
-1. Run Track A micro-test gate.
-2. Add Track C malformed-call rate metric by provider/model (small — instrument `diagnoseToolCallFailure`).
-3. Add minimal instrumentation needed for Track A/B comparison.
-
-> Track B Phases 1-3 and Track C Phase 1 are ✅ complete (shipped 2026-02-17).
-
-Next:
-1. If gate passes: implement Track A MVP behind flag (include fuzzy matching + structured error detail).
-2. Expand `toolMeta` coverage on remaining error paths (Track E).
+1. Add Track C malformed-call rate metric by provider/model (small — instrument `diagnoseToolCallFailure`).
+2. Surface provider compliance data in settings or debug view.
 3. Begin server-side background job prototyping (Track D).
 
-Later:
+Next:
 1. Track D server-side background jobs (see `documents/Background Coder Tasks Plan.md`).
-2. Additional Track A ops (`replace_range`, `delete_range`, `insert_before`) only if MVP earns it.
-3. Evaluate native function calling for providers that support it (Track C cost reduction).
+2. Evaluate native function calling for providers that support it (Track C cost reduction).
+3. Dogfood Agent Experience Wishlist features and measure round/retry reduction.
+
+Later:
+1. Full Track D implementation (reconnectable job timelines, cancel/resume).
+2. Additional hashline ops (`replace_range`, `delete_range`) only if MVP earns it.
+3. Provider compliance scoring surface in settings.
 
 ## Measurement Framework
 
@@ -262,7 +271,18 @@ Source: architecture comparison of two production CLI coding agents.
 
 Key conclusion: **Push's prompt-engineered tool protocol is its biggest reliability tax vs production tools, but also its biggest flexibility advantage.** The harness work (garbled recovery, hashline, read efficiency) is specifically about closing the reliability gap while keeping provider-agnostic design.
 
+### Agent Experience Wishlist — Full Sprint (9 items)
+
+- Experiment: Agent Experience Wishlist — 9 harness improvements from the agent's perspective
+- Date enabled: 2026-02-19
+- Cohort/flag: Global (no flag)
+- Baseline: No structured errors, single-tool-per-turn, no meta context, no acceptance criteria, no working memory
+- Result: All 9 items shipped in 4 phases. Error taxonomy (`classifyError()`), structured malformed-call feedback (`[TOOL_CALL_PARSE_ERROR]`), edit result diffs, multi-tool dispatch (`detectAllToolCalls()`), universal meta envelope (`[meta]` line), machine-checkable acceptance criteria, Coder working memory (`CoderWorkingMemory`), `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (all-or-nothing validation, sequential writes). Post-sprint Codex review caught 5 issues (parallel criteria passthrough, patchset atomicity wording, duplicate-path bug, state-update swallowing checkpoint, unused imports) — all fixed.
+- Decision: `go` (shipped)
+- Notes: No backend (Python/Worker) changes needed. All client-side. See `documents/Agent Experience Wishlist.md` for the original spec.
+
 ## Immediate Next Action
 
-Run the hashline provider micro-test and make a go/no-go call in one review.  
-Do not start full hashline implementation before that gate is passed.
+Dogfood the Agent Experience Wishlist features in real coding tasks.
+Measure round count and retry reduction vs pre-sprint baseline.
+Begin Track D (server-side background jobs) design work.

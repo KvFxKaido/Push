@@ -57,11 +57,19 @@ The app is free. AI usage depends on your provider subscription, and you choose 
 Push prioritizes harness reliability over raw model capability. Current shipped features:
 
 - **Range-aware file reads** — `sandbox_read_file` supports `start_line`/`end_line` with line-numbered output for precise context
+- **Hashline edits** — `sandbox_edit_file` uses 7-char content hashes as line references, eliminating line-number drift
 - **Garbled tool-call recovery** — three-phase diagnosis, JSON repair, and truncation detection so models self-correct in one retry
 - **Pre-commit audit gate** — Auditor agent enforces SAFE/UNSAFE verdict before any commit lands
 - **Execution provenance** — tool-result metadata tracks every sandbox operation for traceability
+- **Error taxonomy** — structured error types (`FILE_NOT_FOUND`, `EXEC_TIMEOUT`, `STALE_FILE`, etc.) with `retryable` flag so the agent makes intelligent retry decisions
+- **Multi-tool per turn** — parallel read-only tool calls in a single round, with optional trailing mutation
+- **Meta envelope** — every tool result includes `[meta]` with round number, context size, and sandbox dirty state
+- **Acceptance criteria** — `delegate_coder` supports shell commands that verify task success post-completion
+- **Agent working memory** — Coder maintains compaction-safe internal state (plan, files touched, errors) via `[CODER_STATE]` blocks
+- **Symbol extraction** — `sandbox_read_symbols` extracts function/class/type indexes without reading full files
+- **Multi-file patchsets** — `sandbox_apply_patchset` validates all edits before writing any files
 
-Next up: hashline edit experiments (content-addressed line references for safer edits) and server-side background execution for mobile resilience. See `documents/Harness Reliability Plan.md` for the full plan.
+Next up: server-side background execution for mobile resilience. See `documents/Harness Reliability Plan.md` for the full plan.
 
 ## Getting Started
 
@@ -154,10 +162,10 @@ Current harness priorities from `documents/Harness Reliability Plan.md`:
 
 - [x] stale-write protection + write-path telemetry baseline
 - [x] improved operator visibility (Coder status events in console, cleaner dialogue/tool display)
-- [x] read-path efficiency phase 1 (`sandbox_read_file` range args, line-numbered range output, out-of-bounds empty-range warning)
+- [x] read-path efficiency (`sandbox_read_file` range args, line-numbered output, truncation-aware edit safety)
 - [x] garbled tool-call recovery (three-phase diagnosis, JSON repair, truncation detection, specific error feedback)
-- [ ] hashline edit reliability gate (provider compliance micro-test before build)
-- [ ] read-path efficiency phase 2 (default full-read cap + payload/truncation telemetry)
+- [x] hashline edit protocol (`sandbox_edit_file` with content-addressed line hashes)
+- [x] Agent Experience Wishlist — 9 harness improvements (error taxonomy, multi-tool dispatch, meta envelope, acceptance criteria, working memory, structured malformed-call feedback, edit result diffs, `sandbox_read_symbols`, `sandbox_apply_patchset`)
 - [ ] server-side background run model for mobile lock/background resilience
 
 ## Project Structure
