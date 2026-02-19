@@ -1,8 +1,16 @@
 # Background Coder Tasks Plan
 
-Date: 2026-02-13 (Updated: 2026-02-15)  
-Status: Draft  
+Date: 2026-02-13 (Updated: 2026-02-19)
+Status: **Deferred — revisit if/when native app is built**
 Owner: Push
+
+## Deferral Rationale
+
+Implementing this in a PWA requires fighting the platform (browser background execution limits, iOS WebKit restrictions) and introduces a Durable Object execution layer that duplicates the client-side harness with less visibility and new failure modes. The reliability cost isn't worth it while Push is a PWA.
+
+If Push ever ships as a native app (React Native / native WebView shell), the platform handles background execution and push notifications natively — the DO design may only need to cover reconnect/resume at that point, not the full execution migration.
+
+**Near-term substitute:** surface stall detection in the foreground loop — if no tokens arrive for ~30s mid-round, show a "Task may have stalled" banner. Cheap, no new architecture.
 
 ## Goal
 
