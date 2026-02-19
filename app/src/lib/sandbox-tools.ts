@@ -11,7 +11,6 @@
 import type {
   ToolExecutionResult,
   StructuredToolError,
-  ToolErrorType,
   ActiveRepo,
   SandboxCardData,
   DiffPreviewCardData,
@@ -1798,6 +1797,23 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
           return { text: '[Tool Error — sandbox_apply_patchset] No edits provided.' };
         }
 
+        // Reject duplicate file paths — each path must appear exactly once
+        const pathCounts = new Map<string, number>();
+        for (const edit of edits) {
+          pathCounts.set(edit.path, (pathCounts.get(edit.path) || 0) + 1);
+        }
+        const duplicates = [...pathCounts.entries()].filter(([, count]) => count > 1);
+        if (duplicates.length > 0) {
+          return {
+            text: [
+              `[Tool Error — sandbox_apply_patchset]`,
+              `Duplicate file paths are not allowed in a single patchset:`,
+              ...duplicates.map(([path, count]) => `  - ${path} (appears ${count} times)`),
+              `Combine all ops for each file into one entry.`,
+            ].join('\n'),
+          };
+        }
+
         // Phase 1: Read all files and validate all hashline ops
         const fileContents = new Map<string, { content: string; version?: string }>();
         const validationErrors: string[] = [];
@@ -1968,7 +1984,7 @@ Additional tools available when sandbox is active:
 - sandbox_save_draft(message?, branch_name?) — Quick-save all uncommitted changes to a draft branch. Stages everything, commits with the message (default: "WIP: draft save"), and pushes. Skips Auditor review (drafts are WIP). If not already on a draft/ branch, creates one automatically. Use this for checkpoints, WIP saves, or before sandbox expiry.
 - sandbox_download(path?) — Download workspace files as a compressed archive (tar.gz). Path defaults to /workspace. Returns a download card the user can save.${BROWSER_TOOL_PROTOCOL_LINE}
 - sandbox_read_symbols(path) — Extract a symbol index from a source file (functions, classes, interfaces, types, imports with line numbers). Works on .py (via ast), .ts/.tsx/.js/.jsx (via regex). Use this to understand file structure before editing — cheaper than reading the whole file.
-- sandbox_apply_patchset(edits, dryRun?) — Apply hashline edits to multiple files atomically. edits is an array of { path, ops: HashlineOp[] }. Phase 1 reads all files and validates all ops — if any fail, nothing is written. Phase 2 writes sequentially. Use dryRun=true to validate without writing. Prefer this over multiple sandbox_edit_file calls when editing 2+ files together.
+- sandbox_apply_patchset(edits, dryRun?) — Apply hashline edits to multiple files with all-or-nothing validation. edits is an array of { path, ops: HashlineOp[] } (each path must appear once). Phase 1 reads all files and validates all ops — if any fail, nothing is written. Phase 2 writes sequentially (partial failure possible if a write fails mid-way). Use dryRun=true to validate without writing. Prefer this over multiple sandbox_edit_file calls when editing 2+ files together.
 - promote_to_github(repo_name, description?, private?) — Create a new GitHub repo under the authenticated user, set the sandbox git remote, and push current branch. Defaults to private=true.
 
 Compatibility aliases also work:

@@ -17,7 +17,7 @@ import type {
   ToolMeta,
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
-import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, detectAllToolCalls, isReadOnlyToolCall, PARALLEL_READ_ONLY_GITHUB_TOOLS, PARALLEL_READ_ONLY_SANDBOX_TOOLS, MAX_PARALLEL_TOOL_CALLS } from '@/lib/tool-dispatch';
+import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent, generateCheckpointAnswer } from '@/lib/coder-agent';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -1465,6 +1465,8 @@ export function useChat(
                             return answer;
                           };
 
+                          // Pass acceptance criteria to the last task (by index), matching sequential behavior
+                          const isLastTask = taskIndex === delegateTasks.length - 1;
                           const coderResult = await runCoderAgent(
                             task,
                             workerSandboxId,
@@ -1478,6 +1480,7 @@ export function useChat(
                             agentsMdRef.current || undefined,
                             abortControllerRef.current?.signal,
                             handleCheckpoint,
+                            isLastTask ? delegateArgs.acceptanceCriteria : undefined,
                           );
 
                           return { taskIndex, coderResult };
