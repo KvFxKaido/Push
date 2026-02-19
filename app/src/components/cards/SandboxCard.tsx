@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Terminal, CheckCircle2, XCircle, Copy, Download, Check } from 'lucide-react';
 import type { SandboxCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_BADGE_SUCCESS, CARD_BADGE_ERROR } from '@/lib/utils';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
+import { CardCodeBlock } from './card-code-block';
 
 export function SandboxCard({ data }: { data: SandboxCardData }) {
   const { expanded, toggleExpanded } = useExpandable(data.exitCode !== 0);
@@ -88,18 +89,14 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
       {/* Output */}
       <ExpandableCardPanel expanded={expanded}>
         {data.stdout && (
-          <pre className="px-3 py-2 overflow-x-auto">
-            <code className="font-mono text-[12px] text-push-fg-secondary leading-relaxed whitespace-pre-wrap break-all">
-              {data.stdout}
-            </code>
-          </pre>
+          <CardCodeBlock codeClassName="text-push-fg-secondary whitespace-pre-wrap break-all">
+            {data.stdout}
+          </CardCodeBlock>
         )}
         {data.stderr && (
-          <pre className="px-3 py-2 bg-[#05080e] overflow-x-auto">
-            <code className="font-mono text-[12px] text-[#ef4444]/70 leading-relaxed whitespace-pre-wrap break-all">
-              {data.stderr}
-            </code>
-          </pre>
+          <CardCodeBlock preClassName="bg-[#05080e]" codeClassName="text-[#ef4444]/70 whitespace-pre-wrap break-all">
+            {data.stderr}
+          </CardCodeBlock>
         )}
         {data.truncated && (
           <div className="px-3 py-1.5 text-[11px] text-push-fg-dim italic border-t border-push-edge">

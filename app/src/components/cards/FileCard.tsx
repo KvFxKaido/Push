@@ -3,6 +3,7 @@ import type { FileCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
 import { CARD_SHELL_CLASS } from '@/lib/utils';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
+import { CardCodeBlock } from './card-code-block';
 
 export function FileCard({ data }: { data: FileCardData }) {
   const { expanded, toggleExpanded } = useExpandable(true);
@@ -32,11 +33,12 @@ export function FileCard({ data }: { data: FileCardData }) {
 
       {/* Code content */}
       <ExpandableCardPanel expanded={expanded}>
-        <pre className="px-3 py-2 overflow-x-auto max-h-[400px] overflow-y-auto">
-          <code className="font-mono text-[12px] text-[#e4e4e7] leading-relaxed whitespace-pre">
-            {data.content}
-          </code>
-        </pre>
+        <CardCodeBlock
+          preClassName="max-h-[400px] overflow-y-auto"
+          codeClassName="text-[#e4e4e7] whitespace-pre"
+        >
+          {data.content}
+        </CardCodeBlock>
         {data.truncated && (
           <div className="px-3 py-1.5 border-t border-push-edge text-[11px] text-push-fg-dim italic">
             Content truncated at 5K characters
