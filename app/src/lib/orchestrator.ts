@@ -1430,6 +1430,24 @@ export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderCha
 
 export type ActiveProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo';
 
+/** Key getter for each configurable provider. */
+const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string> = {
+  moonshot:    getMoonshotKey,
+  ollama:      getOllamaKey,
+  mistral:     getMistralKey,
+  zai:         getZaiKey,
+  minimax:     getMiniMaxKey,
+  openrouter:  getOpenRouterKey,
+};
+
+/**
+ * Fallback order when no preference is set (or the preferred key is gone).
+ * Moonshot first for backwards compat — existing users already have a Kimi key.
+ */
+const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
+  'moonshot', 'ollama', 'mistral', 'zai', 'minimax', 'openrouter',
+];
+
 /**
  * Determine which provider is active.
  *
@@ -1440,28 +1458,14 @@ export type ActiveProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minima
  */
 export function getActiveProvider(): ActiveProvider {
   const preferred = getPreferredProvider();
-  const hasOllama = Boolean(getOllamaKey());
-  const hasKimi = Boolean(getMoonshotKey());
-  const hasMistral = Boolean(getMistralKey());
-  const hasZai = Boolean(getZaiKey());
-  const hasMiniMax = Boolean(getMiniMaxKey());
-  const hasOpenRouter = Boolean(getOpenRouterKey());
 
   // Honour explicit preference when the key is available
-  if (preferred === 'ollama' && hasOllama) return 'ollama';
-  if (preferred === 'moonshot' && hasKimi) return 'moonshot';
-  if (preferred === 'mistral' && hasMistral) return 'mistral';
-  if (preferred === 'zai' && hasZai) return 'zai';
-  if (preferred === 'minimax' && hasMiniMax) return 'minimax';
-  if (preferred === 'openrouter' && hasOpenRouter) return 'openrouter';
+  if (preferred && Boolean(PROVIDER_KEY_GETTERS[preferred]())) return preferred;
 
   // No preference (or preferred key was removed) — first available
-  if (hasKimi) return 'moonshot';
-  if (hasOllama) return 'ollama';
-  if (hasMistral) return 'mistral';
-  if (hasZai) return 'zai';
-  if (hasMiniMax) return 'minimax';
-  if (hasOpenRouter) return 'openrouter';
+  for (const p of PROVIDER_FALLBACK_ORDER) {
+    if (Boolean(PROVIDER_KEY_GETTERS[p]())) return p;
+  }
   return 'demo';
 }
 

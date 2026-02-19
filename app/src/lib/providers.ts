@@ -245,6 +245,15 @@ export function getDefaultModel(type: AIProviderType): AIModel | undefined {
   return provider?.models[0];
 }
 
+/** Runtime model-name getters for providers where the user can override the default. */
+const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
+  ollama:     getOllamaModelName,
+  mistral:    getMistralModelName,
+  zai:        getZaiModelName,
+  minimax:    getMiniMaxModelName,
+  openrouter: getOpenRouterModelName,
+};
+
 export function getModelForRole(
   type: AIProviderType,
   role: AgentRole,
@@ -253,29 +262,8 @@ export function getModelForRole(
   const model = provider?.models.find((m) => m.role === role);
   if (!model) return undefined;
 
-  // For Ollama, overlay the user-selected model name at runtime
-  if (type === 'ollama') {
-    const userModel = getOllamaModelName();
-    return { ...model, id: userModel };
-  }
-  // For Mistral, overlay the user-selected model name at runtime
-  if (type === 'mistral') {
-    const userModel = getMistralModelName();
-    return { ...model, id: userModel };
-  }
-  if (type === 'zai') {
-    const userModel = getZaiModelName();
-    return { ...model, id: userModel };
-  }
-  if (type === 'minimax') {
-    const userModel = getMiniMaxModelName();
-    return { ...model, id: userModel };
-  }
-  if (type === 'openrouter') {
-    const userModel = getOpenRouterModelName();
-    return { ...model, id: userModel };
-  }
-  return model;
+  const getter = MODEL_NAME_GETTERS[type];
+  return getter ? { ...model, id: getter() } : model;
 }
 
 // ---------------------------------------------------------------------------
