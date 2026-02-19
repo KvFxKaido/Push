@@ -142,6 +142,9 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `hooks/useZaiConfig.ts` — Z.ai backend configuration
 - `hooks/useMiniMaxConfig.ts` — MiniMax backend configuration and model selection
 - `hooks/useTavilyConfig.ts` — Tavily web search API key management
+- `hooks/useOpenRouterConfig.ts` — OpenRouter backend configuration and model selection
+- `hooks/useApiKeyConfig.ts` — Factory for provider API key hooks (shared skeleton: localStorage getter + env var fallback + React hook)
+- `hooks/useExpandable.ts` — Generic expandable/collapsible UI state hook
 - `hooks/useUsageTracking.ts` — Usage analytics tracking
 - `hooks/use-mobile.ts` — Mobile viewport detection
 - `types/index.ts` — All shared TypeScript types (includes card data types for sandbox, diff preview, audit verdict)

@@ -217,6 +217,9 @@ Push/
 | `hooks/useZaiConfig.ts` | Z.ai backend configuration |
 | `hooks/useMiniMaxConfig.ts` | MiniMax backend configuration and model selection |
 | `hooks/useTavilyConfig.ts` | Tavily web search API key management |
+| `hooks/useOpenRouterConfig.ts` | OpenRouter backend configuration and model selection |
+| `hooks/useApiKeyConfig.ts` | Factory for provider API key hooks (shared localStorage getter + env var fallback + React hook) |
+| `hooks/useExpandable.ts` | Generic expandable/collapsible UI state |
 | `hooks/useUsageTracking.ts` | Usage analytics tracking |
 | `hooks/use-mobile.ts` | Mobile viewport detection |
 
