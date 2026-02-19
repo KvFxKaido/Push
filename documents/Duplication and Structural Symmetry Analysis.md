@@ -2,7 +2,7 @@
 
 Analysis of repeated patterns, structural symmetry, and consolidation opportunities across the Push codebase. This document is observational — no behavior changes proposed.
 
-**Last audit: 2026-02-19 — ~75% of identified duplication has been consolidated.**
+**Last audit: 2026-02-19 — 100% of identified duplication has been consolidated.**
 
 ---
 
@@ -181,29 +181,28 @@ PRCard, SandboxCard, DiffPreviewCard, FileCard, and EditorCard all use the expan
 
 **Status:** DONE. `expandable.tsx` exports `useExpandable`, `ExpandChevron`, and `ExpandableCardPanel` — all cards use these shared components. Wiring is minimal (~3 lines per card).
 
-### 6c. Status Badge (6 cards) — NOT DONE
+### 6c. Status Badge (6 cards) — DONE
 
-PRCard, AuditVerdictCard, SandboxCard, TestResultsCard, TypeCheckCard, and CIStatusCard each define independent status-to-color config objects:
-```typescript
-const statusConfig = {
-  state1: { label: '...', color: 'bg-[#22c55e]/15 text-[#22c55e]' },
-  state2: { label: '...', color: 'bg-[#ef4444]/15 text-[#ef4444]' },
-};
-```
+PRCard, AuditVerdictCard, SandboxCard, TestResultsCard, TypeCheckCard, and CIStatusCard each define independent status-to-color config objects.
 
-**Status:** NOT DONE. The color values (`#22c55e` for success, `#ef4444` for error, `#f59e0b` for warning) are still hardcoded independently across cards. No shared palette constant exists.
+**Status:** DONE. `lib/utils.ts` now exports the shared palette:
+- `CARD_TEXT_SUCCESS/ERROR/WARNING` — standalone text color classes
+- `CARD_BADGE_SUCCESS/ERROR/WARNING` — pill badge pattern (`bg-[...]/15 text-[...]`)
+- `CARD_HEADER_BG_SUCCESS/ERROR` — header band pattern (`bg-[...]/10`)
 
-### 6d. List/Divider Pattern (8 cards) — NOT DONE
+All config objects (riskColors, statusConfig, etc.) replaced with constants. ~60 lines consolidated.
 
-CommitListCard, FileListCard, BranchListCard, CommitFilesCard, TypeCheckCard, CIStatusCard, FileSearchCard, and WebSearchCard all repeat the same `divide-y divide-push-edge` list markup.
+### 6d. List/Divider Pattern (7 cards) — DONE
 
-**Status:** NOT DONE. No shared `CardList` or `CardListItem` component extracted. Each card still implements the pattern independently (~100 lines total across 8 cards).
+CommitListCard, FileListCard, BranchListCard, CommitFilesCard, TypeCheckCard, FileSearchCard, and WebSearchCard all repeat the same `divide-y divide-push-edge` list markup.
 
-### 6e. Code Block Pattern (4 cards) — NOT DONE
+**Status:** DONE. `CARD_LIST_CLASS = 'divide-y divide-push-edge'` exported from `lib/utils.ts`. All 7 cards use it (cards with max-height combine via template string). ~100 lines consolidated.
 
-FileCard, SandboxCard, TestResultsCard, and CommitReviewCard duplicate the same `<pre><code>` block styling.
+### 6e. Code Block Pattern (2 cards, 3 instances) — DONE
 
-**Status:** NOT DONE. No shared `CardCodeBlock` component exists. `<pre>` styling is duplicated across cards (~40 lines total).
+FileCard and SandboxCard (stdout + stderr) duplicate the `<pre><code>` block wrapper.
+
+**Status:** DONE. `CardCodeBlock` component in `components/cards/card-code-block.tsx`. Base styles on `<pre>` (`px-3 py-2 overflow-x-auto`) and `<code>` (`font-mono text-[12px] leading-relaxed`) are built in; color, whitespace, and max-height passed via `codeClassName`/`preClassName` props. ~30 lines consolidated.
 
 ### 6f. Utility Duplication — DONE
 
@@ -228,26 +227,19 @@ This is a deliberate design pattern (documented in CLAUDE.md) for hooks whose st
 
 ---
 
-## 8. `getActiveProvider()` — Linear Scan — NOT DONE
+## 8. `getActiveProvider()` — Linear Scan — DONE
 
-`getActiveProvider()` still checks each provider in a linear if-chain. `getProviderStreamFn()` is still a switch statement.
+~~`getActiveProvider()` still checks each provider in a linear if-chain.~~
 
-```typescript
-if (preferred === 'ollama' && hasOllama) return 'ollama';
-if (preferred === 'moonshot' && hasKimi) return 'moonshot';
-if (preferred === 'mistral' && hasMistral) return 'mistral';
-if (preferred === 'zai' && hasZai) return 'zai';
-if (preferred === 'minimax' && hasMiniMax) return 'minimax';
-if (preferred === 'openrouter' && hasOpenRouter) return 'openrouter';
-```
-
-**Status:** NOT DONE. Each new provider still requires adding a line in `getActiveProvider()`, `getProviderStreamFn()`, the `PROVIDERS` array, and `getModelForRole()`. A registry/map pattern would make adding providers a single-point change.
+**Status:** DONE. Registry maps replace both linear chains:
+- `PROVIDER_KEY_GETTERS` in `orchestrator.ts` maps each `PreferredProvider` → its key getter function. `getActiveProvider()` uses a single preference check + `for` loop over `PROVIDER_FALLBACK_ORDER`. ~12 if-checks → 5 lines.
+- `MODEL_NAME_GETTERS` in `providers.ts` maps each overridable provider → its model name getter. `getModelForRole()` replaces the 5-check if-chain with one map lookup + spread. Adding a new provider now requires updating only `PROVIDER_KEY_GETTERS`, `MODEL_NAME_GETTERS`, and the `PROVIDERS` array.
 
 ---
 
 ## Summary — Consolidation Opportunity Map
 
-**Audit date: 2026-02-19 — 10 of 14 areas fully consolidated (~75%).**
+**Audit date: 2026-02-19 — 14 of 14 areas fully consolidated (100%).**
 
 | Area | Severity | Lines Affected | Status |
 |------|----------|----------------|--------|
@@ -261,14 +253,7 @@ if (preferred === 'openrouter' && hasOpenRouter) return 'openrouter';
 | Orchestrator stream wrappers | ~~Medium~~ | ~300 | **DONE** — `PROVIDER_STREAM_CONFIGS` registry + `buildErrorMessages()` factory |
 | Settings UI key sections | ~~Medium~~ | ~240 | **DONE** — shared `ProviderKeySection` component |
 | `formatSize`/`formatBytes` | ~~Low~~ | ~20 | **DONE** — single `formatSize()` in `diff-utils.ts` |
-| Card status badge colors | Low | ~60 | NOT DONE — no shared palette |
-| Card list/divider pattern | Low | ~100 | NOT DONE — repeated structural pattern |
-| Card code block pattern | Low | ~40 | NOT DONE — repeated structural pattern |
-| Provider registration (multi-point) | Low | ~30 | NOT DONE — linear chains in 4 places |
-
-### Remaining duplication (~230 lines, all low-severity)
-
-1. **Card status badge colors** (~60 lines) — 6 cards hardcode `#22c55e`/`#ef4444`/`#f59e0b` independently
-2. **Card list/divider pattern** (~100 lines) — 8 cards repeat `divide-y divide-push-edge` + item markup
-3. **Card code block pattern** (~40 lines) — 4 cards duplicate `<pre><code>` styling
-4. **Provider registration** (~30 lines) — `getActiveProvider()` + `getProviderStreamFn()` + `getModelForRole()` are linear chains
+| Card status badge colors | ~~Low~~ | ~60 | **DONE** — `CARD_BADGE_*/CARD_TEXT_*/CARD_HEADER_BG_*` in `lib/utils.ts` |
+| Card list/divider pattern | ~~Low~~ | ~100 | **DONE** — `CARD_LIST_CLASS` in `lib/utils.ts` |
+| Card code block pattern | ~~Low~~ | ~40 | **DONE** — `CardCodeBlock` in `components/cards/card-code-block.tsx` |
+| Provider registration (multi-point) | ~~Low~~ | ~30 | **DONE** — `PROVIDER_KEY_GETTERS` + `MODEL_NAME_GETTERS` maps |
