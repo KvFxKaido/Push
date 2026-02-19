@@ -1,4 +1,5 @@
 import { Trash2, GitBranch, RefreshCw, Loader2 } from 'lucide-react';
+import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
 import {
   Sheet,
   SheetContent,
@@ -361,6 +362,7 @@ export function SettingsSheet({
   workspace,
   data,
 }: SettingsSheetProps) {
+  const tcMetrics = getMalformedToolCallMetrics();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side={side} className="border-[#151b26] bg-push-grad-panel flex flex-col overflow-hidden">
@@ -1187,6 +1189,54 @@ export function SettingsSheet({
                 hint="Not required — web search works without this. Add a Tavily API key for higher-quality, LLM-optimized results. Free tier: 1,000 searches/month."
               />
             </div>
+          </div>
+
+          {/* Tool Call Diagnostics */}
+          <div className="space-y-3 pt-2 border-t border-push-edge">
+            <label className="text-sm font-medium text-push-fg">
+              Tool Call Diagnostics
+            </label>
+            {tcMetrics.count === 0 ? (
+              <p className="text-xs text-push-fg-dim">No malformed tool calls this session.</p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-push-fg-secondary">
+                  {tcMetrics.count} malformed {tcMetrics.count === 1 ? 'call' : 'calls'} detected this session
+                </p>
+                {Object.entries(tcMetrics.byProvider).map(([provider, pm]) => (
+                  <div key={provider} className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-push-fg-secondary">
+                        {PROVIDER_LABELS[provider as AIProviderType] ?? provider}
+                      </span>
+                      <span className="text-xs text-push-fg-dim">{pm.count}</span>
+                    </div>
+                    {Object.entries(pm.byModel).map(([model, mm]) => (
+                      <div key={model} className="space-y-0.5 pl-2 border-l border-push-edge">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-push-fg-dim truncate max-w-[160px]">{model}</span>
+                          <span className="text-[11px] text-push-fg-dim">{mm.count}</span>
+                        </div>
+                        {(Object.entries(mm.reasons) as [string, number][])
+                          .filter(([, n]) => n > 0)
+                          .map(([reason, n]) => (
+                            <div key={reason} className="flex items-center justify-between pl-2">
+                              <span className="text-[10px] text-push-fg-dim">
+                                {reason === 'truncated' ? 'Truncated' :
+                                 reason === 'validation_failed' ? 'Invalid schema' :
+                                 reason === 'malformed_json' ? 'Malformed JSON' :
+                                 reason === 'natural_language_intent' ? 'NL intent' :
+                                 reason}
+                              </span>
+                              <span className="text-[10px] text-push-fg-dim">{n}</span>
+                            </div>
+                          ))}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Danger Zone */}
