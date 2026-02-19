@@ -177,6 +177,8 @@ export interface ToolCallDiagnosis {
   reason: 'truncated' | 'validation_failed' | 'malformed_json' | 'natural_language_intent';
   toolName: string | null;
   errorMessage: string;
+  /** When true, record the metric but do not inject an error or trigger a retry. */
+  telemetryOnly?: boolean;
 }
 
 // ---------------------------------------------------------------------------
