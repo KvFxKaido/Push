@@ -1,13 +1,13 @@
 import { GitCommit, Plus, Minus, FileEdit } from 'lucide-react';
 import type { CommitFilesCardData } from '@/types';
-import { timeAgo, CARD_SHELL_CLASS } from '@/lib/utils';
+import { timeAgo, CARD_SHELL_CLASS, CARD_TEXT_SUCCESS, CARD_TEXT_ERROR, CARD_TEXT_WARNING, CARD_LIST_CLASS } from '@/lib/utils';
 
 export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
   const statusIcon = (status: string) => {
     switch (status) {
-      case 'added': return <Plus className="h-3 w-3 text-[#22c55e]" />;
-      case 'removed': return <Minus className="h-3 w-3 text-[#ef4444]" />;
-      default: return <FileEdit className="h-3 w-3 text-[#f59e0b]" />;
+      case 'added': return <Plus className={`h-3 w-3 ${CARD_TEXT_SUCCESS}`} />;
+      case 'removed': return <Minus className={`h-3 w-3 ${CARD_TEXT_ERROR}`} />;
+      default: return <FileEdit className={`h-3 w-3 ${CARD_TEXT_WARNING}`} />;
     }
   };
 

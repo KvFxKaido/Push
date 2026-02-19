@@ -71,12 +71,12 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
             </span>
           )}
           {isSuccess ? (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-[#22c55e]/15 text-[#22c55e]">
+            <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_SUCCESS}`}>
               <CheckCircle2 className="h-3 w-3" />
               0
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-[#ef4444]/15 text-[#ef4444]">
+            <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_ERROR}`}>
               <XCircle className="h-3 w-3" />
               {data.exitCode}
             </span>

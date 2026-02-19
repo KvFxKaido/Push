@@ -1,11 +1,11 @@
 import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import type { AuditVerdictCardData } from '@/types';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_TEXT_SUCCESS, CARD_TEXT_ERROR, CARD_BADGE_SUCCESS, CARD_BADGE_WARNING, CARD_BADGE_ERROR } from '@/lib/utils';
 
 const riskColors = {
-  low: 'bg-[#22c55e]/15 text-[#22c55e]',
-  medium: 'bg-[#f59e0b]/15 text-[#f59e0b]',
-  high: 'bg-[#ef4444]/15 text-[#ef4444]',
+  low: CARD_BADGE_SUCCESS,
+  medium: CARD_BADGE_WARNING,
+  high: CARD_BADGE_ERROR,
 };
 
 export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
@@ -16,11 +16,11 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
       {/* Verdict header */}
       <div className={`px-3.5 py-3 flex items-center gap-2.5 ${isSafe ? 'bg-[#22c55e]/5' : 'bg-[#ef4444]/5'}`}>
         {isSafe ? (
-          <ShieldCheck className="h-4 w-4 shrink-0 text-[#22c55e]" />
+          <ShieldCheck className={`h-4 w-4 shrink-0 ${CARD_TEXT_SUCCESS}`} />
         ) : (
-          <ShieldAlert className="h-4 w-4 shrink-0 text-[#ef4444]" />
+          <ShieldAlert className={`h-4 w-4 shrink-0 ${CARD_TEXT_ERROR}`} />
         )}
-        <span className={`text-sm font-medium ${isSafe ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
+        <span className={`text-sm font-medium ${isSafe ? CARD_TEXT_SUCCESS : CARD_TEXT_ERROR}`}>
           {isSafe ? 'SAFE' : 'UNSAFE'} — Auditor Verdict
         </span>
         <span className="ml-auto text-[11px] text-push-fg-dim">

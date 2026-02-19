@@ -1,12 +1,12 @@
 import { FileCode, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import type { TypeCheckCardData } from '@/types';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_TEXT_SUCCESS, CARD_TEXT_ERROR, CARD_HEADER_BG_SUCCESS, CARD_HEADER_BG_ERROR } from '@/lib/utils';
 
 export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
   const passed = data.exitCode === 0;
   const Icon = passed ? CheckCircle2 : XCircle;
-  const statusColor = passed ? 'text-[#22c55e]' : 'text-[#ef4444]';
-  const statusBg = passed ? 'bg-[#22c55e]/10' : 'bg-[#ef4444]/10';
+  const statusColor = passed ? CARD_TEXT_SUCCESS : CARD_TEXT_ERROR;
+  const statusBg = passed ? CARD_HEADER_BG_SUCCESS : CARD_HEADER_BG_ERROR;
 
   const toolLabel = {
     tsc: 'TypeScript',

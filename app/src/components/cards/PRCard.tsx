@@ -1,13 +1,13 @@
 import { GitPullRequest, GitMerge } from 'lucide-react';
 import type { PRCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_BADGE_SUCCESS, CARD_BADGE_ERROR } from '@/lib/utils';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 
 const statusConfig = {
-  open: { label: 'Open', color: 'bg-[#22c55e]/15 text-[#22c55e]', Icon: GitPullRequest },
+  open: { label: 'Open', color: CARD_BADGE_SUCCESS, Icon: GitPullRequest },
   merged: { label: 'Merged', color: 'bg-[#a855f7]/15 text-[#a855f7]', Icon: GitMerge },
-  closed: { label: 'Closed', color: 'bg-[#ef4444]/15 text-[#ef4444]', Icon: GitPullRequest },
+  closed: { label: 'Closed', color: CARD_BADGE_ERROR, Icon: GitPullRequest },
 };
 
 export function PRCard({ data }: { data: PRCardData }) {
