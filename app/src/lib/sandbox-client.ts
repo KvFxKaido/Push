@@ -97,6 +97,28 @@ function formatSandboxError(status: number, body: string): Error {
   }
 }
 
+// --- Error code mapping ---
+
+import type { ToolErrorType } from '@/types';
+
+/**
+ * Map sandbox-client error codes (MODAL_TIMEOUT, etc.) to the unified ToolErrorType.
+ */
+export function mapSandboxErrorCode(code: string): ToolErrorType {
+  switch (code) {
+    case 'MODAL_TIMEOUT': return 'EXEC_TIMEOUT';
+    case 'MODAL_NETWORK_ERROR': return 'SANDBOX_UNREACHABLE';
+    case 'MODAL_NOT_CONFIGURED':
+    case 'MODAL_URL_INVALID':
+    case 'MODAL_URL_TRAILING_SLASH':
+    case 'MODAL_NOT_FOUND': return 'SANDBOX_UNREACHABLE';
+    case 'MODAL_AUTH_FAILED': return 'AUTH_FAILURE';
+    case 'MODAL_UNAVAILABLE': return 'SANDBOX_UNREACHABLE';
+    case 'STALE_FILE': return 'STALE_FILE';
+    default: return 'UNKNOWN';
+  }
+}
+
 // --- Helpers ---
 
 const SANDBOX_BASE = '/api/sandbox';

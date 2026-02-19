@@ -182,10 +182,85 @@ export type ChatCard =
   | { type: 'workflow-logs'; data: WorkflowLogsCardData }
   | { type: 'web-search'; data: WebSearchCardData };
 
+// --- Coder working memory ---
+
+/** Agent-internal working memory for the Coder. Resets per task. */
+export interface CoderWorkingMemory {
+  plan?: string;
+  openTasks?: string[];
+  filesTouched?: string[];
+  assumptions?: string[];
+  errorsEncountered?: string[];
+}
+
+// --- Acceptance criteria for Coder delegation ---
+
+/** A single machine-checkable criterion the Coder must pass after task completion. */
+export interface AcceptanceCriterion {
+  id: string;
+  /** Shell command to run in the sandbox. */
+  check: string;
+  /** Expected exit code (default: 0 = success). */
+  exitCode?: number;
+  /** Human-readable description of what's being checked. */
+  description?: string;
+}
+
+/** Result of running one acceptance criterion. */
+export interface CriterionResult {
+  id: string;
+  passed: boolean;
+  exitCode: number;
+  output: string;
+}
+
+// --- Tool result meta envelope ---
+
+/** Lightweight metadata prepended to every tool result text. */
+export interface ToolResultMeta {
+  /** Current round number in the tool loop. */
+  round: number;
+  /** Estimated context size in KB. */
+  contextKb: number;
+  /** Context budget cap in KB. */
+  contextCapKb: number;
+  /** Whether the sandbox working tree has uncommitted changes (cached per round). */
+  gitDirty?: boolean;
+  /** Number of modified files in sandbox (cached per round). */
+  modifiedFiles?: number;
+}
+
+// --- Error taxonomy for structured tool errors ---
+
+/** Canonical error types for all tool failures. */
+export type ToolErrorType =
+  | 'FILE_NOT_FOUND'
+  | 'EXEC_TIMEOUT'
+  | 'EXEC_NON_ZERO_EXIT'
+  | 'SANDBOX_UNREACHABLE'
+  | 'EDIT_HASH_MISMATCH'
+  | 'EDIT_CONTENT_NOT_FOUND'
+  | 'AUTH_FAILURE'
+  | 'RATE_LIMITED'
+  | 'STALE_FILE'
+  | 'EDIT_GUARD_BLOCKED'
+  | 'WRITE_FAILED'
+  | 'UNKNOWN';
+
+/** Structured error attached to tool results when something goes wrong. */
+export interface StructuredToolError {
+  type: ToolErrorType;
+  retryable: boolean;
+  message: string;
+  detail?: string;
+}
+
 // Tool execution returns text for the LLM + optional structured card for UI
 export interface ToolExecutionResult {
   text: string;
   card?: ChatCard;
+  /** Structured error metadata — present when the tool failed. */
+  structuredError?: StructuredToolError;
   promotion?: {
     repo: ActiveRepo;
     pushed: boolean;

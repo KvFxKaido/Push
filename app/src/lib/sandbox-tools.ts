@@ -10,6 +10,8 @@
 
 import type {
   ToolExecutionResult,
+  StructuredToolError,
+  ToolErrorType,
   ActiveRepo,
   SandboxCardData,
   DiffPreviewCardData,
@@ -91,6 +93,57 @@ function formatSandboxError(error: string, context?: string): string {
     return `[Tool Error] Connection refused${context ? ` for ${context}` : ''}. The service may not be running or the port may be incorrect.`;
   }
   return `[Tool Error] ${error}`;
+}
+
+// --- Structured error classification ---
+
+/**
+ * Classify an error message into a structured ToolErrorType.
+ * Pattern-matches common error text from sandbox operations.
+ */
+export function classifyError(error: string, context?: string): StructuredToolError {
+  const lower = error.toLowerCase();
+
+  if (lower.includes('no such file') || lower.includes('enoent') || lower.includes('not found') || lower.includes('does not exist')) {
+    return { type: 'FILE_NOT_FOUND', retryable: false, message: error, detail: context };
+  }
+  if (lower.includes('timed out') || lower.includes('timeout') || lower.includes('modal_timeout')) {
+    return { type: 'EXEC_TIMEOUT', retryable: true, message: error, detail: context };
+  }
+  if (lower.includes('sandbox_unreachable') || lower.includes('modal_network_error') || lower.includes('cannot connect')) {
+    return { type: 'SANDBOX_UNREACHABLE', retryable: true, message: error, detail: context };
+  }
+  if (lower.includes('stale') || lower.includes('stale_file') || lower.includes('stale write')) {
+    return { type: 'STALE_FILE', retryable: false, message: error, detail: context };
+  }
+  if (lower.includes('edit guard') || lower.includes('edit_guard_blocked')) {
+    return { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: error, detail: context };
+  }
+  if (lower.includes('hash mismatch') || lower.includes('hash_mismatch')) {
+    return { type: 'EDIT_HASH_MISMATCH', retryable: false, message: error, detail: context };
+  }
+  if (lower.includes('permission denied') || lower.includes('eacces')) {
+    return { type: 'AUTH_FAILURE', retryable: false, message: error, detail: context };
+  }
+  if (lower.includes('rate limit') || lower.includes('429') || lower.includes('rate_limited')) {
+    return { type: 'RATE_LIMITED', retryable: true, message: error, detail: context };
+  }
+  if (lower.includes('write failed') || lower.includes('write_failed')) {
+    return { type: 'WRITE_FAILED', retryable: true, message: error, detail: context };
+  }
+
+  return { type: 'UNKNOWN', retryable: false, message: error, detail: context };
+}
+
+/**
+ * Format a structured error into the text block injected into tool results.
+ */
+function formatStructuredError(err: StructuredToolError, baseText: string): string {
+  return [
+    baseText,
+    `error_type: ${err.type}`,
+    `retryable: ${err.retryable}`,
+  ].join('\n');
 }
 
 function getGitHubAuthToken(): string {
@@ -187,6 +240,8 @@ export type SandboxToolCall =
   | { tool: 'sandbox_download'; args: { path?: string } }
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
   | { tool: 'promote_to_github'; args: { repo_name: string; description?: string; private?: boolean } }
+  | { tool: 'sandbox_read_symbols'; args: { path: string } }
+  | { tool: 'sandbox_apply_patchset'; args: { dryRun?: boolean; edits: Array<{ path: string; ops: HashlineOp[] }> } }
 
 // --- Validation ---
 
@@ -289,6 +344,18 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
       },
     };
   }
+  if (tool === 'sandbox_read_symbols' && typeof args.path === 'string') {
+    return { tool: 'sandbox_read_symbols', args: { path: args.path } };
+  }
+  if (tool === 'sandbox_apply_patchset' && Array.isArray(args.edits)) {
+    return {
+      tool: 'sandbox_apply_patchset',
+      args: {
+        dryRun: typeof args.dryRun === 'boolean' ? args.dryRun : (args.dry_run === true ? true : undefined),
+        edits: args.edits as Array<{ path: string; ops: HashlineOp[] }>,
+      },
+    };
+  }
   if (tool === 'promote_to_github' && typeof args.repo_name === 'string') {
     const repoName = args.repo_name.trim();
     if (!repoName) return null;
@@ -313,7 +380,7 @@ export const IMPLEMENTED_SANDBOX_TOOLS = new Set([
   'sandbox_list_dir', 'sandbox_diff', 'sandbox_prepare_commit', 'sandbox_push',
   'sandbox_run_tests', 'sandbox_check_types', 'sandbox_browser_screenshot',
   'sandbox_browser_extract', 'sandbox_download', 'sandbox_save_draft',
-  'promote_to_github',
+  'promote_to_github', 'sandbox_read_symbols', 'sandbox_apply_patchset',
   // Compatibility aliases
   'read_sandbox_file', 'search_sandbox', 'list_sandbox_dir', 'sandbox_commit',
 ]);
@@ -355,7 +422,8 @@ export async function executeSandboxToolCall(
   sandboxId: string,
 ): Promise<ToolExecutionResult> {
   if (!sandboxId) {
-    return { text: '[Tool Error] No active sandbox — start one first.' };
+    const err = classifyError('Sandbox unreachable — no active sandbox', 'executeSandboxToolCall');
+    return { text: formatStructuredError(err, '[Tool Error] No active sandbox — start one first.'), structuredError: err };
   }
 
   try {
@@ -400,7 +468,8 @@ export async function executeSandboxToolCall(
             isRangeRead,
             errorCode: 'READ_ERROR',
           });
-          return { text: formatSandboxError(result.error, call.args.path) };
+          const err = classifyError(result.error, call.args.path);
+          return { text: formatStructuredError(err, formatSandboxError(result.error, call.args.path)), structuredError: err };
         }
 
         if (typeof result.version === 'string' && result.version) {
@@ -610,34 +679,69 @@ export async function executeSandboxToolCall(
         // 1. Read the current file content
         const readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
         if (readResult.error) {
-          return { text: formatSandboxError(readResult.error, path) };
+          const err = classifyError(readResult.error, path);
+          return { text: formatStructuredError(err, formatSandboxError(readResult.error, path)), structuredError: err };
         }
 
         // 2. Apply hashline edits
         const editResult = await applyHashlineEdits(readResult.content, edits);
 
         if (editResult.failed > 0) {
+          const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Failed to apply ${editResult.failed} of ${edits.length} edits.`, detail: editResult.errors.join('; ') };
           return {
-            text: [
+            text: formatStructuredError(err, [
               `[Tool Error — sandbox_edit_file]`,
               `Failed to apply ${editResult.failed} of ${edits.length} edits.`,
               ...editResult.errors.map(e => `- ${e}`),
               `No changes were saved. Review the file content and references then retry.`,
-              `No changes were saved. Review the file content and references then retry.`,
-            ].join("\n")
+            ].join("\n")),
+            structuredError: err,
           };
         }
 
-        // 3. Delegate to sandbox_write_file with the edited content
-        const writeCall: SandboxToolCall = {
-          tool: 'sandbox_write_file' as const,
-          args: {
-            path,
-            content: editResult.content,
-            expected_version: expected_version || readResult.version || undefined,
-          },
-        };
-        return executeSandboxToolCall(writeCall, sandboxId);
+        // 3. Write the edited content directly (instead of delegating to sandbox_write_file)
+        const beforeVersion = readResult.version || 'unknown';
+        const editWriteVersion = expected_version || readResult.version || undefined;
+        const editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
+
+        if (!editWriteResult.ok) {
+          if (editWriteResult.code === 'STALE_FILE') {
+            const staleErr: StructuredToolError = { type: 'STALE_FILE', retryable: false, message: `Stale write rejected for ${path}.` };
+            return { text: formatStructuredError(staleErr, `[Tool Error — sandbox_edit_file]\nStale write rejected for ${path}. Re-read the file and retry.`), structuredError: staleErr };
+          }
+          const wErr = classifyError(editWriteResult.error || 'Write failed', path);
+          return { text: formatStructuredError(wErr, `[Tool Error — sandbox_edit_file]\n${editWriteResult.error || 'Write failed'}`), structuredError: wErr };
+        }
+
+        // Update version cache
+        const editCacheKey = fileVersionKey(sandboxId, path);
+        if (typeof editWriteResult.new_version === 'string' && editWriteResult.new_version) {
+          sandboxFileVersions.set(editCacheKey, editWriteResult.new_version);
+        }
+        fileLedger.recordCreation(path);
+
+        // 4. Get the diff hunks for this file
+        const escapedPath = path.replace(/'/g, "'\\''");
+        const diffResult = await execInSandbox(sandboxId, `cd /workspace && git diff -- '${escapedPath}'`);
+        const diffHunks = diffResult.exitCode === 0 ? diffResult.stdout.trim() : '';
+
+        const editLines: string[] = [
+          `[Tool Result — sandbox_edit_file]`,
+          `Edited ${path}: ${editResult.applied} of ${edits.length} operations applied.`,
+          `Before version: ${beforeVersion}`,
+          `After version: ${editWriteResult.new_version || 'unknown'}`,
+          `Bytes written: ${editWriteResult.bytes_written ?? editResult.content.length}`,
+        ];
+        if (diffHunks) {
+          // Limit diff output to prevent context bloat
+          const maxDiffLen = 3000;
+          const truncatedDiff = diffHunks.length > maxDiffLen ? diffHunks.slice(0, maxDiffLen) + '\n[diff truncated]' : diffHunks;
+          editLines.push('', 'Diff:', truncatedDiff);
+        } else {
+          editLines.push('', 'No diff hunks (file may be outside git or content identical).');
+        }
+
+        return { text: editLines.join('\n') };
       }
 
       case 'sandbox_write_file': {
@@ -673,12 +777,14 @@ export async function executeSandboxToolCall(
                   outcome: 'error',
                   errorCode: 'EDIT_GUARD_BLOCKED',
                 });
+                const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${retryVerdict.reason}`, detail: 'File too large for auto-expand' };
                 return {
-                  text: [
+                  text: formatStructuredError(guardErr, [
                     `[Tool Error — sandbox_write_file]`,
                     `Edit guard: ${retryVerdict.reason}`,
                     `The file was auto-read but is too large to fully load. Use sandbox_read_file with start_line/end_line to read the sections you need to edit, then retry.`,
-                  ].join('\n'),
+                  ].join('\n')),
+                  structuredError: guardErr,
                 };
               }
             } else {
@@ -695,11 +801,13 @@ export async function executeSandboxToolCall(
                   outcome: 'error',
                   errorCode: 'EDIT_GUARD_BLOCKED',
                 });
+                const guardErr2: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${guardVerdict.reason}` };
                 return {
-                  text: [
+                  text: formatStructuredError(guardErr2, [
                     `[Tool Error — sandbox_write_file]`,
                     `Edit guard: ${guardVerdict.reason}`,
-                  ].join('\n'),
+                  ].join('\n')),
+                  structuredError: guardErr2,
                 };
               }
             }
@@ -710,11 +818,13 @@ export async function executeSandboxToolCall(
               outcome: 'error',
               errorCode: 'EDIT_GUARD_BLOCKED',
             });
+            const guardErr3: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${guardVerdict.reason}`, detail: 'Auto-read threw an exception' };
             return {
-              text: [
+              text: formatStructuredError(guardErr3, [
                 `[Tool Error — sandbox_write_file]`,
                 `Edit guard: ${guardVerdict.reason}`,
-              ].join('\n'),
+              ].join('\n')),
+              structuredError: guardErr3,
             };
           }
         }
@@ -740,14 +850,16 @@ export async function executeSandboxToolCall(
               });
               const expected = result.expected_version || freshVersion || 'unknown';
               const current = result.current_version || 'missing';
+              const err: StructuredToolError = { type: 'STALE_FILE', retryable: false, message: `Stale write rejected for ${call.args.path}.`, detail: `expected=${expected} current=${current}` };
               return {
-                text: [
+                text: formatStructuredError(err, [
                   `[Tool Error — sandbox_write_file]`,
                   `Stale write rejected for ${call.args.path}.`,
                   `Expected version: ${expected}`,
                   `Current version: ${current}`,
                   `Re-read the file with sandbox_read_file, apply edits to the latest content, then retry.`,
-                ].join('\n'),
+                ].join('\n')),
+                structuredError: err,
               };
             }
 
@@ -758,7 +870,8 @@ export async function executeSandboxToolCall(
               errorCode,
             });
             const detail = result.error || 'Unknown error';
-            return { text: formatSandboxError(detail, call.args.path) };
+            const writeErr = classifyError(detail, call.args.path);
+            return { text: formatStructuredError(writeErr, formatSandboxError(detail, call.args.path)), structuredError: writeErr };
           }
 
           if (typeof result.new_version === 'string' && result.new_version) {
@@ -815,7 +928,8 @@ export async function executeSandboxToolCall(
         const result = await getSandboxDiff(sandboxId);
 
         if (result.error) {
-          return { text: `[Tool Error — sandbox_diff]\n${result.error}` };
+          const diffErr = classifyError(result.error, 'sandbox_diff');
+          return { text: formatStructuredError(diffErr, `[Tool Error — sandbox_diff]\n${result.error}`), structuredError: diffErr };
         }
 
         if (!result.diff) {
@@ -855,7 +969,8 @@ export async function executeSandboxToolCall(
         const diffResult = await getSandboxDiff(sandboxId);
 
         if (diffResult.error) {
-          return { text: `[Tool Error — sandbox_prepare_commit]\n${diffResult.error}` };
+          const commitDiffErr = classifyError(diffResult.error, 'sandbox_prepare_commit');
+          return { text: formatStructuredError(commitDiffErr, `[Tool Error — sandbox_prepare_commit]\n${diffResult.error}`), structuredError: commitDiffErr };
         }
 
         if (!diffResult.diff) {
@@ -1553,13 +1668,271 @@ export async function executeSandboxToolCall(
         };
       }
 
+      case 'sandbox_read_symbols': {
+        const filePath = call.args.path;
+        const ext = filePath.split('.').pop()?.toLowerCase() || '';
+
+        // Inline Python script that handles both Python (ast) and TS/JS (regex)
+        const pythonScript = `
+import sys, json, os
+
+path = sys.argv[1]
+ext = os.path.splitext(path)[1].lower()
+symbols = []
+
+try:
+    with open(path, 'r', errors='replace') as f:
+        content = f.read()
+        lines = content.split('\\n')
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+    sys.exit(0)
+
+if ext == '.py':
+    import ast
+    try:
+        tree = ast.parse(content, filename=path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
+                args = ', '.join(a.arg for a in node.args.args)
+                prefix = 'async ' if isinstance(node, ast.AsyncFunctionDef) else ''
+                symbols.append({"name": node.name, "kind": "function", "line": node.lineno, "signature": f"{prefix}def {node.name}({args})"})
+            elif isinstance(node, ast.ClassDef):
+                bases = ', '.join(getattr(b, 'id', '?') if hasattr(b, 'id') else '?' for b in node.bases)
+                symbols.append({"name": node.name, "kind": "class", "line": node.lineno, "signature": f"class {node.name}({bases})" if bases else f"class {node.name}"})
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.ImportFrom):
+                    names = ', '.join(a.name for a in node.names)
+                    symbols.append({"name": node.module or '', "kind": "import", "line": node.lineno, "signature": f"from {node.module} import {names}"})
+                else:
+                    for alias in node.names:
+                        symbols.append({"name": alias.name, "kind": "import", "line": node.lineno, "signature": f"import {alias.name}"})
+    except SyntaxError as e:
+        symbols.append({"name": "PARSE_ERROR", "kind": "error", "line": e.lineno or 0, "signature": str(e)})
+else:
+    import re
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        # export/function/class/interface/type/const patterns
+        m = re.match(r'^export\\s+(default\\s+)?(async\\s+)?function\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(3), "kind": "function", "line": i, "signature": stripped.split('{')[0].strip().rstrip(':')})
+            continue
+        m = re.match(r'^(?:export\\s+(?:default\\s+)?)?(?:abstract\\s+)?class\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(1), "kind": "class", "line": i, "signature": stripped.split('{')[0].strip()})
+            continue
+        m = re.match(r'^(?:export\\s+)?interface\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(1), "kind": "interface", "line": i, "signature": stripped.split('{')[0].strip()})
+            continue
+        m = re.match(r'^(?:export\\s+)?type\\s+(\\w+)\\s*[=<]', stripped)
+        if m:
+            symbols.append({"name": m.group(1), "kind": "type", "line": i, "signature": stripped.split('=')[0].strip()})
+            continue
+        m = re.match(r'^(?:export\\s+)?(const|let|var)\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(2), "kind": "variable", "line": i, "signature": stripped.split('=')[0].strip().rstrip(':')})
+            continue
+        # Standalone function (no export)
+        m = re.match(r'^(async\\s+)?function\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(2), "kind": "function", "line": i, "signature": stripped.split('{')[0].strip().rstrip(':')})
+            continue
+
+print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
+`.trim();
+
+        const escapedFilePath = shellEscape(filePath);
+        const result = await execInSandbox(
+          sandboxId,
+          `python3 -c ${shellEscape(pythonScript)} ${escapedFilePath}`,
+        );
+
+        if (result.exitCode !== 0) {
+          const err = classifyError(result.stderr || 'Symbol extraction failed', filePath);
+          return { text: formatStructuredError(err, `[Tool Error — sandbox_read_symbols]\n${result.stderr || 'Failed to extract symbols'}`), structuredError: err };
+        }
+
+        try {
+          const parsed = JSON.parse(result.stdout.trim()) as {
+            error?: string;
+            symbols?: Array<{ name: string; kind: string; line: number; signature: string }>;
+            total_lines?: number;
+          };
+
+          if (parsed.error) {
+            const err = classifyError(parsed.error, filePath);
+            return { text: formatStructuredError(err, `[Tool Error — sandbox_read_symbols]\n${parsed.error}`), structuredError: err };
+          }
+
+          const symbols = parsed.symbols || [];
+          const totalLines = parsed.total_lines || 0;
+          const lang = ['py'].includes(ext) ? 'Python' : ['ts', 'tsx', 'js', 'jsx'].includes(ext) ? 'TypeScript/JavaScript' : ext;
+
+          const lines: string[] = [
+            `[Tool Result — sandbox_read_symbols]`,
+            `File: ${filePath} (${totalLines} lines, ${lang})`,
+            `Symbols: ${symbols.length}`,
+            '',
+          ];
+
+          for (const sym of symbols) {
+            lines.push(`  ${sym.kind.padEnd(10)} L${String(sym.line).padStart(4)}  ${sym.signature}`);
+          }
+
+          if (symbols.length === 0) {
+            lines.push('  (no symbols found)');
+          }
+
+          return { text: lines.join('\n') };
+        } catch {
+          return { text: `[Tool Error — sandbox_read_symbols]\nFailed to parse symbol output: ${result.stdout.slice(0, 500)}` };
+        }
+      }
+
+      case 'sandbox_apply_patchset': {
+        const { edits, dryRun } = call.args;
+
+        if (!edits || edits.length === 0) {
+          return { text: '[Tool Error — sandbox_apply_patchset] No edits provided.' };
+        }
+
+        // Phase 1: Read all files and validate all hashline ops
+        const fileContents = new Map<string, { content: string; version?: string }>();
+        const validationErrors: string[] = [];
+        const editResults: Array<{ path: string; content: string; applied: number; version?: string }> = [];
+
+        // Read all files in parallel
+        const readPromises = edits.map(async (edit) => {
+          try {
+            const readResult = await readFromSandbox(sandboxId, edit.path) as FileReadResult & { error?: string };
+            if (readResult.error) {
+              validationErrors.push(`${edit.path}: ${readResult.error}`);
+              return;
+            }
+            fileContents.set(edit.path, {
+              content: readResult.content,
+              version: typeof readResult.version === 'string' ? readResult.version : undefined,
+            });
+          } catch (e) {
+            validationErrors.push(`${edit.path}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        });
+        await Promise.all(readPromises);
+
+        if (validationErrors.length > 0) {
+          const err: StructuredToolError = { type: 'FILE_NOT_FOUND', retryable: false, message: `Failed to read ${validationErrors.length} file(s)`, detail: validationErrors.join('; ') };
+          return {
+            text: formatStructuredError(err, [
+              `[Tool Error — sandbox_apply_patchset]`,
+              `Failed to read ${validationErrors.length} file(s):`,
+              ...validationErrors.map(e => `  - ${e}`),
+              `No changes were written.`,
+            ].join('\n')),
+            structuredError: err,
+          };
+        }
+
+        // Validate all hashline ops against file contents
+        for (const edit of edits) {
+          const fileData = fileContents.get(edit.path);
+          if (!fileData) continue; // shouldn't happen given the check above
+
+          const editResult = await applyHashlineEdits(fileData.content, edit.ops);
+          if (editResult.failed > 0) {
+            validationErrors.push(`${edit.path}: ${editResult.errors.join('; ')}`);
+          } else {
+            editResults.push({
+              path: edit.path,
+              content: editResult.content,
+              applied: editResult.applied,
+              version: fileData.version,
+            });
+          }
+        }
+
+        if (validationErrors.length > 0) {
+          const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Hash mismatch in ${validationErrors.length} file(s)`, detail: validationErrors.join('; ') };
+          return {
+            text: formatStructuredError(err, [
+              `[Tool Error — sandbox_apply_patchset]`,
+              `Validation failed for ${validationErrors.length} file(s):`,
+              ...validationErrors.map(e => `  - ${e}`),
+              `No changes were written. Re-read the affected files and retry.`,
+            ].join('\n')),
+            structuredError: err,
+          };
+        }
+
+        // Dry run — return validation success without writing
+        if (dryRun) {
+          const lines: string[] = [
+            `[Tool Result — sandbox_apply_patchset] (dry run)`,
+            `All ${edits.length} file(s) validated successfully:`,
+          ];
+          for (const r of editResults) {
+            lines.push(`  ${r.path}: ${r.applied} op(s) would apply`);
+          }
+          return { text: lines.join('\n') };
+        }
+
+        // Phase 2: Write all files sequentially
+        const writeResults: string[] = [];
+        const writeFailures: string[] = [];
+
+        for (const r of editResults) {
+          try {
+            const writeResult = await writeToSandbox(sandboxId, r.path, r.content, r.version);
+            if (!writeResult.ok) {
+              if (writeResult.code === 'STALE_FILE') {
+                writeFailures.push(`${r.path}: stale write rejected (version changed during patchset)`);
+              } else {
+                writeFailures.push(`${r.path}: ${writeResult.error || 'write failed'}`);
+              }
+            } else {
+              // Update version cache
+              const cacheKey = fileVersionKey(sandboxId, r.path);
+              if (typeof writeResult.new_version === 'string' && writeResult.new_version) {
+                sandboxFileVersions.set(cacheKey, writeResult.new_version);
+              }
+              fileLedger.recordCreation(r.path);
+              writeResults.push(`${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`);
+            }
+          } catch (e) {
+            writeFailures.push(`${r.path}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+
+        if (writeFailures.length > 0) {
+          const lines: string[] = [
+            `[Tool Result — sandbox_apply_patchset] (partial failure)`,
+            `${writeResults.length} of ${editResults.length} file(s) written successfully:`,
+          ];
+          if (writeResults.length > 0) {
+            lines.push(...writeResults.map(r => `  ✓ ${r}`));
+          }
+          lines.push(`${writeFailures.length} file(s) failed:`);
+          lines.push(...writeFailures.map(f => `  ✗ ${f}`));
+          return { text: lines.join('\n') };
+        }
+
+        const lines: string[] = [
+          `[Tool Result — sandbox_apply_patchset]`,
+          `All ${editResults.length} file(s) patched successfully:`,
+          ...writeResults.map(r => `  ✓ ${r}`),
+        ];
+        return { text: lines.join('\n') };
+      }
+
       default:
         return { text: `[Tool Error] Unknown sandbox tool: ${String((call as { tool?: unknown }).tool ?? 'unknown')}` };
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[Push] Sandbox tool error:', msg);
-    return { text: `[Tool Error] ${msg}` };
+    const catchErr = classifyError(msg, String((call as { tool?: unknown }).tool ?? 'unknown'));
+    return { text: formatStructuredError(catchErr, `[Tool Error] ${msg}`), structuredError: catchErr };
   }
 }
 
@@ -1594,6 +1967,8 @@ Additional tools available when sandbox is active:
 - sandbox_check_types() — Run type checker (tsc for TypeScript, pyright/mypy for Python). Auto-detects from config files. Returns errors with file:line locations.
 - sandbox_save_draft(message?, branch_name?) — Quick-save all uncommitted changes to a draft branch. Stages everything, commits with the message (default: "WIP: draft save"), and pushes. Skips Auditor review (drafts are WIP). If not already on a draft/ branch, creates one automatically. Use this for checkpoints, WIP saves, or before sandbox expiry.
 - sandbox_download(path?) — Download workspace files as a compressed archive (tar.gz). Path defaults to /workspace. Returns a download card the user can save.${BROWSER_TOOL_PROTOCOL_LINE}
+- sandbox_read_symbols(path) — Extract a symbol index from a source file (functions, classes, interfaces, types, imports with line numbers). Works on .py (via ast), .ts/.tsx/.js/.jsx (via regex). Use this to understand file structure before editing — cheaper than reading the whole file.
+- sandbox_apply_patchset(edits, dryRun?) — Apply hashline edits to multiple files atomically. edits is an array of { path, ops: HashlineOp[] }. Phase 1 reads all files and validates all ops — if any fail, nothing is written. Phase 2 writes sequentially. Use dryRun=true to validate without writing. Prefer this over multiple sandbox_edit_file calls when editing 2+ files together.
 - promote_to_github(repo_name, description?, private?) — Create a new GitHub repo under the authenticated user, set the sandbox git remote, and push current branch. Defaults to private=true.
 
 Compatibility aliases also work:

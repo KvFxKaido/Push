@@ -7,7 +7,7 @@
  * to the correct implementation.
  */
 
-import type { ToolExecutionResult } from '@/types';
+import type { ToolExecutionResult, AcceptanceCriterion } from '@/types';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, IMPLEMENTED_SANDBOX_TOOLS, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
@@ -19,10 +19,114 @@ import { asRecord, detectToolFromText, extractBareToolJsonObjects, repairToolJso
 // Re-export for backwards compatibility — other modules import from here
 export { extractBareToolJsonObjects };
 
+// ---------------------------------------------------------------------------
+// Parallel read-only tool detection
+// ---------------------------------------------------------------------------
+
+export const PARALLEL_READ_ONLY_GITHUB_TOOLS = new Set([
+  'fetch_pr', 'list_prs', 'list_commits', 'read_file', 'list_directory',
+  'list_branches', 'fetch_checks', 'search_files', 'list_commit_files',
+  'get_workflow_runs', 'get_workflow_logs', 'check_pr_mergeable', 'find_existing_pr',
+]);
+
+export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set([
+  'sandbox_read_file', 'sandbox_search', 'sandbox_list_dir', 'sandbox_diff',
+]);
+
+export const MAX_PARALLEL_TOOL_CALLS = 6;
+
+/** Check whether a tool call is read-only (safe for parallel execution). */
+export function isReadOnlyToolCall(toolCall: AnyToolCall): boolean {
+  if (toolCall.source === 'github') {
+    return PARALLEL_READ_ONLY_GITHUB_TOOLS.has(toolCall.call.tool);
+  }
+  if (toolCall.source === 'sandbox') {
+    return PARALLEL_READ_ONLY_SANDBOX_TOOLS.has(toolCall.call.tool);
+  }
+  return false;
+}
+
+/** Result of scanning a response for all tool calls. */
+export interface DetectedToolCalls {
+  /** Read-only calls that can safely execute in parallel. */
+  readOnly: AnyToolCall[];
+  /** Optional trailing mutating call that must execute after reads. */
+  mutating: AnyToolCall | null;
+}
+
+/**
+ * Scan assistant output for ALL tool calls — reads + optional trailing mutation.
+ * Returns the read-only calls (parallelizable) and the last mutating call (if any).
+ * Falls back to single-call detection if only one call is found.
+ */
+export function detectAllToolCalls(text: string): DetectedToolCalls {
+  const parsedObjects = extractBareToolJsonObjects(text);
+  if (parsedObjects.length === 0) return { readOnly: [], mutating: null };
+
+  const allCalls: AnyToolCall[] = [];
+  const seen = new Set<string>();
+
+  for (const parsed of parsedObjects) {
+    const serialized = JSON.stringify(parsed);
+    const call = detectAnyToolCall(serialized);
+    if (!call) continue;
+    const key = `${call.source}:${getToolCallName(call)}:${serialized}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    allCalls.push(call);
+    if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + 1) break; // +1 for possible trailing mutation
+  }
+
+  if (allCalls.length === 0) return { readOnly: [], mutating: null };
+
+  // Single call — classify as read or mutation
+  if (allCalls.length === 1) {
+    if (isReadOnlyToolCall(allCalls[0])) {
+      return { readOnly: allCalls, mutating: null };
+    }
+    return { readOnly: [], mutating: allCalls[0] };
+  }
+
+  // Multiple calls — split into reads + optional trailing mutation
+  const readOnly: AnyToolCall[] = [];
+  let mutating: AnyToolCall | null = null;
+
+  for (let i = 0; i < allCalls.length; i++) {
+    if (isReadOnlyToolCall(allCalls[i])) {
+      readOnly.push(allCalls[i]);
+    } else if (i === allCalls.length - 1) {
+      // Only the last call can be a mutation
+      mutating = allCalls[i];
+    } else {
+      // Non-read in the middle — bail to single-call behavior for safety
+      return { readOnly: [], mutating: allCalls[0] };
+    }
+  }
+
+  // Cap parallel reads
+  if (readOnly.length > MAX_PARALLEL_TOOL_CALLS) {
+    return { readOnly: [], mutating: allCalls[0] };
+  }
+
+  return { readOnly, mutating };
+}
+
+/** Extract the tool name from a unified tool call. */
+function getToolCallName(toolCall: AnyToolCall): string {
+  switch (toolCall.source) {
+    case 'github': return toolCall.call.tool;
+    case 'sandbox': return toolCall.call.tool;
+    case 'delegate': return 'delegate_coder';
+    case 'scratchpad': return toolCall.call.tool;
+    case 'web-search': return 'web_search';
+    default: return 'unknown';
+  }
+}
+
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
-  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[] } } }
+  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[]; acceptanceCriteria?: AcceptanceCriterion[] } } }
   | { source: 'scratchpad'; call: ScratchpadToolCall }
   | { source: 'web-search'; call: WebSearchToolCall };
 
@@ -433,10 +537,24 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
     const task = typeof args?.task === 'string' ? args.task : undefined;
     const tasks = Array.isArray(args?.tasks) ? args.tasks.filter((v): v is string => typeof v === 'string') : undefined;
     const files = Array.isArray(args?.files) ? args.files.filter((v): v is string => typeof v === 'string') : undefined;
+    // Parse acceptance criteria if provided
+    let acceptanceCriteria: AcceptanceCriterion[] | undefined;
+    if (Array.isArray(args?.acceptanceCriteria)) {
+      acceptanceCriteria = (args.acceptanceCriteria as unknown[]).filter((c): c is AcceptanceCriterion => {
+        const cr = asRecord(c);
+        return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
+      }).map(c => ({
+        id: c.id,
+        check: c.check,
+        exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
+        description: typeof c.description === 'string' ? c.description : undefined,
+      }));
+      if (acceptanceCriteria.length === 0) acceptanceCriteria = undefined;
+    }
     if (parsedObj?.tool === 'delegate_coder' && (task || (tasks && tasks.length > 0))) {
       return {
         source: 'delegate',
-        call: { tool: 'delegate_coder', args: { task, tasks, files } },
+        call: { tool: 'delegate_coder', args: { task, tasks, files, acceptanceCriteria } },
       };
     }
     return null;
