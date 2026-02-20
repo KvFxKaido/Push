@@ -54,3 +54,6 @@ android-wrapper/
 
 # Personal
 personal/
+
+# push cli local state
+.push/
