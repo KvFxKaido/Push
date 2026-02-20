@@ -290,7 +290,7 @@ Files touched:
 - `hooks/useChat.ts` — Multi-tab lock, checkpoint size management, telemetry
 
 Implementation:
-- **Multi-tab coordination:** `acquireTabLock()` / `releaseTabLock()` / `heartbeatTabLock()` using localStorage (not BroadcastChannel — simpler, works cross-origin). Lock key: `run_active_${chatId}`, stores `{tabId, heartbeat}`. Lock is stale after 60s without heartbeat. Acquired on loop start, heartbeat every 15s, released in finally block. `detectInterruptedRun()` implicitly handles stale locks because it checks if the loop is running via `loopActiveRef`.
+- **Multi-tab coordination:** `acquireTabLock()` / `releaseTabLock()` / `heartbeatTabLock()` using localStorage (not BroadcastChannel — simpler, works cross-origin). Lock key: `run_active_${chatId}`, stores `{tabId, heartbeat}`. Lock is stale after 60s without heartbeat. Acquired on loop start (returns `tabId` token stored in `tabLockIdRef`), heartbeat every 15s (scoped to owner), released in finally block only if the current tab still owns the lock (compare `tabId` before delete). `detectInterruptedRun()` implicitly handles stale locks because it checks if the loop is running via `loopActiveRef`.
 - **Checkpoint size management:** `trimCheckpointDelta()` enforces a 50KB cap on `deltaMessages`. When exceeded, oldest deltas are trimmed from the front. Applied in `saveCheckpoint()` before `JSON.stringify`. Console warning logged when trimming.
 - **Telemetry:** `recordResumeEvent()` captures `{phase, round, timeSinceInterrupt, provider, hadAccumulated, hadCoderState}` into an in-memory ring buffer (50 events max). `getResumeEvents()` exported for debugging/operator visibility. Events also logged to console.
 
