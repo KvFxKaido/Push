@@ -1,9 +1,49 @@
 import process from 'node:process';
-import { detectToolCall, executeToolCall, truncateText, TOOL_PROTOCOL } from './tools.mjs';
+import { detectAllToolCalls, executeToolCall, isReadOnlyToolCall, truncateText, TOOL_PROTOCOL } from './tools.mjs';
 import { appendSessionEvent, saveSessionState, makeRunId } from './session-store.mjs';
 import { streamCompletion } from './provider.mjs';
+import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.mjs';
+import { recordMalformedToolCall } from './tool-call-metrics.mjs';
 
 export const DEFAULT_MAX_ROUNDS = 8;
+
+function createWorkingMemory() {
+  return {
+    plan: '',
+    openTasks: [],
+    filesTouched: [],
+    assumptions: [],
+    errorsEncountered: [],
+  };
+}
+
+function uniqueStrings(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function applyWorkingMemoryUpdate(state, args) {
+  if (!state.workingMemory || typeof state.workingMemory !== 'object') {
+    state.workingMemory = createWorkingMemory();
+  }
+
+  const mem = state.workingMemory;
+  if (typeof args.plan === 'string') mem.plan = args.plan;
+  if (Array.isArray(args.openTasks)) mem.openTasks = uniqueStrings(args.openTasks);
+  if (Array.isArray(args.filesTouched)) mem.filesTouched = uniqueStrings(args.filesTouched);
+  if (Array.isArray(args.assumptions)) mem.assumptions = uniqueStrings(args.assumptions);
+  if (Array.isArray(args.errorsEncountered)) mem.errorsEncountered = uniqueStrings(args.errorsEncountered);
+
+  return mem;
+}
 
 export function buildSystemPrompt(workspaceRoot) {
   return `You are Push CLI, a coding assistant running in a local workspace.
@@ -13,18 +53,30 @@ You can read files, run commands, and write files using tools.
 Use tools for facts; do not invent file contents or command outputs.
 If the user's message does not require reading files or running commands, respond directly without tool calls.
 Each tool-loop round is expensive — plan before acting, batch related reads, and avoid exploratory browsing unless the user asks for it.
+Use coder_update_state to keep a concise working plan; it is persisted and reinjected.
 
 ${TOOL_PROTOCOL}`;
 }
 
-export function buildToolResultMessage(call, result) {
+export function buildToolResultMessage(call, result, metaEnvelope = null) {
   const payload = {
     tool: call.tool,
     ok: result.ok,
     output: result.text,
     meta: result.meta || null,
+    structuredError: result.structuredError || null,
   };
-  return `[TOOL_RESULT]\n${JSON.stringify(payload, null, 2)}\n[/TOOL_RESULT]`;
+
+  const metaLine = metaEnvelope ? `\n[meta] ${JSON.stringify(metaEnvelope)}` : '';
+  return `[TOOL_RESULT]\n${JSON.stringify(payload, null, 2)}${metaLine}\n[/TOOL_RESULT]`;
+}
+
+function buildParseErrorMessage(malformed) {
+  return `[TOOL_CALL_PARSE_ERROR]\n${JSON.stringify({
+    reason: 'malformed_tool_call',
+    malformed,
+    guidance: 'Emit strict JSON fenced blocks: {"tool":"name","args":{...}}',
+  }, null, 2)}\n[/TOOL_CALL_PARSE_ERROR]`;
 }
 
 /**
@@ -35,6 +87,54 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
   const runId = makeRunId();
   let finalAssistantText = '';
   const repeatedCalls = new Map();
+  const toolsUsed = new Set();
+  const fileLedger = createFileLedger();
+
+  if (!state.workingMemory || typeof state.workingMemory !== 'object') {
+    state.workingMemory = createWorkingMemory();
+  }
+
+  async function executeOneToolCall(call, round) {
+    if (streamToStdout) {
+      process.stdout.write(`[tool] ${call.tool}\n`);
+    }
+
+    const toolStart = Date.now();
+    await appendSessionEvent(state, 'tool_call', {
+      source: 'sandbox',
+      toolName: call.tool,
+      args: call.args,
+    }, runId);
+
+    const result = await executeToolCall(call, state.cwd, { approvalFn: options.approvalFn });
+    const durationMs = Date.now() - toolStart;
+
+    await appendSessionEvent(state, 'tool_result', {
+      source: 'sandbox',
+      toolName: call.tool,
+      durationMs,
+      isError: !result.ok,
+      text: result.text.slice(0, 500),
+      structuredError: result.structuredError || null,
+    }, runId);
+
+    updateFileLedger(fileLedger, call, result);
+
+    if (streamToStdout) {
+      process.stdout.write(`[tool:${result.ok ? 'ok' : 'error'}] ${truncateText(result.text, 420)}\n`);
+    }
+
+    const metaEnvelope = {
+      runId,
+      round,
+      ledger: getLedgerSummary(fileLedger),
+      workingMemory: state.workingMemory,
+    };
+
+    state.messages.push({ role: 'user', content: buildToolResultMessage(call, result, metaEnvelope) });
+    toolsUsed.add(call.tool);
+    return result;
+  }
 
   for (let round = 1; round <= maxRounds; round++) {
     if (streamToStdout) process.stdout.write('\nassistant> ');
@@ -60,8 +160,47 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       messageId,
     }, runId);
 
-    const toolCall = detectToolCall(assistantText);
-    if (!toolCall) {
+    const detected = detectAllToolCalls(assistantText);
+
+    if (detected.malformed.length > 0) {
+      for (const malformed of detected.malformed) {
+        recordMalformedToolCall(malformed.reason);
+      }
+      await appendSessionEvent(state, 'warning', {
+        code: 'MALFORMED_TOOL_CALL',
+        count: detected.malformed.length,
+        reasons: detected.malformed.map((m) => m.reason),
+      }, runId);
+      state.messages.push({ role: 'user', content: buildParseErrorMessage(detected.malformed) });
+    }
+
+    const memoryCalls = detected.calls.filter((call) => call.tool === 'coder_update_state');
+    for (const call of memoryCalls) {
+      const updated = applyWorkingMemoryUpdate(state, call.args || {});
+      await appendSessionEvent(state, 'working_memory_updated', {
+        keys: Object.keys(updated),
+      }, runId);
+      state.messages.push({
+        role: 'user',
+        content: buildToolResultMessage(
+          call,
+          {
+            ok: true,
+            text: 'Working memory updated.',
+            meta: { workingMemory: updated },
+          },
+          { runId, round, ledger: getLedgerSummary(fileLedger), workingMemory: updated },
+        ),
+      });
+    }
+
+    const toolCalls = detected.calls.filter((call) => call.tool !== 'coder_update_state');
+
+    if (toolCalls.length === 0) {
+      if (memoryCalls.length > 0 || detected.malformed.length > 0) {
+        await saveSessionState(state);
+        continue;
+      }
       await appendSessionEvent(state, 'run_complete', {
         runId,
         outcome: 'success',
@@ -70,12 +209,12 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       return { outcome: 'success', finalAssistantText, rounds: round, runId };
     }
 
-    const callKey = JSON.stringify(toolCall);
+    const callKey = JSON.stringify(toolCalls);
     const seen = (repeatedCalls.get(callKey) || 0) + 1;
     repeatedCalls.set(callKey, seen);
     if (seen >= 3) {
-      const loopText = `Detected repeated tool call loop for ${toolCall.tool}. Stopping run.`;
-      state.messages.push({ role: 'user', content: `[TOOL_RESULT]\n{"tool":"${toolCall.tool}","ok":false,"output":"${loopText}"}\n[/TOOL_RESULT]` });
+      const loopText = `Detected repeated tool call loop (${toolCalls.map((c) => c.tool).join(', ')}). Stopping run.`;
+      state.messages.push({ role: 'user', content: `[TOOL_RESULT]\n{"tool":"tool_loop","ok":false,"output":"${loopText}"}\n[/TOOL_RESULT]` });
       await appendSessionEvent(state, 'error', {
         code: 'TOOL_LOOP_DETECTED',
         message: loopText,
@@ -84,40 +223,53 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       return { outcome: 'error', finalAssistantText: loopText, rounds: round, runId };
     }
 
-    if (streamToStdout) {
-      process.stdout.write(`[tool] ${toolCall.tool}\n`);
+    const readCalls = toolCalls.filter(isReadOnlyToolCall);
+    const mutateCalls = toolCalls.filter((call) => !isReadOnlyToolCall(call));
+
+    if (readCalls.length > 0) {
+      await Promise.all(readCalls.map((call) => executeOneToolCall(call, round)));
     }
 
-    const toolStart = Date.now();
-    await appendSessionEvent(state, 'tool_call', {
-      source: 'sandbox',
-      toolName: toolCall.tool,
-      args: toolCall.args,
-    }, runId);
+    if (mutateCalls.length > 0) {
+      await executeOneToolCall(mutateCalls[0], round);
 
-    const result = await executeToolCall(toolCall, state.cwd, { approvalFn: options.approvalFn });
-    const durationMs = Date.now() - toolStart;
+      for (let i = 1; i < mutateCalls.length; i++) {
+        const call = mutateCalls[i];
+        const result = {
+          ok: false,
+          text: `Skipped mutating tool call ${call.tool}: only one mutating tool call is allowed per assistant turn.`,
+          structuredError: {
+            code: 'MULTI_MUTATION_NOT_ALLOWED',
+            message: 'Only one mutating tool call allowed per turn',
+            retryable: true,
+          },
+        };
 
-    await appendSessionEvent(state, 'tool_result', {
-      source: 'sandbox',
-      toolName: toolCall.tool,
-      durationMs,
-      isError: !result.ok,
-      text: result.text.slice(0, 500),
-      structuredError: null,
-    }, runId);
+        await appendSessionEvent(state, 'tool_result', {
+          source: 'sandbox',
+          toolName: call.tool,
+          durationMs: 0,
+          isError: true,
+          text: result.text,
+          structuredError: result.structuredError,
+        }, runId);
 
-    if (streamToStdout) {
-      process.stdout.write(`[tool:${result.ok ? 'ok' : 'error'}] ${truncateText(result.text, 420)}\n`);
+        state.messages.push({
+          role: 'user',
+          content: buildToolResultMessage(
+            call,
+            result,
+            { runId, round, ledger: getLedgerSummary(fileLedger), workingMemory: state.workingMemory },
+          ),
+        });
+        toolsUsed.add(call.tool);
+      }
     }
 
-    state.messages.push({ role: 'user', content: buildToolResultMessage(toolCall, result) });
     await saveSessionState(state);
   }
 
-  const tools = [...repeatedCalls.keys()].map((k) => JSON.parse(k).tool);
-  const uniqueTools = [...new Set(tools)];
-  const warning = `Reached max rounds (${maxRounds}). Tools used: ${uniqueTools.join(', ') || 'none'}. Increase --max-rounds or break the task into smaller steps.`;
+  const warning = `Reached max rounds (${maxRounds}). Tools used: ${[...toolsUsed].join(', ') || 'none'}. Increase --max-rounds or break the task into smaller steps.`;
   await appendSessionEvent(state, 'run_complete', {
     runId,
     outcome: 'failed',

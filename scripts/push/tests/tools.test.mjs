@@ -1,7 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { detectToolCall, ensureInsideWorkspace, isHighRiskCommand, truncateText } from '../tools.mjs';
+import {
+  detectToolCall,
+  detectAllToolCalls,
+  ensureInsideWorkspace,
+  executeToolCall,
+  isHighRiskCommand,
+  truncateText,
+} from '../tools.mjs';
 
 // ─── detectToolCall ──────────────────────────────────────────────
 
@@ -47,6 +56,40 @@ describe('detectToolCall', () => {
     const text = '```json\n{"config": true}\n```\n\n```json\n{"tool":"exec","args":{"command":"pwd"}}\n```';
     const result = detectToolCall(text);
     assert.deepEqual(result, { tool: 'exec', args: { command: 'pwd' } });
+  });
+});
+
+describe('detectAllToolCalls', () => {
+  it('parses multiple tool calls from one assistant message', () => {
+    const text = [
+      '```json',
+      '{"tool":"read_file","args":{"path":"a.txt"}}',
+      '```',
+      '```json',
+      '{"tool":"search_files","args":{"pattern":"TODO"}}',
+      '```',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    assert.equal(detected.calls.length, 2);
+    assert.equal(detected.malformed.length, 0);
+    assert.equal(detected.calls[0].tool, 'read_file');
+    assert.equal(detected.calls[1].tool, 'search_files');
+  });
+
+  it('reports malformed tool blocks', () => {
+    const text = '```json\n{"tool":"read_file","args":"oops"}\n```';
+    const detected = detectAllToolCalls(text);
+    assert.equal(detected.calls.length, 0);
+    assert.equal(detected.malformed.length, 1);
+    assert.equal(detected.malformed[0].reason, 'missing_args_object');
+  });
+
+  it('ignores non-tool code fences', () => {
+    const text = '```ts\nconst x = 1;\n```';
+    const detected = detectAllToolCalls(text);
+    assert.equal(detected.calls.length, 0);
+    assert.equal(detected.malformed.length, 0);
   });
 });
 
@@ -171,5 +214,68 @@ describe('truncateText', () => {
     assert.ok(result.includes('[truncated'));
     assert.ok(result.includes('lines'));
     assert.ok(result.includes('start_line/end_line'));
+  });
+});
+
+describe('edit_file hashline flow', () => {
+  it('applies hashline edits using refs from read_file anchors', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));
+    try {
+      const rel = 'sample.txt';
+      const abs = path.join(root, rel);
+      await fs.writeFile(abs, 'alpha\nbeta\ngamma\n', 'utf8');
+
+      const read = await executeToolCall({ tool: 'read_file', args: { path: rel } }, root);
+      assert.equal(read.ok, true);
+      assert.ok(read.meta.version);
+
+      const firstLine = read.text.split('\n')[0];
+      const match = firstLine.match(/^(\d+)\|([a-f0-9]{7})\|/i);
+      assert.ok(match);
+
+      const ref = `${match[1]}:${match[2]}`;
+      const edit = await executeToolCall({
+        tool: 'edit_file',
+        args: {
+          path: rel,
+          expected_version: read.meta.version,
+          edits: [{ op: 'replace_line', ref, content: 'ALPHA' }],
+        },
+      }, root);
+
+      assert.equal(edit.ok, true);
+      const updated = await fs.readFile(abs, 'utf8');
+      assert.ok(updated.startsWith('ALPHA\n'));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects stale expected_version', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));
+    try {
+      const rel = 'stale.txt';
+      const abs = path.join(root, rel);
+      await fs.writeFile(abs, 'one\ntwo\n', 'utf8');
+
+      const read = await executeToolCall({ tool: 'read_file', args: { path: rel } }, root);
+      assert.equal(read.ok, true);
+
+      await fs.writeFile(abs, 'changed\ncontent\n', 'utf8');
+
+      const edit = await executeToolCall({
+        tool: 'edit_file',
+        args: {
+          path: rel,
+          expected_version: read.meta.version,
+          edits: [{ op: 'replace_line', ref: '1:xxxxxxx', content: 'nope' }],
+        },
+      }, root);
+
+      assert.equal(edit.ok, false);
+      assert.equal(edit.structuredError.code, 'STALE_WRITE');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });

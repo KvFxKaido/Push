@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-import { parseArgs } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 import { createInterface } from 'node:readline/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { execFile } from 'node:child_process';
 
 import { PROVIDER_CONFIGS, resolveApiKey } from './provider.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, saveConfig, applyConfigToEnv, getConfigPath, maskSecret } from './config-store.mjs';
+
+const execFileAsync = promisify(execFile);
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -35,6 +38,7 @@ Options:
   --cwd <path>                  Workspace root (default: current directory)
   --session <id>                Resume session id
   --task <text>                 Task text for headless mode
+  --accept <cmd>                Acceptance check command (repeatable)
   --max-rounds <n>              Tool-loop cap per user prompt (default: 8)
   --json                        JSON output in headless mode / sessions
   -h, --help                    Show help
@@ -42,27 +46,86 @@ Options:
   );
 }
 
-async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput) {
+async function runAcceptanceChecks(cwd, checks) {
+  const entries = [];
+  for (const command of checks) {
+    const startedAt = Date.now();
+    try {
+      const { stdout, stderr } = await execFileAsync('/bin/bash', ['-lc', command], {
+        cwd,
+        timeout: 120_000,
+        maxBuffer: 4_000_000,
+      });
+      entries.push({
+        command,
+        ok: true,
+        exitCode: 0,
+        durationMs: Date.now() - startedAt,
+        stdout: (stdout || '').slice(0, 2000),
+        stderr: (stderr || '').slice(0, 2000),
+      });
+    } catch (err) {
+      entries.push({
+        command,
+        ok: false,
+        exitCode: typeof err.code === 'number' ? err.code : 1,
+        durationMs: Date.now() - startedAt,
+        stdout: (err.stdout || '').slice(0, 2000),
+        stderr: (err.stderr || String(err.message || err)).slice(0, 2000),
+      });
+    }
+  }
+  return {
+    passed: entries.every((entry) => entry.ok),
+    checks: entries,
+  };
+}
+
+async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks) {
   state.messages.push({ role: 'user', content: task });
   await appendSessionEvent(state, 'user_message', { chars: task.length, preview: task.slice(0, 280) });
 
   try {
     const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, false);
     await saveSessionState(state);
+    let acceptance = null;
+
+    if (Array.isArray(acceptanceChecks) && acceptanceChecks.length > 0) {
+      acceptance = await runAcceptanceChecks(state.cwd, acceptanceChecks);
+      await appendSessionEvent(state, 'acceptance_complete', {
+        passed: acceptance.passed,
+        checks: acceptance.checks.map((check) => ({
+          command: check.command,
+          ok: check.ok,
+          exitCode: check.exitCode,
+          durationMs: check.durationMs,
+        })),
+      }, result.runId || null);
+      await saveSessionState(state);
+    }
+
+    const success = result.outcome === 'success' && (!acceptance || acceptance.passed);
 
     if (jsonOutput) {
       process.stdout.write(`${JSON.stringify({
         sessionId: state.sessionId,
         runId: result.runId || null,
-        outcome: result.outcome,
+        outcome: success ? 'success' : acceptance && !acceptance.passed ? 'acceptance_failed' : result.outcome,
         rounds: result.rounds,
         assistant: result.finalAssistantText,
+        acceptance,
       }, null, 2)}\n`);
     } else {
       process.stdout.write(`${result.finalAssistantText}\n`);
+      if (acceptance) {
+        process.stdout.write(`\nAcceptance checks: ${acceptance.passed ? 'PASS' : 'FAIL'}\n`);
+        for (const check of acceptance.checks) {
+          process.stdout.write(`- [${check.ok ? 'ok' : 'fail'}] ${check.command} (exit ${check.exitCode})\n`);
+        }
+      }
     }
 
-    return result.outcome === 'success' ? 0 : 1;
+    return success ? 0 : 1;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await appendSessionEvent(state, 'error', { message });
@@ -173,6 +236,13 @@ async function initSession(sessionId, provider, model, cwd) {
     cwd,
     rounds: 0,
     eventSeq: 0,
+    workingMemory: {
+      plan: '',
+      openTasks: [],
+      filesTouched: [],
+      assumptions: [],
+      errorsEncountered: [],
+    },
     messages: [{ role: 'system', content: buildSystemPrompt(cwd) }],
   };
   await appendSessionEvent(state, 'session_started', {
@@ -357,6 +427,7 @@ export async function main() {
       cwd: { type: 'string' },
       session: { type: 'string' },
       task: { type: 'string' },
+      accept: { type: 'string', multiple: true },
       'max-rounds': { type: 'string' },
       maxRounds: { type: 'string' },
       json: { type: 'boolean', default: false },
@@ -403,6 +474,7 @@ export async function main() {
   const cwd = path.resolve(values.cwd || process.cwd());
   const maxRoundsRaw = values['max-rounds'] || values.maxRounds;
   const maxRounds = clamp(Number(maxRoundsRaw || DEFAULT_MAX_ROUNDS), 1, 30);
+  const acceptanceChecks = Array.isArray(values.accept) ? values.accept : [];
 
   const positionalTask = subcommand === 'run'
     ? positionals.slice(1).join(' ').trim()
@@ -426,7 +498,7 @@ export async function main() {
     if (!task) {
       throw new Error('Headless mode requires a task. Use: push run --task "..."');
     }
-    return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json);
+    return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks);
   }
 
   return runInteractive(state, providerConfig, apiKey, maxRounds);
