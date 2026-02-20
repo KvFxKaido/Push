@@ -9,7 +9,7 @@ Use this file to quickly identify which planning docs are authoritative vs histo
 - `Background Coder Tasks Plan.md`
   - Status: Draft plan for server-side background coding runs and reconnectable job timelines.
 - `Push CLI Plan.md`
-  - Status: Active draft for interactive-first CLI and runtime architecture.
+  - Status: Active implementation baseline for REPL-first CLI/runtime architecture; records remaining work (daemon attach/event-stream UX and protocol hardening).
 - `Push Runtime Protocol.md`
   - Status: Active draft protocol spec for `pushd` client/runtime messaging.
 - `schemas/` (see `schemas/README.md`)
@@ -34,7 +34,7 @@ Use this file to quickly identify which planning docs are authoritative vs histo
 - `Browserbase Integration Spike.md`
   - Status: Historical implementation spike; browser tools are now part of baseline docs.
 - `Push CLI Bootstrap Execution Plan.md`
-  - Status: Completed execution record for the bootstrap hardening/modularization/`pushd` skeleton sprint on 2026-02-20.
+  - Status: Completed execution record for bootstrap hardening/modularization/`pushd` skeleton plus same-day post-bootstrap CLI harness transition.
 
 ## Promotion Rule
 

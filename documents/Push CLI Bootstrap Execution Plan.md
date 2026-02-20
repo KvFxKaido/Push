@@ -16,6 +16,7 @@ Primary outcome:
 ## Execution Outcome
 
 All planned workstreams shipped in this sprint.
+Post-bootstrap harness transition also shipped on 2026-02-20.
 
 ## W1: Safety and Reliability Hardening (Shipped)
 
@@ -38,7 +39,7 @@ All planned workstreams shipped in this sprint.
 - Split the monolith into `scripts/push/cli.mjs`, `scripts/push/engine.mjs`, `scripts/push/tools.mjs`, `scripts/push/session-store.mjs`, and `scripts/push/provider.mjs`.
 - Updated root launcher `push` to execute `scripts/push/cli.mjs`.
 - Retired legacy monolith `scripts/push.mjs`.
-- Added tests under `scripts/push/tests/`: 34 `node:test` cases covering tool-call parser (8), workspace path guard (8), high-risk detection (10), truncation behavior (2), and session persistence/protocol serialization (6).
+- Added tests under `scripts/push/tests/`: 34 `node:test` cases in the bootstrap cut, later expanded to 39 with multi-tool/hashline coverage in the post-bootstrap harness transition.
 
 ## W4: `pushd` Skeleton (Shipped)
 
@@ -47,6 +48,17 @@ All planned workstreams shipped in this sprint.
 - Added owner-only socket permissions (`0600`).
 - Implemented request types: `hello`, `start_session`, `send_user_message`, and `attach_session`.
 - Reused the same engine/session modules as CLI (no duplicate orchestration loop).
+
+## W5: Post-Bootstrap Harness Transition (Shipped)
+
+- Added persisted CLI config with `push config show`, `push config set`, and interactive `push config init`.
+- Added enriched provider diagnostics (resolved endpoint display and provider/model/url in error messages).
+- Added multi-tool turn handling: parallel read-only calls plus single mutating call per assistant turn.
+- Added hashline-based `edit_file` with `expected_version` stale-write protection and anchored `read_file` output.
+- Added working-memory updates via `coder_update_state` and persisted working-memory state on sessions.
+- Added malformed tool-call diagnostics (`[TOOL_CALL_PARSE_ERROR]`) and tool-call metric tracking.
+- Added per-turn file-ledger/meta envelopes on tool results.
+- Added headless acceptance checks via repeatable `--accept <cmd>` and `acceptance_complete` session events.
 
 ## Still Out of Scope
 

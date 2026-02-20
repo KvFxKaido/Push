@@ -26,7 +26,7 @@ Only decisions promoted into this file should be treated as implementation commi
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
 | Harness Reliability Program (Tracks A-C + E) | in_progress | Execute harness-first reliability roadmap: edit reliability, read efficiency, tool-loop robustness, and operator visibility improvements | Hashline protocol, truncation-aware safety, and Agent Experience Wishlist (Tracks A-C) live; Track E (Visibility) ongoing; Track D (server-side background jobs) deferred |
-| Push CLI Muscle-Memory UX | planned | Drop full-screen TUI direction and align CLI interaction model with Claude Code/Codex-style muscle memory using a transcript-first REPL | Active plans/protocol docs no longer target TUI; REPL command ergonomics and approval flow are documented and become the default implementation target |
+| Push CLI Muscle-Memory UX | in_progress | Drop full-screen TUI direction and align CLI interaction model with Claude Code/Codex-style muscle memory using a transcript-first REPL | Direction and baseline shipped (interactive REPL, config init/show/set, enriched provider diagnostics, advanced harness semantics without checkpoint resume); remaining work is daemon attach/event-stream UX and protocol/schema hardening |
 | Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
 | Roadmap Hygiene Automation | planned | Lightweight template/checklist for promoting `documents/` ideas into this file | New roadmap items consistently include scope + acceptance criteria |
@@ -35,6 +35,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
+| Push CLI Foundation + Harness Transition (No Checkpoint Resume) | done | Built modular `push`/`pushd` foundation and added advanced harness semantics to CLI runtime: multi-tool turns (parallel reads + single mutation), hashline `edit_file`, working memory updates, malformed tool-call diagnostics, file-ledger/meta envelopes, and headless acceptance checks | `push` supports config init/show/set and persisted defaults; `run --json`/`sessions --json` stable; protocol envelope persisted in session events; advanced harness features shipped in `9ec31c5` with passing `scripts/push/tests/*.test.mjs` |
 | Resumable Sessions (Phases 1-4) | done | Added interruption-safe run checkpointing + resume flow across orchestrator and coder delegation, including reconciliation and lock safety | Interrupted runs surface a `ResumeBanner`; resume revalidates sandbox/branch/repo, injects `[SESSION_RESUMED]` with sandbox HEAD/dirty/diff context, preserves coder state, and records resume telemetry |
 | Agent Experience Wishlist (Track C) | done | Implement 10 harness improvements: structured error taxonomy, edit diffs, multi-tool per turn, universal meta envelope, and machine-readable tool-call feedback | All items shipped and verified in harness metrics (Commit 0336f11) |
 | Sandbox Mode v1 | done | Ephemeral Modal workspace for brainstorming/prototyping; primary onboarding entry point; tar.gz download export path | User can start sandbox from onboarding (no GitHub auth) or repo picker, edit/run files, and download workspace as tar.gz |
@@ -49,6 +50,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Date | Decision | Source |
 |---|---|---|
+| 2026-02-20 | Push CLI foundation and harness transition shipped in staged commits (`53b3c29`, `9b10856`, `aa80d7f`, `9ec31c5`) with checkpoint resume intentionally deferred for CLI | Implementation session |
 | 2026-02-20 | Track D server-side background jobs deferred; resumable sessions remain the active interruption-recovery strategy | Product scope decision |
 | 2026-02-20 | Push CLI direction changed: no full-screen TUI; target transcript-first interactive REPL with Claude Code/Codex muscle memory | Product scope decision |
 | 2026-02-20 | Resumable Sessions hardening pass fixed resume race conditions and lock handling after merge review | Commit 61a262a |
