@@ -17,8 +17,6 @@ import type { RepoOverride } from '@/hooks/useProtectMain';
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
   mistral: 'Mistral',
-  zai: 'Z.ai',
-  minimax: 'MiniMax',
   openrouter: 'OpenRouter',
   demo: 'Demo',
 };
@@ -97,26 +95,6 @@ export interface SettingsAIProps {
   setMistralKeyInput: (v: string) => void;
   setMistralKey: (v: string) => void;
   clearMistralKey: () => void;
-  // Z.ai
-  hasZaiKey: boolean;
-  zaiModel: string;
-  setZaiModel: (v: string) => void;
-  zaiModelOptions: string[];
-  isZaiModelLocked: boolean;
-  zaiKeyInput: string;
-  setZaiKeyInput: (v: string) => void;
-  setZaiKey: (v: string) => void;
-  clearZaiKey: () => void;
-  // MiniMax
-  hasMiniMaxKey: boolean;
-  miniMaxModel: string;
-  setMiniMaxModel: (v: string) => void;
-  miniMaxModelOptions: string[];
-  isMiniMaxModelLocked: boolean;
-  miniMaxKeyInput: string;
-  setMiniMaxKeyInput: (v: string) => void;
-  setMiniMaxKey: (v: string) => void;
-  clearMiniMaxKey: () => void;
   // OpenRouter
   hasOpenRouterKey: boolean;
   openRouterModel: string;
@@ -902,7 +880,7 @@ export function SettingsSheet({
               <div className="flex items-center gap-1.5">
                 <div
                   className={`h-2 w-2 rounded-full ${
-                    ai.hasOllamaKey || ai.hasMistralKey || ai.hasZaiKey || ai.hasMiniMaxKey ? 'bg-emerald-500' : 'bg-push-fg-dim'
+                    ai.hasOllamaKey || ai.hasMistralKey ? 'bg-emerald-500' : 'bg-push-fg-dim'
                   }`}
                 />
                 <span className="text-xs text-push-fg-secondary">
@@ -1047,61 +1025,6 @@ export function SettingsSheet({
 
           </div>
 
-
-            {/* Z.ai */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-push-fg-secondary">Z.ai</label>
-              <ProviderKeySection
-                label="Z.ai"
-                hasKey={ai.hasZaiKey}
-                keyInput={ai.zaiKeyInput}
-                setKeyInput={ai.setZaiKeyInput}
-                saveKey={() => ai.setZaiKey(ai.zaiKeyInput.trim())}
-                clearKey={ai.clearZaiKey}
-                activeBackend={ai.activeBackend}
-                backendId="zai"
-                clearPreferredProvider={ai.clearPreferredProvider}
-                setActiveBackend={ai.setActiveBackend}
-                placeholder="Z.ai API key"
-                saveLabel="Save Z.ai key"
-                hint="Z.ai API keys are available through subscription plans."
-                savedHint="Uses subscription-based API keys from platform.z.ai."
-                model={{
-                  value: ai.zaiModel,
-                  set: ai.setZaiModel,
-                  options: ai.zaiModelOptions,
-                  isLocked: ai.isZaiModelLocked,
-                  lockedModel: ai.lockedModel,
-                }}
-              />
-            </div>
-
-            {/* MiniMax */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-push-fg-secondary">MiniMax</label>
-              <ProviderKeySection
-                label="MiniMax"
-                hasKey={ai.hasMiniMaxKey}
-                keyInput={ai.miniMaxKeyInput}
-                setKeyInput={ai.setMiniMaxKeyInput}
-                saveKey={() => ai.setMiniMaxKey(ai.miniMaxKeyInput.trim())}
-                clearKey={ai.clearMiniMaxKey}
-                activeBackend={ai.activeBackend}
-                backendId="minimax"
-                clearPreferredProvider={ai.clearPreferredProvider}
-                setActiveBackend={ai.setActiveBackend}
-                placeholder="MiniMax API key"
-                saveLabel="Save MiniMax key"
-                hint="MiniMax API key from platform.minimax.io."
-                model={{
-                  value: ai.miniMaxModel,
-                  set: ai.setMiniMaxModel,
-                  options: ai.miniMaxModelOptions,
-                  isLocked: ai.isMiniMaxModelLocked,
-                  lockedModel: ai.lockedModel,
-                }}
-              />
-            </div>
 
           {/* OpenRouter */}
           <div className="space-y-2">

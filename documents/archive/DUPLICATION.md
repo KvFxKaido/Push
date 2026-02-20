@@ -67,7 +67,7 @@ export function setXxxModelName(model: string): void {
 }
 ```
 
-Repeated for Ollama, Mistral, and Z.ai. The only behavioral difference is that `setMistralModelName` also calls `resetMistralAgent()`.
+Repeated for Ollama and Mistral. The only behavioral difference is that `setMistralModelName` also calls `resetMistralAgent()`.
 
 ---
 

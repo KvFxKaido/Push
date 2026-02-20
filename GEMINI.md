@@ -9,7 +9,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Type:** AI Coding Agent / Web Application (PWA)
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** Multi-provider support (Ollama, Mistral, Z.ai, MiniMax, OpenRouter) via OpenAI-compatible SSE streaming.
+*   **AI Backend:** Multi-provider support (Ollama, Mistral, OpenRouter) via OpenAI-compatible SSE streaming.
 
 ## Tech Stack
 
@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 | **Styling** | Tailwind CSS 3, shadcn/ui (Radix primitives) |
 | **Backend** | Cloudflare Workers (TypeScript) |
 | **Sandbox** | Modal (Serverless Python Containers) |
-| **AI Integration** | OpenAI-compatible Streaming (Ollama, Mistral, Z.ai, MiniMax, OpenRouter) |
+| **AI Integration** | OpenAI-compatible Streaming (Ollama, Mistral, OpenRouter) |
 | **APIs** | GitHub REST API |
 
 ## Architecture
@@ -57,7 +57,7 @@ Push/
 │   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
 │   │   │   ├── filebrowser/ # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/        # shadcn/ui library
-│   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useZaiConfig, useMiniMaxConfig, useTavilyConfig, useUsageTracking, etc.)
+│   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useTavilyConfig, useUsageTracking, etc.)
 │   │   ├── lib/           # Core Logic
 │   │   │   ├── orchestrator.ts    # Agent coordination & streaming
 │   │   │   ├── coder-agent.ts     # Coder sub-agent loop, working memory, acceptance criteria
@@ -66,7 +66,7 @@ Push/
 │   │   │   ├── sandbox-tools.ts   # Sandbox tools, error taxonomy, sandbox_read_symbols, sandbox_apply_patchset
 │   │   │   ├── tool-dispatch.ts   # Unified dispatch, detectAllToolCalls(), multi-tool support
 │   │   │   ├── web-search-tools.ts # Web search (Tavily, Ollama native, DuckDuckGo)
-│   │   │   ├── model-catalog.ts   # Ollama/Mistral model lists (Z.ai and MiniMax use static lists)
+│   │   │   ├── model-catalog.ts   # Ollama/Mistral model lists
 │   │   │   ├── prompts.ts         # Prompt building utilities
 │   │   │   ├── feature-flags.ts   # Feature flag system
 │   │   │   ├── snapshot-manager.ts # Workspace snapshot management
@@ -93,7 +93,7 @@ Push/
 ### Prerequisites
 *   Node.js & npm
 *   Python (for Modal sandbox deployment)
-*   API Keys: Ollama/Mistral/Z.ai/MiniMax/OpenRouter (AI), GitHub (Auth/API)
+*   API Keys: Ollama/Mistral/OpenRouter (AI), GitHub (Auth/API)
 
 ### Setup & Run
 1.  **Install Frontend Dependencies:**
@@ -117,7 +117,7 @@ Push/
 ### Environment
 Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI.
 
-Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_ZAI_API_KEY` (Z.ai), `VITE_MINIMAX_API_KEY` (MiniMax), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
+Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
 
 ## Coding Conventions
 *   **TypeScript:** Strict mode enabled. Explicit return types required on exported functions.

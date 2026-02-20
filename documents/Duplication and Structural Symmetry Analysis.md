@@ -8,7 +8,7 @@ Analysis of repeated patterns, structural symmetry, and consolidation opportunit
 
 ## 1. Provider Axis — The Six-Way Symmetry
 
-The codebase is organized around six AI providers (Kimi/Moonshot, Ollama, Mistral, Z.ai, MiniMax, OpenRouter). Each provider requires identical plumbing at every layer. This creates a **six-way structural symmetry** that repeats across files:
+The codebase is organized around AI providers (Kimi/Moonshot, Ollama, Mistral, OpenRouter). Each provider requires identical plumbing at every layer. This creates a structural symmetry that repeats across files:
 
 ### 1a. Config Hooks (already consolidated) — DONE
 
@@ -20,8 +20,6 @@ Each provider has a thin config hook wrapping the shared `useApiKeyConfig` facto
 | `useTavilyConfig.ts` | `useApiKeyConfig` | key only |
 | `useOllamaConfig.ts` | `useApiKeyWithModelConfig` | key + model |
 | `useMistralConfig.ts` | `useApiKeyWithModelConfig` | key + model |
-| `useZaiConfig.ts` | `useApiKeyWithModelConfig` | key + model |
-| `useMiniMaxConfig.ts` | `useApiKeyWithModelConfig` | key + model |
 | `useOpenRouterConfig.ts` | `useApiKeyWithModelConfig` | key + model |
 
 **Status:** DONE. Well-factored. The `useApiKeyConfig.ts` factory eliminated the duplication. Each hook is a 12–20 line thin wrapper.
@@ -69,11 +67,11 @@ The `createModelNameStorage` factory at the bottom already consolidates the five
 
 **Status:** DONE. Fully consolidated via shared helpers and factories:
 - `runPreamble()` — handles origin validation, rate limiting, auth header building, and body reading for all handlers.
-- `createStreamProxyHandler()` — factory for SSE chat endpoints (Kimi, Ollama, Mistral, Z.ai, MiniMax, OpenRouter).
+- `createStreamProxyHandler()` — factory for SSE chat endpoints (Kimi, Ollama, Mistral, OpenRouter).
 - `createJsonProxyHandler()` — factory for model list and search endpoints.
 - `validateOrigin()`, `standardAuth()`, `getClientIp()`, `checkRateLimit()`, `readBodyText()` — all shared.
 - Each handler is now 1–5 lines instead of 40–50. ~400–450 lines of duplication eliminated.
-- The Z.ai/MiniMax consistency issues (Content-Type, clearTimeout) are resolved by the shared factories.
+- Provider consistency issues are resolved by the shared factories.
 
 ### 1e. Settings UI — `SettingsSheet.tsx` — DONE
 

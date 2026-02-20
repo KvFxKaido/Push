@@ -1,7 +1,7 @@
 /**
  * Factory for API key management hooks.
  *
- * All provider config hooks (Tavily, Ollama, Mistral, Z.ai, MiniMax, OpenRouter)
+ * All provider config hooks (Tavily, Ollama, Mistral, OpenRouter)
  * share the same skeleton: a standalone getter (localStorage → env var fallback)
  * and a React hook that wraps useState + useCallback for set/clear/hasKey.
  *

@@ -33,7 +33,7 @@ import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import { browserToolEnabled } from '@/lib/feature-flags';
-import { getMistralModelName, getOllamaModelName, getZaiModelName, getMiniMaxModelName, getOpenRouterModelName } from '@/lib/providers';
+import { getMistralModelName, getOllamaModelName, getOpenRouterModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 
@@ -58,10 +58,6 @@ function getCurrentModelForProvider(provider: AIProviderType | ActiveProvider): 
       return getOllamaModelName();
     case 'mistral':
       return getMistralModelName();
-    case 'zai':
-      return getZaiModelName();
-    case 'minimax':
-      return getMiniMaxModelName();
     case 'openrouter':
       return getOpenRouterModelName();
     default:

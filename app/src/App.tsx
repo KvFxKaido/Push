@@ -9,11 +9,9 @@ import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
-import { useZaiConfig } from '@/hooks/useZaiConfig';
-import { useMiniMaxConfig } from '@/hooks/useMiniMaxConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
-import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, ZAI_MODELS, MINIMAX_MODELS, OPENROUTER_MODELS, type PreferredProvider } from '@/lib/providers';
+import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, OPENROUTER_MODELS, type PreferredProvider } from '@/lib/providers';
 import { getActiveProvider, getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import { fetchOllamaModels, fetchMistralModels, fetchOpenRouterModels } from '@/lib/model-catalog';
 import { useSandbox } from '@/hooks/useSandbox';
@@ -224,8 +222,6 @@ function App() {
   const { repos, loading: reposLoading, error: reposError, sync: syncRepos } = useRepos();
   const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
-  const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey, model: zaiModel, setModel: setZaiModel } = useZaiConfig();
-  const { setKey: setMiniMaxKey, clearKey: clearMiniMaxKey, hasKey: hasMiniMaxKey, model: miniMaxModel, setModel: setMiniMaxModel } = useMiniMaxConfig();
   const { setKey: setOpenRouterKey, clearKey: clearOpenRouterKey, hasKey: hasOpenRouterKey, model: openRouterModel, setModel: setOpenRouterModel } = useOpenRouterConfig();
   const { setKey: setTavilyKey, clearKey: clearTavilyKey, hasKey: hasTavilyKey } = useTavilyConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -236,8 +232,6 @@ function App() {
   const [bioDraft, setBioDraft] = useState('');
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [mistralKeyInput, setMistralKeyInput] = useState('');
-  const [zaiKeyInput, setZaiKeyInput] = useState('');
-  const [miniMaxKeyInput, setMiniMaxKeyInput] = useState('');
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
@@ -256,7 +250,7 @@ function App() {
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
-  const availableProviders = ([['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey], ['zai', 'Z.ai', hasZaiKey], ['minimax', 'MiniMax', hasMiniMaxKey], ['openrouter', 'OpenRouter', hasOpenRouterKey]] as const).filter(([, , has]) => has);
+  const availableProviders = ([['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey], ['openrouter', 'OpenRouter', hasOpenRouterKey]] as const).filter(([, , has]) => has);
   
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
@@ -310,9 +304,6 @@ function App() {
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
   const isMistralModelLocked = isModelLocked && lockedProvider === 'mistral';
-  const isZaiModelLocked = isModelLocked && lockedProvider === 'zai';
-  const isMiniMaxModelLocked = isModelLocked && lockedProvider === 'minimax';
-
   const refreshModels = useCallback(async (params: {
     hasKey: boolean;
     isLoading: boolean;
@@ -514,14 +505,6 @@ function App() {
   const mistralModelOptions = useMemo(() => {
     return includeSelectedModel(mistralModels, mistralModel);
   }, [mistralModels, mistralModel]);
-
-  const zaiModelOptions = useMemo(() => {
-    return includeSelectedModel(ZAI_MODELS, zaiModel);
-  }, [zaiModel]);
-
-  const miniMaxModelOptions = useMemo(() => {
-    return includeSelectedModel(MINIMAX_MODELS, miniMaxModel);
-  }, [miniMaxModel]);
 
   const copyAllowlistCommand = useCallback(async () => {
     try {
@@ -886,16 +869,6 @@ function App() {
     ensureUnlockedChatForProviderChange();
     setMistralModel(model);
   }, [ensureUnlockedChatForProviderChange, setMistralModel]);
-
-  const handleSelectZaiModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setZaiModel(model);
-  }, [ensureUnlockedChatForProviderChange, setZaiModel]);
-
-  const handleSelectMiniMaxModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setMiniMaxModel(model);
-  }, [ensureUnlockedChatForProviderChange, setMiniMaxModel]);
 
   const handleSelectOpenRouterModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
@@ -1270,7 +1243,6 @@ function App() {
         setOllamaKey,
         clearOllamaKey,
         hasMistralKey,
-        hasZaiKey,
         mistralModel,
         setMistralModel,
         mistralModelOptions,
@@ -1283,23 +1255,6 @@ function App() {
         setMistralKeyInput,
         setMistralKey,
         clearMistralKey,
-        zaiModel,
-        setZaiModel,
-        zaiModelOptions,
-        isZaiModelLocked,
-        zaiKeyInput,
-        setZaiKeyInput,
-        setZaiKey: setZaiKey,
-        clearZaiKey,
-        hasMiniMaxKey,
-        miniMaxModel,
-        setMiniMaxModel,
-        miniMaxModelOptions: MINIMAX_MODELS,
-        isMiniMaxModelLocked: isProviderLocked && lockedProvider === 'minimax',
-        miniMaxKeyInput,
-        setMiniMaxKeyInput,
-        setMiniMaxKey,
-        clearMiniMaxKey,
         hasOpenRouterKey,
         openRouterModel,
         setOpenRouterModel,
@@ -1777,14 +1732,6 @@ function App() {
           isMistralModelLocked,
           refreshMistralModels,
           onSelectMistralModel: handleSelectMistralModelFromChat,
-          zaiModel,
-          zaiModelOptions,
-          isZaiModelLocked,
-          onSelectZaiModel: handleSelectZaiModelFromChat,
-          miniMaxModel,
-          miniMaxModelOptions,
-          isMiniMaxModelLocked,
-          onSelectMiniMaxModel: handleSelectMiniMaxModelFromChat,
           openRouterModel,
           openRouterModelOptions: openRouterModels.length > 0 ? openRouterModels : OPENROUTER_MODELS,
           isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',

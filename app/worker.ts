@@ -8,8 +8,6 @@
 interface Env {
   OLLAMA_API_KEY?: string;
   MISTRAL_API_KEY?: string;
-  ZAI_API_KEY?: string;
-  MINIMAX_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   BROWSERBASE_API_KEY?: string;
@@ -84,16 +82,6 @@ export default {
     // API route: model catalog proxy to Mistral
     if (url.pathname === '/api/mistral/models' && request.method === 'GET') {
       return handleMistralModels(request, env);
-    }
-
-    // API route: streaming proxy to Z.ai (SSE, OpenAI-compatible)
-    if (url.pathname === '/api/zai/chat' && request.method === 'POST') {
-      return handleZaiChat(request, env);
-    }
-
-    // API route: streaming proxy to MiniMax (SSE, OpenAI-compatible)
-    if (url.pathname === '/api/minimax/chat' && request.method === 'POST') {
-      return handleMiniMaxChat(request, env);
     }
 
     // API route: streaming proxy to OpenRouter (SSE, OpenAI-compatible)
@@ -708,8 +696,6 @@ interface HealthStatus {
     worker: { status: 'ok' };
     ollama: { status: 'ok' | 'unconfigured'; configured: boolean };
     mistral: { status: 'ok' | 'unconfigured'; configured: boolean };
-    zai: { status: 'ok' | 'unconfigured'; configured: boolean };
-    minimax: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
     github_app_oauth: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -720,8 +706,6 @@ interface HealthStatus {
 async function handleHealthCheck(env: Env): Promise<Response> {
   const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
   const mistralConfigured = Boolean(env.MISTRAL_API_KEY);
-  const zaiConfigured = Boolean(env.ZAI_API_KEY);
-  const miniMaxConfigured = Boolean(env.MINIMAX_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -739,7 +723,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     }
   }
 
-  const hasAnyLlm = ollamaConfigured || mistralConfigured || zaiConfigured || miniMaxConfigured;
+  const hasAnyLlm = ollamaConfigured || mistralConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -751,8 +735,6 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       worker: { status: 'ok' },
       ollama: { status: ollamaConfigured ? 'ok' : 'unconfigured', configured: ollamaConfigured },
       mistral: { status: mistralConfigured ? 'ok' : 'unconfigured', configured: mistralConfigured },
-      zai: { status: zaiConfigured ? 'ok' : 'unconfigured', configured: zaiConfigured },
-      minimax: { status: miniMaxConfigured ? 'ok' : 'unconfigured', configured: miniMaxConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
       github_app_oauth: { status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET) },
@@ -811,83 +793,6 @@ const handleMistralChat = createStreamProxyHandler({
 
 
 // --- Z.ai JWT generation ---
-
-/**
- * Generate a JWT for the Z.ai (ZhipuAI) API from an API key in `{id}.{secret}` format.
- * Z.ai requires HMAC-SHA256 signed JWTs instead of raw Bearer tokens.
- */
-async function generateZaiJWT(apiKey: string): Promise<string> {
-  const normalized = apiKey.trim().replace(/^Bearer\s+/i, '');
-  const segments = normalized.split('.');
-
-  if (segments.length === 3) {
-    // Already a JWT
-    return normalized;
-  }
-
-  const dotIndex = normalized.indexOf('.');
-  if (dotIndex === -1) {
-    // Not in id.secret format — return as-is
-    return normalized;
-  }
-
-  const id = normalized.slice(0, dotIndex);
-  const secret = normalized.slice(dotIndex + 1);
-  const now = Date.now();
-
-  const encodeBase64Url = (str: string): string =>
-    btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-
-  const header = JSON.stringify({ alg: 'HS256', sign_type: 'SIGN' });
-  const payload = JSON.stringify({ api_key: id, exp: now + 3_600_000, timestamp: now });
-  const signingInput = `${encodeBase64Url(header)}.${encodeBase64Url(payload)}`;
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signingInput)));
-  const encodedSig = encodeBase64Url(Array.from(sig, (b) => String.fromCharCode(b)).join(''));
-
-  return `${signingInput}.${encodedSig}`;
-}
-
-// --- Z.ai ---
-
-const handleZaiChat = createStreamProxyHandler({
-  name: 'Z.ai API', logTag: 'api/zai/chat',
-  upstreamUrl: 'https://api.z.ai/api/coding/paas/v4/chat/completions',
-  timeoutMs: 120_000,
-  buildAuth: async (env, request) => {
-    const clientAuth = request.headers.get('Authorization');
-    if (clientAuth) return clientAuth;
-    const serverKey = env.ZAI_API_KEY;
-    if (!serverKey) return null;
-    const jwt = await generateZaiJWT(serverKey);
-    return `Bearer ${jwt}`;
-  },
-  keyMissingError: 'Z.ai API key not configured. Add it in Settings or set ZAI_API_KEY on the Worker.',
-  timeoutError: 'Z.ai request timed out after 120 seconds',
-  preserveUpstreamHeaders: true,
-});
-
-// --- MiniMax ---
-
-const handleMiniMaxChat = createStreamProxyHandler({
-  name: 'MiniMax API', logTag: 'api/minimax/chat',
-  upstreamUrl: 'https://api.minimax.io/v1/chat/completions',
-  timeoutMs: 120_000,
-  buildAuth: (env, request) => {
-    const clientAuth = request.headers.get('Authorization');
-    return clientAuth || (env.MINIMAX_API_KEY ? `Bearer ${env.MINIMAX_API_KEY}` : null);
-  },
-  keyMissingError: 'MiniMax API key not configured. Add it in Settings or set MINIMAX_API_KEY on the Worker.',
-  timeoutError: 'MiniMax request timed out after 120 seconds',
-  preserveUpstreamHeaders: true,
-});
 
 // --- OpenRouter ---
 

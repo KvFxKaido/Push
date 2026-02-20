@@ -5,12 +5,10 @@ import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-t
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
-import { getZaiKey } from '@/hooks/useZaiConfig';
-import { getMiniMaxKey } from '@/hooks/useMiniMaxConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
-import { getOllamaModelName, getMistralModelName, getPreferredProvider, getZaiModelName, getMiniMaxModelName, getOpenRouterModelName } from './providers';
+import { getOllamaModelName, getMistralModelName, getPreferredProvider, getOpenRouterModelName } from './providers';
 import type { PreferredProvider } from './providers';
 // ---------------------------------------------------------------------------
 // Types
@@ -57,14 +55,6 @@ const OLLAMA_API_URL = import.meta.env.DEV
 const MISTRAL_API_URL = import.meta.env.DEV
   ? '/mistral/v1/chat/completions'
   : '/api/mistral/chat';
-
-const ZAI_API_URL = import.meta.env.DEV
-  ? '/zai/api/paas/v4/chat/completions'
-  : '/api/zai/chat';
-
-const MINIMAX_API_URL = import.meta.env.DEV
-  ? '/minimax/v1/chat/completions'
-  : '/api/minimax/chat';
 
 // Mistral Agents API — enables native web search via agent with web_search tool.
 // Dev: Vite proxy rewrites /mistral/ → https://api.mistral.ai/.
@@ -152,7 +142,7 @@ function normalizeModelName(model?: string): string {
 }
 
 export function getContextBudget(
-  provider?: 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo',
+  provider?: 'ollama' | 'mistral' | 'openrouter' | 'demo',
   model?: string,
 ): ContextBudget {
   const normalizedModel = normalizeModelName(model);
@@ -508,7 +498,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter',
+  providerType?: 'ollama' | 'mistral' | 'openrouter',
   providerModel?: string,
 ): LLMMessage[] {
   // Build system prompt: base + user identity + workspace context + tool protocol + optional sandbox tools + scratchpad
@@ -543,7 +533,7 @@ function toLLMMessages(
   // Web search tool — prompt-engineered for providers that need client-side dispatch.
   // Ollama: model outputs JSON → we execute via Ollama's search REST API.
   // Mistral: handles search natively via Agents API (no prompt needed here).
-  if (providerType === 'ollama' || providerType === 'zai') {
+  if (providerType === 'ollama') {
     systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
   }
 
@@ -795,7 +785,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
+  providerType?: 'ollama' | 'mistral' | 'openrouter';
   /** Override the fetch URL (e.g., Mistral Agents API uses a different endpoint) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -1168,49 +1158,6 @@ function buildErrorMessages(name: string, connectHint = 'server may be down.'): 
 /** Standard timeout config used by most providers. */
 const STANDARD_TIMEOUTS = { connectTimeoutMs: 30_000, idleTimeoutMs: 60_000, stallTimeoutMs: 30_000, totalTimeoutMs: 180_000 } as const;
 
-/**
- * Generate a JWT for the Z.ai (ZhipuAI) API from an API key in `{id}.{secret}` format.
- * Z.ai requires HMAC-SHA256 signed JWTs instead of raw Bearer tokens.
- */
-async function generateZaiJWT(apiKey: string): Promise<string> {
-  const normalized = apiKey.trim().replace(/^Bearer\s+/i, '');
-  const segments = normalized.split('.');
-
-  if (segments.length === 3) {
-    // Already a JWT
-    return normalized;
-  }
-
-  const dotIndex = normalized.indexOf('.');
-  if (dotIndex === -1) {
-    // Not in id.secret format — return as-is
-    return normalized;
-  }
-
-  const id = normalized.slice(0, dotIndex);
-  const secret = normalized.slice(dotIndex + 1);
-  const now = Date.now();
-
-  const encodeBase64Url = (str: string): string =>
-    btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-
-  const header = JSON.stringify({ alg: 'HS256', sign_type: 'SIGN' });
-  const payload = JSON.stringify({ api_key: id, exp: now + 3_600_000, timestamp: now });
-  const signingInput = `${encodeBase64Url(header)}.${encodeBase64Url(payload)}`;
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signingInput)));
-  const encodedSig = encodeBase64Url(Array.from(sig, (b) => String.fromCharCode(b)).join(''));
-
-  return `${signingInput}.${encodedSig}`;
-}
-
 interface ProviderStreamEntry {
   getKey: () => string | null;
   buildConfig: (apiKey: string, modelOverride?: string) => Promise<StreamProviderConfig> | StreamProviderConfig;
@@ -1271,46 +1218,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
         bodyTransform: agentBodyTransform,
       };
     },
-  },
-  zai: {
-    getKey: getZaiKey,
-    buildConfig: async (apiKey, modelOverride) => {
-      // Z.ai requires JWT auth — generate from the {id}.{secret} API key
-      const jwt = await generateZaiJWT(apiKey);
-      return {
-        name: 'Z.ai',
-        apiUrl: ZAI_API_URL,
-        apiKey: jwt,
-        model: modelOverride || getZaiModelName(),
-        ...STANDARD_TIMEOUTS,
-        errorMessages: buildErrorMessages('Z.ai'),
-        parseError: (p, f) => parseProviderError(p, f, true),
-        checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length']),
-        providerType: 'zai' as const,
-      };
-    },
-  },
-  minimax: {
-    getKey: getMiniMaxKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'MiniMax',
-      apiUrl: MINIMAX_API_URL,
-      apiKey,
-      model: modelOverride || getMiniMaxModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('MiniMax'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length']),
-      providerType: 'minimax',
-      bodyTransform: (body) => {
-        // MiniMax clamps temperature to (0.0, 1.0] — values outside this range return errors
-        const temp = typeof body.temperature === 'number' ? body.temperature : undefined;
-        if (temp !== undefined) {
-          body.temperature = Math.min(Math.max(temp, 0.01), 1.0);
-        }
-        return body;
-      },
-    }),
   },
   openrouter: {
     getKey: getOpenRouterKey,
@@ -1381,22 +1288,18 @@ type StreamChatFn = (
 
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 export const streamMistralChat: StreamChatFn = (...args) => streamProviderChat('mistral', ...args);
-export const streamZaiChat: StreamChatFn = (...args) => streamProviderChat('zai', ...args);
-export const streamMiniMaxChat: StreamChatFn = (...args) => streamProviderChat('minimax', ...args);
 export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
 
 // ---------------------------------------------------------------------------
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo';
+export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'demo';
 
 /** Key getter for each configurable provider. */
 const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
   ollama:      getOllamaKey,
   mistral:     getMistralKey,
-  zai:         getZaiKey,
-  minimax:     getMiniMaxKey,
   openrouter:  getOpenRouterKey,
 };
 
@@ -1404,7 +1307,7 @@ const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
  * Fallback order when no preference is set (or the preferred key is gone).
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama', 'mistral', 'zai', 'minimax', 'openrouter',
+  'ollama', 'mistral', 'openrouter',
 ];
 
 /**
@@ -1435,8 +1338,6 @@ export function getProviderStreamFn(provider: ActiveProvider) {
   switch (provider) {
     case 'ollama':  return { providerType: 'ollama' as const,  streamFn: streamOllamaChat };
     case 'mistral': return { providerType: 'mistral' as const, streamFn: streamMistralChat };
-    case 'zai': return { providerType: 'zai' as const, streamFn: streamZaiChat };
-    case 'minimax': return { providerType: 'minimax' as const, streamFn: streamMiniMaxChat };
     case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
     default:        return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
   }
@@ -1480,14 +1381,6 @@ export async function streamChat(
 
   if (provider === 'mistral') {
     return streamMistralChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
-  }
-
-  if (provider === 'zai') {
-    return streamZaiChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
-  }
-
-  if (provider === 'minimax') {
-    return streamMiniMaxChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   if (provider === 'openrouter') {

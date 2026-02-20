@@ -7,27 +7,6 @@ export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 
 // Valid Mistral model names via Mistral API
 export const MISTRAL_DEFAULT_MODEL = 'devstral-small-latest';
-export const ZAI_DEFAULT_MODEL = 'glm-4.5';
-
-export const ZAI_MODELS: string[] = [
-  'glm-4.5',
-  'glm-4.5-flash',
-  'glm-4.6',
-  'glm-4.7',
-  'glm-4.7-flash',
-  'glm-5',
-];
-
-export const MINIMAX_DEFAULT_MODEL = 'MiniMax-M2.5';
-
-export const MINIMAX_MODELS: string[] = [
-  'MiniMax-M2.5',
-  'MiniMax-M2.5-highspeed',
-  'MiniMax-M2.1',
-  'MiniMax-M2.1-highspeed',
-  'MiniMax-M2',
-];
-
 // OpenRouter default model — Claude Sonnet 4.6
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 
@@ -49,8 +28,6 @@ export const OPENROUTER_MODELS: string[] = [
   // Others
   'x-ai/grok-4.1-fast',
   'moonshotai/kimi-k2.5',
-  'z-ai/glm-5',
-  'minimax/minimax-m2.5',
 ];
 
 export const PROVIDERS: AIProviderConfig[] = [
@@ -111,66 +88,6 @@ export const PROVIDERS: AIProviderConfig[] = [
         provider: 'mistral',
         role: 'auditor',
         context: 262_144,
-      },
-    ],
-  },
-  {
-    type: 'zai',
-    name: 'Z.ai',
-    description: 'Z.ai API — GLM models (OpenAI-compatible)',
-    envKey: 'VITE_ZAI_API_KEY',
-    envUrl: 'https://platform.z.ai',
-    models: [
-      {
-        id: ZAI_DEFAULT_MODEL,
-        name: 'GLM 4.5 (Orchestrator)',
-        provider: 'zai',
-        role: 'orchestrator',
-        context: 131_072,
-      },
-      {
-        id: ZAI_DEFAULT_MODEL,
-        name: 'GLM 4.5 (Coder)',
-        provider: 'zai',
-        role: 'coder',
-        context: 131_072,
-      },
-      {
-        id: ZAI_DEFAULT_MODEL,
-        name: 'GLM 4.5 (Auditor)',
-        provider: 'zai',
-        role: 'auditor',
-        context: 131_072,
-      },
-    ],
-  },
-  {
-    type: 'minimax',
-    name: 'MiniMax',
-    description: 'MiniMax API — M2.5 and other models (OpenAI-compatible)',
-    envKey: 'VITE_MINIMAX_API_KEY',
-    envUrl: 'https://platform.minimax.io',
-    models: [
-      {
-        id: MINIMAX_DEFAULT_MODEL,
-        name: 'MiniMax M2.5 (Orchestrator)',
-        provider: 'minimax',
-        role: 'orchestrator',
-        context: 200_000,
-      },
-      {
-        id: MINIMAX_DEFAULT_MODEL,
-        name: 'MiniMax M2.5 (Coder)',
-        provider: 'minimax',
-        role: 'coder',
-        context: 200_000,
-      },
-      {
-        id: MINIMAX_DEFAULT_MODEL,
-        name: 'MiniMax M2.5 (Auditor)',
-        provider: 'minimax',
-        role: 'auditor',
-        context: 200_000,
       },
     ],
   },
@@ -241,14 +158,6 @@ const mistralModel = createModelNameStorage('mistral_model', MISTRAL_DEFAULT_MOD
 export const getMistralModelName = mistralModel.get;
 export const setMistralModelName = mistralModel.set;
 
-const zaiModel = createModelNameStorage('zai_model', ZAI_DEFAULT_MODEL);
-export const getZaiModelName = zaiModel.get;
-export const setZaiModelName = zaiModel.set;
-
-const miniMaxModel = createModelNameStorage('minimax_model', MINIMAX_DEFAULT_MODEL);
-export const getMiniMaxModelName = miniMaxModel.get;
-export const setMiniMaxModelName = miniMaxModel.set;
-
 const openRouterModel = createModelNameStorage('openrouter_model', OPENROUTER_DEFAULT_MODEL);
 export const getOpenRouterModelName = openRouterModel.get;
 export const setOpenRouterModelName = openRouterModel.set;
@@ -257,8 +166,6 @@ export const setOpenRouterModelName = openRouterModel.set;
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
   mistral: getMistralModelName,
-  zai: getZaiModelName,
-  minimax: getMiniMaxModelName,
   openrouter: getOpenRouterModelName,
 };
 
@@ -280,11 +187,11 @@ export function getModelForRole(
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
+export type PreferredProvider = 'ollama' | 'mistral' | 'openrouter';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (stored === 'ollama' || stored === 'mistral' || stored === 'zai' || stored === 'minimax' || stored === 'openrouter') return stored;
+  if (stored === 'ollama' || stored === 'mistral' || stored === 'openrouter') return stored;
   return null;
 }
 
