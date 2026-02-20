@@ -14,6 +14,12 @@ function phaseLabel(phase: LoopPhase): string {
   }
 }
 
+function formatCheckpointAge(savedAt: number): string {
+  const ageMs = Date.now() - savedAt;
+  const ageMin = Math.floor(ageMs / 60_000);
+  return ageMin < 1 ? 'just now' : `${ageMin}m ago`;
+}
+
 function ResumeBanner({
   checkpoint,
   onResume,
@@ -23,9 +29,16 @@ function ResumeBanner({
   onResume: () => void;
   onDismiss: () => void;
 }) {
-  const ageMs = Date.now() - checkpoint.savedAt;
-  const ageMin = Math.floor(ageMs / 60_000);
-  const ageLabel = ageMin < 1 ? 'just now' : `${ageMin}m ago`;
+  const [ageLabel, setAgeLabel] = useState('just now');
+
+  useEffect(() => {
+    // Use setInterval for both initial and periodic updates — avoids synchronous
+    // setState in effect body which trips the react-hooks/set-state-in-effect rule.
+    const timer = setInterval(() => setAgeLabel(formatCheckpointAge(checkpoint.savedAt)), 30_000);
+    // Fire the first update asynchronously via setTimeout(0)
+    const initial = setTimeout(() => setAgeLabel(formatCheckpointAge(checkpoint.savedAt)), 0);
+    return () => { clearInterval(timer); clearTimeout(initial); };
+  }, [checkpoint.savedAt]);
 
   return (
     <div className="mx-4 mt-2 mb-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-3 flex items-center justify-between gap-3 animate-fade-in-down">

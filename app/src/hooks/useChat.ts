@@ -646,139 +646,8 @@ export function useChat(
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [flushCheckpoint]);
 
-  // --- Resumable Sessions Phase 2: resume state + detection ---
-
+  // --- Resumable Sessions Phase 2: resume state (callbacks defined after updateAgentStatus) ---
   const [interruptedCheckpoint, setInterruptedCheckpoint] = useState<RunCheckpoint | null>(null);
-
-  // Detect interrupted runs when the chat becomes idle (not streaming, loop not active)
-  useEffect(() => {
-    if (isStreaming || loopActiveRef.current) return;
-    if (!activeChatId) return;
-
-    const checkpoint = detectInterruptedRun(
-      activeChatId,
-      sandboxIdRef.current,
-      branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
-      repoRef.current,
-    );
-
-    setInterruptedCheckpoint(checkpoint);
-  }, [activeChatId, isStreaming]);
-
-  const dismissResume = useCallback(() => {
-    if (interruptedCheckpoint) {
-      clearCheckpoint(interruptedCheckpoint.chatId);
-    }
-    setInterruptedCheckpoint(null);
-  }, [interruptedCheckpoint]);
-
-  const resumeInterruptedRun = useCallback(async () => {
-    const checkpoint = interruptedCheckpoint;
-    if (!checkpoint) return;
-    setInterruptedCheckpoint(null);
-
-    const chatId = checkpoint.chatId;
-    const currentSandboxId = sandboxIdRef.current;
-
-    if (!currentSandboxId) {
-      // Sandbox not available — can't reconcile. Clear and inform user.
-      clearCheckpoint(chatId);
-      setConversations((prev) => {
-        const conv = prev[chatId];
-        if (!conv) return prev;
-        const msg: ChatMessage = {
-          id: createId(),
-          role: 'assistant',
-          content: 'Session was interrupted, but the sandbox is no longer available. Starting fresh.',
-          timestamp: Date.now(),
-          status: 'done',
-        };
-        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
-        saveConversations(updated);
-        return updated;
-      });
-      return;
-    }
-
-    // Fetch sandbox truth
-    updateAgentStatus({ active: true, phase: 'Resuming session...' }, { chatId });
-    let status: SandboxStatusResult;
-    try {
-      status = await sandboxStatus(currentSandboxId);
-    } catch (err) {
-      clearCheckpoint(chatId);
-      updateAgentStatus({ active: false, phase: '' });
-      setConversations((prev) => {
-        const conv = prev[chatId];
-        if (!conv) return prev;
-        const msg: ChatMessage = {
-          id: createId(),
-          role: 'assistant',
-          content: `Session was interrupted, but sandbox status check failed: ${err instanceof Error ? err.message : String(err)}. Starting fresh.`,
-          timestamp: Date.now(),
-          status: 'done',
-        };
-        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
-        saveConversations(updated);
-        return updated;
-      });
-      return;
-    }
-
-    // Build reconciliation message
-    const reconciliationContent = buildReconciliationMessage(checkpoint, status);
-
-    // Reconstruct apiMessages: persistedMessages + deltaMessages + reconciliation
-    const conv = conversations[chatId];
-    if (!conv) {
-      clearCheckpoint(chatId);
-      updateAgentStatus({ active: false, phase: '' });
-      return;
-    }
-
-    const persistedMessages = conv.messages;
-    const base = Math.min(checkpoint.baseMessageCount, persistedMessages.length);
-    const baseMessages = persistedMessages.slice(0, base);
-    const deltaMessages: ChatMessage[] = checkpoint.deltaMessages.map((dm, i) => ({
-      id: createId(),
-      role: dm.role as 'user' | 'assistant',
-      content: dm.content,
-      timestamp: Date.now() - checkpoint.deltaMessages.length + i,
-    }));
-
-    const reconciliationMsg: ChatMessage = {
-      id: createId(),
-      role: 'user',
-      content: reconciliationContent,
-      timestamp: Date.now(),
-      isToolResult: true, // Treat as synthetic injection
-    };
-
-    // Re-enter the loop by injecting the reconciliation message and calling sendMessage
-    // We add the reconciliation as a visible assistant message + user tool result pair
-    setConversations((prev) => {
-      const existing = prev[chatId];
-      if (!existing) return prev;
-      const msgs = [...existing.messages, reconciliationMsg];
-      const updated = { ...prev, [chatId]: { ...existing, messages: msgs, lastMessageAt: Date.now() } };
-      saveConversations(updated);
-      return updated;
-    });
-
-    // Clear the checkpoint — the loop will create new checkpoints
-    clearCheckpoint(chatId);
-
-    // Track resume event
-    recordResumeEvent(checkpoint);
-
-    // Send a synthetic message to re-enter the loop with the reconciliation context.
-    // The reconciliation message is already injected as a tool result; we send a brief
-    // user message that triggers the LLM to read it and continue.
-    // Uses sendMessageRef because sendMessage is defined later in the hook.
-    if (sendMessageRef.current) {
-      await sendMessageRef.current('[Resuming interrupted session — see sandbox state above]', undefined);
-    }
-  }, [interruptedCheckpoint, conversations, updateAgentStatus]);
 
   const appendAgentEvent = useCallback(
     (chatId: string, status: AgentStatus, source: AgentStatusSource = 'orchestrator') => {
@@ -838,6 +707,125 @@ export function useChat(
     },
     [appendAgentEvent],
   );
+
+  // --- Resumable Sessions Phase 2: detection + resume callbacks ---
+  // (Placed after updateAgentStatus to avoid block-scoping issues with tsc -b)
+
+  // Detect interrupted runs when the chat becomes idle (not streaming, loop not active)
+  useEffect(() => {
+    if (isStreaming || loopActiveRef.current) return;
+    if (!activeChatId) return;
+
+    const checkpoint = detectInterruptedRun(
+      activeChatId,
+      sandboxIdRef.current,
+      branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
+      repoRef.current,
+    );
+
+    setInterruptedCheckpoint(checkpoint);
+  }, [activeChatId, isStreaming]);
+
+  const dismissResume = useCallback(() => {
+    if (interruptedCheckpoint) {
+      clearCheckpoint(interruptedCheckpoint.chatId);
+    }
+    setInterruptedCheckpoint(null);
+  }, [interruptedCheckpoint]);
+
+  const resumeInterruptedRun = useCallback(async () => {
+    const checkpoint = interruptedCheckpoint;
+    if (!checkpoint) return;
+    setInterruptedCheckpoint(null);
+
+    const chatId = checkpoint.chatId;
+    const currentSandboxId = sandboxIdRef.current;
+
+    if (!currentSandboxId) {
+      // Sandbox not available — can't reconcile. Clear and inform user.
+      clearCheckpoint(chatId);
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        const msg: ChatMessage = {
+          id: createId(),
+          role: 'assistant',
+          content: 'Session was interrupted, but the sandbox is no longer available. Starting fresh.',
+          timestamp: Date.now(),
+          status: 'done',
+        };
+        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
+        saveConversations(updated);
+        return updated;
+      });
+      return;
+    }
+
+    // Fetch sandbox truth
+    updateAgentStatus({ active: true, phase: 'Resuming session...' }, { chatId });
+    let sbStatus: SandboxStatusResult;
+    try {
+      sbStatus = await sandboxStatus(currentSandboxId);
+    } catch (err) {
+      clearCheckpoint(chatId);
+      updateAgentStatus({ active: false, phase: '' });
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        const msg: ChatMessage = {
+          id: createId(),
+          role: 'assistant',
+          content: `Session was interrupted, but sandbox status check failed: ${err instanceof Error ? err.message : String(err)}. Starting fresh.`,
+          timestamp: Date.now(),
+          status: 'done',
+        };
+        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
+        saveConversations(updated);
+        return updated;
+      });
+      return;
+    }
+
+    // Build reconciliation message
+    const reconciliationContent = buildReconciliationMessage(checkpoint, sbStatus);
+
+    const conv = conversations[chatId];
+    if (!conv) {
+      clearCheckpoint(chatId);
+      updateAgentStatus({ active: false, phase: '' });
+      return;
+    }
+
+    const reconciliationMsg: ChatMessage = {
+      id: createId(),
+      role: 'user',
+      content: reconciliationContent,
+      timestamp: Date.now(),
+      isToolResult: true, // Treat as synthetic injection
+    };
+
+    // Re-enter the loop by injecting the reconciliation message and calling sendMessage
+    setConversations((prev) => {
+      const existing = prev[chatId];
+      if (!existing) return prev;
+      const msgs = [...existing.messages, reconciliationMsg];
+      const updated = { ...prev, [chatId]: { ...existing, messages: msgs, lastMessageAt: Date.now() } };
+      saveConversations(updated);
+      return updated;
+    });
+
+    // Clear the checkpoint — the loop will create new checkpoints
+    clearCheckpoint(chatId);
+
+    // Track resume event
+    recordResumeEvent(checkpoint);
+
+    // Send a synthetic message to re-enter the loop with the reconciliation context.
+    // Uses sendMessageRef because sendMessage is defined later in the hook.
+    if (sendMessageRef.current) {
+      await sendMessageRef.current('[Resuming interrupted session — see sandbox state above]', undefined);
+    }
+  }, [interruptedCheckpoint, conversations, updateAgentStatus]);
 
   // Derived state
   const messages = useMemo(
