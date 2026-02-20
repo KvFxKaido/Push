@@ -41,6 +41,8 @@ Options:
   --accept <cmd>                Acceptance check command (repeatable)
   --max-rounds <n>              Tool-loop cap per user prompt (default: 8)
   --json                        JSON output in headless mode / sessions
+  --sandbox                     Enable local Docker sandbox
+  --no-sandbox                  Disable local Docker sandbox
   -h, --help                    Show help
 `,
   );
@@ -163,6 +165,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
     `provider: ${providerConfig.id} | model: ${state.model}\n` +
     `endpoint: ${providerConfig.url}\n` +
     `workspace: ${state.cwd}\n` +
+    `localSandbox: ${process.env.PUSH_LOCAL_SANDBOX === 'true'}\n` +
     `Type /help for commands.\n`,
   );
 
@@ -250,7 +253,7 @@ async function initSession(sessionId, provider, model, cwd) {
     state: 'idle',
     mode: 'interactive',
     provider,
-    sandboxProvider: 'local',
+    sandboxProvider: process.env.PUSH_LOCAL_SANDBOX === 'true' ? 'local' : 'modal',
   });
   await saveSessionState(state);
   return state;
@@ -270,6 +273,7 @@ function sanitizeConfig(config) {
   };
   return {
     provider: config.provider || null,
+    localSandbox: config.localSandbox ?? null,
     ollama: config.ollama ? redactProvider(config.ollama) : {},
     mistral: config.mistral ? redactProvider(config.mistral) : {},
     openrouter: config.openrouter ? redactProvider(config.openrouter) : {},
@@ -336,6 +340,12 @@ async function runConfigInit(values, config) {
     branch.model = model;
     branch.url = url;
     if (apiKey !== undefined) branch.apiKey = apiKey;
+    
+    const localSandboxDefault = config.localSandbox ?? true;
+    const localSandboxInput = await rl.question(`Local Docker sandbox (y/n) [${localSandboxDefault ? 'y' : 'n'}]: `);
+    const localSandbox = localSandboxInput ? localSandboxInput.toLowerCase() === 'y' : localSandboxDefault;
+    next.localSandbox = localSandbox;
+
     next[provider] = branch;
 
     const configPath = await saveConfig(next);
@@ -344,7 +354,8 @@ async function runConfigInit(values, config) {
       `provider: ${provider}\n` +
       `model: ${branch.model}\n` +
       `url: ${branch.url}\n` +
-      `apiKey: ${branch.apiKey ? maskSecret(branch.apiKey) : '(not set)'}\n`,
+      `apiKey: ${branch.apiKey ? maskSecret(branch.apiKey) : '(not set)'}\n` +
+      `localSandbox: ${next.localSandbox}\n`
     );
 
     return 0;
@@ -395,11 +406,19 @@ async function runConfigSubcommand(values, positionals) {
     branch.apiKey = apiKeyArg;
     changed = true;
   }
+  if (values.sandbox !== undefined) {
+    next.localSandbox = true;
+    changed = true;
+  }
+  if (values['no-sandbox'] !== undefined) {
+    next.localSandbox = false;
+    changed = true;
+  }
 
   next[provider] = branch;
 
   if (!changed) {
-    throw new Error('No config changes provided. Use one or more of: --provider, --model, --url, --api-key');
+    throw new Error('No config changes provided. Use one or more of: --provider, --model, --url, --api-key, --sandbox, --no-sandbox');
   }
 
   const configPath = await saveConfig(next);
@@ -408,7 +427,8 @@ async function runConfigSubcommand(values, positionals) {
     `provider: ${next.provider}\n` +
     `model: ${next[provider]?.model || '(unchanged)'}\n` +
     `url: ${next[provider]?.url || '(unchanged)'}\n` +
-    `apiKey: ${next[provider]?.apiKey ? maskSecret(next[provider].apiKey) : '(unchanged)'}\n`,
+    `apiKey: ${next[provider]?.apiKey ? maskSecret(next[provider].apiKey) : '(unchanged)'}\n` +
+    `localSandbox: ${next.localSandbox ?? '(unchanged)'}\n`
   );
   return 0;
 }
@@ -433,6 +453,8 @@ export async function main() {
       json: { type: 'boolean', default: false },
       headless: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h' },
+      sandbox: { type: 'boolean' },
+      'no-sandbox': { type: 'boolean' },
     },
   });
 
@@ -444,6 +466,14 @@ export async function main() {
   // Apply persisted defaults before resolving runtime config; shell env still wins.
   const persistedConfig = await loadConfig();
   applyConfigToEnv(persistedConfig);
+
+  // Resolve final localSandbox state: flags > env > config
+  const envSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true' ? true : process.env.PUSH_LOCAL_SANDBOX === 'false' ? false : undefined;
+  const flagSandbox = values.sandbox ? true : values['no-sandbox'] ? false : undefined;
+  const localSandbox = flagSandbox ?? envSandbox ?? persistedConfig.localSandbox;
+  if (localSandbox !== undefined) {
+    process.env.PUSH_LOCAL_SANDBOX = String(localSandbox);
+  }
 
   const subcommand = positionals[0] || '';
   if (subcommand === 'config') {

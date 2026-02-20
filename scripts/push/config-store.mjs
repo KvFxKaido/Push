@@ -43,6 +43,10 @@ function setEnvIfMissing(key, value) {
 export function applyConfigToEnv(config) {
   const provider = typeof config.provider === 'string' ? config.provider : '';
   setEnvIfMissing('PUSH_PROVIDER', provider);
+  if (config.localSandbox !== undefined) {
+    process.env.PUSH_LOCAL_SANDBOX = String(config.localSandbox);
+  }
+
 
   const ollama = ensureObject(config.ollama);
   setEnvIfMissing('PUSH_OLLAMA_URL', ollama.url);

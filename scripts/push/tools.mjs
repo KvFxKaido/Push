@@ -347,7 +347,12 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         }
 
         try {
-          const { stdout, stderr } = await execFileAsync('/bin/bash', ['-lc', command], {
+          const isLocalSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true';
+          const bin = isLocalSandbox ? 'docker' : '/bin/bash';
+          const args = isLocalSandbox 
+            ? ['run', '--rm', '-v', `${workspaceRoot}:/workspace`, '-w', '/workspace', 'push-sandbox', 'bash', '-lc', command]
+            : ['-lc', command];
+          const { stdout, stderr } = await execFileAsync(bin, args, {
             cwd: workspaceRoot,
             timeout: timeoutMs,
             maxBuffer: 4_000_000,
