@@ -10,6 +10,8 @@ Use this file to quickly identify which planning docs are authoritative vs histo
   - Status: Draft plan for server-side background coding runs and reconnectable job timelines.
 - `Push CLI Plan.md`
   - Status: Active draft for interactive-first CLI and runtime architecture.
+- `Push CLI Bootstrap Execution Plan.md`
+  - Status: Active implementation plan for post-bootstrap CLI hardening and `pushd` skeleton milestones.
 - `Push Runtime Protocol.md`
   - Status: Active draft protocol spec for `pushd` client/runtime messaging.
 - `schemas/` (see `schemas/README.md`)
