@@ -83,7 +83,6 @@ interface ChatContainerProps {
 
 const AUTO_SCROLL_THRESHOLD_PX = 150;
 const AT_BOTTOM_THRESHOLD_PX = 48;
-const SCROLL_IDLE_MS = 180;
 
 function EmptyState({
   activeRepo,
@@ -179,10 +178,8 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const [isUserScrolling, setIsUserScrolling] = useState(false);
   const lastMessageRef = useRef<ChatMessage | null>(null);
   const lastMessageContent = messages.length > 0 ? messages[messages.length - 1]?.content : '';
-  const scrollIdleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const updateBottomState = useCallback((container: HTMLDivElement) => {
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
@@ -198,21 +195,12 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
 
     const handleScroll = () => {
       updateBottomState(container);
-      setIsUserScrolling(true);
-
-      if (scrollIdleTimeoutRef.current) clearTimeout(scrollIdleTimeoutRef.current);
-      scrollIdleTimeoutRef.current = setTimeout(() => {
-        updateBottomState(container);
-        setIsUserScrolling(false);
-        scrollIdleTimeoutRef.current = null;
-      }, SCROLL_IDLE_MS);
     };
 
     container.addEventListener('scroll', handleScroll, { passive: true });
 
     return () => {
       container.removeEventListener('scroll', handleScroll);
-      if (scrollIdleTimeoutRef.current) clearTimeout(scrollIdleTimeoutRef.current);
     };
   }, [updateBottomState]);
 
@@ -248,10 +236,9 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
   const scrollToBottom = () => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     setIsAtBottom(true);
-    setIsUserScrolling(false);
   };
 
-  const showScrollButton = !isAtBottom && !isUserScrolling;
+  const showScrollButton = !isAtBottom;
 
   if (messages.length === 0) {
     return (
@@ -291,6 +278,7 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
           flex items-center justify-center
           w-10 h-10
           rounded-full
+          z-20
           border border-push-edge
           bg-push-grad-card
           text-push-fg-secondary
