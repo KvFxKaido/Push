@@ -263,7 +263,7 @@ Files touched:
 Implementation:
 - `detectInterruptedRun()` runs via `useEffect` whenever `isStreaming` or `activeChatId` changes while the loop is idle
 - `ResumeBanner` shows phase label, round number, age, and Coder-active indicator
-- On Resume: fetches `sandboxStatus()`, builds phase-specific reconciliation message via `buildReconciliationMessage()`, injects it as a synthetic tool result, then triggers `sendMessage` to re-enter the loop
+- On Resume: revalidates checkpoint identity (sandbox/branch/repo may have changed while the banner was visible), fetches `sandboxStatus()` (bails with user-facing message if `error` is set), builds phase-specific reconciliation message via `buildReconciliationMessage()`, injects it as a synthetic tool result, then triggers `sendMessage` to re-enter the loop
 - On Dismiss: clears the checkpoint from localStorage
 - If sandbox is unavailable, the resume injects a "starting fresh" assistant message and clears the checkpoint
 
