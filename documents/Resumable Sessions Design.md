@@ -88,10 +88,12 @@ Add a `visibilitychange` listener in `useChat` that fires when the document beco
 ```typescript
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && loopActiveRef.current) {
-    flushCheckpoint(); // Save current accumulated + apiMessages immediately
+    flushCheckpoint(); // Save current accumulated + deltaMessages immediately
   }
 });
 ```
+
+**Implementation detail:** `flushCheckpoint()` must read `accumulated` from a `useRef`, not from React state. The `useState` value may lag behind the actual token stream by a render cycle. Track accumulated tokens in a mutable ref (`accumulatedRef.current`) that updates synchronously on every SSE chunk. The `useState` version drives UI renders; the ref drives checkpoint flushing. Mobile browsers give a very narrow synchronous window on `visibilitychange` before suspending — reading from a ref is synchronous and guaranteed to have the latest value.
 
 This catches the "phone locked mid-stream" case where accumulated tokens would otherwise be lost. It won't fire if the OS kills the tab outright, but the last completed-round checkpoint still survives.
 
@@ -149,7 +151,7 @@ This tells us:
 - Diff summary (scope of changes)
 - Exact list of changed files (critical for partial-mutation detection)
 
-This is one sandbox round-trip. Cheap.
+This is one sandbox round-trip. Cheap. If the `--name-only` output exceeds 50 files, truncate to the first 50 with a `(and N more files)` suffix to avoid bloating the reconciliation message.
 
 **Step 3: Inject a phase-specific reconciliation message and re-enter the loop.**
 The reconciliation message is constructed from the checkpoint's `phase` field, sandbox truth, and any saved context. Using the phase produces a specific instruction rather than a generic "figure it out" prompt.
@@ -231,7 +233,7 @@ If the sandbox crashed and was recreated (new session ID), the `sandboxSessionId
 ## What this doesn't solve
 
 - **Long tasks while phone is locked.** The loop still pauses with the browser. This design makes the pause graceful, not invisible. For truly background execution, the Background Coder Tasks plan remains the right long-term answer.
-- **Network-level retries for SSE.** If the LLM provider is down, resuming the loop will hit the same wall. The existing timeout handling surfaces this.
+- **Network-level retries for SSE.** If the LLM provider is down, resuming the loop will hit the same wall. The existing timeout handling surfaces this. Note: a momentary cellular drop (5 seconds) where the tab stays alive is NOT a checkpoint recovery case — it's an SSE reconnect problem. The tab is still running, the loop hasn't exited, and `detectInterruptedRun` is never called. SSE resilience is a separate concern from session resumability.
 - **Concurrent mutations from other sources.** If someone pushes to the branch while the session is suspended, the sandbox is stale. This is the same problem that exists today — sandbox truth still reflects the local state.
 
 ## Implementation plan
@@ -315,3 +317,13 @@ Source: external design review.
 | `visibilitychange` doesn't fire when OS kills the tab | **Already addressed.** The design already noted this: "It won't fire if the OS kills the tab outright, but the last completed-round checkpoint still survives." The flush is a best-effort optimization on top of per-batch checkpoints. | No change needed. |
 | Should add a `LoopPhase` enum (not a state machine, just a tag) for reconciliation and telemetry | **Valid.** Low cost, improves both recovery messages and debugging. | Fixed: `LoopPhase` added to checkpoint type and phase-specific reconciliation templates. |
 | Stress test: `sandbox_apply_patchset` mutation interrupted, connection lost before result injection | **Valid edge case.** Patchset is all-or-nothing by design, but container crash mid-write could leave partial state. | Added as explicit edge case. `git diff --name-only` in reconciliation message shows exactly which files changed. Model compares against intended patchset. |
+
+### Review 2 (2026-02-20)
+
+Source: external peer review.
+
+| Issue | Assessment | Action |
+|---|---|---|
+| `visibilitychange` flush must read from `useRef`, not React state — `useState` lags behind the token stream by a render cycle | **Valid.** Important execution detail. Mobile browsers give a narrow synchronous window on `visibilitychange`; reading stale state defeats the purpose. | Fixed: added implementation note requiring `accumulatedRef` for synchronous reads in `flushCheckpoint()`. |
+| Large `git diff` output on resume could blow up the reconciliation message and trigger immediate context compaction | **Half valid.** `--name-only` for 40 files is ~40 lines — negligible. But pathological cases (200+ files) could get noisy. | Fixed: added truncation cap — 50 files max with `(and N more files)` suffix. |
+| Momentary network flap (5s cellular drop) shouldn't force user to tap Resume — consider auto-resume for short interruptions in `streaming_llm` phase | **Invalid for this design.** A 5s network drop where the tab stays alive is an SSE reconnect problem, not a checkpoint recovery case. The loop hasn't exited, `detectInterruptedRun` is never called. SSE resilience is a separate concern. | Clarified in "What this doesn't solve" section. No auto-resume path needed. |
