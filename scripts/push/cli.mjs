@@ -92,6 +92,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
     `Push CLI\n` +
     `session: ${state.sessionId}\n` +
     `provider: ${providerConfig.id} | model: ${state.model}\n` +
+    `endpoint: ${providerConfig.url}\n` +
     `workspace: ${state.cwd}\n` +
     `Type /help for commands.\n`,
   );
@@ -106,9 +107,18 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
         process.stdout.write(
           `Commands:
   /help                Show this help
+  /provider            Show provider config
   /session             Print session id
   /exit | /quit        Exit
 `,
+        );
+        continue;
+      }
+      if (line === '/provider') {
+        process.stdout.write(
+          `provider: ${providerConfig.id}\n` +
+          `model: ${state.model}\n` +
+          `endpoint: ${providerConfig.url}\n`,
         );
         continue;
       }

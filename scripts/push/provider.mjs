@@ -81,7 +81,9 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
 
       if (!response.ok) {
         const body = await response.text().catch(() => '(no body)');
-        const err = new Error(`Provider error ${response.status}: ${body.slice(0, 400)}`);
+        const err = new Error(
+          `Provider error ${response.status} [provider=${config.id} model=${model} url=${config.url}]: ${body.slice(0, 400)}`,
+        );
         if (attempt < MAX_RETRIES && isRetryableError(err, response)) {
           lastError = err;
           clearTimeout(timeout);
@@ -136,7 +138,9 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
     } catch (err) {
       clearTimeout(timeout);
       if (err instanceof DOMException && err.name === 'AbortError') {
-        throw new Error(`Request timed out after ${Math.floor(timeoutMs / 1000)}s`);
+        throw new Error(
+          `Request timed out after ${Math.floor(timeoutMs / 1000)}s [provider=${config.id} model=${model} url=${config.url}]`,
+        );
       }
       if (attempt < MAX_RETRIES && isRetryableError(err, response)) {
         lastError = err;
