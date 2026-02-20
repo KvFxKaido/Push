@@ -205,7 +205,7 @@ function buildReconciliationMessage(
 const RUN_ACTIVE_PREFIX = 'run_active_';
 const TAB_LOCK_STALE_MS = 60_000; // Consider lock stale after 60s without heartbeat
 
-function acquireTabLock(chatId: string): boolean {
+function acquireTabLock(chatId: string): string | null {
   const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
   const existing = safeStorageGet(key);
   if (existing) {
@@ -213,7 +213,7 @@ function acquireTabLock(chatId: string): boolean {
       const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
       // If the heartbeat is recent, another tab owns this run
       if (Date.now() - lock.heartbeat < TAB_LOCK_STALE_MS) {
-        return false;
+        return null;
       }
     } catch {
       // Malformed lock, take it over
@@ -226,24 +226,37 @@ function acquireTabLock(chatId: string): boolean {
   if (verify) {
     try {
       const parsed = JSON.parse(verify) as { tabId: string };
-      return parsed.tabId === tabId;
+      return parsed.tabId === tabId ? tabId : null;
     } catch {
-      return false;
+      return null;
     }
   }
-  return false;
+  return null;
 }
 
-function releaseTabLock(chatId: string): void {
-  safeStorageRemove(`${RUN_ACTIVE_PREFIX}${chatId}`);
+function releaseTabLock(chatId: string, ownerTabId: string | null): void {
+  if (!ownerTabId) return;
+  const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
+  const existing = safeStorageGet(key);
+  if (existing) {
+    try {
+      const lock = JSON.parse(existing) as { tabId: string };
+      if (lock.tabId !== ownerTabId) return; // Not our lock
+    } catch {
+      // Malformed — safe to remove
+    }
+  }
+  safeStorageRemove(key);
 }
 
-function heartbeatTabLock(chatId: string): void {
+function heartbeatTabLock(chatId: string, ownerTabId: string | null): void {
+  if (!ownerTabId) return;
   const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
   const existing = safeStorageGet(key);
   if (existing) {
     try {
       const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
+      if (lock.tabId !== ownerTabId) return; // Not our lock
       safeStorageSet(key, JSON.stringify({ ...lock, heartbeat: Date.now() }));
     } catch {
       // Ignore
@@ -633,8 +646,9 @@ export function useChat(
   // Ref for Phase 3: last Coder working memory state
   const lastCoderStateRef = useRef<string | null>(null);
 
-  // Tab lock heartbeat interval ref
+  // Tab lock refs
   const tabLockIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tabLockIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -741,6 +755,19 @@ export function useChat(
     const chatId = checkpoint.chatId;
     const currentSandboxId = sandboxIdRef.current;
 
+    // Revalidate checkpoint identity at click-time (sandbox/branch/repo may have
+    // changed while the resume banner was visible)
+    const revalidated = detectInterruptedRun(
+      chatId,
+      currentSandboxId,
+      branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
+      repoRef.current,
+    );
+    if (!revalidated) {
+      // Checkpoint no longer valid — silently discard
+      return;
+    }
+
     if (!currentSandboxId) {
       // Sandbox not available — can't reconcile. Clear and inform user.
       clearCheckpoint(chatId);
@@ -776,6 +803,27 @@ export function useChat(
           id: createId(),
           role: 'assistant',
           content: `Session was interrupted, but sandbox status check failed: ${err instanceof Error ? err.message : String(err)}. Starting fresh.`,
+          timestamp: Date.now(),
+          status: 'done',
+        };
+        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
+        saveConversations(updated);
+        return updated;
+      });
+      return;
+    }
+
+    // Guard: if sandbox git commands failed, don't build reconciliation from bad data
+    if (sbStatus.error) {
+      clearCheckpoint(chatId);
+      updateAgentStatus({ active: false, phase: '' });
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        const msg: ChatMessage = {
+          id: createId(),
+          role: 'assistant',
+          content: `Session was interrupted, but the sandbox is in an unexpected state: ${sbStatus.error}. Starting fresh.`,
           timestamp: Date.now(),
           status: 'done',
         };
@@ -1196,7 +1244,8 @@ export function useChat(
       loopActiveRef.current = true;
 
       // Acquire multi-tab lock — abort if another tab already holds it
-      if (!acquireTabLock(chatId)) {
+      const acquiredTabId = acquireTabLock(chatId);
+      if (!acquiredTabId) {
         loopActiveRef.current = false;
         setIsStreaming(false);
         updateAgentStatus({ active: false, phase: '' });
@@ -1213,9 +1262,10 @@ export function useChat(
         });
         return;
       }
+      tabLockIdRef.current = acquiredTabId;
       // Heartbeat every 15s to keep the lock alive
       if (tabLockIntervalRef.current) clearInterval(tabLockIntervalRef.current);
-      tabLockIntervalRef.current = setInterval(() => heartbeatTabLock(chatId), 15_000);
+      tabLockIntervalRef.current = setInterval(() => heartbeatTabLock(chatId, acquiredTabId), 15_000);
 
       let loopCompletedNormally = false;
       try {
@@ -2198,8 +2248,9 @@ export function useChat(
           clearCheckpoint(chatId);
         }
 
-        // Release multi-tab lock
-        releaseTabLock(chatId);
+        // Release multi-tab lock (only if we own it)
+        releaseTabLock(chatId, tabLockIdRef.current);
+        tabLockIdRef.current = null;
         if (tabLockIntervalRef.current) {
           clearInterval(tabLockIntervalRef.current);
           tabLockIntervalRef.current = null;
