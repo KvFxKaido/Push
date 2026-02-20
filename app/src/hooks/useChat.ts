@@ -1910,7 +1910,7 @@ export function useChat(
         clearCheckpoint(chatId);
       }
     },
-    [activeChatId, conversations, isStreaming, createNewChat, updateAgentStatus],
+    [activeChatId, conversations, isStreaming, createNewChat, updateAgentStatus, flushCheckpoint],
   );
 
   // --- Card action handler (Phase 4 — commit review + CI) ---
