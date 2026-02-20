@@ -139,7 +139,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/kimi/, ''),
         headers: {
-          'User-Agent': 'claude-code/1.0.0',
+          'User-Agent': 'claude-code/2.1.49',
         },
       },
       '/ollama': {
