@@ -15,6 +15,8 @@ import type {
   SandboxStateCardData,
   ActiveRepo,
   ToolMeta,
+  LoopPhase,
+  RunCheckpoint,
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
@@ -47,6 +49,8 @@ const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
 const MAX_PARALLEL_DELEGATE_TASKS = 3;
+const CHECKPOINT_KEY_PREFIX = 'run_checkpoint_';
+const CHECKPOINT_MAX_AGE_MS = 25 * 60 * 1000; // 25 min — matches sandbox max age
 
 function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -91,6 +95,70 @@ function generateTitle(messages: ChatMessage[]): string {
 
 function getGitHubAuthToken(): string {
   return safeStorageGet(APP_TOKEN_STORAGE_KEY) || safeStorageGet(OAUTH_STORAGE_KEY) || GITHUB_TOKEN;
+}
+
+// --- Checkpoint helpers (Resumable Sessions Phase 1) ---
+
+function saveCheckpoint(checkpoint: RunCheckpoint): void {
+  try {
+    safeStorageSet(`${CHECKPOINT_KEY_PREFIX}${checkpoint.chatId}`, JSON.stringify(checkpoint));
+  } catch {
+    // Best-effort — don't break the tool loop if storage is full
+    console.warn('[Push] Failed to save run checkpoint');
+  }
+}
+
+function clearCheckpoint(chatId: string): void {
+  safeStorageRemove(`${CHECKPOINT_KEY_PREFIX}${chatId}`);
+}
+
+function loadCheckpoint(chatId: string): RunCheckpoint | null {
+  try {
+    const raw = safeStorageGet(`${CHECKPOINT_KEY_PREFIX}${chatId}`);
+    if (!raw) return null;
+    return JSON.parse(raw) as RunCheckpoint;
+  } catch {
+    return null;
+  }
+}
+
+export function detectInterruptedRun(
+  chatId: string,
+  currentSandboxId: string | null,
+  currentBranch: string | null,
+  currentRepoId: string | null,
+): RunCheckpoint | null {
+  const checkpoint = loadCheckpoint(chatId);
+  if (!checkpoint) return null;
+
+  // Stale check
+  const age = Date.now() - checkpoint.savedAt;
+  if (age > CHECKPOINT_MAX_AGE_MS) {
+    clearCheckpoint(chatId);
+    return null;
+  }
+
+  // User had requested abort — don't offer resume
+  if (checkpoint.userAborted) {
+    clearCheckpoint(chatId);
+    return null;
+  }
+
+  // Identity check: checkpoint must match current sandbox, branch, and repo
+  if (currentSandboxId && checkpoint.sandboxSessionId !== currentSandboxId) {
+    clearCheckpoint(chatId);
+    return null;
+  }
+  if (currentBranch && checkpoint.activeBranch !== currentBranch) {
+    clearCheckpoint(chatId);
+    return null;
+  }
+  if (currentRepoId && checkpoint.repoId !== currentRepoId) {
+    clearCheckpoint(chatId);
+    return null;
+  }
+
+  return checkpoint;
 }
 
 // --- localStorage helpers ---
@@ -345,6 +413,20 @@ export function useChat(
   const isMainProtectedRef = useRef(false);
   const autoCreateRef = useRef(false); // Guard against creation loops
 
+  // --- Resumable Sessions: refs for synchronous checkpoint flushing ---
+  // These refs track the latest accumulated state so flushCheckpoint() can
+  // read them synchronously in the visibilitychange handler (React state lags).
+  const checkpointAccumulatedRef = useRef('');
+  const checkpointThinkingRef = useRef('');
+  const checkpointRoundRef = useRef(0);
+  const checkpointPhaseRef = useRef<LoopPhase>('streaming_llm');
+  const checkpointApiMessagesRef = useRef<ChatMessage[]>([]);
+  const checkpointBaseMessageCountRef = useRef(0);
+  const checkpointChatIdRef = useRef<string | null>(null);
+  const checkpointProviderRef = useRef<string>('');
+  const checkpointModelRef = useRef<string>('');
+  const loopActiveRef = useRef(false);
+
   // Keep activeRepoFullName in a ref so callbacks always see the latest value
   const repoRef = useRef(activeRepoFullName);
   repoRef.current = activeRepoFullName;
@@ -366,6 +448,52 @@ export function useChat(
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
   }, [activeChatId]);
+
+  // --- Resumable Sessions: flush checkpoint on visibility change ---
+
+  const flushCheckpoint = useCallback(() => {
+    const chatId = checkpointChatIdRef.current;
+    if (!chatId || !loopActiveRef.current) return;
+
+    // Compute deltaMessages: messages in apiMessages beyond the base count
+    const apiMessages = checkpointApiMessagesRef.current;
+    const base = checkpointBaseMessageCountRef.current;
+    const deltaMessages = apiMessages.slice(base).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    const checkpoint: RunCheckpoint = {
+      chatId,
+      round: checkpointRoundRef.current,
+      phase: checkpointPhaseRef.current,
+      baseMessageCount: base,
+      deltaMessages,
+      accumulated: checkpointAccumulatedRef.current,
+      thinkingAccumulated: checkpointThinkingRef.current,
+      coderDelegationActive: checkpointPhaseRef.current === 'delegating_coder',
+      lastCoderState: null, // Phase 3 will populate this
+      savedAt: Date.now(),
+      provider: checkpointProviderRef.current as AIProviderType,
+      model: checkpointModelRef.current,
+      sandboxSessionId: sandboxIdRef.current || '',
+      activeBranch: branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || '',
+      repoId: repoRef.current || '',
+      userAborted: abortRef.current || undefined,
+    };
+
+    saveCheckpoint(checkpoint);
+  }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && loopActiveRef.current) {
+        flushCheckpoint();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [flushCheckpoint]);
 
   const appendAgentEvent = useCallback(
     (chatId: string, status: AgentStatus, source: AgentStatusSource = 'orchestrator') => {
@@ -800,10 +928,27 @@ export function useChat(
       let diagnosisRetries = 0;
       const MAX_DIAGNOSIS_RETRIES = 2;
 
+      // --- Resumable Sessions: initialize checkpoint refs ---
+      checkpointChatIdRef.current = chatId;
+      checkpointProviderRef.current = lockedProviderForChat;
+      checkpointModelRef.current = resolvedModelForChat || '';
+      checkpointBaseMessageCountRef.current = updatedWithUser.length;
+      checkpointApiMessagesRef.current = apiMessages;
+      checkpointAccumulatedRef.current = '';
+      checkpointThinkingRef.current = '';
+      loopActiveRef.current = true;
+
+      let loopCompletedNormally = false;
       try {
         for (let round = 0; ; round++) {
           if (abortRef.current) break;
           fileLedger.advanceRound();
+
+          // --- Checkpoint: update round refs ---
+          checkpointRoundRef.current = round;
+          checkpointAccumulatedRef.current = '';
+          checkpointThinkingRef.current = '';
+          checkpointPhaseRef.current = 'streaming_llm';
 
           if (round > 0) {
             const newAssistant: ChatMessage = {
@@ -858,6 +1003,7 @@ export function useChat(
                 if (processedContentRef.current.has(contentKey)) return;
                 processedContentRef.current.add(contentKey);
                 accumulated += token;
+                checkpointAccumulatedRef.current = accumulated;
                 updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
                 setConversations((prev) => {
                   const conv = prev[chatId];
@@ -889,6 +1035,7 @@ export function useChat(
                 if (processedContentRef.current.has(thinkingKey)) return;
                 processedContentRef.current.add(thinkingKey);
                 thinkingAccumulated += token;
+                checkpointThinkingRef.current = thinkingAccumulated;
                 updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
                 setConversations((prev) => {
                   const conv = prev[chatId];
@@ -931,6 +1078,10 @@ export function useChat(
             });
             break;
           }
+
+          // --- Checkpoint: streaming complete, flush before tool detection ---
+          checkpointPhaseRef.current = 'executing_tools';
+          flushCheckpoint();
 
           // Check for multiple independent read-only tool calls in one turn.
           // These can be executed safely in parallel (no shared-state mutation).
@@ -1063,6 +1214,10 @@ export function useChat(
               },
               ...toolResultMessages,
             ];
+            checkpointApiMessagesRef.current = apiMessages;
+
+            // --- Checkpoint: parallel read-only tool results received ---
+            flushCheckpoint();
 
             // If there's a trailing mutation after the reads, execute it now
             // instead of re-streaming (saves a full LLM round).
@@ -1127,6 +1282,10 @@ export function useChat(
                 return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, mutResultMsg], lastMessageAt: Date.now() } };
               });
               apiMessages = [...apiMessages, mutResultMsg];
+              checkpointApiMessagesRef.current = apiMessages;
+
+              // --- Checkpoint: trailing mutation result received ---
+              flushCheckpoint();
             }
 
             continue;
@@ -1258,6 +1417,7 @@ export function useChat(
               saveConversations(updated);
               return updated;
             });
+            loopCompletedNormally = true;
             break;
           }
 
@@ -1330,6 +1490,7 @@ export function useChat(
             }
           } else if (toolCall.source === 'delegate') {
             // Handle Coder delegation (Phase 3b)
+            checkpointPhaseRef.current = 'delegating_coder';
             const currentSandboxId = sandboxIdRef.current;
             if (!currentSandboxId) {
               toolExecResult = { text: '[Tool Error] Failed to start sandbox automatically. Try again.' };
@@ -1599,6 +1760,8 @@ export function useChat(
                 }
               }
             }
+            // Reset phase — delegation finished (success or error)
+            checkpointPhaseRef.current = 'executing_tools';
           } else {
             // GitHub or Sandbox tools
             const toolRepoFullName = repoRef.current;
@@ -1733,6 +1896,10 @@ export function useChat(
             },
             toolResultMsg,
           ];
+          checkpointApiMessagesRef.current = apiMessages;
+
+          // --- Checkpoint: tool result received ---
+          flushCheckpoint();
         }
       } finally {
         setIsStreaming(false);
@@ -1740,9 +1907,16 @@ export function useChat(
           updateAgentStatus({ active: false, phase: '' });
         }
         abortControllerRef.current = null;
+
+        // --- Checkpoint: clear only on normal completion ---
+        loopActiveRef.current = false;
+        checkpointChatIdRef.current = null;
+        if (loopCompletedNormally) {
+          clearCheckpoint(chatId);
+        }
       }
     },
-    [activeChatId, conversations, isStreaming, createNewChat, updateAgentStatus],
+    [activeChatId, conversations, isStreaming, createNewChat, updateAgentStatus, flushCheckpoint],
   );
 
   // --- Card action handler (Phase 4 — commit review + CI) ---
