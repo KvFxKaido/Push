@@ -796,34 +796,18 @@ export function useChat(
       return;
     }
 
-    const reconciliationMsg: ChatMessage = {
-      id: createId(),
-      role: 'user',
-      content: reconciliationContent,
-      timestamp: Date.now(),
-      isToolResult: true, // Treat as synthetic injection
-    };
-
-    // Re-enter the loop by injecting the reconciliation message and calling sendMessage
-    setConversations((prev) => {
-      const existing = prev[chatId];
-      if (!existing) return prev;
-      const msgs = [...existing.messages, reconciliationMsg];
-      const updated = { ...prev, [chatId]: { ...existing, messages: msgs, lastMessageAt: Date.now() } };
-      saveConversations(updated);
-      return updated;
-    });
-
     // Clear the checkpoint — the loop will create new checkpoints
     clearCheckpoint(chatId);
 
     // Track resume event
     recordResumeEvent(checkpoint);
 
-    // Send a synthetic message to re-enter the loop with the reconciliation context.
-    // Uses sendMessageRef because sendMessage is defined later in the hook.
+    // Send the reconciliation content directly as the user message text.
+    // We do NOT inject it via setConversations first because sendMessage captures
+    // `conversations` from its closure — a preceding setConversations won't be
+    // visible until the next render, so the reconciliation would be lost.
     if (sendMessageRef.current) {
-      await sendMessageRef.current('[Resuming interrupted session — see sandbox state above]', undefined);
+      await sendMessageRef.current(reconciliationContent, undefined);
     }
   }, [interruptedCheckpoint, conversations, updateAgentStatus]);
 
@@ -1211,8 +1195,24 @@ export function useChat(
       checkpointThinkingRef.current = '';
       loopActiveRef.current = true;
 
-      // Acquire multi-tab lock
-      acquireTabLock(chatId);
+      // Acquire multi-tab lock — abort if another tab already holds it
+      if (!acquireTabLock(chatId)) {
+        loopActiveRef.current = false;
+        setIsStreaming(false);
+        updateAgentStatus({ active: false, phase: '' });
+        // Update the placeholder assistant message with an explanation
+        setConversations((prev) => {
+          const existing = prev[chatId];
+          if (!existing) return prev;
+          const msgs = existing.messages.map((m) =>
+            m.status === 'streaming' ? { ...m, content: 'This chat is active in another tab. Please switch tabs or wait for the other session to finish.', status: 'done' as const } : m,
+          );
+          const updated = { ...prev, [chatId]: { ...existing, messages: msgs, lastMessageAt: Date.now() } };
+          saveConversations(updated);
+          return updated;
+        });
+        return;
+      }
       // Heartbeat every 15s to keep the lock alive
       if (tabLockIntervalRef.current) clearInterval(tabLockIntervalRef.current);
       tabLockIntervalRef.current = setInterval(() => heartbeatTabLock(chatId), 15_000);
