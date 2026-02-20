@@ -1,0 +1,263 @@
+#!/usr/bin/env node
+import { parseArgs } from 'node:util';
+import { createInterface } from 'node:readline/promises';
+import path from 'node:path';
+import process from 'node:process';
+
+import { PROVIDER_CONFIGS, resolveApiKey } from './provider.mjs';
+import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
+import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function printHelp() {
+  process.stdout.write(
+    `Push CLI (bootstrap)
+
+Usage:
+  push                          Start interactive session
+  push --session <id>           Resume interactive session
+  push run --task "..."         Run once in headless mode
+  push run "..."                Run once in headless mode
+  push sessions                 List saved sessions
+
+Options:
+  --provider <name>             ollama | mistral | openrouter (default: ollama)
+  --model <name>                Override model
+  --cwd <path>                  Workspace root (default: current directory)
+  --session <id>                Resume session id
+  --task <text>                 Task text for headless mode
+  --max-rounds <n>              Tool-loop cap per user prompt (default: 8)
+  --json                        JSON output in headless mode / sessions
+  -h, --help                    Show help
+`,
+  );
+}
+
+async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput) {
+  state.messages.push({ role: 'user', content: task });
+  await appendSessionEvent(state, 'user_message', { chars: task.length, preview: task.slice(0, 280) });
+
+  try {
+    const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, false);
+    await saveSessionState(state);
+
+    if (jsonOutput) {
+      process.stdout.write(`${JSON.stringify({
+        sessionId: state.sessionId,
+        runId: result.runId || null,
+        outcome: result.outcome,
+        rounds: result.rounds,
+        assistant: result.finalAssistantText,
+      }, null, 2)}\n`);
+    } else {
+      process.stdout.write(`${result.finalAssistantText}\n`);
+    }
+
+    return result.outcome === 'success' ? 0 : 1;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await appendSessionEvent(state, 'error', { message });
+    await saveSessionState(state);
+
+    if (jsonOutput) {
+      process.stdout.write(`${JSON.stringify({ sessionId: state.sessionId, outcome: 'error', error: message }, null, 2)}\n`);
+    } else {
+      process.stderr.write(`Error: ${message}\n`);
+    }
+    return 1;
+  }
+}
+
+function makeInteractiveApprovalFn(rl) {
+  return async (tool, detail) => {
+    process.stdout.write(`\n[!] High-risk operation detected:\n    ${tool}: ${detail}\n`);
+    const answer = await rl.question('    Allow? (y/N) ');
+    return answer.trim().toLowerCase() === 'y';
+  };
+}
+
+async function runInteractive(state, providerConfig, apiKey, maxRounds) {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+  });
+
+  const approvalFn = makeInteractiveApprovalFn(rl);
+
+  process.stdout.write(
+    `Push CLI\n` +
+    `session: ${state.sessionId}\n` +
+    `provider: ${providerConfig.id} | model: ${state.model}\n` +
+    `workspace: ${state.cwd}\n` +
+    `Type /help for commands.\n`,
+  );
+
+  try {
+    while (true) {
+      const line = (await rl.question('\n> ')).trim();
+      if (!line) continue;
+
+      if (line === '/exit' || line === '/quit') break;
+      if (line === '/help') {
+        process.stdout.write(
+          `Commands:
+  /help                Show this help
+  /session             Print session id
+  /exit | /quit        Exit
+`,
+        );
+        continue;
+      }
+      if (line === '/session') {
+        process.stdout.write(`session: ${state.sessionId}\n`);
+        continue;
+      }
+
+      state.messages.push({ role: 'user', content: line });
+      await appendSessionEvent(state, 'user_message', { chars: line.length, preview: line.slice(0, 280) });
+
+      try {
+        const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, true, { approvalFn });
+        await saveSessionState(state);
+        if (result.outcome !== 'success') {
+          process.stdout.write(`[warn] ${result.finalAssistantText}\n`);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await appendSessionEvent(state, 'error', { message });
+        await saveSessionState(state);
+        process.stderr.write(`Error: ${message}\n`);
+      }
+    }
+  } finally {
+    rl.close();
+    await saveSessionState(state);
+  }
+
+  return 0;
+}
+
+async function initSession(sessionId, provider, model, cwd) {
+  if (sessionId) {
+    return loadSessionState(sessionId);
+  }
+
+  const newSessionId = makeSessionId();
+  const now = Date.now();
+  const state = {
+    sessionId: newSessionId,
+    createdAt: now,
+    updatedAt: now,
+    provider,
+    model,
+    cwd,
+    rounds: 0,
+    eventSeq: 0,
+    messages: [{ role: 'system', content: buildSystemPrompt(cwd) }],
+  };
+  await appendSessionEvent(state, 'session_started', {
+    sessionId: newSessionId,
+    state: 'idle',
+    mode: 'interactive',
+    provider,
+    sandboxProvider: 'local',
+  });
+  await saveSessionState(state);
+  return state;
+}
+
+function parseProvider(raw) {
+  const provider = (raw || process.env.PUSH_PROVIDER || 'ollama').toLowerCase();
+  if (provider === 'ollama' || provider === 'mistral' || provider === 'openrouter') return provider;
+  throw new Error(`Unsupported provider: ${raw}`);
+}
+
+export async function main() {
+  const { values, positionals } = parseArgs({
+    args: process.argv.slice(2),
+    allowPositionals: true,
+    strict: false,
+    options: {
+      provider: { type: 'string' },
+      model: { type: 'string' },
+      cwd: { type: 'string' },
+      session: { type: 'string' },
+      task: { type: 'string' },
+      maxRounds: { type: 'string' },
+      json: { type: 'boolean', default: false },
+      headless: { type: 'boolean', default: false },
+      help: { type: 'boolean', short: 'h' },
+    },
+  });
+
+  if (values.help) {
+    printHelp();
+    return 0;
+  }
+
+  const subcommand = positionals[0] || '';
+  if (subcommand === 'sessions') {
+    const sessions = await listSessions();
+    if (values.json) {
+      process.stdout.write(`${JSON.stringify(sessions, null, 2)}\n`);
+      return 0;
+    }
+    if (sessions.length === 0) {
+      process.stdout.write('No sessions found.\n');
+      return 0;
+    }
+    for (const row of sessions) {
+      process.stdout.write(
+        `${row.sessionId}  ${new Date(row.updatedAt).toISOString()}  ${row.provider}/${row.model}  ${row.cwd}\n`,
+      );
+    }
+    return 0;
+  }
+
+  const provider = parseProvider(values.provider);
+  const providerConfig = PROVIDER_CONFIGS[provider];
+  const apiKey = resolveApiKey(providerConfig);
+  const cwd = path.resolve(values.cwd || process.cwd());
+  const maxRounds = clamp(Number(values.maxRounds || DEFAULT_MAX_ROUNDS), 1, 30);
+
+  const positionalTask = subcommand === 'run'
+    ? positionals.slice(1).join(' ').trim()
+    : '';
+  const task = (values.task || positionalTask).trim();
+  const runHeadlessMode = values.headless || subcommand === 'run';
+  const requestedModel = values.model || providerConfig.defaultModel;
+
+  const state = await initSession(values.session, provider, requestedModel, cwd);
+  if (values.model && values.model !== state.model) state.model = values.model;
+  if (values.provider && values.provider !== state.provider) {
+    state.provider = provider;
+    state.model = requestedModel;
+  }
+  if (values.cwd && path.resolve(values.cwd) !== state.cwd) {
+    state.cwd = path.resolve(values.cwd);
+  }
+  await saveSessionState(state);
+
+  if (runHeadlessMode) {
+    if (!task) {
+      throw new Error('Headless mode requires a task. Use: push run --task "..."');
+    }
+    return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json);
+  }
+
+  return runInteractive(state, providerConfig, apiKey, maxRounds);
+}
+
+main()
+  .then((code) => {
+    process.exitCode = code;
+  })
+  .catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`Error: ${message}\n`);
+    process.exitCode = 1;
+  });

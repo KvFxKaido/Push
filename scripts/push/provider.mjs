@@ -1,0 +1,151 @@
+import process from 'node:process';
+
+export const DEFAULT_TIMEOUT_MS = 120_000;
+export const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 1_000;
+
+function isRetryableError(err, response) {
+  if (!response) return true; // network error
+  const status = response.status;
+  return status === 429 || status >= 500;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export const PROVIDER_CONFIGS = {
+  ollama: {
+    id: 'ollama',
+    url: process.env.PUSH_OLLAMA_URL || process.env.OLLAMA_API_URL || 'http://localhost:11434/v1/chat/completions',
+    defaultModel: process.env.PUSH_OLLAMA_MODEL || 'gemini-3-flash-preview',
+    apiKeyEnv: ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'],
+    requiresKey: false,
+  },
+  mistral: {
+    id: 'mistral',
+    url: process.env.PUSH_MISTRAL_URL || 'https://api.mistral.ai/v1/chat/completions',
+    defaultModel: process.env.PUSH_MISTRAL_MODEL || 'devstral-small-latest',
+    apiKeyEnv: ['PUSH_MISTRAL_API_KEY', 'MISTRAL_API_KEY', 'VITE_MISTRAL_API_KEY'],
+    requiresKey: true,
+  },
+  openrouter: {
+    id: 'openrouter',
+    url: process.env.PUSH_OPENROUTER_URL || 'https://openrouter.ai/api/v1/chat/completions',
+    defaultModel: process.env.PUSH_OPENROUTER_MODEL || 'anthropic/claude-sonnet-4.6',
+    apiKeyEnv: ['PUSH_OPENROUTER_API_KEY', 'OPENROUTER_API_KEY', 'VITE_OPENROUTER_API_KEY'],
+    requiresKey: true,
+  },
+};
+
+export function resolveApiKey(config) {
+  for (const key of config.apiKeyEnv) {
+    const value = process.env[key];
+    if (value && value.trim()) return value.trim();
+  }
+  if (config.requiresKey) {
+    throw new Error(`Missing API key for ${config.id}. Set one of: ${config.apiKeyEnv.join(', ')}`);
+  }
+  return '';
+}
+
+export async function streamCompletion(config, apiKey, model, messages, onToken, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    if (config.id === 'openrouter') {
+      headers['HTTP-Referer'] = process.env.PUSH_OPENROUTER_REFERER || 'https://push.local';
+      headers['X-Title'] = 'Push CLI';
+    }
+
+    let response;
+    try {
+      response = await fetch(config.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: true,
+          temperature: 0.1,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '(no body)');
+        const err = new Error(`Provider error ${response.status}: ${body.slice(0, 400)}`);
+        if (attempt < MAX_RETRIES && isRetryableError(err, response)) {
+          lastError = err;
+          clearTimeout(timeout);
+          await sleep(RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1));
+          continue;
+        }
+        throw err;
+      }
+
+      if (!response.body) {
+        clearTimeout(timeout);
+        const fallbackJson = await response.json().catch(() => null);
+        return fallbackJson?.choices?.[0]?.message?.content || '';
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            const token =
+              parsed.choices?.[0]?.delta?.content ??
+              parsed.choices?.[0]?.message?.content ??
+              '';
+            if (token) {
+              accumulated += token;
+              if (onToken) onToken(token);
+            }
+          } catch {
+            // ignore malformed SSE chunks
+          }
+        }
+      }
+
+      clearTimeout(timeout);
+      return accumulated;
+    } catch (err) {
+      clearTimeout(timeout);
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw new Error(`Request timed out after ${Math.floor(timeoutMs / 1000)}s`);
+      }
+      if (attempt < MAX_RETRIES && isRetryableError(err, response)) {
+        lastError = err;
+        await sleep(RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError || new Error('Provider request failed after retries');
+}
