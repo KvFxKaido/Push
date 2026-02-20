@@ -1,9 +1,8 @@
-import { Trash2, GitBranch, RefreshCw, Loader2 } from 'lucide-react';
+import { Trash2, GitBranch, RefreshCw, Loader2, User, FolderCog, Cpu } from 'lucide-react';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
 import {
   Sheet,
   SheetContent,
-  SheetHeader,
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
@@ -208,7 +207,7 @@ function ProviderKeySection({
   if (hasKey) {
     return (
       <div className="space-y-2">
-        <div className="flex items-center justify-between rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+        <div className="flex items-center justify-between rounded-lg border border-[#1b2230] bg-push-surface px-3 py-2">
           <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
           <button
             type="button"
@@ -233,7 +232,7 @@ function ProviderKeySection({
               value={model.value}
               onChange={(e) => model.set(e.target.value)}
               disabled={model.options.length === 0 || (refresh?.loading ?? false)}
-              className="flex-1 rounded-md border border-push-edge bg-push-surface px-2 py-1 text-xs text-push-fg font-mono focus:outline-none focus:border-push-sky/50 disabled:opacity-50"
+              className="flex-1 rounded-md border border-[#1b2230] bg-push-grad-input px-2 py-1 text-xs text-push-fg font-mono shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 disabled:opacity-50"
             >
               {model.options.length === 0 ? (
                 <option value={model.value}>{model.labelTransform ? model.labelTransform(model.value) : model.value}</option>
@@ -290,7 +289,7 @@ function ProviderKeySection({
         value={keyInput}
         onChange={(e) => setKeyInput(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
+        className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
         onKeyDown={(e) => {
           if (e.key === 'Enter' && keyInput.trim()) {
             saveKey();
@@ -336,37 +335,46 @@ export function SettingsSheet({
   const tcMetrics = getMalformedToolCallMetrics();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side={side} className="border-[#151b26] bg-push-grad-panel flex flex-col overflow-hidden">
+      <SheetContent
+        side={side}
+        className="w-[86vw] rounded-r-2xl border-[#151b26] bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
+      >
+        <SheetTitle className="sr-only">Settings</SheetTitle>
+        <SheetDescription className="sr-only">Configure your workspace</SheetDescription>
+
         {/* Subtle top glow */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-white/[0.03] to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tr-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
 
-        <SheetHeader className="relative shrink-0">
-          <SheetTitle className="text-push-fg">Settings</SheetTitle>
-          <SheetDescription className="text-push-fg-secondary">
-            Connect GitHub and configure your workspace.
-          </SheetDescription>
-        </SheetHeader>
+        <div className="relative flex h-dvh flex-col overflow-hidden rounded-r-2xl">
+        {/* Header */}
+        <header className="border-b border-push-edge px-3 py-3 shrink-0">
+          <p className="text-sm font-semibold text-push-fg">Settings</p>
+          <p className="text-[11px] text-push-fg-dim">Configure your workspace</p>
+        </header>
 
-        {/* Tab bar — matches WorkspacePanel */}
-        <div className="flex gap-1.5 px-4 pt-1 pb-2.5 shrink-0">
-          {([['you', 'You'], ['workspace', 'Workspace'], ['ai', 'AI']] as const).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setSettingsTab(key)}
-              className={`flex-1 min-h-[40px] rounded-xl px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
-                settingsTab === key
-                  ? 'border border-push-edge-hover bg-[#0d1119] text-push-fg shadow-push-sm'
-                  : 'border border-transparent text-push-fg-dim hover:text-push-fg-secondary hover:bg-[#080b10]/80'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        {/* Tab bar */}
+        <div className="border-b border-push-edge px-2 py-2 shrink-0">
+          <div className="grid grid-cols-3 gap-1">
+            {([['you', 'You', User], ['workspace', 'Workspace', FolderCog], ['ai', 'AI', Cpu]] as const).map(([key, label, Icon]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSettingsTab(key)}
+                className={`flex min-h-[42px] items-center justify-center gap-1.5 rounded-lg px-1 text-[11px] font-medium transition-all ${
+                  settingsTab === key
+                    ? 'border border-[#31425a] bg-push-grad-input text-push-fg shadow-[0_8px_20px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl'
+                    : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
-        <div className="flex flex-col gap-6 px-4 pt-2 pb-8">
+        <div className="flex flex-col gap-6 px-3 pt-2 pb-8">
           {/* ── You tab ── */}
           {settingsTab === 'you' && (
           <>
@@ -395,7 +403,7 @@ export function SettingsSheet({
             {auth.isConnected && (
               <div className="space-y-2">
                 {!auth.isDemo && (
-                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2">
+                  <div className="rounded-lg border border-[#1b2230] bg-push-surface px-3 py-2">
                     <p className="text-sm text-push-fg-secondary font-mono">
                       {auth.isAppAuth ? (
                         <span className="text-emerald-400">GitHub App</span>
@@ -427,7 +435,7 @@ export function SettingsSheet({
                           value={auth.installIdInput}
                           onChange={(e) => auth.setInstallIdInput(e.target.value)}
                           placeholder="Installation ID (e.g., 12345678)"
-                          className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50 font-mono"
+                          className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 font-mono"
                           onKeyDown={async (e) => {
                             if (e.key === 'Enter' && auth.installIdInput.trim()) {
                               const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
@@ -555,7 +563,7 @@ export function SettingsSheet({
                 onChange={(e) => profile.setDisplayNameDraft(e.target.value)}
                 onBlur={profile.onDisplayNameBlur}
                 placeholder="Your name"
-                className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50"
+                className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
               />
             </div>
 
@@ -581,7 +589,7 @@ export function SettingsSheet({
                 rows={3}
                 maxLength={300}
                 placeholder="Anything you want the assistant to know about you"
-                className="w-full rounded-lg border border-push-edge bg-push-surface px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50 resize-none"
+                className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 resize-none"
               />
               <p className="text-[10px] text-push-fg-dim">
                 {profile.bioDraft.length}/300
@@ -1154,6 +1162,7 @@ export function SettingsSheet({
             </Button>
           </div>
           </>)}
+        </div>
         </div>
         </div>
       </SheetContent>
