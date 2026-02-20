@@ -19,8 +19,6 @@ Create `.env` in this directory, or paste keys in the Settings UI at runtime:
 ```env
 VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud
 VITE_MISTRAL_API_KEY=...          # Optional — Mistral Vibe
-VITE_ZAI_API_KEY=...              # Optional — Z.ai
-VITE_MINIMAX_API_KEY=...          # Optional — MiniMax
 VITE_TAVILY_API_KEY=...           # Optional — Tavily web search
 VITE_GITHUB_TOKEN=...             # Optional — higher GitHub rate limits
 VITE_GITHUB_CLIENT_ID=...         # Optional — enables OAuth login

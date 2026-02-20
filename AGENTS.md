@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: Ollama, Mistral, Z.ai, MiniMax, OpenRouter (user picks, all roles) |
+| AI | Multi-backend: Ollama, Mistral, OpenRouter (user picks, all roles) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -38,17 +38,15 @@ The active backend serves all three roles. The user picks a backend in Settings;
 
 ### AI Backends
 
-Five providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/zai/chat`, `/api/minimax/chat`, `/api/openrouter/chat`.
+Three providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
 | **Ollama Cloud** | gemini-3-flash-preview |
 | **Mistral Vibe** | devstral-small-latest |
-| **Z.ai** | glm-4.5 |
-| **MiniMax** | MiniMax-M2.5 |
-| **OpenRouter** | claude-sonnet-4.5 |
+| **OpenRouter** | claude-sonnet-4.6 |
 
-**OpenRouter** provides access to 50+ models through a single API. Push includes 14 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-5.2/5-mini/o1, 2 Codex variants (5.2/5.1), Gemini 3.1 Pro Preview/3 Flash, Grok 4.1, Kimi K2.5, GLM-5, and MiniMax M2.5.
+**OpenRouter** provides access to 50+ models through a single API. Push includes 12 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-5.2/5-mini/o1, 2 Codex variants (5.2/5.1), Gemini 3.1 Pro Preview/3 Flash, Grok 4.1, and Kimi K2.5.
 
 ### Tool Protocol
 
@@ -149,7 +147,7 @@ Push/
 │   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
 │   │   │   ├── filebrowser/  # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/        # shadcn/ui component library
-│   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useZaiConfig, useMiniMaxConfig, useTavilyConfig, useUsageTracking, etc.)
+│   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useTavilyConfig, useUsageTracking, etc.)
 │   │   ├── lib/           # Core logic, agent modules, web search, model catalog, prompts, feature flags, snapshot manager
 │   │   ├── sections/      # OnboardingScreen, RepoPicker, FileBrowser, HomeScreen
 │   │   ├── types/index.ts # All shared types
@@ -184,7 +182,7 @@ Push/
 | `lib/workspace-context.ts` | Active repo context builder |
 | `lib/providers.ts` | AI provider config and role model mapping |
 | `lib/web-search-tools.ts` | Web search tools (Tavily, Ollama native, DuckDuckGo fallback) |
-| `lib/model-catalog.ts` | Ollama/Mistral model lists and selection (Z.ai and MiniMax use static model lists) |
+| `lib/model-catalog.ts` | Ollama/Mistral model lists and selection |
 | `lib/prompts.ts` | Prompt building utilities |
 | `lib/feature-flags.ts` | Feature flag system |
 | `lib/snapshot-manager.ts` | Workspace snapshot management and recovery |
@@ -215,8 +213,6 @@ Push/
 | `hooks/useProtectMain.ts` | Main branch protection (global default + per-repo override), localStorage persistence |
 | `hooks/useOllamaConfig.ts` | Ollama backend configuration and model selection |
 | `hooks/useMistralConfig.ts` | Mistral backend configuration and model selection |
-| `hooks/useZaiConfig.ts` | Z.ai backend configuration |
-| `hooks/useMiniMaxConfig.ts` | MiniMax backend configuration and model selection |
 | `hooks/useTavilyConfig.ts` | Tavily web search API key management |
 | `hooks/useOpenRouterConfig.ts` | OpenRouter backend configuration and model selection |
 | `hooks/useApiKeyConfig.ts` | Factory for provider API key hooks (shared localStorage getter + env var fallback + React hook) |

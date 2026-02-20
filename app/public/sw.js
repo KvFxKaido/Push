@@ -30,7 +30,7 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
 
   // Never cache API calls
-  if (request.url.includes('/api/') || request.url.includes('/ollama/') || request.url.includes('/mistral/') || request.url.includes('/zai/')) {
+  if (request.url.includes('/api/') || request.url.includes('/ollama/') || request.url.includes('/mistral/')) {
     return;
   }
 

@@ -1,7 +1,7 @@
 /**
  * Coder Agent — sub-agent that implements coding tasks autonomously.
  *
- * Uses the active provider (Ollama / Mistral / Z.ai / MiniMax / OpenRouter) with the role-specific
+ * Uses the active provider (Ollama / Mistral / OpenRouter) with the role-specific
  * model resolved via providers.ts. The Coder can read files, write files,
  * run commands, and get diffs — all within the sandbox. Runs until done (no round cap).
  *

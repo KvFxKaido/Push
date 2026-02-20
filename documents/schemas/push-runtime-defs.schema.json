@@ -71,8 +71,6 @@
       "enum": [
         "ollama",
         "mistral",
-        "zai",
-        "minimax",
         "openrouter",
         "demo"
       ]

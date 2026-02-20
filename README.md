@@ -15,7 +15,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 - **Delegate implementation** — Orchestrator can hand coding work to Coder in a live sandbox
 - **Gate risky changes** — Auditor enforces a SAFE/UNSAFE pre-commit verdict
 - **Stay repo-locked** — active chat context is bound to one repo and one active branch
-- **Use your existing AI stack** — pick Mistral, Ollama Cloud, Z.ai, MiniMax, or OpenRouter
+- **Use your existing AI stack** — pick Mistral, Ollama Cloud, or OpenRouter
 - **Merge from mobile** — branch, commit, push, and merge through GitHub PR flow
 - **Fallback to sandbox-only mode** — start without GitHub auth and export your workspace anytime
 
@@ -45,7 +45,7 @@ The app is free. AI usage depends on your provider subscription, and you choose 
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Mistral Vibe, Ollama Cloud, Z.ai, MiniMax, or OpenRouter — flexible provider choice |
+| AI | Mistral Vibe, Ollama Cloud, or OpenRouter — flexible provider choice |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -93,8 +93,6 @@ Create `app/.env` for local development, or paste keys in the Settings UI at run
 ```env
 VITE_MISTRAL_API_KEY=...              # Mistral Vibe
 VITE_OLLAMA_API_KEY=...               # Ollama Cloud
-VITE_ZAI_API_KEY=...                  # Z.ai
-VITE_MINIMAX_API_KEY=...              # MiniMax
 VITE_OPENROUTER_API_KEY=...           # OpenRouter (50+ models via pay-per-use)
 VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)
 VITE_GITHUB_TOKEN=...                 # Optional — PAT for GitHub API access
@@ -132,7 +130,7 @@ Use it for quick experiments, learning the interface, or when you're on a device
 
 ## Production
 
-Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat` to Ollama Cloud, `/api/mistral/chat` to Mistral Vibe, `/api/zai/chat` to Z.ai, `/api/minimax/chat` to MiniMax, `/api/openrouter/chat` to OpenRouter, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat` to Ollama Cloud, `/api/mistral/chat` to Mistral Vibe, `/api/openrouter/chat` to OpenRouter, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 For browser tools, set Worker secrets `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`. The Worker injects them server-side for `/api/sandbox/browser-screenshot` and `/api/sandbox/browser-extract` so browser credentials never reach the client.
 
@@ -149,9 +147,9 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Coder** — autonomous code implementation in sandbox (runs until done, with 90s per-round timeout)
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Five AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **Z.ai**, **MiniMax**, and **OpenRouter**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+Three AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, and **OpenRouter**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
 
-**OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 15 models covering all major providers.
+**OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 12 models covering all major providers.
 
 There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, console, scratchpad, and commit/push are unified in the **Workspace Hub**. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
 
@@ -177,14 +175,14 @@ Push/
 │   ├── app.py             # Modal Python App — sandbox web endpoints
 │   └── requirements.txt
 ├── app/
-│   ├── worker.ts          # Cloudflare Worker — Ollama/Mistral/Z.ai/MiniMax/OpenRouter proxy + sandbox proxy
+│   ├── worker.ts          # Cloudflare Worker — Ollama/Mistral/OpenRouter proxy + sandbox proxy
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/           # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
 │   │   │   ├── cards/          # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
 │   │   │   ├── filebrowser/    # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/             # shadcn/ui component library
-│   │   ├── hooks/              # useChat, useSandbox, useScratchpad, useUserProfile, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useZaiConfig, useMiniMaxConfig, useTavilyConfig, useUsageTracking
+│   │   ├── hooks/              # useChat, useSandbox, useScratchpad, useUserProfile, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useTavilyConfig, useUsageTracking
 │   │   ├── lib/                # Agent logic, tool protocols, git operations, web search, model catalog, prompts
 │   │   ├── sections/           # OnboardingScreen, RepoPicker, FileBrowser, HomeScreen
 │   │   └── types/              # TypeScript definitions

@@ -142,16 +142,6 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/mistral/, ''),
       },
-      '/zai': {
-        target: 'https://api.z.ai',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/zai/, ''),
-      },
-      '/minimax': {
-        target: 'https://api.minimax.io',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/minimax/, ''),
-      },
       '/openrouter': {
         target: 'https://openrouter.ai',
         changeOrigin: true,

@@ -54,16 +54,6 @@ const PROVIDER_CONFIGS = {
     model: 'anthropic/claude-sonnet-4.5',
     envKey: 'VITE_OPENROUTER_API_KEY',
   },
-  zai: {
-    url: 'https://api.z.ai/api/paas/v4/chat/completions',
-    model: 'glm-4.5',
-    envKey: 'VITE_ZAI_API_KEY',
-  },
-  minimax: {
-    url: 'https://api.minimax.io/v1/text/chatcompletion_v2',
-    model: 'MiniMax-M2.5',
-    envKey: 'VITE_MINIMAX_API_KEY',
-  },
   ollama: {
     url: 'http://localhost:11434/v1/chat/completions',
     model: 'gemini-3-flash-preview',
