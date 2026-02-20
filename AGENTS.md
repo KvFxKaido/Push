@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: Kimi K2.5, Ollama, Mistral, Z.ai, MiniMax, OpenRouter (user picks, all roles) |
+| AI | Multi-backend: Ollama, Mistral, Z.ai, MiniMax, OpenRouter (user picks, all roles) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -38,18 +38,17 @@ The active backend serves all three roles. The user picks a backend in Settings;
 
 ### AI Backends
 
-Six providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/kimi/chat`, `/api/ollama/chat`, `/api/mistral/chat`, `/api/zai/chat`, `/api/minimax/chat`, `/api/openrouter/chat`.
+Five providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/zai/chat`, `/api/minimax/chat`, `/api/openrouter/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
-| **Kimi For Coding** | k2.5 |
 | **Ollama Cloud** | gemini-3-flash-preview |
 | **Mistral Vibe** | devstral-small-latest |
 | **Z.ai** | glm-4.5 |
 | **MiniMax** | MiniMax-M2.5 |
 | **OpenRouter** | claude-sonnet-4.5 |
 
-**OpenRouter** provides access to 50+ models through a single API. Push includes 15 curated models: Claude Sonnet 4.5, Opus 4.6, and Haiku 4.5, GPT-5.2/5-mini/o1, 3 Codex variants, Gemini 3 Flash/Pro, Grok 4.1, Kimi K2.5, GLM-5, and MiniMax M2.5.
+**OpenRouter** provides access to 50+ models through a single API. Push includes 14 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-5.2/5-mini/o1, 2 Codex variants (5.2/5.1), Gemini 3.1 Pro Preview/3 Flash, Grok 4.1, Kimi K2.5, GLM-5, and MiniMax M2.5.
 
 ### Tool Protocol
 
@@ -215,7 +214,6 @@ Push/
 | `hooks/useCommitPush.ts` | Commit and push workflow state |
 | `hooks/useProtectMain.ts` | Main branch protection (global default + per-repo override), localStorage persistence |
 | `hooks/useOllamaConfig.ts` | Ollama backend configuration and model selection |
-| `hooks/useMoonshotKey.ts` | Kimi/Moonshot API key management |
 | `hooks/useMistralConfig.ts` | Mistral backend configuration and model selection |
 | `hooks/useZaiConfig.ts` | Z.ai backend configuration |
 | `hooks/useMiniMaxConfig.ts` | MiniMax backend configuration and model selection |

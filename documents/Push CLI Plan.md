@@ -87,7 +87,7 @@ Components:
 - `pushd` (runtime daemon)
 - `app` remote client (future phase)
 - Providers behind interfaces:
-  - AI provider (`moonshot`, `ollama`, `mistral`, `zai`, `minimax`, `openrouter`)
+  - AI provider (`ollama`, `mistral`, `zai`, `minimax`, `openrouter`)
   - Sandbox provider (`local`, `modal`)
 
 Flow:
@@ -163,7 +163,7 @@ Contract:
 
 ```ts
 interface AIProvider {
-  id: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
+  id: 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
   streamChat(req: StreamRequest): AsyncIterable<ProviderChunk>;
 }
 ```

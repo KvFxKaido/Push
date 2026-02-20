@@ -17,7 +17,6 @@ npm run lint      # Run ESLint
 Create `.env` in this directory, or paste keys in the Settings UI at runtime:
 
 ```env
-VITE_MOONSHOT_API_KEY=...         # Optional — Kimi For Coding (sk-kimi-...)
 VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud
 VITE_MISTRAL_API_KEY=...          # Optional — Mistral Vibe
 VITE_ZAI_API_KEY=...              # Optional — Z.ai
@@ -34,7 +33,6 @@ Without any AI key the app prompts for one on first use.
 
 Worker secrets (set via `wrangler secret put`):
 
-- `MOONSHOT_API_KEY` — Kimi For Coding API key for production proxy (starts with `sk-kimi-`)
 - `MODAL_SANDBOX_BASE_URL` — Modal app base URL (e.g. `https://youruser--push-sandbox`). Without this, sandbox returns 503.
 
 Sandbox backend: `cd ../sandbox && modal deploy app.py` — deploys the 6 Modal web endpoints.

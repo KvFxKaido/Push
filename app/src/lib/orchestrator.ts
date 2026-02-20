@@ -3,7 +3,6 @@ import { TOOL_PROTOCOL } from './github-tools';
 import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
-import { getMoonshotKey } from '@/hooks/useMoonshotKey';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
@@ -46,16 +45,6 @@ function hasFinishReason(choice: unknown, reasons: string[]): boolean {
   return typeof finishReason === 'string' && reasons.includes(finishReason);
 }
 
-
-// ---------------------------------------------------------------------------
-// Kimi For Coding config
-// ---------------------------------------------------------------------------
-
-// Dev: Vite proxy avoids CORS. Prod: Cloudflare Worker proxy at /api/kimi/chat.
-const KIMI_API_URL = import.meta.env.DEV
-  ? '/kimi/coding/v1/chat/completions'
-  : '/api/kimi/chat';
-const KIMI_MODEL = 'k2p5';
 
 // Ollama Cloud: OpenAI-compatible endpoint.
 // Dev: Vite proxy avoids CORS. Prod: Cloudflare Worker proxy at /api/ollama/chat.
@@ -140,8 +129,6 @@ export type ContextMode = 'graceful' | 'none';
 // Rolling window config — token-based context management
 const DEFAULT_CONTEXT_MAX_TOKENS = 100_000; // Hard cap
 const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for system prompt + response
-const KIMI_CONTEXT_MAX_TOKENS = 180_000;
-const KIMI_CONTEXT_TARGET_TOKENS = 156_000;
 const GEMINI3_FLASH_CONTEXT_MAX_TOKENS = 128_000;
 const GEMINI3_FLASH_CONTEXT_TARGET_TOKENS = 112_000;
 
@@ -155,11 +142,6 @@ const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
 };
 
-const KIMI_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: KIMI_CONTEXT_MAX_TOKENS,
-  targetTokens: KIMI_CONTEXT_TARGET_TOKENS,
-};
-
 const GEMINI3_FLASH_CONTEXT_BUDGET: ContextBudget = {
   maxTokens: GEMINI3_FLASH_CONTEXT_MAX_TOKENS,
   targetTokens: GEMINI3_FLASH_CONTEXT_TARGET_TOKENS,
@@ -170,19 +152,10 @@ function normalizeModelName(model?: string): string {
 }
 
 export function getContextBudget(
-  provider?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo',
+  provider?: 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo',
   model?: string,
 ): ContextBudget {
   const normalizedModel = normalizeModelName(model);
-
-  if (
-    provider === 'moonshot' ||
-    normalizedModel === 'k2p5' ||
-    normalizedModel === 'k2.5' ||
-    normalizedModel.includes('kimi')
-  ) {
-    return KIMI_CONTEXT_BUDGET;
-  }
 
   if (
     provider === 'ollama' &&
@@ -535,7 +508,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter',
+  providerType?: 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter',
   providerModel?: string,
 ): LLMMessage[] {
   // Build system prompt: base + user identity + workspace context + tool protocol + optional sandbox tools + scratchpad
@@ -569,9 +542,8 @@ function toLLMMessages(
 
   // Web search tool — prompt-engineered for providers that need client-side dispatch.
   // Ollama: model outputs JSON → we execute via Ollama's search REST API.
-  // Kimi (moonshot): model outputs JSON → we execute via free DuckDuckGo SERP.
   // Mistral: handles search natively via Agents API (no prompt needed here).
-  if (providerType === 'ollama' || providerType === 'moonshot' || providerType === 'zai') {
+  if (providerType === 'ollama' || providerType === 'zai') {
     systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
   }
 
@@ -823,7 +795,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
+  providerType?: 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
   /** Override the fetch URL (e.g., Mistral Agents API uses a different endpoint) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -1017,7 +989,7 @@ async function streamSSEChatOnce(
     let usage: StreamUsage | undefined;
 
     // Accumulate native tool calls (name + arguments) by index.
-    // Some providers (e.g. Ollama serving Kimi K2.5) send tool calls via the
+    // Some providers (e.g. Ollama) send tool calls via the
     // OpenAI tool_calls delta field instead of regular content. The name arrives
     // in the first chunk and arguments stream incrementally across subsequent
     // chunks. We collect everything and reconstruct Push's text-based tool
@@ -1096,7 +1068,7 @@ async function streamSSEChatOnce(
           }
 
           // Handle native tool calls (Ollama may route these separately even when
-          // tools array is not sent in the request — e.g. Kimi K2.5 via Ollama Cloud).
+          // tools array is not sent in the request).
           // Accumulate name + arguments by index, then reconstruct as fenced JSON
           // when the stream ends so Push's text-based tool protocol can detect them.
           const toolCalls = choice.delta?.tool_calls;
@@ -1245,21 +1217,6 @@ interface ProviderStreamEntry {
 }
 
 const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
-  moonshot: {
-    getKey: getMoonshotKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Moonshot',
-      apiUrl: KIMI_API_URL,
-      apiKey,
-      model: modelOverride || KIMI_MODEL,
-      connectTimeoutMs: 30_000,
-      idleTimeoutMs: 60_000,
-      errorMessages: buildErrorMessages('Kimi'),
-      parseError: (p, f) => parseProviderError(p, f),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'tool_calls']),
-      providerType: 'moonshot',
-    }),
-  },
   ollama: {
     getKey: getOllamaKey,
     buildConfig: (apiKey, modelOverride) => ({
@@ -1422,7 +1379,6 @@ type StreamChatFn = (
   signal?: AbortSignal,
 ) => Promise<void>;
 
-export const streamMoonshotChat: StreamChatFn = (...args) => streamProviderChat('moonshot', ...args);
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 export const streamMistralChat: StreamChatFn = (...args) => streamProviderChat('mistral', ...args);
 export const streamZaiChat: StreamChatFn = (...args) => streamProviderChat('zai', ...args);
@@ -1433,11 +1389,10 @@ export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderCha
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo';
+export type ActiveProvider = 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter' | 'demo';
 
 /** Key getter for each configurable provider. */
 const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
-  moonshot:    getMoonshotKey,
   ollama:      getOllamaKey,
   mistral:     getMistralKey,
   zai:         getZaiKey,
@@ -1447,18 +1402,16 @@ const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
 
 /**
  * Fallback order when no preference is set (or the preferred key is gone).
- * Moonshot first for backwards compat — existing users already have a Kimi key.
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'moonshot', 'ollama', 'mistral', 'zai', 'minimax', 'openrouter',
+  'ollama', 'mistral', 'zai', 'minimax', 'openrouter',
 ];
 
 /**
  * Determine which provider is active.
  *
  * 1. If the user set a preference AND that provider has a key → use it.
- * 2. Otherwise, use whichever provider has a key (Kimi checked first for
- *    backwards compat — existing users already have a Kimi key).
+ * 2. Otherwise, use whichever provider has a key (first available wins).
  * 3. No keys → demo.
  */
 export function getActiveProvider(): ActiveProvider {
@@ -1485,7 +1438,7 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'zai': return { providerType: 'zai' as const, streamFn: streamZaiChat };
     case 'minimax': return { providerType: 'minimax' as const, streamFn: streamMiniMaxChat };
     case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
-    default:        return { providerType: 'moonshot' as const, streamFn: streamMoonshotChat };
+    default:        return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
   }
 }
 
@@ -1541,5 +1494,5 @@ export async function streamChat(
     return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
-  return streamMoonshotChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
 }

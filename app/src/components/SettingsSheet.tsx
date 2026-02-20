@@ -16,7 +16,6 @@ import type { RepoOverride } from '@/hooks/useProtectMain';
 
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
-  moonshot: 'Kimi',
   mistral: 'Mistral',
   zai: 'Z.ai',
   minimax: 'MiniMax',
@@ -84,12 +83,6 @@ export interface SettingsAIProps {
   setOllamaKeyInput: (v: string) => void;
   setOllamaKey: (v: string) => void;
   clearOllamaKey: () => void;
-  // Kimi
-  hasKimiKey: boolean;
-  kimiKeyInput: string;
-  setKimiKeyInput: (v: string) => void;
-  setKimiKey: (v: string) => void;
-  clearKimiKey: () => void;
   // Mistral
   hasMistralKey: boolean;
   mistralModel: string;
@@ -909,7 +902,7 @@ export function SettingsSheet({
               <div className="flex items-center gap-1.5">
                 <div
                   className={`h-2 w-2 rounded-full ${
-                    ai.hasOllamaKey || ai.hasKimiKey || ai.hasMistralKey || ai.hasZaiKey || ai.hasMiniMaxKey ? 'bg-emerald-500' : 'bg-push-fg-dim'
+                    ai.hasOllamaKey || ai.hasMistralKey || ai.hasZaiKey || ai.hasMiniMaxKey ? 'bg-emerald-500' : 'bg-push-fg-dim'
                   }`}
                 />
                 <span className="text-xs text-push-fg-secondary">
@@ -1016,26 +1009,6 @@ export function SettingsSheet({
                   error: ai.ollamaModelsError,
                   updatedAt: ai.ollamaModelsUpdatedAt,
                 }}
-              />
-            </div>
-
-            {/* Kimi */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-push-fg-secondary">Kimi</label>
-              <ProviderKeySection
-                label="Kimi"
-                hasKey={ai.hasKimiKey}
-                keyInput={ai.kimiKeyInput}
-                setKeyInput={ai.setKimiKeyInput}
-                saveKey={() => ai.setKimiKey(ai.kimiKeyInput.trim())}
-                clearKey={ai.clearKimiKey}
-                activeBackend={ai.activeBackend}
-                backendId="moonshot"
-                clearPreferredProvider={ai.clearPreferredProvider}
-                setActiveBackend={ai.setActiveBackend}
-                placeholder="Kimi key"
-                saveLabel="Save Kimi key"
-                hint="Kimi For Coding API key."
               />
             </div>
 

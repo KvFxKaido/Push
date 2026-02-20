@@ -7,7 +7,6 @@ import { useGitHubAuth } from '@/hooks/useGitHubAuth';
 import { useGitHubAppAuth } from '@/hooks/useGitHubAppAuth';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
-import { useMoonshotKey } from '@/hooks/useMoonshotKey';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
 import { useZaiConfig } from '@/hooks/useZaiConfig';
@@ -223,7 +222,6 @@ function App() {
   const authError = appError || patError;
   const validatedUser = appUser || patUser;
   const { repos, loading: reposLoading, error: reposError, sync: syncRepos } = useRepos();
-  const { setKey: setKimiKey, clearKey: clearKimiKey, hasKey: hasKimiKey } = useMoonshotKey();
   const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
   const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey, model: zaiModel, setModel: setZaiModel } = useZaiConfig();
@@ -236,7 +234,6 @@ function App() {
   const { profile, updateProfile, clearProfile } = useUserProfile();
   const [displayNameDraft, setDisplayNameDraft] = useState('');
   const [bioDraft, setBioDraft] = useState('');
-  const [kimiKeyInput, setKimiKeyInput] = useState('');
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [mistralKeyInput, setMistralKeyInput] = useState('');
   const [zaiKeyInput, setZaiKeyInput] = useState('');
@@ -259,7 +256,7 @@ function App() {
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
-  const availableProviders = ([['moonshot', 'Kimi', hasKimiKey], ['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey], ['zai', 'Z.ai', hasZaiKey], ['minimax', 'MiniMax', hasMiniMaxKey], ['openrouter', 'OpenRouter', hasOpenRouterKey]] as const).filter(([, , has]) => has);
+  const availableProviders = ([['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey], ['zai', 'Z.ai', hasZaiKey], ['minimax', 'MiniMax', hasMiniMaxKey], ['openrouter', 'OpenRouter', hasOpenRouterKey]] as const).filter(([, , has]) => has);
   
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
@@ -1272,11 +1269,6 @@ function App() {
         setOllamaKeyInput,
         setOllamaKey,
         clearOllamaKey,
-        hasKimiKey,
-        kimiKeyInput,
-        setKimiKeyInput,
-        setKimiKey,
-        clearKimiKey,
         hasMistralKey,
         hasZaiKey,
         mistralModel,

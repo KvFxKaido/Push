@@ -1,7 +1,7 @@
 /**
  * Coder Agent — sub-agent that implements coding tasks autonomously.
  *
- * Uses the active provider (Kimi / Ollama / Mistral) with the role-specific
+ * Uses the active provider (Ollama / Mistral / Z.ai / MiniMax / OpenRouter) with the role-specific
  * model resolved via providers.ts. The Coder can read files, write files,
  * run commands, and get diffs — all within the sandbox. Runs until done (no round cap).
  *
@@ -295,8 +295,8 @@ export async function runCoderAgent(
     const truncatedAgentsMd = truncateContent(agentsMd, MAX_AGENTS_MD_SIZE, 'AGENTS.md');
     systemPrompt += `\n\nAGENTS.MD — Project instructions from the repository:\n${truncatedAgentsMd}`;
   }
-  // Web search for Ollama and Kimi (Mistral handles it natively via Agents API)
-  if (activeProvider === 'ollama' || activeProvider === 'moonshot') {
+  // Web search for Ollama (Mistral handles it natively via Agents API)
+  if (activeProvider === 'ollama') {
     systemPrompt += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
   }
 

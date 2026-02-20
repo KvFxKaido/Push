@@ -1,8 +1,6 @@
 import path from "path"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
-import { inspectAttr } from 'kimi-plugin-inspect-react'
-
 // https://vite.dev/config/
 const API_PROXY_TARGET = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8787';
 const API_PROXY_ORIGIN = (() => {
@@ -68,7 +66,7 @@ function chunkBaseName(chunkName: string, facadeModuleId?: string | null): strin
 
 export default defineConfig({
   base: './',
-  plugins: [inspectAttr(), react()],
+  plugins: [react()],
   build: {
     rollupOptions: {
       output: {
@@ -134,14 +132,6 @@ export default defineConfig({
   server: {
     allowedHosts: ['.trycloudflare.com'],
     proxy: {
-      '/kimi': {
-        target: 'https://api.kimi.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/kimi/, ''),
-        headers: {
-          'User-Agent': 'claude-code/2.1.49',
-        },
-      },
       '/ollama': {
         target: 'https://ollama.com',
         changeOrigin: true,

@@ -1,7 +1,7 @@
 /**
  * Auditor Agent — reviews diffs for safety before allowing commits.
  *
- * Uses the active provider (Kimi / Ollama / Mistral) with the role-specific
+ * Uses the active provider (Ollama / Mistral / Z.ai / MiniMax / OpenRouter) with the role-specific
  * model resolved via providers.ts. This ensures the Auditor works with
  * whichever backend the user has configured.
  *

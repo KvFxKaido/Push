@@ -1,5 +1,5 @@
 /**
- * Scratchpad tools — allows Kimi to update the shared scratchpad.
+ * Scratchpad tools — allows the LLM to update the shared scratchpad.
  *
  * Tools:
  * - set_scratchpad: Replace entire content

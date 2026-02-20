@@ -7,10 +7,10 @@
  * coherence, delegation, and event-stream cleanliness.
  *
  * Usage:
- *   npx tsx scripts/run-provider-compliance.ts --provider kimi
+ *   npx tsx scripts/run-provider-compliance.ts --provider ollama
  *   npx tsx scripts/run-provider-compliance.ts --provider openrouter --model anthropic/claude-opus-4.6
  *   npx tsx scripts/run-provider-compliance.ts --provider mistral --json
- *   npx tsx scripts/run-provider-compliance.ts --provider kimi --test tool-call-schema
+ *   npx tsx scripts/run-provider-compliance.ts --provider ollama --test tool-call-schema
  *
  * Spec: tests/compliance/SPEC.md
  */
@@ -44,16 +44,6 @@ interface TestResult {
 // ---------------------------------------------------------------------------
 
 const PROVIDER_CONFIGS = {
-  kimi: {
-    url: 'https://api.moonshot.cn/v1/chat/completions',
-    model: 'k2p5',
-    envKey: 'VITE_MOONSHOT_API_KEY',
-  },
-  moonshot: {
-    url: 'https://api.moonshot.cn/v1/chat/completions',
-    model: 'k2p5',
-    envKey: 'VITE_MOONSHOT_API_KEY',
-  },
   mistral: {
     url: 'https://api.mistral.ai/v1/chat/completions',
     model: 'devstral-small-latest',

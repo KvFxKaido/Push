@@ -52,16 +52,12 @@ function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-const KIMI_LOCKED_MODEL = 'k2p5';
-
 function getCurrentModelForProvider(provider: AIProviderType | ActiveProvider): string | undefined {
   switch (provider) {
     case 'ollama':
       return getOllamaModelName();
     case 'mistral':
       return getMistralModelName();
-    case 'moonshot':
-      return KIMI_LOCKED_MODEL;
     case 'zai':
       return getZaiModelName();
     case 'minimax':

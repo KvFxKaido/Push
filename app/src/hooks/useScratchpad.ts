@@ -1,8 +1,8 @@
 /**
  * useScratchpad — manages a shared notepad for the session.
  *
- * Both the user and Kimi can read/write. Content persists in localStorage.
- * The scratchpad is always visible to Kimi in the system prompt.
+ * Both the user and the LLM can read/write. Content persists in localStorage.
+ * The scratchpad is always visible to the LLM in the system prompt.
  *
  * Security notes:
  * - localStorage is unencrypted; users should avoid pasting sensitive data

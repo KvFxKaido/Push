@@ -30,7 +30,7 @@ This suite is a gate. If a provider fails, it doesn't merge. No subjective debat
 
 ```bash
 # Local development (pretty output)
-npx tsx scripts/run-provider-compliance.ts --provider kimi
+npx tsx scripts/run-provider-compliance.ts --provider ollama
 
 # CI mode (JSON output)
 npx tsx scripts/run-provider-compliance.ts --provider anthropic --json
@@ -69,7 +69,6 @@ If a provider passes but generates bad code, that's a model quality problem — 
 
 | Provider | Status | Last Tested |
 |----------|--------|-------------|
-| Kimi K2.5 | ✅ Eligible | (not yet run) |
 | Mistral | ✅ Eligible | (not yet run) |
 | OpenRouter (Claude) | ✅ Eligible | (not yet run) |
 

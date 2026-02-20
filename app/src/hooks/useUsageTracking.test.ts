@@ -18,20 +18,20 @@ describe('parseUsageLog', () => {
     const raw = JSON.stringify([
       {
         timestamp: 1000,
-        model: 'k2p5',
+        model: 'gemini-3-flash-preview',
         inputTokens: 10,
         outputTokens: 5,
         totalTokens: 15,
       },
       {
         timestamp: 2000,
-        model: 'k2p5',
+        model: 'gemini-3-flash-preview',
         inputTokens: 1,
         outputTokens: 1,
       },
       {
         timestamp: Number.POSITIVE_INFINITY,
-        model: 'k2p5',
+        model: 'gemini-3-flash-preview',
         inputTokens: 10,
         outputTokens: 5,
         totalTokens: 15,
@@ -41,7 +41,7 @@ describe('parseUsageLog', () => {
     expect(parseUsageLog(raw)).toEqual([
       {
         timestamp: 1000,
-        model: 'k2p5',
+        model: 'gemini-3-flash-preview',
         inputTokens: 10,
         outputTokens: 5,
         totalTokens: 15,
