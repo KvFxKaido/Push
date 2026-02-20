@@ -1,8 +1,8 @@
 # Push Harness Reliability Plan (Hashline Included)
 
 ## Status
-- Last updated: 2026-02-19
-- State: Track B complete, Track A shipped (hashline active), Track C extended (structured feedback shipped), Agent Experience Wishlist shipped (9 items)
+- Last updated: 2026-02-20
+- State: Track B complete, Track A shipped (hashline active), Track C extended (structured feedback shipped), Agent Experience Wishlist shipped (9 items), Track D (server-side background jobs) deferred
 - Intent: Improve coding task success by upgrading the harness, not just swapping models
 
 ## Why this doc changed
@@ -137,7 +137,11 @@ Success signal:
 - lower average rounds per successful task
 - per-provider malformed-call rate data available for comparison
 
-### Track D: Long-Run Resilience (Mobile Background Reality)
+### Track D: Long-Run Resilience (Mobile Background Reality) — DEFERRED
+
+Status (2026-02-20):
+- Deferred in current PWA scope.
+- Kept as design reference for potential native-app/CLI runtime phases.
 
 Problem:
 - Browser-driven loops pause when phone app backgrounds/locks.
@@ -180,19 +184,20 @@ Success signal:
 
 > Track A hashline is shipped and active. Track B complete. Track C Phase 1 + structured feedback shipped.
 > Agent Experience Wishlist shipped (2026-02-19): 9 items across error taxonomy, multi-tool dispatch, meta envelope, acceptance criteria, working memory, and two new tools.
+> Track D (server-side background jobs) is deferred in current product scope.
 
 Now:
 1. Add Track C malformed-call rate metric by provider/model (small — instrument `diagnoseToolCallFailure`).
 2. Surface provider compliance data in settings or debug view.
-3. Begin server-side background job prototyping (Track D).
-
-Next:
-1. Track D server-side background jobs (see `documents/Background Coder Tasks Plan.md`).
-2. Evaluate native function calling for providers that support it (Track C cost reduction).
 3. Dogfood Agent Experience Wishlist features and measure round/retry reduction.
 
+Next:
+1. Evaluate native function calling for providers that support it (Track C cost reduction).
+2. Expand operator-visibility diagnostics (`toolMeta` coverage across error paths).
+3. Validate malformed-call and retry metrics with a 1-week dogfood window.
+
 Later:
-1. Full Track D implementation (reconnectable job timelines, cancel/resume).
+1. Revisit Track D server-side background jobs if native app/CLI runtime direction requires it.
 2. Additional hashline ops (`replace_range`, `delete_range`) only if MVP earns it.
 3. Provider compliance scoring surface in settings.
 
@@ -246,13 +251,13 @@ Decision labels: `accept`, `partial`, `reject`.
 | Narrow primary persona to power users (solo founder, lead dev, CTO in motion) | accept | Tightens product narrative and onboarding clarity | Update README/onboarding copy to explicitly target power users |
 | Emphasize true differentiators (role-separation, branch-scoped chats, provider-agnostic backends) | accept | Already core strengths; should be foregrounded consistently | Keep these three as top-level positioning in root docs and pitch copy |
 | Treat PWA as first-class feature (offline, push, background sync) | partial | Good direction, but API support is inconsistent on mobile (especially iOS) | Prioritize reliable pieces first: offline scratchpad/read-only history + completion notifications |
-| Move long-running orchestration to server-side jobs | accept | Client-driven loops pause when app backgrounds/locks | Execute `Background Coding Jobs Design` roadmap item (`start/status/events/cancel`) |
+| Move long-running orchestration to server-side jobs | defer | Useful in theory, but high complexity for current PWA scope after resumable sessions shipped | Keep `documents/Background Coder Tasks Plan.md` as reference; revisit for native app/CLI runtime direction |
 | Add explicit service worker cache strategy | partial | Useful, but must avoid stale execution state and broken live sessions | Add a documented cache policy pass for app shell/static/api paths before broad SW changes |
 | Harden pre-merge safeguards and surface checks clearly | partial | Most merge safeguards exist; visibility can improve | Add clearer merge-flow UI states for stale base, CI required, and branch protection blocks |
 | Add provider tool-call compliance validation + scoring | accept | Directly aligns with harness reliability goals | Add malformed-call and recovery metrics by provider/model in settings/debug view |
 | Make chat less central over time | reject | Push remains chat-first by product principle | Keep chat as interface, but continue shifting execution UX toward card-first actions |
 | Make Workspace Hub feel like mission control | accept | Fits mobile execution-control positioning | Prioritize Hub v2 diff ergonomics + status visibility |
-| Build-in-public growth metrics and signature feature ideation | hold | Valuable for growth, but secondary to reliability work | Revisit after harness tracks A-D show measurable stability gains |
+| Build-in-public growth metrics and signature feature ideation | hold | Valuable for growth, but secondary to reliability work | Revisit after harness tracks A-C/E show measurable stability gains |
 | Keep surface area small; hide complexity under the hood | accept | Matches biggest current risk (feature sprawl) | Enforce explicit non-goals and kill criteria for each harness experiment |
 
 ## External Research: Claude Code + Codex CLI Patterns (2026-02-14)
@@ -285,4 +290,4 @@ Key conclusion: **Push's prompt-engineered tool protocol is its biggest reliabil
 
 Dogfood the Agent Experience Wishlist features in real coding tasks.
 Measure round count and retry reduction vs pre-sprint baseline.
-Begin Track D (server-side background jobs) design work.
+Track D (server-side background jobs) remains deferred unless roadmap scope changes.

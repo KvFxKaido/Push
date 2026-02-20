@@ -71,7 +71,7 @@ Push prioritizes harness reliability over raw model capability. Current shipped 
 - **Symbol extraction** — `sandbox_read_symbols` extracts function/class/type indexes without reading full files
 - **Multi-file patchsets** — `sandbox_apply_patchset` validates all edits before writing any files
 
-Next up: server-side background execution for mobile resilience. See `documents/Harness Reliability Plan.md` for the full plan.
+Next up: visibility polish, telemetry, and provider-compliance diagnostics. See `documents/Harness Reliability Plan.md` for the full plan.
 
 ## Getting Started
 
@@ -167,7 +167,6 @@ Current harness priorities from `documents/Harness Reliability Plan.md`:
 - [x] garbled tool-call recovery (three-phase diagnosis, JSON repair, truncation detection, specific error feedback)
 - [x] hashline edit protocol (`sandbox_edit_file` with content-addressed line hashes)
 - [x] Agent Experience Wishlist — shipped (error taxonomy, multi-tool dispatch, meta envelope, acceptance criteria, working memory, structured malformed-call feedback, edit result diffs, `sandbox_read_symbols`, `sandbox_apply_patchset`)
-- [ ] server-side background run model for mobile lock/background resilience
 
 ## Project Structure
 

@@ -25,8 +25,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
-| Harness Reliability Program (Tracks A-E) | in_progress | Execute harness-first reliability roadmap: edit reliability experiments, read efficiency, tool-loop robustness, background resilience design, and operator visibility improvements | Hashline protocol, truncation-aware safety, and Agent Experience Wishlist (Tracks A-C) live; Track D (Background Jobs) & Track E (Visibility) ongoing |
-| Background Coding Jobs Design | planned | Turn background coding draft into implementation-ready Worker/DO job contract for mobile lock/background resilience | API contract approved (`start/status/events/cancel`), Durable Object binding plan drafted, and UI job-card status model defined |
+| Harness Reliability Program (Tracks A-C + E) | in_progress | Execute harness-first reliability roadmap: edit reliability, read efficiency, tool-loop robustness, and operator visibility improvements | Hashline protocol, truncation-aware safety, and Agent Experience Wishlist (Tracks A-C) live; Track E (Visibility) ongoing; Track D (server-side background jobs) deferred |
 | Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
 | Roadmap Hygiene Automation | planned | Lightweight template/checklist for promoting `documents/` ideas into this file | New roadmap items consistently include scope + acceptance criteria |
@@ -49,6 +48,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Date | Decision | Source |
 |---|---|---|
+| 2026-02-20 | Track D server-side background jobs deferred; resumable sessions remain the active interruption-recovery strategy | Product scope decision |
 | 2026-02-20 | Resumable Sessions hardening pass fixed resume race conditions and lock handling after merge review | Commit 61a262a |
 | 2026-02-19 | Resumable Sessions completed (Phase 2-4): resume banner UX, sandbox reconciliation, multi-tab lock, checkpoint size controls, and resume telemetry | PR #106 (`3ded27f`) |
 | 2026-02-19 | Resumable Sessions Phase 1 shipped: local checkpoint persistence and interrupted-run detection baseline | PR #105 (`d311af6`) |

@@ -62,7 +62,7 @@ Current harness priorities are tracked in `documents/Harness Reliability Plan.md
 - edit reliability — **`sandbox_edit_file` + hashline protocol are shipped and active**; edits reference 7-char content hashes (`HashlineOp[]`) via `lib/hashline.ts`, eliminating line-number drift; `lib/file-awareness-ledger.ts` tracks per-file read coverage for edit safety
 - read/context efficiency — Track B shipped: `sandbox_read_file` line ranges, numbered range output, out-of-bounds empty-range warning
 - tool-loop robustness — `lib/tool-call-metrics.ts` captures malformed tool-call reasons by provider
-- background execution design for mobile lock/background
+- server-side background execution design is deferred; resumable sessions are the active interruption-recovery path
 - operator visibility and failure diagnostics — `lib/edit-metrics.ts` tracks write latency/stale/error counts
 - **Agent Experience Wishlist shipped** (see `documents/Agent Experience Wishlist.md`): error taxonomy with retry semantics (`classifyError()`), structured malformed-call feedback (`[TOOL_CALL_PARSE_ERROR]`), edit result diffs, multi-tool per turn (`detectAllToolCalls()`), universal meta envelope (`[meta]` line on every tool result), machine-checkable acceptance criteria, agent working memory (`CoderWorkingMemory`), `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (multi-file transactional edits)
 
