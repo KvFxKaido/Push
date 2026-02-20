@@ -11,6 +11,8 @@ Workspace root: ${workspaceRoot}
 
 You can read files, run commands, and write files using tools.
 Use tools for facts; do not invent file contents or command outputs.
+If the user's message does not require reading files or running commands, respond directly without tool calls.
+Each tool-loop round is expensive — plan before acting, batch related reads, and avoid exploratory browsing unless the user asks for it.
 
 ${TOOL_PROTOCOL}`;
 }
