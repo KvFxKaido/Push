@@ -50,7 +50,7 @@ All planned workstreams shipped in this sprint.
 
 ## Still Out of Scope
 
-- Full-screen TUI.
+- Full-screen TUI (dropped direction).
 - Full app-side remote attach UX.
 - Complete web-card/modal parity for daemon mode.
 

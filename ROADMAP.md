@@ -26,6 +26,7 @@ Only decisions promoted into this file should be treated as implementation commi
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
 | Harness Reliability Program (Tracks A-C + E) | in_progress | Execute harness-first reliability roadmap: edit reliability, read efficiency, tool-loop robustness, and operator visibility improvements | Hashline protocol, truncation-aware safety, and Agent Experience Wishlist (Tracks A-C) live; Track E (Visibility) ongoing; Track D (server-side background jobs) deferred |
+| Push CLI Muscle-Memory UX | planned | Drop full-screen TUI direction and align CLI interaction model with Claude Code/Codex-style muscle memory using a transcript-first REPL | Active plans/protocol docs no longer target TUI; REPL command ergonomics and approval flow are documented and become the default implementation target |
 | Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
 | Roadmap Hygiene Automation | planned | Lightweight template/checklist for promoting `documents/` ideas into this file | New roadmap items consistently include scope + acceptance criteria |
@@ -49,6 +50,7 @@ Only decisions promoted into this file should be treated as implementation commi
 | Date | Decision | Source |
 |---|---|---|
 | 2026-02-20 | Track D server-side background jobs deferred; resumable sessions remain the active interruption-recovery strategy | Product scope decision |
+| 2026-02-20 | Push CLI direction changed: no full-screen TUI; target transcript-first interactive REPL with Claude Code/Codex muscle memory | Product scope decision |
 | 2026-02-20 | Resumable Sessions hardening pass fixed resume race conditions and lock handling after merge review | Commit 61a262a |
 | 2026-02-19 | Resumable Sessions completed (Phase 2-4): resume banner UX, sandbox reconciliation, multi-tab lock, checkpoint size controls, and resume telemetry | PR #106 (`3ded27f`) |
 | 2026-02-19 | Resumable Sessions Phase 1 shipped: local checkpoint persistence and interrupted-run detection baseline | PR #105 (`d311af6`) |

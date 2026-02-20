@@ -6,7 +6,7 @@ Owner: Push
 
 ## Purpose
 
-Define the protocol between Push clients (`push` TUI, `push run --headless`, future app remote client) and the runtime daemon (`pushd`).
+Define the protocol between Push clients (`push` interactive REPL, `push run --headless`, future app remote client) and the runtime daemon (`pushd`).
 
 This protocol is interactive-first and supports:
 - streaming model output

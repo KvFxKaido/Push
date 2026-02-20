@@ -1,6 +1,6 @@
 # Push CLI Plan (V2)
 
-Date: 2026-02-19  
+Date: 2026-02-20  
 Status: Draft  
 Owner: Push
 
@@ -9,7 +9,7 @@ Owner: Push
 Push CLI is an interactive product first, not a headless tool first.
 
 Default experience:
-- Codex/Claude Code style interactive terminal UX
+- Codex/Claude Code style interactive terminal REPL (line-oriented, no full-screen TUI)
 
 Optional mode:
 - Headless non-interactive execution for CI and automation
@@ -21,7 +21,7 @@ Platform direction:
 ## Product Principles
 
 1. Interactive by default
-- `push` launches a full TUI session with streaming, tool timeline, diffs, approvals, interrupt/resume, and checkpoints.
+- `push` launches a line-oriented interactive session with streaming, tool timeline, approvals, interrupt/resume, and checkpoints.
 
 2. One engine, multiple clients
 - CLI, web, and Android are clients of the same runtime protocol.
@@ -35,6 +35,10 @@ Platform direction:
 - Sandbox provider is pluggable.
 - Local execution provider is first-class, Modal provider remains supported.
 
+5. Muscle memory over visual parity
+- Match familiar terminal interaction patterns from Claude Code/Codex.
+- Do not chase full-screen terminal UI feature parity.
+
 ## User Experience Targets
 
 ### Interactive (`push`)
@@ -42,10 +46,11 @@ Platform direction:
 Expected baseline:
 - Streaming answer tokens
 - Live tool-call timeline
-- Structured tool result cards rendered in terminal form
+- Compact tool result blocks that are easy to scan in a transcript
 - Diff preview before write/commit actions
 - Confirmation gates for destructive actions
-- Keyboard controls for interrupt, approve, retry, and inspect
+- Slash-command controls for interrupt, approve, retry, inspect, and session actions
+- No alternate-screen takeover; works like a normal terminal transcript
 - Session resume by id
 
 ### Headless (`push run --headless`)
@@ -65,13 +70,14 @@ Expected baseline:
 ## Scope and Non-Goals
 
 In scope (MVP):
-- Interactive TUI experience
+- Interactive CLI REPL experience
 - Runtime daemon process (`pushd`)
 - Session protocol for clients
 - Local sandbox provider + Modal sandbox provider
 - CLI client using runtime protocol
 
 Out of scope (MVP):
+- Full-screen TUI or ncurses-style interface
 - Full cross-platform GUI rewrite
 - Complex plugin marketplace
 - Multi-user shared sessions
@@ -95,7 +101,7 @@ Flow:
 2. Client sends user input event
 3. Runtime executes orchestrator/tool loop
 4. Runtime emits streaming events to subscribers
-5. Client renders events (TUI/app)
+5. Client renders events (REPL/app)
 
 ## Runtime Responsibilities (`pushd`)
 
@@ -191,7 +197,7 @@ Rule:
 ## Execution Modes
 
 Mode selection:
-- Default: interactive TUI with local provider preferred
+- Default: interactive REPL with local provider preferred
 - Optional: `--sandbox modal`
 - Optional: `--headless`
 
@@ -220,8 +226,8 @@ Phase 0: Runtime Contract and Skeleton (3-5 days)
 Deliverable:
 - `push` can start a session and print streamed assistant text from runtime mock
 
-Phase 1: Interactive TUI MVP (1-2 weeks)
-- Build terminal UI loop (input, stream output, status bar, tool timeline)
+Phase 1: Interactive REPL MVP (1-2 weeks)
+- Build transcript-oriented terminal loop (input, stream output, tool timeline, approvals)
 - Add interrupt/cancel and resume support
 - Render basic tool results and errors
 
@@ -280,7 +286,7 @@ Risk: Local provider behavior diverges from Modal
 Mitigation:
 - Shared tool-level contract tests against both providers
 
-Risk: TUI quality misses interactive expectation  
+Risk: CLI ergonomics miss Claude/Codex muscle memory expectations  
 Mitigation:
 - Prioritize session UX loops before expanding command surface
 
@@ -313,4 +319,4 @@ Mitigation:
 1. Create `documents/Push Runtime Protocol.md` with schema and event examples.
 2. Scaffold `cli/` with two processes: `push` client and `pushd` runtime.
 3. Implement Phase 0 end-to-end with mocked provider stream.
-4. Implement Phase 1 interactive TUI controls before adding more commands.
+4. Implement Phase 1 interactive REPL controls before adding more commands.
