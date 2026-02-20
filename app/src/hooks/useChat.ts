@@ -938,6 +938,7 @@ export function useChat(
       checkpointThinkingRef.current = '';
       loopActiveRef.current = true;
 
+      let loopCompletedNormally = false;
       try {
         for (let round = 0; ; round++) {
           if (abortRef.current) break;
@@ -1416,6 +1417,7 @@ export function useChat(
               saveConversations(updated);
               return updated;
             });
+            loopCompletedNormally = true;
             break;
           }
 
@@ -1758,6 +1760,8 @@ export function useChat(
                 }
               }
             }
+            // Reset phase — delegation finished (success or error)
+            checkpointPhaseRef.current = 'executing_tools';
           } else {
             // GitHub or Sandbox tools
             const toolRepoFullName = repoRef.current;
@@ -1904,10 +1908,12 @@ export function useChat(
         }
         abortControllerRef.current = null;
 
-        // --- Checkpoint: loop exited, clear checkpoint ---
+        // --- Checkpoint: clear only on normal completion ---
         loopActiveRef.current = false;
         checkpointChatIdRef.current = null;
-        clearCheckpoint(chatId);
+        if (loopCompletedNormally) {
+          clearCheckpoint(chatId);
+        }
       }
     },
     [activeChatId, conversations, isStreaming, createNewChat, updateAgentStatus, flushCheckpoint],
