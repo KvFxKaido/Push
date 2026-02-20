@@ -151,6 +151,9 @@ function App() {
     contextUsage,
     abortStream,
     setIsMainProtected,
+    interruptedCheckpoint,
+    resumeInterruptedRun,
+    dismissResume,
   } = useChat(
     activeRepo?.full_name ?? null,
     {
@@ -1699,6 +1702,9 @@ function App() {
         isSandboxMode={isSandboxMode}
         onSuggestion={sendMessageWithSnapshotHeartbeat}
         onCardAction={handleCardActionWithSnapshotHeartbeat}
+        interruptedCheckpoint={interruptedCheckpoint}
+        onResumeRun={resumeInterruptedRun}
+        onDismissResume={dismissResume}
       />
 
       {/* Input */}
