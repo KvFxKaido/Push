@@ -7,7 +7,7 @@
  *  2. **Ollama native** — Ollama's built-in REST endpoint (POST /api/web_search).
  *     Used when the active provider is Ollama and no Tavily key is set.
  *  3. **DuckDuckGo free** — HTML scraping, no API key needed. Fallback for
- *     providers without native search (e.g., Kimi) when Tavily isn't configured.
+ *     providers without native search when Tavily isn't configured.
  *
  * Mistral handles search natively via the Agents API — no prompt-engineered
  * tool is needed for that provider (see orchestrator.ts).
@@ -188,7 +188,7 @@ export async function executeOllamaWebSearch(query: string): Promise<ToolExecuti
 
 /**
  * Execute a web search via the free DuckDuckGo-backed endpoint.
- * Used for providers that don't bundle search (e.g., Kimi).
+ * Used for providers that don't bundle search.
  * No API key needed — the Worker scrapes DuckDuckGo's HTML lite page.
  */
 export async function executeFreeWebSearch(query: string): Promise<ToolExecutionResult> {

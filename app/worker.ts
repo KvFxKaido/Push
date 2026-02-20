@@ -1,12 +1,11 @@
 /**
- * Cloudflare Worker — serves the Vite app + streaming proxy to Kimi For Coding.
+ * Cloudflare Worker — serves the Vite app + streaming proxy to AI providers.
  *
  * Static assets in ./dist are served directly by the [assets] layer.
- * Only unmatched requests (like /api/kimi/chat) reach this Worker.
+ * Only unmatched requests (like /api/ollama/chat) reach this Worker.
  */
 
 interface Env {
-  MOONSHOT_API_KEY?: string;
   OLLAMA_API_KEY?: string;
   MISTRAL_API_KEY?: string;
   ZAI_API_KEY?: string;
@@ -65,11 +64,6 @@ export default {
     // API route: GitHub App OAuth auto-connect (code → user token → find installation → installation token)
     if (url.pathname === '/api/github/app-oauth' && request.method === 'POST') {
       return handleGitHubAppOAuth(request, env);
-    }
-
-    // API route: streaming proxy to Kimi For Coding (SSE)
-    if (url.pathname === '/api/kimi/chat' && request.method === 'POST') {
-      return handleKimiChat(request, env);
     }
 
     // API route: streaming proxy to Ollama Cloud (SSE, OpenAI-compatible)
@@ -712,7 +706,6 @@ interface HealthStatus {
   timestamp: string;
   services: {
     worker: { status: 'ok' };
-    kimi: { status: 'ok' | 'unconfigured'; configured: boolean };
     ollama: { status: 'ok' | 'unconfigured'; configured: boolean };
     mistral: { status: 'ok' | 'unconfigured'; configured: boolean };
     zai: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -725,7 +718,6 @@ interface HealthStatus {
 }
 
 async function handleHealthCheck(env: Env): Promise<Response> {
-  const kimiConfigured = Boolean(env.MOONSHOT_API_KEY);
   const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
   const mistralConfigured = Boolean(env.MISTRAL_API_KEY);
   const zaiConfigured = Boolean(env.ZAI_API_KEY);
@@ -747,7 +739,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     }
   }
 
-  const hasAnyLlm = kimiConfigured || ollamaConfigured || mistralConfigured || zaiConfigured || miniMaxConfigured;
+  const hasAnyLlm = ollamaConfigured || mistralConfigured || zaiConfigured || miniMaxConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -757,7 +749,6 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     timestamp: new Date().toISOString(),
     services: {
       worker: { status: 'ok' },
-      kimi: { status: kimiConfigured ? 'ok' : 'unconfigured', configured: kimiConfigured },
       ollama: { status: ollamaConfigured ? 'ok' : 'unconfigured', configured: ollamaConfigured },
       mistral: { status: mistralConfigured ? 'ok' : 'unconfigured', configured: mistralConfigured },
       zai: { status: zaiConfigured ? 'ok' : 'unconfigured', configured: zaiConfigured },
@@ -774,16 +765,6 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     headers: { 'Cache-Control': 'no-store' },
   });
 }
-
-const handleKimiChat = createStreamProxyHandler({
-  name: 'Kimi', logTag: 'api/kimi/chat',
-  upstreamUrl: 'https://api.kimi.com/coding/v1/chat/completions',
-  timeoutMs: 120_000,
-  buildAuth: standardAuth('MOONSHOT_API_KEY'),
-  keyMissingError: 'Kimi API key not configured. Add it in Settings or set MOONSHOT_API_KEY on the Worker.',
-  timeoutError: 'Kimi request timed out after 120 seconds',
-  extraFetchHeaders: { 'User-Agent': 'claude-code/2.1.49' },
-});
 
 // --- Ollama Cloud ---
 

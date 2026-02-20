@@ -1,7 +1,7 @@
 /**
  * Factory for API key management hooks.
  *
- * All five provider config hooks (Moonshot, Tavily, Ollama, Mistral, Z.ai)
+ * All provider config hooks (Tavily, Ollama, Mistral, Z.ai, MiniMax, OpenRouter)
  * share the same skeleton: a standalone getter (localStorage → env var fallback)
  * and a React hook that wraps useState + useCallback for set/clear/hasKey.
  *
@@ -28,7 +28,7 @@ export function createApiKeyGetter(
 }
 
 // ---------------------------------------------------------------------------
-// Key-only hook (Moonshot, Tavily)
+// Key-only hook (Tavily)
 // ---------------------------------------------------------------------------
 
 interface ApiKeyHookResult {

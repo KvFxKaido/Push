@@ -55,35 +55,6 @@ export const OPENROUTER_MODELS: string[] = [
 
 export const PROVIDERS: AIProviderConfig[] = [
   {
-    type: 'moonshot',
-    name: 'Kimi For Coding',
-    description: 'Kimi K2.5 via Kimi For Coding API (OpenAI-compatible)',
-    envKey: 'VITE_MOONSHOT_API_KEY',
-    models: [
-      {
-        id: 'k2p5',
-        name: 'Kimi K2.5 (Orchestrator)',
-        provider: 'moonshot',
-        role: 'orchestrator',
-        context: 262_144,
-      },
-      {
-        id: 'k2p5',
-        name: 'Kimi K2.5 (Coder)',
-        provider: 'moonshot',
-        role: 'coder',
-        context: 262_144,
-      },
-      {
-        id: 'k2p5',
-        name: 'Kimi K2.5 (Auditor)',
-        provider: 'moonshot',
-        role: 'auditor',
-        context: 262_144,
-      },
-    ],
-  },
-  {
     type: 'ollama',
     name: 'Ollama',
     description: 'Ollama — run open models locally or on cloud GPUs (OpenAI-compatible)',
@@ -309,11 +280,11 @@ export function getModelForRole(
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'moonshot' | 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
+export type PreferredProvider = 'ollama' | 'mistral' | 'zai' | 'minimax' | 'openrouter';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (stored === 'moonshot' || stored === 'ollama' || stored === 'mistral' || stored === 'zai' || stored === 'minimax' || stored === 'openrouter') return stored;
+  if (stored === 'ollama' || stored === 'mistral' || stored === 'zai' || stored === 'minimax' || stored === 'openrouter') return stored;
   return null;
 }
 

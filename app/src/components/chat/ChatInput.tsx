@@ -58,7 +58,6 @@ const ACCEPTED_FILES = 'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.
 const MAX_PAYLOAD = 400 * 1024; // 400KB total
 
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
-  moonshot: 'Kimi',
   ollama: 'Ollama',
   mistral: 'Mistral',
   zai: 'Z.ai',
@@ -68,7 +67,6 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
 };
 
 const PROVIDER_ICONS: Record<AIProviderType, string> = {
-  moonshot: '🌙',
   ollama: '🦙',
   mistral: '🌪️',
   zai: '🧠',
@@ -245,7 +243,6 @@ export function ChatInput({
     if (isDisplayedProviderLocked && providerControls.lockedModel) return providerControls.lockedModel;
     if (selectedProvider === 'ollama') return providerControls.ollamaModel;
     if (selectedProvider === 'mistral') return providerControls.mistralModel;
-    if (selectedProvider === 'moonshot') return 'k2.5';
     if (selectedProvider === 'zai') return providerControls.zaiModel;
     if (selectedProvider === 'minimax') return providerControls.miniMaxModel;
     if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
@@ -400,12 +397,6 @@ export function ChatInput({
                           </button>
                         )}
                       </div>
-
-                      {selectedProvider === 'moonshot' && (
-                        <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-2 text-[11px] text-[#9eabbe]">
-                          k2.5 (fixed)
-                        </div>
-                      )}
 
                       {selectedProvider === 'demo' && (
                         <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-2 text-[11px] text-[#9eabbe]">

@@ -76,7 +76,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
           </label>
           {isPending && (
             <span className="text-[10px] text-[#5f6b80] italic">
-              auto-filled by Kimi · tap to edit
+              auto-filled · tap to edit
             </span>
           )}
         </div>

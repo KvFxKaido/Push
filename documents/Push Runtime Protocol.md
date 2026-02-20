@@ -198,7 +198,7 @@ Request payload:
 ```json
 {
   "mode": "interactive",
-  "provider": "moonshot",
+  "provider": "ollama",
   "sandboxProvider": "local",
   "repo": {
     "rootPath": "/home/user/projects/Push",
@@ -422,7 +422,7 @@ Payload:
   "sessionId": "sess_01HXYZ...",
   "state": "idle",
   "mode": "interactive",
-  "provider": "moonshot",
+  "provider": "ollama",
   "sandboxProvider": "local"
 }
 ```
@@ -440,7 +440,7 @@ Payload:
   "lastAssistantText": "...",
   "pendingApproval": null,
   "meta": {
-    "provider": "moonshot",
+    "provider": "ollama",
     "sandboxProvider": "local"
   }
 }

@@ -69,7 +69,6 @@
     "provider": {
       "type": "string",
       "enum": [
-        "moonshot",
         "ollama",
         "mistral",
         "zai",
