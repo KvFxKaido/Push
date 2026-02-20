@@ -510,6 +510,62 @@ export async function renameInSandbox(
   throw new Error('Rename is not available on the current plan.');
 }
 
+// --- Sandbox status (Resumable Sessions Phase 2) ---
+
+export interface SandboxStatusResult {
+  head: string;
+  dirtyFiles: string[];
+  diffStat: string;
+  changedFiles: string[];
+  error?: string;
+}
+
+/**
+ * Fetch lightweight sandbox status for session recovery.
+ * Combines git status, HEAD, and diff info in a single exec call.
+ * Used by the resume flow to reconcile checkpoint state with sandbox truth.
+ */
+export async function sandboxStatus(sandboxId: string): Promise<SandboxStatusResult> {
+  const result = await execInSandbox(
+    sandboxId,
+    'cd /workspace && echo "---HEAD---" && git rev-parse --short HEAD 2>/dev/null && echo "---STATUS---" && git status --porcelain 2>/dev/null && echo "---STAT---" && git diff --stat 2>/dev/null && echo "---NAMES---" && git diff --name-only 2>/dev/null',
+  );
+
+  const output = result.stdout || '';
+  const sections: Record<string, string> = {};
+  let currentSection = '';
+
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '---HEAD---') { currentSection = 'head'; continue; }
+    if (trimmed === '---STATUS---') { currentSection = 'status'; continue; }
+    if (trimmed === '---STAT---') { currentSection = 'stat'; continue; }
+    if (trimmed === '---NAMES---') { currentSection = 'names'; continue; }
+    if (currentSection) {
+      sections[currentSection] = (sections[currentSection] || '') + (sections[currentSection] ? '\n' : '') + line;
+    }
+  }
+
+  const head = (sections.head || 'unknown').trim();
+  const dirtyFiles = (sections.status || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const diffStat = (sections.stat || '').trim();
+  const allChangedFiles = (sections.names || '').split('\n').map(l => l.trim()).filter(Boolean);
+
+  // Truncate to 50 files per design doc
+  const MAX_CHANGED_FILES = 50;
+  const changedFiles = allChangedFiles.length > MAX_CHANGED_FILES
+    ? [...allChangedFiles.slice(0, MAX_CHANGED_FILES), `(and ${allChangedFiles.length - MAX_CHANGED_FILES} more files)`]
+    : allChangedFiles;
+
+  return {
+    head,
+    dirtyFiles,
+    diffStat,
+    changedFiles,
+    error: result.exitCode !== 0 ? (result.stderr || 'git command failed') : undefined,
+  };
+}
+
 export async function browserScreenshotInSandbox(
   sandboxId: string,
   url: string,

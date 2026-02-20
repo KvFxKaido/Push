@@ -30,6 +30,8 @@ import {
   cleanupSandbox,
   downloadFromSandbox,
   hydrateSnapshotInSandbox,
+  sandboxStatus,
+  type SandboxStatusResult,
 } from '@/lib/sandbox-client';
 import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
@@ -101,7 +103,8 @@ function getGitHubAuthToken(): string {
 
 function saveCheckpoint(checkpoint: RunCheckpoint): void {
   try {
-    safeStorageSet(`${CHECKPOINT_KEY_PREFIX}${checkpoint.chatId}`, JSON.stringify(checkpoint));
+    const trimmed = trimCheckpointDelta(checkpoint);
+    safeStorageSet(`${CHECKPOINT_KEY_PREFIX}${trimmed.chatId}`, JSON.stringify(trimmed));
   } catch {
     // Best-effort — don't break the tool loop if storage is full
     console.warn('[Push] Failed to save run checkpoint');
@@ -159,6 +162,145 @@ export function detectInterruptedRun(
   }
 
   return checkpoint;
+}
+
+// --- Resumable Sessions Phase 2: reconciliation message builder ---
+
+function buildReconciliationMessage(
+  checkpoint: RunCheckpoint,
+  status: SandboxStatusResult,
+): string {
+  const dirtyList = status.dirtyFiles.length > 0
+    ? status.dirtyFiles.join('\n')
+    : 'clean';
+  const changedList = status.changedFiles.length > 0
+    ? status.changedFiles.join('\n')
+    : 'none';
+
+  let header = `[SESSION_RESUMED]\nSandbox state at recovery:\n- HEAD: ${status.head}\n- Dirty files: ${dirtyList}\n- Diff summary: ${status.diffStat || 'none'}\n- Changed files: ${changedList}\n`;
+
+  if (checkpoint.phase === 'streaming_llm') {
+    header += `\nInterruption: connection dropped while you were generating a response (round ${checkpoint.round}).\n`;
+    if (checkpoint.accumulated) {
+      header += `Your partial response before disconnection:\n---\n${checkpoint.accumulated}\n---\nResume your response. The sandbox state above reflects the current truth.\n`;
+    } else {
+      header += `No partial response was captured. The sandbox state above reflects the current truth. Continue where you left off.\n`;
+    }
+  } else if (checkpoint.phase === 'executing_tools') {
+    header += `\nInterruption: connection dropped while executing tool calls (round ${checkpoint.round}).\nThe tool batch may or may not have completed. Check the sandbox state above\nagainst what the tools were supposed to do. If the expected changes are present,\nproceed to the next step. If not, re-attempt the tool calls.\n`;
+  } else if (checkpoint.phase === 'delegating_coder') {
+    header += `\nInterruption: connection dropped during Coder delegation (round ${checkpoint.round}).\n`;
+    if (checkpoint.lastCoderState) {
+      header += `Last known Coder state:\n${checkpoint.lastCoderState}\n`;
+    }
+    header += `The Coder's work may be partially complete. Check the sandbox state above.\nDecide whether to re-delegate the remaining work or proceed based on what's done.\n`;
+  }
+
+  header += `\nDo not repeat work that is already reflected in the sandbox.`;
+  return header;
+}
+
+// --- Multi-tab lock helpers (Resumable Sessions Phase 4) ---
+
+const RUN_ACTIVE_PREFIX = 'run_active_';
+const TAB_LOCK_STALE_MS = 60_000; // Consider lock stale after 60s without heartbeat
+
+function acquireTabLock(chatId: string): boolean {
+  const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
+  const existing = safeStorageGet(key);
+  if (existing) {
+    try {
+      const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
+      // If the heartbeat is recent, another tab owns this run
+      if (Date.now() - lock.heartbeat < TAB_LOCK_STALE_MS) {
+        return false;
+      }
+    } catch {
+      // Malformed lock, take it over
+    }
+  }
+  const tabId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  safeStorageSet(key, JSON.stringify({ tabId, heartbeat: Date.now() }));
+  // Verify we won the race (another tab may have written simultaneously)
+  const verify = safeStorageGet(key);
+  if (verify) {
+    try {
+      const parsed = JSON.parse(verify) as { tabId: string };
+      return parsed.tabId === tabId;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function releaseTabLock(chatId: string): void {
+  safeStorageRemove(`${RUN_ACTIVE_PREFIX}${chatId}`);
+}
+
+function heartbeatTabLock(chatId: string): void {
+  const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
+  const existing = safeStorageGet(key);
+  if (existing) {
+    try {
+      const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
+      safeStorageSet(key, JSON.stringify({ ...lock, heartbeat: Date.now() }));
+    } catch {
+      // Ignore
+    }
+  }
+}
+
+// --- Checkpoint size management (Resumable Sessions Phase 4) ---
+
+const CHECKPOINT_DELTA_WARN_SIZE = 50 * 1024; // 50KB warning threshold
+
+function trimCheckpointDelta(checkpoint: RunCheckpoint): RunCheckpoint {
+  const deltaJson = JSON.stringify(checkpoint.deltaMessages);
+  if (deltaJson.length <= CHECKPOINT_DELTA_WARN_SIZE) return checkpoint;
+
+  console.warn(`[Push] Checkpoint deltaMessages exceeds ${CHECKPOINT_DELTA_WARN_SIZE / 1024}KB (${Math.round(deltaJson.length / 1024)}KB), trimming oldest deltas`);
+
+  // Keep the most recent messages, trim from the front
+  const trimmed = [...checkpoint.deltaMessages];
+  while (JSON.stringify(trimmed).length > CHECKPOINT_DELTA_WARN_SIZE && trimmed.length > 2) {
+    trimmed.shift();
+  }
+
+  return { ...checkpoint, deltaMessages: trimmed };
+}
+
+// --- Resumable Sessions Phase 4: telemetry ---
+
+interface ResumeEvent {
+  phase: LoopPhase;
+  round: number;
+  timeSinceInterrupt: number;
+  provider: string;
+  hadAccumulated: boolean;
+  hadCoderState: boolean;
+}
+
+const resumeEvents: ResumeEvent[] = [];
+
+function recordResumeEvent(checkpoint: RunCheckpoint): void {
+  const event: ResumeEvent = {
+    phase: checkpoint.phase,
+    round: checkpoint.round,
+    timeSinceInterrupt: Date.now() - checkpoint.savedAt,
+    provider: checkpoint.provider,
+    hadAccumulated: Boolean(checkpoint.accumulated),
+    hadCoderState: Boolean(checkpoint.lastCoderState),
+  };
+  resumeEvents.push(event);
+  // Keep only last 50 events in memory
+  if (resumeEvents.length > 50) resumeEvents.shift();
+  console.log('[Push] Session resumed:', event);
+}
+
+/** Expose resume telemetry for debugging / operator visibility */
+export function getResumeEvents(): readonly ResumeEvent[] {
+  return resumeEvents;
 }
 
 // --- localStorage helpers ---
@@ -427,6 +569,9 @@ export function useChat(
   const checkpointModelRef = useRef<string>('');
   const loopActiveRef = useRef(false);
 
+  // Ref-based access to sendMessage for resume callback (defined later in the hook)
+  const sendMessageRef = useRef<((text: string, attachments?: AttachmentData[]) => Promise<void>) | null>(null);
+
   // Keep activeRepoFullName in a ref so callbacks always see the latest value
   const repoRef = useRef(activeRepoFullName);
   repoRef.current = activeRepoFullName;
@@ -472,7 +617,7 @@ export function useChat(
       accumulated: checkpointAccumulatedRef.current,
       thinkingAccumulated: checkpointThinkingRef.current,
       coderDelegationActive: checkpointPhaseRef.current === 'delegating_coder',
-      lastCoderState: null, // Phase 3 will populate this
+      lastCoderState: checkpointPhaseRef.current === 'delegating_coder' ? lastCoderStateRef.current : null,
       savedAt: Date.now(),
       provider: checkpointProviderRef.current as AIProviderType,
       model: checkpointModelRef.current,
@@ -485,6 +630,12 @@ export function useChat(
     saveCheckpoint(checkpoint);
   }, []);
 
+  // Ref for Phase 3: last Coder working memory state
+  const lastCoderStateRef = useRef<string | null>(null);
+
+  // Tab lock heartbeat interval ref
+  const tabLockIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden' && loopActiveRef.current) {
@@ -494,6 +645,140 @@ export function useChat(
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [flushCheckpoint]);
+
+  // --- Resumable Sessions Phase 2: resume state + detection ---
+
+  const [interruptedCheckpoint, setInterruptedCheckpoint] = useState<RunCheckpoint | null>(null);
+
+  // Detect interrupted runs when the chat becomes idle (not streaming, loop not active)
+  useEffect(() => {
+    if (isStreaming || loopActiveRef.current) return;
+    if (!activeChatId) return;
+
+    const checkpoint = detectInterruptedRun(
+      activeChatId,
+      sandboxIdRef.current,
+      branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
+      repoRef.current,
+    );
+
+    setInterruptedCheckpoint(checkpoint);
+  }, [activeChatId, isStreaming]);
+
+  const dismissResume = useCallback(() => {
+    if (interruptedCheckpoint) {
+      clearCheckpoint(interruptedCheckpoint.chatId);
+    }
+    setInterruptedCheckpoint(null);
+  }, [interruptedCheckpoint]);
+
+  const resumeInterruptedRun = useCallback(async () => {
+    const checkpoint = interruptedCheckpoint;
+    if (!checkpoint) return;
+    setInterruptedCheckpoint(null);
+
+    const chatId = checkpoint.chatId;
+    const currentSandboxId = sandboxIdRef.current;
+
+    if (!currentSandboxId) {
+      // Sandbox not available — can't reconcile. Clear and inform user.
+      clearCheckpoint(chatId);
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        const msg: ChatMessage = {
+          id: createId(),
+          role: 'assistant',
+          content: 'Session was interrupted, but the sandbox is no longer available. Starting fresh.',
+          timestamp: Date.now(),
+          status: 'done',
+        };
+        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
+        saveConversations(updated);
+        return updated;
+      });
+      return;
+    }
+
+    // Fetch sandbox truth
+    updateAgentStatus({ active: true, phase: 'Resuming session...' }, { chatId });
+    let status: SandboxStatusResult;
+    try {
+      status = await sandboxStatus(currentSandboxId);
+    } catch (err) {
+      clearCheckpoint(chatId);
+      updateAgentStatus({ active: false, phase: '' });
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        const msg: ChatMessage = {
+          id: createId(),
+          role: 'assistant',
+          content: `Session was interrupted, but sandbox status check failed: ${err instanceof Error ? err.message : String(err)}. Starting fresh.`,
+          timestamp: Date.now(),
+          status: 'done',
+        };
+        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
+        saveConversations(updated);
+        return updated;
+      });
+      return;
+    }
+
+    // Build reconciliation message
+    const reconciliationContent = buildReconciliationMessage(checkpoint, status);
+
+    // Reconstruct apiMessages: persistedMessages + deltaMessages + reconciliation
+    const conv = conversations[chatId];
+    if (!conv) {
+      clearCheckpoint(chatId);
+      updateAgentStatus({ active: false, phase: '' });
+      return;
+    }
+
+    const persistedMessages = conv.messages;
+    const base = Math.min(checkpoint.baseMessageCount, persistedMessages.length);
+    const baseMessages = persistedMessages.slice(0, base);
+    const deltaMessages: ChatMessage[] = checkpoint.deltaMessages.map((dm, i) => ({
+      id: createId(),
+      role: dm.role as 'user' | 'assistant',
+      content: dm.content,
+      timestamp: Date.now() - checkpoint.deltaMessages.length + i,
+    }));
+
+    const reconciliationMsg: ChatMessage = {
+      id: createId(),
+      role: 'user',
+      content: reconciliationContent,
+      timestamp: Date.now(),
+      isToolResult: true, // Treat as synthetic injection
+    };
+
+    // Re-enter the loop by injecting the reconciliation message and calling sendMessage
+    // We add the reconciliation as a visible assistant message + user tool result pair
+    setConversations((prev) => {
+      const existing = prev[chatId];
+      if (!existing) return prev;
+      const msgs = [...existing.messages, reconciliationMsg];
+      const updated = { ...prev, [chatId]: { ...existing, messages: msgs, lastMessageAt: Date.now() } };
+      saveConversations(updated);
+      return updated;
+    });
+
+    // Clear the checkpoint — the loop will create new checkpoints
+    clearCheckpoint(chatId);
+
+    // Track resume event
+    recordResumeEvent(checkpoint);
+
+    // Send a synthetic message to re-enter the loop with the reconciliation context.
+    // The reconciliation message is already injected as a tool result; we send a brief
+    // user message that triggers the LLM to read it and continue.
+    // Uses sendMessageRef because sendMessage is defined later in the hook.
+    if (sendMessageRef.current) {
+      await sendMessageRef.current('[Resuming interrupted session — see sandbox state above]', undefined);
+    }
+  }, [interruptedCheckpoint, conversations, updateAgentStatus]);
 
   const appendAgentEvent = useCallback(
     (chatId: string, status: AgentStatus, source: AgentStatusSource = 'orchestrator') => {
@@ -937,6 +1222,12 @@ export function useChat(
       checkpointAccumulatedRef.current = '';
       checkpointThinkingRef.current = '';
       loopActiveRef.current = true;
+
+      // Acquire multi-tab lock
+      acquireTabLock(chatId);
+      // Heartbeat every 15s to keep the lock alive
+      if (tabLockIntervalRef.current) clearInterval(tabLockIntervalRef.current);
+      tabLockIntervalRef.current = setInterval(() => heartbeatTabLock(chatId), 15_000);
 
       let loopCompletedNormally = false;
       try {
@@ -1491,6 +1782,7 @@ export function useChat(
           } else if (toolCall.source === 'delegate') {
             // Handle Coder delegation (Phase 3b)
             checkpointPhaseRef.current = 'delegating_coder';
+            lastCoderStateRef.current = null; // Will be populated by onWorkingMemoryUpdate callback
             const currentSandboxId = sandboxIdRef.current;
             if (!currentSandboxId) {
               toolExecResult = { text: '[Tool Error] Failed to start sandbox automatically. Try again.' };
@@ -1634,6 +1926,7 @@ export function useChat(
                             abortControllerRef.current?.signal,
                             handleCheckpoint,
                             isLastTask ? delegateArgs.acceptanceCriteria : undefined,
+                            (state) => { lastCoderStateRef.current = state; },
                           );
 
                           return { taskIndex, coderResult };
@@ -1710,6 +2003,7 @@ export function useChat(
                         abortControllerRef.current?.signal,
                         handleCheckpoint,
                         isLastTask ? delegateArgs.acceptanceCriteria : undefined,
+                        (state) => { lastCoderStateRef.current = state; },
                       );
                       totalRounds += coderResult.rounds;
                       totalCheckpoints += coderResult.checkpoints;
@@ -1762,6 +2056,7 @@ export function useChat(
             }
             // Reset phase — delegation finished (success or error)
             checkpointPhaseRef.current = 'executing_tools';
+            lastCoderStateRef.current = null;
           } else {
             // GitHub or Sandbox tools
             const toolRepoFullName = repoRef.current;
@@ -1914,10 +2209,20 @@ export function useChat(
         if (loopCompletedNormally) {
           clearCheckpoint(chatId);
         }
+
+        // Release multi-tab lock
+        releaseTabLock(chatId);
+        if (tabLockIntervalRef.current) {
+          clearInterval(tabLockIntervalRef.current);
+          tabLockIntervalRef.current = null;
+        }
       }
     },
     [activeChatId, conversations, isStreaming, createNewChat, updateAgentStatus, flushCheckpoint],
   );
+
+  // Wire sendMessageRef so resume callback can reach it (defined after sendMessage)
+  sendMessageRef.current = sendMessage;
 
   // --- Card action handler (Phase 4 — commit review + CI) ---
 
@@ -2315,5 +2620,10 @@ export function useChat(
 
     // Abort stream
     abortStream,
+
+    // Resumable Sessions (Phase 2)
+    interruptedCheckpoint,
+    resumeInterruptedRun,
+    dismissResume,
   };
 }

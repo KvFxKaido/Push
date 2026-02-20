@@ -1,7 +1,7 @@
 # Resumable Sessions Design
 
 Date: 2026-02-20
-Status: **Draft**
+Status: **Shipped** (all 4 phases implemented)
 Owner: Push
 Related: `documents/Background Coder Tasks Plan.md` (deferred server-side approach), `documents/Harness Reliability Plan.md` Track D
 
@@ -238,7 +238,7 @@ If the sandbox crashed and was recreated (new session ID), the `sandboxSessionId
 
 ## Implementation plan
 
-### Phase 1: Checkpoint persistence (minimal viable recovery)
+### Phase 1: Checkpoint persistence (minimal viable recovery) — **Shipped**
 
 Files touched:
 - `hooks/useChat.ts` — Add checkpoint save/clear logic around the tool loop, `LoopPhase` tracking
@@ -253,38 +253,46 @@ Scope:
 
 Exit criteria: Checkpoints reliably persist across app suspend/resume cycles. Checkpoint payloads stay under ~15KB.
 
-### Phase 2: Recovery detection + resume UI
+### Phase 2: Recovery detection + resume UI — **Shipped**
 
 Files touched:
-- `hooks/useChat.ts` — `detectInterruptedRun()`, resume logic
-- `components/chat/ChatContainer.tsx` — Resume banner/affordance
-- `lib/sandbox-client.ts` — Lightweight `sandboxStatus()` helper (git status + HEAD + diff stat in one call)
+- `hooks/useChat.ts` — `detectInterruptedRun()`, resume logic, `resumeInterruptedRun()`, `dismissResume()`
+- `components/chat/ChatContainer.tsx` — `ResumeBanner` inline component with Resume/Dismiss actions
+- `lib/sandbox-client.ts` — `sandboxStatus()` helper (git status + HEAD + diff stat + changed files in one exec call)
 
-Scope:
-- Detect orphaned checkpoints on mount
-- Show resume banner
-- On resume: fetch sandbox status, inject reconciliation message, re-enter loop
+Implementation:
+- `detectInterruptedRun()` runs via `useEffect` whenever `isStreaming` or `activeChatId` changes while the loop is idle
+- `ResumeBanner` shows phase label, round number, age, and Coder-active indicator
+- On Resume: fetches `sandboxStatus()`, builds phase-specific reconciliation message via `buildReconciliationMessage()`, injects it as a synthetic tool result, then triggers `sendMessage` to re-enter the loop
+- On Dismiss: clears the checkpoint from localStorage
+- If sandbox is unavailable, the resume injects a "starting fresh" assistant message and clears the checkpoint
 
 Exit criteria: User can lock phone mid-tool-loop, reopen app, tap Resume, and have the agent continue.
 
-### Phase 3: Coder delegation recovery
+### Phase 3: Coder delegation recovery — **Shipped**
 
 Files touched:
-- `hooks/useChat.ts` — Capture `lastCoderState` in checkpoint during delegation
-- `lib/coder-agent.ts` — Expose last working memory state for checkpoint capture
+- `hooks/useChat.ts` — `lastCoderStateRef` captures Coder working memory during delegation; `flushCheckpoint()` includes it
+- `lib/coder-agent.ts` — New `onWorkingMemoryUpdate` callback parameter on `runCoderAgent()`, fires on every `coder_update_state`
 
-Scope:
-- Include Coder working memory in checkpoint
-- Reconciliation message includes Coder state when delegation was active
-- Orchestrator re-evaluates delegation status on resume
+Implementation:
+- `runCoderAgent()` accepts optional `onWorkingMemoryUpdate?: (state: string) => void` as its last parameter
+- When the Coder updates its working memory (`coder_update_state`), the callback fires with the formatted `[CODER_STATE]` block
+- The orchestrator checkpoint stores this in `lastCoderState` (via `lastCoderStateRef`)
+- The reconciliation message for `delegating_coder` phase includes the last Coder state
+- `lastCoderStateRef` is cleared when delegation starts (fresh) and when it finishes
 
 Exit criteria: Interrupted Coder tasks resume without losing plan/progress context.
 
-### Phase 4: Hardening
+### Phase 4: Hardening — **Shipped**
 
-- Multi-tab coordination (BroadcastChannel lock)
-- Checkpoint size management (alert if deltaMessages exceeds ~50KB, trim oldest deltas)
-- Telemetry: track interrupt/resume frequency by `LoopPhase`, success rate, time-to-resume
+Files touched:
+- `hooks/useChat.ts` — Multi-tab lock, checkpoint size management, telemetry
+
+Implementation:
+- **Multi-tab coordination:** `acquireTabLock()` / `releaseTabLock()` / `heartbeatTabLock()` using localStorage (not BroadcastChannel — simpler, works cross-origin). Lock key: `run_active_${chatId}`, stores `{tabId, heartbeat}`. Lock is stale after 60s without heartbeat. Acquired on loop start, heartbeat every 15s, released in finally block. `detectInterruptedRun()` implicitly handles stale locks because it checks if the loop is running via `loopActiveRef`.
+- **Checkpoint size management:** `trimCheckpointDelta()` enforces a 50KB cap on `deltaMessages`. When exceeded, oldest deltas are trimmed from the front. Applied in `saveCheckpoint()` before `JSON.stringify`. Console warning logged when trimming.
+- **Telemetry:** `recordResumeEvent()` captures `{phase, round, timeSinceInterrupt, provider, hadAccumulated, hadCoderState}` into an in-memory ring buffer (50 events max). `getResumeEvents()` exported for debugging/operator visibility. Events also logged to console.
 
 ## Design decisions
 

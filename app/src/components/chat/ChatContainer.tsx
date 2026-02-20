@@ -1,8 +1,60 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
-import { ArrowDown } from 'lucide-react';
-import type { ChatMessage, AgentStatus, ActiveRepo, CardAction } from '@/types';
+import { ArrowDown, RotateCcw, X } from 'lucide-react';
+import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, LoopPhase } from '@/types';
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
+
+// --- Resume Banner (Resumable Sessions Phase 2) ---
+
+function phaseLabel(phase: LoopPhase): string {
+  switch (phase) {
+    case 'streaming_llm': return 'mid-response';
+    case 'executing_tools': return 'mid-tool-execution';
+    case 'delegating_coder': return 'during Coder delegation';
+  }
+}
+
+function ResumeBanner({
+  checkpoint,
+  onResume,
+  onDismiss,
+}: {
+  checkpoint: RunCheckpoint;
+  onResume: () => void;
+  onDismiss: () => void;
+}) {
+  const ageMs = Date.now() - checkpoint.savedAt;
+  const ageMin = Math.floor(ageMs / 60_000);
+  const ageLabel = ageMin < 1 ? 'just now' : `${ageMin}m ago`;
+
+  return (
+    <div className="mx-4 mt-2 mb-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-3 flex items-center justify-between gap-3 animate-fade-in-down">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-amber-200">Session interrupted {phaseLabel(checkpoint.phase)}</p>
+        <p className="text-[11px] text-amber-200/60 mt-0.5">
+          Round {checkpoint.round + 1} &middot; {ageLabel}
+          {checkpoint.coderDelegationActive ? ' &middot; Coder was active' : ''}
+        </p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          onClick={onResume}
+          className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-900/20 px-3 py-1.5 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-900/30 active:scale-95"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Resume
+        </button>
+        <button
+          onClick={onDismiss}
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-amber-200/40 transition-colors hover:text-amber-200/70 hover:bg-amber-900/20 active:scale-95"
+          aria-label="Dismiss"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 interface ChatContainerProps {
   messages: ChatMessage[];
@@ -11,6 +63,9 @@ interface ChatContainerProps {
   isSandboxMode?: boolean;
   onSuggestion?: (text: string) => void;
   onCardAction?: (action: CardAction) => void;
+  interruptedCheckpoint?: RunCheckpoint | null;
+  onResumeRun?: () => void;
+  onDismissResume?: () => void;
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 150;
@@ -107,7 +162,7 @@ function EmptyState({
   );
 }
 
-export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode, onSuggestion, onCardAction }: ChatContainerProps) {
+export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode, onSuggestion, onCardAction, interruptedCheckpoint, onResumeRun, onDismissResume }: ChatContainerProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -188,6 +243,9 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
+        {interruptedCheckpoint && onResumeRun && onDismissResume && (
+          <ResumeBanner checkpoint={interruptedCheckpoint} onResume={onResumeRun} onDismiss={onDismissResume} />
+        )}
         <EmptyState activeRepo={activeRepo} isSandboxMode={isSandboxMode} onSuggestion={onSuggestion} />
       </div>
     );
@@ -195,6 +253,9 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden relative">
+      {interruptedCheckpoint && onResumeRun && onDismissResume && (
+        <ResumeBanner checkpoint={interruptedCheckpoint} onResume={onResumeRun} onDismiss={onDismissResume} />
+      )}
       <div
         ref={containerRef}
         className="flex-1 overflow-y-auto overscroll-contain"
