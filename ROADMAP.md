@@ -1,6 +1,6 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-02-19
+Last updated: 2026-02-20
 
 This is the single source of truth for active product and engineering direction.
 
@@ -35,6 +35,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
+| Resumable Sessions (Phases 1-4) | done | Added interruption-safe run checkpointing + resume flow across orchestrator and coder delegation, including reconciliation and lock safety | Interrupted runs surface a `ResumeBanner`; resume revalidates sandbox/branch/repo, injects `[SESSION_RESUMED]` with sandbox HEAD/dirty/diff context, preserves coder state, and records resume telemetry |
 | Agent Experience Wishlist (Track C) | done | Implement 10 harness improvements: structured error taxonomy, edit diffs, multi-tool per turn, universal meta envelope, and machine-readable tool-call feedback | All items shipped and verified in harness metrics (Commit 0336f11) |
 | Sandbox Mode v1 | done | Ephemeral Modal workspace for brainstorming/prototyping; primary onboarding entry point; tar.gz download export path | User can start sandbox from onboarding (no GitHub auth) or repo picker, edit/run files, and download workspace as tar.gz |
 | Repo Sync Reliability | done | Unified auth handling and complete repo pagination for PAT/OAuth + GitHub App paths | Authenticated flows do not silently fall back to demo; repo fetching paginates across accessible pages |
@@ -48,6 +49,9 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Date | Decision | Source |
 |---|---|---|
+| 2026-02-20 | Resumable Sessions hardening pass fixed resume race conditions and lock handling after merge review | Commit 61a262a |
+| 2026-02-19 | Resumable Sessions completed (Phase 2-4): resume banner UX, sandbox reconciliation, multi-tab lock, checkpoint size controls, and resume telemetry | PR #106 (`3ded27f`) |
+| 2026-02-19 | Resumable Sessions Phase 1 shipped: local checkpoint persistence and interrupted-run detection baseline | PR #105 (`d311af6`) |
 | 2026-02-19 | Agent Experience Wishlist (Track C) fully implemented | Commit 0336f11 + follow-ups |
 | 2026-02-19 | OpenRouter catalog updated: Sonnet 4.6, Gemini 3.1 Pro Preview added; Codex 5.3 removed | Commits f323e1b, 4b97df9 |
 | 2026-02-09 | Root `ROADMAP.md` is canonical; `documents/` is draft space | Team decision in chat |

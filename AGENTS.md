@@ -105,6 +105,10 @@ Optional setting that blocks direct commits to `main`, requiring a branch for al
 
 Conversations are permanently bound to the branch on which they were created. The history drawer groups chats by branch. Switching to a branch with existing chats lets the user resume any of them. After merge, branch chats receive a closure message; deleted branches are marked `(Merged + Deleted)` in history. Chats are never duplicated or rebound.
 
+### Resumable Sessions
+
+When the user locks their phone or switches apps mid-tool-loop, the app checkpoints run state to localStorage (`run_checkpoint_${chatId}`). On return, a `ResumeBanner` offers to resume. Resume revalidates sandbox/branch/repo identity, fetches `sandboxStatus()` (HEAD, dirty files, diff summary), injects a phase-specific `[SESSION_RESUMED]` reconciliation message, and re-enters the normal loop. Coder delegation state is captured via `onWorkingMemoryUpdate` callback. Multi-tab coordination uses localStorage locks (not BroadcastChannel). Checkpoint delta payload is trimmed/capped at 50KB, and resume telemetry is recorded via `getResumeEvents()`. See `documents/Resumable Sessions Design.md`.
+
 ### PR Awareness
 
 Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo.
@@ -175,9 +179,9 @@ Push/
 | `lib/file-awareness-ledger.ts` | Tracks model read coverage per file (`never_read` / `partial_read` / `fully_read` / `model_authored` / `stale`) for edit safety |
 | `lib/tool-call-metrics.ts` | In-memory observability for malformed tool-call attempts by provider/model/reason |
 | `lib/scratchpad-tools.ts` | Scratchpad tools, prompt injection escaping |
-| `lib/sandbox-client.ts` | HTTP client for `/api/sandbox/*` endpoints, `mapSandboxErrorCode()` |
+| `lib/sandbox-client.ts` | HTTP client for `/api/sandbox/*` endpoints, `mapSandboxErrorCode()`, `sandboxStatus()` (HEAD/dirty/diff snapshot for resume reconciliation) |
 | `lib/tool-dispatch.ts` | Unified dispatch for all tools, `detectAllToolCalls()` (multi-tool with read/mutate split), `isReadOnlyToolCall()` |
-| `lib/coder-agent.ts` | Coder autonomous loop (uses active backend), working memory (`coder_update_state`), acceptance criteria, parallel reads |
+| `lib/coder-agent.ts` | Coder autonomous loop (uses active backend), working memory (`coder_update_state`), acceptance criteria, parallel reads, `onWorkingMemoryUpdate` callback for resumable checkpoints |
 | `lib/auditor-agent.ts` | Auditor review + verdict (fail-safe, uses active backend) |
 | `lib/workspace-context.ts` | Active repo context builder |
 | `lib/providers.ts` | AI provider config and role model mapping |
@@ -198,7 +202,7 @@ Push/
 
 | File | Purpose |
 |------|---------|
-| `hooks/useChat.ts` | Chat state, message history, tool execution loop (multi-tool dispatch, `[meta]` envelope, structured malformed-call feedback), Coder delegation with `acceptanceCriteria` |
+| `hooks/useChat.ts` | Chat state, message history, tool execution loop (multi-tool dispatch, `[meta]` envelope, structured malformed-call feedback), Coder delegation with `acceptanceCriteria`, resumable sessions (`detectInterruptedRun()`, `resumeInterruptedRun`, `dismissResume`, checkpoint persistence, multi-tab lock, `getResumeEvents()`) |
 | `hooks/useSandbox.ts` | Sandbox session lifecycle |
 | `hooks/useScratchpad.ts` | Shared notepad state, localStorage persistence |
 | `hooks/useGitHubAuth.ts` | PAT validation, OAuth flow |
