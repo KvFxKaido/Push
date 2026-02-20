@@ -782,7 +782,7 @@ const handleKimiChat = createStreamProxyHandler({
   buildAuth: standardAuth('MOONSHOT_API_KEY'),
   keyMissingError: 'Kimi API key not configured. Add it in Settings or set MOONSHOT_API_KEY on the Worker.',
   timeoutError: 'Kimi request timed out after 120 seconds',
-  extraFetchHeaders: { 'User-Agent': 'claude-code/1.0.0' },
+  extraFetchHeaders: { 'User-Agent': 'claude-code/2.1.49' },
 });
 
 // --- Ollama Cloud ---
