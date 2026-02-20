@@ -122,7 +122,7 @@ function loadCheckpoint(chatId: string): RunCheckpoint | null {
   }
 }
 
-function detectInterruptedRun(
+export function detectInterruptedRun(
   chatId: string,
   currentSandboxId: string | null,
   currentBranch: string | null,
