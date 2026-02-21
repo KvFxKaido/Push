@@ -14,6 +14,7 @@ import { loadConfig, saveConfig, applyConfigToEnv, getConfigPath, maskSecret } f
 import { aggregateStats, formatStats } from './stats.mjs';
 import { getToolCallMetrics } from './tool-call-metrics.mjs';
 import { getSocketPath, getPidPath } from './pushd.mjs';
+import { loadSkills, interpolateSkill } from './skill-loader.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -23,11 +24,11 @@ const KNOWN_OPTIONS = new Set([
   'provider', 'model', 'url', 'api-key', 'apiKey', 'cwd', 'session',
   'tavily-key', 'tavilyKey', 'search-backend', 'searchBackend',
   'task', 'accept', 'max-rounds', 'maxRounds', 'json', 'headless',
-  'allow-exec', 'allowExec',
+  'allow-exec', 'allowExec', 'skill',
   'help', 'sandbox', 'no-sandbox', 'version',
 ]);
 
-const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'sessions', 'stats', 'daemon', 'attach']);
+const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'sessions', 'skills', 'stats', 'daemon', 'attach']);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
 function clamp(value, min, max) {
@@ -50,6 +51,7 @@ Usage:
   push run --task "..."         Run once in headless mode
   push run "..."                Run once in headless mode
   push sessions                 List saved sessions
+  push skills                   List available skills
   push stats                    Show provider compliance stats
   push daemon start             Start background daemon
   push daemon stop              Stop background daemon
@@ -69,6 +71,7 @@ Options:
   --cwd <path>                  Workspace root (default: current directory)
   --session <id>                Resume session id
   --task <text>                 Task text for headless mode
+  --skill <name>               Run a skill (e.g. commit, review, fix)
   --accept <cmd>                Acceptance check command (repeatable)
   --max-rounds <n>              Tool-loop cap per user prompt (default: 8)
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
@@ -388,6 +391,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
   // Mutable context — allows mid-session provider/model switching
   const ctx = { providerConfig, apiKey };
   const config = await loadConfig();
+  const skills = await loadSkills(state.cwd);
 
   const approvalFn = makeInteractiveApprovalFn(rl);
   const onEvent = makeCLIEventHandler();
@@ -417,6 +421,8 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
   /model <name|#>      Switch model
   /provider            Show all providers with status
   /provider <name|#>   Switch provider
+  /skills              List available skills
+  /<skill> [args]      Run a skill (e.g. /commit, /review src/app.ts)
   /session             Print session id
   /exit | /quit        Exit
 `,
@@ -439,6 +445,62 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       if (line === '/provider' || line.startsWith('/provider ')) {
         const arg = line.slice('/provider'.length).trim();
         await handleProviderCommand(arg || null, ctx, state, config);
+        continue;
+      }
+
+      // /skills — list loaded skills
+      if (line === '/skills') {
+        if (skills.size === 0) {
+          process.stdout.write('No skills loaded.\n');
+        } else {
+          for (const [name, skill] of skills) {
+            const tag = skill.source === 'workspace' ? ' (workspace)' : '';
+            process.stdout.write(`  /${name}  ${skill.description}${tag}\n`);
+          }
+        }
+        continue;
+      }
+
+      // /<name> [args] — skill dispatch
+      if (line.startsWith('/')) {
+        const spaceIdx = line.indexOf(' ');
+        const cmdName = (spaceIdx === -1 ? line.slice(1) : line.slice(1, spaceIdx));
+        const skill = skills.get(cmdName);
+        if (skill) {
+          const args = spaceIdx === -1 ? '' : line.slice(spaceIdx + 1).trim();
+          const prompt = interpolateSkill(skill.promptTemplate, args);
+          state.messages.push({ role: 'user', content: prompt });
+          await appendSessionEvent(state, 'user_message', { chars: prompt.length, preview: prompt.slice(0, 280), skill: cmdName });
+
+          const ac = new AbortController();
+          const onSigint = () => ac.abort();
+          process.on('SIGINT', onSigint);
+
+          try {
+            const result = await runAssistantLoop(state, ctx.providerConfig, ctx.apiKey, maxRounds, {
+              approvalFn,
+              signal: ac.signal,
+              emit: onEvent,
+            });
+            await saveSessionState(state);
+          } catch (err) {
+            if (err.name === 'AbortError') {
+              await saveSessionState(state);
+              process.stdout.write('\n[cancelled]\n');
+            } else {
+              const message = err instanceof Error ? err.message : String(err);
+              await appendSessionEvent(state, 'error', { message });
+              await saveSessionState(state);
+              process.stderr.write(`Error: ${message}\n`);
+            }
+          } finally {
+            process.removeListener('SIGINT', onSigint);
+          }
+          continue;
+        }
+
+        // Unknown /command — hint
+        process.stdout.write(`Unknown command: ${line.split(' ')[0]}. Type /help for commands or /skills for skills.\n`);
         continue;
       }
 
@@ -973,6 +1035,7 @@ export async function main() {
       cwd: { type: 'string' },
       session: { type: 'string' },
       task: { type: 'string' },
+      skill: { type: 'string' },
       accept: { type: 'string', multiple: true },
       'max-rounds': { type: 'string' },
       maxRounds: { type: 'string' },
@@ -1047,6 +1110,25 @@ export async function main() {
     return 0;
   }
 
+  if (subcommand === 'skills') {
+    const cwd = path.resolve(values.cwd || process.cwd());
+    const skills = await loadSkills(cwd);
+    if (values.json) {
+      const arr = [...skills.values()].map(({ name, description, source, filePath }) => ({ name, description, source, filePath }));
+      process.stdout.write(`${JSON.stringify(arr, null, 2)}\n`);
+      return 0;
+    }
+    if (skills.size === 0) {
+      process.stdout.write('No skills found.\n');
+      return 0;
+    }
+    for (const [name, skill] of skills) {
+      const tag = skill.source === 'workspace' ? ' (workspace)' : '';
+      process.stdout.write(`  /${name}  ${skill.description}${tag}\n`);
+    }
+    return 0;
+  }
+
   if (subcommand === 'stats') {
     const filter = {};
     if (values.provider) filter.provider = values.provider;
@@ -1071,7 +1153,7 @@ export async function main() {
   }
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
-    throw new Error(`Unknown command: ${subcommand}. Known commands: run, config, sessions, stats, daemon, attach. See: push --help`);
+    throw new Error(`Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach. See: push --help`);
   }
 
   const provider = parseProvider(values.provider);
@@ -1101,12 +1183,24 @@ export async function main() {
   const positionalTask = subcommand === 'run'
     ? positionals.slice(1).join(' ').trim()
     : '';
-  const task = (values.task || positionalTask).trim();
+  let task = (values.task || positionalTask).trim();
   const runHeadlessMode = values.headless || subcommand === 'run';
+
+  // --skill: expand skill template into the task
+  if (values.skill) {
+    const skillMap = await loadSkills(cwd);
+    const skill = skillMap.get(values.skill);
+    if (!skill) {
+      const available = [...skillMap.keys()].join(', ') || '(none)';
+      throw new Error(`Unknown skill: ${values.skill}. Available: ${available}`);
+    }
+    task = interpolateSkill(skill.promptTemplate, task);
+  }
 
   if (!runHeadlessMode) {
     const ignored = [];
     if (values.task) ignored.push('--task');
+    if (values.skill) ignored.push('--skill');
     if (values.accept) ignored.push('--accept');
     if (values.json) ignored.push('--json');
     if (ignored.length > 0) {
@@ -1128,7 +1222,7 @@ export async function main() {
 
   if (runHeadlessMode) {
     if (!task) {
-      throw new Error('Headless mode requires a task. Use: push run --task "..."');
+      throw new Error('Headless mode requires a task. Use: push run --task "..." or push run --skill <name>');
     }
     const allowExec = values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
     return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks, { allowExec });
