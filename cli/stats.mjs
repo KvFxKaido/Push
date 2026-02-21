@@ -3,6 +3,7 @@
  * from persisted session event logs.
  */
 import { listSessions, loadSessionEvents } from './session-store.mjs';
+import { fmt } from './format.mjs';
 
 /**
  * Aggregate stats across all (or filtered) sessions.
@@ -96,35 +97,39 @@ export async function aggregateStats(filter = {}) {
 export function formatStats({ providers, totals }) {
   const lines = [];
 
-  lines.push('Push CLI — Provider Stats');
-  lines.push('═'.repeat(50));
+  lines.push(fmt.bold('Push CLI — Provider Stats'));
+  lines.push(fmt.dim('═'.repeat(50)));
 
   if (totals.sessions === 0) {
-    lines.push('No sessions found.');
+    lines.push(fmt.dim('No sessions found.'));
     return lines.join('\n');
   }
 
   lines.push(`Total: ${totals.sessions} sessions, ${totals.runs} runs, ${totals.rounds} rounds`);
-  lines.push(`Tool calls: ${totals.toolCalls} | Errors: ${totals.toolErrors} | Malformed: ${totals.malformedCalls}`);
+  const errCount = totals.toolErrors > 0 ? fmt.yellow(String(totals.toolErrors)) : String(totals.toolErrors);
+  const malCount = totals.malformedCalls > 0 ? fmt.yellow(String(totals.malformedCalls)) : String(totals.malformedCalls);
+  lines.push(`${fmt.dim('Tool calls:')} ${totals.toolCalls} ${fmt.dim('|')} ${fmt.dim('Errors:')} ${errCount} ${fmt.dim('|')} ${fmt.dim('Malformed:')} ${malCount}`);
   lines.push('');
 
   const keys = Object.keys(providers).sort();
   for (const key of keys) {
     const p = providers[key];
-    lines.push(`─ ${key}`);
-    lines.push(`  Sessions: ${p.sessions} | Runs: ${p.runs} | Rounds: ${p.rounds}`);
+    lines.push(`${fmt.bold('─ ' + key)}`);
+    lines.push(`  ${fmt.dim('Sessions:')} ${p.sessions} ${fmt.dim('|')} ${fmt.dim('Runs:')} ${p.runs} ${fmt.dim('|')} ${fmt.dim('Rounds:')} ${p.rounds}`);
     const avgRounds = p.runs > 0 ? (p.rounds / p.runs).toFixed(1) : '-';
-    lines.push(`  Avg rounds/run: ${avgRounds}`);
-    lines.push(`  Tool calls: ${p.toolCalls} | Errors: ${p.toolErrors} | Malformed: ${p.malformedCalls}`);
+    lines.push(`  ${fmt.dim('Avg rounds/run:')} ${avgRounds}`);
+    const pErr = p.toolErrors > 0 ? fmt.yellow(String(p.toolErrors)) : String(p.toolErrors);
+    const pMal = p.malformedCalls > 0 ? fmt.yellow(String(p.malformedCalls)) : String(p.malformedCalls);
+    lines.push(`  ${fmt.dim('Tool calls:')} ${p.toolCalls} ${fmt.dim('|')} ${fmt.dim('Errors:')} ${pErr} ${fmt.dim('|')} ${fmt.dim('Malformed:')} ${pMal}`);
 
     if (Object.keys(p.outcomes).length > 0) {
       const outcomeStr = Object.entries(p.outcomes).map(([k, v]) => `${k}:${v}`).join(', ');
-      lines.push(`  Outcomes: ${outcomeStr}`);
+      lines.push(`  ${fmt.dim('Outcomes:')} ${outcomeStr}`);
     }
 
     if (Object.keys(p.malformedReasons).length > 0) {
       const reasonStr = Object.entries(p.malformedReasons).map(([k, v]) => `${k}:${v}`).join(', ');
-      lines.push(`  Malformed reasons: ${reasonStr}`);
+      lines.push(`  ${fmt.dim('Malformed reasons:')} ${reasonStr}`);
     }
 
     lines.push('');

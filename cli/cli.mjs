@@ -15,6 +15,7 @@ import { aggregateStats, formatStats } from './stats.mjs';
 import { getToolCallMetrics } from './tool-call-metrics.mjs';
 import { getSocketPath, getPidPath } from './pushd.mjs';
 import { loadSkills, interpolateSkill } from './skill-loader.mjs';
+import { fmt, Spinner } from './format.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -121,6 +122,7 @@ async function runAcceptanceChecks(cwd, checks) {
 
 function makeCLIEventHandler() {
   let isThinking = false;
+  const spinner = new Spinner();
 
   return (event) => {
     switch (event.type) {
@@ -129,21 +131,31 @@ function makeCLIEventHandler() {
           process.stdout.write('\n');
           isThinking = false;
         }
-        process.stdout.write(`[tool] ${event.payload.toolName}\n`);
+        spinner.stop();
+        process.stdout.write(`${fmt.dim('[tool]')} ${event.payload.toolName}\n`);
+        spinner.start(event.payload.toolName);
         break;
-      case 'tool_result':
+      case 'tool_result': {
+        spinner.stop();
         const ok = !event.payload.isError;
         const text = truncateText(event.payload.text, 420);
-        process.stdout.write(`[tool:${ok ? 'ok' : 'error'}] ${text}\n`);
+        if (ok) {
+          process.stdout.write(`${fmt.green('[tool:ok]')} ${fmt.dim(text)}\n`);
+        } else {
+          process.stdout.write(`${fmt.red('[tool:error]')} ${text}\n`);
+        }
         break;
+      }
       case 'status':
         if (event.payload.phase === 'context_trimming') {
-          process.stdout.write(`\n[context] ${event.payload.detail}\n`);
+          spinner.stop();
+          process.stdout.write(`\n${fmt.dim('[context] ' + event.payload.detail)}\n`);
         }
         break;
       case 'assistant_token':
+        spinner.stop();
         if (!isThinking) {
-          process.stdout.write('\nassistant> ');
+          process.stdout.write(`\n${fmt.bold(fmt.cyan('assistant>'))} `);
           isThinking = true;
         }
         process.stdout.write(event.payload.text);
@@ -155,17 +167,19 @@ function makeCLIEventHandler() {
         }
         break;
       case 'warning':
-        process.stdout.write(`\n[warning] ${event.payload.message || event.payload.code}\n`);
+        spinner.stop();
+        process.stdout.write(`\n${fmt.warn('[warning]')} ${event.payload.message || event.payload.code}\n`);
         break;
       case 'error':
-        // Tool loop errors etc
-        process.stdout.write(`\n[error] ${event.payload.message}\n`);
+        spinner.stop();
+        process.stdout.write(`\n${fmt.error('[error]')} ${event.payload.message}\n`);
         break;
       case 'run_complete':
+        spinner.stop();
         if (event.payload.outcome === 'aborted') {
-            process.stdout.write('\n[cancelled]\n');
+            process.stdout.write(`\n${fmt.yellow('[cancelled]')}\n`);
         } else if (event.payload.outcome === 'failed') {
-            process.stdout.write(`\n[failed] ${event.payload.summary}\n`);
+            process.stdout.write(`\n${fmt.error('[failed]')} ${event.payload.summary}\n`);
         }
         break;
     }
@@ -194,7 +208,7 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
       if (jsonOutput) {
         process.stdout.write(`${JSON.stringify({ sessionId: state.sessionId, runId: result.runId || null, outcome: 'aborted' }, null, 2)}\n`);
       } else {
-        process.stderr.write('[aborted]\n');
+        process.stderr.write(`${fmt.yellow('[aborted]')}\n`);
       }
       return 130;
     }
@@ -229,9 +243,11 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
     } else {
       process.stdout.write(`${result.finalAssistantText}\n`);
       if (acceptance) {
-        process.stdout.write(`\nAcceptance checks: ${acceptance.passed ? 'PASS' : 'FAIL'}\n`);
+        const verdict = acceptance.passed ? fmt.green('PASS') : fmt.red('FAIL');
+        process.stdout.write(`\nAcceptance checks: ${verdict}\n`);
         for (const check of acceptance.checks) {
-          process.stdout.write(`- [${check.ok ? 'ok' : 'fail'}] ${check.command} (exit ${check.exitCode})\n`);
+          const tag = check.ok ? fmt.green('[ok]') : fmt.red('[fail]');
+          process.stdout.write(`- ${tag} ${check.command} (exit ${check.exitCode})\n`);
         }
       }
     }
@@ -243,7 +259,7 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
       if (jsonOutput) {
         process.stdout.write(`${JSON.stringify({ sessionId: state.sessionId, outcome: 'aborted' }, null, 2)}\n`);
       } else {
-        process.stderr.write('[aborted]\n');
+        process.stderr.write(`${fmt.yellow('[aborted]')}\n`);
       }
       return 130;
     }
@@ -255,7 +271,7 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
     if (jsonOutput) {
       process.stdout.write(`${JSON.stringify({ sessionId: state.sessionId, outcome: 'error', error: message }, null, 2)}\n`);
     } else {
-      process.stderr.write(`Error: ${message}\n`);
+      process.stderr.write(`${fmt.error('Error:')} ${message}\n`);
     }
     return 1;
   } finally {
@@ -265,7 +281,7 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
 
 function makeInteractiveApprovalFn(rl) {
   return async (tool, detail) => {
-    process.stdout.write(`\n[!] High-risk operation detected:\n    ${tool}: ${detail}\n`);
+    process.stdout.write(`\n${fmt.yellow('[!]')} ${fmt.warn('High-risk operation detected:')}\n    ${tool}: ${detail}\n`);
     const answer = await rl.question('    Allow? (y/N) ');
     return answer.trim().toLowerCase() === 'y';
   };
@@ -398,14 +414,14 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
 
   const nativeFC = resolveNativeFC(ctx.providerConfig);
   process.stdout.write(
-    `Push CLI\n` +
-    `session: ${state.sessionId}\n` +
-    `provider: ${ctx.providerConfig.id} | model: ${state.model}\n` +
-    `endpoint: ${ctx.providerConfig.url}\n` +
-    `workspace: ${state.cwd}\n` +
-    `localSandbox: ${process.env.PUSH_LOCAL_SANDBOX === 'true'}\n` +
-    `nativeFC: ${nativeFC}\n` +
-    `Type /help for commands.\n`,
+    `${fmt.bold('Push CLI')}\n` +
+    `${fmt.dim('session:')} ${state.sessionId}\n` +
+    `${fmt.dim('provider:')} ${ctx.providerConfig.id} ${fmt.dim('|')} ${fmt.dim('model:')} ${state.model}\n` +
+    `${fmt.dim('endpoint:')} ${ctx.providerConfig.url}\n` +
+    `${fmt.dim('workspace:')} ${state.cwd}\n` +
+    `${fmt.dim('localSandbox:')} ${process.env.PUSH_LOCAL_SANDBOX === 'true'}\n` +
+    `${fmt.dim('nativeFC:')} ${nativeFC}\n` +
+    `${fmt.dim('Type /help for commands.')}\n`,
   );
 
   try {
@@ -416,16 +432,15 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       if (line === '/exit' || line === '/quit') break;
       if (line === '/help') {
         process.stdout.write(
-          `Commands:
-  /model               Show current model + available models
-  /model <name|#>      Switch model
-  /provider            Show all providers with status
-  /provider <name|#>   Switch provider
-  /skills              List available skills
-  /<skill> [args]      Run a skill (e.g. /commit, /review src/app.ts)
-  /session             Print session id
-  /exit | /quit        Exit
-`,
+          `Commands:\n` +
+          `  ${fmt.bold('/model')}               Show current model + available models\n` +
+          `  ${fmt.bold('/model')} <name|#>      Switch model\n` +
+          `  ${fmt.bold('/provider')}            Show all providers with status\n` +
+          `  ${fmt.bold('/provider')} <name|#>   Switch provider\n` +
+          `  ${fmt.bold('/skills')}              List available skills\n` +
+          `  ${fmt.bold('/<skill>')} [args]      Run a skill (e.g. /commit, /review src/app.ts)\n` +
+          `  ${fmt.bold('/session')}             Print session id\n` +
+          `  ${fmt.bold('/exit')} | ${fmt.bold('/quit')}        Exit\n`,
         );
         continue;
       }
@@ -454,8 +469,8 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           process.stdout.write('No skills loaded.\n');
         } else {
           for (const [name, skill] of skills) {
-            const tag = skill.source === 'workspace' ? ' (workspace)' : '';
-            process.stdout.write(`  /${name}  ${skill.description}${tag}\n`);
+            const tag = skill.source === 'workspace' ? fmt.dim(' (workspace)') : '';
+            process.stdout.write(`  ${fmt.bold('/' + name)}  ${skill.description}${tag}\n`);
           }
         }
         continue;
@@ -486,12 +501,12 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           } catch (err) {
             if (err.name === 'AbortError') {
               await saveSessionState(state);
-              process.stdout.write('\n[cancelled]\n');
+              process.stdout.write(`\n${fmt.yellow('[cancelled]')}\n`);
             } else {
               const message = err instanceof Error ? err.message : String(err);
               await appendSessionEvent(state, 'error', { message });
               await saveSessionState(state);
-              process.stderr.write(`Error: ${message}\n`);
+              process.stderr.write(`${fmt.error('Error:')} ${message}\n`);
             }
           } finally {
             process.removeListener('SIGINT', onSigint);
@@ -500,7 +515,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
         }
 
         // Unknown /command — hint
-        process.stdout.write(`Unknown command: ${line.split(' ')[0]}. Type /help for commands or /skills for skills.\n`);
+        process.stdout.write(fmt.warn(`Unknown command: ${line.split(' ')[0]}. Type /help for commands or /skills for skills.`) + '\n');
         continue;
       }
 
@@ -528,12 +543,12 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       } catch (err) {
         if (err.name === 'AbortError') {
           await saveSessionState(state);
-          process.stdout.write('\n[cancelled]\n');
+          process.stdout.write(`\n${fmt.yellow('[cancelled]')}\n`);
         } else {
           const message = err instanceof Error ? err.message : String(err);
           await appendSessionEvent(state, 'error', { message });
           await saveSessionState(state);
-          process.stderr.write(`Error: ${message}\n`);
+          process.stderr.write(`${fmt.error('Error:')} ${message}\n`);
         }
       } finally {
         process.removeListener('SIGINT', onSigint);
@@ -549,7 +564,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
   const malformedTotal = Object.values(metrics.malformed).reduce((a, b) => a + b, 0);
   if (malformedTotal > 0) {
     const reasons = Object.entries(metrics.malformed).map(([k, v]) => `${k}:${v}`).join(', ');
-    process.stdout.write(`\n[stats] ${malformedTotal} malformed tool call(s) this session: ${reasons}\n`);
+    process.stdout.write(`\n${fmt.dim('[stats]')} ${fmt.yellow(String(malformedTotal))} malformed tool call(s) this session: ${reasons}\n`);
   }
 
   return 0;
@@ -772,15 +787,15 @@ async function runConfigInit(values, config) {
 
     const configPath = await saveConfig(next);
     process.stdout.write(
-      `\n┌─ Saved to ${configPath}\n` +
-      `│  provider:     ${provider}\n` +
-      `│  model:        ${branch.model}\n` +
-      `│  endpoint:     ${branch.url}\n` +
-      `│  apiKey:       ${branch.apiKey ? maskSecret(branch.apiKey) : '(not set)'}\n` +
-      `│  tavilyKey:    ${next.tavilyApiKey ? maskSecret(next.tavilyApiKey) : '(not set)'}\n` +
-      `│  webSearch:    ${next.webSearchBackend || 'auto'}\n` +
-      `│  localSandbox: ${next.localSandbox}\n` +
-      `└────────────────────────────────\n`
+      `\n${fmt.dim('┌─')} Saved to ${fmt.bold(configPath)}\n` +
+      `${fmt.dim('│')}  ${fmt.dim('provider:')}     ${provider}\n` +
+      `${fmt.dim('│')}  ${fmt.dim('model:')}        ${branch.model}\n` +
+      `${fmt.dim('│')}  ${fmt.dim('endpoint:')}     ${branch.url}\n` +
+      `${fmt.dim('│')}  ${fmt.dim('apiKey:')}       ${branch.apiKey ? maskSecret(branch.apiKey) : '(not set)'}\n` +
+      `${fmt.dim('│')}  ${fmt.dim('tavilyKey:')}    ${next.tavilyApiKey ? maskSecret(next.tavilyApiKey) : '(not set)'}\n` +
+      `${fmt.dim('│')}  ${fmt.dim('webSearch:')}    ${next.webSearchBackend || 'auto'}\n` +
+      `${fmt.dim('│')}  ${fmt.dim('localSandbox:')} ${next.localSandbox}\n` +
+      `${fmt.dim('└────────────────────────────────')}\n`
     );
 
     return 0;
@@ -858,14 +873,14 @@ async function runConfigSubcommand(values, positionals) {
 
   const configPath = await saveConfig(next);
   process.stdout.write(
-    `Saved config to ${configPath}\n` +
-    `provider: ${next.provider}\n` +
-    `model: ${next[provider]?.model || '(unchanged)'}\n` +
-    `url: ${next[provider]?.url || '(unchanged)'}\n` +
-    `apiKey: ${next[provider]?.apiKey ? maskSecret(next[provider].apiKey) : '(unchanged)'}\n` +
-    `tavilyKey: ${next.tavilyApiKey ? maskSecret(next.tavilyApiKey) : '(unchanged)'}\n` +
-    `webSearch: ${next.webSearchBackend || 'auto'}\n` +
-    `localSandbox: ${next.localSandbox ?? '(unchanged)'}\n`
+    `Saved config to ${fmt.bold(configPath)}\n` +
+    `${fmt.dim('provider:')} ${next.provider}\n` +
+    `${fmt.dim('model:')} ${next[provider]?.model || '(unchanged)'}\n` +
+    `${fmt.dim('url:')} ${next[provider]?.url || '(unchanged)'}\n` +
+    `${fmt.dim('apiKey:')} ${next[provider]?.apiKey ? maskSecret(next[provider].apiKey) : '(unchanged)'}\n` +
+    `${fmt.dim('tavilyKey:')} ${next.tavilyApiKey ? maskSecret(next.tavilyApiKey) : '(unchanged)'}\n` +
+    `${fmt.dim('webSearch:')} ${next.webSearchBackend || 'auto'}\n` +
+    `${fmt.dim('localSandbox:')} ${next.localSandbox ?? '(unchanged)'}\n`
   );
   return 0;
 }
@@ -979,7 +994,7 @@ async function runAttach(sessionId) {
 
           if (msg.kind === 'response' && msg.type === 'attach_session') {
             if (!msg.ok) {
-              process.stderr.write(`Attach failed: ${msg.error?.message || 'unknown error'}\n`);
+              process.stderr.write(`${fmt.error('Attach failed:')} ${msg.error?.message || 'unknown error'}\n`);
               socket.end();
               resolve(1);
               return;
@@ -1004,7 +1019,7 @@ async function runAttach(sessionId) {
     });
 
     socket.on('error', (err) => {
-      process.stderr.write(`Connection error: ${err.message}\n`);
+      process.stderr.write(`${fmt.error('Connection error:')} ${err.message}\n`);
       resolve(1);
     });
 
@@ -1053,7 +1068,7 @@ export async function main() {
   // Warn on unknown flags (strict: false swallows them silently)
   for (const key of Object.keys(values)) {
     if (!KNOWN_OPTIONS.has(key)) {
-      process.stderr.write(`Warning: unknown flag --${key}\n`);
+      process.stderr.write(`${fmt.warn('Warning:')} unknown flag --${key}\n`);
     }
   }
 
@@ -1123,8 +1138,8 @@ export async function main() {
       return 0;
     }
     for (const [name, skill] of skills) {
-      const tag = skill.source === 'workspace' ? ' (workspace)' : '';
-      process.stdout.write(`  /${name}  ${skill.description}${tag}\n`);
+      const tag = skill.source === 'workspace' ? fmt.dim(' (workspace)') : '';
+      process.stdout.write(`  ${fmt.bold('/' + name)}  ${skill.description}${tag}\n`);
     }
     return 0;
   }
@@ -1204,7 +1219,7 @@ export async function main() {
     if (values.accept) ignored.push('--accept');
     if (values.json) ignored.push('--json');
     if (ignored.length > 0) {
-      process.stderr.write(`Warning: ${ignored.join(', ')} ignored in interactive mode. Use: push run\n`);
+      process.stderr.write(`${fmt.warn('Warning:')} ${ignored.join(', ')} ignored in interactive mode. Use: push run\n`);
     }
   }
   const requestedModel = values.model || providerConfig.defaultModel;
@@ -1241,6 +1256,6 @@ main()
   })
   .catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`Error: ${message}\n`);
+    process.stderr.write(`${fmt.error('Error:')} ${message}\n`);
     process.exitCode = 1;
   });
