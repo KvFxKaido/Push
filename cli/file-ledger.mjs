@@ -46,17 +46,14 @@ export function updateFileLedger(ledger, call, result) {
 }
 
 export function getLedgerSummary(ledger) {
-  const files = Object.entries(ledger.files);
-  const summary = {
-    total: files.length,
-    never_read: 0,
-    partial_read: 0,
-    fully_read: 0,
-    model_authored: 0,
+  const entries = Object.entries(ledger.files);
+  return {
+    total: entries.length,
+    files: entries.map(([path, v]) => ({
+      path,
+      status: v.status,
+      reads: v.reads,
+      writes: v.writes,
+    })),
   };
-  for (const [, v] of files) {
-    const status = v.status;
-    if (summary[status] !== undefined) summary[status] += 1;
-  }
-  return summary;
 }

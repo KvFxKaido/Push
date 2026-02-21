@@ -100,8 +100,9 @@ export function applyHashlineEdits(content, edits) {
 
     if (op === 'replace_line') {
       if (typeof edit.content !== 'string') throw new Error('replace_line requires string content');
-      lines[idx] = edit.content;
-      applied.push({ op, line: idx + 1 });
+      const newLines = edit.content.split('\n');
+      lines.splice(idx, 1, ...newLines);
+      applied.push({ op, line: idx + 1, linesInserted: newLines.length });
       continue;
     }
 
@@ -113,15 +114,17 @@ export function applyHashlineEdits(content, edits) {
 
     if (op === 'insert_after') {
       if (typeof edit.content !== 'string') throw new Error('insert_after requires string content');
-      lines.splice(idx + 1, 0, edit.content);
-      applied.push({ op, line: idx + 2 });
+      const newLines = edit.content.split('\n');
+      lines.splice(idx + 1, 0, ...newLines);
+      applied.push({ op, line: idx + 2, linesInserted: newLines.length });
       continue;
     }
 
     if (op === 'insert_before') {
       if (typeof edit.content !== 'string') throw new Error('insert_before requires string content');
-      lines.splice(idx, 0, edit.content);
-      applied.push({ op, line: idx + 1 });
+      const newLines = edit.content.split('\n');
+      lines.splice(idx, 0, ...newLines);
+      applied.push({ op, line: idx + 1, linesInserted: newLines.length });
       continue;
     }
 

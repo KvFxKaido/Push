@@ -4,6 +4,7 @@ import { appendSessionEvent, saveSessionState, makeRunId } from './session-store
 import { streamCompletion } from './provider.mjs';
 import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.mjs';
 import { recordMalformedToolCall } from './tool-call-metrics.mjs';
+import { buildWorkspaceSnapshot, loadProjectInstructions } from './workspace-context.mjs';
 
 export const DEFAULT_MAX_ROUNDS = 8;
 
@@ -45,8 +46,11 @@ function applyWorkingMemoryUpdate(state, args) {
   return mem;
 }
 
-export function buildSystemPrompt(workspaceRoot) {
-  return `You are Push CLI, a coding assistant running in a local workspace.
+export async function buildSystemPrompt(workspaceRoot) {
+  const snapshot = await buildWorkspaceSnapshot(workspaceRoot).catch(() => '');
+  const instructions = await loadProjectInstructions(workspaceRoot).catch(() => null);
+
+  let prompt = `You are Push CLI, a coding assistant running in a local workspace.
 Workspace root: ${workspaceRoot}
 
 You can read files, run commands, and write files using tools.
@@ -56,6 +60,16 @@ Each tool-loop round is expensive — plan before acting, batch related reads, a
 Use coder_update_state to keep a concise working plan; it is persisted and reinjected.
 
 ${TOOL_PROTOCOL}`;
+
+  if (snapshot) {
+    prompt += `\n\n${snapshot}`;
+  }
+
+  if (instructions) {
+    prompt += `\n\n[PROJECT_INSTRUCTIONS source="${instructions.file}"]\n${instructions.content}\n[/PROJECT_INSTRUCTIONS]`;
+  }
+
+  return prompt;
 }
 
 export function buildToolResultMessage(call, result, metaEnvelope = null) {
@@ -96,7 +110,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     state.workingMemory = createWorkingMemory();
   }
 
-  async function executeOneToolCall(call, round) {
+  async function executeOneToolCall(call, round, includeMemory = true) {
     if (streamToStdout) {
       process.stdout.write(`[tool] ${call.tool}\n`);
     }
@@ -129,8 +143,9 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     const metaEnvelope = {
       runId,
       round,
+      contextChars,
       ledger: getLedgerSummary(fileLedger),
-      workingMemory: state.workingMemory,
+      ...(includeMemory ? { workingMemory: state.workingMemory } : {}),
     };
 
     state.messages.push({ role: 'user', content: buildToolResultMessage(call, result, metaEnvelope) });
@@ -138,7 +153,10 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     return result;
   }
 
+  let contextChars = 0;
+
   for (let round = 1; round <= maxRounds; round++) {
+    contextChars = state.messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
     if (signal?.aborted) {
       await saveSessionState(state);
       await appendSessionEvent(state, 'run_complete', { runId, outcome: 'aborted', summary: 'Aborted by user.' }, runId);
@@ -199,7 +217,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
             text: 'Working memory updated.',
             meta: { workingMemory: updated },
           },
-          { runId, round, ledger: getLedgerSummary(fileLedger), workingMemory: updated },
+          { runId, round, contextChars, ledger: getLedgerSummary(fileLedger), workingMemory: updated },
         ),
       });
     }
@@ -237,11 +255,13 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     const mutateCalls = toolCalls.filter((call) => !isReadOnlyToolCall(call));
 
     if (readCalls.length > 0) {
-      await Promise.all(readCalls.map((call) => executeOneToolCall(call, round)));
+      await Promise.all(readCalls.map((call, i) =>
+        executeOneToolCall(call, round, i === readCalls.length - 1 && mutateCalls.length === 0)
+      ));
     }
 
     if (mutateCalls.length > 0) {
-      await executeOneToolCall(mutateCalls[0], round);
+      await executeOneToolCall(mutateCalls[0], round, true);
 
       for (let i = 1; i < mutateCalls.length; i++) {
         const call = mutateCalls[i];
@@ -269,7 +289,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
           content: buildToolResultMessage(
             call,
             result,
-            { runId, round, ledger: getLedgerSummary(fileLedger), workingMemory: state.workingMemory },
+            { runId, round, contextChars, ledger: getLedgerSummary(fileLedger), workingMemory: state.workingMemory },
           ),
         });
         toolsUsed.add(call.tool);

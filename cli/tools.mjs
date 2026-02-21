@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 export const MAX_TOOL_OUTPUT_CHARS = 24_000;
 const DEFAULT_SEARCH_RESULTS = 120;
 
-const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files']);
+const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'read_symbols', 'git_status', 'git_diff']);
 
 // Patterns that indicate high-risk shell commands requiring user approval
 const HIGH_RISK_PATTERNS = [
@@ -57,6 +57,10 @@ Available tools:
 - exec(command, timeout_ms?) — run a shell command
 - write_file(path, content) — write full file content
 - edit_file(path, edits, expected_version?) — surgical hashline edits. edits[] ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content
+- read_symbols(path) — extract function/class/type declarations from a file
+- git_status() — workspace git status (branch, dirty files)
+- git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
+- git_commit(message, paths?) — stage and commit files (all files if paths not specified)
 - coder_update_state(plan?, openTasks?, filesTouched?, assumptions?, errorsEncountered?) — update working memory (no filesystem action)
 
 Rules:
@@ -249,6 +253,23 @@ async function executeSearch(pattern, searchRoot, maxResults) {
 }
 
 /**
+ * Best-effort backup of a file before mutation.
+ * Stored in .push/backups/ with a timestamped name.
+ */
+export async function backupFile(filePath, workspaceRoot) {
+  try {
+    await fs.access(filePath); // only backup if file exists
+    const backupDir = path.join(workspaceRoot, '.push', 'backups');
+    await fs.mkdir(backupDir, { recursive: true });
+    const relative = path.relative(workspaceRoot, filePath).replace(/\//g, '__');
+    const backupPath = path.join(backupDir, `${relative}.${Date.now()}.bak`);
+    await fs.copyFile(filePath, backupPath);
+  } catch {
+    // Best-effort — don't fail the write/edit if backup fails
+  }
+}
+
+/**
  * Execute a tool call. Options:
  * - approvalFn(tool, detail): async fn that returns true to proceed, false to deny.
  *   If not provided, all calls proceed (headless default: deny high-risk).
@@ -383,6 +404,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       case 'write_file': {
         const filePath = ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
         const content = asString(call.args.content, 'content');
+        await backupFile(filePath, workspaceRoot);
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         await fs.writeFile(filePath, content, 'utf8');
         return {
@@ -397,6 +419,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const edits = Array.isArray(call.args.edits) ? call.args.edits : null;
         if (!edits) throw new Error('edits must be an array');
 
+        await backupFile(filePath, workspaceRoot);
         const before = await fs.readFile(filePath, 'utf8');
         const versionBefore = calculateContentVersion(before);
 
@@ -420,9 +443,19 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         await fs.writeFile(filePath, applied.content, 'utf8');
         const versionAfter = calculateContentVersion(applied.content);
 
+        // Build context preview around each edit site
+        const afterLines = applied.content.split('\n');
+        const previews = applied.applied.map(({ op, line }) => {
+          const center = line - 1; // 0-indexed
+          const start = Math.max(0, center - 3);
+          const end = Math.min(afterLines.length, center + 4);
+          return afterLines.slice(start, end).map((l, i) => `${start + i + 1}| ${l}`).join('\n');
+        });
+        const previewText = previews.length > 0 ? `\n\nContext after edits:\n${previews.join('\n---\n')}` : '';
+
         return {
           ok: true,
-          text: `Applied ${applied.applied.length} hashline edits to ${path.relative(workspaceRoot, filePath) || '.'}`,
+          text: `Applied ${applied.applied.length} hashline edits to ${path.relative(workspaceRoot, filePath) || '.'}${previewText}`,
           meta: {
             path: filePath,
             edits: applied.applied.length,
@@ -432,10 +465,114 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         };
       }
 
+      case 'read_symbols': {
+        const filePath = ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const content = await fs.readFile(filePath, 'utf8');
+        const lines = content.split('\n');
+        const symbols = [];
+        const patterns = [
+          { pat: /^\s*(export\s+)?(default\s+)?(async\s+)?function\s+(\w+)/, kind: 'function' },
+          { pat: /^\s*(export\s+)?(default\s+)?class\s+(\w+)/, kind: 'class' },
+          { pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(/, kind: 'function' },
+          { pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function/, kind: 'function' },
+          { pat: /^\s*def\s+(\w+)/, kind: 'function' },
+          { pat: /^\s*(async\s+)?fn\s+(\w+)/, kind: 'function' },
+          { pat: /^\s*func\s+(\w+)/, kind: 'function' },
+          { pat: /^\s*type\s+(\w+)/, kind: 'type' },
+          { pat: /^\s*(export\s+)?interface\s+(\w+)/, kind: 'interface' },
+        ];
+        lines.forEach((line, i) => {
+          for (const { pat, kind } of patterns) {
+            if (pat.test(line)) {
+              symbols.push({ line: i + 1, kind, text: line.trim() });
+              break;
+            }
+          }
+        });
+        const text = symbols.length > 0
+          ? symbols.map(s => `${s.line}| [${s.kind}] ${s.text}`).join('\n')
+          : 'No symbols found';
+        return {
+          ok: true,
+          text: truncateText(text),
+          meta: { path: filePath, symbolCount: symbols.length },
+        };
+      }
+
+      case 'git_status': {
+        try {
+          const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '--branch'], { cwd: workspaceRoot });
+          const lines = stdout.trim().split('\n');
+          const branchLine = lines[0] || '';
+          const branchMatch = branchLine.match(/^## (.+?)(?:\.\.\.(.+?))?(?:\s+\[(.+)\])?$/);
+          const branch = branchMatch ? branchMatch[1] : 'unknown';
+          const tracking = branchMatch ? (branchMatch[2] || null) : null;
+          const changes = lines.slice(1).filter(l => l.trim()).map(l => ({
+            status: l.slice(0, 2).trim(),
+            path: l.slice(3),
+          }));
+          return {
+            ok: true,
+            text: stdout.trim() || 'Clean working tree',
+            meta: { branch, tracking, changedFiles: changes.length },
+          };
+        } catch (err) {
+          return { ok: false, text: `git status failed: ${err.message}`, structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false } };
+        }
+      }
+
+      case 'git_diff': {
+        const diffPath = call.args.path ? ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path')) : null;
+        const staged = call.args.staged === true;
+        const gitArgs = ['diff'];
+        if (staged) gitArgs.push('--staged');
+        if (diffPath) gitArgs.push('--', diffPath);
+        try {
+          const { stdout } = await execFileAsync('git', gitArgs, { cwd: workspaceRoot, maxBuffer: 2_000_000 });
+          return {
+            ok: true,
+            text: truncateText(stdout.trim() || 'No changes'),
+            meta: { staged, path: diffPath },
+          };
+        } catch (err) {
+          return { ok: false, text: `git diff failed: ${err.message}`, structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false } };
+        }
+      }
+
+      case 'git_commit': {
+        const message = asString(call.args.message, 'message');
+        const paths = Array.isArray(call.args.paths) ? call.args.paths : [];
+
+        // This is a mutating operation — validate paths are inside workspace
+        const resolvedPaths = paths.map(p => ensureInsideWorkspace(workspaceRoot, p));
+
+        try {
+          // Stage specified files, or all if none specified
+          if (resolvedPaths.length > 0) {
+            await execFileAsync('git', ['add', '--', ...resolvedPaths], { cwd: workspaceRoot });
+          } else {
+            await execFileAsync('git', ['add', '-A'], { cwd: workspaceRoot });
+          }
+
+          const { stdout } = await execFileAsync('git', ['commit', '-m', message], { cwd: workspaceRoot });
+
+          // Get the commit SHA
+          const { stdout: sha } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd: workspaceRoot });
+
+          return {
+            ok: true,
+            text: stdout.trim(),
+            meta: { sha: sha.trim(), message, filesStaged: resolvedPaths.length || 'all' },
+          };
+        } catch (err) {
+          return { ok: false, text: `git commit failed: ${err.message}`, structuredError: { code: 'GIT_ERROR', message: err.message, retryable: true } };
+        }
+      }
+
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, exec, write_file, edit_file`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, exec, write_file, edit_file, read_symbols, git_status, git_diff, git_commit`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,

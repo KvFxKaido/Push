@@ -294,7 +294,7 @@ async function initSession(sessionId, provider, model, cwd) {
       assumptions: [],
       errorsEncountered: [],
     },
-    messages: [{ role: 'system', content: buildSystemPrompt(cwd) }],
+    messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
   };
   await appendSessionEvent(state, 'session_started', {
     sessionId: newSessionId,
