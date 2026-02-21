@@ -15,6 +15,7 @@ const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 const OLLAMA_SEARCH_URL = 'https://ollama.com/api/web_search';
 const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_TAVILY_API_KEY'];
 const OLLAMA_API_KEY_ENV_VARS = ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'];
+const WEB_SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
 const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'git_status', 'git_diff']);
 
@@ -61,7 +62,7 @@ Available tools:
 - read_file(path, start_line?, end_line?) — read file content with stable line hash anchors
 - list_dir(path?) — list files/directories
 - search_files(pattern, path?, max_results?) — text search in workspace
-- web_search(query, max_results?) — search the public web (Tavily if configured, otherwise Ollama native when provider=ollama+key, otherwise DuckDuckGo)
+- web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
 - exec(command, timeout_ms?) — run a shell command
 - write_file(path, content) — write full file content
 - edit_file(path, edits, expected_version?) — surgical hashline edits. edits[] ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content
@@ -283,16 +284,32 @@ function resolveTavilyApiKey() {
   return '';
 }
 
+function normalizeWebSearchBackend(rawValue) {
+  if (typeof rawValue !== 'string') return '';
+  const normalized = rawValue.trim().toLowerCase();
+  return WEB_SEARCH_BACKENDS.has(normalized) ? normalized : '';
+}
+
+function resolveWebSearchBackend(options = {}) {
+  const direct = normalizeWebSearchBackend(options.webSearchBackend);
+  if (direct) return direct;
+
+  const fromEnv = normalizeWebSearchBackend(process.env.PUSH_WEB_SEARCH_BACKEND);
+  if (fromEnv) return fromEnv;
+
+  return 'auto';
+}
+
 function resolveProviderId(options = {}) {
   if (typeof options.providerId !== 'string') return '';
   return options.providerId.toLowerCase();
 }
 
-function resolveOllamaApiKey(options = {}) {
+function resolveOllamaApiKey(options = {}, { allowAnyProvider = false } = {}) {
   const providerId = resolveProviderId(options);
-  if (providerId !== 'ollama') return '';
+  if (!allowAnyProvider && providerId !== 'ollama') return '';
 
-  if (typeof options.providerApiKey === 'string' && options.providerApiKey.trim()) {
+  if (providerId === 'ollama' && typeof options.providerApiKey === 'string' && options.providerApiKey.trim()) {
     return options.providerApiKey.trim();
   }
 
@@ -522,26 +539,55 @@ async function executeOllamaWebSearch(query, maxResults, apiKey, signal) {
 }
 
 function resolveWebSearchSourceHint(options = {}) {
+  const backend = resolveWebSearchBackend(options);
+  if (backend === 'tavily') return 'tavily';
+  if (backend === 'ollama') return 'ollama_native';
+  if (backend === 'duckduckgo') return 'duckduckgo_html';
   if (resolveTavilyApiKey()) return 'tavily';
   if (resolveOllamaApiKey(options)) return 'ollama_native';
   return 'duckduckgo_html';
 }
 
 async function executeWebSearch(query, maxResults, signal, options = {}) {
+  const backend = resolveWebSearchBackend(options);
+
+  if (backend === 'tavily') {
+    const tavilyApiKey = resolveTavilyApiKey();
+    if (!tavilyApiKey) {
+      throw new Error('Tavily API key not configured (search backend=tavily)');
+    }
+    const results = await executeTavilyWebSearch(query, maxResults, tavilyApiKey, signal);
+    return { backend, source: 'tavily', results };
+  }
+
+  if (backend === 'ollama') {
+    const ollamaApiKey = resolveOllamaApiKey(options, { allowAnyProvider: true });
+    if (!ollamaApiKey) {
+      throw new Error('Ollama API key not configured (search backend=ollama)');
+    }
+    const results = await executeOllamaWebSearch(query, maxResults, ollamaApiKey, signal);
+    return { backend, source: 'ollama_native', results };
+  }
+
+  if (backend === 'duckduckgo') {
+    const results = await executeDuckDuckGoWebSearch(query, maxResults, signal);
+    return { backend, source: 'duckduckgo_html', results };
+  }
+
   const tavilyApiKey = resolveTavilyApiKey();
   if (tavilyApiKey) {
     const results = await executeTavilyWebSearch(query, maxResults, tavilyApiKey, signal);
-    return { source: 'tavily', results };
+    return { backend, source: 'tavily', results };
   }
 
   const ollamaApiKey = resolveOllamaApiKey(options);
   if (ollamaApiKey) {
     const results = await executeOllamaWebSearch(query, maxResults, ollamaApiKey, signal);
-    return { source: 'ollama_native', results };
+    return { backend, source: 'ollama_native', results };
   }
 
   const results = await executeDuckDuckGoWebSearch(query, maxResults, signal);
-  return { source: 'duckduckgo_html', results };
+  return { backend, source: 'duckduckgo_html', results };
 }
 
 /**
@@ -634,6 +680,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const query = asString(call.args.query, 'query').trim();
         if (!query) throw new Error('query must be a non-empty string');
         const maxResults = clamp(asOptionalNumber(call.args.max_results) ?? DEFAULT_WEB_SEARCH_RESULTS, 1, MAX_WEB_SEARCH_RESULTS);
+        const backend = resolveWebSearchBackend(options);
         const sourceHint = resolveWebSearchSourceHint(options);
 
         try {
@@ -643,7 +690,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             return {
               ok: true,
               text: `No web results found for "${query}".`,
-              meta: { query, max_results: maxResults, results: 0, source },
+              meta: { query, max_results: maxResults, results: 0, source, backend },
             };
           }
 
@@ -664,6 +711,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               max_results: maxResults,
               results: results.length,
               source,
+              backend,
             },
           };
         } catch (err) {
@@ -677,7 +725,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               message,
               retryable: true,
             },
-            meta: { query, max_results: maxResults, source: sourceHint },
+            meta: { query, max_results: maxResults, source: sourceHint, backend },
           };
         }
       }

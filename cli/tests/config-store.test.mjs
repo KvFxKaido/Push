@@ -6,6 +6,7 @@ const savedEnv = {
   PUSH_PROVIDER: process.env.PUSH_PROVIDER,
   PUSH_LOCAL_SANDBOX: process.env.PUSH_LOCAL_SANDBOX,
   PUSH_TAVILY_API_KEY: process.env.PUSH_TAVILY_API_KEY,
+  PUSH_WEB_SEARCH_BACKEND: process.env.PUSH_WEB_SEARCH_BACKEND,
 };
 
 function restoreEnv() {
@@ -39,5 +40,24 @@ describe('applyConfigToEnv', () => {
 
     assert.equal(process.env.PUSH_TAVILY_API_KEY, 'existing-env-key');
   });
-});
 
+  it('applies webSearchBackend to PUSH_WEB_SEARCH_BACKEND when missing', () => {
+    delete process.env.PUSH_WEB_SEARCH_BACKEND;
+
+    applyConfigToEnv({
+      webSearchBackend: 'duckduckgo',
+    });
+
+    assert.equal(process.env.PUSH_WEB_SEARCH_BACKEND, 'duckduckgo');
+  });
+
+  it('does not override existing PUSH_WEB_SEARCH_BACKEND', () => {
+    process.env.PUSH_WEB_SEARCH_BACKEND = 'tavily';
+
+    applyConfigToEnv({
+      webSearchBackend: 'duckduckgo',
+    });
+
+    assert.equal(process.env.PUSH_WEB_SEARCH_BACKEND, 'tavily');
+  });
+});

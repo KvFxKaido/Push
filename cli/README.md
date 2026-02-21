@@ -80,6 +80,7 @@ Runs a single task and exits. No interaction. High-risk commands are blocked (no
 ./push config set --provider mistral --model devstral-small-latest
 ./push config set --api-key sk-abc123
 ./push config set --tavily-key tvly-abc123
+./push config set --search-backend ollama
 ./push config set --sandbox     # enable local Docker sandbox
 ./push config set --no-sandbox  # disable it
 ```
@@ -103,6 +104,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OPENROUTER_API_KEY` | OpenRouter API key |
 | `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
+| `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_NATIVE_FC` | Native function-calling override: `0`/`false` = off, `1`/`true` = on |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
 | `PUSH_SESSION_DIR` | Override session storage location |
@@ -136,7 +138,7 @@ Available tools:
 | `read_file` | read | Read file with hashline-anchored line numbers |
 | `list_dir` | read | List directory contents |
 | `search_files` | read | Ripgrep text search (falls back to grep) |
-| `web_search` | read | Search the public web (Tavily when key is set, else Ollama native for provider=ollama+key, else DuckDuckGo HTML) |
+| `web_search` | read | Search the public web (backend configurable: `auto`/`tavily`/`ollama`/`duckduckgo`) |
 | `read_symbols` | read | Extract function/class/type declarations from a file |
 | `git_status` | read | Workspace git status (branch, dirty files) |
 | `git_diff` | read | Show git diff (optionally for a specific file, staged) |
@@ -255,6 +257,7 @@ Options:
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key
   --tavily-key <secret>   Set Tavily API key for web_search
+  --search-backend <mode> auto | tavily | ollama | duckduckgo
   --cwd <path>            Workspace root (default: cwd)
   --session <id>          Resume session
   --task <text>           Task for headless mode

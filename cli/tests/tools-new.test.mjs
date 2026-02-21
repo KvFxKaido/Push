@@ -18,6 +18,7 @@ const originalViteTavilyKey = process.env.VITE_TAVILY_API_KEY;
 const originalPushOllamaKey = process.env.PUSH_OLLAMA_API_KEY;
 const originalOllamaKey = process.env.OLLAMA_API_KEY;
 const originalViteOllamaKey = process.env.VITE_OLLAMA_API_KEY;
+const originalWebSearchBackend = process.env.PUSH_WEB_SEARCH_BACKEND;
 
 // ─── read_symbols ────────────────────────────────────────────────
 
@@ -150,6 +151,7 @@ describe('web_search', () => {
     delete process.env.PUSH_OLLAMA_API_KEY;
     delete process.env.OLLAMA_API_KEY;
     delete process.env.VITE_OLLAMA_API_KEY;
+    delete process.env.PUSH_WEB_SEARCH_BACKEND;
   });
 
   afterEach(() => {
@@ -166,6 +168,8 @@ describe('web_search', () => {
     else process.env.OLLAMA_API_KEY = originalOllamaKey;
     if (originalViteOllamaKey === undefined) delete process.env.VITE_OLLAMA_API_KEY;
     else process.env.VITE_OLLAMA_API_KEY = originalViteOllamaKey;
+    if (originalWebSearchBackend === undefined) delete process.env.PUSH_WEB_SEARCH_BACKEND;
+    else process.env.PUSH_WEB_SEARCH_BACKEND = originalWebSearchBackend;
   });
 
   it('uses Tavily when PUSH_TAVILY_API_KEY is set', async () => {
@@ -276,6 +280,62 @@ describe('web_search', () => {
     assert.equal(result.ok, true);
     assert.equal(result.meta.source, 'duckduckgo_html');
     assert.ok(capturedUrl.startsWith('https://html.duckduckgo.com/html/?q='));
+  });
+
+  it('honors PUSH_WEB_SEARCH_BACKEND=duckduckgo even when Tavily key is set', async () => {
+    process.env.PUSH_TAVILY_API_KEY = 'tvly-test-key';
+    process.env.PUSH_WEB_SEARCH_BACKEND = 'duckduckgo';
+
+    let capturedUrl = '';
+    globalThis.fetch = async (url) => {
+      capturedUrl = String(url);
+      return new Response(
+        '<html><body><a class="result__a" href="https://example.com/ddg-only">DDG Only</a><a class="result__snippet">forced backend</a></body></html>',
+        { status: 200 },
+      );
+    };
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'forced duckduckgo' } },
+      PUSH_ROOT,
+      { providerId: 'ollama', providerApiKey: 'ollama-test-key' },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.meta.backend, 'duckduckgo');
+    assert.equal(result.meta.source, 'duckduckgo_html');
+    assert.ok(capturedUrl.startsWith('https://html.duckduckgo.com/html/?q='));
+  });
+
+  it('returns clear error when backend=tavily and key is missing', async () => {
+    process.env.PUSH_WEB_SEARCH_BACKEND = 'tavily';
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'tavily required' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError.code, 'WEB_SEARCH_ERROR');
+    assert.equal(result.meta.backend, 'tavily');
+    assert.equal(result.meta.source, 'tavily');
+    assert.ok(result.text.includes('search backend=tavily'));
+  });
+
+  it('returns clear error when backend=ollama and key is missing', async () => {
+    process.env.PUSH_WEB_SEARCH_BACKEND = 'ollama';
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'ollama required' } },
+      PUSH_ROOT,
+      { providerId: 'openrouter' },
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError.code, 'WEB_SEARCH_ERROR');
+    assert.equal(result.meta.backend, 'ollama');
+    assert.equal(result.meta.source, 'ollama_native');
+    assert.ok(result.text.includes('search backend=ollama'));
   });
 
   it('returns no-results message when parser finds none', async () => {

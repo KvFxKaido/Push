@@ -47,6 +47,7 @@ export function applyConfigToEnv(config) {
     process.env.PUSH_LOCAL_SANDBOX = String(config.localSandbox);
   }
   setEnvIfMissing('PUSH_TAVILY_API_KEY', config.tavilyApiKey);
+  setEnvIfMissing('PUSH_WEB_SEARCH_BACKEND', config.webSearchBackend);
 
 
   const ollama = ensureObject(config.ollama);

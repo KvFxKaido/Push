@@ -21,12 +21,13 @@ const VERSION = '0.1.0';
 
 const KNOWN_OPTIONS = new Set([
   'provider', 'model', 'url', 'api-key', 'apiKey', 'cwd', 'session',
-  'tavily-key', 'tavilyKey',
+  'tavily-key', 'tavilyKey', 'search-backend', 'searchBackend',
   'task', 'accept', 'max-rounds', 'maxRounds', 'json', 'headless',
   'help', 'sandbox', 'no-sandbox', 'version',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'sessions', 'stats', 'daemon', 'attach']);
+const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -63,6 +64,7 @@ Options:
   --url <endpoint>              Override provider endpoint URL
   --api-key <secret>            Set provider API key (for push config set/init)
   --tavily-key <secret>         Set Tavily API key (for push config set/init)
+  --search-backend <mode>       auto | tavily | ollama | duckduckgo
   --cwd <path>                  Workspace root (default: current directory)
   --session <id>                Resume session id
   --task <text>                 Task text for headless mode
@@ -541,6 +543,17 @@ function parseProvider(raw) {
   throw new Error(`Unsupported provider: ${raw}`);
 }
 
+function parseSearchBackend(raw, fallback = 'auto') {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return fallback;
+  if (SEARCH_BACKENDS.has(value)) return value;
+  throw new Error(`Unsupported --search-backend value: ${raw}. Expected one of: auto, tavily, ollama, duckduckgo`);
+}
+
+function getSearchBackendArg(values) {
+  return values['search-backend'] || values.searchBackend;
+}
+
 function sanitizeConfig(config) {
   const redactProvider = (obj) => {
     const out = { ...obj };
@@ -551,6 +564,7 @@ function sanitizeConfig(config) {
     provider: config.provider || null,
     localSandbox: config.localSandbox ?? null,
     tavilyApiKey: config.tavilyApiKey ? maskSecret(config.tavilyApiKey) : null,
+    webSearchBackend: config.webSearchBackend || null,
     ollama: config.ollama ? redactProvider(config.ollama) : {},
     mistral: config.mistral ? redactProvider(config.mistral) : {},
     openrouter: config.openrouter ? redactProvider(config.openrouter) : {},
@@ -658,6 +672,23 @@ async function runConfigInit(values, config) {
       if (trimmed) tavilyApiKey = trimmed;
     }
 
+    // --- Web search backend (optional, global) ---
+    const searchBackendArg = getSearchBackendArg(values);
+    let webSearchBackend;
+    if (searchBackendArg) {
+      webSearchBackend = parseSearchBackend(searchBackendArg);
+    } else {
+      let currentBackend = 'auto';
+      try {
+        currentBackend = parseSearchBackend(config.webSearchBackend, 'auto');
+      } catch {
+        currentBackend = 'auto';
+      }
+      const input = await rl.question(`Web search backend [${currentBackend}] (auto|tavily|ollama|duckduckgo): `);
+      const trimmed = input.trim();
+      webSearchBackend = trimmed ? parseSearchBackend(trimmed) : currentBackend;
+    }
+
     // --- Local sandbox ---
     const localSandboxDefault = config.localSandbox ?? true;
     const localSandboxInput = await rl.question(`Local Docker sandbox (y/n) [${localSandboxDefault ? 'y' : 'n'}]: `);
@@ -670,6 +701,7 @@ async function runConfigInit(values, config) {
     branch.url = url;
     if (apiKey !== undefined) branch.apiKey = apiKey;
     if (tavilyApiKey !== undefined) next.tavilyApiKey = tavilyApiKey;
+    if (webSearchBackend !== undefined) next.webSearchBackend = webSearchBackend;
     next.localSandbox = localSandbox;
     next[provider] = branch;
 
@@ -681,6 +713,7 @@ async function runConfigInit(values, config) {
       `│  endpoint:     ${branch.url}\n` +
       `│  apiKey:       ${branch.apiKey ? maskSecret(branch.apiKey) : '(not set)'}\n` +
       `│  tavilyKey:    ${next.tavilyApiKey ? maskSecret(next.tavilyApiKey) : '(not set)'}\n` +
+      `│  webSearch:    ${next.webSearchBackend || 'auto'}\n` +
       `│  localSandbox: ${next.localSandbox}\n` +
       `└────────────────────────────────\n`
     );
@@ -738,6 +771,11 @@ async function runConfigSubcommand(values, positionals) {
     next.tavilyApiKey = tavilyKeyArg;
     changed = true;
   }
+  const searchBackendArg = getSearchBackendArg(values);
+  if (searchBackendArg) {
+    next.webSearchBackend = parseSearchBackend(searchBackendArg);
+    changed = true;
+  }
   if (values.sandbox !== undefined) {
     next.localSandbox = true;
     changed = true;
@@ -750,7 +788,7 @@ async function runConfigSubcommand(values, positionals) {
   next[provider] = branch;
 
   if (!changed) {
-    throw new Error('No config changes provided. Use one or more of: --provider, --model, --url, --api-key, --tavily-key, --sandbox, --no-sandbox');
+    throw new Error('No config changes provided. Use one or more of: --provider, --model, --url, --api-key, --tavily-key, --search-backend, --sandbox, --no-sandbox');
   }
 
   const configPath = await saveConfig(next);
@@ -761,6 +799,7 @@ async function runConfigSubcommand(values, positionals) {
     `url: ${next[provider]?.url || '(unchanged)'}\n` +
     `apiKey: ${next[provider]?.apiKey ? maskSecret(next[provider].apiKey) : '(unchanged)'}\n` +
     `tavilyKey: ${next.tavilyApiKey ? maskSecret(next.tavilyApiKey) : '(unchanged)'}\n` +
+    `webSearch: ${next.webSearchBackend || 'auto'}\n` +
     `localSandbox: ${next.localSandbox ?? '(unchanged)'}\n`
   );
   return 0;
@@ -926,6 +965,8 @@ export async function main() {
       apiKey: { type: 'string' },
       'tavily-key': { type: 'string' },
       tavilyKey: { type: 'string' },
+      'search-backend': { type: 'string' },
+      searchBackend: { type: 'string' },
       cwd: { type: 'string' },
       session: { type: 'string' },
       task: { type: 'string' },
@@ -971,6 +1012,11 @@ export async function main() {
   const localSandbox = flagSandbox ?? envSandbox ?? persistedConfig.localSandbox;
   if (localSandbox !== undefined) {
     process.env.PUSH_LOCAL_SANDBOX = String(localSandbox);
+  }
+
+  const searchBackendArg = getSearchBackendArg(values);
+  if (searchBackendArg) {
+    process.env.PUSH_WEB_SEARCH_BACKEND = parseSearchBackend(searchBackendArg);
   }
 
   const subcommand = positionals[0] || '';

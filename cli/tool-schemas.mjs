@@ -55,7 +55,7 @@ export const CLI_TOOL_SCHEMAS = [
     type: 'function',
     function: {
       name: 'web_search',
-      description: 'Search the public web for current information (Tavily when configured, else Ollama native for provider=ollama+key, else DuckDuckGo fallback).',
+      description: 'Search the public web for current information (backend configurable via PUSH_WEB_SEARCH_BACKEND: auto|tavily|ollama|duckduckgo).',
       parameters: {
         type: 'object',
         properties: {
