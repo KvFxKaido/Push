@@ -1,7 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { getCuratedModels, DEFAULT_MODELS, OPENROUTER_MODELS, OLLAMA_MODELS, MISTRAL_MODELS } from '../model-catalog.mjs';
-import { PROVIDER_CONFIGS } from '../provider.mjs';
 
 describe('getCuratedModels', () => {
   it('returns OpenRouter models', () => {
@@ -30,14 +29,26 @@ describe('getCuratedModels', () => {
 });
 
 describe('DEFAULT_MODELS', () => {
-  it('matches PROVIDER_CONFIGS defaults', () => {
-    for (const [id, cfg] of Object.entries(PROVIDER_CONFIGS)) {
+  // Hardcoded expected values — not cross-referencing PROVIDER_CONFIGS
+  // because those are env-overridable at import time.
+  const EXPECTED = {
+    ollama: 'gemini-3-flash-preview',
+    mistral: 'devstral-small-latest',
+    openrouter: 'anthropic/claude-sonnet-4.6',
+  };
+
+  it('has correct hardcoded defaults', () => {
+    for (const [id, expected] of Object.entries(EXPECTED)) {
       assert.equal(
         DEFAULT_MODELS[id],
-        cfg.defaultModel,
-        `DEFAULT_MODELS.${id} should match PROVIDER_CONFIGS.${id}.defaultModel`,
+        expected,
+        `DEFAULT_MODELS.${id} should be "${expected}"`,
       );
     }
+  });
+
+  it('covers all three providers', () => {
+    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['mistral', 'ollama', 'openrouter']);
   });
 
   it('each default appears in its curated list', () => {

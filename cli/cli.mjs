@@ -280,11 +280,11 @@ async function handleModelCommand(arg, ctx, state, config) {
     return;
   }
 
-  // Resolve by number or name
-  const num = parseInt(arg, 10);
+  // Resolve by number (digits only) or name
   let target;
-  if (!isNaN(num) && num >= 1 && num <= models.length) {
-    target = models[num - 1];
+  if (/^\d+$/.test(arg)) {
+    const num = parseInt(arg, 10);
+    target = (num >= 1 && num <= models.length) ? models[num - 1] : arg;
   } else {
     target = arg;
   }
@@ -321,11 +321,11 @@ async function handleProviderCommand(arg, ctx, state, config) {
     return;
   }
 
-  // Resolve by number or name
-  const num = parseInt(arg, 10);
+  // Resolve by number (digits only) or name
   let target;
-  if (!isNaN(num) && num >= 1 && num <= providers.length) {
-    target = providers[num - 1];
+  if (/^\d+$/.test(arg)) {
+    const num = parseInt(arg, 10);
+    target = (num >= 1 && num <= providers.length) ? providers[num - 1] : null;
   } else {
     target = providers.find((p) => p.id === arg.toLowerCase());
   }
@@ -615,9 +615,9 @@ async function runConfigInit(values, config) {
       }
       const modelInput = (await rl.question(`Select [${defaultModel}]: `)).trim();
       if (modelInput) {
-        const num = parseInt(modelInput, 10);
-        if (!isNaN(num) && num >= 1 && num <= models.length) {
-          model = models[num - 1];
+        if (/^\d+$/.test(modelInput)) {
+          const num = parseInt(modelInput, 10);
+          model = (num >= 1 && num <= models.length) ? models[num - 1] : modelInput;
         } else {
           model = modelInput;
         }
