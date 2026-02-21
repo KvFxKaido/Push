@@ -49,12 +49,22 @@ export function resolveApiKey(config) {
   return '';
 }
 
-export async function streamCompletion(config, apiKey, model, messages, onToken, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export async function streamCompletion(config, apiKey, model, messages, onToken, timeoutMs = DEFAULT_TIMEOUT_MS, externalSignal = null) {
   let lastError;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    // Check for external abort before starting attempt
+    if (externalSignal?.aborted) {
+      const err = new Error('Request aborted.');
+      err.name = 'AbortError';
+      throw err;
+    }
+
+    const timeoutController = new AbortController();
+    const timeout = setTimeout(() => timeoutController.abort(), timeoutMs);
+    const signals = [timeoutController.signal];
+    if (externalSignal) signals.push(externalSignal);
+    const controller = { signal: AbortSignal.any(signals) };
     const headers = {
       'Content-Type': 'application/json',
     };
@@ -137,7 +147,12 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
       return accumulated;
     } catch (err) {
       clearTimeout(timeout);
-      if (err instanceof DOMException && err.name === 'AbortError') {
+      if ((err instanceof DOMException || err instanceof Error) && err.name === 'AbortError') {
+        if (externalSignal?.aborted) {
+          const abortErr = new Error('Request aborted.');
+          abortErr.name = 'AbortError';
+          throw abortErr;
+        }
         throw new Error(
           `Request timed out after ${Math.floor(timeoutMs / 1000)}s [provider=${config.id} model=${model} url=${config.url}]`,
         );

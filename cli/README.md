@@ -1,0 +1,235 @@
+# Push CLI
+
+Local coding agent for your terminal. Reads files, runs commands, writes code — backed by the same role-based agent architecture as the Push mobile app, but operating directly on your filesystem.
+
+## Quick start
+
+```bash
+# From repo root
+./push
+
+# Or with Node directly
+node cli/cli.mjs
+```
+
+On first run you'll want to configure a provider:
+
+```bash
+./push config init
+```
+
+This walks you through provider, model, API key, and sandbox settings. Config is saved to `~/.push/config.json` (mode 0600).
+
+## Modes
+
+### Interactive (default)
+
+```bash
+./push
+./push --provider openrouter --model anthropic/claude-sonnet-4.6
+./push --session sess_abc123   # resume a previous session
+```
+
+Starts a REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (rm -rf, sudo, force-push, etc.) prompt for approval before running.
+
+In-session commands: `/help`, `/provider`, `/session`, `/exit`.
+
+### Headless
+
+```bash
+./push run --task "Add error handling to src/parser.ts"
+./push run "Fix the failing test in utils.test.js"
+./push run --task "Refactor auth module" --accept "npm test" --accept "npm run lint" --json
+```
+
+Runs a single task and exits. No interaction. High-risk commands are blocked (no approval prompt).
+
+`--accept <cmd>` runs shell commands after the agent finishes as acceptance checks. Exit code 0 = pass. The process exits 0 only if the agent succeeds *and* all checks pass.
+
+`--json` outputs structured results:
+
+```json
+{
+  "sessionId": "sess_...",
+  "runId": "run_...",
+  "outcome": "success",
+  "rounds": 4,
+  "assistant": "Done. Added try/catch blocks...",
+  "acceptance": {
+    "passed": true,
+    "checks": [{ "command": "npm test", "ok": true, "exitCode": 0, "durationMs": 3200 }]
+  }
+}
+```
+
+## Configuration
+
+### Config file (`~/.push/config.json`)
+
+```bash
+./push config init              # interactive wizard
+./push config show              # print current config (keys masked)
+./push config set --provider mistral --model devstral-small-latest
+./push config set --api-key sk-abc123
+./push config set --sandbox     # enable local Docker sandbox
+./push config set --no-sandbox  # disable it
+```
+
+Per-provider settings (model, endpoint URL, API key) are stored under the provider name. The config file is chmod 0600.
+
+### Environment variables
+
+Config resolves in order: CLI flags > env vars > config file > defaults.
+
+| Variable | Purpose |
+|---|---|
+| `PUSH_PROVIDER` | Default provider (`ollama`, `mistral`, `openrouter`) |
+| `PUSH_OLLAMA_URL` | Ollama endpoint (default: `http://localhost:11434/v1/chat/completions`) |
+| `PUSH_OLLAMA_API_KEY` | Ollama API key |
+| `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
+| `PUSH_MISTRAL_URL` | Mistral endpoint (default: `https://api.mistral.ai/v1/chat/completions`) |
+| `PUSH_MISTRAL_API_KEY` | Mistral API key |
+| `PUSH_MISTRAL_MODEL` | Mistral model (default: `devstral-small-latest`) |
+| `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/chat/completions`) |
+| `PUSH_OPENROUTER_API_KEY` | OpenRouter API key |
+| `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6`) |
+| `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
+| `PUSH_SESSION_DIR` | Override session storage location |
+| `PUSH_CONFIG_PATH` | Override config file path |
+
+Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, etc.) are also checked.
+
+## Providers
+
+All three providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+
+| Provider | Default model | Requires key |
+|---|---|---|
+| `ollama` | `gemini-3-flash-preview` | No (local) |
+| `mistral` | `devstral-small-latest` | Yes |
+| `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
+
+## Tools
+
+The agent uses prompt-engineered tool calls — JSON blocks in fenced code blocks detected by regex, not native function calling. Available tools:
+
+| Tool | Type | Purpose |
+|---|---|---|
+| `read_file` | read | Read file with hashline-anchored line numbers |
+| `list_dir` | read | List directory contents |
+| `search_files` | read | Ripgrep text search (falls back to grep) |
+| `exec` | mutate | Run a shell command |
+| `write_file` | mutate | Write entire file |
+| `edit_file` | mutate | Surgical hashline edits |
+| `coder_update_state` | memory | Update working memory (plan, tasks, etc.) |
+
+**Read/mutate split:** Multiple read-only tools can run in parallel per turn. Only one mutating tool is allowed per turn — extras are rejected with a structured error.
+
+### Hashline edits
+
+`edit_file` uses content-hash anchored references instead of raw line numbers. When the agent reads a file, each line is displayed as:
+
+```
+12|a3b8c1f| const x = 42;
+```
+
+The `a3b8c1f` is a 7-char SHA-1 hash of the line content. Edits reference lines by `lineNo:hash` (e.g. `"12:a3b8c1f"`), so stale edits are caught immediately if the file changed. Operations: `replace_line`, `insert_after`, `insert_before`, `delete_line`.
+
+## Sessions
+
+Sessions persist to `.push/sessions/<session-id>/` in the workspace root. Each session has:
+
+- `state.json` — full conversation state (messages, working memory, provider info)
+- `events.jsonl` — append-only event log (tool calls, results, errors, run outcomes)
+
+```bash
+./push sessions              # list all sessions
+./push sessions --json       # list as JSON
+./push --session sess_abc123 # resume
+```
+
+## Working memory
+
+The agent maintains structured working memory across rounds — plan, open tasks, files touched, assumptions, and errors encountered. This is injected into every tool result via a `[meta]` envelope, so it survives context trimming.
+
+## Safety
+
+- **Workspace jail:** All file paths are resolved and checked — no escaping the workspace root.
+- **High-risk detection:** Commands matching patterns like `rm -rf`, `sudo`, `git push --force`, `drop table`, `curl | sh`, etc. are flagged. In interactive mode, you're prompted. In headless mode, they're blocked.
+- **Tool loop detection:** If the same tool call sequence repeats 3 times, the run is stopped.
+- **Max rounds:** Default 8, configurable via `--max-rounds` (max 30). Prevents runaway loops.
+- **Output truncation:** Tool output is capped at 24KB to avoid context blowout.
+
+## Docker sandbox
+
+With `--sandbox` (or `PUSH_LOCAL_SANDBOX=true`), `exec` commands run inside a Docker container instead of directly on your machine:
+
+```bash
+docker run --rm -v $WORKSPACE:/workspace -w /workspace push-sandbox bash -lc "$COMMAND"
+```
+
+The `push-sandbox` image must exist locally. File reads/writes still go through the host filesystem.
+
+## Daemon (experimental)
+
+`pushd` is a daemon skeleton for IPC-based access to the same engine:
+
+```bash
+node cli/pushd.mjs
+```
+
+Listens on a Unix domain socket (`~/.push/run/pushd.sock`), speaks NDJSON. Request types: `hello`, `start_session`, `send_user_message`, `attach_session`. This is the foundation for editor integrations and background task runners.
+
+## File layout
+
+```
+cli/
+  cli.mjs              # Entrypoint — arg parsing, interactive/headless dispatch
+  engine.mjs           # Assistant loop, working memory, multi-tool dispatch
+  tools.mjs            # Tool executor, workspace guard, hashline edits, risk detection
+  provider.mjs         # SSE streaming client, retry policy, provider configs
+  session-store.mjs    # Session state + event persistence
+  config-store.mjs     # ~/.push/config.json read/write/env overlay
+  hashline.mjs         # Hashline protocol (content-hash line refs, anchored ranges)
+  file-ledger.mjs      # File awareness tracking (read/write coverage per file)
+  tool-call-metrics.mjs # Malformed tool-call counters
+  pushd.mjs            # Daemon skeleton (Unix socket, NDJSON IPC)
+  tests/               # node:test suite
+```
+
+## CLI reference
+
+```
+push                                Start interactive session
+push --session <id>                 Resume interactive session
+push run --task "..."               Headless mode (single task)
+push run "..."                      Headless mode (positional)
+push sessions                       List saved sessions
+push config show                    Show saved config
+push config init                    Interactive setup wizard
+push config set ...                 Save provider config
+
+Options:
+  --provider <name>       ollama | mistral | openrouter (default: ollama)
+  --model <name>          Override model
+  --url <endpoint>        Override provider endpoint URL
+  --api-key <secret>      Set provider API key
+  --cwd <path>            Workspace root (default: cwd)
+  --session <id>          Resume session
+  --task <text>           Task for headless mode
+  --accept <cmd>          Acceptance check (repeatable)
+  --max-rounds <n>        Tool-loop cap (default: 8, max: 30)
+  --json                  JSON output (headless/sessions)
+  --sandbox               Enable local Docker sandbox
+  --no-sandbox            Disable local Docker sandbox
+  -h, --help              Show help
+```
+
+## Future
+
+Items not yet implemented:
+
+- **`--verbose` / `--quiet`** — No verbosity control. Tool status lines always go to stdout in interactive mode.
+- **Subcommand-level help** — `push config --help` doesn't show config-specific options.
+- **`--yes` / `--force`** — No flag to auto-approve high-risk commands in headless mode.
+- **Exit code taxonomy** — Only `0` (success) and `1` (error) currently. Could add `2` (usage error), `130` (SIGINT) for CI.

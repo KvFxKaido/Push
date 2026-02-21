@@ -82,8 +82,10 @@ function buildParseErrorMessage(malformed) {
 /**
  * Run the assistant loop. Options:
  * - approvalFn: async (tool, detail) => boolean — gate for high-risk operations
+ * - signal: AbortSignal — external abort (e.g. Ctrl+C)
  */
 export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds, streamToStdout, options = {}) {
+  const { approvalFn, signal } = options;
   const runId = makeRunId();
   let finalAssistantText = '';
   const repeatedCalls = new Map();
@@ -106,7 +108,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       args: call.args,
     }, runId);
 
-    const result = await executeToolCall(call, state.cwd, { approvalFn: options.approvalFn });
+    const result = await executeToolCall(call, state.cwd, { approvalFn, signal });
     const durationMs = Date.now() - toolStart;
 
     await appendSessionEvent(state, 'tool_result', {
@@ -137,6 +139,12 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
   }
 
   for (let round = 1; round <= maxRounds; round++) {
+    if (signal?.aborted) {
+      await saveSessionState(state);
+      await appendSessionEvent(state, 'run_complete', { runId, outcome: 'aborted', summary: 'Aborted by user.' }, runId);
+      return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
+    }
+
     if (streamToStdout) process.stdout.write('\nassistant> ');
 
     const assistantText = await streamCompletion(
@@ -147,6 +155,8 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       (token) => {
         if (streamToStdout) process.stdout.write(token);
       },
+      undefined,
+      signal,
     );
 
     if (streamToStdout) process.stdout.write('\n');

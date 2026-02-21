@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs, promisify } from 'node:util';
 import { createInterface } from 'node:readline/promises';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { execFile } from 'node:child_process';
@@ -11,6 +12,16 @@ import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engin
 import { loadConfig, saveConfig, applyConfigToEnv, getConfigPath, maskSecret } from './config-store.mjs';
 
 const execFileAsync = promisify(execFile);
+
+const VERSION = '0.1.0';
+
+const KNOWN_OPTIONS = new Set([
+  'provider', 'model', 'url', 'api-key', 'apiKey', 'cwd', 'session',
+  'task', 'accept', 'max-rounds', 'maxRounds', 'json', 'headless',
+  'help', 'sandbox', 'no-sandbox', 'version',
+]);
+
+const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'sessions']);
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -43,6 +54,7 @@ Options:
   --json                        JSON output in headless mode / sessions
   --sandbox                     Enable local Docker sandbox
   --no-sandbox                  Disable local Docker sandbox
+  -v, --version                 Show version
   -h, --help                    Show help
 `,
   );
@@ -87,8 +99,12 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
   state.messages.push({ role: 'user', content: task });
   await appendSessionEvent(state, 'user_message', { chars: task.length, preview: task.slice(0, 280) });
 
+  const ac = new AbortController();
+  const onSigint = () => ac.abort();
+  process.on('SIGINT', onSigint);
+
   try {
-    const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, false);
+    const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, false, { signal: ac.signal });
     await saveSessionState(state);
     let acceptance = null;
 
@@ -129,6 +145,16 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
 
     return success ? 0 : 1;
   } catch (err) {
+    if (err.name === 'AbortError') {
+      await saveSessionState(state);
+      if (jsonOutput) {
+        process.stdout.write(`${JSON.stringify({ sessionId: state.sessionId, outcome: 'aborted' }, null, 2)}\n`);
+      } else {
+        process.stderr.write('[aborted]\n');
+      }
+      return 130;
+    }
+
     const message = err instanceof Error ? err.message : String(err);
     await appendSessionEvent(state, 'error', { message });
     await saveSessionState(state);
@@ -139,6 +165,8 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
       process.stderr.write(`Error: ${message}\n`);
     }
     return 1;
+  } finally {
+    process.removeListener('SIGINT', onSigint);
   }
 }
 
@@ -202,17 +230,30 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       state.messages.push({ role: 'user', content: line });
       await appendSessionEvent(state, 'user_message', { chars: line.length, preview: line.slice(0, 280) });
 
+      const ac = new AbortController();
+      const onSigint = () => ac.abort();
+      process.on('SIGINT', onSigint);
+
       try {
-        const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, true, { approvalFn });
+        const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, true, { approvalFn, signal: ac.signal });
         await saveSessionState(state);
-        if (result.outcome !== 'success') {
+        if (result.outcome === 'aborted') {
+          process.stdout.write('\n[cancelled]\n');
+        } else if (result.outcome !== 'success') {
           process.stdout.write(`[warn] ${result.finalAssistantText}\n`);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        await appendSessionEvent(state, 'error', { message });
-        await saveSessionState(state);
-        process.stderr.write(`Error: ${message}\n`);
+        if (err.name === 'AbortError') {
+          await saveSessionState(state);
+          process.stdout.write('\n[cancelled]\n');
+        } else {
+          const message = err instanceof Error ? err.message : String(err);
+          await appendSessionEvent(state, 'error', { message });
+          await saveSessionState(state);
+          process.stderr.write(`Error: ${message}\n`);
+        }
+      } finally {
+        process.removeListener('SIGINT', onSigint);
       }
     }
   } finally {
@@ -225,7 +266,14 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
 
 async function initSession(sessionId, provider, model, cwd) {
   if (sessionId) {
-    return loadSessionState(sessionId);
+    try {
+      return await loadSessionState(sessionId);
+    } catch (err) {
+      if (err.code === 'ENOENT' || (err.message && err.message.includes('ENOENT'))) {
+        throw new Error(`Session not found: ${sessionId}. Use "push sessions" to list available sessions.`);
+      }
+      throw err;
+    }
   }
 
   const newSessionId = makeSessionId();
@@ -455,8 +503,21 @@ export async function main() {
       help: { type: 'boolean', short: 'h' },
       sandbox: { type: 'boolean' },
       'no-sandbox': { type: 'boolean' },
+      version: { type: 'boolean', short: 'v' },
     },
   });
+
+  // Warn on unknown flags (strict: false swallows them silently)
+  for (const key of Object.keys(values)) {
+    if (!KNOWN_OPTIONS.has(key)) {
+      process.stderr.write(`Warning: unknown flag --${key}\n`);
+    }
+  }
+
+  if (values.version) {
+    process.stdout.write(`push ${VERSION}\n`);
+    return 0;
+  }
 
   if (values.help) {
     printHelp();
@@ -468,6 +529,9 @@ export async function main() {
   applyConfigToEnv(persistedConfig);
 
   // Resolve final localSandbox state: flags > env > config
+  if (values.sandbox && values['no-sandbox']) {
+    throw new Error('Conflicting flags: --sandbox and --no-sandbox cannot both be set.');
+  }
   const envSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true' ? true : process.env.PUSH_LOCAL_SANDBOX === 'false' ? false : undefined;
   const flagSandbox = values.sandbox ? true : values['no-sandbox'] ? false : undefined;
   const localSandbox = flagSandbox ?? envSandbox ?? persistedConfig.localSandbox;
@@ -498,11 +562,31 @@ export async function main() {
     return 0;
   }
 
+  if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
+    throw new Error(`Unknown command: ${subcommand}. Known commands: run, config, sessions. See: push --help`);
+  }
+
   const provider = parseProvider(values.provider);
   const providerConfig = PROVIDER_CONFIGS[provider];
   const apiKey = resolveApiKey(providerConfig);
   const cwd = path.resolve(values.cwd || process.cwd());
+  if (values.cwd) {
+    let cwdStat;
+    try {
+      cwdStat = await fs.stat(cwd);
+    } catch (err) {
+      if (err.code === 'ENOENT') throw new Error(`--cwd path does not exist: ${cwd}`);
+      throw err;
+    }
+    if (!cwdStat.isDirectory()) throw new Error(`--cwd path is not a directory: ${cwd}`);
+  }
   const maxRoundsRaw = values['max-rounds'] || values.maxRounds;
+  if (maxRoundsRaw !== undefined) {
+    const parsed = Number(maxRoundsRaw);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`Invalid --max-rounds value: "${maxRoundsRaw}". Must be a number between 1 and 30.`);
+    }
+  }
   const maxRounds = clamp(Number(maxRoundsRaw || DEFAULT_MAX_ROUNDS), 1, 30);
   const acceptanceChecks = Array.isArray(values.accept) ? values.accept : [];
 
@@ -511,6 +595,16 @@ export async function main() {
     : '';
   const task = (values.task || positionalTask).trim();
   const runHeadlessMode = values.headless || subcommand === 'run';
+
+  if (!runHeadlessMode) {
+    const ignored = [];
+    if (values.task) ignored.push('--task');
+    if (values.accept) ignored.push('--accept');
+    if (values.json) ignored.push('--json');
+    if (ignored.length > 0) {
+      process.stderr.write(`Warning: ${ignored.join(', ')} ignored in interactive mode. Use: push run\n`);
+    }
+  }
   const requestedModel = values.model || providerConfig.defaultModel;
 
   const state = await initSession(values.session, provider, requestedModel, cwd);
@@ -529,6 +623,10 @@ export async function main() {
       throw new Error('Headless mode requires a task. Use: push run --task "..."');
     }
     return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks);
+  }
+
+  if (!process.stdin.isTTY) {
+    throw new Error('Interactive mode requires a TTY. For scripted use, run: push run --task "your task here"');
   }
 
   return runInteractive(state, providerConfig, apiKey, maxRounds);

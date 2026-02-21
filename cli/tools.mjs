@@ -352,17 +352,20 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           const args = isLocalSandbox 
             ? ['run', '--rm', '-v', `${workspaceRoot}:/workspace`, '-w', '/workspace', 'push-sandbox', 'bash', '-lc', command]
             : ['-lc', command];
-          const { stdout, stderr } = await execFileAsync(bin, args, {
+          const execOpts = {
             cwd: workspaceRoot,
             timeout: timeoutMs,
             maxBuffer: 4_000_000,
-          });
+          };
+          if (options.signal) execOpts.signal = options.signal;
+          const { stdout, stderr } = await execFileAsync(bin, args, execOpts);
           return {
             ok: true,
             text: truncateText(formatExecOutput(stdout, stderr, 0)),
             meta: { command, timeout_ms: timeoutMs },
           };
         } catch (err) {
+          if (err.name === 'AbortError') throw err;
           const exitCode = typeof err.code === 'number' ? err.code : 1;
           return {
             ok: false,
