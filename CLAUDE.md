@@ -42,7 +42,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Harness focus (current):** Reliability improvements are prioritized over model churn. Active tracks are defined in `documents/Harness Reliability Plan.md` (edit reliability, read efficiency, tool-loop robustness, and operator visibility). Track B shipped: `sandbox_read_file` supports line ranges with numbered output and out-of-bounds warnings. `sandbox_edit_file` is active — edits are expressed as `HashlineOp[]` referencing 7-char content hashes (see `lib/hashline.ts`), which eliminates line-number drift and provides implicit staleness detection. **Agent Experience Wishlist shipped** (see `documents/Agent Experience Wishlist.md`): 10 harness improvements — error taxonomy with retry semantics, structured malformed-call feedback, edit result diffs, multi-tool per turn, universal meta envelope, machine-checkable acceptance criteria, agent working memory, `sandbox_read_symbols`, and `sandbox_apply_patchset`. Server-side background jobs (Track D) are currently deferred; resumable sessions are the active interruption-recovery path.
 
-**Web search tools:** The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). Mistral handles search natively via its Agents API. API keys are configurable at runtime via Settings.
+**Web search tools:** The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). In native function-calling mode (Mistral/OpenRouter), web search is passed via request `tools[]` (`web_search`) rather than the Mistral Agents API path. API keys are configurable at runtime via Settings.
 
 **Sandbox:** Modal (serverless containers) provides a persistent Linux environment per session. The repo is cloned into `/workspace` (or an empty workspace is created in Sandbox Mode). The Coder reads/writes files, runs commands, and gets diffs — all via sandbox tools. The Cloudflare Worker proxies sandbox requests to Modal web endpoints (keeps Modal auth server-side). Containers auto-terminate after 30 min.
 
@@ -123,7 +123,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `lib/auditor-agent.ts` — Auditor review + verdict (fail-safe to UNSAFE, uses active backend)
 - `lib/workspace-context.ts` — Builds active repo context for system prompt injection
 - `lib/providers.ts` — AI provider configs (Ollama + Mistral + OpenRouter), role-to-model mapping, backend preference
-- `lib/web-search-tools.ts` — Web search tool definitions (Tavily, Ollama native search, DuckDuckGo fallback; Mistral handles search natively via Agents API)
+- `lib/web-search-tools.ts` — Web search tool definitions (Tavily, Ollama native search, DuckDuckGo fallback; in native FC mode, Mistral/OpenRouter expose `web_search` via request `tools[]`)
 - `lib/model-catalog.ts` — Manages Ollama/Mistral model lists and selection
 - `lib/prompts.ts` — Prompt building utilities
 - `lib/feature-flags.ts` — Feature flag system
@@ -166,7 +166,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 Environment variables are defined in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI at runtime. Without any API keys the app runs in demo mode with mock data.
 
-Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
+Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle), `VITE_NATIVE_FC` (web native FC override: `0|1`), `PUSH_NATIVE_FC` (CLI native FC override: `0|1`).
 
 ## Design Principles
 

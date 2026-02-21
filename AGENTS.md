@@ -75,7 +75,7 @@ Prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true`. Routed through Worker endpoint
 
 ### Web Search Tools
 
-The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). Mistral handles search natively via its Agents API.
+The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). For Mistral/OpenRouter native function-calling mode, web search is exposed via request `tools[]` (`web_search`), not the Mistral Agents API path.
 
 ### User Identity
 
@@ -172,7 +172,7 @@ Read-only tools run in parallel per turn. Only one mutating tool allowed per tur
 Workspace jail, high-risk command detection, tool loop detection, max rounds cap, output truncation. `.push/` internal state excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers (Ollama, Mistral, OpenRouter), all OpenAI-compatible SSE with retry on 429/5xx.
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers (Ollama, Mistral, OpenRouter), all OpenAI-compatible SSE with retry on 429/5xx. Native function-calling override flags: `PUSH_NATIVE_FC=0|1` (CLI) and `VITE_NATIVE_FC=0|1` (web).
 
 ## Directory Structure
 
