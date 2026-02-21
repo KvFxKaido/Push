@@ -6,13 +6,13 @@
 Mobile-native AI coding agent for developers who ship from anywhere.
 
 No platform lock-in. Open source. Start on free tiers.
+Self-hosted only. No managed service.
 
 Push is a personal chat interface backed by role-based AI agents that read your code, write patches, run checks in a sandbox, and commit/push changes from your phone or terminal.
 
 Try it free with provider free tiers: Google Gemini, OpenCode Zen, Ollama Cloud, or Z.AI.
 Bring your own provider: Mistral, Ollama Cloud, OpenRouter, Z.AI, Google, or OpenCode Zen.
 Switch providers on new chats at any time.
-Self-hosting path included.
 
 ## What It Does
 
@@ -166,9 +166,9 @@ Don't have GitHub access right now? Start a **Sandbox** — an ephemeral workspa
 
 Use it for quick experiments, learning the interface, or when you're on a device without GitHub credentials.
 
-## Production
+## Deploying Your Instance
 
-Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, and `/api/zen/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+For a self-hosted deployment, run the app on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, and `/api/zen/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 For browser tools, set Worker secrets `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`. The Worker injects them server-side for `/api/sandbox/browser-screenshot` and `/api/sandbox/browser-extract` so browser credentials never reach the client.
 
