@@ -3,7 +3,7 @@
 Date: 2026-02-20
 Status: **Shipped** (all 4 phases implemented)
 Owner: Push
-Related: `documents/Background Coder Tasks Plan.md` (deferred server-side approach), `documents/Harness Reliability Plan.md` Track D
+Related: `documents/plans/Background Coder Tasks Plan.md` (deferred server-side approach), `documents/plans/Harness Reliability Plan.md` Track D
 
 ## Problem
 

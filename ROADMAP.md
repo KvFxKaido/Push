@@ -59,14 +59,14 @@ Only decisions promoted into this file should be treated as implementation commi
 | 2026-02-19 | Agent Experience Wishlist (Track C) fully implemented | Commit 0336f11 + follow-ups |
 | 2026-02-19 | OpenRouter catalog updated: Sonnet 4.6, Gemini 3.1 Pro Preview added; Codex 5.3 removed | Commits f323e1b, 4b97df9 |
 | 2026-02-09 | Root `ROADMAP.md` is canonical; `documents/` is draft space | Team decision in chat |
-| 2026-02-09 | Sandbox Mode vision: real ephemeral workspace + explicit promotion paths | `documents/Sandbox mode.md` |
-| 2026-02-08 | Sandbox v1 descoped: no in-app repo creation (latency/sync concerns); zip download is the only export path; onboarding entry point is v1 priority | `documents/Sandbox mode.md` revision |
+| 2026-02-09 | Sandbox Mode vision: real ephemeral workspace + explicit promotion paths | `documents/archive/Sandbox mode.md` |
+| 2026-02-08 | Sandbox v1 descoped: no in-app repo creation (latency/sync concerns); zip download is the only export path; onboarding entry point is v1 priority | `documents/archive/Sandbox mode.md` revision |
 | 2026-02-09 | Sandbox Mode v1 implemented: two entry points, sandbox-specific system prompt, `sandbox_download` tool + card, expiry warning banner, persistent download button in header; export format is tar.gz (not zip) | Implementation session |
-| 2026-02-12 | Workspace shell consolidated into one mobile hub trigger with `Files`, `Diff`, `Console`, and `Scratchpad` tabs | `documents/Workspace Hub Sprint Plan.md` + implementation session |
+| 2026-02-12 | Workspace shell consolidated into one mobile hub trigger with `Files`, `Diff`, `Console`, and `Scratchpad` tabs | `documents/archive/Workspace Hub Sprint Plan.md` + implementation session |
 | 2026-02-12 | Branch selection now surfaces existing branches across Home/workspace, with in-context delete from the workspace selector | Implementation session |
 | 2026-02-12 | Home header simplified to compact account menu with Settings + guarded Disconnect and GitHub avatar | Implementation session |
-| 2026-02-13 | Harness-first reliability promoted as canonical planning focus; browser tooling treated as one capability within harness work, not a standalone roadmap pillar | `documents/Harness Reliability Plan.md` |
-| 2026-02-14 | Track B phase 1 shipped: `sandbox_read_file` supports line ranges with numbered tool output and out-of-bounds empty-range warnings | `documents/Harness Reliability Plan.md` + implementation session |
+| 2026-02-13 | Harness-first reliability promoted as canonical planning focus; browser tooling treated as one capability within harness work, not a standalone roadmap pillar | `documents/plans/Harness Reliability Plan.md` |
+| 2026-02-14 | Track B phase 1 shipped: `sandbox_read_file` supports line ranges with numbered tool output and out-of-bounds empty-range warnings | `documents/plans/Harness Reliability Plan.md` + implementation session |
 | 2026-02-17 | Activated Hashline protocol (`sandbox_edit_file`) in the harness to replace full-file rewrites with surgical edits | Implementation session |
 
 ## Promotion Checklist (Draft -> Canonical)

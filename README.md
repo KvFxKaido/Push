@@ -71,7 +71,7 @@ Push prioritizes harness reliability over raw model capability. Current shipped 
 - **Symbol extraction** — `sandbox_read_symbols` extracts function/class/type indexes without reading full files
 - **Multi-file patchsets** — `sandbox_apply_patchset` validates all edits before writing any files
 
-Next up: visibility polish, telemetry, and provider-compliance diagnostics. See `documents/Harness Reliability Plan.md` for the full plan.
+Next up: visibility polish, telemetry, and provider-compliance diagnostics. See `documents/plans/Harness Reliability Plan.md` for the full plan.
 
 ## Getting Started
 
@@ -175,7 +175,7 @@ If a run is interrupted (phone lock/background), Push checkpoints state and surf
 
 ## Harness Focus
 
-Current harness priorities from `documents/Harness Reliability Plan.md`:
+Current harness priorities from `documents/plans/Harness Reliability Plan.md`:
 
 - [x] stale-write protection + write-path telemetry baseline
 - [x] improved operator visibility (Coder status events in console, cleaner dialogue/tool display)

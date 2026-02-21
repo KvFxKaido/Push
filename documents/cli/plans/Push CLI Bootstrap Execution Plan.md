@@ -68,6 +68,6 @@ Post-bootstrap harness transition also shipped on 2026-02-20.
 
 ## Follow-up Candidates
 
-1. Add optional schema validation mode against `documents/schemas/*` for protocol events.
+1. Add optional schema validation mode against `documents/cli/schemas/` artifacts for protocol events.
 2. Add integration tests for end-to-end daemon request flows.
 3. Add explicit CLI client commands for daemon attach and event streaming.

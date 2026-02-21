@@ -1,6 +1,6 @@
 # Push Runtime Schemas
 
-These JSON Schema files define the MVP wire protocol documented in `documents/Push Runtime Protocol.md`.
+These JSON Schema files define the MVP wire protocol documented in `documents/cli/design/Push Runtime Protocol.md`.
 
 ## Files
 
@@ -19,6 +19,6 @@ These JSON Schema files define the MVP wire protocol documented in `documents/Pu
 
 Use any JSON Schema 2020-12 compatible validator and point it at:
 
-- `documents/schemas/push-runtime-envelope.schema.json`
+- `documents/cli/schemas/push-runtime-envelope.schema.json`
 
 When validating from code, ensure relative `$ref` resolution is enabled.

@@ -151,7 +151,7 @@ Scope (design now, implementation separate):
 - reconnectable job timelines
 - cancel/resume controls
 
-Design doc: `documents/Background Coder Tasks Plan.md`
+Design doc: `documents/plans/Background Coder Tasks Plan.md`
 
 Patterns from external research:
 - **Pre-approved tool allowlist** (from Claude Code background agents): background jobs declare their allowed tools at start time. Anything not pre-approved → auto-deny. No runtime permission prompts. For Push: `POST /api/jobs/start` should include the full tool allowlist.
@@ -229,7 +229,7 @@ Evaluation cadence:
 - Baseline: Full-file reads only; frequent "blind edits" on truncated content.
 - Result: Shipped range reads, 2000-line read cap, Awareness Ledger, Edit Guard, and Scoped Auto-Expand.
 - Decision: `go` (Track B complete)
-- Notes: Track B has significantly reduced payload size and eliminated a major class of edit failures where the model would guess missing code. See `documents/Truncation-Aware Edit Safety Plan.md`.
+- Notes: Track B has significantly reduced payload size and eliminated a major class of edit failures where the model would guess missing code. See `documents/plans/Truncation-Aware Edit Safety Plan.md`.
 
 ### Track C Phase 1 — Garbled tool-call recovery
 
@@ -251,7 +251,7 @@ Decision labels: `accept`, `partial`, `reject`.
 | Narrow primary persona to power users (solo founder, lead dev, CTO in motion) | accept | Tightens product narrative and onboarding clarity | Update README/onboarding copy to explicitly target power users |
 | Emphasize true differentiators (role-separation, branch-scoped chats, provider-agnostic backends) | accept | Already core strengths; should be foregrounded consistently | Keep these three as top-level positioning in root docs and pitch copy |
 | Treat PWA as first-class feature (offline, push, background sync) | partial | Good direction, but API support is inconsistent on mobile (especially iOS) | Prioritize reliable pieces first: offline scratchpad/read-only history + completion notifications |
-| Move long-running orchestration to server-side jobs | defer | Useful in theory, but high complexity for current PWA scope after resumable sessions shipped | Keep `documents/Background Coder Tasks Plan.md` as reference; revisit for native app/CLI runtime direction |
+| Move long-running orchestration to server-side jobs | defer | Useful in theory, but high complexity for current PWA scope after resumable sessions shipped | Keep `documents/plans/Background Coder Tasks Plan.md` as reference; revisit for native app/CLI runtime direction |
 | Add explicit service worker cache strategy | partial | Useful, but must avoid stale execution state and broken live sessions | Add a documented cache policy pass for app shell/static/api paths before broad SW changes |
 | Harden pre-merge safeguards and surface checks clearly | partial | Most merge safeguards exist; visibility can improve | Add clearer merge-flow UI states for stale base, CI required, and branch protection blocks |
 | Add provider tool-call compliance validation + scoring | accept | Directly aligns with harness reliability goals | Add malformed-call and recovery metrics by provider/model in settings/debug view |
@@ -284,7 +284,7 @@ Key conclusion: **Push's prompt-engineered tool protocol is its biggest reliabil
 - Baseline: No structured errors, single-tool-per-turn, no meta context, no acceptance criteria, no working memory
 - Result: All 9 items shipped in 4 phases. Error taxonomy (`classifyError()`), structured malformed-call feedback (`[TOOL_CALL_PARSE_ERROR]`), edit result diffs, multi-tool dispatch (`detectAllToolCalls()`), universal meta envelope (`[meta]` line), machine-checkable acceptance criteria, Coder working memory (`CoderWorkingMemory`), `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (all-or-nothing validation, sequential writes). Post-sprint Codex review caught 5 issues (parallel criteria passthrough, patchset atomicity wording, duplicate-path bug, state-update swallowing checkpoint, unused imports) — all fixed.
 - Decision: `go` (shipped)
-- Notes: No backend (Python/Worker) changes needed. All client-side. See `documents/Agent Experience Wishlist.md` for the original spec.
+- Notes: No backend (Python/Worker) changes needed. All client-side. See `documents/analysis/Agent Experience Wishlist.md` for the original spec.
 
 ## Immediate Next Action
 

@@ -17,19 +17,19 @@ This protocol is interactive-first and supports:
 
 ## Product Alignment
 
-This protocol follows the current CLI direction in `documents/Push CLI Plan.md`:
+This protocol follows the current CLI direction in `documents/cli/plans/Push CLI Plan.md`:
 - interactive UX is default
 - headless is optional mode
 - modal is optional via sandbox provider abstraction
 
 ## Schema Artifacts
 
-Concrete JSON Schemas for this protocol live in `documents/schemas/`:
-- `documents/schemas/push-runtime-envelope.schema.json` (entrypoint)
-- `documents/schemas/push-runtime-request-envelope.schema.json`
-- `documents/schemas/push-runtime-response-envelope.schema.json`
-- `documents/schemas/push-runtime-event-envelope.schema.json`
-- `documents/schemas/push-runtime-defs.schema.json`
+Concrete JSON Schemas for this protocol live in `documents/cli/schemas/`:
+- `documents/cli/schemas/push-runtime-envelope.schema.json` (entrypoint)
+- `documents/cli/schemas/push-runtime-request-envelope.schema.json`
+- `documents/cli/schemas/push-runtime-response-envelope.schema.json`
+- `documents/cli/schemas/push-runtime-event-envelope.schema.json`
+- `documents/cli/schemas/push-runtime-defs.schema.json`
 
 ## Non-Goals (MVP)
 

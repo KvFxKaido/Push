@@ -316,7 +316,7 @@ Mitigation:
 
 ## Immediate Next Actions
 
-1. Create `documents/Push Runtime Protocol.md` with schema and event examples.
+1. Create `documents/cli/design/Push Runtime Protocol.md` with schema and event examples.
 2. Scaffold `cli/` with two processes: `push` client and `pushd` runtime.
 3. Implement Phase 0 end-to-end with mocked provider stream.
 4. Implement Phase 1 interactive REPL controls before adding more commands.

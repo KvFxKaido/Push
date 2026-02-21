@@ -89,7 +89,7 @@ All tool dispatch is unified via `lib/tool-dispatch.ts`.
 
 ### Harness Reliability Focus
 
-Current priorities from `documents/Harness Reliability Plan.md`:
+Current priorities from `documents/plans/Harness Reliability Plan.md`:
 - **Edit reliability** — Hashline experiment for line-tagged references (gated by provider compliance)
 - **Read efficiency** — Range-aware file reads with line numbers, default caps
 - **Tool-loop robustness** — Garbled tool-call recovery, per-provider compliance metrics
