@@ -42,7 +42,8 @@ describe('request body with native FC', () => {
 
     // Simulate the logic from provider.mjs streamCompletion
     const options = { tools: CLI_TOOL_SCHEMAS, toolChoice: 'auto' };
-    if (options?.tools && config.supportsNativeFC) {
+    const nativeFCEnabled = options?.forceNativeFC === true || config.supportsNativeFC;
+    if (options?.tools && nativeFCEnabled) {
       body.tools = options.tools;
       body.tool_choice = options.toolChoice || config.toolChoice || 'auto';
     }
@@ -62,13 +63,35 @@ describe('request body with native FC', () => {
     };
 
     const options = { tools: CLI_TOOL_SCHEMAS, toolChoice: 'auto' };
-    if (options?.tools && config.supportsNativeFC) {
+    const nativeFCEnabled = options?.forceNativeFC === true || config.supportsNativeFC;
+    if (options?.tools && nativeFCEnabled) {
       body.tools = options.tools;
       body.tool_choice = options.toolChoice || config.toolChoice || 'auto';
     }
 
     assert.equal(body.tools, undefined, 'tools should NOT be set for Ollama');
     assert.equal(body.tool_choice, undefined);
+  });
+
+  it('includes tools when forceNativeFC override is set (e.g. PUSH_NATIVE_FC=1)', () => {
+    const config = PROVIDER_CONFIGS.ollama;
+    const body = {
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+      temperature: 0.1,
+    };
+
+    const options = { tools: CLI_TOOL_SCHEMAS, toolChoice: 'auto', forceNativeFC: true };
+    const nativeFCEnabled = options?.forceNativeFC === true || config.supportsNativeFC;
+    if (options?.tools && nativeFCEnabled) {
+      body.tools = options.tools;
+      body.tool_choice = options.toolChoice || config.toolChoice || 'auto';
+    }
+
+    assert.ok(body.tools, 'tools should be set when forceNativeFC=true');
+    assert.equal(body.tools.length, 12);
+    assert.equal(body.tool_choice, 'auto');
   });
 });
 

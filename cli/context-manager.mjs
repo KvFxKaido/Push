@@ -158,6 +158,17 @@ function isAssistantWithToolFollowUp(messages, idx) {
   return idx + 1 < messages.length && isToolResultMessage(messages[idx + 1]);
 }
 
+// Keep system prompt and at least one additional message when hard-splicing.
+const HARD_FALLBACK_MIN_MESSAGES = 2;
+
+function applyHardFallback(messages, maxTokens) {
+  const hardResult = [...messages];
+  while (estimateContextTokens(hardResult) > maxTokens && hardResult.length > HARD_FALLBACK_MIN_MESSAGES) {
+    hardResult.splice(1, 1);
+  }
+  return hardResult;
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
@@ -252,8 +263,15 @@ export function trimContext(messages, providerId, model) {
   }
 
   if (toRemove.size === 0) {
-    const afterTokens = estimateContextTokens(result);
-    return { messages: result, trimmed: true, beforeTokens, afterTokens, removedCount: 0 };
+    const hardResult = applyHardFallback(result, budget.maxTokens);
+    const afterTokens = estimateContextTokens(hardResult);
+    return {
+      messages: hardResult,
+      trimmed: true,
+      beforeTokens,
+      afterTokens,
+      removedCount: result.length - hardResult.length,
+    };
   }
 
   // Build the kept array with digest inserted after first user message
@@ -281,18 +299,13 @@ export function trimContext(messages, providerId, model) {
   // ---------------------------------------------------------------------------
   // Phase 3: Hard fallback — splice from index 1 if still over maxTokens
   // ---------------------------------------------------------------------------
-  if (estimateContextTokens(kept) > budget.maxTokens) {
-    while (estimateContextTokens(kept) > budget.maxTokens && kept.length > 16) {
-      kept.splice(1, 1);
-    }
-  }
-
-  const afterTokens = estimateContextTokens(kept);
+  const finalMessages = applyHardFallback(kept, budget.maxTokens);
+  const afterTokens = estimateContextTokens(finalMessages);
   return {
-    messages: kept,
+    messages: finalMessages,
     trimmed: true,
     beforeTokens,
     afterTokens,
-    removedCount: messages.length - kept.length + 1, // +1 for the digest we inserted
+    removedCount: messages.length - finalMessages.length,
   };
 }

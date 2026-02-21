@@ -288,7 +288,7 @@ describe('trimContext — Phase 2 (remove pairs + digest)', () => {
 // ─── trimContext: Phase 3 — hard fallback ────────────────────────
 
 describe('trimContext — Phase 3 (hard fallback)', () => {
-  it('falls back to hard splice while keeping >= 16 messages', () => {
+  it('hard-splices from index 1 until within max token budget', () => {
     // Make messages where even Phase 2 can't get under maxTokens,
     // because most messages are in the protected tail
     const msgs = [makeSystemMsg(1000)];
@@ -300,7 +300,9 @@ describe('trimContext — Phase 3 (hard fallback)', () => {
 
     const result = trimContext(msgs, 'ollama', 'test');
     assert.equal(result.trimmed, true);
-    assert.ok(result.messages.length >= 16, `should keep at least 16, got ${result.messages.length}`);
+    assert.ok(result.afterTokens <= 100_000, `should be <= max token budget, got ${result.afterTokens}`);
+    assert.ok(result.messages.length >= 2, `should keep at least 2 messages, got ${result.messages.length}`);
+    assert.equal(result.messages[0].role, 'system');
   });
 });
 
@@ -354,8 +356,9 @@ describe('trimContext — edge cases', () => {
     }
 
     const result = trimContext(msgs, 'ollama', 'test');
-    // Should trigger at least Phase 1 summarization or Phase 3 hard fallback
     assert.equal(result.trimmed, true);
+    assert.ok(result.afterTokens <= 100_000, `should be <= max token budget, got ${result.afterTokens}`);
+    assert.ok(result.removedCount > 0, 'should remove messages via hard fallback');
   });
 
   it('uses Gemini budget when appropriate', () => {

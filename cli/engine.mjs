@@ -189,8 +189,9 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
 
     if (streamToStdout) process.stdout.write('\nassistant> ');
 
-    const fcOptions = resolveNativeFC(providerConfig)
-      ? { tools: CLI_TOOL_SCHEMAS, toolChoice: providerConfig.toolChoice || 'auto' }
+    const useNativeFC = resolveNativeFC(providerConfig);
+    const fcOptions = useNativeFC
+      ? { tools: CLI_TOOL_SCHEMAS, toolChoice: providerConfig.toolChoice || 'auto', forceNativeFC: true }
       : undefined;
 
     const assistantText = await streamCompletion(

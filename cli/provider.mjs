@@ -122,7 +122,10 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
       stream: true,
       temperature: 0.1,
     };
-    if (options?.tools && config.supportsNativeFC) {
+    // forceNativeFC allows env override (PUSH_NATIVE_FC=1) to enable tools[]
+    // even for providers whose default config has supportsNativeFC=false.
+    const nativeFCEnabled = options?.forceNativeFC === true || config.supportsNativeFC;
+    if (options?.tools && nativeFCEnabled) {
       requestBody.tools = options.tools;
       requestBody.tool_choice = options.toolChoice || config.toolChoice || 'auto';
     }
