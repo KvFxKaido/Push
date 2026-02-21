@@ -1,6 +1,6 @@
 # Push — AI Agent Context
 
-Mobile-first AI coding agent with direct GitHub repo access. Chat with your codebase — review PRs, explore changes, and ship code from your phone.
+AI coding agent — mobile PWA + local CLI. Chat with your codebase — review PRs, explore changes, and ship code from your phone or terminal.
 
 ## Project Overview
 
@@ -135,12 +135,52 @@ When the user selects a repo, the app fetches project instruction files via the 
 10. **Merge** → PR creation + Auditor review + GitHub merge (merge commit strategy)
 11. **Cards** → Structured results render as inline cards
 
+## Push CLI
+
+Local coding agent for the terminal. Same role-based agent architecture as the web app, operating directly on the filesystem instead of through a sandbox.
+
+### Modes
+*   **Interactive** (`./push`) — REPL with streaming responses, tool execution, and Ctrl+C per-prompt cancellation. High-risk commands prompt for approval.
+*   **Headless** (`./push run --task "..."`) — Single task, no interaction, exits when done. `--accept <cmd>` for post-task acceptance checks. `--json` for structured output. Exit 130 on SIGINT.
+
+### Tools
+
+| Tool | Type | Purpose |
+|------|------|---------|
+| `read_file` | read | Read file with hashline-anchored line numbers |
+| `list_dir` | read | List directory contents |
+| `search_files` | read | Ripgrep text search (falls back to grep) |
+| `read_symbols` | read | Extract function/class/type declarations (regex) |
+| `git_status` | read | Workspace git status (branch, dirty files) |
+| `git_diff` | read | Show git diff (file-scoped, staged) |
+| `exec` | mutate | Run a shell command |
+| `write_file` | mutate | Write entire file (auto-backed up) |
+| `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
+| `git_commit` | mutate | Stage and commit files (excludes `.push/` internal state) |
+| `coder_update_state` | memory | Update working memory |
+
+Read-only tools run in parallel per turn. Only one mutating tool allowed per turn.
+
+### Agent Experience
+*   **Workspace snapshot** in system prompt (git branch, file tree, manifest summary)
+*   **Project instructions** loaded from `.push/instructions.md`, `AGENTS.md`, or `CLAUDE.md`
+*   **Hashline edits** with multi-line content, edit-site context preview, automatic file backup
+*   **Working memory** deduplicated (once per round), context budget tracking via `contextChars`
+*   **File awareness ledger** with per-file paths and read/write status
+
+### Safety
+Workspace jail, high-risk command detection, tool loop detection, max rounds cap, output truncation. `.push/` internal state excluded from `git_commit`.
+
+### Configuration
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers (Ollama, Mistral, OpenRouter), all OpenAI-compatible SSE with retry on 429/5xx.
+
 ## Directory Structure
 
 ```
 Push/
 ├── AGENTS.md              # This file — AI assistant context
 ├── CLAUDE.md              # Detailed architecture and conventions
+├── push                   # Bash launcher (symlink-safe, POSIX-compatible)
 ├── wrangler.jsonc         # Cloudflare Workers config
 ├── app/
 │   ├── worker.ts          # Cloudflare Worker — AI proxy + sandbox proxy
@@ -158,6 +198,18 @@ Push/
 │   │   └── main.tsx       # App entry point
 │   ├── package.json
 │   └── vite.config.ts
+├── cli/
+│   ├── cli.mjs               # Entrypoint — arg parsing, interactive/headless, Ctrl+C abort
+│   ├── engine.mjs            # Assistant loop, working memory dedup, context budget tracking
+│   ├── tools.mjs             # Tool executor, guards, hashline edits, git tools, file backup
+│   ├── provider.mjs          # SSE streaming client, retry policy, abort signal merge
+│   ├── workspace-context.mjs # Workspace snapshot + project instruction loading
+│   ├── session-store.mjs     # Session state + event persistence
+│   ├── config-store.mjs      # ~/.push/config.json read/write/env overlay
+│   ├── hashline.mjs          # Hashline protocol (content-hash line refs, multi-line edits)
+│   ├── file-ledger.mjs       # File awareness (per-file read/write status)
+│   ├── pushd.mjs             # Daemon skeleton (Unix socket, NDJSON IPC)
+│   └── tests/                # node:test suite (104 tests)
 └── sandbox/
     ├── app.py             # Modal Python App — sandbox web endpoints
     └── requirements.txt

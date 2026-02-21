@@ -6,8 +6,8 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 
 ## Project Overview
 
-*   **Type:** AI Coding Agent / Web Application (PWA)
-*   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile.
+*   **Type:** AI Coding Agent — Mobile PWA + Local CLI
+*   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
 *   **AI Backend:** Multi-provider support (Ollama, Mistral, OpenRouter) via OpenAI-compatible SSE streaming.
 
@@ -47,6 +47,52 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **PR Awareness:** Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches`.
 *   **Context Management:** Token-budget rolling window with summarization.
 
+## Push CLI
+
+Local coding agent for the terminal. Same role-based agent architecture as the web app, operating directly on the filesystem.
+
+### Quick Start
+```bash
+./push                              # interactive session
+./push run --task "Fix the bug"     # headless (single task, no interaction)
+./push config init                  # configure provider/model/API key
+```
+
+### Modes
+*   **Interactive:** REPL with streaming responses, tool execution, and Ctrl+C per-prompt cancellation. High-risk commands prompt for approval.
+*   **Headless:** Single task, exits when done. `--accept <cmd>` runs post-task acceptance checks. `--json` for structured output. Exit code 130 on SIGINT.
+
+### Tools
+| Tool | Type | Purpose |
+| :--- | :--- | :--- |
+| `read_file` | read | Read file with hashline-anchored line numbers |
+| `list_dir` | read | List directory contents |
+| `search_files` | read | Ripgrep text search (falls back to grep) |
+| `read_symbols` | read | Extract function/class/type declarations (regex-based) |
+| `git_status` | read | Workspace git status (branch, dirty files) |
+| `git_diff` | read | Show git diff (file-scoped, staged) |
+| `exec` | mutate | Run a shell command |
+| `write_file` | mutate | Write entire file (auto-backed up) |
+| `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
+| `git_commit` | mutate | Stage and commit files (excludes `.push/` internal state) |
+| `coder_update_state` | memory | Update working memory |
+
+**Read/mutate split:** Multiple read-only tools run in parallel per turn. Only one mutating tool allowed per turn.
+
+### Agent Experience
+*   **Workspace snapshot** injected into system prompt at session init (git branch, file tree, manifest summary).
+*   **Project instructions** loaded from `.push/instructions.md`, `AGENTS.md`, or `CLAUDE.md`.
+*   **Hashline edits** with multi-line content support, edit-site context preview, and automatic file backup before mutations.
+*   **Working memory** deduplicated (injected once per round, not per tool result). Context budget tracking via `contextChars` in meta envelope.
+*   **File awareness ledger** with per-file paths and read/write status.
+
+### Safety
+*   Workspace jail (no path escapes), high-risk command detection, tool loop detection, max rounds cap (default 8), output truncation (24KB).
+*   `.push/` internal state (sessions, backups) excluded from `git_commit`.
+
+### Configuration
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers: Ollama (local), Mistral, OpenRouter. All use OpenAI-compatible SSE with retry on 429/5xx.
+
 ## Directory Structure
 
 ```
@@ -81,9 +127,24 @@ Push/
 │   ├── package.json       # Frontend dependencies & scripts
 │   ├── tsconfig.json      # TypeScript configuration
 │   └── vite.config.ts     # Vite configuration
+├── cli/
+│   ├── cli.mjs               # Entrypoint — arg parsing, interactive/headless dispatch
+│   ├── engine.mjs            # Assistant loop, working memory, multi-tool dispatch, context tracking
+│   ├── tools.mjs             # Tool executor, workspace guard, hashline edits, git tools, risk detection
+│   ├── provider.mjs          # SSE streaming client, retry policy, provider configs
+│   ├── workspace-context.mjs # Workspace snapshot + project instruction loading
+│   ├── session-store.mjs     # Session state + event persistence
+│   ├── config-store.mjs      # ~/.push/config.json read/write/env overlay
+│   ├── hashline.mjs          # Hashline protocol (content-hash line refs, multi-line edits)
+│   ├── file-ledger.mjs       # File awareness tracking (per-file read/write status)
+│   ├── tool-call-metrics.mjs # Malformed tool-call counters
+│   ├── pushd.mjs             # Daemon skeleton (Unix socket, NDJSON IPC)
+│   ├── AGENT-WISHLIST.md     # Agent experience wishlist (shipped)
+│   └── tests/                # node:test suite (104 tests)
 ├── sandbox/
 │   ├── app.py             # Modal Python App (Sandbox Endpoints)
 │   └── requirements.txt   # Python dependencies
+├── push                   # Bash launcher (symlink-safe, POSIX-compatible)
 ├── AGENTS.md              # AI Agent Context & Instructions
 ├── CLAUDE.md              # Detailed Architecture Docs
 ├── wrangler.jsonc         # Cloudflare Workers Configuration

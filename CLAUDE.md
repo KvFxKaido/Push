@@ -89,16 +89,19 @@ app/src/
   App.tsx                 # Root component, screen state machine
 app/worker.ts        # Cloudflare Worker — streaming proxy to Ollama/Mistral/OpenRouter + sandbox proxy to Modal
 cli/                 # Push CLI — local coding agent
-  cli.mjs            # Entrypoint (arg parsing, interactive/headless modes)
-  engine.mjs         # Assistant/tool loop, working memory, multi-tool dispatch
-  tools.mjs          # Tool executor, guards, hashline edits, risk detection
-  provider.mjs       # SSE streaming client, retry policy, provider configs
+  cli.mjs            # Entrypoint (arg parsing, interactive/headless modes, Ctrl+C abort)
+  engine.mjs         # Assistant/tool loop, working memory dedup, context budget tracking
+  tools.mjs          # Tool executor, guards, hashline edits, git tools, risk detection, file backup
+  provider.mjs       # SSE streaming client, retry policy, abort signal merge
+  workspace-context.mjs # Workspace snapshot + project instruction loading for system prompt
   session-store.mjs  # Session state/events persistence, protocol-aligned envelopes
-  hashline.mjs       # Hashline edit protocol (anchored line refs, content versioning)
-  file-ledger.mjs    # File awareness ledger (read/write tracking per file)
+  config-store.mjs   # ~/.push/config.json read/write/env overlay
+  hashline.mjs       # Hashline edit protocol (anchored line refs, multi-line content)
+  file-ledger.mjs    # File awareness ledger (per-file path/status tracking)
   tool-call-metrics.mjs # Malformed tool-call observability
   pushd.mjs          # Daemon skeleton (Unix socket, NDJSON IPC)
-  tests/             # node:test suite
+  AGENT-WISHLIST.md  # Agent experience wishlist (shipped — 10 items)
+  tests/             # node:test suite (104 tests)
 sandbox/app.py       # Modal Python App — sandbox web endpoints (file ops, exec/git, browser tools, archive download)
 sandbox/requirements.txt
 scripts/             # One-off scripts (provider compliance, etc.)
