@@ -726,13 +726,19 @@ interface GetToolSchemasOptions {
   providerType?: 'ollama' | 'mistral' | 'openrouter';
 }
 
+type NativeToolSchema =
+  | (typeof GITHUB_TOOL_SCHEMAS)[number]
+  | (typeof SANDBOX_TOOL_SCHEMAS)[number]
+  | (typeof SCRATCHPAD_TOOL_SCHEMAS)[number]
+  | typeof WEB_SEARCH_TOOL_SCHEMA;
+
 /**
  * Returns filtered tool schemas based on what's available in the current session.
  * GitHub tools are included when a repo is connected, sandbox tools when sandbox is active.
  * Scratchpad tools are always included.
  */
-export function getToolSchemas(options: GetToolSchemasOptions = {}): typeof GITHUB_TOOL_SCHEMAS {
-  const schemas: typeof GITHUB_TOOL_SCHEMAS = [];
+export function getToolSchemas(options: GetToolSchemasOptions = {}): NativeToolSchema[] {
+  const schemas: NativeToolSchema[] = [];
 
   if (options.hasGitHub) {
     schemas.push(...GITHUB_TOOL_SCHEMAS);

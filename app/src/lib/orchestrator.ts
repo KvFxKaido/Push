@@ -64,7 +64,7 @@ const MISTRAL_API_URL = import.meta.env.DEV
 const MISTRAL_AGENTS_CREATE_URL = import.meta.env.DEV
   ? '/mistral/v1/agents'
   : '/api/mistral/agents';
-const MISTRAL_AGENTS_COMPLETIONS_URL = import.meta.env.DEV
+export const MISTRAL_AGENTS_COMPLETIONS_URL = import.meta.env.DEV
   ? '/mistral/v1/agents/completions'
   : '/api/mistral/agents/chat';
 
@@ -76,7 +76,7 @@ let mistralAgentModel: string | null = null;
  * Ensure a Mistral agent exists with web_search enabled.
  * Returns the cached agent_id, or creates one if needed.
  */
-async function ensureMistralAgent(apiKey: string, model: string): Promise<string> {
+export async function ensureMistralAgent(apiKey: string, model: string): Promise<string> {
   // Return cached agent if model hasn't changed
   if (mistralAgentId && mistralAgentModel === model) {
     return mistralAgentId;
