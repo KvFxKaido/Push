@@ -11,6 +11,8 @@ const IGNORED_ENTRIES = new Set([
 
 const MAX_TREE_ENTRIES = 40;
 const MAX_INSTRUCTIONS_CHARS = 8000;
+const MAX_MEMORY_CHARS = 4000;
+const MEMORY_PATH = '.push/memory.md';
 
 const MANIFEST_FILES = [
   'package.json',
@@ -210,6 +212,23 @@ const INSTRUCTION_FILES = [
   'AGENTS.md',
   'CLAUDE.md',
 ];
+
+// ─── loadMemory ────────────────────────────────────────────────
+
+export async function loadMemory(cwd) {
+  try {
+    const fullPath = path.join(cwd, MEMORY_PATH);
+    let content = await fs.readFile(fullPath, 'utf8');
+    if (content.length > MAX_MEMORY_CHARS) {
+      content = content.slice(0, MAX_MEMORY_CHARS);
+    }
+    return content.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── loadProjectInstructions ────────────────────────────────────
 
 export async function loadProjectInstructions(cwd) {
   for (const relPath of INSTRUCTION_FILES) {

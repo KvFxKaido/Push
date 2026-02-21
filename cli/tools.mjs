@@ -61,6 +61,7 @@ Available tools:
 - git_status() — workspace git status (branch, dirty files)
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - git_commit(message, paths?) — stage and commit files (all files if paths not specified)
+- save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session.
 - coder_update_state(plan?, openTasks?, filesTouched?, assumptions?, errorsEncountered?) — update working memory (no filesystem action)
 
 Rules:
@@ -570,10 +571,23 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         }
       }
 
+      case 'save_memory': {
+        const content = asString(call.args.content, 'content');
+        const memoryDir = path.join(workspaceRoot, '.push');
+        const memoryPath = path.join(memoryDir, 'memory.md');
+        await fs.mkdir(memoryDir, { recursive: true });
+        await fs.writeFile(memoryPath, content, 'utf8');
+        return {
+          ok: true,
+          text: `Memory saved (${content.length} chars). Will be loaded into system prompt on next session.`,
+          meta: { path: memoryPath, chars: content.length },
+        };
+      }
+
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, exec, write_file, edit_file, read_symbols, git_status, git_diff, git_commit`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, exec, write_file, edit_file, read_symbols, git_status, git_diff, git_commit, save_memory`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,

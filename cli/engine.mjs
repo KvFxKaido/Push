@@ -4,7 +4,7 @@ import { appendSessionEvent, saveSessionState, makeRunId } from './session-store
 import { streamCompletion } from './provider.mjs';
 import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.mjs';
 import { recordMalformedToolCall } from './tool-call-metrics.mjs';
-import { buildWorkspaceSnapshot, loadProjectInstructions } from './workspace-context.mjs';
+import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.mjs';
 
 export const DEFAULT_MAX_ROUNDS = 8;
 
@@ -47,8 +47,11 @@ function applyWorkingMemoryUpdate(state, args) {
 }
 
 export async function buildSystemPrompt(workspaceRoot) {
-  const snapshot = await buildWorkspaceSnapshot(workspaceRoot).catch(() => '');
-  const instructions = await loadProjectInstructions(workspaceRoot).catch(() => null);
+  const [snapshot, instructions, memory] = await Promise.all([
+    buildWorkspaceSnapshot(workspaceRoot).catch(() => ''),
+    loadProjectInstructions(workspaceRoot).catch(() => null),
+    loadMemory(workspaceRoot).catch(() => null),
+  ]);
 
   let prompt = `You are Push CLI, a coding assistant running in a local workspace.
 Workspace root: ${workspaceRoot}
@@ -58,6 +61,7 @@ Use tools for facts; do not invent file contents or command outputs.
 If the user's message does not require reading files or running commands, respond directly without tool calls.
 Each tool-loop round is expensive — plan before acting, batch related reads, and avoid exploratory browsing unless the user asks for it.
 Use coder_update_state to keep a concise working plan; it is persisted and reinjected.
+Use save_memory to persist learnings across sessions (build commands, project patterns, conventions).
 
 ${TOOL_PROTOCOL}`;
 
@@ -67,6 +71,10 @@ ${TOOL_PROTOCOL}`;
 
   if (instructions) {
     prompt += `\n\n[PROJECT_INSTRUCTIONS source="${instructions.file}"]\n${instructions.content}\n[/PROJECT_INSTRUCTIONS]`;
+  }
+
+  if (memory) {
+    prompt += `\n\n[MEMORY]\n${memory}\n[/MEMORY]`;
   }
 
   return prompt;

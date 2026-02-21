@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildWorkspaceSnapshot, loadProjectInstructions } from '../workspace-context.mjs';
+import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from '../workspace-context.mjs';
+import { executeToolCall } from '../tools.mjs';
 
 const PUSH_ROOT = path.resolve(import.meta.dirname, '..', '..');
 
@@ -167,6 +168,96 @@ describe('loadProjectInstructions', () => {
       const result = await loadProjectInstructions(tmpDir);
       assert.ok(result !== null);
       assert.equal(result.content.length, 8000);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── loadMemory ─────────────────────────────────────────────────
+
+describe('loadMemory', () => {
+  it('returns null when no memory file exists', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
+    try {
+      const result = await loadMemory(tmpDir);
+      assert.equal(result, null);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads .push/memory.md content', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
+    try {
+      await fs.mkdir(path.join(tmpDir, '.push'));
+      await fs.writeFile(path.join(tmpDir, '.push', 'memory.md'), 'Tests run with: bun test');
+
+      const result = await loadMemory(tmpDir);
+      assert.equal(result, 'Tests run with: bun test');
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('caps content at 4000 characters', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
+    try {
+      await fs.mkdir(path.join(tmpDir, '.push'));
+      await fs.writeFile(path.join(tmpDir, '.push', 'memory.md'), 'x'.repeat(5000));
+
+      const result = await loadMemory(tmpDir);
+      assert.equal(result.length, 4000);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null for empty file', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
+    try {
+      await fs.mkdir(path.join(tmpDir, '.push'));
+      await fs.writeFile(path.join(tmpDir, '.push', 'memory.md'), '');
+
+      const result = await loadMemory(tmpDir);
+      assert.equal(result, null);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── save_memory tool ───────────────────────────────────────────
+
+describe('save_memory tool', () => {
+  it('writes .push/memory.md and reports success', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'save_memory', args: { content: 'Build: npm run build\nTest: npm test' } },
+        tmpDir,
+      );
+
+      assert.ok(result.ok);
+      assert.ok(result.text.includes('Memory saved'));
+
+      const saved = await fs.readFile(path.join(tmpDir, '.push', 'memory.md'), 'utf8');
+      assert.equal(saved, 'Build: npm run build\nTest: npm test');
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('roundtrips with loadMemory', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
+    try {
+      await executeToolCall(
+        { tool: 'save_memory', args: { content: 'This project uses vitest' } },
+        tmpDir,
+      );
+
+      const loaded = await loadMemory(tmpDir);
+      assert.equal(loaded, 'This project uses vitest');
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
