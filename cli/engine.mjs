@@ -112,10 +112,11 @@ function buildParseErrorMessage(malformed) {
  * - approvalFn: async (tool, detail) => boolean — gate for high-risk operations
  * - signal: AbortSignal — external abort (e.g. Ctrl+C)
  * - emit: (event) => void — callback for streaming events (replaces stdout writing)
+ * - runId: string — optional run id override (used by pushd for ack/event correlation)
  */
 export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds, options = {}) {
-  const { approvalFn, signal, emit } = options;
-  const runId = makeRunId();
+  const { approvalFn, signal, emit, runId: providedRunId } = options;
+  const runId = providedRunId || makeRunId();
   let finalAssistantText = '';
   const repeatedCalls = new Map();
   const toolsUsed = new Set();
@@ -216,18 +217,45 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       ? { tools: CLI_TOOL_SCHEMAS, toolChoice: providerConfig.toolChoice || 'auto', forceNativeFC: true }
       : undefined;
 
-    const assistantText = await streamCompletion(
-      providerConfig,
-      apiKey,
-      state.model,
-      trimResult.messages,
-      (token) => {
-        dispatchEvent('assistant_token', { text: token });
-      },
-      undefined,
-      signal,
-      fcOptions,
-    );
+    let assistantText;
+    try {
+      assistantText = await streamCompletion(
+        providerConfig,
+        apiKey,
+        state.model,
+        trimResult.messages,
+        (token) => {
+          dispatchEvent('assistant_token', { text: token });
+        },
+        undefined,
+        signal,
+        fcOptions,
+      );
+    } catch (err) {
+      const isAbort = (err instanceof Error && err.name === 'AbortError') || signal?.aborted;
+      if (isAbort) {
+        await saveSessionState(state);
+        await appendSessionEvent(state, 'run_complete', { runId, outcome: 'aborted', summary: 'Aborted by user.' }, runId);
+        dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
+        return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
+      }
+
+      const message = err instanceof Error ? err.message : String(err);
+      await appendSessionEvent(state, 'error', {
+        code: 'PROVIDER_ERROR',
+        message,
+        retryable: true,
+      }, runId);
+      dispatchEvent('error', { code: 'PROVIDER_ERROR', message });
+
+      await appendSessionEvent(state, 'run_complete', {
+        runId,
+        outcome: 'failed',
+        summary: message.slice(0, 500),
+      }, runId);
+      dispatchEvent('run_complete', { outcome: 'failed', summary: message.slice(0, 500) });
+      return { outcome: 'error', finalAssistantText: message, rounds: round - 1, runId };
+    }
 
     finalAssistantText = assistantText.trim();
     state.messages.push({ role: 'assistant', content: assistantText });

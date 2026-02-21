@@ -18,7 +18,7 @@ import process from 'node:process';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 
-import { PROVIDER_CONFIGS, resolveApiKey } from './provider.mjs';
+import { PROVIDER_CONFIGS, resolveApiKey, resolveNativeFC } from './provider.mjs';
 import {
   makeSessionId,
   makeRunId,
@@ -104,7 +104,8 @@ async function handleHello(req) {
 async function handleStartSession(req) {
   const payload = req.payload || {};
   const provider = payload.provider || 'ollama';
-  if (!PROVIDER_CONFIGS[provider]) {
+  const providerConfig = PROVIDER_CONFIGS[provider];
+  if (!providerConfig) {
     return makeErrorResponse(req.requestId, 'start_session', 'PROVIDER_NOT_CONFIGURED', `Unknown provider: ${provider}`);
   }
 
@@ -114,6 +115,7 @@ async function handleStartSession(req) {
   const attachToken = makeAttachToken();
   const now = Date.now();
 
+  const useNativeFC = resolveNativeFC(providerConfig);
   const state = {
     sessionId,
     createdAt: now,
@@ -123,7 +125,7 @@ async function handleStartSession(req) {
     cwd,
     rounds: 0,
     eventSeq: 0,
-    messages: [{ role: 'system', content: buildSystemPrompt(cwd) }],
+    messages: [{ role: 'system', content: await buildSystemPrompt(cwd, { useNativeFC }) }],
   };
 
   await appendSessionEvent(state, 'session_started', {
@@ -187,20 +189,16 @@ async function handleSendUserMessage(req, emitEvent) {
 
   // Run in background — emit events as they happen
   (async () => {
+    let sawError = false;
+    let sawRunComplete = false;
     try {
-      const persistedTypes = new Set([
-        'tool_call', 'tool_result', 'assistant_done', 
-        'warning', 'error', 'run_complete'
-      ]);
-
-      const result = await runAssistantLoop(state, providerConfig, apiKey, DEFAULT_MAX_ROUNDS, {
+      await runAssistantLoop(state, providerConfig, apiKey, DEFAULT_MAX_ROUNDS, {
+        runId,
         emit: (event) => {
-          let seq = state.eventSeq;
-          if (!persistedTypes.has(event.type)) {
-            seq = state.eventSeq + 1;
-            state.eventSeq = seq;
-          }
-          
+          const seq = state.eventSeq;
+          if (event.type === 'error') sawError = true;
+          if (event.type === 'run_complete') sawRunComplete = true;
+
           emitEvent({
             v: PROTOCOL_VERSION,
             kind: 'event',
@@ -216,9 +214,40 @@ async function handleSendUserMessage(req, emitEvent) {
       await saveSessionState(state);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // If engine didn't emit run_complete/error (e.g. persisted failure), we do it here.
-      // But engine usually handles its own errors.
-      // We'll just ensure state is saved.
+      if (!sawError) {
+        await appendSessionEvent(state, 'error', {
+          code: 'INTERNAL_ERROR',
+          message,
+          retryable: false,
+        }, runId);
+        emitEvent({
+          v: PROTOCOL_VERSION,
+          kind: 'event',
+          sessionId,
+          runId,
+          seq: state.eventSeq,
+          ts: Date.now(),
+          type: 'error',
+          payload: { code: 'INTERNAL_ERROR', message, retryable: false },
+        });
+      }
+      if (!sawRunComplete) {
+        await appendSessionEvent(state, 'run_complete', {
+          runId,
+          outcome: 'failed',
+          summary: message.slice(0, 500),
+        }, runId);
+        emitEvent({
+          v: PROTOCOL_VERSION,
+          kind: 'event',
+          sessionId,
+          runId,
+          seq: state.eventSeq,
+          ts: Date.now(),
+          type: 'run_complete',
+          payload: { outcome: 'failed', summary: message.slice(0, 500) },
+        });
+      }
       await saveSessionState(state);
     }
   })();

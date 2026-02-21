@@ -330,7 +330,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       } catch (err) {
         if (err.name === 'AbortError') {
           await saveSessionState(state);
-          // handled by event?
+          process.stdout.write('\n[cancelled]\n');
         } else {
           const message = err instanceof Error ? err.message : String(err);
           await appendSessionEvent(state, 'error', { message });
