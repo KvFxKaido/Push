@@ -40,6 +40,8 @@ Use this file to navigate active design/planning docs versus historical referenc
 
 - `security/SECURITY_AUDIT.md`
   - Status: Security findings and mitigation history.
+- `security/PROVIDER_USAGE_POLICY.md`
+  - Status: Active provider key usage policy and terms-boundary review checklist (last reviewed 2026-02-21).
 
 ### CLI Docs
 

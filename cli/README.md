@@ -98,7 +98,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
 | `PUSH_MISTRAL_URL` | Mistral endpoint (default: `https://api.mistral.ai/v1/chat/completions`) |
-| `PUSH_MISTRAL_API_KEY` | Mistral API key |
+| `PUSH_MISTRAL_API_KEY` | Mistral workspace API key for `api.mistral.ai` |
 | `PUSH_MISTRAL_MODEL` | Mistral model (default: `devstral-small-latest`) |
 | `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/chat/completions`) |
 | `PUSH_OPENROUTER_API_KEY` | OpenRouter API key |
@@ -123,6 +123,13 @@ All three providers use OpenAI-compatible SSE streaming. The CLI retries on 429/
 | `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
+
+### Mistral key type
+
+- Supported: standard workspace API key from `console.mistral.ai` / `admin.mistral.ai` for `api.mistral.ai`.
+- Not supported in Push: auto-generated **Mistral Code extension** key.
+- Not supported in default Push config: **Codestral-only** domain keys/endpoints.
+- Policy + terms boundary + review cadence: `documents/security/PROVIDER_USAGE_POLICY.md` (last reviewed 2026-02-21).
 
 ## Tools
 
