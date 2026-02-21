@@ -24,28 +24,48 @@ The TUI must remain fully usable in all tiers.
 
 ## Design Tokens
 
+## Source of Truth (Web App)
+
+Use the existing web tokens first:
+
+- `app/tailwind.config.js` for Push hex tokens (`push-*` colors).
+- `app/src/index.css` for semantic HSL tokens (`--destructive`, `--ring`, etc.).
+- `app/src/App.css` for gradient endpoints (when approximating panel fills).
+
+Rule:
+- If a token exists in web theme, TUI must use that value instead of inventing a new palette.
+
 ## Colors (Truecolor)
 
-| Token | Hex | Usage |
-|---|---|---|
-| `bg.base` | `#0b0d10` | App background |
-| `bg.panel` | `#11151b` | Header card, modal, tool pane background |
-| `fg.primary` | `#e8ecf2` | Main text |
-| `fg.muted` | `#a1a9b5` | Secondary labels |
-| `fg.dim` | `#6f7885` | De-emphasized hints |
-| `border.default` | `#303846` | Panel separators/borders |
-| `accent.cyan` | `#43e7e7` | Commands, active shortcut hints |
-| `accent.violet` | `#a7b3ff` | Brand/prompt accents |
-| `state.success` | `#62d881` | Success states |
-| `state.warn` | `#e5c76b` | Warning states |
-| `state.error` | `#ff7b8f` | Error/deny states |
+| Token | Web token | Hex | Usage |
+|---|---|---|---|
+| `bg.base` | `push-surface` | `#070a10` | App background |
+| `bg.panel` | `push-surface-raised` | `#0c1018` | Header card, modal, tool pane background |
+| `fg.primary` | `push-fg` | `#f5f7ff` | Main text |
+| `fg.secondary` | `push-fg-secondary` | `#b4becf` | Secondary labels |
+| `fg.muted` | `push-fg-muted` | `#8b96aa` | Muted labels/icons |
+| `fg.dim` | `push-fg-dim` | `#667086` | De-emphasized hints |
+| `border.default` | `push-edge` | `#1f2531` | Panel separators/borders |
+| `border.hover` | `push-edge-hover` | `#2f3949` | Focus/hover border |
+| `accent.primary` | `push-accent` | `#0070f3` | Primary interactive accent |
+| `accent.secondary` | `push-sky` | `#38bdf8` | Focus rings/status glow |
+| `accent.link` | `push-link` | `#5cb7ff` | Command hints/actions |
+| `state.success` | utility `emerald-500` | `#10b981` | Success states |
+| `state.warn` | utility `amber-400` | `#fbbf24` | Warning states |
+| `state.error` | semantic `--destructive` (~red-500) | `#ef4444` | Error/deny states |
+
+Gradient note:
+- Terminal UIs cannot reliably render CSS gradients; use solid fills from the web token set.
+- When approximating gradient-heavy surfaces, prefer `bg.panel` and `border.default`.
 
 ## ANSI Fallback Mapping
 
 - `fg.primary` -> bright white
+- `fg.secondary` -> white
 - `fg.muted` -> bright black / gray
-- `accent.cyan` -> cyan
-- `accent.violet` -> blue or magenta
+- `accent.primary` -> blue
+- `accent.secondary` -> cyan
+- `accent.link` -> bright cyan/blue
 - `state.success` -> green
 - `state.warn` -> yellow
 - `state.error` -> red
@@ -89,14 +109,14 @@ Required lines:
 
 Style:
 - Bordered panel using `bg.panel` + `border.default`.
-- Header text in `fg.primary`; metadata labels in `fg.muted`; command hints in `accent.cyan`.
+- Header text in `fg.primary`; metadata labels in `fg.secondary`; command hints in `accent.link`.
 
 ## 2) Transcript Pane
 
 Purpose: primary reading surface.
 
 Rules:
-- User messages prefixed with prompt marker in `accent.violet`.
+- User messages prefixed with prompt marker in `accent.primary`.
 - Assistant stream uses `fg.primary`.
 - Thinking/status text uses `fg.dim`.
 - Maintain stable wrapping; no horizontal scrolling for normal text.
