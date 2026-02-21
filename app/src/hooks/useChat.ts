@@ -1416,7 +1416,7 @@ export function useChat(
           // These can be executed safely in parallel (no shared-state mutation).
           const detected = detectAllToolCalls(accumulated);
           const parallelToolCalls = detected.readOnly;
-          if (parallelToolCalls.length > 1) {
+          if (parallelToolCalls.length > 1 || (parallelToolCalls.length > 0 && Boolean(detected.mutating))) {
             console.log(`[Push] Parallel tool calls detected:`, parallelToolCalls);
 
             // Mark assistant message as tool call

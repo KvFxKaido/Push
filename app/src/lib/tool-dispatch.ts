@@ -60,7 +60,12 @@ export interface DetectedToolCalls {
  * Falls back to single-call detection if only one call is found.
  */
 export function detectAllToolCalls(text: string): DetectedToolCalls {
-  const parsedObjects = extractBareToolJsonObjects(text);
+  const explicitToolObjects = extractBareToolJsonObjects(text);
+  if (explicitToolObjects.length === 0) return { readOnly: [], mutating: null };
+
+  // Preserve current safety behavior: only do broad bare-object scanning
+  // when the response already contains at least one explicit tool wrapper.
+  const parsedObjects = extractAllBareJsonObjects(text);
   if (parsedObjects.length === 0) return { readOnly: [], mutating: null };
 
   const allCalls: AnyToolCall[] = [];
@@ -70,7 +75,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     const serialized = JSON.stringify(parsed);
     const call = detectAnyToolCall(serialized);
     if (!call) continue;
-    const key = `${call.source}:${getToolCallName(call)}:${serialized}`;
+    const key = `${call.source}:${getToolCallName(call)}:${JSON.stringify(getToolCallArgs(call))}`;
     if (seen.has(key)) continue;
     seen.add(key);
     allCalls.push(call);
@@ -120,6 +125,21 @@ function getToolCallName(toolCall: AnyToolCall): string {
     case 'scratchpad': return toolCall.call.tool;
     case 'web-search': return 'web_search';
     default: return 'unknown';
+  }
+}
+
+/** Build a normalized arg payload for stable dedupe keys across wrapper formats. */
+function getToolCallArgs(toolCall: AnyToolCall): unknown {
+  switch (toolCall.source) {
+    case 'github':
+    case 'sandbox':
+    case 'delegate':
+    case 'web-search':
+      return toolCall.call.args;
+    case 'scratchpad':
+      return { tool: toolCall.call.tool, content: toolCall.call.content };
+    default:
+      return {};
   }
 }
 
