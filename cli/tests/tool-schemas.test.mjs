@@ -5,8 +5,8 @@ import { CLI_TOOL_SCHEMAS, TOOL_RULES } from '../tool-schemas.mjs';
 // ─── Schema structure ──────────────────────────────────────────────
 
 describe('CLI_TOOL_SCHEMAS', () => {
-  it('exports exactly 13 tool schemas', () => {
-    assert.equal(CLI_TOOL_SCHEMAS.length, 13);
+  it('exports exactly 14 tool schemas', () => {
+    assert.equal(CLI_TOOL_SCHEMAS.length, 14);
   });
 
   it('every schema has type "function" and function.name/parameters', () => {
@@ -30,8 +30,8 @@ describe('CLI_TOOL_SCHEMAS', () => {
   });
 
   const expectedTools = [
-    'read_file', 'list_dir', 'search_files', 'exec',
-    'write_file', 'edit_file', 'read_symbols',
+    'read_file', 'list_dir', 'search_files', 'web_search', 'exec',
+    'write_file', 'edit_file', 'undo_edit', 'read_symbols',
     'git_status', 'git_diff', 'git_commit',
     'save_memory', 'coder_update_state',
   ];
@@ -59,6 +59,11 @@ describe('schema required fields', () => {
   it('search_files requires pattern', () => {
     const schema = getSchema('search_files');
     assert.deepEqual(schema.function.parameters.required, ['pattern']);
+  });
+
+  it('web_search requires query', () => {
+    const schema = getSchema('web_search');
+    assert.deepEqual(schema.function.parameters.required, ['query']);
   });
 
   it('exec requires command', () => {

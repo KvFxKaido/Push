@@ -150,6 +150,7 @@ Local coding agent for the terminal. Same role-based agent architecture as the w
 | `read_file` | read | Read file with hashline-anchored line numbers |
 | `list_dir` | read | List directory contents |
 | `search_files` | read | Ripgrep text search (falls back to grep) |
+| `web_search` | read | Search the public web (Tavily when key is set, otherwise DuckDuckGo HTML) |
 | `read_symbols` | read | Extract function/class/type declarations (regex) |
 | `git_status` | read | Workspace git status (branch, dirty files) |
 | `git_diff` | read | Show git diff (file-scoped, staged) |
@@ -172,7 +173,7 @@ Read-only tools run in parallel per turn. Only one mutating tool allowed per tur
 Workspace jail, high-risk command detection, tool loop detection, max rounds cap, output truncation. `.push/` internal state excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers (Ollama, Mistral, OpenRouter), all OpenAI-compatible SSE with retry on 429/5xx. Native function-calling override flags: `PUSH_NATIVE_FC=0|1` (CLI) and `VITE_NATIVE_FC=0|1` (web).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers (Ollama, Mistral, OpenRouter), all OpenAI-compatible SSE with retry on 429/5xx. Native function-calling override flags: `PUSH_NATIVE_FC=0|1` (CLI) and `VITE_NATIVE_FC=0|1` (web). CLI `web_search` uses Tavily when `PUSH_TAVILY_API_KEY` is set, otherwise DuckDuckGo fallback.
 
 ## Directory Structure
 

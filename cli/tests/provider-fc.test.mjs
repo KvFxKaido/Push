@@ -49,7 +49,7 @@ describe('request body with native FC', () => {
     }
 
     assert.ok(body.tools, 'tools should be set');
-    assert.equal(body.tools.length, 13);
+    assert.equal(body.tools.length, 14);
     assert.equal(body.tool_choice, 'auto');
   });
 
@@ -90,7 +90,7 @@ describe('request body with native FC', () => {
     }
 
     assert.ok(body.tools, 'tools should be set when forceNativeFC=true');
-    assert.equal(body.tools.length, 13);
+    assert.equal(body.tools.length, 14);
     assert.equal(body.tool_choice, 'auto');
   });
 });

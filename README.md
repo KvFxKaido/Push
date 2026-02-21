@@ -107,6 +107,22 @@ VITE_BROWSER_TOOL_ENABLED=true        # Optional — enables sandbox browser too
 
 Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings.
 
+## Push CLI
+
+Push also ships with a local terminal agent that uses the same role-based architecture on your filesystem.
+
+```bash
+# from repo root
+./push config init
+./push
+./push run --task "Implement X and run tests"
+```
+
+- **Interactive mode** (`./push`) streams responses and supports in-session `/model` + `/provider` switching.
+- **Headless mode** (`./push run --task "..."`) runs one task and exits, with optional `--accept` checks.
+
+Full CLI docs and command reference: `cli/README.md`.
+
 ## GitHub Authentication
 
 Push supports two authentication methods:
@@ -172,8 +188,15 @@ Current harness priorities from `documents/Harness Reliability Plan.md`:
 
 ```
 Push/
+├── push                   # CLI launcher script
 ├── CLAUDE.md              # AI assistant context (architecture, conventions)
 ├── wrangler.jsonc         # Cloudflare Workers config
+├── cli/
+│   ├── cli.mjs            # CLI entrypoint (interactive + headless)
+│   ├── engine.mjs         # Assistant loop and tool orchestration
+│   ├── tools.mjs          # Local file/exec/git tools
+│   ├── provider.mjs       # Provider config + streaming client
+│   └── README.md          # CLI usage and full reference
 ├── sandbox/
 │   ├── app.py             # Modal Python App — sandbox web endpoints
 │   └── requirements.txt

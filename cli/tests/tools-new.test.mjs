@@ -1,4 +1,4 @@
-import { describe, it, after } from 'node:test';
+import { describe, it, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -11,6 +11,10 @@ import {
 } from '../tools.mjs';
 
 const PUSH_ROOT = path.resolve(import.meta.dirname, '..', '..');
+const originalFetch = globalThis.fetch;
+const originalPushTavilyKey = process.env.PUSH_TAVILY_API_KEY;
+const originalTavilyKey = process.env.TAVILY_API_KEY;
+const originalViteTavilyKey = process.env.VITE_TAVILY_API_KEY;
 
 // ─── read_symbols ────────────────────────────────────────────────
 
@@ -130,6 +134,129 @@ describe('git_diff', () => {
 
   it('is classified as read-only', () => {
     assert.equal(isReadOnlyToolCall({ tool: 'git_diff' }), true);
+  });
+});
+
+// ─── web_search ───────────────────────────────────────────────────
+
+describe('web_search', () => {
+  beforeEach(() => {
+    delete process.env.PUSH_TAVILY_API_KEY;
+    delete process.env.TAVILY_API_KEY;
+    delete process.env.VITE_TAVILY_API_KEY;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    if (originalPushTavilyKey === undefined) delete process.env.PUSH_TAVILY_API_KEY;
+    else process.env.PUSH_TAVILY_API_KEY = originalPushTavilyKey;
+    if (originalTavilyKey === undefined) delete process.env.TAVILY_API_KEY;
+    else process.env.TAVILY_API_KEY = originalTavilyKey;
+    if (originalViteTavilyKey === undefined) delete process.env.VITE_TAVILY_API_KEY;
+    else process.env.VITE_TAVILY_API_KEY = originalViteTavilyKey;
+  });
+
+  it('uses Tavily when PUSH_TAVILY_API_KEY is set', async () => {
+    process.env.PUSH_TAVILY_API_KEY = 'tvly-test-key';
+
+    let capturedUrl = '';
+    let capturedBody = null;
+    globalThis.fetch = async (url, init = {}) => {
+      capturedUrl = String(url);
+      capturedBody = JSON.parse(String(init.body || '{}'));
+      return new Response(
+        JSON.stringify({
+          results: [
+            { title: 'Tavily Result', url: 'https://example.com/tavily', content: 'fresh context' },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'push cli tavily', max_results: 3 } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(capturedUrl, 'https://api.tavily.com/search');
+    assert.equal(capturedBody.api_key, 'tvly-test-key');
+    assert.equal(capturedBody.query, 'push cli tavily');
+    assert.equal(capturedBody.max_results, 3);
+    assert.equal(result.meta.source, 'tavily');
+    assert.ok(result.text.includes('Tavily Result'));
+  });
+
+  it('parses DuckDuckGo HTML results', async () => {
+    const html = [
+      '<html><body>',
+      '<a class="result__a" href="https://example.com/alpha">Alpha <b>Result</b></a>',
+      '<a class="result__snippet">Alpha snippet text</a>',
+      '<a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Fbeta">Beta Result</a>',
+      '<div class="result__snippet">Beta snippet &amp; details</div>',
+      '</body></html>',
+    ].join('\n');
+
+    globalThis.fetch = async () => new Response(html, { status: 200 });
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'push cli', max_results: 2 } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.meta.results, 2);
+    assert.equal(result.meta.source, 'duckduckgo_html');
+    assert.ok(result.text.includes('Alpha Result'));
+    assert.ok(result.text.includes('https://example.com/beta'));
+    assert.ok(result.text.includes('Beta snippet & details'));
+  });
+
+  it('returns no-results message when parser finds none', async () => {
+    globalThis.fetch = async () => new Response('<html><body>No hits</body></html>', { status: 200 });
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'no results expected' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.meta.results, 0);
+    assert.ok(result.text.includes('No web results found'));
+  });
+
+  it('returns structured error when upstream returns non-2xx', async () => {
+    globalThis.fetch = async () => new Response('upstream unavailable', { status: 503 });
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'service outage test' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError.code, 'WEB_SEARCH_ERROR');
+    assert.ok(result.text.includes('DuckDuckGo returned 503'));
+  });
+
+  it('returns Tavily-specific error when Tavily request fails', async () => {
+    process.env.PUSH_TAVILY_API_KEY = 'tvly-test-key';
+    globalThis.fetch = async () => new Response('invalid key', { status: 401 });
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'bad tavily key' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError.code, 'WEB_SEARCH_ERROR');
+    assert.equal(result.meta.source, 'tavily');
+    assert.ok(result.text.includes('Web search (tavily) failed'));
+    assert.ok(result.text.includes('Tavily returned 401'));
+  });
+
+  it('is classified as read-only', () => {
+    assert.equal(isReadOnlyToolCall({ tool: 'web_search' }), true);
   });
 });
 
@@ -294,6 +421,10 @@ describe('TOOL_PROTOCOL', () => {
 
   it('includes undo_edit', () => {
     assert.ok(TOOL_PROTOCOL.includes('undo_edit'), 'TOOL_PROTOCOL should mention undo_edit');
+  });
+
+  it('includes web_search', () => {
+    assert.ok(TOOL_PROTOCOL.includes('web_search'), 'TOOL_PROTOCOL should mention web_search');
   });
 });
 

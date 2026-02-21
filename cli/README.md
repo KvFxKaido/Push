@@ -18,7 +18,7 @@ On first run you'll want to configure a provider:
 ./push config init
 ```
 
-This walks you through provider, model, API key, and sandbox settings. Config is saved to `~/.push/config.json` (mode 0600).
+This walks you through provider, model, API key, and sandbox settings using numbered menus (with free-text fallback). Config is saved to `~/.push/config.json` (mode 0600).
 
 ## Modes
 
@@ -32,7 +32,15 @@ This walks you through provider, model, API key, and sandbox settings. Config is
 
 Starts a REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (rm -rf, sudo, force-push, etc.) prompt for approval before running.
 
-In-session commands: `/help`, `/provider`, `/session`, `/exit`.
+In-session commands:
+
+- `/help` — show commands
+- `/model` — show current model and curated list for the active provider
+- `/model <name|#>` — switch model by name or list number
+- `/provider` — show providers with key/native-FC status
+- `/provider <name|#>` — switch provider by name or list number
+- `/session` — print current session id
+- `/exit` or `/quit` — exit interactive mode
 
 ### Headless
 
@@ -71,6 +79,7 @@ Runs a single task and exits. No interaction. High-risk commands are blocked (no
 ./push config show              # print current config (keys masked)
 ./push config set --provider mistral --model devstral-small-latest
 ./push config set --api-key sk-abc123
+./push config set --tavily-key tvly-abc123
 ./push config set --sandbox     # enable local Docker sandbox
 ./push config set --no-sandbox  # disable it
 ```
@@ -93,11 +102,13 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/chat/completions`) |
 | `PUSH_OPENROUTER_API_KEY` | OpenRouter API key |
 | `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6`) |
+| `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
+| `PUSH_NATIVE_FC` | Native function-calling override: `0`/`false` = off, `1`/`true` = on |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
 | `PUSH_SESSION_DIR` | Override session storage location |
 | `PUSH_CONFIG_PATH` | Override config file path |
 
-Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, etc.) are also checked.
+Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VITE_TAVILY_API_KEY`, etc.) are also checked.
 
 ## Providers
 
@@ -109,15 +120,23 @@ All three providers use OpenAI-compatible SSE streaming. The CLI retries on 429/
 | `mistral` | `devstral-small-latest` | Yes |
 | `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
 
+You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
+
 ## Tools
 
-The agent uses prompt-engineered tool calls — JSON blocks in fenced code blocks detected by regex, not native function calling. Available tools:
+The CLI supports both prompt-engineered tool calls and native function-calling.
+- Default mode: `ollama` uses prompt-engineered calls; `mistral` and `openrouter` use native function-calling.
+- Override with `PUSH_NATIVE_FC=0|1`.
+- Regardless of mode, tool behavior and safety rules are the same.
+
+Available tools:
 
 | Tool | Type | Purpose |
 |---|---|---|
 | `read_file` | read | Read file with hashline-anchored line numbers |
 | `list_dir` | read | List directory contents |
 | `search_files` | read | Ripgrep text search (falls back to grep) |
+| `web_search` | read | Search the public web (Tavily when key is set, otherwise DuckDuckGo HTML) |
 | `read_symbols` | read | Extract function/class/type declarations from a file |
 | `git_status` | read | Workspace git status (branch, dirty files) |
 | `git_diff` | read | Show git diff (optionally for a specific file, staged) |
@@ -223,6 +242,9 @@ push --session <id>                 Resume interactive session
 push run --task "..."               Headless mode (single task)
 push run "..."                      Headless mode (positional)
 push sessions                       List saved sessions
+push stats                          Show provider compliance stats
+push daemon status|start|stop       Manage pushd daemon
+push attach <session-id>            Attach to daemon-backed session
 push config show                    Show saved config
 push config init                    Interactive setup wizard
 push config set ...                 Save provider config
@@ -232,6 +254,7 @@ Options:
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key
+  --tavily-key <secret>   Set Tavily API key for web_search
   --cwd <path>            Workspace root (default: cwd)
   --session <id>          Resume session
   --task <text>           Task for headless mode
@@ -241,6 +264,17 @@ Options:
   --sandbox               Enable local Docker sandbox
   --no-sandbox            Disable local Docker sandbox
   -h, --help              Show help
+```
+
+Interactive slash commands:
+
+```
+/model                    Show model list for current provider
+/model <name|#>           Switch model
+/provider                 Show providers and current status
+/provider <name|#>        Switch provider
+/session                  Print session id
+/exit | /quit             Exit interactive mode
 ```
 
 ## Future
