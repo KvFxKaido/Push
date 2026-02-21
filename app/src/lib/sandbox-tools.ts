@@ -2017,3 +2017,32 @@ ${BROWSER_RULES_BLOCK}- sandbox_diff shows what you've changed — review before
 - Before delegating code changes, prefer sandbox_search to quickly locate relevant files/functions and provide precise context.
 - Use sandbox_run_tests BEFORE committing to catch regressions early. It's faster than sandbox_exec("npm test") and gives structured results.
 - Use sandbox_check_types to validate TypeScript/Python code before committing. Catches type errors that tests might miss.`;
+
+/**
+ * Behavioral rules only — used with native function calling where sandbox tool
+ * definitions are sent as structured schemas in the request body.
+ * Omits the tool list and JSON format instructions.
+ */
+export const SANDBOX_TOOL_PROTOCOL_BEHAVIORAL = `
+SANDBOX TOOLS — Sandbox tools are available via native function calling.
+
+Sandbox rules:
+- CRITICAL: Use tool calls for sandbox operations. Do NOT describe or narrate tool usage in prose.
+- The repo is cloned to /workspace — use that as the working directory
+- You can install packages, run tests, build, lint — anything you'd do in a terminal
+- For multi-step tasks (edit + test), use multiple tool calls in sequence
+- For independent read-only operations, you may use multiple tool calls in one message. They can be executed in parallel.
+- Prefer read → write flows for edits. Use expected_version from sandbox_read_file to avoid stale overwrites.
+- sandbox_diff shows what you've changed — review before committing
+- sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.
+- If the push fails after a successful commit, use sandbox_push() to retry
+- Keep commands focused — avoid long-running servers or background processes
+- IMPORTANT: sandbox_read_file only works on files, not directories. To explore the project structure, use sandbox_list_dir first, then read specific files.
+- Before delegating code changes, prefer sandbox_search to quickly locate relevant files/functions and provide precise context.
+- Use sandbox_run_tests BEFORE committing to catch regressions early.
+- Use sandbox_check_types to validate TypeScript/Python code before committing.
+
+Commit message guidelines for sandbox_prepare_commit:
+- Use conventional commit format (feat:, fix:, refactor:, docs:, etc.)
+- Keep under 72 characters
+- Describe what changed and why, not how`;

@@ -73,6 +73,19 @@ Rules:
 - If a tool fails, correct the call and retry when appropriate.
 - Do not describe tool calls in prose. Emit only JSON blocks for tool calls.`;
 
+/**
+ * Behavioral rules only — used with native function calling where tool
+ * definitions are sent as structured schemas in the request body.
+ */
+export const TOOL_RULES = `Tool Rules:
+- Paths are relative to workspace root unless absolute inside workspace.
+- Never attempt paths outside workspace.
+- You may emit multiple tool calls in one assistant reply.
+- Emit at most one mutating tool call per reply; read-only calls can be batched.
+- Prefer edit_file over full-file rewrites when possible.
+- If a tool fails, correct the call and retry when appropriate.
+- Do not describe tool calls in prose; use tool calls directly.`;
+
 export function truncateText(text, max = MAX_TOOL_OUTPUT_CHARS) {
   if (text.length <= max) return text;
   const totalLines = text.split('\n').length;

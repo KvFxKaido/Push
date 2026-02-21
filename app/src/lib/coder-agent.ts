@@ -15,7 +15,8 @@ import { parseDiffStats } from './diff-utils';
 import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
-import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
+import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL, SANDBOX_TOOL_PROTOCOL_BEHAVIORAL } from './sandbox-tools';
+import { nativeFCOverride } from './feature-flags';
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { extractBareToolJsonObjects, isReadOnlyToolCall, MAX_PARALLEL_TOOL_CALLS } from './tool-dispatch';
 import type { AnyToolCall } from './tool-dispatch';
@@ -236,7 +237,9 @@ async function fetchSandboxStateSummary(sandboxId: string): Promise<string> {
 // Coder system prompt
 // ---------------------------------------------------------------------------
 
-const CODER_SYSTEM_PROMPT = `You are the Coder agent for Push, a mobile AI coding assistant. Your job is to implement coding tasks.
+function buildCoderSystemPrompt(useNativeFC = false): string {
+  const sandboxBlock = useNativeFC ? SANDBOX_TOOL_PROTOCOL_BEHAVIORAL : SANDBOX_TOOL_PROTOCOL;
+  return `You are the Coder agent for Push, a mobile AI coding assistant. Your job is to implement coding tasks.
 
 Rules:
 - You receive a task description and work autonomously to complete it
@@ -260,7 +263,8 @@ Working Memory:
 - Format: {"tool": "coder_update_state", "args": {"plan": "...", "openTasks": ["..."], "filesTouched": ["..."], "assumptions": ["..."], "errorsEncountered": ["..."]}}
 - All fields are optional — only include what changed. Call it early (after reading files) and update as you go.
 
-${SANDBOX_TOOL_PROTOCOL}`;
+${sandboxBlock}`;
+}
 
 // ---------------------------------------------------------------------------
 // Main Coder agent loop
@@ -286,8 +290,12 @@ export async function runCoderAgent(
   const roleModel = getModelForRole(activeProvider, 'coder');
   const coderModelId = roleModel?.id; // undefined falls back to provider default
 
+  // Determine if native FC is active for this provider (respects VITE_NATIVE_FC override)
+  const providerDefault = activeProvider === 'mistral' || activeProvider === 'openrouter';
+  const useNativeFC = nativeFCOverride ?? providerDefault;
+
   // Build system prompt, optionally including user identity and AGENTS.md
-  let systemPrompt = CODER_SYSTEM_PROMPT;
+  let systemPrompt = buildCoderSystemPrompt(useNativeFC);
   const identityBlock = buildUserIdentityBlock(getUserProfile());
   if (identityBlock) {
     systemPrompt += '\n\n' + identityBlock;
@@ -296,7 +304,7 @@ export async function runCoderAgent(
     const truncatedAgentsMd = truncateContent(agentsMd, MAX_AGENTS_MD_SIZE, 'AGENTS.md');
     systemPrompt += `\n\nAGENTS.MD — Project instructions from the repository:\n${truncatedAgentsMd}`;
   }
-  // Web search for Ollama (Mistral handles it natively via Agents API)
+  // Web search for Ollama (Mistral/OpenRouter handle it via native FC tools[])
   if (activeProvider === 'ollama') {
     systemPrompt += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
   }

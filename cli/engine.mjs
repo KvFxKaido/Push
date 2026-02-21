@@ -1,7 +1,8 @@
 import process from 'node:process';
-import { detectAllToolCalls, executeToolCall, isReadOnlyToolCall, truncateText, TOOL_PROTOCOL } from './tools.mjs';
+import { detectAllToolCalls, executeToolCall, isReadOnlyToolCall, truncateText, TOOL_PROTOCOL, TOOL_RULES } from './tools.mjs';
+import { CLI_TOOL_SCHEMAS } from './tool-schemas.mjs';
 import { appendSessionEvent, saveSessionState, makeRunId } from './session-store.mjs';
-import { streamCompletion } from './provider.mjs';
+import { streamCompletion, resolveNativeFC } from './provider.mjs';
 import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.mjs';
 import { recordMalformedToolCall } from './tool-call-metrics.mjs';
 import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.mjs';
@@ -47,12 +48,16 @@ function applyWorkingMemoryUpdate(state, args) {
   return mem;
 }
 
-export async function buildSystemPrompt(workspaceRoot) {
+export async function buildSystemPrompt(workspaceRoot, { useNativeFC = false } = {}) {
   const [snapshot, instructions, memory] = await Promise.all([
     buildWorkspaceSnapshot(workspaceRoot).catch(() => ''),
     loadProjectInstructions(workspaceRoot).catch(() => null),
     loadMemory(workspaceRoot).catch(() => null),
   ]);
+
+  // When native FC is active, tool definitions are sent as structured schemas
+  // in the request body — only include behavioral rules in the prompt.
+  const toolBlock = useNativeFC ? TOOL_RULES : TOOL_PROTOCOL;
 
   let prompt = `You are Push CLI, a coding assistant running in a local workspace.
 Workspace root: ${workspaceRoot}
@@ -64,7 +69,7 @@ Each tool-loop round is expensive — plan before acting, batch related reads, a
 Use coder_update_state to keep a concise working plan; it is persisted and reinjected.
 Use save_memory to persist learnings across sessions (build commands, project patterns, conventions).
 
-${TOOL_PROTOCOL}`;
+${toolBlock}`;
 
   if (snapshot) {
     prompt += `\n\n${snapshot}`;
@@ -184,6 +189,10 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
 
     if (streamToStdout) process.stdout.write('\nassistant> ');
 
+    const fcOptions = resolveNativeFC(providerConfig)
+      ? { tools: CLI_TOOL_SCHEMAS, toolChoice: providerConfig.toolChoice || 'auto' }
+      : undefined;
+
     const assistantText = await streamCompletion(
       providerConfig,
       apiKey,
@@ -194,6 +203,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       },
       undefined,
       signal,
+      fcOptions,
     );
 
     if (streamToStdout) process.stdout.write('\n');

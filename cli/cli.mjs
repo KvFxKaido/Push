@@ -6,7 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFile } from 'node:child_process';
 
-import { PROVIDER_CONFIGS, resolveApiKey } from './provider.mjs';
+import { PROVIDER_CONFIGS, resolveApiKey, resolveNativeFC } from './provider.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, saveConfig, applyConfigToEnv, getConfigPath, maskSecret } from './config-store.mjs';
@@ -198,6 +198,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
 
   const approvalFn = makeInteractiveApprovalFn(rl);
 
+  const nativeFC = resolveNativeFC(providerConfig);
   process.stdout.write(
     `Push CLI\n` +
     `session: ${state.sessionId}\n` +
@@ -205,6 +206,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
     `endpoint: ${providerConfig.url}\n` +
     `workspace: ${state.cwd}\n` +
     `localSandbox: ${process.env.PUSH_LOCAL_SANDBOX === 'true'}\n` +
+    `nativeFC: ${nativeFC}\n` +
     `Type /help for commands.\n`,
   );
 
@@ -287,6 +289,9 @@ async function initSession(sessionId, provider, model, cwd) {
     }
   }
 
+  const providerConfig = PROVIDER_CONFIGS[provider];
+  const useNativeFC = resolveNativeFC(providerConfig);
+
   const newSessionId = makeSessionId();
   const now = Date.now();
   const state = {
@@ -305,13 +310,14 @@ async function initSession(sessionId, provider, model, cwd) {
       assumptions: [],
       errorsEncountered: [],
     },
-    messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
+    messages: [{ role: 'system', content: await buildSystemPrompt(cwd, { useNativeFC }) }],
   };
   await appendSessionEvent(state, 'session_started', {
     sessionId: newSessionId,
     state: 'idle',
     mode: 'interactive',
     provider,
+    nativeFC: useNativeFC,
     sandboxProvider: process.env.PUSH_LOCAL_SANDBOX === 'true' ? 'local' : 'modal',
   });
   await saveSessionState(state);
