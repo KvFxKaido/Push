@@ -8,8 +8,13 @@ const execFileAsync = promisify(execFile);
 
 export const MAX_TOOL_OUTPUT_CHARS = 24_000;
 const DEFAULT_SEARCH_RESULTS = 120;
+const DEFAULT_WEB_SEARCH_RESULTS = 5;
+const MAX_WEB_SEARCH_RESULTS = 10;
+const WEB_SEARCH_TIMEOUT_MS = 15_000;
+const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
+const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_TAVILY_API_KEY'];
 
-const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'read_symbols', 'git_status', 'git_diff']);
+const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'git_status', 'git_diff']);
 
 // Patterns that indicate high-risk shell commands requiring user approval
 const HIGH_RISK_PATTERNS = [
@@ -54,6 +59,7 @@ Available tools:
 - read_file(path, start_line?, end_line?) — read file content with stable line hash anchors
 - list_dir(path?) — list files/directories
 - search_files(pattern, path?, max_results?) — text search in workspace
+- web_search(query, max_results?) — search the public web for current information
 - exec(command, timeout_ms?) — run a shell command
 - write_file(path, content) — write full file content
 - edit_file(path, edits, expected_version?) — surgical hashline edits. edits[] ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content
@@ -267,6 +273,195 @@ async function executeSearch(pattern, searchRoot, maxResults) {
   }
 }
 
+function resolveTavilyApiKey() {
+  for (const envName of TAVILY_API_KEY_ENV_VARS) {
+    const value = process.env[envName];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function decodeHtmlEntities(text) {
+  return String(text)
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&#x27;|&apos;/g, "'");
+}
+
+function decodeMaybe(text) {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+function stripHtml(text) {
+  return decodeHtmlEntities(text)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeDuckDuckGoUrl(rawUrl) {
+  if (!rawUrl) return '';
+  let candidate = decodeMaybe(decodeHtmlEntities(rawUrl).trim());
+  if (!candidate) return '';
+  if (candidate.startsWith('//')) candidate = `https:${candidate}`;
+
+  if (candidate.startsWith('/')) {
+    try {
+      const redirectUrl = new URL(candidate, 'https://duckduckgo.com');
+      const target = redirectUrl.searchParams.get('uddg');
+      if (!target) return '';
+      candidate = decodeMaybe(target);
+    } catch {
+      return '';
+    }
+  }
+
+  return /^https?:\/\//i.test(candidate) ? candidate : '';
+}
+
+function parseDuckDuckGoHTML(html, maxResults) {
+  const links = [];
+  const snippets = [];
+
+  const linkRegex = /<a[^>]*class=["'][^"']*result__a[^"']*["'][^>]*>[\s\S]*?<\/a>/gi;
+  let match;
+  while ((match = linkRegex.exec(html)) !== null) {
+    const full = match[0];
+    const hrefMatch = full.match(/href=["']([^"']*)["']/i);
+    const titleMatch = full.match(/>([\s\S]*?)<\/a>/i);
+    const url = normalizeDuckDuckGoUrl(hrefMatch?.[1] || '');
+    const title = stripHtml(titleMatch?.[1] || '');
+    if (!url || !title) continue;
+    links.push({ title, url });
+  }
+
+  const snippetRegex = /<(?:a|div)[^>]*class=["'][^"']*result__snippet[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div)>/gi;
+  while ((match = snippetRegex.exec(html)) !== null) {
+    snippets.push(stripHtml(match[1]));
+  }
+
+  const results = [];
+  for (let i = 0; i < links.length && results.length < maxResults; i++) {
+    results.push({
+      title: links[i].title,
+      url: links[i].url,
+      content: snippets[i] || '',
+    });
+  }
+  return results;
+}
+
+function parseTavilyResults(payload, maxResults) {
+  const rawResults = Array.isArray(payload?.results) ? payload.results : [];
+  const results = [];
+
+  for (const entry of rawResults) {
+    if (!entry || typeof entry !== 'object') continue;
+    const title = typeof entry.title === 'string' ? entry.title.trim() : '';
+    const url = typeof entry.url === 'string' ? entry.url.trim() : '';
+    const content = typeof entry.content === 'string' ? entry.content.trim() : '';
+    if (!title || !/^https?:\/\//i.test(url)) continue;
+    results.push({ title, url, content });
+    if (results.length >= maxResults) break;
+  }
+
+  return results;
+}
+
+async function executeDuckDuckGoWebSearch(query, maxResults, signal) {
+  if (typeof fetch !== 'function') {
+    throw new Error('fetch is not available in this Node runtime');
+  }
+
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), WEB_SEARCH_TIMEOUT_MS);
+  const signals = [timeoutController.signal];
+  if (signal) signals.push(signal);
+
+  try {
+    const response = await fetch(
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+      {
+        method: 'GET',
+        headers: { 'User-Agent': 'PushCLI/1.0 (AI Coding Assistant)' },
+        signal: AbortSignal.any(signals),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`DuckDuckGo returned ${response.status}`);
+    }
+
+    const html = await response.text();
+    return parseDuckDuckGoHTML(html, maxResults);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError' && !signal?.aborted) {
+      throw new Error(`Web search timed out after ${WEB_SEARCH_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function executeTavilyWebSearch(query, maxResults, apiKey, signal) {
+  if (typeof fetch !== 'function') {
+    throw new Error('fetch is not available in this Node runtime');
+  }
+
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), WEB_SEARCH_TIMEOUT_MS);
+  const signals = [timeoutController.signal];
+  if (signal) signals.push(signal);
+
+  try {
+    const response = await fetch(TAVILY_SEARCH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        search_depth: 'basic',
+        max_results: maxResults,
+        include_answer: false,
+      }),
+      signal: AbortSignal.any(signals),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`Tavily returned ${response.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`);
+    }
+
+    const payload = await response.json();
+    return parseTavilyResults(payload, maxResults);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError' && !signal?.aborted) {
+      throw new Error(`Web search timed out after ${WEB_SEARCH_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function executeWebSearch(query, maxResults, signal) {
+  const tavilyApiKey = resolveTavilyApiKey();
+  if (tavilyApiKey) {
+    const results = await executeTavilyWebSearch(query, maxResults, tavilyApiKey, signal);
+    return { source: 'tavily', results };
+  }
+
+  const results = await executeDuckDuckGoWebSearch(query, maxResults, signal);
+  return { source: 'duckduckgo_html', results };
+}
+
 /**
  * Best-effort backup of a file before mutation.
  * Stored in .push/backups/ with a timestamped name.
@@ -349,6 +544,58 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           text: truncateText(output),
           meta: { path: searchPath, max_results: maxResults },
         };
+      }
+
+      case 'web_search': {
+        const query = asString(call.args.query, 'query').trim();
+        if (!query) throw new Error('query must be a non-empty string');
+        const maxResults = clamp(asOptionalNumber(call.args.max_results) ?? DEFAULT_WEB_SEARCH_RESULTS, 1, MAX_WEB_SEARCH_RESULTS);
+        const sourceHint = resolveTavilyApiKey() ? 'tavily' : 'duckduckgo_html';
+
+        try {
+          const search = await executeWebSearch(query, maxResults, options.signal);
+          const { source, results } = search;
+          if (results.length === 0) {
+            return {
+              ok: true,
+              text: `No web results found for "${query}".`,
+              meta: { query, max_results: maxResults, results: 0, source },
+            };
+          }
+
+          const formatted = results
+            .map(
+              (result, index) =>
+                `${index + 1}. ${result.title}\n   ${result.url}\n   ${result.content || '(no snippet)'}`,
+            )
+            .join('\n\n');
+
+          return {
+            ok: true,
+            text: truncateText(
+              `Query: "${query}"\n${results.length} web result${results.length === 1 ? '' : 's'}:\n\n${formatted}`,
+            ),
+            meta: {
+              query,
+              max_results: maxResults,
+              results: results.length,
+              source,
+            },
+          };
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') throw err;
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            text: `Web search (${sourceHint}) failed: ${message}`,
+            structuredError: {
+              code: 'WEB_SEARCH_ERROR',
+              message,
+              retryable: true,
+            },
+            meta: { query, max_results: maxResults, source: sourceHint },
+          };
+        }
       }
 
       case 'exec': {
@@ -675,7 +922,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, exec, write_file, edit_file, undo_edit, read_symbols, git_status, git_diff, git_commit, save_memory`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, write_file, edit_file, undo_edit, read_symbols, git_status, git_diff, git_commit, save_memory`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,

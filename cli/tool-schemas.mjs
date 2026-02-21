@@ -54,6 +54,21 @@ export const CLI_TOOL_SCHEMAS = [
   {
     type: 'function',
     function: {
+      name: 'web_search',
+      description: 'Search the public web for current information (Tavily when configured, DuckDuckGo fallback).',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+          max_results: { type: 'integer', description: 'Maximum results to return (default: 5, max: 10)' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'exec',
       description: 'Run a shell command in the workspace.',
       parameters: {

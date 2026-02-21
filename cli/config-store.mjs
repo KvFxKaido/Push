@@ -46,6 +46,7 @@ export function applyConfigToEnv(config) {
   if (config.localSandbox !== undefined) {
     process.env.PUSH_LOCAL_SANDBOX = String(config.localSandbox);
   }
+  setEnvIfMissing('PUSH_TAVILY_API_KEY', config.tavilyApiKey);
 
 
   const ollama = ensureObject(config.ollama);
@@ -70,4 +71,3 @@ export function maskSecret(value) {
   if (s.length <= 8) return '********';
   return `${s.slice(0, 4)}...${s.slice(-4)}`;
 }
-
