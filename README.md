@@ -120,7 +120,7 @@ VITE_BROWSER_TOOL_ENABLED=true        # Optional — enables sandbox browser too
   - Google Gemini: `documents/security/PROVIDER_USAGE_POLICY_GOOGLE.md`
   - OpenCode Zen: `documents/security/PROVIDER_USAGE_POLICY_ZEN.md`
 
-Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings.
+Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings. Web default mode is **Auto** (Zen-first when available), and users can still pin any provider.
 
 ## Push CLI
 
@@ -180,7 +180,7 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Coder** — autonomous code implementation in sandbox (runs until done, with 90s per-round timeout)
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Six AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter**, **Z.AI**, **Google Gemini**, and **OpenCode Zen**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+Six AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter**, **Z.AI**, **Google Gemini**, and **OpenCode Zen**. All use OpenAI-compatible streaming. The active backend serves all three roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
 
 **OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 12 models covering all major providers.
 

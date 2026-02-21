@@ -8,7 +8,7 @@ Analysis of repeated patterns, structural symmetry, and consolidation opportunit
 
 ## 1. Provider Axis — The Six-Way Symmetry
 
-The codebase is organized around AI providers (Kimi/Moonshot, Ollama, Mistral, OpenRouter). Each provider requires identical plumbing at every layer. This creates a structural symmetry that repeats across files:
+The codebase is organized around AI providers (Ollama, Mistral, OpenRouter, Z.AI, Google, OpenCode Zen). Each provider requires identical plumbing at every layer. This creates a structural symmetry that repeats across files:
 
 ### 1a. Config Hooks (already consolidated) — DONE
 
@@ -16,11 +16,13 @@ Each provider has a thin config hook wrapping the shared `useApiKeyConfig` facto
 
 | Hook file | Factory used | Extra state |
 |-----------|-------------|-------------|
-| `useMoonshotKey.ts` | `useApiKeyConfig` | key only |
 | `useTavilyConfig.ts` | `useApiKeyConfig` | key only |
 | `useOllamaConfig.ts` | `useApiKeyWithModelConfig` | key + model |
 | `useMistralConfig.ts` | `useApiKeyWithModelConfig` | key + model |
 | `useOpenRouterConfig.ts` | `useApiKeyWithModelConfig` | key + model |
+| `useZaiConfig.ts` | `useApiKeyWithModelConfig` | key + model |
+| `useGoogleConfig.ts` | `useApiKeyWithModelConfig` | key + model |
+| `useZenConfig.ts` | `useApiKeyWithModelConfig` | key + model |
 
 **Status:** DONE. Well-factored. The `useApiKeyConfig.ts` factory eliminated the duplication. Each hook is a 12–20 line thin wrapper.
 
@@ -42,7 +44,7 @@ The `PROVIDERS` array repeats the same three-role model block (orchestrator/code
 
 Six providers × three roles = 18 model entries that share the same shape. The `getModelForRole()` function has a chain of `if (type === 'ollama') ... if (type === 'mistral') ...` blocks that could be a lookup table.
 
-The `createModelNameStorage` factory at the bottom already consolidates the five per-provider model-name storage getters/setters.
+The `createModelNameStorage` factory at the bottom already consolidates the per-provider model-name storage getters/setters.
 
 **Status:** PARTIAL. `createModelNameStorage` is consolidated. `PROVIDERS` array and `getModelForRole()` if-chain remain as-is — structurally repetitive but functional.
 
@@ -56,7 +58,7 @@ The `createModelNameStorage` factory at the bottom already consolidates the five
 - `PROVIDER_STREAM_CONFIGS` registry maps each provider to `{ getKey, buildConfig }`.
 - `buildErrorMessages(name, connectHint?)` factory generates all error messages — only provider name varies.
 - `streamProviderChat()` single entry point: looks up provider → fetches key → builds config → delegates to `streamSSEChat()`.
-- Six exports (`streamMoonshotChat`, etc.) are now **one-line lambdas** for backward compatibility.
+- Six exports (`streamOllamaChat`, `streamMistralChat`, `streamOpenRouterChat`, `streamZaiChat`, `streamGoogleChat`, `streamZenChat`) are now **one-line lambdas** for backward compatibility.
 - ~300 lines of wrapper duplication reduced to ~12 lines of thin lambdas.
 
 ### 1d. Worker Proxy — `worker.ts` — DONE
@@ -67,7 +69,7 @@ The `createModelNameStorage` factory at the bottom already consolidates the five
 
 **Status:** DONE. Fully consolidated via shared helpers and factories:
 - `runPreamble()` — handles origin validation, rate limiting, auth header building, and body reading for all handlers.
-- `createStreamProxyHandler()` — factory for SSE chat endpoints (Kimi, Ollama, Mistral, OpenRouter).
+- `createStreamProxyHandler()` — factory for SSE chat endpoints across providers.
 - `createJsonProxyHandler()` — factory for model list and search endpoints.
 - `validateOrigin()`, `standardAuth()`, `getClientIp()`, `checkRateLimit()`, `readBodyText()` — all shared.
 - Each handler is now 1–5 lines instead of 40–50. ~400–450 lines of duplication eliminated.

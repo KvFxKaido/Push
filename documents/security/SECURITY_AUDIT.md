@@ -3,11 +3,13 @@
 Date: February 1, 2026
 Scope: `app/worker.ts`, `app/src/hooks/useGitHubAuth.ts`, `app/src/hooks/useChat.ts`, `app/src/lib/orchestrator.ts`, `app/src/lib/github-tools.ts`, `app/src/components/chat/MessageBubble.tsx`, `app/src/sections/OnboardingScreen.tsx`, `app/src/App.tsx`, `app/src/hooks/useRepos.ts`, `app/src/hooks/useActiveRepo.ts`, `.env` (not present), `.gitignore`.
 
+Status note (updated February 21, 2026): this is a historical point-in-time audit. Some provider names/endpoints and file paths below reflect the app state on the audit date.
+
 ## Findings
 
 ### 1) ~~Unauthenticated Ollama proxy enables open, unmetered use~~ RESOLVED
 - Severity: ~~HIGH~~ RESOLVED
-- Description: The old `/api/chat` endpoint has been removed. The current `/api/kimi/chat` endpoint includes origin validation, per-IP rate limiting (30 req/min), request body size limits (512KB), and upstream timeouts (120s). The Ollama proxy no longer exists.
+- Description: The old `/api/chat` endpoint has been removed. Provider chat traffic now uses `/api/{provider}/chat` proxy routes with origin validation, per-IP rate limiting, request body limits, and upstream timeouts.
 
 ### 2) ~~No request-size/shape limits on `/api/chat`~~ RESOLVED
 - Severity: ~~MEDIUM~~ RESOLVED
@@ -15,8 +17,8 @@ Scope: `app/worker.ts`, `app/src/hooks/useGitHubAuth.ts`, `app/src/hooks/useChat
 
 ### 3) Client-side secret exposure via `VITE_*` env variables
 - Severity: MEDIUM
-- File and line: `app/src/hooks/useMoonshotKey.ts:16`, `app/src/hooks/useGitHubAuth.ts:9`, `app/src/hooks/useRepos.ts:4`, `app/src/lib/github-tools.ts:10`
-- Description: The code reads `VITE_MOONSHOT_API_KEY` and `VITE_GITHUB_TOKEN` directly in client bundles. Any `VITE_*` variable is embedded into the built JavaScript and is visible to end users. If these are set in production, the secrets are exposed. In production, the Kimi key is stored server-side as `MOONSHOT_API_KEY` on the Cloudflare Worker.
+- File and line: Historical references in this section were captured on the audit date and may have moved/renamed.
+- Description: Any `VITE_*` variable is embedded into built JavaScript and is visible to end users. If production secrets are put in `VITE_*`, they are exposed. Production provider keys should remain server-side in Worker secrets.
 - Recommendation: Remove secret usage from client code. Store secrets only server-side (Worker) and proxy requests; if needed for dev, use non-`VITE_` vars and inject only in local dev tooling, never in production builds.
 
 ### 4) Tool calls execute without user confirmation or repo scoping
