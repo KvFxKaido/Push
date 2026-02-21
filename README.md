@@ -182,7 +182,7 @@ Role-based agent system. **Models are replaceable; roles are not.**
 
 Six AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter**, **Z.AI**, **Google Gemini**, and **OpenCode Zen**. All use OpenAI-compatible streaming. The active backend serves all three roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
 
-**OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 12 models covering all major providers.
+**OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 10 models covering all major providers.
 
 There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, console, scratchpad, and commit/push are unified in the **Workspace Hub**. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
 

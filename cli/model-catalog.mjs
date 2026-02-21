@@ -7,15 +7,13 @@ export const OPENROUTER_MODELS = [
   'anthropic/claude-sonnet-4.6',
   'anthropic/claude-opus-4.6',
   'anthropic/claude-haiku-4.5',
-  'openai/gpt-5.2',
-  'openai/gpt-5-mini',
-  'openai/o1',
   'openai/gpt-5.2-codex',
   'openai/gpt-5.1-codex',
+  'stepfun/step-3.5-flash:free',
+  'qwen/qwen3-coder:free',
+  'deepseek/deepseek-r1-0528:free',
   'google/gemini-3-flash-preview',
-  'google/gemini-3.1-pro-preview',
   'x-ai/grok-4.1-fast',
-  'moonshotai/kimi-k2.5',
 ];
 
 export const OLLAMA_MODELS = [
