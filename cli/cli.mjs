@@ -15,6 +15,7 @@ import { aggregateStats, formatStats } from './stats.mjs';
 import { getToolCallMetrics } from './tool-call-metrics.mjs';
 import { getSocketPath, getPidPath } from './pushd.mjs';
 import { loadSkills, interpolateSkill } from './skill-loader.mjs';
+import { createCompleter } from './completer.mjs';
 import { fmt, Spinner } from './format.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -398,16 +399,18 @@ async function handleProviderCommand(arg, ctx, state, config) {
 }
 
 async function runInteractive(state, providerConfig, apiKey, maxRounds) {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-  });
-
   // Mutable context — allows mid-session provider/model switching
   const ctx = { providerConfig, apiKey };
   const config = await loadConfig();
   const skills = await loadSkills(state.cwd);
+
+  const completer = createCompleter({ ctx, skills, getCuratedModels, getProviderList });
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+    completer,
+  });
 
   const approvalFn = makeInteractiveApprovalFn(rl);
   const onEvent = makeCLIEventHandler();
