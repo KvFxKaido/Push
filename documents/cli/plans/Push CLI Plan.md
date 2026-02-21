@@ -13,16 +13,18 @@ Owner: Push
 - Done: Phase 4 (headless `push run`, JSON output, exit codes, and acceptance checks).
 - Partial: Phase 5 (`pushd` + `push attach` shipped; full remote app client attach/reconnect UX still pending).
 - Done (post-bootstrap): CLI web search stack shipped (`web_search` + Tavily + Ollama native + DuckDuckGo fallback + configurable backend via `PUSH_WEB_SEARCH_BACKEND` and `push config set --search-backend`).
+- Proposed: Phase 6 optional TUI shell (`push tui`) documented in `documents/cli/plans/Push CLI TUI Phase 1 Plan.md`.
 
 ## Decision
 
 Push CLI is an interactive product first, not a headless tool first.
 
 Default experience:
-- Codex/Claude Code style interactive terminal REPL (line-oriented, no full-screen TUI)
+- Codex/Claude Code style interactive terminal REPL (line-oriented)
 
 Optional mode:
 - Headless non-interactive execution for CI and automation
+- Full-screen TUI (`push tui`) as an additive shell over the same runtime protocol
 
 Platform direction:
 - The same runtime powers CLI, web, and Android remote clients
@@ -47,7 +49,7 @@ Platform direction:
 
 5. Muscle memory over visual parity
 - Match familiar terminal interaction patterns from Claude Code/Codex.
-- Do not chase full-screen terminal UI feature parity.
+- If TUI mode exists, keep it thin and protocol-first rather than web-card parity.
 
 ## User Experience Targets
 
@@ -87,7 +89,7 @@ In scope (MVP):
 - CLI client using runtime protocol
 
 Out of scope (MVP):
-- Full-screen TUI or ncurses-style interface
+- Deep card-rich ncurses interface with full web-card parity
 - Full cross-platform GUI rewrite
 - Complex plugin marketplace
 - Multi-user shared sessions

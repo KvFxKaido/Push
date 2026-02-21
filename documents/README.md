@@ -57,6 +57,8 @@ Use this file to navigate active design/planning docs versus historical referenc
 
 - `cli/plans/Push CLI Plan.md`
   - Status: Active CLI architecture and implementation baseline.
+- `cli/plans/Push CLI TUI Phase 1 Plan.md`
+  - Status: Proposed scope for optional full-screen `push tui` mode (Phase 1).
 - `cli/plans/Push CLI Bootstrap Execution Plan.md`
   - Status: Completed bootstrap execution record.
 - `cli/design/Push Runtime Protocol.md`
