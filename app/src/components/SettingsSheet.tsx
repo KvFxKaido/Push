@@ -979,34 +979,37 @@ export function SettingsSheet({
                       : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
                   }`}
                 >
-                  Auto
+                  Auto (Zen first)
                 </button>
                 {ai.availableProviders.length === 0 ? (
                   <div className="col-span-1 rounded-lg border border-push-edge bg-push-surface px-3 py-1.5 text-xs text-push-fg-dim">
                     Add a key
                   </div>
                 ) : (
-                  ai.availableProviders.map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => {
-                        ai.setPreferredProvider(value as PreferredProvider);
-                        ai.setActiveBackend(value as PreferredProvider);
-                      }}
-                      className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-                        ai.activeBackend === value
-                          ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
-                          : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))
+                  ai.availableProviders.map(([value, label]) => {
+                    const isRecommended = value === 'zen';
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          ai.setPreferredProvider(value as PreferredProvider);
+                          ai.setActiveBackend(value as PreferredProvider);
+                        }}
+                        className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          ai.activeBackend === value
+                            ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                            : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                        }`}
+                      >
+                        {label}{isRecommended ? ' (Recommended)' : ''}
+                      </button>
+                    );
+                  })
                 )}
               </div>
               <p className="text-[11px] text-push-fg-dim">
-                Sets your preferred provider for new chats.
+                Sets your preferred provider for new chats. Auto prefers OpenCode Zen when available.
               </p>
             </div>
 

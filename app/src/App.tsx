@@ -290,13 +290,14 @@ function App() {
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
+  // Keep Zen first so backend pickers surface the recommended default.
   const availableProviders = ([
+    ['zen', 'OpenCode Zen', hasZenKey],
     ['ollama', 'Ollama', hasOllamaKey],
     ['mistral', 'Mistral', hasMistralKey],
     ['openrouter', 'OpenRouter', hasOpenRouterKey],
     ['zai', 'Z.AI', hasZaiKey],
     ['google', 'Google', hasGoogleKey],
-    ['zen', 'OpenCode Zen', hasZenKey],
   ] as const).filter(([, , has]) => has);
   
   const [showFileBrowser, setShowFileBrowser] = useState(false);

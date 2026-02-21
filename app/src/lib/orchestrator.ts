@@ -1370,7 +1370,7 @@ const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
  * Fallback order when no preference is set (or the preferred key is gone).
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama', 'mistral', 'openrouter', 'zai', 'google', 'zen',
+  'zen', 'ollama', 'mistral', 'openrouter', 'zai', 'google',
 ];
 
 /**

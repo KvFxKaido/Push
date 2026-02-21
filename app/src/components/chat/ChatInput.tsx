@@ -402,7 +402,7 @@ export function ChatInput({
                         >
                           {providerControls.availableProviders.map(([value, label]) => (
                             <option key={value} value={value}>
-                              {PROVIDER_ICONS[value]} {label}
+                              {PROVIDER_ICONS[value]} {label}{value === 'zen' ? ' (Recommended)' : ''}
                             </option>
                           ))}
                         </select>
