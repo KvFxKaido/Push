@@ -1,7 +1,11 @@
-# Provider Usage Policy
+# Provider Usage Policy — Mistral
 
 Last reviewed: 2026-02-21  
 Review cadence: Quarterly (next target: 2026-05-21)
+
+Related policies:
+- OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
+- Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
 
 ## Scope
 

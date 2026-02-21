@@ -130,6 +130,9 @@ You can switch provider/model mid-session with `/provider` and `/model`. Switchi
 - Not supported in Push: auto-generated **Mistral Code extension** key.
 - Not supported in default Push config: **Codestral-only** domain keys/endpoints.
 - Policy + terms boundary + review cadence: `documents/security/PROVIDER_USAGE_POLICY.md` (last reviewed 2026-02-21).
+- Matching provider policies:
+  - OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
+  - Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
 
 ## Tools
 

@@ -112,6 +112,9 @@ VITE_BROWSER_TOOL_ENABLED=true        # Optional — enables sandbox browser too
 - Do not use a **Codestral-only** domain key (`codestral.mistral.ai`) with default Push config.
 - Terms boundary: personal/internal usage follows consumer terms; business/distributed usage should follow commercial terms.
 - Review cadence: quarterly. Last reviewed **2026-02-21**. Full policy and references: `documents/security/PROVIDER_USAGE_POLICY.md`.
+- Matching provider policies:
+  - OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
+  - Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
 
 Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings.
 
