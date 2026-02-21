@@ -41,6 +41,30 @@ export const PROVIDER_CONFIGS = {
     supportsNativeFC: true,
     toolChoice: 'auto',
   },
+  zai: {
+    id: 'zai',
+    url: process.env.PUSH_ZAI_URL || 'https://api.z.ai/api/coding/paas/v4/chat/completions',
+    defaultModel: process.env.PUSH_ZAI_MODEL || 'glm-4.5',
+    apiKeyEnv: ['PUSH_ZAI_API_KEY', 'ZAI_API_KEY', 'Z_AI_API_KEY', 'VITE_ZAI_API_KEY'],
+    requiresKey: true,
+    supportsNativeFC: true,
+    toolChoice: 'auto',
+  },
+  google: {
+    id: 'google',
+    url: process.env.PUSH_GOOGLE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    defaultModel: process.env.PUSH_GOOGLE_MODEL || 'gemini-2.5-flash',
+    apiKeyEnv: [
+      'PUSH_GOOGLE_API_KEY',
+      'GOOGLE_API_KEY',
+      'GEMINI_API_KEY',
+      'GOOGLE_GENERATIVE_AI_API_KEY',
+      'VITE_GOOGLE_API_KEY',
+    ],
+    requiresKey: true,
+    supportsNativeFC: true,
+    toolChoice: 'auto',
+  },
 };
 
 /**

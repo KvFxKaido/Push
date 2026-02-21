@@ -64,6 +64,16 @@ export function applyConfigToEnv(config) {
   setEnvIfMissing('PUSH_OPENROUTER_URL', openrouter.url);
   setEnvIfMissing('PUSH_OPENROUTER_API_KEY', openrouter.apiKey);
   setEnvIfMissing('PUSH_OPENROUTER_MODEL', openrouter.model);
+
+  const zai = ensureObject(config.zai);
+  setEnvIfMissing('PUSH_ZAI_URL', zai.url);
+  setEnvIfMissing('PUSH_ZAI_API_KEY', zai.apiKey);
+  setEnvIfMissing('PUSH_ZAI_MODEL', zai.model);
+
+  const google = ensureObject(config.google);
+  setEnvIfMissing('PUSH_GOOGLE_URL', google.url);
+  setEnvIfMissing('PUSH_GOOGLE_API_KEY', google.apiKey);
+  setEnvIfMissing('PUSH_GOOGLE_MODEL', google.model);
 }
 
 export function maskSecret(value) {

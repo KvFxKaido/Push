@@ -93,7 +93,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `mistral`, `openrouter`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `mistral`, `openrouter`, `zai`, `google`) |
 | `PUSH_OLLAMA_URL` | Ollama endpoint (default: `http://localhost:11434/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
@@ -103,6 +103,12 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/chat/completions`) |
 | `PUSH_OPENROUTER_API_KEY` | OpenRouter API key |
 | `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6`) |
+| `PUSH_ZAI_URL` | Z.AI endpoint (default: `https://api.z.ai/api/coding/paas/v4/chat/completions`) |
+| `PUSH_ZAI_API_KEY` | Z.AI API key |
+| `PUSH_ZAI_MODEL` | Z.AI model (default: `glm-4.5`) |
+| `PUSH_GOOGLE_URL` | Google OpenAI-compatible endpoint (default: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`) |
+| `PUSH_GOOGLE_API_KEY` | Google API key |
+| `PUSH_GOOGLE_MODEL` | Google model (default: `gemini-2.5-flash`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_NATIVE_FC` | Native function-calling override: `0`/`false` = off, `1`/`true` = on |
@@ -114,13 +120,15 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-All three providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+All five providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
 | `ollama` | `gemini-3-flash-preview` | No (local) |
 | `mistral` | `devstral-small-latest` | Yes |
 | `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
+| `zai` | `glm-4.5` | Yes |
+| `google` | `gemini-2.5-flash` | Yes |
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 
@@ -137,7 +145,7 @@ You can switch provider/model mid-session with `/provider` and `/model`. Switchi
 ## Tools
 
 The CLI supports both prompt-engineered tool calls and native function-calling.
-- Default mode: `ollama` uses prompt-engineered calls; `mistral` and `openrouter` use native function-calling.
+- Default mode: `ollama` uses prompt-engineered calls; `mistral`, `openrouter`, `zai`, and `google` use native function-calling.
 - Override with `PUSH_NATIVE_FC=0|1`.
 - Regardless of mode, tool behavior and safety rules are the same.
 
@@ -262,7 +270,7 @@ push config init                    Interactive setup wizard
 push config set ...                 Save provider config
 
 Options:
-  --provider <name>       ollama | mistral | openrouter (default: ollama)
+  --provider <name>       ollama | mistral | openrouter | zai | google (default: ollama)
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key

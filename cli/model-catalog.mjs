@@ -31,10 +31,22 @@ export const MISTRAL_MODELS = [
   'codestral-latest',
 ];
 
+export const ZAI_MODELS = [
+  'glm-4.5',
+];
+
+export const GOOGLE_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-2.0-flash',
+];
+
 const CATALOG = {
   ollama: OLLAMA_MODELS,
   mistral: MISTRAL_MODELS,
   openrouter: OPENROUTER_MODELS,
+  zai: ZAI_MODELS,
+  google: GOOGLE_MODELS,
 };
 
 /** Default model per provider — must match PROVIDER_CONFIGS defaults. */
@@ -42,6 +54,8 @@ export const DEFAULT_MODELS = {
   ollama: 'gemini-3-flash-preview',
   mistral: 'devstral-small-latest',
   openrouter: 'anthropic/claude-sonnet-4.6',
+  zai: 'glm-4.5',
+  google: 'gemini-2.5-flash',
 };
 
 /**

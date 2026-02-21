@@ -19,6 +19,8 @@ npm run dev
   - Ollama Cloud (open models on cloud GPUs via ollama.com, OpenAI-compatible SSE)
   - Mistral Vibe (Devstral via api.mistral.ai, OpenAI-compatible SSE)
   - OpenRouter (50+ models via openrouter.ai, OpenAI-compatible SSE)
+  - Z.AI (GLM via api.z.ai, OpenAI-compatible SSE)
+  - Google Gemini (OpenAI-compatible endpoint via generativelanguage.googleapis.com)
 - Modal (serverless containers) for sandbox code execution
 - Cloudflare Workers (streaming proxy + sandbox proxy)
 
@@ -32,7 +34,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 - **Coder** — Code implementation and execution engine. Writes, edits, and runs code in a sandbox.
 - **Auditor** — Risk specialist, pre-commit gate, binary verdict. Cannot be bypassed.
 
-**AI backends:** Three providers — **Ollama Cloud** (`ollama.com`), **Mistral Vibe** (`api.mistral.ai`), and **OpenRouter** (`openrouter.ai`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI. The active backend serves all three roles. Provider selection is locked per chat after the first user message. Default Ollama model is `gemini-3-flash-preview`. Default Mistral model is `devstral-small-latest`. Default OpenRouter model is `claude-sonnet-4.6`. OpenRouter provides access to 50+ models through a single API — Push includes 12 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-5.2/5-mini/o1, 2 Codex variants (5.2/5.1), Gemini 3.1 Pro Preview/3 Flash, Grok 4.1, and Kimi K2.5.
+**AI backends:** Five providers — **Ollama Cloud** (`ollama.com`), **Mistral Vibe** (`api.mistral.ai`), **OpenRouter** (`openrouter.ai`), **Z.AI** (`api.z.ai`), and **Google Gemini** (`generativelanguage.googleapis.com`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI. The active backend serves all three roles. Provider selection is locked per chat after the first user message. Default Ollama model is `gemini-3-flash-preview`. Default Mistral model is `devstral-small-latest`. Default OpenRouter model is `claude-sonnet-4.6`. Default Z.AI model is `glm-4.5`. Default Google model is `gemini-2.5-flash`. OpenRouter provides access to 50+ models through a single API — Push includes 12 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-5.2/5-mini/o1, 2 Codex variants (5.2/5.1), Gemini 3.1 Pro Preview/3 Flash, Grok 4.1, and Kimi K2.5.
 
 **Onboarding & state machine:** Users connect with GitHub App (recommended) or GitHub PAT, then select an active repo before chatting. Demo mode is an escape hatch with mock data. Sandbox Mode lets users start an ephemeral workspace without any GitHub auth. State machine: `onboarding → home → chat` (plus `file-browser` when sandbox files are open). The `isSandboxMode` flag bypasses auth and repo selection.
 
@@ -42,7 +44,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Harness focus (current):** Reliability improvements are prioritized over model churn. Active tracks are defined in `documents/plans/Harness Reliability Plan.md` (edit reliability, read efficiency, tool-loop robustness, and operator visibility). Track B shipped: `sandbox_read_file` supports line ranges with numbered output and out-of-bounds warnings. `sandbox_edit_file` is active — edits are expressed as `HashlineOp[]` referencing 7-char content hashes (see `lib/hashline.ts`), which eliminates line-number drift and provides implicit staleness detection. **Agent Experience Wishlist shipped** (see `documents/analysis/Agent Experience Wishlist.md`): 10 harness improvements — error taxonomy with retry semantics, structured malformed-call feedback, edit result diffs, multi-tool per turn, universal meta envelope, machine-checkable acceptance criteria, agent working memory, `sandbox_read_symbols`, and `sandbox_apply_patchset`. Server-side background jobs (Track D) are currently deferred; resumable sessions are the active interruption-recovery path.
 
-**Web search tools:** The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). In native function-calling mode (Mistral/OpenRouter), web search is passed via request `tools[]` (`web_search`) rather than the Mistral Agents API path. API keys are configurable at runtime via Settings.
+**Web search tools:** The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). In native function-calling mode (Mistral/OpenRouter/Z.AI/Google), web search is passed via request `tools[]` (`web_search`) rather than the Mistral Agents API path. API keys are configurable at runtime via Settings.
 
 **Sandbox:** Modal (serverless containers) provides a persistent Linux environment per session. The repo is cloned into `/workspace` (or an empty workspace is created in Sandbox Mode). The Coder reads/writes files, runs commands, and gets diffs — all via sandbox tools. The Cloudflare Worker proxies sandbox requests to Modal web endpoints (keeps Modal auth server-side). Containers auto-terminate after 30 min.
 
@@ -82,12 +84,12 @@ app/src/
   components/cards/       # Rich inline cards (PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, SandboxDownloadCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, EditorPanel, FileCard, FileListCard, BrowserExtractCard, BrowserScreenshotCard, BranchListCard, CIStatusCard, CommitListCard, CommitFilesCard, PRListCard, TypeCheckCard, WorkflowRunsCard, WorkflowLogsCard, SandboxStateCard, CardRenderer)
   components/filebrowser/ # File browser UI (FileActionsSheet, CommitPushSheet, FileEditor, UploadButton)
   components/ui/          # shadcn/ui component library
-  hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useOllamaConfig, useMistralConfig, useTavilyConfig, useUsageTracking, use-mobile)
+  hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useOllamaConfig, useMistralConfig, useOpenRouterConfig, useZaiConfig, useGoogleConfig, useTavilyConfig, useUsageTracking, use-mobile)
   lib/                    # Orchestrator, tool protocol, sandbox client, agent modules, workspace context, web search, model catalog, prompts, feature flags, snapshot manager
   sections/               # Screen components (OnboardingScreen, RepoPicker, FileBrowser, HomeScreen)
   types/                  # TypeScript type definitions
   App.tsx                 # Root component, screen state machine
-app/worker.ts        # Cloudflare Worker — streaming proxy to Ollama/Mistral/OpenRouter + sandbox proxy to Modal
+app/worker.ts        # Cloudflare Worker — streaming proxy to providers (Ollama/Mistral/OpenRouter/Z.AI/Google) + sandbox proxy to Modal
 cli/                 # Push CLI — local coding agent
   cli.mjs            # Entrypoint (arg parsing, interactive/headless modes, Ctrl+C abort)
   engine.mjs         # Assistant/tool loop, working memory dedup, context budget tracking
@@ -111,7 +113,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 ## Key Files
 
-- `lib/orchestrator.ts` — System prompt, multi-backend streaming (Ollama + Mistral + OpenRouter SSE), think-token parsing, provider routing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
+- `lib/orchestrator.ts` — System prompt, multi-backend streaming (Ollama + Mistral + OpenRouter + Z.AI + Google SSE), think-token parsing, provider routing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
 - `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks), `delegate_coder`, `fetchProjectInstructions` (reads AGENTS.md/CLAUDE.md from repos via API), branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`)
 - `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt; includes `sandbox_edit_file` (hashline-based edits with diff output), `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (multi-file transactional edits), `classifyError()` (structured error taxonomy), `formatStructuredError()`
 - `lib/hashline.ts` — Hashline edit protocol: `calculateLineHash()` (7-char content hash per line), `applyHashlineEdits()`, `HashlineOp` type; underpins `sandbox_edit_file` and eliminates line-number drift
@@ -122,9 +124,9 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `lib/coder-agent.ts` — Coder sub-agent loop (unbounded rounds, 90s timeout per round, uses active backend), `CoderWorkingMemory` + `coder_update_state` tool (compaction-safe internal state), `acceptanceCriteria` post-task verification, parallel read-only tool support, `onWorkingMemoryUpdate` callback for resumable session checkpoint capture
 - `lib/auditor-agent.ts` — Auditor review + verdict (fail-safe to UNSAFE, uses active backend)
 - `lib/workspace-context.ts` — Builds active repo context for system prompt injection
-- `lib/providers.ts` — AI provider configs (Ollama + Mistral + OpenRouter), role-to-model mapping, backend preference
-- `lib/web-search-tools.ts` — Web search tool definitions (Tavily, Ollama native search, DuckDuckGo fallback; in native FC mode, Mistral/OpenRouter expose `web_search` via request `tools[]`)
-- `lib/model-catalog.ts` — Manages Ollama/Mistral model lists and selection
+- `lib/providers.ts` — AI provider configs (Ollama + Mistral + OpenRouter + Z.AI + Google), role-to-model mapping, backend preference
+- `lib/web-search-tools.ts` — Web search tool definitions (Tavily, Ollama native search, DuckDuckGo fallback; in native FC mode, non-Ollama providers expose `web_search` via request `tools[]`)
+- `lib/model-catalog.ts` — Manages provider model lists and selection
 - `lib/prompts.ts` — Prompt building utilities
 - `lib/feature-flags.ts` — Feature flag system
 - `lib/snapshot-manager.ts` — Workspace snapshot management and recovery
@@ -156,6 +158,8 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `hooks/useMistralConfig.ts` — Mistral backend configuration and model selection
 - `hooks/useTavilyConfig.ts` — Tavily web search API key management
 - `hooks/useOpenRouterConfig.ts` — OpenRouter backend configuration and model selection
+- `hooks/useZaiConfig.ts` — Z.AI backend configuration and model selection
+- `hooks/useGoogleConfig.ts` — Google backend configuration and model selection
 - `hooks/useApiKeyConfig.ts` — Factory for provider API key hooks (shared skeleton: localStorage getter + env var fallback + React hook)
 - `hooks/useExpandable.ts` — Generic expandable/collapsible UI state hook
 - `hooks/useUsageTracking.ts` — Usage analytics tracking
@@ -166,7 +170,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 Environment variables are defined in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI at runtime. Without any API keys the app runs in demo mode with mock data.
 
-Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle), `VITE_NATIVE_FC` (web native FC override: `0|1`), `PUSH_NATIVE_FC` (CLI native FC override: `0|1`).
+Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZAI_API_KEY` (Z.AI), `VITE_GOOGLE_API_KEY` (Google), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle), `VITE_NATIVE_FC` (web native FC override: `0|1`), `PUSH_NATIVE_FC` (CLI native FC override: `0|1`).
 
 ## Design Principles
 

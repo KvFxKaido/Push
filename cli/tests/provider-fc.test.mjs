@@ -19,12 +19,28 @@ describe('provider supportsNativeFC flags', () => {
     assert.equal(PROVIDER_CONFIGS.openrouter.supportsNativeFC, true);
   });
 
+  it('Z.AI supports native FC', () => {
+    assert.equal(PROVIDER_CONFIGS.zai.supportsNativeFC, true);
+  });
+
+  it('Google supports native FC', () => {
+    assert.equal(PROVIDER_CONFIGS.google.supportsNativeFC, true);
+  });
+
   it('Mistral uses tool_choice "any"', () => {
     assert.equal(PROVIDER_CONFIGS.mistral.toolChoice, 'any');
   });
 
   it('OpenRouter uses tool_choice "auto"', () => {
     assert.equal(PROVIDER_CONFIGS.openrouter.toolChoice, 'auto');
+  });
+
+  it('Z.AI uses tool_choice "auto"', () => {
+    assert.equal(PROVIDER_CONFIGS.zai.toolChoice, 'auto');
+  });
+
+  it('Google uses tool_choice "auto"', () => {
+    assert.equal(PROVIDER_CONFIGS.google.toolChoice, 'auto');
   });
 });
 
@@ -254,6 +270,8 @@ describe('resolveNativeFC', () => {
     assert.equal(resolveNativeFC(PROVIDER_CONFIGS.ollama), false);
     assert.equal(resolveNativeFC(PROVIDER_CONFIGS.mistral), true);
     assert.equal(resolveNativeFC(PROVIDER_CONFIGS.openrouter), true);
+    assert.equal(resolveNativeFC(PROVIDER_CONFIGS.zai), true);
+    assert.equal(resolveNativeFC(PROVIDER_CONFIGS.google), true);
   });
 
   it('PUSH_NATIVE_FC=0 forces off even for mistral', () => {

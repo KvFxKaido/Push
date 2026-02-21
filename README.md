@@ -15,7 +15,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 - **Delegate implementation** — Orchestrator can hand coding work to Coder in a live sandbox
 - **Gate risky changes** — Auditor enforces a SAFE/UNSAFE pre-commit verdict
 - **Stay repo-locked** — active chat context is bound to one repo and one active branch
-- **Use your existing AI stack** — pick Mistral, Ollama Cloud, or OpenRouter
+- **Use your existing AI stack** — pick Mistral, Ollama Cloud, OpenRouter, Z.AI, or Google
 - **Resume interrupted runs** — checkpoint + reconciliation flow when mobile sessions are interrupted
 - **Merge from mobile** — branch, commit, push, and merge through GitHub PR flow
 - **Fallback to sandbox-only mode** — start without GitHub auth and export your workspace anytime
@@ -46,7 +46,7 @@ The app is free. AI usage depends on your provider subscription, and you choose 
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Mistral Vibe, Ollama Cloud, or OpenRouter — flexible provider choice |
+| AI | Mistral Vibe, Ollama Cloud, OpenRouter, Z.AI, or Google — flexible provider choice |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -96,6 +96,8 @@ Create `app/.env` for local development, or paste keys in the Settings UI at run
 VITE_MISTRAL_API_KEY=...              # Mistral Vibe
 VITE_OLLAMA_API_KEY=...               # Ollama Cloud
 VITE_OPENROUTER_API_KEY=...           # OpenRouter (50+ models via pay-per-use)
+VITE_ZAI_API_KEY=...                  # Z.AI (GLM)
+VITE_GOOGLE_API_KEY=...               # Google Gemini (OpenAI-compatible endpoint)
 VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)
 VITE_GITHUB_TOKEN=...                 # Optional — PAT for GitHub API access
 VITE_GITHUB_CLIENT_ID=...             # Optional — GitHub App OAuth client ID
@@ -159,7 +161,7 @@ Use it for quick experiments, learning the interface, or when you're on a device
 
 ## Production
 
-Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat` to Ollama Cloud, `/api/mistral/chat` to Mistral Vibe, `/api/openrouter/chat` to OpenRouter, and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, and `/api/google/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 For browser tools, set Worker secrets `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`. The Worker injects them server-side for `/api/sandbox/browser-screenshot` and `/api/sandbox/browser-extract` so browser credentials never reach the client.
 
@@ -176,7 +178,7 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Coder** — autonomous code implementation in sandbox (runs until done, with 90s per-round timeout)
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Three AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, and **OpenRouter**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+Five AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter**, **Z.AI**, and **Google Gemini**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
 
 **OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 12 models covering all major providers.
 
@@ -212,7 +214,7 @@ Push/
 │   ├── app.py             # Modal Python App — sandbox web endpoints
 │   └── requirements.txt
 ├── app/
-│   ├── worker.ts          # Cloudflare Worker — Ollama/Mistral/OpenRouter proxy + sandbox proxy
+│   ├── worker.ts          # Cloudflare Worker — provider proxies (Ollama/Mistral/OpenRouter/Z.AI/Google) + sandbox proxy
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/           # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet

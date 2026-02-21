@@ -1,6 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getCuratedModels, DEFAULT_MODELS, OPENROUTER_MODELS, OLLAMA_MODELS, MISTRAL_MODELS } from '../model-catalog.mjs';
+import {
+  getCuratedModels,
+  DEFAULT_MODELS,
+  OPENROUTER_MODELS,
+  OLLAMA_MODELS,
+  MISTRAL_MODELS,
+  ZAI_MODELS,
+  GOOGLE_MODELS,
+} from '../model-catalog.mjs';
 
 describe('getCuratedModels', () => {
   it('returns OpenRouter models', () => {
@@ -21,6 +29,18 @@ describe('getCuratedModels', () => {
     assert.deepEqual(models, MISTRAL_MODELS);
   });
 
+  it('returns Z.AI models', () => {
+    const models = getCuratedModels('zai');
+    assert.ok(models.length > 0);
+    assert.deepEqual(models, ZAI_MODELS);
+  });
+
+  it('returns Google models', () => {
+    const models = getCuratedModels('google');
+    assert.ok(models.length > 0);
+    assert.deepEqual(models, GOOGLE_MODELS);
+  });
+
   it('returns empty array for unknown provider', () => {
     assert.deepEqual(getCuratedModels('unknown'), []);
     assert.deepEqual(getCuratedModels(''), []);
@@ -35,6 +55,8 @@ describe('DEFAULT_MODELS', () => {
     ollama: 'gemini-3-flash-preview',
     mistral: 'devstral-small-latest',
     openrouter: 'anthropic/claude-sonnet-4.6',
+    zai: 'glm-4.5',
+    google: 'gemini-2.5-flash',
   };
 
   it('has correct hardcoded defaults', () => {
@@ -47,8 +69,8 @@ describe('DEFAULT_MODELS', () => {
     }
   });
 
-  it('covers all three providers', () => {
-    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['mistral', 'ollama', 'openrouter']);
+  it('covers all providers', () => {
+    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['google', 'mistral', 'ollama', 'openrouter', 'zai']);
   });
 
   it('each default appears in its curated list', () => {

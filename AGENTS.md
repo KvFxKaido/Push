@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: Ollama, Mistral, OpenRouter (user picks, all roles) |
+| AI | Multi-backend: Ollama, Mistral, OpenRouter, Z.AI, Google (user picks, all roles) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -38,13 +38,15 @@ The active backend serves all three roles. The user picks a backend in Settings;
 
 ### AI Backends
 
-Three providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`.
+Five providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, and `/api/google/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
 | **Ollama Cloud** | gemini-3-flash-preview |
 | **Mistral Vibe** | devstral-small-latest |
 | **OpenRouter** | claude-sonnet-4.6 |
+| **Z.AI** | glm-4.5 |
+| **Google Gemini** | gemini-2.5-flash |
 
 **OpenRouter** provides access to 50+ models through a single API. Push includes 12 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-5.2/5-mini/o1, 2 Codex variants (5.2/5.1), Gemini 3.1 Pro Preview/3 Flash, Grok 4.1, and Kimi K2.5.
 
@@ -75,7 +77,7 @@ Prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true`. Routed through Worker endpoint
 
 ### Web Search Tools
 
-The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). For Mistral/OpenRouter native function-calling mode, web search is exposed via request `tools[]` (`web_search`), not the Mistral Agents API path.
+The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). For native function-calling providers (Mistral/OpenRouter/Z.AI/Google), web search is exposed via request `tools[]` (`web_search`), not the Mistral Agents API path.
 
 ### User Identity
 
@@ -173,7 +175,7 @@ Read-only tools run in parallel per turn. Only one mutating tool allowed per tur
 Workspace jail, high-risk command detection, tool loop detection, max rounds cap, output truncation. `.push/` internal state excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers (Ollama, Mistral, OpenRouter), all OpenAI-compatible SSE with retry on 429/5xx. Native function-calling override flags: `PUSH_NATIVE_FC=0|1` (CLI) and `VITE_NATIVE_FC=0|1` (web). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Five providers (Ollama, Mistral, OpenRouter, Z.AI, Google), all OpenAI-compatible SSE with retry on 429/5xx. Native function-calling override flags: `PUSH_NATIVE_FC=0|1` (CLI) and `VITE_NATIVE_FC=0|1` (web). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
 
 ## Directory Structure
 
@@ -239,7 +241,7 @@ Push/
 | `lib/workspace-context.ts` | Active repo context builder |
 | `lib/providers.ts` | AI provider config and role model mapping |
 | `lib/web-search-tools.ts` | Web search tools (Tavily, Ollama native, DuckDuckGo fallback) |
-| `lib/model-catalog.ts` | Ollama/Mistral model lists and selection |
+| `lib/model-catalog.ts` | Provider model lists and selection |
 | `lib/prompts.ts` | Prompt building utilities |
 | `lib/feature-flags.ts` | Feature flag system |
 | `lib/snapshot-manager.ts` | Workspace snapshot management and recovery |
@@ -272,6 +274,8 @@ Push/
 | `hooks/useMistralConfig.ts` | Mistral backend configuration and model selection |
 | `hooks/useTavilyConfig.ts` | Tavily web search API key management |
 | `hooks/useOpenRouterConfig.ts` | OpenRouter backend configuration and model selection |
+| `hooks/useZaiConfig.ts` | Z.AI backend configuration and model selection |
+| `hooks/useGoogleConfig.ts` | Google backend configuration and model selection |
 | `hooks/useApiKeyConfig.ts` | Factory for provider API key hooks (shared localStorage getter + env var fallback + React hook) |
 | `hooks/useExpandable.ts` | Generic expandable/collapsible UI state |
 | `hooks/useUsageTracking.ts` | Usage analytics tracking |
