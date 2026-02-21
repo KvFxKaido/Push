@@ -106,6 +106,17 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
   try {
     const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, false, { signal: ac.signal });
     await saveSessionState(state);
+
+    // Non-throw abort path (engine returned outcome: 'aborted' without throwing)
+    if (result.outcome === 'aborted') {
+      if (jsonOutput) {
+        process.stdout.write(`${JSON.stringify({ sessionId: state.sessionId, runId: result.runId || null, outcome: 'aborted' }, null, 2)}\n`);
+      } else {
+        process.stderr.write('[aborted]\n');
+      }
+      return 130;
+    }
+
     let acceptance = null;
 
     if (Array.isArray(acceptanceChecks) && acceptanceChecks.length > 0) {

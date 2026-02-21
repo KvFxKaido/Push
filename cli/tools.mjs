@@ -551,7 +551,8 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           if (resolvedPaths.length > 0) {
             await execFileAsync('git', ['add', '--', ...resolvedPaths], { cwd: workspaceRoot });
           } else {
-            await execFileAsync('git', ['add', '-A'], { cwd: workspaceRoot });
+            // Exclude .push/ (sessions, backups, internal state) from "all" staging
+            await execFileAsync('git', ['add', '-A', '--', '.', ':!.push'], { cwd: workspaceRoot });
           }
 
           const { stdout } = await execFileAsync('git', ['commit', '-m', message], { cwd: workspaceRoot });
