@@ -33,7 +33,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Tool Protocol:** Prompt-engineered JSON tool blocks for GitHub and Sandbox interactions. Multi-tool dispatch (`detectAllToolCalls()`) splits read-only calls (parallel) from mutations (serial). Tool results include structured error fields (`error_type`, `retryable`), a `[meta]` envelope (round, context size, sandbox state), and `[TOOL_CALL_PARSE_ERROR]` headers for malformed-call feedback.
 *   **Sandbox:** Persistent Linux environment (via Modal) for cloning repos, running tests, and editing files.
 *   **Sandbox Mode:** Ephemeral workspace (no GitHub repo). Entry via onboarding or repo picker. GitHub tools blocked; 30-min lifetime with expiry warning. Download as tar.gz.
-*   **Web Search Tools:** Mid-conversation web search via Tavily (premium), Ollama native search, or DuckDuckGo fallback. Mistral handles search natively via Agents API.
+*   **Web Search Tools:** Mid-conversation web search via Tavily (premium), Ollama native search, or DuckDuckGo fallback. In native function-calling mode (Mistral/OpenRouter), web search is exposed via request `tools[]` (`web_search`) rather than the Mistral Agents API path.
 *   **Browser Tools (Optional):** Sandbox-backed webpage screenshot + text extraction (server-side browser credentials injected by Worker).
 *   **Coder Delegation:** Orchestrator delegates via `delegate_coder`. Supports `acceptanceCriteria[]` (shell commands run post-task). Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — survives context trimming.
 *   **Harness Focus:** Active reliability tracks are tracked in `documents/Harness Reliability Plan.md`. Track B complete (range reads, edit guard, auto-expand). **Agent Experience Wishlist shipped** (`documents/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`.
@@ -91,7 +91,7 @@ Local coding agent for the terminal. Same role-based agent architecture as the w
 *   `.push/` internal state (sessions, backups) excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers: Ollama (local), Mistral, OpenRouter. All use OpenAI-compatible SSE with retry on 429/5xx.
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers: Ollama (local), Mistral, OpenRouter. All use OpenAI-compatible SSE with retry on 429/5xx. Native function-calling override flags: `PUSH_NATIVE_FC=0|1` (CLI) and `VITE_NATIVE_FC=0|1` (web).
 
 ## Directory Structure
 
@@ -180,7 +180,7 @@ Push/
 ### Environment
 Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI.
 
-Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
+Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle), `VITE_NATIVE_FC` (web native FC override: `0|1`), `PUSH_NATIVE_FC` (CLI native FC override: `0|1`).
 
 ## Coding Conventions
 *   **TypeScript:** Strict mode enabled. Explicit return types required on exported functions.
