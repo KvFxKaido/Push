@@ -55,4 +55,29 @@ describe('detectAllToolCalls', () => {
     expect(detected.readOnly).toHaveLength(1);
     expect(detected.mutating).toBeNull();
   });
+
+  it('deduplicates identical wrapper calls with reordered args keys', () => {
+    const text = [
+      '{"tool":"fetch_pr","args":{"repo":"KvFxKaido/Push","pr":105}}',
+      '{"tool":"fetch_pr","args":{"pr":105,"repo":"KvFxKaido/Push"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(1);
+    expect(detected.mutating).toBeNull();
+  });
+
+  it('deduplicates nested args regardless of key order', () => {
+    const text = [
+      '{"tool":"sandbox_exec","args":{"command":"npm test","cwd":"/workspace","timeout":120000}}',
+      '{"tool":"sandbox_exec","args":{"timeout":120000,"cwd":"/workspace","command":"npm test"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.mutating?.source).toBe('sandbox');
+    if (detected.mutating?.source === 'sandbox') {
+      expect(detected.mutating.call.tool).toBe('sandbox_exec');
+    }
+  });
 });

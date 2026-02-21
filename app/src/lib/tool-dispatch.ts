@@ -75,7 +75,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     const serialized = JSON.stringify(parsed);
     const call = detectAnyToolCall(serialized);
     if (!call) continue;
-    const key = `${call.source}:${getToolCallName(call)}:${JSON.stringify(getToolCallArgs(call))}`;
+    const key = getCanonicalInvocationKey(call);
     if (seen.has(key)) continue;
     seen.add(key);
     allCalls.push(call);
@@ -128,7 +128,26 @@ function getToolCallName(toolCall: AnyToolCall): string {
   }
 }
 
-/** Build a normalized arg payload for stable dedupe keys across wrapper formats. */
+/**
+ * Build a canonical key for deduping logically-identical tool invocations.
+ * Uses stable-key JSON serialization so key order differences do not matter.
+ */
+function getCanonicalInvocationKey(toolCall: AnyToolCall): string {
+  const canonical: CanonicalToolInvocation = {
+    source: toolCall.source,
+    toolName: getToolCallName(toolCall),
+    args: getToolCallArgs(toolCall),
+  };
+  return `${canonical.source}:${canonical.toolName}:${stableJsonStringify(canonical.args)}`;
+}
+
+interface CanonicalToolInvocation {
+  source: AnyToolCall['source'];
+  toolName: string;
+  args: unknown;
+}
+
+/** Build a normalized arg payload for canonical invocation dedupe. */
 function getToolCallArgs(toolCall: AnyToolCall): unknown {
   switch (toolCall.source) {
     case 'github':
@@ -141,6 +160,39 @@ function getToolCallArgs(toolCall: AnyToolCall): unknown {
     default:
       return {};
   }
+}
+
+/**
+ * Stable JSON stringify: recursively sorts object keys and drops undefined
+ * object properties so logically-equivalent payloads produce the same key.
+ */
+function stableJsonStringify(value: unknown): string {
+  const normalized = normalizeJsonValue(value);
+  return JSON.stringify(normalized === undefined ? null : normalized);
+}
+
+function normalizeJsonValue(value: unknown): unknown {
+  if (value === null) return null;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      const normalized = normalizeJsonValue(item);
+      // Mirror JSON.stringify behavior for arrays: undefined -> null.
+      return normalized === undefined ? null : normalized;
+    });
+  }
+  if (typeof value === 'object') {
+    const record = asRecord(value);
+    if (!record) return undefined;
+    const output: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      const normalized = normalizeJsonValue(record[key]);
+      if (normalized !== undefined) output[key] = normalized;
+    }
+    return output;
+  }
+  // Functions/symbols/bigints are not valid JSON values.
+  return undefined;
 }
 
 export type AnyToolCall =
