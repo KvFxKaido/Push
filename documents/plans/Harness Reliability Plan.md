@@ -1,9 +1,19 @@
 # Push Harness Reliability Plan (Hashline Included)
 
 ## Status
-- Last updated: 2026-02-20
-- State: Track B complete, Track A shipped (hashline active), Track C extended (structured feedback shipped), Agent Experience Wishlist shipped (9 items), Track D (server-side background jobs) deferred
+- Last updated: 2026-02-21
+- State: Track A shipped (hashline active), Track B complete, Track C extended (metrics + settings diagnostics shipped), Track E wishlist outcomes shipped, Track D (server-side background jobs) deferred
 - Intent: Improve coding task success by upgrading the harness, not just swapping models
+
+## Implementation Status Snapshot (2026-02-21)
+
+- [x] Track A (hashline edit reliability) shipped and active.
+- [x] Track B (range reads + truncation-aware safety) complete.
+- [x] Track C Phase 1 + structured malformed-call feedback shipped.
+- [x] Track C metrics/visibility shipped: malformed-call metrics by provider/model are instrumented and exposed in Settings diagnostics.
+- [~] Track C native function-calling cost reduction is partially shipped (Mistral/OpenRouter native FC with fallback; Ollama remains prompt-engineered by default).
+- [x] Track E (error taxonomy, meta envelope, edit diffs) shipped.
+- [ ] Track D remains deferred in current PWA scope.
 
 ## Why this doc changed
 
@@ -122,12 +132,14 @@ Done (2026-02-14):
 - [x] Garbled messages hidden from chat UI via `isToolCall: true` + `stripToolCallPayload` extension.
 
 Remaining scope:
-- Add malformed-call rate metric by provider/model — instrument `diagnoseToolCallFailure` calls.
-- Surface provider compliance data in settings or debug view.
 - Consider native function calling for providers that support it (reduces prompt-engineering tax, but must coexist with JSON-block providers).
 
 Done (2026-02-19, Agent Experience Wishlist):
 - [x] Structured malformed-call feedback to agent — `[TOOL_CALL_PARSE_ERROR]` header with `error_type`, `detected_tool`, and `problem` fields injected into correction messages. Closes the loop between Track C telemetry and agent behavior.
+
+Done (2026-02-21):
+- [x] Malformed-call rate metrics by provider/model/tool added (`recordMalformedToolCallMetric`, `tool-call-metrics`).
+- [x] Provider/model diagnostics surfaced in Settings (`Tool Call Diagnostics` panel).
 
 Context note:
 - Both Claude Code and Codex CLI avoid this problem entirely via native API-level function calling. Push's prompt-engineered protocol is the cost of provider-agnostic design. The garbled recovery layer is the right investment; tracking per-provider compliance rates will show where the cost is highest.
@@ -187,14 +199,14 @@ Success signal:
 > Track D (server-side background jobs) is deferred in current product scope.
 
 Now:
-1. Add Track C malformed-call rate metric by provider/model (small — instrument `diagnoseToolCallFailure`).
-2. Surface provider compliance data in settings or debug view.
-3. Dogfood Agent Experience Wishlist features and measure round/retry reduction.
+1. Dogfood Agent Experience Wishlist features and measure round/retry reduction.
+2. Validate Track C metrics over a full week and set provider/model compliance thresholds.
+3. Expand operator-visibility diagnostics (`toolMeta`) across remaining error paths.
 
 Next:
-1. Evaluate native function calling for providers that support it (Track C cost reduction).
-2. Expand operator-visibility diagnostics (`toolMeta` coverage across error paths).
-3. Validate malformed-call and retry metrics with a 1-week dogfood window.
+1. Evaluate whether Ollama default should move toward native function-calling in selected environments.
+2. Add a lightweight compliance score surface (provider/model trend view) if dogfood metrics are stable.
+3. Revisit Track D only if roadmap scope changes (native app or deeper daemon-first runtime).
 
 Later:
 1. Revisit Track D server-side background jobs if native app/CLI runtime direction requires it.
@@ -238,8 +250,18 @@ Evaluation cadence:
 - Cohort/flag: Global (no flag)
 - Baseline: Narrow regex detection, generic error messages, raw JSON visible in chat
 - Result: Three-phase diagnosis, JSON repair, truncation detection, specific error feedback, garbled messages hidden from UI
-- Decision: `go` (Phase 1 complete, metrics instrumentation next)
+- Decision: `go` (Phase 1 complete; metrics instrumentation shipped 2026-02-21)
 - Notes: Shipped same day as Track B Phase 1. Covers `repairToolJson`, `detectTruncatedToolCall`, `diagnoseToolCallFailure`.
+
+### Track C Phase 2 — Metrics + Settings Visibility
+
+- Experiment: Track C Phase 2 — Provider/model malformed-call observability
+- Date enabled: 2026-02-21
+- Cohort/flag: Global (no flag)
+- Baseline: Recovery worked, but provider/model failure rates were opaque during dogfooding.
+- Result: In-memory malformed-call metrics by provider/model/tool shipped; Settings now surfaces counts and reason breakdowns.
+- Decision: `go` (visibility objective met; proceed to thresholding and trend analysis)
+- Notes: Completes the original "instrument + surface" follow-up from Track C.
 
 ## External Review Checklist (PWA-GPT)
 

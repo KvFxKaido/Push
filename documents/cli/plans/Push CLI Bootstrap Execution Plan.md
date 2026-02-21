@@ -60,6 +60,15 @@ Post-bootstrap harness transition also shipped on 2026-02-20.
 - Added per-turn file-ledger/meta envelopes on tool results.
 - Added headless acceptance checks via repeatable `--accept <cmd>` and `acceptance_complete` session events.
 
+## W6: Web Search Expansion (Shipped, 2026-02-21)
+
+- Added `web_search` tool support to the CLI tool protocol and native FC schemas.
+- Added Tavily-backed web search path keyed by `PUSH_TAVILY_API_KEY` (with env fallbacks).
+- Added Ollama native web search path (`https://ollama.com/api/web_search`) when provider/key are available.
+- Added backend policy control via `PUSH_WEB_SEARCH_BACKEND` (`auto`, `tavily`, `ollama`, `duckduckgo`).
+- Added persisted config support for search backend selection via `push config set --search-backend`.
+- Added coverage for backend selection/error paths and docs updates in CLI docs/tests.
+
 ## Still Out of Scope
 
 - Full-screen TUI (dropped direction).

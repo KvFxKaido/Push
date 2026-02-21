@@ -12,6 +12,12 @@ If Push ever ships as a native app (React Native / native WebView shell), the pl
 
 **Near-term substitute:** surface stall detection in the foreground loop — if no tokens arrive for ~30s mid-round, show a "Task may have stalled" banner. Cheap, no new architecture.
 
+## Implementation Status Snapshot (2026-02-21)
+
+- [x] Product decision confirmed: keep this work deferred in current PWA scope.
+- [ ] Phases 0-4 remain unstarted in production code.
+- [x] Keep this as a design reference for a future native-app or daemon-first runtime phase.
+
 ## Goal
 
 Allow long-running coding tasks to continue when the mobile app is backgrounded or the phone is locked, then let the user reconnect and see progress/results.

@@ -2,8 +2,16 @@
 
 ## Status
 - Last updated: 2026-02-21
-- State: Analysis complete, implementation pending
+- State: Partially shipped — Priority 1 complete, Priority 2 mostly complete, follow-up optimization pending
 - Scope: CLI + Web app — both share the same architectural patterns
+
+## Implementation Status Snapshot (2026-02-21)
+
+- [x] Priority 1 shipped: CLI context trimming is active (`cli/context-manager.mjs`, integrated in `cli/engine.mjs`).
+- [x] Priority 2 shipped (core): native function-calling path + prompt-engineered fallback are active for both CLI and web.
+- [x] Priority 2 shipped (visibility): malformed-call diagnostics are tracked by provider/model and surfaced in Settings.
+- [ ] Priority 2 follow-up: automatic provider/model capability probing is still pending (current mode uses provider defaults plus `PUSH_NATIVE_FC` / `VITE_NATIVE_FC` override).
+- [x] Priority 3 decision unchanged: keep hashline edit safety.
 
 ## Context
 
@@ -19,6 +27,8 @@ Push is model-agnostic by design. The current tool protocol (prompt-engineered J
 ---
 
 ## Priority 1 — Context Trimming (CLI)
+
+**Status (2026-02-21):** Shipped
 
 **Problem:** The CLI re-sends the entire message history every round. At 8 rounds with 2-3 tool calls each, that's 16-24 tool result messages plus the ~13KB system prompt. No trimming, no summarization. When the history exceeds the provider's context window, the session fails with a cryptic 400 error.
 
@@ -43,6 +53,8 @@ Push is model-agnostic by design. The current tool protocol (prompt-engineered J
 ---
 
 ## Priority 2 — Native Function Calling (with Fallback)
+
+**Status (2026-02-21):** Mostly shipped (dual-mode active; automatic capability probing still pending)
 
 **Problem:** Prompt-engineered tools cost ~15-20% token overhead:
 - ~800 char `TOOL_PROTOCOL` prompt in every system message
@@ -129,6 +141,8 @@ Provider connection
 
 ## Priority 3 — Hashline: Keep, Don't Change
 
+**Status (2026-02-21):** Decision accepted, no implementation changes required
+
 **Current overhead:** ~10% token overhead per file read (7-char hash + line number + delimiters per line).
 
 **Why keep it:**
@@ -161,6 +175,6 @@ CLI uses character count (`contextChars`) as a proxy. Real token counting requir
 
 ## Implementation Order
 
-1. **Context trimming (CLI)** — Unblocks longer sessions. Prerequisite for everything else because without it, you can't test multi-round improvements.
-2. **Native function calling (dual-mode)** — Start with CLI (simpler codebase), then port to web app. Implement capability detection per provider. Keep prompt-engineered fallback.
-3. **Hashline** — No action needed. Monitor token costs in real sessions.
+1. [x] **Context trimming (CLI)** — shipped.
+2. [~] **Native function calling (dual-mode)** — shipped for CLI + web with fallback; capability probing per provider/model still pending.
+3. [x] **Hashline** — no action needed; continue monitoring token costs in real sessions.

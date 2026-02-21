@@ -1,8 +1,18 @@
 # Push CLI Plan (V2)
 
 Date: 2026-02-20  
-Status: Draft  
+Status: In Progress (as of 2026-02-21)  
 Owner: Push
+
+## Implementation Status Snapshot (2026-02-21)
+
+- Done: Phase 0 (runtime contract + `pushd` skeleton + IPC baseline).
+- Done: Phase 1 (interactive REPL MVP with streaming, tool timeline, approvals, and resume-by-session).
+- Done: Phase 2 (real agent loop integration, provider/key wiring, and tool-loop semantics).
+- Partial: Phase 3 (local sandbox execution shipped via `PUSH_LOCAL_SANDBOX`; full `SandboxProvider` abstraction and Modal adapter still pending).
+- Done: Phase 4 (headless `push run`, JSON output, exit codes, and acceptance checks).
+- Partial: Phase 5 (`pushd` + `push attach` shipped; full remote app client attach/reconnect UX still pending).
+- Done (post-bootstrap): CLI web search stack shipped (`web_search` + Tavily + Ollama native + DuckDuckGo fallback + configurable backend via `PUSH_WEB_SEARCH_BACKEND` and `push config set --search-backend`).
 
 ## Decision
 
