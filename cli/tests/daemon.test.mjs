@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getSocketPath, getPidPath } from '../pushd.mjs';
+import { getSocketPath, getPidPath, validateAttachToken } from '../pushd.mjs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -73,5 +73,38 @@ describe('NDJSON protocol compliance', () => {
     assert.equal(parsed.type, 'assistant_token');
     assert.equal(typeof parsed.seq, 'number');
     assert.equal(typeof parsed.ts, 'number');
+  });
+});
+
+// ─── validateAttachToken ────────────────────────────────────────
+
+describe('validateAttachToken', () => {
+  it('rejects missing token when entry has one', () => {
+    const entry = { state: {}, attachToken: 'att_abc123' };
+    assert.equal(validateAttachToken(entry, undefined), false);
+    assert.equal(validateAttachToken(entry, null), false);
+    assert.equal(validateAttachToken(entry, ''), false);
+  });
+
+  it('rejects wrong token', () => {
+    const entry = { state: {}, attachToken: 'att_abc123' };
+    assert.equal(validateAttachToken(entry, 'att_wrong'), false);
+  });
+
+  it('accepts correct token', () => {
+    const entry = { state: {}, attachToken: 'att_abc123' };
+    assert.equal(validateAttachToken(entry, 'att_abc123'), true);
+  });
+
+  it('passes when no token set on entry (legacy/internal)', () => {
+    assert.equal(validateAttachToken({ state: {} }, undefined), true);
+    assert.equal(validateAttachToken({ state: {}, attachToken: '' }, 'anything'), true);
+    assert.equal(validateAttachToken({ state: {}, attachToken: null }, undefined), true);
+  });
+
+  it('rejects when entry is null/undefined', () => {
+    // null entry should return true (no entry = no token requirement)
+    assert.equal(validateAttachToken(null, 'token'), true);
+    assert.equal(validateAttachToken(undefined, 'token'), true);
   });
 });

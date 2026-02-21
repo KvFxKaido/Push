@@ -30,7 +30,7 @@ describe('loadSessionEvents', () => {
   });
 
   it('returns empty array for missing session', async () => {
-    const events = await loadSessionEvents('nonexistent');
+    const events = await loadSessionEvents('sess_abc123_def456');
     assert.deepEqual(events, []);
   });
 

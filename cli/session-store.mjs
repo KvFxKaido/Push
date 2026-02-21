@@ -5,6 +5,16 @@ import process from 'node:process';
 
 export const PROTOCOL_VERSION = 'push.runtime.v1';
 
+// Session IDs must match the output of makeSessionId(): sess_<base36>_<6 hex chars>
+export const SESSION_ID_RE = /^sess_[a-z0-9]+_[a-f0-9]{6}$/;
+
+export function validateSessionId(sessionId) {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) {
+    throw new Error(`Invalid session id: ${typeof sessionId === 'string' ? sessionId : typeof sessionId}`);
+  }
+  return sessionId;
+}
+
 export function makeSessionId() {
   return `sess_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
 }
@@ -18,7 +28,14 @@ export function getSessionRoot() {
 }
 
 export function getSessionDir(sessionId) {
-  return path.join(getSessionRoot(), sessionId);
+  validateSessionId(sessionId);
+  const root = path.resolve(getSessionRoot());
+  const dir = path.resolve(root, sessionId);
+  // Belt-and-suspenders: even if the regex is bypassed, prevent path traversal
+  if (!dir.startsWith(`${root}${path.sep}`) && dir !== root) {
+    throw new Error('Session dir escapes session root');
+  }
+  return dir;
 }
 
 function getStatePath(sessionId) {
@@ -30,13 +47,16 @@ function getEventsPath(sessionId) {
 }
 
 async function ensureSessionDir(sessionId) {
-  await fs.mkdir(getSessionDir(sessionId), { recursive: true });
+  const dir = getSessionDir(sessionId);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  // Ensure permissions even if dir already existed with looser perms
+  await fs.chmod(dir, 0o700);
 }
 
 export async function saveSessionState(state) {
   state.updatedAt = Date.now();
   await ensureSessionDir(state.sessionId);
-  await fs.writeFile(getStatePath(state.sessionId), JSON.stringify(state, null, 2), 'utf8');
+  await fs.writeFile(getStatePath(state.sessionId), JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 });
 }
 
 export async function appendSessionEvent(state, type, payload, runId = null) {
@@ -53,7 +73,7 @@ export async function appendSessionEvent(state, type, payload, runId = null) {
     payload,
   };
   await ensureSessionDir(state.sessionId);
-  await fs.appendFile(getEventsPath(state.sessionId), `${JSON.stringify(event)}\n`, 'utf8');
+  await fs.appendFile(getEventsPath(state.sessionId), `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 export async function loadSessionState(sessionId) {
@@ -83,8 +103,10 @@ export async function listSessions() {
     const rows = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const statePath = path.join(root, entry.name, 'state.json');
+      // Skip entries that don't match valid session id format
+      if (!SESSION_ID_RE.test(entry.name)) continue;
       try {
+        const statePath = getStatePath(entry.name);
         const raw = await fs.readFile(statePath, 'utf8');
         const state = JSON.parse(raw);
         rows.push({

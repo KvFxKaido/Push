@@ -8,7 +8,7 @@ import os from 'node:os';
 const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-'));
 process.env.PUSH_SESSION_DIR = tmpDir;
 
-const { makeSessionId, makeRunId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, getSessionDir, PROTOCOL_VERSION } = await import('../session-store.mjs');
+const { makeSessionId, makeRunId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, getSessionDir, validateSessionId, SESSION_ID_RE, PROTOCOL_VERSION } = await import('../session-store.mjs');
 
 after(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
@@ -54,9 +54,16 @@ describe('session persistence', () => {
     assert.deepEqual(loaded.messages, [{ role: 'system', content: 'test' }]);
   });
 
-  it('rejects loading with wrong session id', async () => {
+  it('rejects loading with invalid session id', async () => {
     await assert.rejects(
       () => loadSessionState('nonexistent_session'),
+      /Invalid session id/,
+    );
+  });
+
+  it('rejects loading non-existent valid-format session id', async () => {
+    await assert.rejects(
+      () => loadSessionState('sess_abc123_def456'),
       /ENOENT/,
     );
   });
@@ -148,5 +155,105 @@ describe('listSessions', () => {
       assert.ok(s.provider);
       assert.ok(s.model);
     }
+  });
+});
+
+// ─── validateSessionId ──────────────────────────────────────────
+
+describe('validateSessionId', () => {
+  it('accepts output of makeSessionId()', () => {
+    const id = makeSessionId();
+    assert.equal(validateSessionId(id), id);
+  });
+
+  it('rejects path traversal', () => {
+    assert.throws(() => validateSessionId('../../etc'), /Invalid session id/);
+  });
+
+  it('rejects empty string', () => {
+    assert.throws(() => validateSessionId(''), /Invalid session id/);
+  });
+
+  it('rejects non-string values', () => {
+    assert.throws(() => validateSessionId(null), /Invalid session id/);
+    assert.throws(() => validateSessionId(undefined), /Invalid session id/);
+    assert.throws(() => validateSessionId(42), /Invalid session id/);
+  });
+
+  it('rejects partial format (missing hex suffix)', () => {
+    assert.throws(() => validateSessionId('sess_abc'), /Invalid session id/);
+  });
+
+  it('rejects format with wrong prefix', () => {
+    assert.throws(() => validateSessionId('run_abc_def123'), /Invalid session id/);
+  });
+});
+
+// ─── getSessionDir traversal guard ──────────────────────────────
+
+describe('getSessionDir security', () => {
+  it('throws on path traversal attempt', () => {
+    assert.throws(() => getSessionDir('../../etc'), /Invalid session id/);
+  });
+
+  it('throws on non-matching id format', () => {
+    assert.throws(() => getSessionDir('bad_id'), /Invalid session id/);
+  });
+
+  it('returns valid path for proper session id', () => {
+    const id = makeSessionId();
+    const dir = getSessionDir(id);
+    assert.ok(dir.endsWith(id));
+  });
+});
+
+// ─── File permissions ───────────────────────────────────────────
+
+describe('session file permissions', () => {
+  it('creates session dir with mode 0o700', async () => {
+    const id = makeSessionId();
+    const state = {
+      sessionId: id, createdAt: Date.now(), updatedAt: Date.now(),
+      provider: 'ollama', model: 'test', cwd: '/tmp', rounds: 0, eventSeq: 0,
+      messages: [{ role: 'system', content: 'test' }],
+    };
+    await saveSessionState(state);
+    const dir = getSessionDir(id);
+    const stat = await fs.stat(dir);
+    assert.equal(stat.mode & 0o777, 0o700, 'dir should be 0700');
+  });
+
+  it('creates state file with mode 0o600', async () => {
+    const id = makeSessionId();
+    const state = {
+      sessionId: id, createdAt: Date.now(), updatedAt: Date.now(),
+      provider: 'ollama', model: 'test', cwd: '/tmp', rounds: 0, eventSeq: 0,
+      messages: [{ role: 'system', content: 'test' }],
+    };
+    await saveSessionState(state);
+    const statePath = path.join(getSessionDir(id), 'state.json');
+    const stat = await fs.stat(statePath);
+    assert.equal(stat.mode & 0o777, 0o600, 'state file should be 0600');
+  });
+});
+
+// ─── listSessions skips invalid dirs ────────────────────────────
+
+describe('listSessions security', () => {
+  it('skips directories that do not match session id format', async () => {
+    // Create a dir with an invalid name
+    const badDir = path.join(tmpDir, '..sneaky_traversal');
+    await fs.mkdir(badDir, { recursive: true });
+    await fs.writeFile(path.join(badDir, 'state.json'), JSON.stringify({
+      sessionId: '..sneaky_traversal', updatedAt: Date.now(),
+      provider: 'ollama', model: 'a', cwd: '/tmp',
+    }), 'utf8');
+
+    const sessions = await listSessions();
+    const ids = sessions.map(s => s.sessionId);
+    assert.ok(!ids.includes('..sneaky_traversal'), 'should not list invalid session dirs');
+
+    // Cleanup
+    await fs.rm(badDir, { recursive: true, force: true });
   });
 });

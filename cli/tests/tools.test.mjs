@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -98,55 +98,125 @@ describe('detectAllToolCalls', () => {
 describe('ensureInsideWorkspace', () => {
   const root = '/home/user/project';
 
-  it('resolves a relative path inside workspace', () => {
-    const result = ensureInsideWorkspace(root, 'src/index.ts');
+  it('resolves a relative path inside workspace', async () => {
+    const result = await ensureInsideWorkspace(root, 'src/index.ts');
     assert.equal(result, path.join(root, 'src/index.ts'));
   });
 
-  it('allows workspace root itself', () => {
-    const result = ensureInsideWorkspace(root, '.');
+  it('allows workspace root itself', async () => {
+    const result = await ensureInsideWorkspace(root, '.');
     assert.equal(result, root);
   });
 
-  it('rejects path traversal above workspace', () => {
-    assert.throws(
+  it('rejects path traversal above workspace', async () => {
+    await assert.rejects(
       () => ensureInsideWorkspace(root, '../../../etc/passwd'),
       /path escapes workspace root/,
     );
   });
 
-  it('rejects absolute path outside workspace', () => {
-    assert.throws(
+  it('rejects absolute path outside workspace', async () => {
+    await assert.rejects(
       () => ensureInsideWorkspace(root, '/etc/passwd'),
       /path escapes workspace root/,
     );
   });
 
-  it('rejects empty path', () => {
-    assert.throws(
+  it('rejects empty path', async () => {
+    await assert.rejects(
       () => ensureInsideWorkspace(root, ''),
       /path is required/,
     );
   });
 
-  it('rejects whitespace-only path', () => {
-    assert.throws(
+  it('rejects whitespace-only path', async () => {
+    await assert.rejects(
       () => ensureInsideWorkspace(root, '   '),
       /path is required/,
     );
   });
 
-  it('allows absolute path inside workspace', () => {
-    const result = ensureInsideWorkspace(root, '/home/user/project/deep/file.txt');
+  it('allows absolute path inside workspace', async () => {
+    const result = await ensureInsideWorkspace(root, '/home/user/project/deep/file.txt');
     assert.equal(result, path.join(root, 'deep/file.txt'));
   });
 
-  it('rejects path that is a prefix but not a child', () => {
+  it('rejects path that is a prefix but not a child', async () => {
     // /home/user/project-other should not be inside /home/user/project
-    assert.throws(
+    await assert.rejects(
       () => ensureInsideWorkspace(root, '/home/user/project-other/file.txt'),
       /path escapes workspace root/,
     );
+  });
+});
+
+// ─── ensureInsideWorkspace symlink checks ───────────────────────
+
+describe('ensureInsideWorkspace symlink', () => {
+  let workspace;
+
+  before(async () => {
+    workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-'));
+    // Create inner dir and file
+    await fs.mkdir(path.join(workspace, 'inner'), { recursive: true });
+    await fs.writeFile(path.join(workspace, 'inner', 'safe.txt'), 'ok', 'utf8');
+    // Create an external dir with a secret file
+    await fs.mkdir(path.join(workspace, '..', 'push-external-secret'), { recursive: true });
+    await fs.writeFile(path.join(workspace, '..', 'push-external-secret', 'data.txt'), 'SECRET', 'utf8');
+    // Symlink inside workspace pointing outside
+    await fs.symlink(path.join(workspace, '..', 'push-external-secret'), path.join(workspace, 'escape'));
+    // Symlink inside workspace pointing to another location inside
+    await fs.symlink(path.join(workspace, 'inner'), path.join(workspace, 'safe-link'));
+  });
+
+  after(async () => {
+    await fs.rm(workspace, { recursive: true, force: true });
+    // Clean up external dir
+    const external = path.join(workspace, '..', 'push-external-secret');
+    await fs.rm(external, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('rejects symlink pointing outside workspace', async () => {
+    await assert.rejects(
+      () => ensureInsideWorkspace(workspace, 'escape/data.txt'),
+      /path escapes workspace root/,
+    );
+  });
+
+  it('allows symlink pointing inside workspace', async () => {
+    const result = await ensureInsideWorkspace(workspace, 'safe-link/safe.txt');
+    assert.ok(result.startsWith(workspace));
+  });
+
+  it('allows non-existent target (new file) with safe parent', async () => {
+    const result = await ensureInsideWorkspace(workspace, 'inner/new-file.txt');
+    assert.ok(result.startsWith(workspace));
+  });
+});
+
+// ─── list_dir symlink reporting ─────────────────────────────────
+
+describe('list_dir symlink reporting', () => {
+  let workspace;
+
+  before(async () => {
+    workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ls-'));
+    await fs.writeFile(path.join(workspace, 'file.txt'), 'ok', 'utf8');
+    await fs.mkdir(path.join(workspace, 'subdir'));
+    await fs.symlink(path.join(workspace, 'file.txt'), path.join(workspace, 'link-to-file'));
+  });
+
+  after(async () => {
+    await fs.rm(workspace, { recursive: true, force: true });
+  });
+
+  it('reports symlinks with l prefix', async () => {
+    const result = await executeToolCall({ tool: 'list_dir', args: { path: '.' } }, workspace);
+    assert.equal(result.ok, true);
+    const lines = result.text.split('\n');
+    const symLine = lines.find(l => l.includes('link-to-file'));
+    assert.ok(symLine, 'should contain link-to-file entry');
+    assert.ok(symLine.startsWith('l '), `expected "l " prefix, got: ${symLine}`);
   });
 });
 
@@ -274,6 +344,70 @@ describe('edit_file hashline flow', () => {
 
       assert.equal(edit.ok, false);
       assert.equal(edit.structuredError.code, 'STALE_WRITE');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── exec headless hardening ────────────────────────────────────
+
+describe('exec headless hardening', () => {
+  it('blocks exec when no approvalFn and no allowExec', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'echo hello' } },
+        root,
+        {}, // no approvalFn, no allowExec
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.structuredError.code, 'EXEC_DISABLED');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows exec with allowExec: true', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'echo hello' } },
+        root,
+        { allowExec: true },
+      );
+      assert.equal(result.ok, true);
+      assert.ok(result.text.includes('hello'));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks high-risk even with allowExec but no approvalFn', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'rm -rf /' } },
+        root,
+        { allowExec: true }, // no approvalFn
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.structuredError.code, 'APPROVAL_REQUIRED');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows exec with approvalFn (interactive backward compat)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'echo safe' } },
+        root,
+        { approvalFn: async () => true },
+      );
+      assert.equal(result.ok, true);
+      assert.ok(result.text.includes('safe'));
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

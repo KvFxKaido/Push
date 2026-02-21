@@ -139,9 +139,15 @@ describe('--cwd validation', () => {
 
 describe('--session validation', () => {
   it('gives friendly error for nonexistent session', async () => {
+    const { code, stderr } = await runCli(['--session', 'sess_abc123_def456']);
+    assert.equal(code, 1);
+    assert.ok(stderr.includes('Session not found: sess_abc123_def456'));
+  });
+
+  it('gives friendly error for invalid session id format', async () => {
     const { code, stderr } = await runCli(['--session', 'fake_session_id']);
     assert.equal(code, 1);
-    assert.ok(stderr.includes('Session not found: fake_session_id'));
+    assert.ok(stderr.includes('Invalid session id'));
   });
 });
 

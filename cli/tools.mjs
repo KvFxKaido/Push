@@ -200,14 +200,53 @@ export function detectToolCall(text) {
   return detected.calls[0] || null;
 }
 
-export function ensureInsideWorkspace(workspaceRoot, rawPath) {
+export async function ensureInsideWorkspace(workspaceRoot, rawPath) {
   const trimmed = rawPath.trim();
   if (!trimmed) throw new Error('path is required');
   const resolved = path.resolve(workspaceRoot, trimmed);
   const root = path.resolve(workspaceRoot);
+
+  // 1. Logical check — catches obvious traversal without touching fs
   if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
     throw new Error('path escapes workspace root');
   }
+
+  // 2. Realpath check — catches symlink escapes
+  try {
+    const realRoot = await fs.realpath(root);
+    let realTarget;
+    try {
+      realTarget = await fs.realpath(resolved);
+    } catch (targetErr) {
+      if (targetErr.code === 'ENOENT') {
+        // New file: check parent dir instead
+        const parent = path.dirname(resolved);
+        try {
+          const realParent = await fs.realpath(parent);
+          if (realParent !== realRoot && !realParent.startsWith(`${realRoot}${path.sep}`)) {
+            throw new Error('path escapes workspace root');
+          }
+        } catch (parentErr) {
+          if (parentErr.code === 'ENOENT') {
+            // Parent doesn't exist either — fall back to logical check (already passed)
+          } else if (parentErr.message === 'path escapes workspace root') {
+            throw parentErr;
+          }
+          // Other errors: fall back to logical check
+        }
+        return resolved;
+      }
+      // Non-ENOENT errors: fall back to logical check
+      return resolved;
+    }
+    if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}${path.sep}`)) {
+      throw new Error('path escapes workspace root');
+    }
+  } catch (rootErr) {
+    if (rootErr.message === 'path escapes workspace root') throw rootErr;
+    // Workspace root doesn't exist on disk (e.g. test with fake paths) — logical check only
+  }
+
   return resolved;
 }
 
@@ -618,7 +657,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
   try {
     switch (call.tool) {
       case 'read_file': {
-        const filePath = ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
         const raw = await fs.readFile(filePath, 'utf8');
         const startLine = asOptionalNumber(call.args.start_line);
         const endLine = asOptionalNumber(call.args.end_line);
@@ -641,12 +680,12 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
       case 'list_dir': {
         const dirArg = typeof call.args.path === 'string' ? call.args.path : '.';
-        const dirPath = ensureInsideWorkspace(workspaceRoot, dirArg);
+        const dirPath = await ensureInsideWorkspace(workspaceRoot, dirArg);
         const entries = await fs.readdir(dirPath, { withFileTypes: true });
         const mapped = entries
           .map((entry) => ({
             name: entry.name,
-            type: entry.isDirectory() ? 'dir' : entry.isFile() ? 'file' : 'other',
+            type: entry.isSymbolicLink() ? 'symlink' : entry.isDirectory() ? 'dir' : entry.isFile() ? 'file' : 'other',
           }))
           .sort((a, b) => {
             if (a.type === b.type) return a.name.localeCompare(b.name);
@@ -655,7 +694,8 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             return a.name.localeCompare(b.name);
           })
           .slice(0, 300);
-        const text = mapped.map((entry) => `${entry.type === 'dir' ? 'd' : 'f'} ${entry.name}`).join('\n');
+        const prefixMap = { dir: 'd', file: 'f', symlink: 'l', other: 'f' };
+        const text = mapped.map((entry) => `${prefixMap[entry.type] || 'f'} ${entry.name}`).join('\n');
         return {
           ok: true,
           text: text || '<empty directory>',
@@ -666,7 +706,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       case 'search_files': {
         const pattern = asString(call.args.pattern, 'pattern').trim();
         if (!pattern) throw new Error('pattern cannot be empty');
-        const searchPath = typeof call.args.path === 'string' ? ensureInsideWorkspace(workspaceRoot, call.args.path) : workspaceRoot;
+        const searchPath = typeof call.args.path === 'string' ? await ensureInsideWorkspace(workspaceRoot, call.args.path) : workspaceRoot;
         const maxResults = clamp(asOptionalNumber(call.args.max_results) ?? DEFAULT_SEARCH_RESULTS, 1, 1000);
         const output = await executeSearch(pattern, searchPath, maxResults);
         return {
@@ -734,6 +774,19 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const command = asString(call.args.command, 'command');
         const timeoutMs = clamp(asOptionalNumber(call.args.timeout_ms) ?? 90_000, 1_000, 180_000);
 
+        // In headless mode (no approvalFn), block ALL exec unless --allow-exec
+        if (!options.approvalFn && !options.allowExec) {
+          return {
+            ok: false,
+            text: `Blocked: exec is disabled in headless mode. Use --allow-exec to enable.`,
+            structuredError: {
+              code: 'EXEC_DISABLED',
+              message: 'exec blocked in headless mode without --allow-exec',
+              retryable: false,
+            },
+          };
+        }
+
         if (isHighRiskCommand(command)) {
           const { approvalFn } = options;
           if (!approvalFn) {
@@ -796,7 +849,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'write_file': {
-        const filePath = ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
         const content = asString(call.args.content, 'content');
         await backupFile(filePath, workspaceRoot);
         await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -809,7 +862,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'edit_file': {
-        const filePath = ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
         const edits = Array.isArray(call.args.edits) ? call.args.edits : null;
         if (!edits) throw new Error('edits must be an array');
 
@@ -860,7 +913,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'read_symbols': {
-        const filePath = ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
         const content = await fs.readFile(filePath, 'utf8');
         const lines = content.split('\n');
         const symbols = [];
@@ -933,7 +986,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'git_diff': {
-        const diffPath = call.args.path ? ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path')) : null;
+        const diffPath = call.args.path ? await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path')) : null;
         const staged = call.args.staged === true;
         const gitArgs = ['diff', '--stat'];
         if (staged) gitArgs.push('--staged');
@@ -981,7 +1034,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const paths = Array.isArray(call.args.paths) ? call.args.paths : [];
 
         // This is a mutating operation — validate paths are inside workspace
-        const resolvedPaths = paths.map(p => ensureInsideWorkspace(workspaceRoot, p));
+        const resolvedPaths = await Promise.all(paths.map(p => ensureInsideWorkspace(workspaceRoot, p)));
 
         try {
           // Stage specified files, or all if none specified
@@ -1008,7 +1061,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'undo_edit': {
-        const filePath = ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
         const backupDir = path.join(workspaceRoot, '.push', 'backups');
         const relative = path.relative(workspaceRoot, filePath).replace(/\//g, '__');
         const prefix = `${relative}.`;

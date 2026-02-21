@@ -23,6 +23,7 @@ const KNOWN_OPTIONS = new Set([
   'provider', 'model', 'url', 'api-key', 'apiKey', 'cwd', 'session',
   'tavily-key', 'tavilyKey', 'search-backend', 'searchBackend',
   'task', 'accept', 'max-rounds', 'maxRounds', 'json', 'headless',
+  'allow-exec', 'allowExec',
   'help', 'sandbox', 'no-sandbox', 'version',
 ]);
 
@@ -70,6 +71,7 @@ Options:
   --task <text>                 Task text for headless mode
   --accept <cmd>                Acceptance check command (repeatable)
   --max-rounds <n>              Tool-loop cap per user prompt (default: 8)
+  --allow-exec                  Allow exec tool in headless mode (blocked by default)
   --json                        JSON output in headless mode / sessions
   --sandbox                     Enable local Docker sandbox
   --no-sandbox                  Disable local Docker sandbox
@@ -167,7 +169,7 @@ function makeCLIEventHandler() {
   };
 }
 
-async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks) {
+async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks, { allowExec = false } = {}) {
   state.messages.push({ role: 'user', content: task });
   await appendSessionEvent(state, 'user_message', { chars: task.length, preview: task.slice(0, 280) });
 
@@ -179,7 +181,8 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
     // Headless run is silent during execution unless we want to wire up a log listener later
     const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, {
       signal: ac.signal,
-      emit: null, 
+      emit: null,
+      allowExec,
     });
     await saveSessionState(state);
 
@@ -975,6 +978,8 @@ export async function main() {
       maxRounds: { type: 'string' },
       json: { type: 'boolean', default: false },
       headless: { type: 'boolean', default: false },
+      'allow-exec': { type: 'boolean' },
+      allowExec: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       sandbox: { type: 'boolean' },
       'no-sandbox': { type: 'boolean' },
@@ -1125,7 +1130,8 @@ export async function main() {
     if (!task) {
       throw new Error('Headless mode requires a task. Use: push run --task "..."');
     }
-    return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks);
+    const allowExec = values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
+    return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks, { allowExec });
   }
 
   if (!process.stdin.isTTY) {

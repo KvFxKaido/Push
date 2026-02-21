@@ -56,7 +56,9 @@ async function cleanPidFile() {
 }
 
 async function ensureSocketDir(socketPath) {
-  await fs.mkdir(path.dirname(socketPath), { recursive: true });
+  const dir = path.dirname(socketPath);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.chmod(dir, 0o700);
 }
 
 async function cleanStaleSocket(socketPath) {
@@ -98,6 +100,18 @@ function makeErrorResponse(requestId, type, code, message, retryable = false) {
     message,
     retryable,
   });
+}
+
+// ─── Token validation ─────────────────────────────────────────────
+
+/**
+ * Validate an attach token against a session entry.
+ * Returns true if token matches or if the entry has no token set (legacy/internal).
+ */
+export function validateAttachToken(entry, providedToken) {
+  if (!entry || !entry.attachToken) return true; // no token set — allow (legacy)
+  if (typeof providedToken !== 'string' || !providedToken) return false;
+  return entry.attachToken === providedToken;
 }
 
 // ─── Session registry (in-memory) ────────────────────────────────
@@ -163,7 +177,7 @@ async function handleStartSession(req) {
 async function handleSendUserMessage(req, emitEvent) {
   const sessionId = req.sessionId || req.payload?.sessionId;
   const text = req.payload?.text;
-  
+
   if (!sessionId || !text) {
     return makeErrorResponse(req.requestId, 'send_user_message', 'INVALID_REQUEST', 'sessionId and text are required');
   }
@@ -178,6 +192,12 @@ async function handleSendUserMessage(req, emitEvent) {
     } catch {
       return makeErrorResponse(req.requestId, 'send_user_message', 'SESSION_NOT_FOUND', `Session not found: ${sessionId}`);
     }
+  }
+
+  // Validate attach token
+  const providedToken = req.payload?.attachToken;
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(req.requestId, 'send_user_message', 'INVALID_TOKEN', 'Invalid or missing attach token');
   }
 
   const { state } = entry;
@@ -270,7 +290,7 @@ async function handleSendUserMessage(req, emitEvent) {
 }
 
 async function handleAttachSession(req, emitEvent) {
-  const { sessionId, lastSeenSeq } = req.payload || {};
+  const { sessionId, lastSeenSeq, attachToken: providedToken } = req.payload || {};
   if (!sessionId) {
     return makeErrorResponse(req.requestId, 'attach_session', 'INVALID_REQUEST', 'sessionId is required');
   }
@@ -284,6 +304,11 @@ async function handleAttachSession(req, emitEvent) {
     } catch {
       return makeErrorResponse(req.requestId, 'attach_session', 'SESSION_NOT_FOUND', `Session not found: ${sessionId}`);
     }
+  }
+
+  // Validate attach token
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(req.requestId, 'attach_session', 'INVALID_TOKEN', 'Invalid or missing attach token');
   }
 
   const { state } = entry;
@@ -411,14 +436,17 @@ async function main() {
 
   const server = net.createServer(handleConnection);
 
+  // Set restrictive umask before listen() so socket is born with 0o600
+  const oldUmask = process.umask(0o077);
   server.listen(socketPath, () => {
+    process.umask(oldUmask); // restore original umask
     process.stdout.write(`pushd listening on ${socketPath}\n`);
     process.stdout.write(`protocol: ${PROTOCOL_VERSION}\n`);
     process.stdout.write(`version: ${VERSION}\n`);
     process.stdout.write(`pid: ${process.pid}\n`);
   });
 
-  // Write PID file + set socket permissions
+  // Write PID file + belt-and-suspenders chmod
   server.on('listening', async () => {
     try {
       await writePidFile();
