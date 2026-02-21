@@ -63,6 +63,8 @@ Use this file to navigate active design/planning docs versus historical referenc
   - Status: Completed bootstrap execution record.
 - `cli/design/Push Runtime Protocol.md`
   - Status: Active protocol spec for `pushd` messaging.
+- `cli/design/Push CLI TUI Visual Language Spec.md`
+  - Status: Proposed visual language and terminal theming spec for `push tui` Phase 1.
 - `cli/schemas/` (see `cli/schemas/README.md`)
   - Status: Active JSON Schema artifacts for runtime protocol envelopes/payloads.
 

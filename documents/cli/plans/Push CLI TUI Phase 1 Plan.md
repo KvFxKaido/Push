@@ -34,6 +34,9 @@ Owner: Push
 
 ## UX Scope
 
+Visual baseline reference:
+- `documents/cli/design/Push CLI TUI Visual Language Spec.md`
+
 ## Command Surface
 
 - `push tui`
@@ -116,7 +119,8 @@ Phase 1 protocol rule:
 2. Rendering primitives
 - Build panes: header, transcript, tool feed, composer, footer.
 - Implement token streaming append and smooth scroll behavior.
-- Add minimal theming and terminal resize handling.
+- Implement theme tokens and glyph fallbacks from the visual language spec.
+- Add terminal resize handling.
 
 3. Controls and approvals
 - Wire keybinds to runtime requests.
