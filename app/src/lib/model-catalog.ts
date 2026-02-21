@@ -3,6 +3,7 @@ import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
+import { getZenKey } from '@/hooks/useZenConfig';
 
 const OLLAMA_MODELS_URL = import.meta.env.DEV
   ? '/ollama/v1/models'
@@ -23,6 +24,10 @@ const ZAI_MODELS_URL = import.meta.env.DEV
 const GOOGLE_MODELS_URL = import.meta.env.DEV
   ? '/google/v1beta/openai/models'
   : '/api/google/models';
+
+const ZEN_MODELS_URL = import.meta.env.DEV
+  ? '/opencode/zen/v1/models'
+  : '/api/zen/models';
 
 import { asRecord } from './utils';
 
@@ -98,4 +103,8 @@ export async function fetchZaiModels(): Promise<string[]> {
 
 export async function fetchGoogleModels(): Promise<string[]> {
   return fetchProviderModels(GOOGLE_MODELS_URL, getGoogleKey(), 'Google');
+}
+
+export async function fetchZenModels(): Promise<string[]> {
+  return fetchProviderModels(ZEN_MODELS_URL, getZenKey(), 'OpenCode Zen');
 }

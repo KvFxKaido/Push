@@ -19,6 +19,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   openrouter: 'OpenRouter',
   zai: 'Z.AI',
   google: 'Google',
+  zen: 'OpenCode Zen',
   demo: 'Demo',
 };
 
@@ -138,6 +139,20 @@ export interface SettingsAIProps {
   setGoogleKeyInput: (v: string) => void;
   setGoogleKey: (v: string) => void;
   clearGoogleKey: () => void;
+  // OpenCode Zen
+  hasZenKey: boolean;
+  zenModel: string;
+  setZenModel: (v: string) => void;
+  zenModelOptions: string[];
+  zenModelsLoading: boolean;
+  zenModelsError: string | null;
+  zenModelsUpdatedAt: number | null;
+  isZenModelLocked: boolean;
+  refreshZenModels: () => void;
+  zenKeyInput: string;
+  setZenKeyInput: (v: string) => void;
+  setZenKey: (v: string) => void;
+  clearZenKey: () => void;
   // Tavily
   hasTavilyKey: boolean;
   tavilyKeyInput: string;
@@ -1160,6 +1175,39 @@ export function SettingsSheet({
                 loading: ai.googleModelsLoading,
                 error: ai.googleModelsError,
                 updatedAt: ai.googleModelsUpdatedAt,
+              }}
+            />
+          </div>
+
+          {/* OpenCode Zen */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-push-fg-secondary">OpenCode Zen</label>
+            <ProviderKeySection
+              label="OpenCode Zen"
+              hasKey={ai.hasZenKey}
+              keyInput={ai.zenKeyInput}
+              setKeyInput={ai.setZenKeyInput}
+              saveKey={() => ai.setZenKey(ai.zenKeyInput.trim())}
+              clearKey={ai.clearZenKey}
+              activeBackend={ai.activeBackend}
+              backendId="zen"
+              clearPreferredProvider={ai.clearPreferredProvider}
+              setActiveBackend={ai.setActiveBackend}
+              placeholder="Zen API key"
+              saveLabel="Save OpenCode Zen key"
+              hint="OpenCode Zen API key for https://opencode.ai/zen."
+              model={{
+                value: ai.zenModel,
+                set: ai.setZenModel,
+                options: ai.zenModelOptions,
+                isLocked: ai.isZenModelLocked,
+                lockedModel: ai.lockedModel,
+              }}
+              refresh={{
+                trigger: ai.refreshZenModels,
+                loading: ai.zenModelsLoading,
+                error: ai.zenModelsError,
+                updatedAt: ai.zenModelsUpdatedAt,
               }}
             />
           </div>

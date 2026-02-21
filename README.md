@@ -15,7 +15,7 @@ Push is a personal chat interface backed by role-based AI agents. Select a repo,
 - **Delegate implementation** — Orchestrator can hand coding work to Coder in a live sandbox
 - **Gate risky changes** — Auditor enforces a SAFE/UNSAFE pre-commit verdict
 - **Stay repo-locked** — active chat context is bound to one repo and one active branch
-- **Use your existing AI stack** — pick Mistral, Ollama Cloud, OpenRouter, Z.AI, or Google
+- **Use your existing AI stack** — pick Mistral, Ollama Cloud, OpenRouter, Z.AI, Google, or OpenCode Zen
 - **Resume interrupted runs** — checkpoint + reconciliation flow when mobile sessions are interrupted
 - **Merge from mobile** — branch, commit, push, and merge through GitHub PR flow
 - **Fallback to sandbox-only mode** — start without GitHub auth and export your workspace anytime
@@ -46,7 +46,7 @@ The app is free. AI usage depends on your provider subscription, and you choose 
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Mistral Vibe, Ollama Cloud, OpenRouter, Z.AI, or Google — flexible provider choice |
+| AI | Mistral Vibe, Ollama Cloud, OpenRouter, Z.AI, Google, or OpenCode Zen — flexible provider choice |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -98,6 +98,7 @@ VITE_OLLAMA_API_KEY=...               # Ollama Cloud
 VITE_OPENROUTER_API_KEY=...           # OpenRouter (50+ models via pay-per-use)
 VITE_ZAI_API_KEY=...                  # Z.AI (GLM)
 VITE_GOOGLE_API_KEY=...               # Google Gemini (OpenAI-compatible endpoint)
+VITE_ZEN_API_KEY=...                  # OpenCode Zen (OpenAI-compatible endpoint)
 VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)
 VITE_GITHUB_TOKEN=...                 # Optional — PAT for GitHub API access
 VITE_GITHUB_CLIENT_ID=...             # Optional — GitHub App OAuth client ID
@@ -117,6 +118,7 @@ VITE_BROWSER_TOOL_ENABLED=true        # Optional — enables sandbox browser too
   - Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
   - Z.AI: `documents/security/PROVIDER_USAGE_POLICY_ZAI.md`
   - Google Gemini: `documents/security/PROVIDER_USAGE_POLICY_GOOGLE.md`
+  - OpenCode Zen: `documents/security/PROVIDER_USAGE_POLICY_ZEN.md`
 
 Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings.
 
@@ -161,7 +163,7 @@ Use it for quick experiments, learning the interface, or when you're on a device
 
 ## Production
 
-Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, and `/api/google/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+Deployed on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, and `/api/zen/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 For browser tools, set Worker secrets `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`. The Worker injects them server-side for `/api/sandbox/browser-screenshot` and `/api/sandbox/browser-extract` so browser credentials never reach the client.
 
@@ -178,7 +180,7 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Coder** — autonomous code implementation in sandbox (runs until done, with 90s per-round timeout)
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Five AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter**, **Z.AI**, and **Google Gemini**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+Six AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter**, **Z.AI**, **Google Gemini**, and **OpenCode Zen**. All use OpenAI-compatible streaming. The active backend serves all three roles. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
 
 **OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 12 models covering all major providers.
 
@@ -214,7 +216,7 @@ Push/
 │   ├── app.py             # Modal Python App — sandbox web endpoints
 │   └── requirements.txt
 ├── app/
-│   ├── worker.ts          # Cloudflare Worker — provider proxies (Ollama/Mistral/OpenRouter/Z.AI/Google) + sandbox proxy
+│   ├── worker.ts          # Cloudflare Worker — provider proxies (Ollama/Mistral/OpenRouter/Z.AI/Google/Zen) + sandbox proxy
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/           # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet

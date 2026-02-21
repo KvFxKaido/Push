@@ -93,7 +93,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `mistral`, `openrouter`, `zai`, `google`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `mistral`, `openrouter`, `zai`, `google`, `zen`) |
 | `PUSH_OLLAMA_URL` | Ollama endpoint (default: `http://localhost:11434/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
@@ -109,6 +109,9 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_GOOGLE_URL` | Google OpenAI-compatible endpoint (default: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`) |
 | `PUSH_GOOGLE_API_KEY` | Google API key |
 | `PUSH_GOOGLE_MODEL` | Google model (default: `gemini-2.5-flash`) |
+| `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`) |
+| `PUSH_ZEN_API_KEY` | OpenCode Zen API key |
+| `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `qwen3-coder`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_NATIVE_FC` | Native function-calling override: `0`/`false` = off, `1`/`true` = on |
@@ -120,7 +123,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-All five providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+All six providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -129,6 +132,7 @@ All five providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5
 | `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
 | `zai` | `glm-4.5` | Yes |
 | `google` | `gemini-2.5-flash` | Yes |
+| `zen` | `qwen3-coder` | Yes |
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 
@@ -141,11 +145,14 @@ You can switch provider/model mid-session with `/provider` and `/model`. Switchi
 - Matching provider policies:
   - OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
   - Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
+  - Z.AI: `documents/security/PROVIDER_USAGE_POLICY_ZAI.md`
+  - Google Gemini: `documents/security/PROVIDER_USAGE_POLICY_GOOGLE.md`
+  - OpenCode Zen: `documents/security/PROVIDER_USAGE_POLICY_ZEN.md`
 
 ## Tools
 
 The CLI supports both prompt-engineered tool calls and native function-calling.
-- Default mode: `ollama` uses prompt-engineered calls; `mistral`, `openrouter`, `zai`, and `google` use native function-calling.
+- Default mode: `ollama` uses prompt-engineered calls; `mistral`, `openrouter`, `zai`, `google`, and `zen` use native function-calling.
 - Override with `PUSH_NATIVE_FC=0|1`.
 - Regardless of mode, tool behavior and safety rules are the same.
 
@@ -270,7 +277,7 @@ push config init                    Interactive setup wizard
 push config set ...                 Save provider config
 
 Options:
-  --provider <name>       ollama | mistral | openrouter | zai | google (default: ollama)
+  --provider <name>       ollama | mistral | openrouter | zai | google | zen (default: ollama)
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key

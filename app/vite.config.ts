@@ -157,6 +157,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/google/, ''),
       },
+      '/opencode': {
+        target: 'https://opencode.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/opencode/, ''),
+      },
       '/api': {
         target: API_PROXY_TARGET,
         changeOrigin: true,

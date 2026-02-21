@@ -10,6 +10,7 @@ import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
+import { getZenKey } from '@/hooks/useZenConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
 import {
@@ -19,6 +20,7 @@ import {
   getOpenRouterModelName,
   getZaiModelName,
   getGoogleModelName,
+  getZenModelName,
 } from './providers';
 import type { PreferredProvider } from './providers';
 // ---------------------------------------------------------------------------
@@ -77,6 +79,11 @@ const GOOGLE_API_URL = import.meta.env.DEV
   ? '/google/v1beta/openai/chat/completions'
   : '/api/google/chat';
 
+// OpenCode Zen OpenAI-compatible endpoint.
+const ZEN_API_URL = import.meta.env.DEV
+  ? '/opencode/zen/v1/chat/completions'
+  : '/api/zen/chat';
+
 /** Reset hook retained for compatibility with providers.ts model setter callback. */
 export function resetMistralAgent(): void {
   // Native function-calling path no longer uses Mistral Agents API state.
@@ -112,7 +119,7 @@ function normalizeModelName(model?: string): string {
 }
 
 export function getContextBudget(
-  provider?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'demo',
+  provider?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen' | 'demo',
   model?: string,
 ): ContextBudget {
   const normalizedModel = normalizeModelName(model);
@@ -468,7 +475,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google',
+  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen',
   providerModel?: string,
   useNativeFC = false,
 ): LLMMessage[] {
@@ -509,7 +516,7 @@ function toLLMMessages(
 
   // Web search tool — prompt-engineered for providers that need client-side dispatch.
   // Ollama: model outputs JSON → we execute via Ollama's search REST API.
-  // Native FC providers (Mistral/OpenRouter/Z.AI/Google): search handled via tools[] in request body.
+  // Native FC providers (Mistral/OpenRouter/Z.AI/Google/Zen): search handled via tools[] in request body.
   if (providerType === 'ollama') {
     systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
   }
@@ -762,7 +769,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google';
+  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen';
   /** Override the fetch URL (e.g., Mistral Agents API uses a different endpoint) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -1267,6 +1274,22 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       toolChoice: 'auto',
     }),
   },
+  zen: {
+    getKey: getZenKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'OpenCode Zen',
+      apiUrl: ZEN_API_URL,
+      apiKey,
+      model: modelOverride || getZenModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('OpenCode Zen'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
+      providerType: 'zen',
+      supportsNativeFC: true,
+      toolChoice: 'auto',
+    }),
+  },
 };
 
 /** Core streaming function — looks up provider config and delegates to streamSSEChat. */
@@ -1325,12 +1348,13 @@ export const streamMistralChat: StreamChatFn = (...args) => streamProviderChat('
 export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
 export const streamZaiChat: StreamChatFn = (...args) => streamProviderChat('zai', ...args);
 export const streamGoogleChat: StreamChatFn = (...args) => streamProviderChat('google', ...args);
+export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
 
 // ---------------------------------------------------------------------------
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'demo';
+export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen' | 'demo';
 
 /** Key getter for each configurable provider. */
 const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
@@ -1339,13 +1363,14 @@ const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
   openrouter:  getOpenRouterKey,
   zai:         getZaiKey,
   google:      getGoogleKey,
+  zen:         getZenKey,
 };
 
 /**
  * Fallback order when no preference is set (or the preferred key is gone).
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama', 'mistral', 'openrouter', 'zai', 'google',
+  'ollama', 'mistral', 'openrouter', 'zai', 'google', 'zen',
 ];
 
 /**
@@ -1379,6 +1404,7 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
     case 'zai': return { providerType: 'zai' as const, streamFn: streamZaiChat };
     case 'google': return { providerType: 'google' as const, streamFn: streamGoogleChat };
+    case 'zen': return { providerType: 'zen' as const, streamFn: streamZenChat };
     default:        return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
   }
 }
@@ -1433,6 +1459,10 @@ export async function streamChat(
 
   if (provider === 'google') {
     return streamGoogleChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'zen') {
+    return streamZenChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);

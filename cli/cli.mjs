@@ -64,7 +64,7 @@ Usage:
   push config set ...           Save provider config defaults
 
 Options:
-  --provider <name>             ollama | mistral | openrouter | zai | google (default: ollama)
+  --provider <name>             ollama | mistral | openrouter | zai | google | zen (default: ollama)
   --model <name>                Override model
   --url <endpoint>              Override provider endpoint URL
   --api-key <secret>            Set provider API key (for push config set/init)
@@ -358,7 +358,7 @@ async function handleProviderCommand(arg, ctx, state, config) {
   }
 
   if (!target) {
-    process.stdout.write(`Unknown provider: ${arg}. Use: ollama, mistral, openrouter, zai, google\n`);
+    process.stdout.write(`Unknown provider: ${arg}. Use: ollama, mistral, openrouter, zai, google, zen\n`);
     return;
   }
 
@@ -622,7 +622,7 @@ async function initSession(sessionId, provider, model, cwd) {
 
 function parseProvider(raw) {
   const provider = (raw || process.env.PUSH_PROVIDER || 'ollama').toLowerCase();
-  if (provider === 'ollama' || provider === 'mistral' || provider === 'openrouter' || provider === 'zai' || provider === 'google') return provider;
+  if (provider === 'ollama' || provider === 'mistral' || provider === 'openrouter' || provider === 'zai' || provider === 'google' || provider === 'zen') return provider;
   throw new Error(`Unsupported provider: ${raw}`);
 }
 
@@ -653,6 +653,7 @@ function sanitizeConfig(config) {
     openrouter: config.openrouter ? redactProvider(config.openrouter) : {},
     zai: config.zai ? redactProvider(config.zai) : {},
     google: config.google ? redactProvider(config.google) : {},
+    zen: config.zen ? redactProvider(config.zen) : {},
   };
 }
 

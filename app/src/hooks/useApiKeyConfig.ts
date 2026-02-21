@@ -1,7 +1,7 @@
 /**
  * Factory for API key management hooks.
  *
- * All provider config hooks (Tavily, Ollama, Mistral, OpenRouter)
+ * All provider config hooks (Tavily, Ollama, Mistral, OpenRouter, Z.AI, Google, Zen)
  * share the same skeleton: a standalone getter (localStorage → env var fallback)
  * and a React hook that wraps useState + useCallback for set/clear/hasKey.
  *
@@ -63,7 +63,7 @@ export function useApiKeyConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Key + model hook (Ollama, Mistral, OpenRouter, Z.AI, Google)
+// Key + model hook (Ollama, Mistral, OpenRouter, Z.AI, Google, Zen)
 // ---------------------------------------------------------------------------
 
 interface ApiKeyWithModelHookResult extends ApiKeyHookResult {

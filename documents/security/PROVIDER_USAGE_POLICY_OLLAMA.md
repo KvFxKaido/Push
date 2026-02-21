@@ -8,6 +8,7 @@ Related policies:
 - OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
 - Z.AI: `documents/security/PROVIDER_USAGE_POLICY_ZAI.md`
 - Google Gemini: `documents/security/PROVIDER_USAGE_POLICY_GOOGLE.md`
+- OpenCode Zen: `documents/security/PROVIDER_USAGE_POLICY_ZEN.md`
 
 ## Scope
 

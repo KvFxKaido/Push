@@ -74,6 +74,11 @@ export function applyConfigToEnv(config) {
   setEnvIfMissing('PUSH_GOOGLE_URL', google.url);
   setEnvIfMissing('PUSH_GOOGLE_API_KEY', google.apiKey);
   setEnvIfMissing('PUSH_GOOGLE_MODEL', google.model);
+
+  const zen = ensureObject(config.zen);
+  setEnvIfMissing('PUSH_ZEN_URL', zen.url);
+  setEnvIfMissing('PUSH_ZEN_API_KEY', zen.apiKey);
+  setEnvIfMissing('PUSH_ZEN_MODEL', zen.model);
 }
 
 export function maskSecret(value) {

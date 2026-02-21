@@ -43,6 +43,7 @@ import {
   getOpenRouterModelName,
   getZaiModelName,
   getGoogleModelName,
+  getZenModelName,
 } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
@@ -76,6 +77,8 @@ function getCurrentModelForProvider(provider: AIProviderType | ActiveProvider): 
       return getZaiModelName();
     case 'google':
       return getGoogleModelName();
+    case 'zen':
+      return getZenModelName();
     default:
       return undefined;
   }

@@ -8,6 +8,7 @@ import {
   MISTRAL_MODELS,
   ZAI_MODELS,
   GOOGLE_MODELS,
+  ZEN_MODELS,
 } from '../model-catalog.mjs';
 
 describe('getCuratedModels', () => {
@@ -41,6 +42,12 @@ describe('getCuratedModels', () => {
     assert.deepEqual(models, GOOGLE_MODELS);
   });
 
+  it('returns Zen models', () => {
+    const models = getCuratedModels('zen');
+    assert.ok(models.length > 0);
+    assert.deepEqual(models, ZEN_MODELS);
+  });
+
   it('returns empty array for unknown provider', () => {
     assert.deepEqual(getCuratedModels('unknown'), []);
     assert.deepEqual(getCuratedModels(''), []);
@@ -57,6 +64,7 @@ describe('DEFAULT_MODELS', () => {
     openrouter: 'anthropic/claude-sonnet-4.6',
     zai: 'glm-4.5',
     google: 'gemini-2.5-flash',
+    zen: 'qwen3-coder',
   };
 
   it('has correct hardcoded defaults', () => {
@@ -70,7 +78,7 @@ describe('DEFAULT_MODELS', () => {
   });
 
   it('covers all providers', () => {
-    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['google', 'mistral', 'ollama', 'openrouter', 'zai']);
+    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['google', 'mistral', 'ollama', 'openrouter', 'zai', 'zen']);
   });
 
   it('each default appears in its curated list', () => {

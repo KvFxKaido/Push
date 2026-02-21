@@ -65,6 +65,21 @@ export const PROVIDER_CONFIGS = {
     supportsNativeFC: true,
     toolChoice: 'auto',
   },
+  zen: {
+    id: 'zen',
+    url: process.env.PUSH_ZEN_URL || 'https://opencode.ai/zen/v1/chat/completions',
+    defaultModel: process.env.PUSH_ZEN_MODEL || 'qwen3-coder',
+    apiKeyEnv: [
+      'PUSH_ZEN_API_KEY',
+      'ZEN_API_KEY',
+      'OPENCODE_API_KEY',
+      'VITE_ZEN_API_KEY',
+      'VITE_OPENCODE_API_KEY',
+    ],
+    requiresKey: true,
+    supportsNativeFC: true,
+    toolChoice: 'auto',
+  },
 };
 
 /**

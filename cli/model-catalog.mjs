@@ -41,12 +41,21 @@ export const GOOGLE_MODELS = [
   'gemini-2.0-flash',
 ];
 
+export const ZEN_MODELS = [
+  'qwen3-coder',
+  'kimi-k2.5',
+  'kimi-k2.5-free',
+  'minimax-m2.5-free',
+  'big-pickle',
+];
+
 const CATALOG = {
   ollama: OLLAMA_MODELS,
   mistral: MISTRAL_MODELS,
   openrouter: OPENROUTER_MODELS,
   zai: ZAI_MODELS,
   google: GOOGLE_MODELS,
+  zen: ZEN_MODELS,
 };
 
 /** Default model per provider — must match PROVIDER_CONFIGS defaults. */
@@ -56,6 +65,7 @@ export const DEFAULT_MODELS = {
   openrouter: 'anthropic/claude-sonnet-4.6',
   zai: 'glm-4.5',
   google: 'gemini-2.5-flash',
+  zen: 'qwen3-coder',
 };
 
 /**

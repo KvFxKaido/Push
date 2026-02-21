@@ -723,7 +723,7 @@ const WEB_SEARCH_TOOL_SCHEMA = {
 interface GetToolSchemasOptions {
   hasSandbox?: boolean;
   hasGitHub?: boolean;
-  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google';
+  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen';
 }
 
 type NativeToolSchema = {
@@ -761,11 +761,12 @@ export function getToolSchemas(options: GetToolSchemasOptions = {}): NativeToolS
   // Web search:
   // - Mistral uses its native web_search tool type in request tools[]
   // - Ollama uses prompt-engineered client-side dispatch
-  // - OpenRouter/Z.AI/Google receive web_search as a function schema
+  // - OpenRouter/Z.AI/Google/Zen receive web_search as a function schema
   if (
     options.providerType === 'openrouter'
     || options.providerType === 'zai'
     || options.providerType === 'google'
+    || options.providerType === 'zen'
   ) {
     schemas.push(WEB_SEARCH_TOOL_SCHEMA);
   }

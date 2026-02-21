@@ -9,8 +9,9 @@
  *  3. **DuckDuckGo free** — HTML scraping, no API key needed. Fallback for
  *     providers without native search when Tavily isn't configured.
  *
- * Mistral handles search natively via the Agents API — no prompt-engineered
- * tool is needed for that provider (see orchestrator.ts).
+ * Native function-calling providers (Mistral/OpenRouter/Z.AI/Google/Zen)
+ * receive web search in request tools[]; prompt-engineered web_search is only
+ * injected for Ollama (see orchestrator.ts).
  */
 
 import type { ToolExecutionResult, WebSearchResult, WebSearchCardData } from '@/types';

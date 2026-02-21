@@ -27,6 +27,10 @@ describe('provider supportsNativeFC flags', () => {
     assert.equal(PROVIDER_CONFIGS.google.supportsNativeFC, true);
   });
 
+  it('Zen supports native FC', () => {
+    assert.equal(PROVIDER_CONFIGS.zen.supportsNativeFC, true);
+  });
+
   it('Mistral uses tool_choice "any"', () => {
     assert.equal(PROVIDER_CONFIGS.mistral.toolChoice, 'any');
   });
@@ -41,6 +45,10 @@ describe('provider supportsNativeFC flags', () => {
 
   it('Google uses tool_choice "auto"', () => {
     assert.equal(PROVIDER_CONFIGS.google.toolChoice, 'auto');
+  });
+
+  it('Zen uses tool_choice "auto"', () => {
+    assert.equal(PROVIDER_CONFIGS.zen.toolChoice, 'auto');
   });
 });
 

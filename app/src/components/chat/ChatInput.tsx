@@ -59,6 +59,14 @@ interface ChatInputProps {
     isGoogleModelLocked: boolean;
     refreshGoogleModels: () => void;
     onSelectGoogleModel: (model: string) => void;
+    zenModel: string;
+    zenModelOptions: string[];
+    zenModelsLoading: boolean;
+    zenModelsError: string | null;
+    zenModelsUpdatedAt: number | null;
+    isZenModelLocked: boolean;
+    refreshZenModels: () => void;
+    onSelectZenModel: (model: string) => void;
   };
 }
 
@@ -71,6 +79,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   openrouter: 'OpenRouter',
   zai: 'Z.AI',
   google: 'Google',
+  zen: 'OpenCode Zen',
   demo: 'Demo',
 };
 
@@ -80,6 +89,7 @@ const PROVIDER_ICONS: Record<AIProviderType, string> = {
   openrouter: '🔀',
   zai: '🟦',
   google: '🔎',
+  zen: '🧘',
   demo: '⚡',
 };
 
@@ -254,6 +264,7 @@ export function ChatInput({
     if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
     if (selectedProvider === 'zai') return providerControls.zaiModel;
     if (selectedProvider === 'google') return providerControls.googleModel;
+    if (selectedProvider === 'zen') return providerControls.zenModel;
     return 'demo';
   })();
 
@@ -270,6 +281,7 @@ export function ChatInput({
     if (selectedProvider === 'mistral') return providerControls.mistralModelsLoading;
     if (selectedProvider === 'zai') return providerControls.zaiModelsLoading;
     if (selectedProvider === 'google') return providerControls.googleModelsLoading;
+    if (selectedProvider === 'zen') return providerControls.zenModelsLoading;
     return false;
   })();
 
@@ -279,16 +291,18 @@ export function ChatInput({
     if (selectedProvider === 'mistral') return formatTimeAgo(providerControls.mistralModelsUpdatedAt);
     if (selectedProvider === 'zai') return formatTimeAgo(providerControls.zaiModelsUpdatedAt);
     if (selectedProvider === 'google') return formatTimeAgo(providerControls.googleModelsUpdatedAt);
+    if (selectedProvider === 'zen') return formatTimeAgo(providerControls.zenModelsUpdatedAt);
     return null;
   })();
 
-  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'zai' || selectedProvider === 'google';
+  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'zai' || selectedProvider === 'google' || selectedProvider === 'zen';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
     if (selectedProvider === 'mistral') providerControls.refreshMistralModels();
     if (selectedProvider === 'zai') providerControls.refreshZaiModels();
     if (selectedProvider === 'google') providerControls.refreshGoogleModels();
+    if (selectedProvider === 'zen') providerControls.refreshZenModels();
   };
 
   return (
@@ -573,6 +587,41 @@ export function ChatInput({
                             <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isGoogleModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'zen' && (
+                        <>
+                          <select
+                            value={providerControls.zenModel}
+                            disabled={!canChangeModel || providerControls.zenModelsLoading || providerControls.zenModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectZenModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {(providerControls.zenModelOptions.length > 0
+                              ? providerControls.zenModelOptions
+                              : [providerControls.zenModel]
+                            ).map((model) => (
+                              <option key={model || '__default'} value={model}>
+                                {model || '(default)'}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.zenModelsLoading && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Loading OpenCode Zen models...</p>
+                          )}
+                          {!providerControls.zenModelsLoading && providerControls.zenModelOptions.length === 0 && !providerControls.zenModelsError && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
+                          )}
+                          {providerControls.zenModelsError && (
+                            <p className="px-1 text-[10px] text-amber-400">{providerControls.zenModelsError}</p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                          )}
+                          {providerControls.isZenModelLocked && (
                             <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

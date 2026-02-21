@@ -13,6 +13,8 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 export const ZAI_DEFAULT_MODEL = 'glm-4.5';
 // Google OpenAI-compatible endpoint default model
 export const GOOGLE_DEFAULT_MODEL = 'gemini-2.5-flash';
+// OpenCode Zen (OpenAI-compatible) default model
+export const ZEN_DEFAULT_MODEL = 'qwen3-coder';
 
 export const OPENROUTER_MODELS: string[] = [
   // Claude 4 series
@@ -42,6 +44,14 @@ export const GOOGLE_MODELS: string[] = [
   'gemini-2.5-flash',
   'gemini-2.5-pro',
   'gemini-2.0-flash',
+];
+
+export const ZEN_MODELS: string[] = [
+  'qwen3-coder',
+  'kimi-k2.5',
+  'kimi-k2.5-free',
+  'minimax-m2.5-free',
+  'big-pickle',
 ];
 
 export const PROVIDERS: AIProviderConfig[] = [
@@ -195,6 +205,36 @@ export const PROVIDERS: AIProviderConfig[] = [
       },
     ],
   },
+  {
+    type: 'zen',
+    name: 'OpenCode Zen',
+    description: 'OpenCode Zen routing API (OpenAI-compatible)',
+    envKey: 'VITE_ZEN_API_KEY',
+    envUrl: 'https://opencode.ai/zen',
+    models: [
+      {
+        id: ZEN_DEFAULT_MODEL,
+        name: 'OpenCode Zen (Orchestrator)',
+        provider: 'zen',
+        role: 'orchestrator',
+        context: 200_000,
+      },
+      {
+        id: ZEN_DEFAULT_MODEL,
+        name: 'OpenCode Zen (Coder)',
+        provider: 'zen',
+        role: 'coder',
+        context: 200_000,
+      },
+      {
+        id: ZEN_DEFAULT_MODEL,
+        name: 'OpenCode Zen (Auditor)',
+        provider: 'zen',
+        role: 'auditor',
+        context: 200_000,
+      },
+    ],
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -244,6 +284,10 @@ const googleModel = createModelNameStorage('google_model', GOOGLE_DEFAULT_MODEL)
 export const getGoogleModelName = googleModel.get;
 export const setGoogleModelName = googleModel.set;
 
+const zenModel = createModelNameStorage('zen_model', ZEN_DEFAULT_MODEL);
+export const getZenModelName = zenModel.get;
+export const setZenModelName = zenModel.set;
+
 /** Runtime model-name getters for providers where the user can override the default. */
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
@@ -251,6 +295,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   openrouter: getOpenRouterModelName,
   zai: getZaiModelName,
   google: getGoogleModelName,
+  zen: getZenModelName,
 };
 
 export function getModelForRole(
@@ -271,11 +316,11 @@ export function getModelForRole(
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google';
+export type PreferredProvider = 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (stored === 'ollama' || stored === 'mistral' || stored === 'openrouter' || stored === 'zai' || stored === 'google') return stored;
+  if (stored === 'ollama' || stored === 'mistral' || stored === 'openrouter' || stored === 'zai' || stored === 'google' || stored === 'zen') return stored;
   return null;
 }
 

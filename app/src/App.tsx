@@ -12,6 +12,7 @@ import { useMistralConfig } from '@/hooks/useMistralConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useZaiConfig } from '@/hooks/useZaiConfig';
 import { useGoogleConfig } from '@/hooks/useGoogleConfig';
+import { useZenConfig } from '@/hooks/useZenConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import {
   getPreferredProvider,
@@ -20,6 +21,7 @@ import {
   OPENROUTER_MODELS,
   ZAI_MODELS,
   GOOGLE_MODELS,
+  ZEN_MODELS,
   type PreferredProvider,
 } from '@/lib/providers';
 import { getActiveProvider, getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
@@ -29,6 +31,7 @@ import {
   fetchOpenRouterModels,
   fetchZaiModels,
   fetchGoogleModels,
+  fetchZenModels,
 } from '@/lib/model-catalog';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
@@ -244,6 +247,7 @@ function App() {
   const { setKey: setOpenRouterKey, clearKey: clearOpenRouterKey, hasKey: hasOpenRouterKey, model: openRouterModel, setModel: setOpenRouterModel } = useOpenRouterConfig();
   const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey, model: zaiModel, setModel: setZaiModel } = useZaiConfig();
   const { setKey: setGoogleKey, clearKey: clearGoogleKey, hasKey: hasGoogleKey, model: googleModel, setModel: setGoogleModel } = useGoogleConfig();
+  const { setKey: setZenKey, clearKey: clearZenKey, hasKey: hasZenKey, model: zenModel, setModel: setZenModel } = useZenConfig();
   const { setKey: setTavilyKey, clearKey: clearTavilyKey, hasKey: hasTavilyKey } = useTavilyConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('you');
@@ -256,6 +260,7 @@ function App() {
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [zaiKeyInput, setZaiKeyInput] = useState('');
   const [googleKeyInput, setGoogleKeyInput] = useState('');
+  const [zenKeyInput, setZenKeyInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
@@ -263,21 +268,25 @@ function App() {
   const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
   const [zaiModels, setZaiModels] = useState<string[]>([]);
   const [googleModels, setGoogleModels] = useState<string[]>([]);
+  const [zenModels, setZenModels] = useState<string[]>([]);
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
   const [mistralModelsLoading, setMistralModelsLoading] = useState(false);
   const [openRouterModelsLoading, setOpenRouterModelsLoading] = useState(false);
   const [zaiModelsLoading, setZaiModelsLoading] = useState(false);
   const [googleModelsLoading, setGoogleModelsLoading] = useState(false);
+  const [zenModelsLoading, setZenModelsLoading] = useState(false);
   const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
   const [mistralModelsError, setMistralModelsError] = useState<string | null>(null);
   const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
   const [zaiModelsError, setZaiModelsError] = useState<string | null>(null);
   const [googleModelsError, setGoogleModelsError] = useState<string | null>(null);
+  const [zenModelsError, setZenModelsError] = useState<string | null>(null);
   const [ollamaModelsUpdatedAt, setOllamaModelsUpdatedAt] = useState<number | null>(null);
   const [mistralModelsUpdatedAt, setMistralModelsUpdatedAt] = useState<number | null>(null);
   const [openRouterModelsUpdatedAt, setOpenRouterModelsUpdatedAt] = useState<number | null>(null);
   const [zaiModelsUpdatedAt, setZaiModelsUpdatedAt] = useState<number | null>(null);
   const [googleModelsUpdatedAt, setGoogleModelsUpdatedAt] = useState<number | null>(null);
+  const [zenModelsUpdatedAt, setZenModelsUpdatedAt] = useState<number | null>(null);
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
@@ -287,6 +296,7 @@ function App() {
     ['openrouter', 'OpenRouter', hasOpenRouterKey],
     ['zai', 'Z.AI', hasZaiKey],
     ['google', 'Google', hasGoogleKey],
+    ['zen', 'OpenCode Zen', hasZenKey],
   ] as const).filter(([, , has]) => has);
   
   const [showFileBrowser, setShowFileBrowser] = useState(false);
@@ -343,6 +353,7 @@ function App() {
   const isMistralModelLocked = isModelLocked && lockedProvider === 'mistral';
   const isZaiModelLocked = isModelLocked && lockedProvider === 'zai';
   const isGoogleModelLocked = isModelLocked && lockedProvider === 'google';
+  const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
   const refreshModels = useCallback(async (params: {
     hasKey: boolean;
     isLoading: boolean;
@@ -438,6 +449,20 @@ function App() {
       failureMessage: 'Failed to load Google models.',
     });
   }, [hasGoogleKey, googleModelsLoading, refreshModels]);
+
+  const refreshZenModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: hasZenKey,
+      isLoading: zenModelsLoading,
+      setLoading: setZenModelsLoading,
+      setError: setZenModelsError,
+      setModels: setZenModels,
+      setUpdatedAt: setZenModelsUpdatedAt,
+      fetchModels: fetchZenModels,
+      emptyMessage: 'No models returned by OpenCode Zen.',
+      failureMessage: 'Failed to load OpenCode Zen models.',
+    });
+  }, [hasZenKey, zenModelsLoading, refreshModels]);
 
   const loadRepoBranches = useCallback(async (repoFullName: string) => {
     const seq = ++branchFetchSeqRef.current;
@@ -537,6 +562,12 @@ function App() {
     }
   }, [hasGoogleKey, googleModels.length, googleModelsLoading, refreshGoogleModels]);
 
+  useEffect(() => {
+    if (hasZenKey && zenModels.length === 0 && !zenModelsLoading) {
+      refreshZenModels();
+    }
+  }, [hasZenKey, zenModels.length, zenModelsLoading, refreshZenModels]);
+
   // OpenRouter: Don't auto-fetch models (large list can cause UI freeze)
   // Users can manually refresh via the refresh button if needed
   // useEffect(() => {
@@ -586,6 +617,14 @@ function App() {
   }, [hasGoogleKey]);
 
   useEffect(() => {
+    if (!hasZenKey) {
+      setZenModels([]);
+      setZenModelsError(null);
+      setZenModelsUpdatedAt(null);
+    }
+  }, [hasZenKey]);
+
+  useEffect(() => {
     setDisplayNameDraft(profile.displayName);
   }, [profile.displayName]);
 
@@ -608,6 +647,10 @@ function App() {
   const googleModelOptions = useMemo(() => {
     return includeSelectedModel(googleModels, googleModel);
   }, [googleModels, googleModel]);
+
+  const zenModelOptions = useMemo(() => {
+    return includeSelectedModel(zenModels, zenModel);
+  }, [zenModels, zenModel]);
 
   const copyAllowlistCommand = useCallback(async () => {
     try {
@@ -987,6 +1030,11 @@ function App() {
     ensureUnlockedChatForProviderChange();
     setGoogleModel(model);
   }, [ensureUnlockedChatForProviderChange, setGoogleModel]);
+
+  const handleSelectZenModelFromChat = useCallback((model: string) => {
+    ensureUnlockedChatForProviderChange();
+    setZenModel(model);
+  }, [ensureUnlockedChatForProviderChange, setZenModel]);
 
   // Disconnect: clear everything (both auth methods)
   const handleDisconnect = useCallback(() => {
@@ -1407,6 +1455,19 @@ function App() {
         setGoogleKeyInput,
         setGoogleKey,
         clearGoogleKey,
+        hasZenKey,
+        zenModel,
+        setZenModel,
+        zenModelOptions: zenModelOptions.length > 0 ? zenModelOptions : ZEN_MODELS,
+        zenModelsLoading,
+        zenModelsError,
+        zenModelsUpdatedAt,
+        isZenModelLocked,
+        refreshZenModels,
+        zenKeyInput,
+        setZenKeyInput,
+        setZenKey,
+        clearZenKey,
         hasTavilyKey,
         tavilyKeyInput,
         setTavilyKeyInput,
@@ -1894,6 +1955,14 @@ function App() {
           isGoogleModelLocked,
           refreshGoogleModels,
           onSelectGoogleModel: handleSelectGoogleModelFromChat,
+          zenModel,
+          zenModelOptions: zenModelOptions.length > 0 ? zenModelOptions : ZEN_MODELS,
+          zenModelsLoading,
+          zenModelsError,
+          zenModelsUpdatedAt,
+          isZenModelLocked,
+          refreshZenModels,
+          onSelectZenModel: handleSelectZenModelFromChat,
         }}
       />
 

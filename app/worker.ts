@@ -11,6 +11,7 @@ interface Env {
   OPENROUTER_API_KEY?: string;
   ZAI_API_KEY?: string;
   GOOGLE_API_KEY?: string;
+  ZEN_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   BROWSERBASE_API_KEY?: string;
   BROWSERBASE_PROJECT_ID?: string;
@@ -114,6 +115,16 @@ export default {
     // API route: model catalog proxy to Google Gemini OpenAI-compatible endpoint
     if (url.pathname === '/api/google/models' && request.method === 'GET') {
       return handleGoogleModels(request, env);
+    }
+
+    // API route: streaming proxy to OpenCode Zen (SSE, OpenAI-compatible)
+    if (url.pathname === '/api/zen/chat' && request.method === 'POST') {
+      return handleZenChat(request, env);
+    }
+
+    // API route: model catalog proxy to OpenCode Zen
+    if (url.pathname === '/api/zen/models' && request.method === 'GET') {
+      return handleZenModels(request, env);
     }
 
     // API route: Ollama web search proxy
@@ -721,6 +732,7 @@ interface HealthStatus {
     openrouter: { status: 'ok' | 'unconfigured'; configured: boolean };
     zai: { status: 'ok' | 'unconfigured'; configured: boolean };
     google: { status: 'ok' | 'unconfigured'; configured: boolean };
+    zen: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
     github_app_oauth: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -734,6 +746,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   const openRouterConfigured = Boolean(env.OPENROUTER_API_KEY);
   const zaiConfigured = Boolean(env.ZAI_API_KEY);
   const googleConfigured = Boolean(env.GOOGLE_API_KEY);
+  const zenConfigured = Boolean(env.ZEN_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -751,7 +764,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     }
   }
 
-  const hasAnyLlm = ollamaConfigured || mistralConfigured || openRouterConfigured || zaiConfigured || googleConfigured;
+  const hasAnyLlm = ollamaConfigured || mistralConfigured || openRouterConfigured || zaiConfigured || googleConfigured || zenConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -766,6 +779,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       openrouter: { status: openRouterConfigured ? 'ok' : 'unconfigured', configured: openRouterConfigured },
       zai: { status: zaiConfigured ? 'ok' : 'unconfigured', configured: zaiConfigured },
       google: { status: googleConfigured ? 'ok' : 'unconfigured', configured: googleConfigured },
+      zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
       github_app_oauth: { status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET) },
@@ -886,6 +900,27 @@ const handleGoogleModels = createJsonProxyHandler({
   buildAuth: standardAuth('GOOGLE_API_KEY'),
   keyMissingError: 'Google API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
   timeoutError: 'Google model list timed out after 30 seconds',
+});
+
+// --- OpenCode Zen (OpenAI-compatible endpoint) ---
+
+const handleZenChat = createStreamProxyHandler({
+  name: 'OpenCode Zen API', logTag: 'api/zen/chat',
+  upstreamUrl: 'https://opencode.ai/zen/v1/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: standardAuth('ZEN_API_KEY'),
+  keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+  timeoutError: 'OpenCode Zen request timed out after 120 seconds',
+});
+
+const handleZenModels = createJsonProxyHandler({
+  name: 'OpenCode Zen API', logTag: 'api/zen/models',
+  upstreamUrl: 'https://opencode.ai/zen/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('ZEN_API_KEY'),
+  keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+  timeoutError: 'OpenCode Zen model list timed out after 30 seconds',
 });
 
 // --- Ollama Web Search proxy ---
