@@ -13,7 +13,9 @@ export const OPENROUTER_MODELS = [
   'qwen/qwen3-coder:free',
   'deepseek/deepseek-r1-0528:free',
   'google/gemini-3-flash-preview',
+  'google/gemini-3.1-pro-preview',
   'x-ai/grok-4.1-fast',
+  'moonshotai/kimi-k2.5',
 ];
 
 export const OLLAMA_MODELS = [

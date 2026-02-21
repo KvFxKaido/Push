@@ -30,8 +30,10 @@ export const OPENROUTER_MODELS: string[] = [
   'deepseek/deepseek-r1-0528:free',
   // Google Gemini
   'google/gemini-3-flash-preview',
+  'google/gemini-3.1-pro-preview',
   // Others
   'x-ai/grok-4.1-fast',
+  'moonshotai/kimi-k2.5',
 ];
 
 export const ZAI_MODELS: string[] = [
