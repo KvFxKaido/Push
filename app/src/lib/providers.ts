@@ -9,6 +9,10 @@ export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 export const MISTRAL_DEFAULT_MODEL = 'devstral-small-latest';
 // OpenRouter default model — Claude Sonnet 4.6
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
+// Z.AI (GLM) default model
+export const ZAI_DEFAULT_MODEL = 'glm-4.5';
+// Google OpenAI-compatible endpoint default model
+export const GOOGLE_DEFAULT_MODEL = 'gemini-2.5-flash';
 
 export const OPENROUTER_MODELS: string[] = [
   // Claude 4 series
@@ -28,6 +32,16 @@ export const OPENROUTER_MODELS: string[] = [
   // Others
   'x-ai/grok-4.1-fast',
   'moonshotai/kimi-k2.5',
+];
+
+export const ZAI_MODELS: string[] = [
+  'glm-4.5',
+];
+
+export const GOOGLE_MODELS: string[] = [
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-2.0-flash',
 ];
 
 export const PROVIDERS: AIProviderConfig[] = [
@@ -121,6 +135,66 @@ export const PROVIDERS: AIProviderConfig[] = [
       },
     ],
   },
+  {
+    type: 'zai',
+    name: 'Z.AI',
+    description: 'Z.AI (GLM) OpenAI-compatible API',
+    envKey: 'VITE_ZAI_API_KEY',
+    envUrl: 'https://platform.z.ai',
+    models: [
+      {
+        id: ZAI_DEFAULT_MODEL,
+        name: 'Z.AI (Orchestrator)',
+        provider: 'zai',
+        role: 'orchestrator',
+        context: 131_072,
+      },
+      {
+        id: ZAI_DEFAULT_MODEL,
+        name: 'Z.AI (Coder)',
+        provider: 'zai',
+        role: 'coder',
+        context: 131_072,
+      },
+      {
+        id: ZAI_DEFAULT_MODEL,
+        name: 'Z.AI (Auditor)',
+        provider: 'zai',
+        role: 'auditor',
+        context: 131_072,
+      },
+    ],
+  },
+  {
+    type: 'google',
+    name: 'Google',
+    description: 'Google Gemini (OpenAI-compatible endpoint)',
+    envKey: 'VITE_GOOGLE_API_KEY',
+    envUrl: 'https://ai.google.dev',
+    models: [
+      {
+        id: GOOGLE_DEFAULT_MODEL,
+        name: 'Google (Orchestrator)',
+        provider: 'google',
+        role: 'orchestrator',
+        context: 131_072,
+      },
+      {
+        id: GOOGLE_DEFAULT_MODEL,
+        name: 'Google (Coder)',
+        provider: 'google',
+        role: 'coder',
+        context: 131_072,
+      },
+      {
+        id: GOOGLE_DEFAULT_MODEL,
+        name: 'Google (Auditor)',
+        provider: 'google',
+        role: 'auditor',
+        context: 131_072,
+      },
+    ],
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -162,11 +236,21 @@ const openRouterModel = createModelNameStorage('openrouter_model', OPENROUTER_DE
 export const getOpenRouterModelName = openRouterModel.get;
 export const setOpenRouterModelName = openRouterModel.set;
 
+const zaiModel = createModelNameStorage('zai_model', ZAI_DEFAULT_MODEL);
+export const getZaiModelName = zaiModel.get;
+export const setZaiModelName = zaiModel.set;
+
+const googleModel = createModelNameStorage('google_model', GOOGLE_DEFAULT_MODEL);
+export const getGoogleModelName = googleModel.get;
+export const setGoogleModelName = googleModel.set;
+
 /** Runtime model-name getters for providers where the user can override the default. */
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
   mistral: getMistralModelName,
   openrouter: getOpenRouterModelName,
+  zai: getZaiModelName,
+  google: getGoogleModelName,
 };
 
 export function getModelForRole(
@@ -187,11 +271,11 @@ export function getModelForRole(
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'ollama' | 'mistral' | 'openrouter';
+export type PreferredProvider = 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (stored === 'ollama' || stored === 'mistral' || stored === 'openrouter') return stored;
+  if (stored === 'ollama' || stored === 'mistral' || stored === 'openrouter' || stored === 'zai' || stored === 'google') return stored;
   return null;
 }
 

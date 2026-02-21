@@ -9,6 +9,8 @@ interface Env {
   OLLAMA_API_KEY?: string;
   MISTRAL_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
+  ZAI_API_KEY?: string;
+  GOOGLE_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   BROWSERBASE_API_KEY?: string;
   BROWSERBASE_PROJECT_ID?: string;
@@ -92,6 +94,26 @@ export default {
     // API route: model catalog proxy to OpenRouter
     if (url.pathname === '/api/openrouter/models' && request.method === 'GET') {
       return handleOpenRouterModels(request, env);
+    }
+
+    // API route: streaming proxy to Z.AI (SSE, OpenAI-compatible)
+    if (url.pathname === '/api/zai/chat' && request.method === 'POST') {
+      return handleZaiChat(request, env);
+    }
+
+    // API route: model catalog proxy to Z.AI
+    if (url.pathname === '/api/zai/models' && request.method === 'GET') {
+      return handleZaiModels(request, env);
+    }
+
+    // API route: streaming proxy to Google Gemini OpenAI-compatible endpoint
+    if (url.pathname === '/api/google/chat' && request.method === 'POST') {
+      return handleGoogleChat(request, env);
+    }
+
+    // API route: model catalog proxy to Google Gemini OpenAI-compatible endpoint
+    if (url.pathname === '/api/google/models' && request.method === 'GET') {
+      return handleGoogleModels(request, env);
     }
 
     // API route: Ollama web search proxy
@@ -696,6 +718,9 @@ interface HealthStatus {
     worker: { status: 'ok' };
     ollama: { status: 'ok' | 'unconfigured'; configured: boolean };
     mistral: { status: 'ok' | 'unconfigured'; configured: boolean };
+    openrouter: { status: 'ok' | 'unconfigured'; configured: boolean };
+    zai: { status: 'ok' | 'unconfigured'; configured: boolean };
+    google: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
     github_app_oauth: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -706,6 +731,9 @@ interface HealthStatus {
 async function handleHealthCheck(env: Env): Promise<Response> {
   const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
   const mistralConfigured = Boolean(env.MISTRAL_API_KEY);
+  const openRouterConfigured = Boolean(env.OPENROUTER_API_KEY);
+  const zaiConfigured = Boolean(env.ZAI_API_KEY);
+  const googleConfigured = Boolean(env.GOOGLE_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -723,7 +751,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     }
   }
 
-  const hasAnyLlm = ollamaConfigured || mistralConfigured;
+  const hasAnyLlm = ollamaConfigured || mistralConfigured || openRouterConfigured || zaiConfigured || googleConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -735,6 +763,9 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       worker: { status: 'ok' },
       ollama: { status: ollamaConfigured ? 'ok' : 'unconfigured', configured: ollamaConfigured },
       mistral: { status: mistralConfigured ? 'ok' : 'unconfigured', configured: mistralConfigured },
+      openrouter: { status: openRouterConfigured ? 'ok' : 'unconfigured', configured: openRouterConfigured },
+      zai: { status: zaiConfigured ? 'ok' : 'unconfigured', configured: zaiConfigured },
+      google: { status: googleConfigured ? 'ok' : 'unconfigured', configured: googleConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
       github_app_oauth: { status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET) },
@@ -790,10 +821,6 @@ const handleMistralChat = createStreamProxyHandler({
   timeoutError: 'Mistral request timed out after 120 seconds',
 });
 
-
-
-// --- Z.ai JWT generation ---
-
 // --- OpenRouter ---
 
 const handleOpenRouterChat = createStreamProxyHandler({
@@ -817,6 +844,48 @@ const handleOpenRouterModels = createJsonProxyHandler({
   buildAuth: standardAuth('OPENROUTER_API_KEY'),
   keyMissingError: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
   timeoutError: 'OpenRouter model list timed out after 30 seconds',
+});
+
+// --- Z.AI (OpenAI-compatible coding endpoint) ---
+
+const handleZaiChat = createStreamProxyHandler({
+  name: 'Z.AI API', logTag: 'api/zai/chat',
+  upstreamUrl: 'https://api.z.ai/api/coding/paas/v4/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: standardAuth('ZAI_API_KEY'),
+  keyMissingError: 'Z.AI API key not configured. Add it in Settings or set ZAI_API_KEY on the Worker.',
+  timeoutError: 'Z.AI request timed out after 120 seconds',
+});
+
+const handleZaiModels = createJsonProxyHandler({
+  name: 'Z.AI API', logTag: 'api/zai/models',
+  upstreamUrl: 'https://api.z.ai/api/coding/paas/v4/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('ZAI_API_KEY'),
+  keyMissingError: 'Z.AI API key not configured. Add it in Settings or set ZAI_API_KEY on the Worker.',
+  timeoutError: 'Z.AI model list timed out after 30 seconds',
+});
+
+// --- Google Gemini (OpenAI-compatible endpoint) ---
+
+const handleGoogleChat = createStreamProxyHandler({
+  name: 'Google Gemini API', logTag: 'api/google/chat',
+  upstreamUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: standardAuth('GOOGLE_API_KEY'),
+  keyMissingError: 'Google API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
+  timeoutError: 'Google request timed out after 120 seconds',
+});
+
+const handleGoogleModels = createJsonProxyHandler({
+  name: 'Google Gemini API', logTag: 'api/google/models',
+  upstreamUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('GOOGLE_API_KEY'),
+  keyMissingError: 'Google API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
+  timeoutError: 'Google model list timed out after 30 seconds',
 });
 
 // --- Ollama Web Search proxy ---

@@ -147,6 +147,16 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/openrouter/, ''),
       },
+      '/zai': {
+        target: 'https://api.z.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/zai/, ''),
+      },
+      '/google': {
+        target: 'https://generativelanguage.googleapis.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/google/, ''),
+      },
       '/api': {
         target: API_PROXY_TARGET,
         changeOrigin: true,

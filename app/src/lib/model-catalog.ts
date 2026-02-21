@@ -1,6 +1,8 @@
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
+import { getZaiKey } from '@/hooks/useZaiConfig';
+import { getGoogleKey } from '@/hooks/useGoogleConfig';
 
 const OLLAMA_MODELS_URL = import.meta.env.DEV
   ? '/ollama/v1/models'
@@ -13,6 +15,14 @@ const MISTRAL_MODELS_URL = import.meta.env.DEV
 const OPENROUTER_MODELS_URL = import.meta.env.DEV
   ? '/openrouter/v1/models'
   : '/api/openrouter/models';
+
+const ZAI_MODELS_URL = import.meta.env.DEV
+  ? '/zai/api/coding/paas/v4/models'
+  : '/api/zai/models';
+
+const GOOGLE_MODELS_URL = import.meta.env.DEV
+  ? '/google/v1beta/openai/models'
+  : '/api/google/models';
 
 import { asRecord } from './utils';
 
@@ -80,4 +90,12 @@ export async function fetchMistralModels(): Promise<string[]> {
 
 export async function fetchOpenRouterModels(): Promise<string[]> {
   return fetchProviderModels(OPENROUTER_MODELS_URL, getOpenRouterKey(), 'OpenRouter');
+}
+
+export async function fetchZaiModels(): Promise<string[]> {
+  return fetchProviderModels(ZAI_MODELS_URL, getZaiKey(), 'Z.AI');
+}
+
+export async function fetchGoogleModels(): Promise<string[]> {
+  return fetchProviderModels(GOOGLE_MODELS_URL, getGoogleKey(), 'Google');
 }

@@ -17,6 +17,8 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
   mistral: 'Mistral',
   openrouter: 'OpenRouter',
+  zai: 'Z.AI',
+  google: 'Google',
   demo: 'Demo',
 };
 
@@ -108,6 +110,34 @@ export interface SettingsAIProps {
   setOpenRouterKeyInput: (v: string) => void;
   setOpenRouterKey: (v: string) => void;
   clearOpenRouterKey: () => void;
+  // Z.AI
+  hasZaiKey: boolean;
+  zaiModel: string;
+  setZaiModel: (v: string) => void;
+  zaiModelOptions: string[];
+  zaiModelsLoading: boolean;
+  zaiModelsError: string | null;
+  zaiModelsUpdatedAt: number | null;
+  isZaiModelLocked: boolean;
+  refreshZaiModels: () => void;
+  zaiKeyInput: string;
+  setZaiKeyInput: (v: string) => void;
+  setZaiKey: (v: string) => void;
+  clearZaiKey: () => void;
+  // Google
+  hasGoogleKey: boolean;
+  googleModel: string;
+  setGoogleModel: (v: string) => void;
+  googleModelOptions: string[];
+  googleModelsLoading: boolean;
+  googleModelsError: string | null;
+  googleModelsUpdatedAt: number | null;
+  isGoogleModelLocked: boolean;
+  refreshGoogleModels: () => void;
+  googleKeyInput: string;
+  setGoogleKeyInput: (v: string) => void;
+  setGoogleKey: (v: string) => void;
+  clearGoogleKey: () => void;
   // Tavily
   hasTavilyKey: boolean;
   tavilyKeyInput: string;
@@ -888,7 +918,7 @@ export function SettingsSheet({
               <div className="flex items-center gap-1.5">
                 <div
                   className={`h-2 w-2 rounded-full ${
-                    ai.hasOllamaKey || ai.hasMistralKey ? 'bg-emerald-500' : 'bg-push-fg-dim'
+                    ai.availableProviders.length > 0 ? 'bg-emerald-500' : 'bg-push-fg-dim'
                   }`}
                 />
                 <span className="text-xs text-push-fg-secondary">
@@ -1064,6 +1094,72 @@ export function SettingsSheet({
                 loading: ai.openRouterModelsLoading,
                 error: ai.openRouterModelsError,
                 updatedAt: ai.openRouterModelsUpdatedAt,
+              }}
+            />
+          </div>
+
+          {/* Z.AI */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-push-fg-secondary">Z.AI</label>
+            <ProviderKeySection
+              label="Z.AI"
+              hasKey={ai.hasZaiKey}
+              keyInput={ai.zaiKeyInput}
+              setKeyInput={ai.setZaiKeyInput}
+              saveKey={() => ai.setZaiKey(ai.zaiKeyInput.trim())}
+              clearKey={ai.clearZaiKey}
+              activeBackend={ai.activeBackend}
+              backendId="zai"
+              clearPreferredProvider={ai.clearPreferredProvider}
+              setActiveBackend={ai.setActiveBackend}
+              placeholder="Z.AI API key"
+              saveLabel="Save Z.AI key"
+              hint="Z.AI API key for the coding endpoint."
+              model={{
+                value: ai.zaiModel,
+                set: ai.setZaiModel,
+                options: ai.zaiModelOptions,
+                isLocked: ai.isZaiModelLocked,
+                lockedModel: ai.lockedModel,
+              }}
+              refresh={{
+                trigger: ai.refreshZaiModels,
+                loading: ai.zaiModelsLoading,
+                error: ai.zaiModelsError,
+                updatedAt: ai.zaiModelsUpdatedAt,
+              }}
+            />
+          </div>
+
+          {/* Google */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-push-fg-secondary">Google</label>
+            <ProviderKeySection
+              label="Google"
+              hasKey={ai.hasGoogleKey}
+              keyInput={ai.googleKeyInput}
+              setKeyInput={ai.setGoogleKeyInput}
+              saveKey={() => ai.setGoogleKey(ai.googleKeyInput.trim())}
+              clearKey={ai.clearGoogleKey}
+              activeBackend={ai.activeBackend}
+              backendId="google"
+              clearPreferredProvider={ai.clearPreferredProvider}
+              setActiveBackend={ai.setActiveBackend}
+              placeholder="Google API key"
+              saveLabel="Save Google key"
+              hint="Google Gemini API key (OpenAI-compatible endpoint)."
+              model={{
+                value: ai.googleModel,
+                set: ai.setGoogleModel,
+                options: ai.googleModelOptions,
+                isLocked: ai.isGoogleModelLocked,
+                lockedModel: ai.lockedModel,
+              }}
+              refresh={{
+                trigger: ai.refreshGoogleModels,
+                loading: ai.googleModelsLoading,
+                error: ai.googleModelsError,
+                updatedAt: ai.googleModelsUpdatedAt,
               }}
             />
           </div>

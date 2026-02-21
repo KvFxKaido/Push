@@ -43,6 +43,22 @@ interface ChatInputProps {
     openRouterModelOptions: string[];
     isOpenRouterModelLocked: boolean;
     onSelectOpenRouterModel: (model: string) => void;
+    zaiModel: string;
+    zaiModelOptions: string[];
+    zaiModelsLoading: boolean;
+    zaiModelsError: string | null;
+    zaiModelsUpdatedAt: number | null;
+    isZaiModelLocked: boolean;
+    refreshZaiModels: () => void;
+    onSelectZaiModel: (model: string) => void;
+    googleModel: string;
+    googleModelOptions: string[];
+    googleModelsLoading: boolean;
+    googleModelsError: string | null;
+    googleModelsUpdatedAt: number | null;
+    isGoogleModelLocked: boolean;
+    refreshGoogleModels: () => void;
+    onSelectGoogleModel: (model: string) => void;
   };
 }
 
@@ -53,6 +69,8 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
   mistral: 'Mistral',
   openrouter: 'OpenRouter',
+  zai: 'Z.AI',
+  google: 'Google',
   demo: 'Demo',
 };
 
@@ -60,6 +78,8 @@ const PROVIDER_ICONS: Record<AIProviderType, string> = {
   ollama: '🦙',
   mistral: '🌪️',
   openrouter: '🔀',
+  zai: '🟦',
+  google: '🔎',
   demo: '⚡',
 };
 
@@ -232,6 +252,8 @@ export function ChatInput({
     if (selectedProvider === 'ollama') return providerControls.ollamaModel;
     if (selectedProvider === 'mistral') return providerControls.mistralModel;
     if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
+    if (selectedProvider === 'zai') return providerControls.zaiModel;
+    if (selectedProvider === 'google') return providerControls.googleModel;
     return 'demo';
   })();
 
@@ -246,6 +268,8 @@ export function ChatInput({
     if (!providerControls) return false;
     if (selectedProvider === 'ollama') return providerControls.ollamaModelsLoading;
     if (selectedProvider === 'mistral') return providerControls.mistralModelsLoading;
+    if (selectedProvider === 'zai') return providerControls.zaiModelsLoading;
+    if (selectedProvider === 'google') return providerControls.googleModelsLoading;
     return false;
   })();
 
@@ -253,14 +277,18 @@ export function ChatInput({
     if (!providerControls) return null;
     if (selectedProvider === 'ollama') return formatTimeAgo(providerControls.ollamaModelsUpdatedAt);
     if (selectedProvider === 'mistral') return formatTimeAgo(providerControls.mistralModelsUpdatedAt);
+    if (selectedProvider === 'zai') return formatTimeAgo(providerControls.zaiModelsUpdatedAt);
+    if (selectedProvider === 'google') return formatTimeAgo(providerControls.googleModelsUpdatedAt);
     return null;
   })();
 
-  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral';
+  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'zai' || selectedProvider === 'google';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
     if (selectedProvider === 'mistral') providerControls.refreshMistralModels();
+    if (selectedProvider === 'zai') providerControls.refreshZaiModels();
+    if (selectedProvider === 'google') providerControls.refreshGoogleModels();
   };
 
   return (
@@ -475,6 +503,76 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.isOpenRouterModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'zai' && (
+                        <>
+                          <select
+                            value={providerControls.zaiModel}
+                            disabled={!canChangeModel || providerControls.zaiModelsLoading || providerControls.zaiModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectZaiModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {(providerControls.zaiModelOptions.length > 0
+                              ? providerControls.zaiModelOptions
+                              : [providerControls.zaiModel]
+                            ).map((model) => (
+                              <option key={model || '__default'} value={model}>
+                                {model || '(default)'}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.zaiModelsLoading && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Loading Z.AI models...</p>
+                          )}
+                          {!providerControls.zaiModelsLoading && providerControls.zaiModelOptions.length === 0 && !providerControls.zaiModelsError && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
+                          )}
+                          {providerControls.zaiModelsError && (
+                            <p className="px-1 text-[10px] text-amber-400">{providerControls.zaiModelsError}</p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                          )}
+                          {providerControls.isZaiModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'google' && (
+                        <>
+                          <select
+                            value={providerControls.googleModel}
+                            disabled={!canChangeModel || providerControls.googleModelsLoading || providerControls.googleModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectGoogleModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {(providerControls.googleModelOptions.length > 0
+                              ? providerControls.googleModelOptions
+                              : [providerControls.googleModel]
+                            ).map((model) => (
+                              <option key={model || '__default'} value={model}>
+                                {model || '(default)'}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.googleModelsLoading && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Loading Google models...</p>
+                          )}
+                          {!providerControls.googleModelsLoading && providerControls.googleModelOptions.length === 0 && !providerControls.googleModelsError && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
+                          )}
+                          {providerControls.googleModelsError && (
+                            <p className="px-1 text-[10px] text-amber-400">{providerControls.googleModelsError}</p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                          )}
+                          {providerControls.isGoogleModelLocked && (
                             <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

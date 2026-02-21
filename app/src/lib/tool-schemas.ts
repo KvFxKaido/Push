@@ -1,6 +1,6 @@
 /**
  * OpenAI-format function schemas for web app tools.
- * Used by providers that support native function calling (Mistral, OpenRouter).
+ * Used by providers that support native function calling (Mistral, OpenRouter, Z.AI, Google).
  * Ollama falls back to prompt-engineered tool protocol.
  */
 
@@ -723,14 +723,22 @@ const WEB_SEARCH_TOOL_SCHEMA = {
 interface GetToolSchemasOptions {
   hasSandbox?: boolean;
   hasGitHub?: boolean;
-  providerType?: 'ollama' | 'mistral' | 'openrouter';
+  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google';
 }
 
-type NativeToolSchema =
-  | (typeof GITHUB_TOOL_SCHEMAS)[number]
-  | (typeof SANDBOX_TOOL_SCHEMAS)[number]
-  | (typeof SCRATCHPAD_TOOL_SCHEMAS)[number]
-  | typeof WEB_SEARCH_TOOL_SCHEMA;
+type NativeToolSchema = {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: string;
+      properties: Record<string, unknown>;
+      required: string[];
+      [key: string]: unknown;
+    };
+  };
+};
 
 /**
  * Returns filtered tool schemas based on what's available in the current session.
@@ -750,9 +758,15 @@ export function getToolSchemas(options: GetToolSchemasOptions = {}): NativeToolS
 
   schemas.push(...SCRATCHPAD_TOOL_SCHEMAS);
 
-  // Web search — Mistral handles it natively via its web_search tool type,
-  // OpenRouter models generally support it as a function schema
-  if (options.providerType === 'openrouter') {
+  // Web search:
+  // - Mistral uses its native web_search tool type in request tools[]
+  // - Ollama uses prompt-engineered client-side dispatch
+  // - OpenRouter/Z.AI/Google receive web_search as a function schema
+  if (
+    options.providerType === 'openrouter'
+    || options.providerType === 'zai'
+    || options.providerType === 'google'
+  ) {
     schemas.push(WEB_SEARCH_TOOL_SCHEMA);
   }
 

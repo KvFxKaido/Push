@@ -10,10 +10,26 @@ import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
+import { useZaiConfig } from '@/hooks/useZaiConfig';
+import { useGoogleConfig } from '@/hooks/useGoogleConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
-import { getPreferredProvider, setPreferredProvider, clearPreferredProvider, OPENROUTER_MODELS, type PreferredProvider } from '@/lib/providers';
+import {
+  getPreferredProvider,
+  setPreferredProvider,
+  clearPreferredProvider,
+  OPENROUTER_MODELS,
+  ZAI_MODELS,
+  GOOGLE_MODELS,
+  type PreferredProvider,
+} from '@/lib/providers';
 import { getActiveProvider, getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
-import { fetchOllamaModels, fetchMistralModels, fetchOpenRouterModels } from '@/lib/model-catalog';
+import {
+  fetchOllamaModels,
+  fetchMistralModels,
+  fetchOpenRouterModels,
+  fetchZaiModels,
+  fetchGoogleModels,
+} from '@/lib/model-catalog';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useUserProfile } from '@/hooks/useUserProfile';
@@ -226,6 +242,8 @@ function App() {
   const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
   const { setKey: setOpenRouterKey, clearKey: clearOpenRouterKey, hasKey: hasOpenRouterKey, model: openRouterModel, setModel: setOpenRouterModel } = useOpenRouterConfig();
+  const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey, model: zaiModel, setModel: setZaiModel } = useZaiConfig();
+  const { setKey: setGoogleKey, clearKey: clearGoogleKey, hasKey: hasGoogleKey, model: googleModel, setModel: setGoogleModel } = useGoogleConfig();
   const { setKey: setTavilyKey, clearKey: clearTavilyKey, hasKey: hasTavilyKey } = useTavilyConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('you');
@@ -236,24 +254,40 @@ function App() {
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [mistralKeyInput, setMistralKeyInput] = useState('');
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
+  const [zaiKeyInput, setZaiKeyInput] = useState('');
+  const [googleKeyInput, setGoogleKeyInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [mistralModels, setMistralModels] = useState<string[]>([]);
   const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
+  const [zaiModels, setZaiModels] = useState<string[]>([]);
+  const [googleModels, setGoogleModels] = useState<string[]>([]);
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
   const [mistralModelsLoading, setMistralModelsLoading] = useState(false);
   const [openRouterModelsLoading, setOpenRouterModelsLoading] = useState(false);
+  const [zaiModelsLoading, setZaiModelsLoading] = useState(false);
+  const [googleModelsLoading, setGoogleModelsLoading] = useState(false);
   const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
   const [mistralModelsError, setMistralModelsError] = useState<string | null>(null);
   const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
+  const [zaiModelsError, setZaiModelsError] = useState<string | null>(null);
+  const [googleModelsError, setGoogleModelsError] = useState<string | null>(null);
   const [ollamaModelsUpdatedAt, setOllamaModelsUpdatedAt] = useState<number | null>(null);
   const [mistralModelsUpdatedAt, setMistralModelsUpdatedAt] = useState<number | null>(null);
   const [openRouterModelsUpdatedAt, setOpenRouterModelsUpdatedAt] = useState<number | null>(null);
+  const [zaiModelsUpdatedAt, setZaiModelsUpdatedAt] = useState<number | null>(null);
+  const [googleModelsUpdatedAt, setGoogleModelsUpdatedAt] = useState<number | null>(null);
 
   // Derive display label from actual active provider
   const activeProviderLabel = getActiveProvider();
-  const availableProviders = ([['ollama', 'Ollama', hasOllamaKey], ['mistral', 'Mistral', hasMistralKey], ['openrouter', 'OpenRouter', hasOpenRouterKey]] as const).filter(([, , has]) => has);
+  const availableProviders = ([
+    ['ollama', 'Ollama', hasOllamaKey],
+    ['mistral', 'Mistral', hasMistralKey],
+    ['openrouter', 'OpenRouter', hasOpenRouterKey],
+    ['zai', 'Z.AI', hasZaiKey],
+    ['google', 'Google', hasGoogleKey],
+  ] as const).filter(([, , has]) => has);
   
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
@@ -307,6 +341,8 @@ function App() {
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
   const isMistralModelLocked = isModelLocked && lockedProvider === 'mistral';
+  const isZaiModelLocked = isModelLocked && lockedProvider === 'zai';
+  const isGoogleModelLocked = isModelLocked && lockedProvider === 'google';
   const refreshModels = useCallback(async (params: {
     hasKey: boolean;
     isLoading: boolean;
@@ -374,6 +410,34 @@ function App() {
       failureMessage: 'Failed to load OpenRouter models.',
     });
   }, [hasOpenRouterKey, openRouterModelsLoading, refreshModels]);
+
+  const refreshZaiModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: hasZaiKey,
+      isLoading: zaiModelsLoading,
+      setLoading: setZaiModelsLoading,
+      setError: setZaiModelsError,
+      setModels: setZaiModels,
+      setUpdatedAt: setZaiModelsUpdatedAt,
+      fetchModels: fetchZaiModels,
+      emptyMessage: 'No models returned by Z.AI.',
+      failureMessage: 'Failed to load Z.AI models.',
+    });
+  }, [hasZaiKey, zaiModelsLoading, refreshModels]);
+
+  const refreshGoogleModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: hasGoogleKey,
+      isLoading: googleModelsLoading,
+      setLoading: setGoogleModelsLoading,
+      setError: setGoogleModelsError,
+      setModels: setGoogleModels,
+      setUpdatedAt: setGoogleModelsUpdatedAt,
+      fetchModels: fetchGoogleModels,
+      emptyMessage: 'No models returned by Google.',
+      failureMessage: 'Failed to load Google models.',
+    });
+  }, [hasGoogleKey, googleModelsLoading, refreshModels]);
 
   const loadRepoBranches = useCallback(async (repoFullName: string) => {
     const seq = ++branchFetchSeqRef.current;
@@ -461,6 +525,18 @@ function App() {
     }
   }, [hasMistralKey, mistralModels.length, mistralModelsLoading, refreshMistralModels]);
 
+  useEffect(() => {
+    if (hasZaiKey && zaiModels.length === 0 && !zaiModelsLoading) {
+      refreshZaiModels();
+    }
+  }, [hasZaiKey, zaiModels.length, zaiModelsLoading, refreshZaiModels]);
+
+  useEffect(() => {
+    if (hasGoogleKey && googleModels.length === 0 && !googleModelsLoading) {
+      refreshGoogleModels();
+    }
+  }, [hasGoogleKey, googleModels.length, googleModelsLoading, refreshGoogleModels]);
+
   // OpenRouter: Don't auto-fetch models (large list can cause UI freeze)
   // Users can manually refresh via the refresh button if needed
   // useEffect(() => {
@@ -494,6 +570,22 @@ function App() {
   }, [hasOpenRouterKey]);
 
   useEffect(() => {
+    if (!hasZaiKey) {
+      setZaiModels([]);
+      setZaiModelsError(null);
+      setZaiModelsUpdatedAt(null);
+    }
+  }, [hasZaiKey]);
+
+  useEffect(() => {
+    if (!hasGoogleKey) {
+      setGoogleModels([]);
+      setGoogleModelsError(null);
+      setGoogleModelsUpdatedAt(null);
+    }
+  }, [hasGoogleKey]);
+
+  useEffect(() => {
     setDisplayNameDraft(profile.displayName);
   }, [profile.displayName]);
 
@@ -508,6 +600,14 @@ function App() {
   const mistralModelOptions = useMemo(() => {
     return includeSelectedModel(mistralModels, mistralModel);
   }, [mistralModels, mistralModel]);
+
+  const zaiModelOptions = useMemo(() => {
+    return includeSelectedModel(zaiModels, zaiModel);
+  }, [zaiModels, zaiModel]);
+
+  const googleModelOptions = useMemo(() => {
+    return includeSelectedModel(googleModels, googleModel);
+  }, [googleModels, googleModel]);
 
   const copyAllowlistCommand = useCallback(async () => {
     try {
@@ -877,6 +977,16 @@ function App() {
     ensureUnlockedChatForProviderChange();
     setOpenRouterModel(model);
   }, [ensureUnlockedChatForProviderChange, setOpenRouterModel]);
+
+  const handleSelectZaiModelFromChat = useCallback((model: string) => {
+    ensureUnlockedChatForProviderChange();
+    setZaiModel(model);
+  }, [ensureUnlockedChatForProviderChange, setZaiModel]);
+
+  const handleSelectGoogleModelFromChat = useCallback((model: string) => {
+    ensureUnlockedChatForProviderChange();
+    setGoogleModel(model);
+  }, [ensureUnlockedChatForProviderChange, setGoogleModel]);
 
   // Disconnect: clear everything (both auth methods)
   const handleDisconnect = useCallback(() => {
@@ -1271,6 +1381,32 @@ function App() {
         setOpenRouterKeyInput,
         setOpenRouterKey,
         clearOpenRouterKey,
+        hasZaiKey,
+        zaiModel,
+        setZaiModel,
+        zaiModelOptions: zaiModelOptions.length > 0 ? zaiModelOptions : ZAI_MODELS,
+        zaiModelsLoading,
+        zaiModelsError,
+        zaiModelsUpdatedAt,
+        isZaiModelLocked,
+        refreshZaiModels,
+        zaiKeyInput,
+        setZaiKeyInput,
+        setZaiKey,
+        clearZaiKey,
+        hasGoogleKey,
+        googleModel,
+        setGoogleModel,
+        googleModelOptions: googleModelOptions.length > 0 ? googleModelOptions : GOOGLE_MODELS,
+        googleModelsLoading,
+        googleModelsError,
+        googleModelsUpdatedAt,
+        isGoogleModelLocked,
+        refreshGoogleModels,
+        googleKeyInput,
+        setGoogleKeyInput,
+        setGoogleKey,
+        clearGoogleKey,
         hasTavilyKey,
         tavilyKeyInput,
         setTavilyKeyInput,
@@ -1742,6 +1878,22 @@ function App() {
           openRouterModelOptions: openRouterModels.length > 0 ? openRouterModels : OPENROUTER_MODELS,
           isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
           onSelectOpenRouterModel: handleSelectOpenRouterModelFromChat,
+          zaiModel,
+          zaiModelOptions: zaiModelOptions.length > 0 ? zaiModelOptions : ZAI_MODELS,
+          zaiModelsLoading,
+          zaiModelsError,
+          zaiModelsUpdatedAt,
+          isZaiModelLocked,
+          refreshZaiModels,
+          onSelectZaiModel: handleSelectZaiModelFromChat,
+          googleModel,
+          googleModelOptions: googleModelOptions.length > 0 ? googleModelOptions : GOOGLE_MODELS,
+          googleModelsLoading,
+          googleModelsError,
+          googleModelsUpdatedAt,
+          isGoogleModelLocked,
+          refreshGoogleModels,
+          onSelectGoogleModel: handleSelectGoogleModelFromChat,
         }}
       />
 

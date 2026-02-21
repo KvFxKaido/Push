@@ -63,7 +63,7 @@ export function useApiKeyConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Key + model hook (Ollama, Mistral, Z.ai)
+// Key + model hook (Ollama, Mistral, OpenRouter, Z.AI, Google)
 // ---------------------------------------------------------------------------
 
 interface ApiKeyWithModelHookResult extends ApiKeyHookResult {

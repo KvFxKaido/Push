@@ -291,7 +291,7 @@ export async function runCoderAgent(
   const coderModelId = roleModel?.id; // undefined falls back to provider default
 
   // Determine if native FC is active for this provider (respects VITE_NATIVE_FC override)
-  const providerDefault = activeProvider === 'mistral' || activeProvider === 'openrouter';
+  const providerDefault = activeProvider !== 'ollama';
   const useNativeFC = nativeFCOverride ?? providerDefault;
 
   // Build system prompt, optionally including user identity and AGENTS.md
@@ -304,7 +304,7 @@ export async function runCoderAgent(
     const truncatedAgentsMd = truncateContent(agentsMd, MAX_AGENTS_MD_SIZE, 'AGENTS.md');
     systemPrompt += `\n\nAGENTS.MD — Project instructions from the repository:\n${truncatedAgentsMd}`;
   }
-  // Web search for Ollama (Mistral/OpenRouter handle it via native FC tools[])
+  // Web search for Ollama (other providers handle it via native FC tools[])
   if (activeProvider === 'ollama') {
     systemPrompt += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
   }

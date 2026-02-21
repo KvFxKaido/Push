@@ -8,9 +8,18 @@ import { nativeFCOverride } from './feature-flags';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
+import { getZaiKey } from '@/hooks/useZaiConfig';
+import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
-import { getOllamaModelName, getMistralModelName, getPreferredProvider, getOpenRouterModelName } from './providers';
+import {
+  getOllamaModelName,
+  getMistralModelName,
+  getPreferredProvider,
+  getOpenRouterModelName,
+  getZaiModelName,
+  getGoogleModelName,
+} from './providers';
 import type { PreferredProvider } from './providers';
 // ---------------------------------------------------------------------------
 // Types
@@ -58,60 +67,19 @@ const MISTRAL_API_URL = import.meta.env.DEV
   ? '/mistral/v1/chat/completions'
   : '/api/mistral/chat';
 
-// Mistral Agents API — enables native web search via agent with web_search tool.
-// Dev: Vite proxy rewrites /mistral/ → https://api.mistral.ai/.
-// Prod: Worker routes /api/mistral/agents* → api.mistral.ai/v1/agents*.
-const MISTRAL_AGENTS_CREATE_URL = import.meta.env.DEV
-  ? '/mistral/v1/agents'
-  : '/api/mistral/agents';
-export const MISTRAL_AGENTS_COMPLETIONS_URL = import.meta.env.DEV
-  ? '/mistral/v1/agents/completions'
-  : '/api/mistral/agents/chat';
+// Z.AI coding endpoint (OpenAI-compatible).
+const ZAI_API_URL = import.meta.env.DEV
+  ? '/zai/api/coding/paas/v4/chat/completions'
+  : '/api/zai/chat';
 
-// Cached Mistral agent — created once per model, reused across requests
-let mistralAgentId: string | null = null;
-let mistralAgentModel: string | null = null;
+// Google Gemini OpenAI-compatible endpoint.
+const GOOGLE_API_URL = import.meta.env.DEV
+  ? '/google/v1beta/openai/chat/completions'
+  : '/api/google/chat';
 
-/**
- * Ensure a Mistral agent exists with web_search enabled.
- * Returns the cached agent_id, or creates one if needed.
- */
-export async function ensureMistralAgent(apiKey: string, model: string): Promise<string> {
-  // Return cached agent if model hasn't changed
-  if (mistralAgentId && mistralAgentModel === model) {
-    return mistralAgentId;
-  }
-
-  const response = await fetch(MISTRAL_AGENTS_CREATE_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      name: 'push-orchestrator',
-      tools: [{ type: 'web_search' }],
-    }),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '');
-    console.error('[Push] Mistral agent creation failed:', response.status, errBody.slice(0, 200));
-    throw new Error(`Failed to create Mistral agent: ${response.status}`);
-  }
-
-  const data = (await response.json()) as { id: string };
-  mistralAgentId = data.id;
-  mistralAgentModel = model;
-  console.log(`[Push] Created Mistral agent: ${mistralAgentId} (model: ${model})`);
-  return mistralAgentId;
-}
-
-/** Clear cached Mistral agent (call when user changes model in Settings). */
+/** Reset hook retained for compatibility with providers.ts model setter callback. */
 export function resetMistralAgent(): void {
-  mistralAgentId = null;
-  mistralAgentModel = null;
+  // Native function-calling path no longer uses Mistral Agents API state.
 }
 
 // Context mode config (runtime toggle from Settings)
@@ -144,7 +112,7 @@ function normalizeModelName(model?: string): string {
 }
 
 export function getContextBudget(
-  provider?: 'ollama' | 'mistral' | 'openrouter' | 'demo',
+  provider?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'demo',
   model?: string,
 ): ContextBudget {
   const normalizedModel = normalizeModelName(model);
@@ -500,7 +468,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'ollama' | 'mistral' | 'openrouter',
+  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google',
   providerModel?: string,
   useNativeFC = false,
 ): LLMMessage[] {
@@ -541,7 +509,7 @@ function toLLMMessages(
 
   // Web search tool — prompt-engineered for providers that need client-side dispatch.
   // Ollama: model outputs JSON → we execute via Ollama's search REST API.
-  // Mistral/OpenRouter with native FC: search handled via tools[] in request body.
+  // Native FC providers (Mistral/OpenRouter/Z.AI/Google): search handled via tools[] in request body.
   if (providerType === 'ollama') {
     systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
   }
@@ -794,7 +762,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'mistral' | 'openrouter';
+  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google';
   /** Override the fetch URL (e.g., Mistral Agents API uses a different endpoint) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -1267,6 +1235,38 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       toolChoice: 'auto',
     }),
   },
+  zai: {
+    getKey: getZaiKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'Z.AI',
+      apiUrl: ZAI_API_URL,
+      apiKey,
+      model: modelOverride || getZaiModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('Z.AI'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
+      providerType: 'zai',
+      supportsNativeFC: true,
+      toolChoice: 'auto',
+    }),
+  },
+  google: {
+    getKey: getGoogleKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'Google',
+      apiUrl: GOOGLE_API_URL,
+      apiKey,
+      model: modelOverride || getGoogleModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('Google'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
+      providerType: 'google',
+      supportsNativeFC: true,
+      toolChoice: 'auto',
+    }),
+  },
 };
 
 /** Core streaming function — looks up provider config and delegates to streamSSEChat. */
@@ -1323,25 +1323,29 @@ type StreamChatFn = (
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 export const streamMistralChat: StreamChatFn = (...args) => streamProviderChat('mistral', ...args);
 export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
+export const streamZaiChat: StreamChatFn = (...args) => streamProviderChat('zai', ...args);
+export const streamGoogleChat: StreamChatFn = (...args) => streamProviderChat('google', ...args);
 
 // ---------------------------------------------------------------------------
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'demo';
+export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'demo';
 
 /** Key getter for each configurable provider. */
 const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
   ollama:      getOllamaKey,
   mistral:     getMistralKey,
   openrouter:  getOpenRouterKey,
+  zai:         getZaiKey,
+  google:      getGoogleKey,
 };
 
 /**
  * Fallback order when no preference is set (or the preferred key is gone).
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama', 'mistral', 'openrouter',
+  'ollama', 'mistral', 'openrouter', 'zai', 'google',
 ];
 
 /**
@@ -1373,6 +1377,8 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'ollama':  return { providerType: 'ollama' as const,  streamFn: streamOllamaChat };
     case 'mistral': return { providerType: 'mistral' as const, streamFn: streamMistralChat };
     case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
+    case 'zai': return { providerType: 'zai' as const, streamFn: streamZaiChat };
+    case 'google': return { providerType: 'google' as const, streamFn: streamGoogleChat };
     default:        return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
   }
 }
@@ -1419,6 +1425,14 @@ export async function streamChat(
 
   if (provider === 'openrouter') {
     return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'zai') {
+    return streamZaiChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'google') {
+    return streamGoogleChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
