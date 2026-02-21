@@ -10,6 +10,9 @@ import { PROVIDER_CONFIGS, resolveApiKey, resolveNativeFC } from './provider.mjs
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, saveConfig, applyConfigToEnv, getConfigPath, maskSecret } from './config-store.mjs';
+import { aggregateStats, formatStats } from './stats.mjs';
+import { getToolCallMetrics } from './tool-call-metrics.mjs';
+import { getSocketPath, getPidPath } from './pushd.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,7 +24,7 @@ const KNOWN_OPTIONS = new Set([
   'help', 'sandbox', 'no-sandbox', 'version',
 ]);
 
-const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'sessions']);
+const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'sessions', 'stats', 'daemon', 'attach']);
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -43,6 +46,11 @@ Usage:
   push run --task "..."         Run once in headless mode
   push run "..."                Run once in headless mode
   push sessions                 List saved sessions
+  push stats                    Show provider compliance stats
+  push daemon start             Start background daemon
+  push daemon stop              Stop background daemon
+  push daemon status            Check daemon status
+  push attach <session-id>      Attach to a running daemon session
   push config show              Show saved CLI config
   push config init              Interactive setup wizard
   push config set ...           Save provider config defaults
@@ -346,6 +354,14 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
     await saveSessionState(state);
   }
 
+  // End-of-session metrics summary
+  const metrics = getToolCallMetrics();
+  const malformedTotal = Object.values(metrics.malformed).reduce((a, b) => a + b, 0);
+  if (malformedTotal > 0) {
+    const reasons = Object.entries(metrics.malformed).map(([k, v]) => `${k}:${v}`).join(', ');
+    process.stdout.write(`\n[stats] ${malformedTotal} malformed tool call(s) this session: ${reasons}\n`);
+  }
+
   return 0;
 }
 
@@ -570,6 +586,153 @@ async function runConfigSubcommand(values, positionals) {
   return 0;
 }
 
+async function readPidFile() {
+  try {
+    const raw = await fs.readFile(getPidPath(), 'utf8');
+    return parseInt(raw.trim(), 10);
+  } catch {
+    return null;
+  }
+}
+
+function isProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runDaemonSubcommand(positionals) {
+  const action = (positionals[1] || 'status').toLowerCase();
+
+  if (action === 'status') {
+    const pid = await readPidFile();
+    const socketPath = getSocketPath();
+    if (pid && isProcessRunning(pid)) {
+      process.stdout.write(`pushd is running (pid: ${pid})\nsocket: ${socketPath}\n`);
+    } else {
+      process.stdout.write('pushd is not running\n');
+      if (pid) {
+        // Stale PID file
+        try { await fs.unlink(getPidPath()); } catch { /* ignore */ }
+      }
+    }
+    return 0;
+  }
+
+  if (action === 'start') {
+    const pid = await readPidFile();
+    if (pid && isProcessRunning(pid)) {
+      process.stdout.write(`pushd is already running (pid: ${pid})\n`);
+      return 0;
+    }
+
+    // Launch pushd as a detached child process
+    const { spawn } = await import('node:child_process');
+    const pushdPath = new URL('./pushd.mjs', import.meta.url).pathname;
+    const child = spawn(process.execPath, [pushdPath], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    });
+    child.unref();
+    process.stdout.write(`pushd started (pid: ${child.pid})\nsocket: ${getSocketPath()}\n`);
+    return 0;
+  }
+
+  if (action === 'stop') {
+    const pid = await readPidFile();
+    if (!pid || !isProcessRunning(pid)) {
+      process.stdout.write('pushd is not running\n');
+      return 0;
+    }
+    process.kill(pid, 'SIGTERM');
+    process.stdout.write(`pushd stopped (pid: ${pid})\n`);
+    return 0;
+  }
+
+  throw new Error(`Unknown daemon action: ${action}. Use: push daemon start|stop|status`);
+}
+
+async function runAttach(sessionId) {
+  const pid = await readPidFile();
+  if (!pid || !isProcessRunning(pid)) {
+    throw new Error('pushd is not running. Start it with: push daemon start');
+  }
+
+  const socketPath = getSocketPath();
+  const net = await import('node:net');
+  const { PROTOCOL_VERSION } = await import('./session-store.mjs');
+
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(socketPath, () => {
+      // Send attach request
+      const req = {
+        v: PROTOCOL_VERSION,
+        kind: 'request',
+        requestId: `req_${Date.now().toString(36)}`,
+        type: 'attach_session',
+        payload: { sessionId, lastSeenSeq: 0 },
+      };
+      socket.write(JSON.stringify(req) + '\n');
+    });
+
+    let buffer = '';
+    const onEvent = makeCLIEventHandler();
+    let attached = false;
+
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+
+          if (msg.kind === 'response' && msg.type === 'attach_session') {
+            if (!msg.ok) {
+              process.stderr.write(`Attach failed: ${msg.error?.message || 'unknown error'}\n`);
+              socket.end();
+              resolve(1);
+              return;
+            }
+            attached = true;
+            process.stdout.write(
+              `Attached to ${sessionId}\n` +
+              `Replay: seq ${msg.payload.replay.fromSeq}–${msg.payload.replay.toSeq}\n`,
+            );
+          } else if (msg.kind === 'event') {
+            onEvent(msg);
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
+    });
+
+    socket.on('end', () => {
+      process.stdout.write('\n[disconnected]\n');
+      resolve(attached ? 0 : 1);
+    });
+
+    socket.on('error', (err) => {
+      process.stderr.write(`Connection error: ${err.message}\n`);
+      resolve(1);
+    });
+
+    // Allow Ctrl+C to detach
+    process.on('SIGINT', () => {
+      process.stdout.write('\n[detached]\n');
+      socket.end();
+      resolve(0);
+    });
+  });
+}
+
 export async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -651,8 +814,31 @@ export async function main() {
     return 0;
   }
 
+  if (subcommand === 'stats') {
+    const filter = {};
+    if (values.provider) filter.provider = values.provider;
+    if (values.model) filter.model = values.model;
+    const stats = await aggregateStats(filter);
+    if (values.json) {
+      process.stdout.write(`${JSON.stringify(stats, null, 2)}\n`);
+    } else {
+      process.stdout.write(`${formatStats(stats)}\n`);
+    }
+    return 0;
+  }
+
+  if (subcommand === 'daemon') {
+    return runDaemonSubcommand(positionals);
+  }
+
+  if (subcommand === 'attach') {
+    const sessionId = positionals[1];
+    if (!sessionId) throw new Error('Usage: push attach <session-id>');
+    return runAttach(sessionId);
+  }
+
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
-    throw new Error(`Unknown command: ${subcommand}. Known commands: run, config, sessions. See: push --help`);
+    throw new Error(`Unknown command: ${subcommand}. Known commands: run, config, sessions, stats, daemon, attach. See: push --help`);
   }
 
   const provider = parseProvider(values.provider);

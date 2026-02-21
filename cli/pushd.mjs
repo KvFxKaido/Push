@@ -35,10 +35,24 @@ const CAPABILITIES = ['stream_tokens', 'approvals'];
 
 // ─── Socket path ─────────────────────────────────────────────────
 
-function getSocketPath() {
+export function getSocketPath() {
   if (process.env.PUSHD_SOCKET) return process.env.PUSHD_SOCKET;
   const pushDir = path.join(os.homedir(), '.push', 'run');
   return path.join(pushDir, 'pushd.sock');
+}
+
+export function getPidPath() {
+  return path.join(os.homedir(), '.push', 'run', 'pushd.pid');
+}
+
+async function writePidFile() {
+  const pidPath = getPidPath();
+  await fs.mkdir(path.dirname(pidPath), { recursive: true });
+  await fs.writeFile(pidPath, String(process.pid), 'utf8');
+}
+
+async function cleanPidFile() {
+  try { await fs.unlink(getPidPath()); } catch { /* ignore */ }
 }
 
 async function ensureSocketDir(socketPath) {
@@ -255,7 +269,7 @@ async function handleSendUserMessage(req, emitEvent) {
   return ack;
 }
 
-async function handleAttachSession(req) {
+async function handleAttachSession(req, emitEvent) {
   const { sessionId, lastSeenSeq } = req.payload || {};
   if (!sessionId) {
     return makeErrorResponse(req.requestId, 'attach_session', 'INVALID_REQUEST', 'sessionId is required');
@@ -275,6 +289,18 @@ async function handleAttachSession(req) {
   const { state } = entry;
   const currentSeq = state.eventSeq;
   const fromSeq = (lastSeenSeq || 0) + 1;
+
+  // Replay missed events from disk
+  try {
+    const { loadSessionEvents } = await import('./session-store.mjs');
+    const allEvents = await loadSessionEvents(sessionId);
+    const missed = allEvents.filter(e => e.seq >= fromSeq && e.seq <= currentSeq);
+    for (const event of missed) {
+      emitEvent(event);
+    }
+  } catch {
+    // best-effort replay
+  }
 
   return makeResponse(req.requestId, 'attach_session', sessionId, true, {
     sessionId,
@@ -389,11 +415,13 @@ async function main() {
     process.stdout.write(`pushd listening on ${socketPath}\n`);
     process.stdout.write(`protocol: ${PROTOCOL_VERSION}\n`);
     process.stdout.write(`version: ${VERSION}\n`);
+    process.stdout.write(`pid: ${process.pid}\n`);
   });
 
-  // Set owner-only permissions on socket
+  // Write PID file + set socket permissions
   server.on('listening', async () => {
     try {
+      await writePidFile();
       await fs.chmod(socketPath, 0o600);
     } catch {
       // non-fatal
@@ -405,6 +433,7 @@ async function main() {
     process.stdout.write('\nshutting down...\n');
     server.close();
     await cleanStaleSocket(socketPath);
+    await cleanPidFile();
     process.exit(0);
   };
 
@@ -417,7 +446,15 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  process.stderr.write(`Fatal: ${err.message}\n`);
-  process.exit(1);
-});
+// Only run main() when executed directly (not when imported)
+const isDirectRun = process.argv[1] && (
+  process.argv[1].endsWith('/pushd.mjs') ||
+  process.argv[1].endsWith('\\pushd.mjs')
+);
+
+if (isDirectRun) {
+  main().catch((err) => {
+    process.stderr.write(`Fatal: ${err.message}\n`);
+    process.exit(1);
+  });
+}

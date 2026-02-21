@@ -65,6 +65,17 @@ export async function loadSessionState(sessionId) {
   return parsed;
 }
 
+export async function loadSessionEvents(sessionId) {
+  const eventsPath = getEventsPath(sessionId);
+  try {
+    const raw = await fs.readFile(eventsPath, 'utf8');
+    return raw.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+}
+
 export async function listSessions() {
   const root = getSessionRoot();
   try {
