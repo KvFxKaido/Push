@@ -151,7 +151,12 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       args: call.args,
     });
 
-    const result = await executeToolCall(call, state.cwd, { approvalFn, signal });
+    const result = await executeToolCall(call, state.cwd, {
+      approvalFn,
+      signal,
+      providerId: providerConfig?.id,
+      providerApiKey: apiKey,
+    });
     const durationMs = Date.now() - toolStart;
 
     await appendSessionEvent(state, 'tool_result', {

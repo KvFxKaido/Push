@@ -136,7 +136,7 @@ Available tools:
 | `read_file` | read | Read file with hashline-anchored line numbers |
 | `list_dir` | read | List directory contents |
 | `search_files` | read | Ripgrep text search (falls back to grep) |
-| `web_search` | read | Search the public web (Tavily when key is set, otherwise DuckDuckGo HTML) |
+| `web_search` | read | Search the public web (Tavily when key is set, else Ollama native for provider=ollama+key, else DuckDuckGo HTML) |
 | `read_symbols` | read | Extract function/class/type declarations from a file |
 | `git_status` | read | Workspace git status (branch, dirty files) |
 | `git_diff` | read | Show git diff (optionally for a specific file, staged) |

@@ -15,6 +15,9 @@ const originalFetch = globalThis.fetch;
 const originalPushTavilyKey = process.env.PUSH_TAVILY_API_KEY;
 const originalTavilyKey = process.env.TAVILY_API_KEY;
 const originalViteTavilyKey = process.env.VITE_TAVILY_API_KEY;
+const originalPushOllamaKey = process.env.PUSH_OLLAMA_API_KEY;
+const originalOllamaKey = process.env.OLLAMA_API_KEY;
+const originalViteOllamaKey = process.env.VITE_OLLAMA_API_KEY;
 
 // ─── read_symbols ────────────────────────────────────────────────
 
@@ -144,6 +147,9 @@ describe('web_search', () => {
     delete process.env.PUSH_TAVILY_API_KEY;
     delete process.env.TAVILY_API_KEY;
     delete process.env.VITE_TAVILY_API_KEY;
+    delete process.env.PUSH_OLLAMA_API_KEY;
+    delete process.env.OLLAMA_API_KEY;
+    delete process.env.VITE_OLLAMA_API_KEY;
   });
 
   afterEach(() => {
@@ -154,6 +160,12 @@ describe('web_search', () => {
     else process.env.TAVILY_API_KEY = originalTavilyKey;
     if (originalViteTavilyKey === undefined) delete process.env.VITE_TAVILY_API_KEY;
     else process.env.VITE_TAVILY_API_KEY = originalViteTavilyKey;
+    if (originalPushOllamaKey === undefined) delete process.env.PUSH_OLLAMA_API_KEY;
+    else process.env.PUSH_OLLAMA_API_KEY = originalPushOllamaKey;
+    if (originalOllamaKey === undefined) delete process.env.OLLAMA_API_KEY;
+    else process.env.OLLAMA_API_KEY = originalOllamaKey;
+    if (originalViteOllamaKey === undefined) delete process.env.VITE_OLLAMA_API_KEY;
+    else process.env.VITE_OLLAMA_API_KEY = originalViteOllamaKey;
   });
 
   it('uses Tavily when PUSH_TAVILY_API_KEY is set', async () => {
@@ -211,6 +223,59 @@ describe('web_search', () => {
     assert.ok(result.text.includes('Alpha Result'));
     assert.ok(result.text.includes('https://example.com/beta'));
     assert.ok(result.text.includes('Beta snippet & details'));
+  });
+
+  it('uses Ollama native search when provider is ollama and key is present', async () => {
+    let capturedUrl = '';
+    let capturedBody = null;
+    let capturedAuth = '';
+    globalThis.fetch = async (url, init = {}) => {
+      capturedUrl = String(url);
+      capturedBody = JSON.parse(String(init.body || '{}'));
+      capturedAuth = String(init.headers?.Authorization || init.headers?.authorization || '');
+      return new Response(
+        JSON.stringify({
+          results: [
+            { title: 'Ollama Result', url: 'https://example.com/ollama', content: 'native search context' },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'ollama native search' } },
+      PUSH_ROOT,
+      { providerId: 'ollama', providerApiKey: 'ollama-test-key' },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(capturedUrl, 'https://ollama.com/api/web_search');
+    assert.equal(capturedBody.query, 'ollama native search');
+    assert.equal(capturedAuth, 'Bearer ollama-test-key');
+    assert.equal(result.meta.source, 'ollama_native');
+    assert.ok(result.text.includes('Ollama Result'));
+  });
+
+  it('falls back to DuckDuckGo when provider is ollama but key is missing', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = async (url) => {
+      capturedUrl = String(url);
+      return new Response(
+        '<html><body><a class="result__a" href="https://example.com/ddg">DDG Result</a><a class="result__snippet">fallback path</a></body></html>',
+        { status: 200 },
+      );
+    };
+
+    const result = await executeToolCall(
+      { tool: 'web_search', args: { query: 'fallback expected' } },
+      PUSH_ROOT,
+      { providerId: 'ollama' },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.meta.source, 'duckduckgo_html');
+    assert.ok(capturedUrl.startsWith('https://html.duckduckgo.com/html/?q='));
   });
 
   it('returns no-results message when parser finds none', async () => {

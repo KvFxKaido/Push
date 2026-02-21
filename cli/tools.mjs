@@ -12,7 +12,9 @@ const DEFAULT_WEB_SEARCH_RESULTS = 5;
 const MAX_WEB_SEARCH_RESULTS = 10;
 const WEB_SEARCH_TIMEOUT_MS = 15_000;
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
+const OLLAMA_SEARCH_URL = 'https://ollama.com/api/web_search';
 const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_TAVILY_API_KEY'];
+const OLLAMA_API_KEY_ENV_VARS = ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'];
 
 const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'git_status', 'git_diff']);
 
@@ -59,7 +61,7 @@ Available tools:
 - read_file(path, start_line?, end_line?) — read file content with stable line hash anchors
 - list_dir(path?) — list files/directories
 - search_files(pattern, path?, max_results?) — text search in workspace
-- web_search(query, max_results?) — search the public web for current information
+- web_search(query, max_results?) — search the public web (Tavily if configured, otherwise Ollama native when provider=ollama+key, otherwise DuckDuckGo)
 - exec(command, timeout_ms?) — run a shell command
 - write_file(path, content) — write full file content
 - edit_file(path, edits, expected_version?) — surgical hashline edits. edits[] ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content
@@ -281,6 +283,26 @@ function resolveTavilyApiKey() {
   return '';
 }
 
+function resolveProviderId(options = {}) {
+  if (typeof options.providerId !== 'string') return '';
+  return options.providerId.toLowerCase();
+}
+
+function resolveOllamaApiKey(options = {}) {
+  const providerId = resolveProviderId(options);
+  if (providerId !== 'ollama') return '';
+
+  if (typeof options.providerApiKey === 'string' && options.providerApiKey.trim()) {
+    return options.providerApiKey.trim();
+  }
+
+  for (const envName of OLLAMA_API_KEY_ENV_VARS) {
+    const value = process.env[envName];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
 function decodeHtmlEntities(text) {
   return String(text)
     .replace(/&amp;/g, '&')
@@ -357,15 +379,25 @@ function parseDuckDuckGoHTML(html, maxResults) {
   return results;
 }
 
-function parseTavilyResults(payload, maxResults) {
+function parseJsonWebSearchResults(payload, maxResults) {
   const rawResults = Array.isArray(payload?.results) ? payload.results : [];
   const results = [];
 
   for (const entry of rawResults) {
     if (!entry || typeof entry !== 'object') continue;
-    const title = typeof entry.title === 'string' ? entry.title.trim() : '';
-    const url = typeof entry.url === 'string' ? entry.url.trim() : '';
-    const content = typeof entry.content === 'string' ? entry.content.trim() : '';
+    const title = typeof entry.title === 'string'
+      ? entry.title.trim()
+      : (typeof entry.name === 'string' ? entry.name.trim() : '');
+    const url = typeof entry.url === 'string'
+      ? entry.url.trim()
+      : (typeof entry.link === 'string' ? entry.link.trim() : '');
+    const content = typeof entry.content === 'string'
+      ? entry.content.trim()
+      : (
+          typeof entry.snippet === 'string'
+            ? entry.snippet.trim()
+            : (typeof entry.description === 'string' ? entry.description.trim() : '')
+        );
     if (!title || !/^https?:\/\//i.test(url)) continue;
     results.push({ title, url, content });
     if (results.length >= maxResults) break;
@@ -440,7 +472,7 @@ async function executeTavilyWebSearch(query, maxResults, apiKey, signal) {
     }
 
     const payload = await response.json();
-    return parseTavilyResults(payload, maxResults);
+    return parseJsonWebSearchResults(payload, maxResults);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError' && !signal?.aborted) {
       throw new Error(`Web search timed out after ${WEB_SEARCH_TIMEOUT_MS}ms`);
@@ -451,11 +483,61 @@ async function executeTavilyWebSearch(query, maxResults, apiKey, signal) {
   }
 }
 
-async function executeWebSearch(query, maxResults, signal) {
+async function executeOllamaWebSearch(query, maxResults, apiKey, signal) {
+  if (typeof fetch !== 'function') {
+    throw new Error('fetch is not available in this Node runtime');
+  }
+
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), WEB_SEARCH_TIMEOUT_MS);
+  const signals = [timeoutController.signal];
+  if (signal) signals.push(signal);
+
+  try {
+    const response = await fetch(OLLAMA_SEARCH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.any(signals),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`Ollama search returned ${response.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`);
+    }
+
+    const payload = await response.json();
+    return parseJsonWebSearchResults(payload, maxResults);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError' && !signal?.aborted) {
+      throw new Error(`Web search timed out after ${WEB_SEARCH_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function resolveWebSearchSourceHint(options = {}) {
+  if (resolveTavilyApiKey()) return 'tavily';
+  if (resolveOllamaApiKey(options)) return 'ollama_native';
+  return 'duckduckgo_html';
+}
+
+async function executeWebSearch(query, maxResults, signal, options = {}) {
   const tavilyApiKey = resolveTavilyApiKey();
   if (tavilyApiKey) {
     const results = await executeTavilyWebSearch(query, maxResults, tavilyApiKey, signal);
     return { source: 'tavily', results };
+  }
+
+  const ollamaApiKey = resolveOllamaApiKey(options);
+  if (ollamaApiKey) {
+    const results = await executeOllamaWebSearch(query, maxResults, ollamaApiKey, signal);
+    return { source: 'ollama_native', results };
   }
 
   const results = await executeDuckDuckGoWebSearch(query, maxResults, signal);
@@ -483,6 +565,8 @@ export async function backupFile(filePath, workspaceRoot) {
  * Execute a tool call. Options:
  * - approvalFn(tool, detail): async fn that returns true to proceed, false to deny.
  *   If not provided, all calls proceed (headless default: deny high-risk).
+ * - providerId: active provider id ('ollama' | 'mistral' | 'openrouter') for provider-aware tools.
+ * - providerApiKey: resolved provider API key for provider-aware tools.
  */
 export async function executeToolCall(call, workspaceRoot, options = {}) {
   try {
@@ -550,10 +634,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const query = asString(call.args.query, 'query').trim();
         if (!query) throw new Error('query must be a non-empty string');
         const maxResults = clamp(asOptionalNumber(call.args.max_results) ?? DEFAULT_WEB_SEARCH_RESULTS, 1, MAX_WEB_SEARCH_RESULTS);
-        const sourceHint = resolveTavilyApiKey() ? 'tavily' : 'duckduckgo_html';
+        const sourceHint = resolveWebSearchSourceHint(options);
 
         try {
-          const search = await executeWebSearch(query, maxResults, options.signal);
+          const search = await executeWebSearch(query, maxResults, options.signal, options);
           const { source, results } = search;
           if (results.length === 0) {
             return {
