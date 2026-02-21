@@ -69,6 +69,28 @@ export function resolveApiKey(config) {
 }
 
 /**
+ * Return enriched metadata for all providers.
+ * hasKey probes resolveApiKey without throwing.
+ */
+export function getProviderList() {
+  return Object.values(PROVIDER_CONFIGS).map((cfg) => {
+    let hasKey = false;
+    try {
+      resolveApiKey(cfg);
+      hasKey = true;
+    } catch { /* key missing */ }
+    return {
+      id: cfg.id,
+      url: cfg.url,
+      defaultModel: cfg.defaultModel,
+      requiresKey: cfg.requiresKey,
+      supportsNativeFC: Boolean(cfg.supportsNativeFC),
+      hasKey,
+    };
+  });
+}
+
+/**
  * Bridge native tool calls (delta.tool_calls) to fenced JSON text.
  * Accumulated tool call data is converted to the same format used by
  * the prompt-engineered protocol, so detectAllToolCalls() works unchanged.

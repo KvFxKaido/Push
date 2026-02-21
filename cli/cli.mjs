@@ -6,7 +6,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFile } from 'node:child_process';
 
-import { PROVIDER_CONFIGS, resolveApiKey, resolveNativeFC } from './provider.mjs';
+import { PROVIDER_CONFIGS, resolveApiKey, resolveNativeFC, getProviderList } from './provider.mjs';
+import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, saveConfig, applyConfigToEnv, getConfigPath, maskSecret } from './config-store.mjs';
@@ -260,6 +261,116 @@ function makeInteractiveApprovalFn(rl) {
   };
 }
 
+async function handleModelCommand(arg, ctx, state, config) {
+  const models = getCuratedModels(ctx.providerConfig.id);
+
+  if (!arg) {
+    // Show current model + numbered list
+    process.stdout.write(`Current model: ${state.model}\n`);
+    if (models.length === 0) {
+      process.stdout.write('No curated models for this provider. Enter any model name.\n');
+      return;
+    }
+    process.stdout.write('Available models:\n');
+    for (let i = 0; i < models.length; i++) {
+      const marker = models[i] === state.model ? ' ← current' : '';
+      process.stdout.write(`  ${i + 1}. ${models[i]}${marker}\n`);
+    }
+    process.stdout.write('Use /model <name|#> to switch.\n');
+    return;
+  }
+
+  // Resolve by number or name
+  const num = parseInt(arg, 10);
+  let target;
+  if (!isNaN(num) && num >= 1 && num <= models.length) {
+    target = models[num - 1];
+  } else {
+    target = arg;
+  }
+
+  if (target === state.model) {
+    process.stdout.write(`Already using ${target}.\n`);
+    return;
+  }
+
+  state.model = target;
+  // Persist model to config under current provider
+  const branch = { ...(config[ctx.providerConfig.id] || {}) };
+  branch.model = target;
+  config[ctx.providerConfig.id] = branch;
+  await saveConfig(config);
+  await appendSessionEvent(state, 'model_switched', { model: target, provider: ctx.providerConfig.id });
+  process.stdout.write(`Switched to model: ${target}\n`);
+}
+
+async function handleProviderCommand(arg, ctx, state, config) {
+  const providers = getProviderList();
+
+  if (!arg) {
+    // Show all providers with status
+    process.stdout.write('Providers:\n');
+    for (let i = 0; i < providers.length; i++) {
+      const p = providers[i];
+      const current = p.id === ctx.providerConfig.id ? ' ← current' : '';
+      const keyStatus = p.requiresKey ? (p.hasKey ? 'key set' : 'no key') : 'no key needed';
+      const fc = p.supportsNativeFC ? 'native FC' : 'prompt FC';
+      process.stdout.write(`  ${i + 1}. ${p.id}  [${keyStatus}] [${fc}] default: ${p.defaultModel}${current}\n`);
+    }
+    process.stdout.write('Use /provider <name|#> to switch.\n');
+    return;
+  }
+
+  // Resolve by number or name
+  const num = parseInt(arg, 10);
+  let target;
+  if (!isNaN(num) && num >= 1 && num <= providers.length) {
+    target = providers[num - 1];
+  } else {
+    target = providers.find((p) => p.id === arg.toLowerCase());
+  }
+
+  if (!target) {
+    process.stdout.write(`Unknown provider: ${arg}. Use: ollama, mistral, openrouter\n`);
+    return;
+  }
+
+  if (target.id === ctx.providerConfig.id) {
+    process.stdout.write(`Already using ${target.id}.\n`);
+    return;
+  }
+
+  const newConfig = PROVIDER_CONFIGS[target.id];
+  let newApiKey;
+  try {
+    newApiKey = resolveApiKey(newConfig);
+  } catch {
+    process.stdout.write(`Cannot switch to ${target.id}: no API key found.\nSet one of: ${newConfig.apiKeyEnv.join(', ')}\n`);
+    return;
+  }
+
+  const oldFC = resolveNativeFC(ctx.providerConfig);
+  const newFC = resolveNativeFC(newConfig);
+
+  // Update mutable context
+  ctx.providerConfig = newConfig;
+  ctx.apiKey = newApiKey;
+  state.provider = target.id;
+  state.model = config[target.id]?.model || newConfig.defaultModel;
+
+  // Rebuild system prompt if FC mode changed
+  if (oldFC !== newFC) {
+    state.messages[0] = { role: 'system', content: await buildSystemPrompt(state.cwd, { useNativeFC: newFC }) };
+    process.stdout.write(`[system prompt rebuilt — nativeFC: ${oldFC} → ${newFC}]\n`);
+  }
+
+  // Persist
+  config.provider = target.id;
+  await saveConfig(config);
+  await appendSessionEvent(state, 'provider_switched', { provider: target.id, model: state.model, nativeFC: newFC });
+  process.stdout.write(`Switched to ${target.id} | model: ${state.model}\n`);
+}
+
 async function runInteractive(state, providerConfig, apiKey, maxRounds) {
   const rl = createInterface({
     input: process.stdin,
@@ -267,15 +378,19 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
     terminal: true,
   });
 
+  // Mutable context — allows mid-session provider/model switching
+  const ctx = { providerConfig, apiKey };
+  const config = await loadConfig();
+
   const approvalFn = makeInteractiveApprovalFn(rl);
   const onEvent = makeCLIEventHandler();
 
-  const nativeFC = resolveNativeFC(providerConfig);
+  const nativeFC = resolveNativeFC(ctx.providerConfig);
   process.stdout.write(
     `Push CLI\n` +
     `session: ${state.sessionId}\n` +
-    `provider: ${providerConfig.id} | model: ${state.model}\n` +
-    `endpoint: ${providerConfig.url}\n` +
+    `provider: ${ctx.providerConfig.id} | model: ${state.model}\n` +
+    `endpoint: ${ctx.providerConfig.url}\n` +
     `workspace: ${state.cwd}\n` +
     `localSandbox: ${process.env.PUSH_LOCAL_SANDBOX === 'true'}\n` +
     `nativeFC: ${nativeFC}\n` +
@@ -291,24 +406,32 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       if (line === '/help') {
         process.stdout.write(
           `Commands:
-  /help                Show this help
-  /provider            Show provider config
+  /model               Show current model + available models
+  /model <name|#>      Switch model
+  /provider            Show all providers with status
+  /provider <name|#>   Switch provider
   /session             Print session id
   /exit | /quit        Exit
 `,
         );
         continue;
       }
-      if (line === '/provider') {
-        process.stdout.write(
-          `provider: ${providerConfig.id}\n` +
-          `model: ${state.model}\n` +
-          `endpoint: ${providerConfig.url}\n`,
-        );
-        continue;
-      }
       if (line === '/session') {
         process.stdout.write(`session: ${state.sessionId}\n`);
+        continue;
+      }
+
+      // /model [arg]
+      if (line === '/model' || line.startsWith('/model ')) {
+        const arg = line.slice('/model'.length).trim();
+        await handleModelCommand(arg || null, ctx, state, config);
+        continue;
+      }
+
+      // /provider [arg]
+      if (line === '/provider' || line.startsWith('/provider ')) {
+        const arg = line.slice('/provider'.length).trim();
+        await handleProviderCommand(arg || null, ctx, state, config);
         continue;
       }
 
@@ -320,7 +443,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       process.on('SIGINT', onSigint);
 
       try {
-        const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, {
+        const result = await runAssistantLoop(state, ctx.providerConfig, ctx.apiKey, maxRounds, {
           approvalFn,
           signal: ac.signal,
           emit: onEvent,
@@ -329,8 +452,6 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
         if (result.outcome === 'aborted') {
            // handled by event
         } else if (result.outcome !== 'success') {
-           // handled by event? run_complete covers failed/aborted.
-           // but engine.mjs return value might have finalAssistantText even on error
            if (result.outcome === 'max_rounds' || result.outcome === 'error') {
                // warning already emitted
            }
@@ -445,18 +566,32 @@ async function runConfigInit(values, config) {
   });
 
   try {
+    // --- Provider picker ---
     const providerDefault = parseProvider(values.provider || config.provider || 'ollama');
-
     let provider = providerDefault;
+
     if (!values.provider) {
+      const providers = getProviderList();
+      process.stdout.write('\nProvider:\n');
+      for (let i = 0; i < providers.length; i++) {
+        const p = providers[i];
+        const current = p.id === providerDefault ? ' (current)' : '';
+        const keyStatus = p.requiresKey ? (p.hasKey ? 'key set' : 'no key') : 'no key needed';
+        process.stdout.write(`  ${i + 1}. ${p.id}  [${keyStatus}]${current}\n`);
+      }
       while (true) {
-        const input = (await rl.question(`Provider (ollama/mistral/openrouter) [${providerDefault}]: `)).trim();
-        const candidate = input || providerDefault;
+        const input = (await rl.question(`Select [${providerDefault}]: `)).trim();
+        if (!input) break; // keep default
+        const num = parseInt(input, 10);
+        if (!isNaN(num) && num >= 1 && num <= providers.length) {
+          provider = providers[num - 1].id;
+          break;
+        }
         try {
-          provider = parseProvider(candidate);
+          provider = parseProvider(input);
           break;
         } catch {
-          process.stdout.write('Invalid provider. Choose: ollama, mistral, openrouter.\n');
+          process.stdout.write('Invalid choice. Enter a number or name.\n');
         }
       }
     }
@@ -464,19 +599,39 @@ async function runConfigInit(values, config) {
     const providerConfig = PROVIDER_CONFIGS[provider];
     const current = config[provider] && typeof config[provider] === 'object' ? config[provider] : {};
 
+    // --- Model picker ---
     const defaultModel = values.model || current.model || providerConfig.defaultModel;
-    const defaultUrl = values.url || current.url || providerConfig.url;
+    let model = defaultModel;
 
-    const modelInput = values.model
-      ? values.model
-      : (await rl.question(`Model [${defaultModel}]: `)).trim();
+    if (!values.model) {
+      const models = getCuratedModels(provider);
+      if (models.length > 0) {
+        process.stdout.write('\nModel:\n');
+        for (let i = 0; i < models.length; i++) {
+          const marker = models[i] === defaultModel ? ' (current)' : '';
+          process.stdout.write(`  ${i + 1}. ${models[i]}${marker}\n`);
+        }
+        process.stdout.write('  Or type a custom model name.\n');
+      }
+      const modelInput = (await rl.question(`Select [${defaultModel}]: `)).trim();
+      if (modelInput) {
+        const num = parseInt(modelInput, 10);
+        if (!isNaN(num) && num >= 1 && num <= models.length) {
+          model = models[num - 1];
+        } else {
+          model = modelInput;
+        }
+      }
+    }
+
+    // --- Endpoint URL ---
+    const defaultUrl = values.url || current.url || providerConfig.url;
     const urlInput = values.url
       ? values.url
       : (await rl.question(`Endpoint URL [${defaultUrl}]: `)).trim();
-
-    const model = modelInput || defaultModel;
     const url = urlInput || defaultUrl;
 
+    // --- API key ---
     const apiKeyArg = values['api-key'] || values.apiKey;
     let apiKey;
     if (apiKeyArg) {
@@ -488,27 +643,29 @@ async function runConfigInit(values, config) {
       if (trimmed) apiKey = trimmed;
     }
 
+    // --- Local sandbox ---
+    const localSandboxDefault = config.localSandbox ?? true;
+    const localSandboxInput = await rl.question(`Local Docker sandbox (y/n) [${localSandboxDefault ? 'y' : 'n'}]: `);
+    const localSandbox = localSandboxInput ? localSandboxInput.toLowerCase() === 'y' : localSandboxDefault;
+
+    // --- Save ---
     const next = { ...config, provider };
     const branch = { ...(next[provider] || {}) };
     branch.model = model;
     branch.url = url;
     if (apiKey !== undefined) branch.apiKey = apiKey;
-    
-    const localSandboxDefault = config.localSandbox ?? true;
-    const localSandboxInput = await rl.question(`Local Docker sandbox (y/n) [${localSandboxDefault ? 'y' : 'n'}]: `);
-    const localSandbox = localSandboxInput ? localSandboxInput.toLowerCase() === 'y' : localSandboxDefault;
     next.localSandbox = localSandbox;
-
     next[provider] = branch;
 
     const configPath = await saveConfig(next);
     process.stdout.write(
-      `\nSaved config to ${configPath}\n` +
-      `provider: ${provider}\n` +
-      `model: ${branch.model}\n` +
-      `url: ${branch.url}\n` +
-      `apiKey: ${branch.apiKey ? maskSecret(branch.apiKey) : '(not set)'}\n` +
-      `localSandbox: ${next.localSandbox}\n`
+      `\n┌─ Saved to ${configPath}\n` +
+      `│  provider:     ${provider}\n` +
+      `│  model:        ${branch.model}\n` +
+      `│  endpoint:     ${branch.url}\n` +
+      `│  apiKey:       ${branch.apiKey ? maskSecret(branch.apiKey) : '(not set)'}\n` +
+      `│  localSandbox: ${next.localSandbox}\n` +
+      `└────────────────────────────────\n`
     );
 
     return 0;
