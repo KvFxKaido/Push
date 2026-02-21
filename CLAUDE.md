@@ -88,8 +88,21 @@ app/src/
   types/                  # TypeScript type definitions
   App.tsx                 # Root component, screen state machine
 app/worker.ts        # Cloudflare Worker — streaming proxy to Ollama/Mistral/OpenRouter + sandbox proxy to Modal
+cli/                 # Push CLI — local coding agent
+  cli.mjs            # Entrypoint (arg parsing, interactive/headless modes)
+  engine.mjs         # Assistant/tool loop, working memory, multi-tool dispatch
+  tools.mjs          # Tool executor, guards, hashline edits, risk detection
+  provider.mjs       # SSE streaming client, retry policy, provider configs
+  session-store.mjs  # Session state/events persistence, protocol-aligned envelopes
+  hashline.mjs       # Hashline edit protocol (anchored line refs, content versioning)
+  file-ledger.mjs    # File awareness ledger (read/write tracking per file)
+  tool-call-metrics.mjs # Malformed tool-call observability
+  pushd.mjs          # Daemon skeleton (Unix socket, NDJSON IPC)
+  tests/             # node:test suite
 sandbox/app.py       # Modal Python App — sandbox web endpoints (file ops, exec/git, browser tools, archive download)
 sandbox/requirements.txt
+scripts/             # One-off scripts (provider compliance, etc.)
+push                 # Bash launcher (repo root)
 wrangler.jsonc       # Cloudflare Workers config (repo root)
 ```
 

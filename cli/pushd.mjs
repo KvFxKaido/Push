@@ -18,7 +18,7 @@ import process from 'node:process';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 
-import { PROVIDER_CONFIGS, resolveApiKey } from './push/provider.mjs';
+import { PROVIDER_CONFIGS, resolveApiKey } from './provider.mjs';
 import {
   makeSessionId,
   makeRunId,
@@ -27,8 +27,8 @@ import {
   loadSessionState,
   listSessions,
   PROTOCOL_VERSION,
-} from './push/session-store.mjs';
-import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './push/engine.mjs';
+} from './session-store.mjs';
+import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 
 const VERSION = '0.1.0';
 const CAPABILITIES = ['stream_tokens', 'approvals'];
