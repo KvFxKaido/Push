@@ -5,8 +5,8 @@ import { CLI_TOOL_SCHEMAS, TOOL_RULES } from '../tool-schemas.mjs';
 // ─── Schema structure ──────────────────────────────────────────────
 
 describe('CLI_TOOL_SCHEMAS', () => {
-  it('exports exactly 12 tool schemas', () => {
-    assert.equal(CLI_TOOL_SCHEMAS.length, 12);
+  it('exports exactly 13 tool schemas', () => {
+    assert.equal(CLI_TOOL_SCHEMAS.length, 13);
   });
 
   it('every schema has type "function" and function.name/parameters', () => {

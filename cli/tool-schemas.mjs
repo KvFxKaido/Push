@@ -112,6 +112,20 @@ export const CLI_TOOL_SCHEMAS = [
   {
     type: 'function',
     function: {
+      name: 'undo_edit',
+      description: 'Restore a file from its most recent backup (created before each write_file/edit_file).',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path to the file to restore' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'read_symbols',
       description: 'Extract function/class/type/interface declarations from a file with line numbers.',
       parameters: {
@@ -127,7 +141,7 @@ export const CLI_TOOL_SCHEMAS = [
     type: 'function',
     function: {
       name: 'git_status',
-      description: 'Show workspace git status (branch, dirty files).',
+      description: 'Show workspace git status with structured breakdown (branch, staged, unstaged, untracked files).',
       parameters: {
         type: 'object',
         properties: {},
@@ -139,7 +153,7 @@ export const CLI_TOOL_SCHEMAS = [
     type: 'function',
     function: {
       name: 'git_diff',
-      description: 'Show git diff. Optionally for a specific file or staged changes.',
+      description: 'Show git diff with file-level change summary. Optionally for a specific file or staged changes.',
       parameters: {
         type: 'object',
         properties: {

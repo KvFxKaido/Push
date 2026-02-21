@@ -61,6 +61,7 @@ Available tools:
 - git_status() — workspace git status (branch, dirty files)
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - git_commit(message, paths?) — stage and commit files (all files if paths not specified)
+- undo_edit(path) — restore a file from its most recent backup (created before each write/edit)
 - save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session.
 - coder_update_state(plan?, openTasks?, filesTouched?, assumptions?, errorsEncountered?) — update working memory (no filesystem action)
 
@@ -521,14 +522,31 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           const branchMatch = branchLine.match(/^## (.+?)(?:\.\.\.(.+?))?(?:\s+\[(.+)\])?$/);
           const branch = branchMatch ? branchMatch[1] : 'unknown';
           const tracking = branchMatch ? (branchMatch[2] || null) : null;
-          const changes = lines.slice(1).filter(l => l.trim()).map(l => ({
-            status: l.slice(0, 2).trim(),
-            path: l.slice(3),
-          }));
+          const aheadBehind = branchMatch?.[3] || null;
+          const changes = lines.slice(1).filter(l => l.trim()).map(l => {
+            const xy = l.slice(0, 2);
+            return {
+              status: xy.trim(),
+              path: l.slice(3),
+              staged: xy[0] !== ' ' && xy[0] !== '?',
+              unstaged: xy[1] !== ' ' && xy[1] !== '?',
+            };
+          });
+          const staged = changes.filter(c => c.staged);
+          const unstaged = changes.filter(c => c.unstaged);
+          const untracked = changes.filter(c => c.status === '??');
+
+          // Build structured text for clearer agent reasoning
+          const sections = [`Branch: ${branch}${tracking ? ` → ${tracking}` : ''}${aheadBehind ? ` [${aheadBehind}]` : ''}`];
+          if (staged.length) sections.push(`Staged (${staged.length}): ${staged.map(c => c.path).join(', ')}`);
+          if (unstaged.length) sections.push(`Unstaged (${unstaged.length}): ${unstaged.map(c => c.path).join(', ')}`);
+          if (untracked.length) sections.push(`Untracked (${untracked.length}): ${untracked.map(c => c.path).join(', ')}`);
+          if (!changes.length) sections.push('Clean working tree');
+
           return {
             ok: true,
-            text: stdout.trim() || 'Clean working tree',
-            meta: { branch, tracking, changedFiles: changes.length },
+            text: sections.join('\n'),
+            meta: { branch, tracking, aheadBehind, changedFiles: changes.length, staged: staged.length, unstaged: unstaged.length, untracked: untracked.length },
           };
         } catch (err) {
           return { ok: false, text: `git status failed: ${err.message}`, structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false } };
@@ -538,15 +556,41 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       case 'git_diff': {
         const diffPath = call.args.path ? ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path')) : null;
         const staged = call.args.staged === true;
-        const gitArgs = ['diff'];
+        const gitArgs = ['diff', '--stat'];
         if (staged) gitArgs.push('--staged');
         if (diffPath) gitArgs.push('--', diffPath);
         try {
-          const { stdout } = await execFileAsync('git', gitArgs, { cwd: workspaceRoot, maxBuffer: 2_000_000 });
+          // Get stat summary
+          const { stdout: statOut } = await execFileAsync('git', gitArgs, { cwd: workspaceRoot, maxBuffer: 2_000_000 });
+          // Get full diff
+          const fullArgs = ['diff'];
+          if (staged) fullArgs.push('--staged');
+          if (diffPath) fullArgs.push('--', diffPath);
+          const { stdout: diffOut } = await execFileAsync('git', fullArgs, { cwd: workspaceRoot, maxBuffer: 2_000_000 });
+
+          // Parse stat lines to extract file-level summary
+          const statLines = statOut.trim().split('\n');
+          const summaryLine = statLines[statLines.length - 1] || '';
+          const filesChanged = [];
+          for (const line of statLines.slice(0, -1)) {
+            const m = line.match(/^\s*(.+?)\s+\|\s+(\d+)\s*([+-]*)\s*$/);
+            if (m) filesChanged.push({ file: m[1].trim(), changes: parseInt(m[2], 10) });
+          }
+
+          const insertions = (summaryLine.match(/(\d+) insertion/) || [])[1];
+          const deletions = (summaryLine.match(/(\d+) deletion/) || [])[1];
+
           return {
             ok: true,
-            text: truncateText(stdout.trim() || 'No changes'),
-            meta: { staged, path: diffPath },
+            text: truncateText(diffOut.trim() || 'No changes'),
+            meta: {
+              staged,
+              path: diffPath,
+              filesChanged: filesChanged.length,
+              insertions: insertions ? parseInt(insertions, 10) : 0,
+              deletions: deletions ? parseInt(deletions, 10) : 0,
+              files: filesChanged,
+            },
           };
         } catch (err) {
           return { ok: false, text: `git diff failed: ${err.message}`, structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false } };
@@ -584,6 +628,37 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         }
       }
 
+      case 'undo_edit': {
+        const filePath = ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const backupDir = path.join(workspaceRoot, '.push', 'backups');
+        const relative = path.relative(workspaceRoot, filePath).replace(/\//g, '__');
+        const prefix = `${relative}.`;
+
+        let entries;
+        try {
+          entries = await fs.readdir(backupDir);
+        } catch {
+          return { ok: false, text: `No backups found for ${call.args.path}`, structuredError: { code: 'NO_BACKUP', message: 'Backup directory does not exist', retryable: false } };
+        }
+
+        const matches = entries
+          .filter(e => e.startsWith(prefix) && e.endsWith('.bak'))
+          .sort()
+          .reverse();
+
+        if (matches.length === 0) {
+          return { ok: false, text: `No backups found for ${call.args.path}`, structuredError: { code: 'NO_BACKUP', message: 'No matching backup files', retryable: false } };
+        }
+
+        const backupPath = path.join(backupDir, matches[0]);
+        await fs.copyFile(backupPath, filePath);
+        return {
+          ok: true,
+          text: `Restored ${call.args.path} from backup ${matches[0]}`,
+          meta: { path: filePath, backup: matches[0], availableBackups: matches.length },
+        };
+      }
+
       case 'save_memory': {
         const content = asString(call.args.content, 'content');
         const memoryDir = path.join(workspaceRoot, '.push');
@@ -600,7 +675,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, exec, write_file, edit_file, read_symbols, git_status, git_diff, git_commit, save_memory`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, exec, write_file, edit_file, undo_edit, read_symbols, git_status, git_diff, git_commit, save_memory`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,

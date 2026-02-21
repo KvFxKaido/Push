@@ -88,7 +88,10 @@ describe('git_status', () => {
     assert.equal(result.ok, true);
     assert.ok(result.meta.branch, 'should have a branch name');
     assert.equal(typeof result.meta.changedFiles, 'number');
-    assert.ok(result.text.includes('##'), 'porcelain output should include ## branch line');
+    assert.equal(typeof result.meta.staged, 'number', 'should have staged count');
+    assert.equal(typeof result.meta.unstaged, 'number', 'should have unstaged count');
+    assert.equal(typeof result.meta.untracked, 'number', 'should have untracked count');
+    assert.ok(result.text.includes('Branch:'), 'structured output should include Branch: line');
   });
 
   it('is classified as read-only', () => {
@@ -109,6 +112,10 @@ describe('git_diff', () => {
     assert.equal(typeof result.text, 'string');
     assert.equal(result.meta.staged, false);
     assert.equal(result.meta.path, null);
+    assert.equal(typeof result.meta.filesChanged, 'number', 'should have filesChanged count');
+    assert.equal(typeof result.meta.insertions, 'number', 'should have insertions count');
+    assert.equal(typeof result.meta.deletions, 'number', 'should have deletions count');
+    assert.ok(Array.isArray(result.meta.files), 'should have files array');
   });
 
   it('accepts staged flag', async () => {
@@ -283,5 +290,84 @@ describe('TOOL_PROTOCOL', () => {
 
   it('includes git_commit', () => {
     assert.ok(TOOL_PROTOCOL.includes('git_commit'), 'TOOL_PROTOCOL should mention git_commit');
+  });
+
+  it('includes undo_edit', () => {
+    assert.ok(TOOL_PROTOCOL.includes('undo_edit'), 'TOOL_PROTOCOL should mention undo_edit');
+  });
+});
+
+// ─── undo_edit ────────────────────────────────────────────────────
+
+describe('undo_edit', () => {
+  let tmpDir;
+
+  after(async () => {
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('restores a file from its most recent backup', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-undo-'));
+    const filePath = path.join(tmpDir, 'target.txt');
+    await fs.writeFile(filePath, 'original', 'utf8');
+
+    // Create a backup (simulates what write_file/edit_file does)
+    await backupFile(filePath, tmpDir);
+
+    // Overwrite the file
+    await fs.writeFile(filePath, 'modified', 'utf8');
+    assert.equal(await fs.readFile(filePath, 'utf8'), 'modified');
+
+    // Undo should restore from backup
+    const result = await executeToolCall(
+      { tool: 'undo_edit', args: { path: 'target.txt' } },
+      tmpDir,
+    );
+
+    assert.equal(result.ok, true);
+    assert.ok(result.text.includes('Restored'), 'should report restore');
+    assert.equal(result.meta.availableBackups, 1);
+    assert.equal(await fs.readFile(filePath, 'utf8'), 'original');
+  });
+
+  it('picks the most recent backup when multiple exist', async () => {
+    tmpDir = tmpDir || await fs.mkdtemp(path.join(os.tmpdir(), 'push-undo-'));
+    const filePath = path.join(tmpDir, 'multi.txt');
+
+    // Create two backups with different content
+    await fs.writeFile(filePath, 'v1', 'utf8');
+    await backupFile(filePath, tmpDir);
+    // Small delay to ensure different timestamps
+    await new Promise(r => setTimeout(r, 10));
+    await fs.writeFile(filePath, 'v2', 'utf8');
+    await backupFile(filePath, tmpDir);
+
+    // Overwrite
+    await fs.writeFile(filePath, 'v3', 'utf8');
+
+    const result = await executeToolCall(
+      { tool: 'undo_edit', args: { path: 'multi.txt' } },
+      tmpDir,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.meta.availableBackups, 2);
+    assert.equal(await fs.readFile(filePath, 'utf8'), 'v2');
+  });
+
+  it('returns error when no backups exist', async () => {
+    tmpDir = tmpDir || await fs.mkdtemp(path.join(os.tmpdir(), 'push-undo-'));
+    const result = await executeToolCall(
+      { tool: 'undo_edit', args: { path: 'nonexistent.txt' } },
+      tmpDir,
+    );
+
+    assert.equal(result.ok, false);
+    assert.ok(result.text.includes('No backups found'));
+    assert.equal(result.structuredError.code, 'NO_BACKUP');
+  });
+
+  it('is NOT classified as read-only', () => {
+    assert.equal(isReadOnlyToolCall({ tool: 'undo_edit' }), false);
   });
 });
