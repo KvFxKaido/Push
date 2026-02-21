@@ -3,41 +3,46 @@
 [![Deploy Modal](https://github.com/KvFxKaido/Push/actions/workflows/deploy-modal.yml/badge.svg)](https://github.com/KvFxKaido/Push/actions/workflows/deploy-modal.yml)
 [![CI](https://github.com/KvFxKaido/Push/actions/workflows/ci.yml/badge.svg)](https://github.com/KvFxKaido/Push/actions/workflows/ci.yml)
 
-**Built for reviewing, deciding, and shipping — not typing thousands of lines on glass.**
+Mobile-native AI coding agent for developers who ship from anywhere.
 
-Push is a mobile-native AI coding agent with direct GitHub repo access. It is built as an **execution control plane** for builders who already have an AI stack and want to keep shipping when away from their desk.
+No platform lock-in. Open source. Start on free tiers.
+
+Push is a personal chat interface backed by role-based AI agents that read your code, write patches, run checks in a sandbox, and commit/push changes from your phone or terminal.
+
+Try it free with provider free tiers: Google Gemini, OpenCode Zen, Ollama Cloud, or Z.AI.
+Bring your own provider: Mistral, Ollama Cloud, OpenRouter, Z.AI, Google, or OpenCode Zen.
+Switch providers on new chats at any time.
+Self-hosting path included.
 
 ## What It Does
 
-Push is a personal chat interface backed by role-based AI agents. Select a repo, ask questions, and orchestrate real code work from your phone.
+Push is an execution control plane for developers who need to keep shipping when away from their desk.
 
-- **Review and decide fast** — PRs, diffs, checks, and repo state in structured cards
-- **Delegate implementation** — Orchestrator can hand coding work to Coder in a live sandbox
-- **Gate risky changes** — Auditor enforces a SAFE/UNSAFE pre-commit verdict
-- **Stay repo-locked** — active chat context is bound to one repo and one active branch
-- **Use your existing AI stack** — pick Mistral, Ollama Cloud, OpenRouter, Z.AI, Google, or OpenCode Zen
-- **Resume interrupted runs** — checkpoint + reconciliation flow when mobile sessions are interrupted
-- **Merge from mobile** — branch, commit, push, and merge through GitHub PR flow
-- **Fallback to sandbox-only mode** — start without GitHub auth and export your workspace anytime
+- Review fast with structured cards for PRs, diffs, checks, and repo state
+- Delegate implementation from Orchestrator to Coder in a live sandbox
+- Gate risky changes with Auditor SAFE/UNSAFE pre-commit verdicts
+- Keep context repo-locked to one repo and one active branch
+- Resume interrupted mobile runs with checkpoint + reconciliation
+- Branch, commit, push, and merge through GitHub PR flow
+- Start in sandbox-only mode without GitHub auth and export anytime
+- Use the same role-based agent system from terminal with Push CLI
 
 ## Why Push Is Different
 
-- **Role-separated agents** — Orchestrator, Coder, and Auditor have distinct responsibilities
-- **Branch-scoped memory** — chats are permanently tied to the branch where they were created
-- **Provider-agnostic backend** — backend choice is runtime-selectable and locked per chat for consistency
+- Runtime-selectable AI backends, no single-vendor lock-in
+- Zero-barrier entry with free-tier-capable providers
+- Full role-separated architecture: Orchestrator, Coder, Auditor
+- Branch-scoped chat memory tied to the branch where each chat starts
 
 ## Who It's For
 
-Push is for builders in motion:
+- Solo builders shipping while away from desktop
+- Teams already paying for model providers and needing execution leverage
+- Developers wanting a full AI coding workflow without buying another subscription
 
-- **Solo founders** who need to review and ship while away from desktop
-- **Indie hackers** who already pay for AI providers and want better execution leverage
-- **Lead developers / CTOs** who want mobile oversight and approvals without losing technical depth
-- **Developers who want control** — open-source codebase with self-hosting path and provider choice
+Push is optimized for momentum, decisions, and execution control from mobile, not for replacing deep desktop IDE sessions.
 
-Push is not trying to replace desktop IDE flow for deep coding sessions. It is optimized for momentum, decisions, and execution control from mobile.
-
-The app is free. AI usage depends on your provider subscription, and you choose which provider to run.
+The app is free. AI usage depends on the provider and plan you choose.
 
 ## Tech Stack
 
