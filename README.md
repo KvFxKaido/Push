@@ -107,16 +107,16 @@ VITE_GITHUB_REDIRECT_URI=...          # Optional — GitHub OAuth redirect URI
 VITE_BROWSER_TOOL_ENABLED=true        # Optional — enables sandbox browser tools in prompts
 ```
 
-### Provider Key Policy (Mistral)
+### Provider Key Policy (All Providers)
 
-- Use a standard Mistral workspace API key for `api.mistral.ai` (`VITE_MISTRAL_API_KEY` in local web dev, `MISTRAL_API_KEY` as Worker secret in production).
-- Do not use the auto-generated **Mistral Code extension** key in Push.
-- Do not use a **Codestral-only** domain key (`codestral.mistral.ai`) with default Push config.
-- Terms boundary: personal/internal usage follows consumer terms; business/distributed usage should follow commercial terms.
-- Review cadence: quarterly. Last reviewed **2026-02-21**. Full policy and references: `documents/security/PROVIDER_USAGE_POLICY.md`.
-- Matching provider policies:
+- Use provider-native API keys for the selected backend and keep production keys server-side (Worker secrets), not in shipped client bundles.
+- Review cadence: quarterly. Last reviewed **2026-02-21** (next target **2026-05-21**).
+- Full per-provider policies and references:
+  - Mistral: `documents/security/PROVIDER_USAGE_POLICY.md`
   - OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
   - Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
+  - Z.AI: `documents/security/PROVIDER_USAGE_POLICY_ZAI.md`
+  - Google Gemini: `documents/security/PROVIDER_USAGE_POLICY_GOOGLE.md`
 
 Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings.
 

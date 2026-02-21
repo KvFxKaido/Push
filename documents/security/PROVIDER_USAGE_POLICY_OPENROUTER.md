@@ -3,6 +3,12 @@
 Last reviewed: 2026-02-21  
 Review cadence: Quarterly (next target: 2026-05-21)
 
+Related policies:
+- Mistral: `documents/security/PROVIDER_USAGE_POLICY.md`
+- Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
+- Z.AI: `documents/security/PROVIDER_USAGE_POLICY_ZAI.md`
+- Google Gemini: `documents/security/PROVIDER_USAGE_POLICY_GOOGLE.md`
+
 ## Scope
 
 This policy covers OpenRouter API key usage and operational terms-boundary checks for Push web and Push CLI.

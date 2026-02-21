@@ -6,6 +6,8 @@ Review cadence: Quarterly (next target: 2026-05-21)
 Related policies:
 - OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
 - Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
+- Z.AI: `documents/security/PROVIDER_USAGE_POLICY_ZAI.md`
+- Google Gemini: `documents/security/PROVIDER_USAGE_POLICY_GOOGLE.md`
 
 ## Scope
 

@@ -46,6 +46,10 @@ Use this file to navigate active design/planning docs versus historical referenc
   - Status: OpenRouter provider key usage policy and terms-boundary review checklist (last reviewed 2026-02-21).
 - `security/PROVIDER_USAGE_POLICY_OLLAMA.md`
   - Status: Ollama provider key usage policy and terms/data-boundary review checklist (last reviewed 2026-02-21).
+- `security/PROVIDER_USAGE_POLICY_ZAI.md`
+  - Status: Z.AI provider key usage policy and terms/data-boundary review checklist (last reviewed 2026-02-21).
+- `security/PROVIDER_USAGE_POLICY_GOOGLE.md`
+  - Status: Google Gemini provider key usage policy and terms/data-boundary review checklist (last reviewed 2026-02-21).
 
 ### CLI Docs
 
