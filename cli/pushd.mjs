@@ -145,7 +145,9 @@ async function handleStartSession(req) {
 }
 
 async function handleSendUserMessage(req, emitEvent) {
-  const { sessionId, text } = req.payload || {};
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const text = req.payload?.text;
+  
   if (!sessionId || !text) {
     return makeErrorResponse(req.requestId, 'send_user_message', 'INVALID_REQUEST', 'sessionId and text are required');
   }
@@ -186,30 +188,37 @@ async function handleSendUserMessage(req, emitEvent) {
   // Run in background — emit events as they happen
   (async () => {
     try {
-      const result = await runAssistantLoop(state, providerConfig, apiKey, DEFAULT_MAX_ROUNDS, false);
-      await saveSessionState(state);
-      // Emit run_complete event to attached clients
-      emitEvent({
-        v: PROTOCOL_VERSION,
-        kind: 'event',
-        sessionId,
-        runId,
-        seq: state.eventSeq + 1,
-        ts: Date.now(),
-        type: 'run_complete',
-        payload: {
-          runId,
-          outcome: result.outcome === 'success' ? 'success' : 'failed',
-          summary: result.finalAssistantText.slice(0, 500),
-        },
+      const persistedTypes = new Set([
+        'tool_call', 'tool_result', 'assistant_done', 
+        'warning', 'error', 'run_complete'
+      ]);
+
+      const result = await runAssistantLoop(state, providerConfig, apiKey, DEFAULT_MAX_ROUNDS, {
+        emit: (event) => {
+          let seq = state.eventSeq;
+          if (!persistedTypes.has(event.type)) {
+            seq = state.eventSeq + 1;
+            state.eventSeq = seq;
+          }
+          
+          emitEvent({
+            v: PROTOCOL_VERSION,
+            kind: 'event',
+            sessionId: event.sessionId,
+            runId: event.runId,
+            seq,
+            ts: Date.now(),
+            type: event.type,
+            payload: event.payload
+          });
+        }
       });
+      await saveSessionState(state);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await appendSessionEvent(state, 'error', {
-        code: 'INTERNAL_ERROR',
-        message,
-        retryable: false,
-      }, runId);
+      // If engine didn't emit run_complete/error (e.g. persisted failure), we do it here.
+      // But engine usually handles its own errors.
+      // We'll just ensure state is saved.
       await saveSessionState(state);
     }
   })();

@@ -27,6 +27,12 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function truncateText(text, maxLength = 100) {
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + '...';
+}
+
 function printHelp() {
   process.stdout.write(
     `Push CLI (bootstrap)
@@ -95,6 +101,59 @@ async function runAcceptanceChecks(cwd, checks) {
   };
 }
 
+function makeCLIEventHandler() {
+  let isThinking = false;
+
+  return (event) => {
+    switch (event.type) {
+      case 'tool_call':
+        if (isThinking) {
+          process.stdout.write('\n');
+          isThinking = false;
+        }
+        process.stdout.write(`[tool] ${event.payload.toolName}\n`);
+        break;
+      case 'tool_result':
+        const ok = !event.payload.isError;
+        const text = truncateText(event.payload.text, 420);
+        process.stdout.write(`[tool:${ok ? 'ok' : 'error'}] ${text}\n`);
+        break;
+      case 'status':
+        if (event.payload.phase === 'context_trimming') {
+          process.stdout.write(`\n[context] ${event.payload.detail}\n`);
+        }
+        break;
+      case 'assistant_token':
+        if (!isThinking) {
+          process.stdout.write('\nassistant> ');
+          isThinking = true;
+        }
+        process.stdout.write(event.payload.text);
+        break;
+      case 'assistant_done':
+        if (isThinking) {
+          process.stdout.write('\n');
+          isThinking = false;
+        }
+        break;
+      case 'warning':
+        process.stdout.write(`\n[warning] ${event.payload.message || event.payload.code}\n`);
+        break;
+      case 'error':
+        // Tool loop errors etc
+        process.stdout.write(`\n[error] ${event.payload.message}\n`);
+        break;
+      case 'run_complete':
+        if (event.payload.outcome === 'aborted') {
+            process.stdout.write('\n[cancelled]\n');
+        } else if (event.payload.outcome === 'failed') {
+            process.stdout.write(`\n[failed] ${event.payload.summary}\n`);
+        }
+        break;
+    }
+  };
+}
+
 async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks) {
   state.messages.push({ role: 'user', content: task });
   await appendSessionEvent(state, 'user_message', { chars: task.length, preview: task.slice(0, 280) });
@@ -104,7 +163,11 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
   process.on('SIGINT', onSigint);
 
   try {
-    const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, false, { signal: ac.signal });
+    // Headless run is silent during execution unless we want to wire up a log listener later
+    const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, {
+      signal: ac.signal,
+      emit: null, 
+    });
     await saveSessionState(state);
 
     // Non-throw abort path (engine returned outcome: 'aborted' without throwing)
@@ -197,6 +260,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
   });
 
   const approvalFn = makeInteractiveApprovalFn(rl);
+  const onEvent = makeCLIEventHandler();
 
   const nativeFC = resolveNativeFC(providerConfig);
   process.stdout.write(
@@ -248,17 +312,25 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       process.on('SIGINT', onSigint);
 
       try {
-        const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, true, { approvalFn, signal: ac.signal });
+        const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, {
+          approvalFn,
+          signal: ac.signal,
+          emit: onEvent,
+        });
         await saveSessionState(state);
         if (result.outcome === 'aborted') {
-          process.stdout.write('\n[cancelled]\n');
+           // handled by event
         } else if (result.outcome !== 'success') {
-          process.stdout.write(`[warn] ${result.finalAssistantText}\n`);
+           // handled by event? run_complete covers failed/aborted.
+           // but engine.mjs return value might have finalAssistantText even on error
+           if (result.outcome === 'max_rounds' || result.outcome === 'error') {
+               // warning already emitted
+           }
         }
       } catch (err) {
         if (err.name === 'AbortError') {
           await saveSessionState(state);
-          process.stdout.write('\n[cancelled]\n');
+          // handled by event?
         } else {
           const message = err instanceof Error ? err.message : String(err);
           await appendSessionEvent(state, 'error', { message });

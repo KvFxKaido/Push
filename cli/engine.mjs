@@ -111,9 +111,10 @@ function buildParseErrorMessage(malformed) {
  * Run the assistant loop. Options:
  * - approvalFn: async (tool, detail) => boolean — gate for high-risk operations
  * - signal: AbortSignal — external abort (e.g. Ctrl+C)
+ * - emit: (event) => void — callback for streaming events (replaces stdout writing)
  */
-export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds, streamToStdout, options = {}) {
-  const { approvalFn, signal } = options;
+export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds, options = {}) {
+  const { approvalFn, signal, emit } = options;
   const runId = makeRunId();
   let finalAssistantText = '';
   const repeatedCalls = new Map();
@@ -124,17 +125,30 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     state.workingMemory = createWorkingMemory();
   }
 
-  async function executeOneToolCall(call, round, includeMemory = true) {
-    if (streamToStdout) {
-      process.stdout.write(`[tool] ${call.tool}\n`);
+  function dispatchEvent(type, payload) {
+    if (typeof emit === 'function') {
+      emit({
+        type,
+        payload,
+        runId,
+        sessionId: state.sessionId,
+      });
     }
+  }
 
+  async function executeOneToolCall(call, round, includeMemory = true) {
     const toolStart = Date.now();
     await appendSessionEvent(state, 'tool_call', {
       source: 'sandbox',
       toolName: call.tool,
       args: call.args,
     }, runId);
+
+    dispatchEvent('tool_call', {
+      source: 'sandbox',
+      toolName: call.tool,
+      args: call.args,
+    });
 
     const result = await executeToolCall(call, state.cwd, { approvalFn, signal });
     const durationMs = Date.now() - toolStart;
@@ -150,9 +164,14 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
 
     updateFileLedger(fileLedger, call, result);
 
-    if (streamToStdout) {
-      process.stdout.write(`[tool:${result.ok ? 'ok' : 'error'}] ${truncateText(result.text, 420)}\n`);
-    }
+    dispatchEvent('tool_result', {
+      source: 'sandbox',
+      toolName: call.tool,
+      durationMs,
+      isError: !result.ok,
+      text: result.text,
+      structuredError: result.structuredError || null,
+    });
 
     const metaEnvelope = {
       runId,
@@ -177,17 +196,20 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     if (signal?.aborted) {
       await saveSessionState(state);
       await appendSessionEvent(state, 'run_complete', { runId, outcome: 'aborted', summary: 'Aborted by user.' }, runId);
+      dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
       return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
     }
 
     // Trim context to fit provider budget (state.messages is never mutated)
     const trimResult = trimContext(state.messages, providerConfig.id, state.model);
     lastTrimResult = trimResult;
-    if (trimResult.trimmed && streamToStdout) {
-      process.stdout.write(`\n[context] ${trimResult.beforeTokens} → ${trimResult.afterTokens} tokens (${trimResult.removedCount} msgs removed)\n`);
+    if (trimResult.trimmed) {
+      dispatchEvent('status', {
+        source: 'orchestrator',
+        phase: 'context_trimming',
+        detail: `${trimResult.beforeTokens} → ${trimResult.afterTokens} tokens (${trimResult.removedCount} msgs removed)`,
+      });
     }
-
-    if (streamToStdout) process.stdout.write('\nassistant> ');
 
     const useNativeFC = resolveNativeFC(providerConfig);
     const fcOptions = useNativeFC
@@ -200,14 +222,12 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       state.model,
       trimResult.messages,
       (token) => {
-        if (streamToStdout) process.stdout.write(token);
+        dispatchEvent('assistant_token', { text: token });
       },
       undefined,
       signal,
       fcOptions,
     );
-
-    if (streamToStdout) process.stdout.write('\n');
 
     finalAssistantText = assistantText.trim();
     state.messages.push({ role: 'assistant', content: assistantText });
@@ -217,6 +237,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     await appendSessionEvent(state, 'assistant_done', {
       messageId,
     }, runId);
+    dispatchEvent('assistant_done', { messageId });
 
     const detected = detectAllToolCalls(assistantText);
 
@@ -229,6 +250,11 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
         count: detected.malformed.length,
         reasons: detected.malformed.map((m) => m.reason),
       }, runId);
+      dispatchEvent('warning', {
+        code: 'MALFORMED_TOOL_CALL',
+        message: 'Malformed tool calls detected',
+        detail: detected.malformed.map((m) => m.reason).join(', '),
+      });
       state.messages.push({ role: 'user', content: buildParseErrorMessage(detected.malformed) });
     }
 
@@ -250,6 +276,13 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
           { runId, round, contextChars, ledger: getLedgerSummary(fileLedger), workingMemory: updated },
         ),
       });
+      dispatchEvent('tool_result', {
+        source: 'memory',
+        toolName: call.tool,
+        durationMs: 0,
+        isError: false,
+        text: 'Working memory updated.',
+      });
     }
 
     const toolCalls = detected.calls.filter((call) => call.tool !== 'coder_update_state');
@@ -264,6 +297,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
         outcome: 'success',
         summary: finalAssistantText.slice(0, 500),
       }, runId);
+      dispatchEvent('run_complete', { outcome: 'success', summary: finalAssistantText });
       return { outcome: 'success', finalAssistantText, rounds: round, runId };
     }
 
@@ -278,6 +312,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
         message: loopText,
         retryable: false,
       }, runId);
+      dispatchEvent('error', { code: 'TOOL_LOOP_DETECTED', message: loopText });
       return { outcome: 'error', finalAssistantText: loopText, rounds: round, runId };
     }
 
@@ -323,6 +358,13 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
           ),
         });
         toolsUsed.add(call.tool);
+        dispatchEvent('tool_call', { source: 'sandbox', toolName: call.tool, args: call.args });
+        dispatchEvent('tool_result', {
+          source: 'sandbox',
+          toolName: call.tool,
+          isError: true,
+          text: result.text,
+        });
       }
     }
 
@@ -335,5 +377,6 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     outcome: 'failed',
     summary: warning,
   }, runId);
+  dispatchEvent('run_complete', { outcome: 'failed', summary: warning });
   return { outcome: 'max_rounds', finalAssistantText: warning, rounds: maxRounds, runId };
 }
