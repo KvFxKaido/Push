@@ -5,6 +5,7 @@ import { streamCompletion } from './provider.mjs';
 import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.mjs';
 import { recordMalformedToolCall } from './tool-call-metrics.mjs';
 import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.mjs';
+import { trimContext } from './context-manager.mjs';
 
 export const DEFAULT_MAX_ROUNDS = 8;
 
@@ -152,6 +153,8 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       runId,
       round,
       contextChars,
+      trimmed: lastTrimResult?.trimmed || false,
+      estimatedTokens: lastTrimResult?.afterTokens || 0,
       ledger: getLedgerSummary(fileLedger),
       ...(includeMemory ? { workingMemory: state.workingMemory } : {}),
     };
@@ -162,6 +165,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
   }
 
   let contextChars = 0;
+  let lastTrimResult = null;
 
   for (let round = 1; round <= maxRounds; round++) {
     contextChars = state.messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
@@ -171,13 +175,20 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
       return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
     }
 
+    // Trim context to fit provider budget (state.messages is never mutated)
+    const trimResult = trimContext(state.messages, providerConfig.id, state.model);
+    lastTrimResult = trimResult;
+    if (trimResult.trimmed && streamToStdout) {
+      process.stdout.write(`\n[context] ${trimResult.beforeTokens} → ${trimResult.afterTokens} tokens (${trimResult.removedCount} msgs removed)\n`);
+    }
+
     if (streamToStdout) process.stdout.write('\nassistant> ');
 
     const assistantText = await streamCompletion(
       providerConfig,
       apiKey,
       state.model,
-      state.messages,
+      trimResult.messages,
       (token) => {
         if (streamToStdout) process.stdout.write(token);
       },
