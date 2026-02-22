@@ -8,9 +8,8 @@
 ## Implementation Status Snapshot (2026-02-21)
 
 - [x] Priority 1 shipped: CLI context trimming is active (`cli/context-manager.mjs`, integrated in `cli/engine.mjs`).
-- [x] Priority 2 shipped (core): native function-calling path + prompt-engineered fallback are active for both CLI and web.
+- [x] Priority 2 shipped (core): all tools are prompt-engineered (native function-calling removed).
 - [x] Priority 2 shipped (visibility): malformed-call diagnostics are tracked by provider/model and surfaced in Settings.
-- [ ] Priority 2 follow-up: automatic provider/model capability probing is still pending (current mode uses provider defaults plus `PUSH_NATIVE_FC` / `VITE_NATIVE_FC` override).
 - [x] Priority 3 decision unchanged: keep hashline edit safety.
 
 ## Context

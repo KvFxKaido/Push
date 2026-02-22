@@ -476,37 +476,44 @@ function toLLMMessages(
   providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen',
   providerModel?: string,
 ): LLMMessage[] {
-  // Build system prompt: base + user identity + workspace context + tool protocol + optional sandbox tools + scratchpad
-  let systemContent = systemPromptOverride || ORCHESTRATOR_SYSTEM_PROMPT;
+  // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
+  // composed a complete system prompt — don't append Orchestrator-specific protocols.
+  let systemContent: string;
 
-  // Inject user identity (name, bio) when configured
-  const identityBlock = buildUserIdentityBlock(getUserProfile());
-  if (identityBlock) {
-    systemContent += '\n\n' + identityBlock;
-  }
+  if (systemPromptOverride) {
+    systemContent = systemPromptOverride;
+  } else {
+    systemContent = ORCHESTRATOR_SYSTEM_PROMPT;
 
-  if (workspaceContext) {
-    systemContent += '\n\n' + workspaceContext + '\n' + TOOL_PROTOCOL;
-    if (hasSandbox) {
-      systemContent += '\n' + SANDBOX_TOOL_PROTOCOL;
+    // Inject user identity (name, bio) when configured
+    const identityBlock = buildUserIdentityBlock(getUserProfile());
+    if (identityBlock) {
+      systemContent += '\n\n' + identityBlock;
     }
-  } else if (hasSandbox) {
-    // Sandbox mode (no repo): include sandbox tools with ephemeral preamble, no GitHub tools
-    systemContent += '\n\nYou are in **Sandbox Mode** — an ephemeral Linux workspace with no GitHub repo connected.'
-      + ' You have full access to the sandbox filesystem and can create, edit, and run files freely.'
-      + ' Nothing is saved or committed unless the user explicitly downloads their work.'
-      + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.'
-      + '\n' + SANDBOX_TOOL_PROTOCOL;
-  }
 
-  // Always include scratchpad context and tools (even if empty)
-  systemContent += '\n' + SCRATCHPAD_TOOL_PROTOCOL;
-  if (scratchpadContent !== undefined) {
-    systemContent += '\n\n' + buildScratchpadContext(scratchpadContent);
-  }
+    if (workspaceContext) {
+      systemContent += '\n\n' + workspaceContext + '\n' + TOOL_PROTOCOL;
+      if (hasSandbox) {
+        systemContent += '\n' + SANDBOX_TOOL_PROTOCOL;
+      }
+    } else if (hasSandbox) {
+      // Sandbox mode (no repo): include sandbox tools with ephemeral preamble, no GitHub tools
+      systemContent += '\n\nYou are in **Sandbox Mode** — an ephemeral Linux workspace with no GitHub repo connected.'
+        + ' You have full access to the sandbox filesystem and can create, edit, and run files freely.'
+        + ' Nothing is saved or committed unless the user explicitly downloads their work.'
+        + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.'
+        + '\n' + SANDBOX_TOOL_PROTOCOL;
+    }
 
-  // Web search tool — prompt-engineered, all providers use client-side dispatch
-  systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
+    // Scratchpad context and tools
+    systemContent += '\n' + SCRATCHPAD_TOOL_PROTOCOL;
+    if (scratchpadContent !== undefined) {
+      systemContent += '\n\n' + buildScratchpadContext(scratchpadContent);
+    }
+
+    // Web search tool — prompt-engineered, all providers use client-side dispatch
+    systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
+  }
 
   const llmMessages: LLMMessage[] = [
     providerType === "openrouter" 
@@ -1096,7 +1103,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       totalTimeoutMs: 180_000,
       errorMessages: buildErrorMessages('Ollama Cloud', 'server may be cold-starting.'),
       parseError: (p, f) => parseProviderError(p, f),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length']),
       shouldResetStallOnReasoning: true,
       providerType: 'ollama',
     }),
@@ -1111,7 +1118,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Mistral'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length']),
       providerType: 'mistral' as const,
     }),
   },
@@ -1125,7 +1132,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('OpenRouter'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
       providerType: 'openrouter',
     }),
   },
@@ -1139,7 +1146,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Z.AI'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
       providerType: 'zai',
     }),
   },
@@ -1153,7 +1160,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Google'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
       providerType: 'google',
     }),
   },
@@ -1167,7 +1174,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('OpenCode Zen'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
       providerType: 'zen',
     }),
   },
