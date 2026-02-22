@@ -29,7 +29,7 @@ const KNOWN_OPTIONS = new Set([
   'provider', 'model', 'url', 'api-key', 'apiKey', 'cwd', 'session',
   'tavily-key', 'tavilyKey', 'search-backend', 'searchBackend',
   'task', 'accept', 'max-rounds', 'maxRounds', 'json', 'headless',
-  'allow-exec', 'allowExec', 'skill',
+  'allow-exec', 'allowExec', 'skill', 'mode',
   'help', 'sandbox', 'no-sandbox', 'version',
 ]);
 
@@ -83,6 +83,7 @@ Options:
   --accept <cmd>                Acceptance check command (repeatable)
   --max-rounds <n>              Tool-loop cap per user prompt (default: 8)
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
+  --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
   --sandbox                     Enable local Docker sandbox
   --no-sandbox                  Disable local Docker sandbox
@@ -218,7 +219,7 @@ function makeCLIEventHandler() {
   };
 }
 
-async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks, { allowExec = false, safeExecPatterns = [] } = {}) {
+async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks, { allowExec = false, safeExecPatterns = [], execMode = 'auto' } = {}) {
   await appendUserMessageWithFileReferences(state, task, state.cwd);
   await appendSessionEvent(state, 'user_message', { chars: task.length, preview: task.slice(0, 280) });
 
@@ -233,6 +234,7 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
       emit: null,
       allowExec,
       safeExecPatterns,
+      execMode,
     });
     await saveSessionState(state);
 
@@ -339,6 +341,13 @@ function makeInteractiveApprovalFn(rl) {
   };
 }
 
+function makeAskUserFn(rl) {
+  return async (question, choices) => {
+    const choiceHint = choices?.length ? `  Choices: ${choices.join(' / ')}\n` : '';
+    return rl.question(`\n  ${fmt.cyan('[?]')} ${question}\n${choiceHint}  > `);
+  };
+}
+
 async function handleModelCommand(arg, ctx, state, config) {
   const models = getCuratedModels(ctx.providerConfig.id);
 
@@ -439,11 +448,26 @@ async function handleProviderCommand(arg, ctx, state, config) {
   process.stdout.write(`Switched to ${target.id} | model: ${state.model}\n`);
 }
 
-async function runInteractive(state, providerConfig, apiKey, maxRounds) {
+async function runInteractive(state, providerConfig, apiKey, maxRounds, { alreadyPersisted = false } = {}) {
   // Mutable context — allows mid-session provider/model switching
   const ctx = { providerConfig, apiKey };
   const config = await loadConfig();
   const safeExecPatterns = Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [];
+
+  // Lazy session creation: defer disk writes until first user message.
+  let sessionPersisted = alreadyPersisted;
+  async function ensureSessionPersisted() {
+    if (sessionPersisted) return;
+    sessionPersisted = true;
+    await appendSessionEvent(state, 'session_started', {
+      sessionId: state.sessionId,
+      state: 'idle',
+      mode: 'interactive',
+      provider: state.provider,
+      sandboxProvider: process.env.PUSH_LOCAL_SANDBOX === 'true' ? 'local' : 'modal',
+    });
+    await saveSessionState(state);
+  }
   const skills = await loadSkills(state.cwd);
 
   async function reloadSkillsMap() {
@@ -489,6 +513,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
     );
   }
 
+  const execMode = process.env.PUSH_EXEC_MODE || 'auto';
   const completer = createCompleter({ ctx, skills, getCuratedModels, getProviderList, workspaceRoot: state.cwd });
   const rl = createInterface({
     input: process.stdin,
@@ -498,6 +523,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
   });
 
   const approvalFn = makeInteractiveApprovalFn(rl);
+  const askUserFn = makeAskUserFn(rl);
   const onEvent = makeCLIEventHandler();
   let runInFlight = false;
   let exitRequestedBySigint = false;
@@ -556,8 +582,10 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       }
       if (line === '/new') {
         const previousSessionId = state.sessionId;
+        await ensureSessionPersisted(); // flush any unpersisted current session before switching
         await saveSessionState(state);
         state = await initSession(null, state.provider, state.model, state.cwd);
+        sessionPersisted = false; // new session is lazy
         process.stdout.write(
           `Started new session: ${state.sessionId} ` +
           `(${fmt.dim(`from ${previousSessionId}`)}) ` +
@@ -654,6 +682,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           const args = spaceIdx === -1 ? '' : line.slice(spaceIdx + 1).trim();
           const promptTemplate = await getSkillPromptTemplate(skill);
           const prompt = interpolateSkill(promptTemplate, args);
+          await ensureSessionPersisted();
           await appendUserMessageWithFileReferences(state, prompt, state.cwd, { referenceSourceText: args });
           await appendSessionEvent(state, 'user_message', { chars: prompt.length, preview: prompt.slice(0, 280), skill: cmdName });
 
@@ -665,9 +694,11 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           try {
             const result = await runAssistantLoop(state, ctx.providerConfig, ctx.apiKey, maxRounds, {
               approvalFn,
+              askUserFn,
               signal: ac.signal,
               emit: onEvent,
               safeExecPatterns,
+              execMode,
             });
             await saveSessionState(state);
           } catch (err) {
@@ -692,6 +723,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
         continue;
       }
 
+      await ensureSessionPersisted();
       await appendUserMessageWithFileReferences(state, line, state.cwd);
       await appendSessionEvent(state, 'user_message', { chars: line.length, preview: line.slice(0, 280) });
 
@@ -703,9 +735,11 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       try {
         const result = await runAssistantLoop(state, ctx.providerConfig, ctx.apiKey, maxRounds, {
           approvalFn,
+          askUserFn,
           signal: ac.signal,
           emit: onEvent,
           safeExecPatterns,
+          execMode,
         });
         await saveSessionState(state);
         if (result.outcome === 'aborted') {
@@ -783,14 +817,9 @@ async function initSession(sessionId, provider, model, cwd) {
   // Start enriching the system prompt in the background — will be
   // awaited before the first LLM call in runAssistantLoop.
   ensureSystemPromptReady(state);
-  await appendSessionEvent(state, 'session_started', {
-    sessionId: newSessionId,
-    state: 'idle',
-    mode: 'interactive',
-    provider,
-    sandboxProvider: process.env.PUSH_LOCAL_SANDBOX === 'true' ? 'local' : 'modal',
-  });
-  await saveSessionState(state);
+  // Disk writes are deferred to first user message (lazy session creation).
+  // The caller is responsible for calling appendSessionEvent('session_started') + saveSessionState
+  // before the first user_message event.
   return state;
 }
 
@@ -1239,6 +1268,7 @@ export async function main() {
       headless: { type: 'boolean', default: false },
       'allow-exec': { type: 'boolean' },
       allowExec: { type: 'boolean' },
+      mode: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       sandbox: { type: 'boolean' },
       'no-sandbox': { type: 'boolean' },
@@ -1281,6 +1311,15 @@ export async function main() {
   const searchBackendArg = getSearchBackendArg(values);
   if (searchBackendArg) {
     process.env.PUSH_WEB_SEARCH_BACKEND = parseSearchBackend(searchBackendArg);
+  }
+
+  // --mode flag wins over config (config was already applied to env via applyConfigToEnv)
+  const VALID_EXEC_MODES = new Set(['strict', 'auto', 'yolo']);
+  if (values.mode) {
+    if (!VALID_EXEC_MODES.has(values.mode)) {
+      throw new Error(`Invalid --mode "${values.mode}". Valid values: strict, auto, yolo`);
+    }
+    process.env.PUSH_EXEC_MODE = values.mode;
   }
 
   const subcommand = positionals[0] || '';
@@ -1486,7 +1525,8 @@ export async function main() {
     const apiKey = resolveApiKey(providerConfig);
     const allowExec = values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
     const headlessSafePatterns = Array.isArray(persistedConfig.safeExecPatterns) ? persistedConfig.safeExecPatterns : [];
-    return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks, { allowExec, safeExecPatterns: headlessSafePatterns });
+    const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
+    return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks, { allowExec, safeExecPatterns: headlessSafePatterns, execMode: headlessExecMode });
   }
 
   // Default UX: bare "push" opens TUI when enabled.
@@ -1506,7 +1546,7 @@ export async function main() {
   }
 
   const apiKey = resolveApiKey(providerConfig);
-  return runInteractive(state, providerConfig, apiKey, maxRounds);
+  return runInteractive(state, providerConfig, apiKey, maxRounds, { alreadyPersisted: !!values.session });
 }
 
 main()

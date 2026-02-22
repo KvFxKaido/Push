@@ -147,7 +147,7 @@ function buildParseErrorMessage(malformed) {
  * - runId: string — optional run id override (used by pushd for ack/event correlation)
  */
 export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds, options = {}) {
-  const { approvalFn, signal, emit, runId: providedRunId, allowExec, safeExecPatterns } = options;
+  const { approvalFn, askUserFn, signal, emit, runId: providedRunId, allowExec, safeExecPatterns, execMode } = options;
   const runId = providedRunId || makeRunId();
   let finalAssistantText = '';
   const repeatedCalls = new Map();
@@ -189,9 +189,11 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
 
     const result = await executeToolCall(call, state.cwd, {
       approvalFn,
+      askUserFn,
       signal,
       allowExec,
       safeExecPatterns,
+      execMode,
       providerId: providerConfig?.id,
       providerApiKey: apiKey,
     });

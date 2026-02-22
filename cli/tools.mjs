@@ -136,6 +136,7 @@ Available tools:
 - undo_edit(path) — restore a file from its most recent backup (created before each write/edit)
 - save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session.
 - coder_update_state(plan?, openTasks?, filesTouched?, assumptions?, errorsEncountered?) — update working memory (no filesystem action)
+- ask_user(question, choices?) — pause and ask the operator a clarifying question; choices is an optional string[] of suggested answers. Use only when a critical ambiguity would cause significant wasted work — avoid for questions you can reasonably assume.
 
 Rules:
 - Paths are relative to workspace root unless absolute inside workspace.
@@ -820,12 +821,33 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         }
       }
 
+      case 'ask_user': {
+        const question = asString(call.args.question, 'question');
+        const choices = Array.isArray(call.args.choices) ? call.args.choices.map(String) : null;
+
+        if (typeof options.askUserFn === 'function') {
+          const answer = await options.askUserFn(question, choices);
+          return {
+            ok: true,
+            text: `User answered: ${answer}`,
+            meta: { question, choices },
+          };
+        }
+        // Headless / non-interactive fallback
+        return {
+          ok: true,
+          text: 'Non-interactive session — make a reasonable assumption and document it via coder_update_state.',
+          meta: { question, choices, non_interactive: true },
+        };
+      }
+
       case 'exec': {
         const command = asString(call.args.command, 'command');
         const timeoutMs = clamp(asOptionalNumber(call.args.timeout_ms) ?? 90_000, 1_000, 180_000);
+        const execMode = options.execMode ?? 'auto';
 
-        // In headless mode (no approvalFn), block ALL exec unless --allow-exec
-        if (!options.approvalFn && !options.allowExec) {
+        // In headless mode (no approvalFn), block ALL exec unless --allow-exec or yolo
+        if (!options.approvalFn && !options.allowExec && execMode !== 'yolo') {
           return {
             ok: false,
             text: `Blocked: exec is disabled in headless mode. Use --allow-exec to enable.`,
@@ -837,32 +859,62 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           };
         }
 
-        // Safe-command allowlist: skip high-risk gate for known-safe patterns
-        if (!isSafeCommand(command, options.safeExecPatterns)) {
-          if (isHighRiskCommand(command)) {
-            const { approvalFn } = options;
-            if (!approvalFn) {
-              return {
-                ok: false,
-                text: `Blocked: "${command}" is a high-risk command. Not allowed in headless mode without approval.`,
-                structuredError: {
-                  code: 'APPROVAL_REQUIRED',
-                  message: 'High-risk command blocked in non-interactive mode',
-                  retryable: false,
-                },
-              };
-            }
-            const approved = await approvalFn('exec', command);
-            if (!approved) {
-              return {
-                ok: false,
-                text: `Denied by user: "${command}" was not approved for execution.`,
-                structuredError: {
-                  code: 'APPROVAL_DENIED',
-                  message: 'User denied high-risk command',
-                  retryable: false,
-                },
-              };
+        // Tiered approval gate
+        if (execMode === 'yolo') {
+          // No prompts — fall through to execution
+        } else if (execMode === 'strict') {
+          // Prompt for ALL exec, even safe commands
+          if (!options.approvalFn) {
+            return {
+              ok: false,
+              text: `Blocked: exec requires approval in strict mode.`,
+              structuredError: {
+                code: 'APPROVAL_REQUIRED',
+                message: 'exec blocked in strict mode without approval function',
+                retryable: false,
+              },
+            };
+          }
+          const approved = await options.approvalFn('exec', command);
+          if (!approved) {
+            return {
+              ok: false,
+              text: `Denied by user: "${command}" was not approved for execution.`,
+              structuredError: {
+                code: 'APPROVAL_DENIED',
+                message: 'User denied command in strict mode',
+                retryable: false,
+              },
+            };
+          }
+        } else {
+          // auto (default): safe patterns bypass, high-risk commands prompt
+          if (!isSafeCommand(command, options.safeExecPatterns)) {
+            if (isHighRiskCommand(command)) {
+              const { approvalFn } = options;
+              if (!approvalFn) {
+                return {
+                  ok: false,
+                  text: `Blocked: "${command}" is a high-risk command. Not allowed in headless mode without approval.`,
+                  structuredError: {
+                    code: 'APPROVAL_REQUIRED',
+                    message: 'High-risk command blocked in non-interactive mode',
+                    retryable: false,
+                  },
+                };
+              }
+              const approved = await approvalFn('exec', command);
+              if (!approved) {
+                return {
+                  ok: false,
+                  text: `Denied by user: "${command}" was not approved for execution.`,
+                  structuredError: {
+                    code: 'APPROVAL_DENIED',
+                    message: 'User denied high-risk command',
+                    retryable: false,
+                  },
+                };
+              }
             }
           }
         }

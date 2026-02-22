@@ -48,6 +48,7 @@ export function applyConfigToEnv(config) {
   }
   setEnvIfMissing('PUSH_TAVILY_API_KEY', config.tavilyApiKey);
   setEnvIfMissing('PUSH_WEB_SEARCH_BACKEND', config.webSearchBackend);
+  setEnvIfMissing('PUSH_EXEC_MODE', config.execMode);
 
 
   const ollama = ensureObject(config.ollama);

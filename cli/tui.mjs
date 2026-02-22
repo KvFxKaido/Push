@@ -34,7 +34,7 @@ const MAX_TOOL_FEED = 200;     // max items in tool feed
 
 function createTUIState() {
   return {
-    // Run state machine: idle | running | awaiting_approval
+    // Run state machine: idle | running | awaiting_approval | awaiting_user_question
     runState: 'idle',
     // Transcript: array of { role, text, timestamp }
     transcript: [],
@@ -44,6 +44,8 @@ function createTUIState() {
     toolFeed: [],
     // Approval prompt (when awaiting_approval)
     approval: null,    // { kind, summary, details }
+    // User question prompt (when awaiting_user_question)
+    userQuestion: null,  // { question: string, choices?: string[] }
     // UI toggles
     toolPaneOpen: false,
     reasoningModalOpen: false,
@@ -248,7 +250,9 @@ function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
     ? theme.style('state.warn', ' streaming... ')
     : tuiState.runState === 'awaiting_approval'
       ? theme.style('state.error', ' approval required ')
-      : theme.style('fg.muted', ' message ');
+      : tuiState.runState === 'awaiting_user_question'
+        ? theme.style('accent.primary', ' ? question ')
+        : theme.style('fg.muted', ' message ');
   const tabHint = tabState ? tabState.hint : null;
   const label = tabHint
     ? stateLabel + theme.style('accent.primary', ` ${tabHint} `)
@@ -314,6 +318,11 @@ function renderFooter(buf, layout, theme, tuiState, keybindHints) {
       theme.style('accent.link', 'Ctrl+N / n') + theme.style('fg.dim', ' deny'),
       theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' dismiss'),
     ].join('  ');
+  } else if (tuiState.runState === 'awaiting_user_question') {
+    leftHints = [
+      theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' submit answer'),
+      theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' skip'),
+    ].join('  ');
   } else {
     leftHints = [
       theme.style('accent.link', 'Ctrl+T') + theme.style('fg.dim', ' tools'),
@@ -328,7 +337,9 @@ function renderFooter(buf, layout, theme, tuiState, keybindHints) {
     ? theme.style('state.warn', 'running')
     : tuiState.runState === 'awaiting_approval'
       ? theme.style('state.error', 'awaiting approval')
-      : theme.style('state.success', 'idle');
+      : tuiState.runState === 'awaiting_user_question'
+        ? theme.style('accent.primary', 'awaiting answer')
+        : theme.style('state.success', 'idle');
 
   // Layout left/right
   const rightWidth = visibleWidth(stateLabel);
@@ -371,6 +382,45 @@ function renderApprovalModal(buf, theme, rows, cols, approval) {
   const modalLeft = Math.floor((cols - modalWidth) / 2);
 
   // Draw box
+  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
+  for (let i = 0; i < boxLines.length; i++) {
+    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
+  }
+}
+
+function renderQuestionModal(buf, theme, rows, cols, userQuestion, inputBuf) {
+  if (!userQuestion) return;
+  const { glyphs } = theme;
+
+  const modalWidth = Math.min(64, cols - 8);
+  const lines = [
+    theme.bold(theme.style('accent.primary', '  Question')),
+    '',
+  ];
+
+  // Wrap the question text
+  const questionLines = wordWrap(userQuestion.question || '', modalWidth - 6);
+  for (const ql of questionLines) {
+    lines.push(`  ${theme.style('fg.primary', ql)}`);
+  }
+
+  // Choices (if provided)
+  if (userQuestion.choices?.length) {
+    lines.push('');
+    lines.push(`  ${theme.style('fg.secondary', 'Choices:')} ${userQuestion.choices.map((c) => theme.style('accent.link', c)).join('  ')}`);
+  }
+
+  lines.push('');
+  // Input line with cursor
+  const inputDisplay = inputBuf + theme.style('fg.primary', '█');
+  lines.push(`  ${theme.style('fg.dim', '›')} ${inputDisplay}`);
+  lines.push('');
+  lines.push(`  ${theme.style('accent.link', 'Enter')} ${theme.style('fg.dim', 'submit')}  ${theme.style('accent.link', 'Esc')} ${theme.style('fg.dim', 'skip')}`);
+
+  const modalHeight = lines.length + 2;
+  const modalTop = Math.floor((rows - modalHeight) / 2);
+  const modalLeft = Math.floor((cols - modalWidth) / 2);
+
   const boxLines = drawBox(lines, modalWidth, glyphs, theme);
   for (let i = 0; i < boxLines.length; i++) {
     buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
@@ -841,13 +891,7 @@ export async function runTUI(options = {}) {
     // Start enriching the system prompt in the background — will be
     // awaited before the first LLM call in runAssistantLoop.
     ensureSystemPromptReady(nextState);
-    await appendSessionEvent(nextState, 'session_started', {
-      sessionId,
-      state: 'idle',
-      mode: 'tui',
-      provider: providerName,
-    });
-    await saveSessionState(nextState);
+    // Disk writes are deferred to first user message (lazy session creation).
     return nextState;
   }
 
@@ -903,6 +947,22 @@ export async function runTUI(options = {}) {
     providerConfig: activeProviderConfig,
     apiKey: resolveApiKey(activeProviderConfig),
   };
+
+  // ── Lazy session creation ─────────────────────────────────────────
+  // Resumed sessions are already on disk; fresh sessions are persisted on first message.
+  let sessionPersisted = !!options.sessionId;
+
+  async function ensureSessionPersisted() {
+    if (sessionPersisted) return;
+    sessionPersisted = true;
+    await appendSessionEvent(state, 'session_started', {
+      sessionId: state.sessionId,
+      state: 'idle',
+      mode: 'tui',
+      provider: state.provider,
+    });
+    await saveSessionState(state);
+  }
 
   // ── Git branch (best-effort) ─────────────────────────────────────
 
@@ -991,6 +1051,9 @@ export async function runTUI(options = {}) {
     // Modals (overlay)
     if (tuiState.runState === 'awaiting_approval' && tuiState.approval) {
       renderApprovalModal(screenBuf, theme, rows, cols, tuiState.approval);
+    }
+    if (tuiState.runState === 'awaiting_user_question' && tuiState.userQuestion) {
+      renderQuestionModal(screenBuf, theme, rows, cols, tuiState.userQuestion, questionInputBuf);
     }
     if (tuiState.reasoningModalOpen) {
       renderReasoningModal(screenBuf, theme, rows, cols, tuiState);
@@ -1142,6 +1205,73 @@ export async function runTUI(options = {}) {
   let approvalResolve = null;
   const trustedPatterns = new Set();
 
+  // ── Ask-user handling ─────────────────────────────────────────────
+
+  let questionResolve = null;
+  let questionInputBuf = '';
+
+  function makeAskUserFn() {
+    return (question, choices) => new Promise((resolve) => {
+      questionInputBuf = '';
+      questionResolve = resolve;
+      tuiState.runState = 'awaiting_user_question';
+      tuiState.userQuestion = { question, choices: choices ?? null };
+      tuiState.dirty.add('all');
+      scheduler.flush();
+    });
+  }
+
+  function submitQuestionAnswer() {
+    if (questionResolve) {
+      const answer = questionInputBuf;
+      questionResolve(answer);
+      questionResolve = null;
+      questionInputBuf = '';
+      tuiState.userQuestion = null;
+      tuiState.runState = 'running';
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+    }
+  }
+
+  function dismissQuestion() {
+    if (questionResolve) {
+      questionResolve('(skipped — make a reasonable assumption)');
+      questionResolve = null;
+      questionInputBuf = '';
+      tuiState.userQuestion = null;
+      tuiState.runState = 'running';
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+    }
+  }
+
+  /** Dedicated input handler for the ask_user modal — captures typed text. */
+  function handleQuestionInput(key) {
+    if (key.name === 'return' || key.name === 'enter') {
+      submitQuestionAnswer();
+      return;
+    }
+    if (key.name === 'escape') {
+      dismissQuestion();
+      return;
+    }
+    if (key.name === 'backspace' || key.name === 'delete') {
+      if (questionInputBuf.length > 0) {
+        questionInputBuf = questionInputBuf.slice(0, -1);
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+      }
+      return;
+    }
+    // Printable character
+    if (key.sequence && !key.ctrl && !key.meta && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
+      questionInputBuf += key.sequence;
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+    }
+  }
+
   function makeApprovalFn() {
     return (tool, detail) => {
       const patternIndex = matchingRiskPatternIndex(detail);
@@ -1222,6 +1352,7 @@ export async function runTUI(options = {}) {
     tuiState.dirty.add('all');
     scheduler.flush();
 
+    await ensureSessionPersisted();
     await appendUserMessageWithFileReferences(state, text, state.cwd, {
       referenceSourceText: options.referenceSourceText,
     });
@@ -1232,9 +1363,11 @@ export async function runTUI(options = {}) {
     try {
       await runAssistantLoop(state, ctx.providerConfig, ctx.apiKey, maxRounds, {
         approvalFn: makeApprovalFn(),
+        askUserFn: makeAskUserFn(),
         signal: runAbort.signal,
         emit: handleEngineEvent,
         safeExecPatterns,
+        execMode: process.env.PUSH_EXEC_MODE || 'auto',
       });
       await saveSessionState(state);
     } catch (err) {
@@ -1389,8 +1522,10 @@ export async function runTUI(options = {}) {
     }
 
     const previousSessionId = state.sessionId;
+    await ensureSessionPersisted(); // flush any unpersisted current session before switching
     await saveSessionState(state);
     state = nextState;
+    sessionPersisted = true; // resumed session is already on disk
     ctx.providerConfig = nextProviderConfig;
     ctx.apiKey = nextApiKey;
 
@@ -1725,8 +1860,10 @@ export async function runTUI(options = {}) {
     }
 
     const previousSessionId = state.sessionId;
+    await ensureSessionPersisted(); // flush any unpersisted current session before switching
     await saveSessionState(state);
     state = await createFreshSessionState(state.provider, state.model, state.cwd);
+    sessionPersisted = false; // new session starts lazy
     await refreshBranchLabel();
     resetTUIViewForSessionChange();
 
@@ -2165,6 +2302,7 @@ export async function runTUI(options = {}) {
           addTranscriptEntry(tuiState, 'user', text);
           composer.clear();
           tuiState.dirty.add('all');
+          await ensureSessionPersisted();
           await appendSessionEvent(state, 'user_message', { chars: prompt.length, preview: prompt.slice(0, 280), skill: cmd });
           await runPrompt(prompt, { referenceSourceText: arg });
           return true;
@@ -2707,6 +2845,12 @@ export async function runTUI(options = {}) {
       return;
     }
 
+    // Ask-user modal: captures typed text
+    if (tuiState.runState === 'awaiting_user_question' && tuiState.userQuestion) {
+      handleQuestionInput(key);
+      return;
+    }
+
     // Config modal: swallow all keys
     if (tuiState.configModalOpen) {
       runAsync(() => handleConfigModalInput(key), 'config input failed');
@@ -2940,7 +3084,35 @@ export async function runTUI(options = {}) {
 
   // ── Signal handling ─────────────────────────────────────────────
 
+  function dumpSessionTranscript(sessionState) {
+    try {
+      const messages = sessionState?.messages ?? [];
+      const userAndAssistant = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
+      if (userAndAssistant.length === 0) return;
+      process.stdout.write('\n─── Session transcript ───\n\n');
+      for (const msg of userAndAssistant) {
+        if (msg.role === 'user') {
+          const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+          // Skip synthetic system-injected messages (e.g. [SESSION_RESUMED])
+          if (text.startsWith('[') && text.includes(']')) continue;
+          process.stdout.write(`> ${text.slice(0, 500)}\n\n`);
+        } else if (msg.role === 'assistant') {
+          const raw = typeof msg.content === 'string' ? msg.content : '';
+          // Strip JSON tool call fences, keeping only prose
+          const cleaned = raw
+            .replace(/```(?:json)?\s*\n?\{[\s\S]*?\}\s*\n?```/g, '')
+            .trim();
+          if (cleaned) process.stdout.write(`${cleaned.slice(0, 800)}\n\n`);
+        }
+      }
+      process.stdout.write('─────────────────────────\n\n');
+    } catch { /* best-effort */ }
+  }
+
   function emergencyCleanup() {
+    try {
+      if (sessionPersisted) dumpSessionTranscript(state);
+    } catch { /* best-effort */ }
     try {
       process.stdout.write(ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset);
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
@@ -2998,7 +3170,10 @@ export async function runTUI(options = {}) {
     }
     process.stdin.pause();
 
-    await saveSessionState(state);
+    if (sessionPersisted) {
+      dumpSessionTranscript(state);
+      await saveSessionState(state);
+    }
   }
 
   return 0;
