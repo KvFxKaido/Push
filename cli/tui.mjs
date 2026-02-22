@@ -16,7 +16,7 @@ import {
   ESC, getTermSize, visibleWidth, truncate, wordWrap, padTo,
   drawBox, drawDivider, createScreenBuffer, createRenderScheduler, computeLayout,
 } from './tui-renderer.mjs';
-import { PROVIDER_CONFIGS, resolveApiKey, resolveNativeFC, getProviderList } from './provider.mjs';
+import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
 import { getCuratedModels, fetchModels } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, deleteSession } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
@@ -811,7 +811,6 @@ export async function runTUI(options = {}) {
   async function createFreshSessionState(providerName, requestedModel, cwd) {
     const providerConfig = PROVIDER_CONFIGS[providerName];
     if (!providerConfig) throw new Error(`Unknown provider: ${providerName}`);
-    const useNativeFC = resolveNativeFC(providerConfig);
     const sessionId = makeSessionId();
     const now = Date.now();
     const nextState = {
@@ -830,14 +829,13 @@ export async function runTUI(options = {}) {
         assumptions: [],
         errorsEncountered: [],
       },
-      messages: [{ role: 'system', content: await buildSystemPrompt(cwd, { useNativeFC }) }],
+      messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
     };
     await appendSessionEvent(nextState, 'session_started', {
       sessionId,
       state: 'idle',
       mode: 'tui',
       provider: providerName,
-      nativeFC: useNativeFC,
     });
     await saveSessionState(nextState);
     return nextState;
@@ -856,20 +854,8 @@ export async function runTUI(options = {}) {
       const overrideConfig = PROVIDER_CONFIGS[overrideProvider];
       if (!overrideConfig) throw new Error(`Unknown provider: ${overrideProvider}`);
       if (overrideProvider !== state.provider) {
-        const oldConfig = PROVIDER_CONFIGS[state.provider];
-        if (!oldConfig) throw new Error(`Unknown provider in session: ${state.provider}`);
-
-        const oldFC = resolveNativeFC(oldConfig);
-        const newFC = resolveNativeFC(overrideConfig);
-
         state.provider = overrideProvider;
         state.model = options.model || overrideConfig.defaultModel;
-        if (oldFC !== newFC && state.messages?.[0]?.role === 'system') {
-          state.messages[0] = {
-            role: 'system',
-            content: await buildSystemPrompt(state.cwd, { useNativeFC: newFC }),
-          };
-        }
         stateChanged = true;
       }
     }
@@ -2253,18 +2239,12 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    const oldFC = resolveNativeFC(ctx.providerConfig);
     const newConfig = PROVIDER_CONFIGS[target.id];
-    const newFC = resolveNativeFC(newConfig);
 
     ctx.providerConfig = newConfig;
     ctx.apiKey = newApiKey;
     state.provider = target.id;
     state.model = config[target.id]?.model || newConfig.defaultModel;
-
-    if (oldFC !== newFC) {
-      state.messages[0] = { role: 'system', content: await buildSystemPrompt(state.cwd, { useNativeFC: newFC }) };
-    }
 
     // Persist current default provider (matches classic REPL behavior).
     config.provider = target.id;

@@ -40,7 +40,7 @@ In-session commands:
 - `/new` — start a fresh session in the same workspace/provider/model
 - `/model` — show current model and curated list for the active provider
 - `/model <name|#>` — switch model by name or list number
-- `/provider` — show providers with key/native-FC status
+- `/provider` — show providers with key status
 - `/provider <name|#>` — switch provider by name or list number
 - `/session` — print current session id
 - `/session rename <name>` — rename the current session (`--clear` to unset)
@@ -128,7 +128,6 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `qwen3-coder`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
-| `PUSH_NATIVE_FC` | Native function-calling override: `0`/`false` = off, `1`/`true` = on |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
 | `PUSH_SESSION_DIR` | Override session storage location (default: `~/.push/sessions`) |
 | `PUSH_CONFIG_PATH` | Override config file path |
@@ -165,10 +164,7 @@ You can switch provider/model mid-session with `/provider` and `/model`. Switchi
 
 ## Tools
 
-The CLI supports both prompt-engineered tool calls and native function-calling.
-- Default mode: `ollama` uses prompt-engineered calls; `mistral`, `openrouter`, `zai`, `google`, and `zen` use native function-calling.
-- Override with `PUSH_NATIVE_FC=0|1`.
-- Regardless of mode, tool behavior and safety rules are the same.
+All providers use prompt-engineered tool calls (fenced JSON blocks in the content stream).
 
 Available tools:
 

@@ -18,7 +18,7 @@ import process from 'node:process';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 
-import { PROVIDER_CONFIGS, resolveApiKey, resolveNativeFC } from './provider.mjs';
+import { PROVIDER_CONFIGS, resolveApiKey } from './provider.mjs';
 import {
   makeSessionId,
   makeRunId,
@@ -144,7 +144,6 @@ async function handleStartSession(req) {
   const attachToken = makeAttachToken();
   const now = Date.now();
 
-  const useNativeFC = resolveNativeFC(providerConfig);
   const state = {
     sessionId,
     createdAt: now,
@@ -154,7 +153,7 @@ async function handleStartSession(req) {
     cwd,
     rounds: 0,
     eventSeq: 0,
-    messages: [{ role: 'system', content: await buildSystemPrompt(cwd, { useNativeFC }) }],
+    messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
   };
 
   await appendSessionEvent(state, 'session_started', {

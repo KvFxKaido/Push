@@ -21,7 +21,6 @@ export const PROVIDER_CONFIGS = {
     defaultModel: process.env.PUSH_OLLAMA_MODEL || 'gemini-3-flash-preview',
     apiKeyEnv: ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'],
     requiresKey: true,
-    supportsNativeFC: false,
   },
   mistral: {
     id: 'mistral',
@@ -29,8 +28,6 @@ export const PROVIDER_CONFIGS = {
     defaultModel: process.env.PUSH_MISTRAL_MODEL || 'devstral-small-latest',
     apiKeyEnv: ['PUSH_MISTRAL_API_KEY', 'MISTRAL_API_KEY', 'VITE_MISTRAL_API_KEY'],
     requiresKey: true,
-    supportsNativeFC: true,
-    toolChoice: 'any',
   },
   openrouter: {
     id: 'openrouter',
@@ -38,8 +35,6 @@ export const PROVIDER_CONFIGS = {
     defaultModel: process.env.PUSH_OPENROUTER_MODEL || 'anthropic/claude-sonnet-4.6',
     apiKeyEnv: ['PUSH_OPENROUTER_API_KEY', 'OPENROUTER_API_KEY', 'VITE_OPENROUTER_API_KEY'],
     requiresKey: true,
-    supportsNativeFC: true,
-    toolChoice: 'auto',
   },
   zai: {
     id: 'zai',
@@ -47,8 +42,6 @@ export const PROVIDER_CONFIGS = {
     defaultModel: process.env.PUSH_ZAI_MODEL || 'glm-4.5',
     apiKeyEnv: ['PUSH_ZAI_API_KEY', 'ZAI_API_KEY', 'Z_AI_API_KEY', 'VITE_ZAI_API_KEY'],
     requiresKey: true,
-    supportsNativeFC: true,
-    toolChoice: 'auto',
   },
   google: {
     id: 'google',
@@ -62,8 +55,6 @@ export const PROVIDER_CONFIGS = {
       'VITE_GOOGLE_API_KEY',
     ],
     requiresKey: true,
-    supportsNativeFC: true,
-    toolChoice: 'auto',
   },
   zen: {
     id: 'zen',
@@ -77,24 +68,8 @@ export const PROVIDER_CONFIGS = {
       'VITE_OPENCODE_API_KEY',
     ],
     requiresKey: true,
-    supportsNativeFC: true,
-    toolChoice: 'auto',
   },
 };
-
-/**
- * Resolve whether native FC is active for a provider.
- * Respects PUSH_NATIVE_FC env var as an override:
- *   0 / false → force OFF (fallback to prompt-engineered)
- *   1 / true  → force ON  (even if provider config says false — use at your own risk)
- *   unset     → use provider config default
- */
-export function resolveNativeFC(config) {
-  const envOverride = process.env.PUSH_NATIVE_FC;
-  if (envOverride === '0' || envOverride === 'false') return false;
-  if (envOverride === '1' || envOverride === 'true') return true;
-  return Boolean(config.supportsNativeFC);
-}
 
 export function resolveApiKey(config) {
   for (const key of config.apiKeyEnv) {
@@ -123,31 +98,9 @@ export function getProviderList() {
       url: cfg.url,
       defaultModel: cfg.defaultModel,
       requiresKey: cfg.requiresKey,
-      supportsNativeFC: Boolean(cfg.supportsNativeFC),
       hasKey,
     };
   });
-}
-
-/**
- * Bridge native tool calls (delta.tool_calls) to fenced JSON text.
- * Accumulated tool call data is converted to the same format used by
- * the prompt-engineered protocol, so detectAllToolCalls() works unchanged.
- */
-function bridgeNativeToolCalls(pendingCalls) {
-  let bridged = '';
-  for (const [, tc] of pendingCalls) {
-    if (!tc.name) continue;
-    try {
-      const parsedArgs = tc.args ? JSON.parse(tc.args) : {};
-      const toolJson = JSON.stringify({ tool: tc.name, args: parsedArgs });
-      bridged += '\n```json\n' + toolJson + '\n```\n';
-    } catch {
-      // Args didn't parse — best-effort with empty args
-      bridged += '\n```json\n' + JSON.stringify({ tool: tc.name, args: {} }) + '\n```\n';
-    }
-  }
-  return bridged;
 }
 
 /**
@@ -278,20 +231,12 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
       headers['X-Title'] = 'Push CLI';
     }
 
-    // Build request body — conditionally include native FC schemas
     const requestBody = {
       model,
       messages,
       stream: true,
       temperature: 0.1,
     };
-    // forceNativeFC allows env override (PUSH_NATIVE_FC=1) to enable tools[]
-    // even for providers whose default config has supportsNativeFC=false.
-    const nativeFCEnabled = options?.forceNativeFC === true || config.supportsNativeFC;
-    if (options?.tools && nativeFCEnabled) {
-      requestBody.tools = options.tools;
-      requestBody.tool_choice = options.toolChoice || config.toolChoice || 'auto';
-    }
 
     let response;
     try {
@@ -334,9 +279,6 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
         options?.onThinkingToken,
       );
 
-      // Accumulate native tool calls by index (same bridge pattern as web app)
-      const pendingNativeToolCalls = new Map();
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -367,44 +309,12 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
             if (token) {
               reasoningParser.pushContent(token);
             }
-
-            // Accumulate native tool calls (delta.tool_calls)
-            const toolCalls = choice.delta?.tool_calls;
-            if (toolCalls) {
-              for (const tc of toolCalls) {
-                const idx = typeof tc.index === 'number' ? tc.index : 0;
-                const fnCall = tc.function;
-                if (!fnCall) continue;
-                if (!pendingNativeToolCalls.has(idx)) {
-                  pendingNativeToolCalls.set(idx, { name: '', args: '' });
-                }
-                const entry = pendingNativeToolCalls.get(idx);
-                if (fnCall.name) entry.name = fnCall.name;
-                if (fnCall.arguments) entry.args += fnCall.arguments;
-              }
-            }
-
-            // Flush on finish_reason that indicates tool calls
-            const reason = choice.finish_reason;
-            if (reason === 'tool_calls' || reason === 'stop' || reason === 'end_turn' || reason === 'length') {
-              if (pendingNativeToolCalls.size > 0) {
-                const bridged = bridgeNativeToolCalls(pendingNativeToolCalls);
-                reasoningParser.pushContent(bridged);
-                pendingNativeToolCalls.clear();
-              }
-            }
           } catch {
             // ignore malformed SSE chunks
           }
         }
       }
 
-      // Flush any remaining native tool calls on stream end
-      if (pendingNativeToolCalls.size > 0) {
-        const bridged = bridgeNativeToolCalls(pendingNativeToolCalls);
-        reasoningParser.pushContent(bridged);
-        pendingNativeToolCalls.clear();
-      }
       reasoningParser.flush();
 
       clearTimeout(timeout);

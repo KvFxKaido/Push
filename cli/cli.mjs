@@ -6,7 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFile } from 'node:child_process';
 
-import { PROVIDER_CONFIGS, resolveApiKey, resolveNativeFC, getProviderList } from './provider.mjs';
+import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
 import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
@@ -369,8 +369,7 @@ async function handleProviderCommand(arg, ctx, state, config) {
       const p = providers[i];
       const current = p.id === ctx.providerConfig.id ? ' ← current' : '';
       const keyStatus = p.requiresKey ? (p.hasKey ? 'key set' : 'no key') : 'no key needed';
-      const fc = p.supportsNativeFC ? 'native FC' : 'prompt FC';
-      process.stdout.write(`  ${i + 1}. ${p.id}  [${keyStatus}] [${fc}] default: ${p.defaultModel}${current}\n`);
+      process.stdout.write(`  ${i + 1}. ${p.id}  [${keyStatus}] default: ${p.defaultModel}${current}\n`);
     }
     process.stdout.write('Use /provider <name|#> to switch.\n');
     return;
@@ -404,25 +403,16 @@ async function handleProviderCommand(arg, ctx, state, config) {
     return;
   }
 
-  const oldFC = resolveNativeFC(ctx.providerConfig);
-  const newFC = resolveNativeFC(newConfig);
-
   // Update mutable context
   ctx.providerConfig = newConfig;
   ctx.apiKey = newApiKey;
   state.provider = target.id;
   state.model = config[target.id]?.model || newConfig.defaultModel;
 
-  // Rebuild system prompt if FC mode changed
-  if (oldFC !== newFC) {
-    state.messages[0] = { role: 'system', content: await buildSystemPrompt(state.cwd, { useNativeFC: newFC }) };
-    process.stdout.write(`[system prompt rebuilt — nativeFC: ${oldFC} → ${newFC}]\n`);
-  }
-
   // Persist
   config.provider = target.id;
   await saveConfig(config);
-  await appendSessionEvent(state, 'provider_switched', { provider: target.id, model: state.model, nativeFC: newFC });
+  await appendSessionEvent(state, 'provider_switched', { provider: target.id, model: state.model });
   process.stdout.write(`Switched to ${target.id} | model: ${state.model}\n`);
 }
 
@@ -464,7 +454,6 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
   };
   rl.on('SIGINT', onPromptSigint);
 
-  const nativeFC = resolveNativeFC(ctx.providerConfig);
   process.stdout.write(
     `${fmt.bold('Push CLI')}\n` +
     `${fmt.dim('session:')} ${state.sessionId}\n` +
@@ -472,7 +461,6 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
     `${fmt.dim('endpoint:')} ${ctx.providerConfig.url}\n` +
     `${fmt.dim('workspace:')} ${state.cwd}\n` +
     `${fmt.dim('localSandbox:')} ${process.env.PUSH_LOCAL_SANDBOX === 'true'}\n` +
-    `${fmt.dim('nativeFC:')} ${nativeFC}\n` +
     `${fmt.dim('Type /help for commands.')}\n`,
   );
 
@@ -704,8 +692,6 @@ async function initSession(sessionId, provider, model, cwd) {
   }
 
   const providerConfig = PROVIDER_CONFIGS[provider];
-  const useNativeFC = resolveNativeFC(providerConfig);
-
   const newSessionId = makeSessionId();
   const now = Date.now();
   const state = {
@@ -724,14 +710,13 @@ async function initSession(sessionId, provider, model, cwd) {
       assumptions: [],
       errorsEncountered: [],
     },
-    messages: [{ role: 'system', content: await buildSystemPrompt(cwd, { useNativeFC }) }],
+    messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
   };
   await appendSessionEvent(state, 'session_started', {
     sessionId: newSessionId,
     state: 'idle',
     mode: 'interactive',
     provider,
-    nativeFC: useNativeFC,
     sandboxProvider: process.env.PUSH_LOCAL_SANDBOX === 'true' ? 'local' : 'modal',
   });
   await saveSessionState(state);
