@@ -43,6 +43,8 @@ function createTUIState() {
     // UI toggles
     toolPaneOpen: false,
     providerModalOpen: false,
+    modelModalOpen: false,
+    modelModalState: null,   // { providerId, models[], cursor, loading, source, error }
     configModalOpen: false,
     configModalState: null,  // { mode: 'list'|'edit', cursor: 0, editTarget: '', editBuf: '', editCursor: 0 }
     // Dirty flags for selective re-render
@@ -379,6 +381,71 @@ function renderProviderModal(buf, theme, rows, cols, currentProvider, currentMod
 
   lines.push('');
   lines.push(`  ${theme.style('fg.dim', 'Press number to switch, Esc to close')}`);
+
+  const modalHeight = lines.length + 2;
+  const modalTop = Math.floor((rows - modalHeight) / 2);
+  const modalLeft = Math.floor((cols - modalWidth) / 2);
+
+  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
+  for (let i = 0; i < boxLines.length; i++) {
+    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
+  }
+}
+
+function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
+  const { glyphs } = theme;
+  const modalWidth = Math.min(80, cols - 8);
+  const listHeight = Math.max(6, Math.min(14, rows - 16));
+
+  const lines = [
+    theme.bold(theme.style('fg.primary', '  Model Picker')),
+    '',
+    `  ${theme.style('fg.muted', 'provider:')} ${theme.style('fg.secondary', modalState.providerId)}`,
+    `  ${theme.style('fg.muted', 'current:')} ${theme.style('fg.primary', currentModel)}`,
+    '',
+  ];
+
+  if (modalState.models.length === 0) {
+    lines.push(`  ${theme.style('fg.dim', 'No models found. Use /model <name> for custom values.')}`);
+  } else {
+    const count = modalState.models.length;
+    let start = 0;
+    if (count > listHeight) {
+      start = Math.max(0, modalState.cursor - Math.floor(listHeight / 2));
+      start = Math.min(start, count - listHeight);
+    }
+    const end = Math.min(count, start + listHeight);
+
+    for (let i = start; i < end; i++) {
+      const isCursor = i === modalState.cursor;
+      const marker = isCursor ? theme.style('accent.primary', glyphs.prompt) : ' ';
+      const num = padTo(`${i + 1}.`, 4);
+      const modelText = truncate(modalState.models[i], modalWidth - 14);
+      const model = isCursor
+        ? theme.style('accent.primary', modelText)
+        : theme.style('fg.secondary', modelText);
+      const currentMark = modalState.models[i] === currentModel
+        ? theme.style('fg.dim', ' (current)')
+        : '';
+      lines.push(`  ${marker} ${num} ${model}${currentMark}`);
+    }
+
+    if (end < count) {
+      lines.push(`  ${theme.style('fg.dim', `... ${count - end} more`)}`);
+    }
+  }
+
+  lines.push('');
+  if (modalState.loading) {
+    lines.push(`  ${theme.style('fg.dim', 'Fetching live model list...')}`);
+  } else if (modalState.error) {
+    lines.push(`  ${theme.style('fg.dim', `Live fetch failed (${modalState.error}); showing curated list`)}`);
+  } else if (modalState.source === 'live') {
+    lines.push(`  ${theme.style('fg.dim', `${modalState.models.length} models from provider`)}`);
+  } else {
+    lines.push(`  ${theme.style('fg.dim', `${modalState.models.length} curated models`)}`);
+  }
+  lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter select  Esc close  1-9 quick pick')}`);
 
   const modalHeight = lines.length + 2;
   const modalTop = Math.floor((rows - modalHeight) / 2);
@@ -728,6 +795,9 @@ export async function runTUI(options = {}) {
     if (tuiState.providerModalOpen) {
       renderProviderModal(screenBuf, theme, rows, cols, state.provider, state.model);
     }
+    if (tuiState.modelModalOpen && tuiState.modelModalState) {
+      renderModelModal(screenBuf, theme, rows, cols, tuiState.modelModalState, state.model);
+    }
     if (tuiState.configModalOpen && tuiState.configModalState) {
       renderConfigModal(screenBuf, theme, rows, cols, tuiState.configModalState, config);
     }
@@ -916,38 +986,119 @@ export async function runTUI(options = {}) {
     }
   }
 
+  async function switchModel(target, { closePicker = false } = {}) {
+    if (!target) return;
+
+    if (target === state.model) {
+      addTranscriptEntry(tuiState, 'status', `Already using model: ${target}`);
+      if (closePicker) {
+        closeModelModal();
+      } else {
+        scheduler.flush();
+      }
+      return;
+    }
+
+    state.model = target;
+    await saveSessionState(state);
+    addTranscriptEntry(tuiState, 'status', `Model switched to: ${target}`);
+    if (closePicker) {
+      closeModelModal();
+    } else {
+      tuiState.dirty.add('all');
+      scheduler.flush();
+    }
+  }
+
+  function closeModelModal() {
+    tuiState.modelModalOpen = false;
+    tuiState.modelModalState = null;
+    tuiState.dirty.add('all');
+    scheduler.flush();
+  }
+
+  async function openModelPicker() {
+    const providerId = ctx.providerConfig.id;
+    const initialModels = getCuratedModels(providerId);
+    const initialCursor = Math.max(0, initialModels.indexOf(state.model));
+
+    tuiState.modelModalOpen = true;
+    tuiState.modelModalState = {
+      providerId,
+      models: initialModels,
+      cursor: initialCursor,
+      loading: true,
+      source: 'curated',
+      error: '',
+    };
+    tuiState.dirty.add('all');
+    scheduler.flush();
+
+    const { models, source, error } = await fetchModels(ctx.providerConfig, ctx.apiKey);
+    const ms = tuiState.modelModalState;
+    if (!ms || !tuiState.modelModalOpen || ms.providerId !== providerId) return;
+
+    ms.models = models;
+    ms.source = source;
+    ms.error = error || '';
+    ms.loading = false;
+
+    const currentIndex = models.indexOf(state.model);
+    if (currentIndex >= 0) {
+      ms.cursor = currentIndex;
+    } else if (ms.cursor >= models.length) {
+      ms.cursor = Math.max(0, models.length - 1);
+    }
+
+    tuiState.dirty.add('all');
+    scheduler.flush();
+  }
+
+  async function selectModelFromPicker(index) {
+    const ms = tuiState.modelModalState;
+    if (!ms || index < 0 || index >= ms.models.length) return;
+    await switchModel(ms.models[index], { closePicker: true });
+  }
+
+  async function handleModelModalInput(key) {
+    const ms = tuiState.modelModalState;
+    if (!ms) return;
+
+    if (key.name === 'escape') {
+      closeModelModal();
+      return;
+    }
+    if (key.name === 'up') {
+      if (ms.models.length > 0) {
+        ms.cursor = (ms.cursor - 1 + ms.models.length) % ms.models.length;
+      }
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+      return;
+    }
+    if (key.name === 'down') {
+      if (ms.models.length > 0) {
+        ms.cursor = (ms.cursor + 1) % ms.models.length;
+      }
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+      return;
+    }
+    if (key.ch >= '1' && key.ch <= '9') {
+      const idx = parseInt(key.ch, 10) - 1;
+      await selectModelFromPicker(idx);
+      return;
+    }
+    if (key.name === 'return') {
+      await selectModelFromPicker(ms.cursor);
+      return;
+    }
+  }
+
   /** Handle /model [name|#] command. */
   async function handleModelCommand(arg) {
     if (!arg) {
-      // Show current model, then fetch live list
-      addTranscriptEntry(tuiState, 'status', `Current model: ${state.model}\nFetching models from ${ctx.providerConfig.id}...`);
-      scheduler.flush();
-
-      const { models, source, error } = await fetchModels(ctx.providerConfig, ctx.apiKey);
-      const lines = [`Current model: ${state.model}`];
-      if (error) {
-        lines.push(`(live fetch failed: ${error} — showing curated list)`);
-      } else if (source === 'live') {
-        lines.push(`(${models.length} models from ${ctx.providerConfig.id})`);
-      }
-      if (models.length === 0) {
-        lines.push('No models found. Type any model name.');
-      } else {
-        lines.push('Available models:');
-        for (let i = 0; i < models.length; i++) {
-          const marker = models[i] === state.model ? ' ← current' : '';
-          lines.push(`  ${i + 1}. ${models[i]}${marker}`);
-        }
-        lines.push('Use /model <name|#> to switch.');
-      }
-      // Replace the "fetching..." entry with final list
-      if (tuiState.transcript.length > 0 && tuiState.transcript[tuiState.transcript.length - 1].role === 'status') {
-        tuiState.transcript[tuiState.transcript.length - 1].text = lines.join('\n');
-      } else {
-        addTranscriptEntry(tuiState, 'status', lines.join('\n'));
-      }
-      tuiState.dirty.add('transcript');
-      scheduler.flush();
+      await openModelPicker();
       return;
     }
 
@@ -958,22 +1109,17 @@ export async function runTUI(options = {}) {
     let target;
     if (/^\d+$/.test(arg)) {
       const num = parseInt(arg, 10);
-      target = (num >= 1 && num <= models.length) ? models[num - 1] : arg;
+      if (num < 1 || num > models.length) {
+        addTranscriptEntry(tuiState, 'error', `Model index out of range: ${num}`);
+        scheduler.flush();
+        return;
+      }
+      target = models[num - 1];
     } else {
       target = arg;
     }
 
-    if (target === state.model) {
-      addTranscriptEntry(tuiState, 'status', `Already using model: ${target}`);
-      scheduler.flush();
-      return;
-    }
-
-    state.model = target;
-    await saveSessionState(state);
-    addTranscriptEntry(tuiState, 'status', `Model switched to: ${target}`);
-    tuiState.dirty.add('all');
-    scheduler.flush();
+    await switchModel(target);
   }
 
   /** Handle /provider [name|#] command. */
@@ -1147,7 +1293,7 @@ export async function runTUI(options = {}) {
       case 'help':
         addTranscriptEntry(tuiState, 'status', [
           'Commands:',
-          '  /model               Show current model + available models',
+          '  /model               Open navigable model picker',
           '  /model <name|#>      Switch model',
           '  /provider            Show all providers with status',
           '  /provider <name|#>   Switch provider',
@@ -1291,6 +1437,10 @@ export async function runTUI(options = {}) {
       closeConfigModal();
       return;
     }
+    if (tuiState.modelModalOpen) {
+      closeModelModal();
+      return;
+    }
     if (tuiState.providerModalOpen) {
       tuiState.providerModalOpen = false;
       tuiState.dirty.add('all');
@@ -1330,6 +1480,8 @@ export async function runTUI(options = {}) {
     await saveSessionState(state);
     addTranscriptEntry(tuiState, 'status', `Switched to ${target.id} | model: ${state.model}`);
     tuiState.providerModalOpen = false;
+    tuiState.modelModalOpen = false;
+    tuiState.modelModalState = null;
     tuiState.dirty.add('all');
     scheduler.flush();
   }
@@ -1508,6 +1660,12 @@ export async function runTUI(options = {}) {
     // Config modal: swallow all keys
     if (tuiState.configModalOpen) {
       runAsync(() => handleConfigModalInput(key), 'config input failed');
+      return;
+    }
+
+    // Model modal: navigable list
+    if (tuiState.modelModalOpen) {
+      runAsync(() => handleModelModalInput(key), 'model picker input failed');
       return;
     }
 
