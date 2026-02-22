@@ -59,7 +59,7 @@ export async function buildSystemPrompt(workspaceRoot, { useNativeFC = false } =
   // in the request body — only include behavioral rules in the prompt.
   const toolBlock = useNativeFC ? TOOL_RULES : TOOL_PROTOCOL;
 
-  let prompt = `You are Push CLI, a coding assistant running in a local workspace.
+  let prompt = `You are a coding assistant running in a local workspace.
 Workspace root: ${workspaceRoot}
 
 You can read files, run commands, and write files using tools.

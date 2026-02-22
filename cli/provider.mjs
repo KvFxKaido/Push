@@ -17,10 +17,10 @@ function sleep(ms) {
 export const PROVIDER_CONFIGS = {
   ollama: {
     id: 'ollama',
-    url: process.env.PUSH_OLLAMA_URL || process.env.OLLAMA_API_URL || 'http://localhost:11434/v1/chat/completions',
+    url: process.env.PUSH_OLLAMA_URL || process.env.OLLAMA_API_URL || 'https://ollama.com/v1/chat/completions',
     defaultModel: process.env.PUSH_OLLAMA_MODEL || 'gemini-3-flash-preview',
     apiKeyEnv: ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'],
-    requiresKey: false,
+    requiresKey: true,
     supportsNativeFC: false,
   },
   mistral: {

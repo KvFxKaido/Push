@@ -30,7 +30,7 @@ const KNOWN_OPTIONS = new Set([
   'help', 'sandbox', 'no-sandbox', 'version',
 ]);
 
-const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'sessions', 'skills', 'stats', 'daemon', 'attach']);
+const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'sessions', 'skills', 'stats', 'daemon', 'attach', 'tui']);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
 function clamp(value, min, max) {
@@ -58,6 +58,8 @@ Usage:
   push daemon start             Start background daemon
   push daemon stop              Stop background daemon
   push daemon status            Check daemon status
+  push tui                       Start full-screen TUI
+  push tui --session <id>        Resume session in TUI
   push attach <session-id>      Attach to a running daemon session
   push config show              Show saved CLI config
   push config init              Interactive setup wizard
@@ -1173,13 +1175,31 @@ export async function main() {
     return runAttach(sessionId);
   }
 
+  if (subcommand === 'tui') {
+    if (process.env.PUSH_TUI_ENABLED !== '1' && process.env.PUSH_TUI_ENABLED !== 'true') {
+      throw new Error('TUI is behind a feature flag. Set PUSH_TUI_ENABLED=1 to enable it.');
+    }
+    if (!process.stdin.isTTY) {
+      throw new Error('TUI requires a TTY terminal.');
+    }
+    const { runTUI } = await import('./tui.mjs');
+    return runTUI({
+      sessionId: values.session,
+      provider: values.provider,
+      model: values.model,
+      cwd: values.cwd ? path.resolve(values.cwd) : undefined,
+      maxRounds: values['max-rounds'] || values.maxRounds
+        ? clamp(Number(values['max-rounds'] || values.maxRounds || DEFAULT_MAX_ROUNDS), 1, 30)
+        : undefined,
+    });
+  }
+
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(`Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach. See: push --help`);
   }
 
   const provider = parseProvider(values.provider);
   const providerConfig = PROVIDER_CONFIGS[provider];
-  const apiKey = resolveApiKey(providerConfig);
   const cwd = path.resolve(values.cwd || process.cwd());
   if (values.cwd) {
     let cwdStat;
@@ -1245,6 +1265,9 @@ export async function main() {
     if (!task) {
       throw new Error('Headless mode requires a task. Use: push run --task "..." or push run --skill <name>');
     }
+    // Resolve API key late — after all validation — so missing keys
+    // don't mask argument or environment errors.
+    const apiKey = resolveApiKey(providerConfig);
     const allowExec = values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
     return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks, { allowExec });
   }
@@ -1253,6 +1276,7 @@ export async function main() {
     throw new Error('Interactive mode requires a TTY. For scripted use, run: push run --task "your task here"');
   }
 
+  const apiKey = resolveApiKey(providerConfig);
   return runInteractive(state, providerConfig, apiKey, maxRounds);
 }
 

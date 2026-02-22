@@ -75,3 +75,86 @@ export const DEFAULT_MODELS = {
 export function getCuratedModels(providerId) {
   return CATALOG[providerId] || [];
 }
+
+/**
+ * Derive the /models endpoint from a provider's chat/completions URL.
+ * Works for all OpenAI-compatible providers.
+ */
+function deriveModelsUrl(chatUrl) {
+  return chatUrl.replace(/\/chat\/completions\/?$/, '/models');
+}
+
+/**
+ * Fetch live model list from a provider's /models endpoint.
+ * Returns { models: string[], source: 'live' | 'curated', error?: string }.
+ * Falls back to curated list on any failure.
+ */
+export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 } = {}) {
+  const providerId = providerConfig.id;
+  const curated = getCuratedModels(providerId);
+
+  const modelsUrl = deriveModelsUrl(providerConfig.url);
+  // If URL didn't change (no /chat/completions to replace), skip live fetch
+  if (modelsUrl === providerConfig.url) {
+    return { models: curated, source: 'curated' };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const headers = { 'Accept': 'application/json' };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    if (providerId === 'openrouter') {
+      headers['HTTP-Referer'] = process.env.PUSH_OPENROUTER_REFERER || 'https://push.local';
+    }
+    // Google uses ?key= instead of Authorization header
+    let url = modelsUrl;
+    if (providerId === 'google' && apiKey) {
+      url += `?key=${apiKey}`;
+      delete headers.Authorization;
+    }
+
+    const response = await fetch(url, { method: 'GET', headers, signal: controller.signal });
+    if (!response.ok) {
+      return { models: curated, source: 'curated', error: `HTTP ${response.status}` };
+    }
+
+    const payload = await response.json();
+
+    // OpenAI-compatible: { data: [{ id: "model-name" }, ...] }
+    // Ollama native: { models: [{ name: "model-name" }, ...] }
+    let ids = [];
+    if (Array.isArray(payload.data)) {
+      ids = payload.data
+        .map(m => m.id || m.name || '')
+        .filter(Boolean);
+    } else if (Array.isArray(payload.models)) {
+      ids = payload.models
+        .map(m => m.name || m.id || m.model || '')
+        .filter(Boolean);
+    }
+
+    if (ids.length === 0) {
+      return { models: curated, source: 'curated', error: 'empty response' };
+    }
+
+    // Sort: put curated models first (in their original order), then remaining
+    const curatedSet = new Set(curated);
+    const inCurated = ids.filter(id => curatedSet.has(id));
+    const extra = ids.filter(id => !curatedSet.has(id)).sort();
+    // Keep curated order for known models, append discovered ones
+    const orderedCurated = curated.filter(id => ids.includes(id));
+    const merged = [...orderedCurated, ...extra.filter(id => !orderedCurated.includes(id))];
+
+    return { models: merged, source: 'live' };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (err?.name === 'AbortError') {
+      return { models: curated, source: 'curated', error: 'timeout' };
+    }
+    return { models: curated, source: 'curated', error: message };
+  } finally {
+    clearTimeout(timeout);
+  }
+}

@@ -22,7 +22,7 @@ const NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 /** Commands that skills cannot shadow */
 export const RESERVED_COMMANDS = new Set([
-  'help', 'exit', 'quit', 'session', 'model', 'provider', 'skills',
+  'help', 'exit', 'quit', 'session', 'model', 'provider', 'skills', 'config',
 ]);
 
 /**
