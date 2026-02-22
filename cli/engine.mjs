@@ -47,14 +47,16 @@ function applyWorkingMemoryUpdate(state, args) {
   return mem;
 }
 
-export async function buildSystemPrompt(workspaceRoot) {
-  const [snapshot, instructions, memory] = await Promise.all([
-    buildWorkspaceSnapshot(workspaceRoot).catch(() => ''),
-    loadProjectInstructions(workspaceRoot).catch(() => null),
-    loadMemory(workspaceRoot).catch(() => null),
-  ]);
+// Sentinel appended to the base prompt — signals that workspace context
+// (git status, project instructions, memory) still needs to be loaded.
+const NEEDS_ENRICHMENT = '[WORKSPACE_PENDING]';
 
-  let prompt = `You are a coding assistant running in a local workspace.
+/**
+ * Instant (sync, no I/O) base system prompt — enough to create a session
+ * and render the UI without blocking on git or filesystem.
+ */
+export function buildSystemPromptBase(workspaceRoot) {
+  return `You are a coding assistant running in a local workspace.
 Workspace root: ${workspaceRoot}
 
 You can read files, run commands, and write files using tools.
@@ -64,7 +66,22 @@ Each tool-loop round is expensive — plan before acting, batch related reads, a
 Use coder_update_state to keep a concise working plan; it is persisted and reinjected.
 Use save_memory to persist learnings across sessions (build commands, project patterns, conventions).
 
-${TOOL_PROTOCOL}`;
+${TOOL_PROTOCOL}
+${NEEDS_ENRICHMENT}`;
+}
+
+/**
+ * Full system prompt with workspace context (git status, project instructions,
+ * memory). Async — requires I/O. Used for enrichment and the legacy sync path.
+ */
+export async function buildSystemPrompt(workspaceRoot) {
+  let prompt = buildSystemPromptBase(workspaceRoot).replace(NEEDS_ENRICHMENT, '');
+
+  const [snapshot, instructions, memory] = await Promise.all([
+    buildWorkspaceSnapshot(workspaceRoot).catch(() => ''),
+    loadProjectInstructions(workspaceRoot).catch(() => null),
+    loadMemory(workspaceRoot).catch(() => null),
+  ]);
 
   if (snapshot) {
     prompt += `\n\n${snapshot}`;
@@ -79,6 +96,26 @@ ${TOOL_PROTOCOL}`;
   }
 
   return prompt;
+}
+
+/**
+ * Ensure the system prompt is fully enriched with workspace context.
+ * No-op for resumed sessions or already-enriched prompts.
+ * Returns the enrichment promise (safe to call multiple times — deduped per state).
+ */
+const _enrichmentMap = new WeakMap();
+export function ensureSystemPromptReady(state) {
+  const sysMsg = state.messages[0];
+  if (!sysMsg || sysMsg.role !== 'system' || !sysMsg.content.includes(NEEDS_ENRICHMENT)) {
+    return Promise.resolve();
+  }
+  if (_enrichmentMap.has(state)) return _enrichmentMap.get(state);
+  const promise = buildSystemPrompt(state.cwd).then((enriched) => {
+    sysMsg.content = enriched;
+    _enrichmentMap.delete(state);
+  });
+  _enrichmentMap.set(state, promise);
+  return promise;
 }
 
 export function buildToolResultMessage(call, result, metaEnvelope = null) {
@@ -116,6 +153,10 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
   const repeatedCalls = new Map();
   const toolsUsed = new Set();
   const fileLedger = createFileLedger();
+
+  // Lazily enrich system prompt with workspace context (git status,
+  // project instructions, memory) if it hasn't been loaded yet.
+  await ensureSystemPromptReady(state);
 
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();

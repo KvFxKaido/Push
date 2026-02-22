@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
 import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
-import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
+import { buildSystemPrompt, buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, saveConfig, applyConfigToEnv, getConfigPath, maskSecret } from './config-store.mjs';
 import { aggregateStats, formatStats } from './stats.mjs';
 import { getToolCallMetrics } from './tool-call-metrics.mjs';
@@ -710,8 +710,11 @@ async function initSession(sessionId, provider, model, cwd) {
       assumptions: [],
       errorsEncountered: [],
     },
-    messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
+    messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
   };
+  // Start enriching the system prompt in the background — will be
+  // awaited before the first LLM call in runAssistantLoop.
+  ensureSystemPromptReady(state);
   await appendSessionEvent(state, 'session_started', {
     sessionId: newSessionId,
     state: 'idle',

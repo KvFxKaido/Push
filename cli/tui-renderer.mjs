@@ -304,7 +304,7 @@ export function createScreenBuffer() {
 
 // ── Render scheduler (throttled) ────────────────────────────────────
 
-const FRAME_MS = 33; // ~30 FPS
+const FRAME_MS = 16; // ~60 FPS
 
 /**
  * Create a throttled render scheduler.

@@ -245,6 +245,7 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
         headers,
         body: JSON.stringify(requestBody),
         signal: controller.signal,
+        keepalive: true,
       });
 
       if (!response.ok) {

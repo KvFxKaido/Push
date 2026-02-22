@@ -19,7 +19,7 @@ import {
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
 import { getCuratedModels, fetchModels } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, deleteSession } from './session-store.mjs';
-import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
+import { buildSystemPrompt, buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.mjs';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
 import { createTabCompleter } from './tui-completer.mjs';
@@ -829,8 +829,11 @@ export async function runTUI(options = {}) {
         assumptions: [],
         errorsEncountered: [],
       },
-      messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
+      messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
     };
+    // Start enriching the system prompt in the background — will be
+    // awaited before the first LLM call in runAssistantLoop.
+    ensureSystemPromptReady(nextState);
     await appendSessionEvent(nextState, 'session_started', {
       sessionId,
       state: 'idle',
