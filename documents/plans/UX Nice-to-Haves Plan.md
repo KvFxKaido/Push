@@ -2,7 +2,7 @@
 
 ## Status
 - Last updated: 2026-02-22
-- State: Research / wishlist — nothing started
+- State: Research / wishlist — nothing started (not current roadmap focus; terminal UX is)
 - Intent: Quality-of-life features inspired by Claude Code's workflow, adapted for Push's mobile-first context
 
 ## Origin
@@ -32,6 +32,8 @@ Conversation about whether to add Google native search grounding led to a broade
 
 **Effort:** Low. Summarization infra exists — this is mostly a trigger + UI affordance.
 
+**Risk / rollout notes:** Summary quality or over-compaction could hide context the user still cares about. MVP should preserve the last N turns and show a clear "compacted X messages" notice (ideally with an undo path).
+
 ---
 
 ### 2. Cross-Session Project Memory
@@ -60,7 +62,9 @@ Conversation about whether to add Google native search grounding led to a broade
 - Should the user be able to see/edit it? (Probably yes — Scratchpad-style tab)
 - Should it be per-branch or per-repo? (Repo — branches are ephemeral)
 
-**Effort:** Medium. Scratchpad is ~80% of the plumbing. New hook, new tools, system prompt injection tweak.
+**Effort:** Medium-high. Scratchpad is ~80% of the plumbing, but stale-memory cleanup, prompt-budget control, and user visibility/editing push this beyond a simple plumbing task.
+
+**Risk / rollout notes:** Stale or incorrect memory can be worse than no memory. Ship with explicit user visibility/editing and a small size cap before attempting aggressive auto-memory behavior.
 
 ---
 
@@ -86,7 +90,9 @@ Conversation about whether to add Google native search grounding led to a broade
 - Current cost estimates use flat rates (`COST_PER_1M_INPUT = 0.15`). Real accuracy needs per-model pricing, which is a maintenance burden.
 - "Estimated" should be visible — don't present guesses as invoices
 
-**Effort:** Very low for MVP (wire existing `costs.today` into chat header). Medium if per-model pricing is added.
+**Effort:** Low for display-only MVP. Medium for a true per-session ticker and/or per-model pricing. Wiring `costs.today` into the chat header is a stopgap, not a real per-session implementation.
+
+**Risk / rollout notes:** Cost estimates can erode trust if they look precise but are not. Label clearly as estimated and avoid invoice-like formatting until per-model pricing is maintained.
 
 ---
 
@@ -115,7 +121,9 @@ Conversation about whether to add Google native search grounding led to a broade
 - "Run" only makes sense for shell commands and scripts — need language/context detection
 - How to handle conflicts with text selection on mobile?
 
-**Effort:** Medium. Context menu component + code block detection + sandbox integration.
+**Effort:** Medium-high. Context menu UI is straightforward, but target-file resolution ("Apply"), execution safety ("Run"), and mobile gesture conflicts add complexity.
+
+**Risk / rollout notes:** Easy to ship a flashy surface that produces wrong-file writes or unsafe runs. Split MVP by action (`Copy` first, then file-path actions, then `Apply`/`Run` with explicit confirmation).
 
 ---
 
@@ -141,6 +149,8 @@ Conversation about whether to add Google native search grounding led to a broade
 
 **Effort:** Low-medium. State is simple (array of IDs). UI is a horizontal chip strip + scroll-to behavior.
 
+**Risk / rollout notes:** Can become visual clutter on small screens if overused. Limit visible chips and make bookmark UI collapsible.
+
 ---
 
 ## Priority Recommendation
@@ -148,12 +158,12 @@ Conversation about whether to add Google native search grounding led to a broade
 | Item | Value | Effort | Ship order |
 |------|-------|--------|------------|
 | Context compaction | High | Low | 1 |
-| Cost ticker | Medium | Very low | 2 |
-| Cross-session memory | High | Medium | 3 |
-| Message bookmarks | Medium | Low-medium | 4 |
-| Code block actions | High | Medium | 5 |
+| Message bookmarks | Medium | Low-medium | 2 |
+| Cost ticker | Medium | Low | 3 |
+| Cross-session memory | High | Medium-high | 4 |
+| Code block actions | High | Medium-high | 5 |
 
-Items 1-2 are quick wins that leverage existing infra. Item 3 is the most transformative but needs design thought. Items 4-5 are genuine mobile UX improvements that compound over time.
+Items 1-3 are the best near-term wins and can ship incrementally. Cross-session memory is the most transformative but needs stronger design constraints (staleness + visibility). Code block actions are high-value, but likely easiest to overscope.
 
 ## Decisions Not Yet Made
 
@@ -161,4 +171,4 @@ Items 1-2 are quick wins that leverage existing infra. Item 3 is the most transf
 - Whether cross-session memory should be visible/editable by the user
 - Whether cost estimates should use per-model pricing (maintenance burden) or stay with flat rates
 - Whether code block actions warrant a full context menu or simpler inline buttons
-- Whether any of these should block other active tracks (harness reliability, etc.)
+- Whether any of these should preempt the current canonical roadmap focus on CLI/TUI terminal UX improvements
