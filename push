@@ -12,5 +12,6 @@ ROOT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 
 # Default to TUI unless explicitly overridden by caller.
 : "${PUSH_TUI_ENABLED:=1}"
+export PUSH_TUI_ENABLED
 
 exec node "$ROOT_DIR/cli/cli.mjs" "$@"
