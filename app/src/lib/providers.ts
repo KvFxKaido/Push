@@ -12,9 +12,9 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 // Z.AI (GLM) default model
 export const ZAI_DEFAULT_MODEL = 'glm-4.5';
 // Google OpenAI-compatible endpoint default model
-export const GOOGLE_DEFAULT_MODEL = 'gemini-2.5-flash';
+export const GOOGLE_DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 // OpenCode Zen (OpenAI-compatible) default model
-export const ZEN_DEFAULT_MODEL = 'qwen3-coder';
+export const ZEN_DEFAULT_MODEL = 'big-pickle';
 
 export const OPENROUTER_MODELS: string[] = [
   // Claude 4 series
@@ -41,9 +41,10 @@ export const ZAI_MODELS: string[] = [
 ];
 
 export const GOOGLE_MODELS: string[] = [
-  'gemini-2.5-flash',
+  'gemini-3.1-pro-preview',
+  'gemini-3-flash-preview',
   'gemini-2.5-pro',
-  'gemini-2.0-flash',
+  'gemini-2.5-flash',
 ];
 
 export const ZEN_MODELS: string[] = [
