@@ -1752,6 +1752,38 @@ export async function runTUI(options = {}) {
     return 0;
   }
 
+  function insertPastedText(text) {
+    if (!text) return;
+
+    // Config edit mode is a single-line secret input; paste should target the
+    // modal buffer instead of the main composer, and newlines should be dropped.
+    if (tuiState.configModalOpen && tuiState.configModalState?.mode === 'edit') {
+      const ms = tuiState.configModalState;
+      const normalized = text.replace(/\r\n/g, '\n').replace(/[\r\n]/g, '');
+      if (!normalized) return;
+      ms.editBuf = ms.editBuf.slice(0, ms.editCursor) + normalized + ms.editBuf.slice(ms.editCursor);
+      ms.editCursor += normalized.length;
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+      return;
+    }
+
+    // For non-text modals, ignore paste rather than mutating the hidden composer.
+    if (
+      tuiState.configModalOpen ||
+      tuiState.modelModalOpen ||
+      tuiState.providerModalOpen ||
+      (tuiState.runState === 'awaiting_approval' && tuiState.approval)
+    ) {
+      return;
+    }
+
+    tabCompleter.reset();
+    composer.insertText(text);
+    tuiState.dirty.add('composer');
+    scheduler.schedule();
+  }
+
   // ── Input handler ────────────────────────────────────────────────
 
   function onData(data) {
@@ -1781,11 +1813,9 @@ export async function runTUI(options = {}) {
       }
       // End of paste
       pasteBuf += str.slice(0, endIdx);
-      composer.insertText(pasteBuf);
+      insertPastedText(pasteBuf);
       pasteBuf = '';
       pasteMode = false;
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
       // Process any data after the paste end marker
       const after = str.slice(endIdx + PASTE_END.length);
       if (after.length > 0) processInput(after);

@@ -85,6 +85,23 @@ function deriveModelsUrl(chatUrl) {
 }
 
 /**
+ * Google lists models from the native Generative Language endpoint, not the
+ * OpenAI-compatible `/openai/models` path. Convert:
+ *   .../v1beta/openai/chat/completions -> .../v1beta/models
+ */
+function deriveGoogleModelsUrl(chatUrl) {
+  const replaced = chatUrl.replace(/\/(v[^/]+)\/openai\/chat\/completions\/?$/, '/$1/models');
+  if (replaced === chatUrl) return null;
+  return replaced;
+}
+
+function addQueryParam(urlStr, key, value) {
+  const url = new URL(urlStr);
+  url.searchParams.set(key, value);
+  return url.toString();
+}
+
+/**
  * Fetch live model list from a provider's /models endpoint.
  * Returns { models: string[], source: 'live' | 'curated', error?: string }.
  * Falls back to curated list on any failure.
@@ -93,7 +110,9 @@ export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 }
   const providerId = providerConfig.id;
   const curated = getCuratedModels(providerId);
 
-  const modelsUrl = deriveModelsUrl(providerConfig.url);
+  const modelsUrl = providerId === 'google'
+    ? (deriveGoogleModelsUrl(providerConfig.url) || deriveModelsUrl(providerConfig.url))
+    : deriveModelsUrl(providerConfig.url);
   // If URL didn't change (no /chat/completions to replace), skip live fetch
   if (modelsUrl === providerConfig.url) {
     return { models: curated, source: 'curated' };
@@ -111,7 +130,7 @@ export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 }
     // Google uses ?key= instead of Authorization header
     let url = modelsUrl;
     if (providerId === 'google' && apiKey) {
-      url += `?key=${apiKey}`;
+      url = addQueryParam(url, 'key', apiKey);
       delete headers.Authorization;
     }
 
@@ -130,14 +149,28 @@ export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 }
         .map(m => m.id || m.name || '')
         .filter(Boolean);
     } else if (Array.isArray(payload.models)) {
-      ids = payload.models
-        .map(m => m.name || m.id || m.model || '')
-        .filter(Boolean);
+      if (providerId === 'google') {
+        ids = payload.models
+          .filter((m) => {
+            if (!Array.isArray(m?.supportedGenerationMethods)) return true;
+            return m.supportedGenerationMethods.includes('generateContent');
+          })
+          .map(m => m.name || m.id || m.model || '')
+          .map((id) => String(id).replace(/^models\//, ''))
+          .filter(Boolean);
+      } else {
+        ids = payload.models
+          .map(m => m.name || m.id || m.model || '')
+          .filter(Boolean);
+      }
     }
 
     if (ids.length === 0) {
       return { models: curated, source: 'curated', error: 'empty response' };
     }
+
+    // De-duplicate while preserving first occurrence.
+    ids = [...new Set(ids)];
 
     // Sort: put curated models first (in their original order), then remaining
     const curatedSet = new Set(curated);
