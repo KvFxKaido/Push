@@ -1,10 +1,8 @@
 import type { ChatMessage } from '@/types';
-import { TOOL_PROTOCOL, TOOL_PROTOCOL_BEHAVIORAL } from './github-tools';
-import { SANDBOX_TOOL_PROTOCOL, SANDBOX_TOOL_PROTOCOL_BEHAVIORAL } from './sandbox-tools';
+import { TOOL_PROTOCOL } from './github-tools';
+import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
-import { getToolSchemas } from './tool-schemas';
-import { nativeFCOverride } from './feature-flags';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -477,7 +475,6 @@ function toLLMMessages(
   scratchpadContent?: string,
   providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen',
   providerModel?: string,
-  useNativeFC = false,
 ): LLMMessage[] {
   // Build system prompt: base + user identity + workspace context + tool protocol + optional sandbox tools + scratchpad
   let systemContent = systemPromptOverride || ORCHESTRATOR_SYSTEM_PROMPT;
@@ -488,15 +485,10 @@ function toLLMMessages(
     systemContent += '\n\n' + identityBlock;
   }
 
-  // When native FC is active, tool definitions are sent as structured schemas —
-  // only include behavioral rules in the prompt (saves ~15-20% tokens).
-  const toolProtocol = useNativeFC ? TOOL_PROTOCOL_BEHAVIORAL : TOOL_PROTOCOL;
-  const sandboxProtocol = useNativeFC ? SANDBOX_TOOL_PROTOCOL_BEHAVIORAL : SANDBOX_TOOL_PROTOCOL;
-
   if (workspaceContext) {
-    systemContent += '\n\n' + workspaceContext + '\n' + toolProtocol;
+    systemContent += '\n\n' + workspaceContext + '\n' + TOOL_PROTOCOL;
     if (hasSandbox) {
-      systemContent += '\n' + sandboxProtocol;
+      systemContent += '\n' + SANDBOX_TOOL_PROTOCOL;
     }
   } else if (hasSandbox) {
     // Sandbox mode (no repo): include sandbox tools with ephemeral preamble, no GitHub tools
@@ -504,22 +496,17 @@ function toLLMMessages(
       + ' You have full access to the sandbox filesystem and can create, edit, and run files freely.'
       + ' Nothing is saved or committed unless the user explicitly downloads their work.'
       + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.'
-      + '\n' + sandboxProtocol;
+      + '\n' + SANDBOX_TOOL_PROTOCOL;
   }
 
   // Always include scratchpad context and tools (even if empty)
-  // Scratchpad uses a different format pattern — keep full protocol even in native FC mode
   systemContent += '\n' + SCRATCHPAD_TOOL_PROTOCOL;
   if (scratchpadContent !== undefined) {
     systemContent += '\n\n' + buildScratchpadContext(scratchpadContent);
   }
 
-  // Web search tool — prompt-engineered for providers that need client-side dispatch.
-  // Ollama: model outputs JSON → we execute via Ollama's search REST API.
-  // Native FC providers (Mistral/OpenRouter/Z.AI/Google/Zen): search handled via tools[] in request body.
-  if (providerType === 'ollama') {
-    systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
-  }
+  // Web search tool — prompt-engineered, all providers use client-side dispatch
+  systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
 
   const llmMessages: LLMMessage[] = [
     providerType === "openrouter" 
@@ -774,10 +761,6 @@ interface StreamProviderConfig {
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
   bodyTransform?: (body: Record<string, unknown>) => Record<string, unknown>;
-  /** Whether this provider supports native function calling (tools[] in request body) */
-  supportsNativeFC?: boolean;
-  /** tool_choice value for native FC ('auto', 'any', 'required') */
-  toolChoice?: string;
 }
 
 interface AutoRetryConfig {
@@ -865,12 +848,7 @@ async function streamSSEChatOnce(
     providerType,
     apiUrlOverride,
     bodyTransform,
-    supportsNativeFC: configNativeFC = false,
-    toolChoice,
   } = config;
-
-  // Apply env override (VITE_NATIVE_FC=0/1) if set
-  const supportsNativeFC = nativeFCOverride ?? configNativeFC;
 
   const controller = new AbortController();
   type AbortReason = 'connect' | 'idle' | 'user' | 'stall' | 'total' | null;
@@ -921,19 +899,9 @@ async function streamSSEChatOnce(
 
     let requestBody: Record<string, unknown> = {
       model,
-      messages: toLLMMessages(messages, workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, providerType, model, supportsNativeFC),
+      messages: toLLMMessages(messages, workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, providerType, model),
       stream: true,
     };
-
-    // Inject native function calling schemas when provider supports it
-    if (supportsNativeFC) {
-      const hasGitHub = Boolean(workspaceContext);
-      const schemas = getToolSchemas({ hasSandbox, hasGitHub, providerType });
-      if (schemas.length > 0) {
-        requestBody.tools = schemas;
-        requestBody.tool_choice = toolChoice || 'auto';
-      }
-    }
 
     if (bodyTransform) {
       requestBody = bodyTransform(requestBody);
@@ -982,35 +950,6 @@ async function streamSSEChatOnce(
     const parser = createThinkTokenParser((token) => chunker.push(token), onThinkingToken);
     let usage: StreamUsage | undefined;
 
-    // Accumulate native tool calls (name + arguments) by index.
-    // Some providers (e.g. Ollama) send tool calls via the
-    // OpenAI tool_calls delta field instead of regular content. The name arrives
-    // in the first chunk and arguments stream incrementally across subsequent
-    // chunks. We collect everything and reconstruct Push's text-based tool
-    // format before flushing.
-    const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
-
-    /** Flush accumulated native tool calls as fenced JSON blocks into the parser. */
-    const flushNativeToolCalls = () => {
-      if (pendingNativeToolCalls.size === 0) return;
-      for (const [, tc] of pendingNativeToolCalls) {
-        if (tc.name) {
-          try {
-            const parsedArgs = tc.args ? JSON.parse(tc.args) : {};
-            const toolJson = JSON.stringify({ tool: tc.name, args: parsedArgs });
-            parser.push('\n```json\n' + toolJson + '\n```\n');
-          } catch {
-            // Args didn't parse — wrap name + raw args as best-effort
-            parser.push('\n```json\n' + JSON.stringify({ tool: tc.name, args: {} }) + '\n```\n');
-          }
-        } else if (tc.args) {
-          // No name — fall back to bare args (will be caught by bare-JSON recovery)
-          parser.push(tc.args);
-        }
-      }
-      pendingNativeToolCalls.clear();
-    };
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -1025,7 +964,6 @@ async function streamSSEChatOnce(
         if (!trimmed) continue;
 
         if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
-          flushNativeToolCalls();
           parser.flush();
           chunker.flush();
           onDone(usage);
@@ -1061,29 +999,7 @@ async function streamSSEChatOnce(
             if (stallTimeoutMs) resetStallTimer();
           }
 
-          // Handle native tool calls (Ollama may route these separately even when
-          // tools array is not sent in the request).
-          // Accumulate name + arguments by index, then reconstruct as fenced JSON
-          // when the stream ends so Push's text-based tool protocol can detect them.
-          const toolCalls = choice.delta?.tool_calls;
-          if (toolCalls) {
-            for (const tc of toolCalls) {
-              const idx = typeof tc.index === 'number' ? tc.index : 0;
-              const fnCall = tc.function;
-              if (!fnCall) continue;
-
-              if (!pendingNativeToolCalls.has(idx)) {
-                pendingNativeToolCalls.set(idx, { name: '', args: '' });
-              }
-              const entry = pendingNativeToolCalls.get(idx)!;
-              if (fnCall.name) entry.name = fnCall.name;
-              if (fnCall.arguments) entry.args += fnCall.arguments;
-            }
-            if (stallTimeoutMs) resetStallTimer();
-          }
-
           if (checkFinishReason(choice)) {
-            flushNativeToolCalls();
             parser.flush();
             chunker.flush();
             onDone(usage);
@@ -1095,7 +1011,6 @@ async function streamSSEChatOnce(
       }
     }
 
-    flushNativeToolCalls();
     parser.flush();
     chunker.flush();
     onDone(usage);
@@ -1184,40 +1099,21 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls']),
       shouldResetStallOnReasoning: true,
       providerType: 'ollama',
-      supportsNativeFC: false,
     }),
   },
   mistral: {
     getKey: getMistralKey,
-    buildConfig: async (apiKey, modelOverride) => {
-      const model = modelOverride || getMistralModelName();
-
-      // Native FC mode: bypass Agents API entirely, use standard chat completions
-      // with function schemas in the request body.
-      // The Agents API path is kept as fallback if native FC is ever disabled.
-      let agentApiUrl: string | undefined;
-      let agentBodyTransform: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined;
-
-      // Only use Agents API if NOT using native FC (fallback path)
-      // For now, native FC is always on for Mistral — keep agent path as dead code
-      // so it's easy to revert if needed.
-
-      return {
-        name: 'Mistral',
-        apiUrl: MISTRAL_API_URL,
-        apiKey,
-        model,
-        ...STANDARD_TIMEOUTS,
-        errorMessages: buildErrorMessages('Mistral'),
-        parseError: (p, f) => parseProviderError(p, f, true),
-        checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls']),
-        providerType: 'mistral' as const,
-        apiUrlOverride: agentApiUrl,
-        bodyTransform: agentBodyTransform,
-        supportsNativeFC: true,
-        toolChoice: 'any',
-      };
-    },
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'Mistral',
+      apiUrl: MISTRAL_API_URL,
+      apiKey,
+      model: modelOverride || getMistralModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('Mistral'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls']),
+      providerType: 'mistral' as const,
+    }),
   },
   openrouter: {
     getKey: getOpenRouterKey,
@@ -1231,8 +1127,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       parseError: (p, f) => parseProviderError(p, f, true),
       checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
       providerType: 'openrouter',
-      supportsNativeFC: true,
-      toolChoice: 'auto',
     }),
   },
   zai: {
@@ -1247,8 +1141,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       parseError: (p, f) => parseProviderError(p, f, true),
       checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
       providerType: 'zai',
-      supportsNativeFC: true,
-      toolChoice: 'auto',
     }),
   },
   google: {
@@ -1263,8 +1155,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       parseError: (p, f) => parseProviderError(p, f, true),
       checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
       providerType: 'google',
-      supportsNativeFC: true,
-      toolChoice: 'auto',
     }),
   },
   zen: {
@@ -1279,8 +1169,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       parseError: (p, f) => parseProviderError(p, f, true),
       checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls']),
       providerType: 'zen',
-      supportsNativeFC: true,
-      toolChoice: 'auto',
     }),
   },
 };

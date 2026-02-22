@@ -15,8 +15,7 @@ import { parseDiffStats } from './diff-utils';
 import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
-import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL, SANDBOX_TOOL_PROTOCOL_BEHAVIORAL } from './sandbox-tools';
-import { nativeFCOverride } from './feature-flags';
+import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { extractBareToolJsonObjects, isReadOnlyToolCall, MAX_PARALLEL_TOOL_CALLS } from './tool-dispatch';
 import type { AnyToolCall } from './tool-dispatch';
@@ -237,8 +236,8 @@ async function fetchSandboxStateSummary(sandboxId: string): Promise<string> {
 // Coder system prompt
 // ---------------------------------------------------------------------------
 
-function buildCoderSystemPrompt(useNativeFC = false): string {
-  const sandboxBlock = useNativeFC ? SANDBOX_TOOL_PROTOCOL_BEHAVIORAL : SANDBOX_TOOL_PROTOCOL;
+function buildCoderSystemPrompt(): string {
+  const sandboxBlock = SANDBOX_TOOL_PROTOCOL;
   return `You are the Coder agent for Push, a mobile AI coding assistant. Your job is to implement coding tasks.
 
 Rules:
@@ -290,12 +289,8 @@ export async function runCoderAgent(
   const roleModel = getModelForRole(activeProvider, 'coder');
   const coderModelId = roleModel?.id; // undefined falls back to provider default
 
-  // Determine if native FC is active for this provider (respects VITE_NATIVE_FC override)
-  const providerDefault = activeProvider !== 'ollama';
-  const useNativeFC = nativeFCOverride ?? providerDefault;
-
   // Build system prompt, optionally including user identity and AGENTS.md
-  let systemPrompt = buildCoderSystemPrompt(useNativeFC);
+  let systemPrompt = buildCoderSystemPrompt();
   const identityBlock = buildUserIdentityBlock(getUserProfile());
   if (identityBlock) {
     systemPrompt += '\n\n' + identityBlock;
@@ -304,10 +299,8 @@ export async function runCoderAgent(
     const truncatedAgentsMd = truncateContent(agentsMd, MAX_AGENTS_MD_SIZE, 'AGENTS.md');
     systemPrompt += `\n\nAGENTS.MD — Project instructions from the repository:\n${truncatedAgentsMd}`;
   }
-  // Web search for Ollama (other providers handle it via native FC tools[])
-  if (activeProvider === 'ollama') {
-    systemPrompt += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
-  }
+  // Web search tool — prompt-engineered, all providers use client-side dispatch
+  systemPrompt += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
 
   const allCards: ChatCard[] = [];
   let rounds = 0;

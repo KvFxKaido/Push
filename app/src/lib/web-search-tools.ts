@@ -9,9 +9,8 @@
  *  3. **DuckDuckGo free** — HTML scraping, no API key needed. Fallback for
  *     providers without native search when Tavily isn't configured.
  *
- * Native function-calling providers (Mistral/OpenRouter/Z.AI/Google/Zen)
- * receive web search in request tools[]; prompt-engineered web_search is only
- * injected for Ollama (see orchestrator.ts).
+ * All providers use prompt-engineered web search — the web_search tool
+ * protocol is injected into the system prompt for all providers.
  */
 
 import type { ToolExecutionResult, WebSearchResult, WebSearchCardData } from '@/types';
