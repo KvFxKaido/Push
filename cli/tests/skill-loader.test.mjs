@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { loadSkills, interpolateSkill, RESERVED_COMMANDS } from '../skill-loader.mjs';
+import { loadSkills, interpolateSkill, RESERVED_COMMANDS, getSkillPromptTemplate } from '../skill-loader.mjs';
 
 let tmpDir;
 
@@ -59,7 +59,10 @@ describe('loadSkills — workspace override', () => {
     const commit = skills.get('commit');
     assert.equal(commit.source, 'workspace');
     assert.equal(commit.description, 'Custom commit');
-    assert.ok(commit.promptTemplate.includes('Do a custom commit.'));
+    assert.equal(commit.promptTemplateLoaded, false);
+    const prompt = await getSkillPromptTemplate(commit);
+    assert.ok(prompt.includes('Do a custom commit.'));
+    assert.equal(commit.promptTemplateLoaded, true);
   });
 
   it('workspace adds new skills alongside built-ins', async () => {
@@ -70,6 +73,7 @@ describe('loadSkills — workspace override', () => {
     const skills = await loadSkills(tmpDir);
     assert.ok(skills.has('deploy'));
     assert.equal(skills.get('deploy').source, 'workspace');
+    assert.equal(skills.get('deploy').promptTemplateLoaded, false);
     // Built-ins still present
     assert.ok(skills.has('commit'));
     assert.equal(skills.get('commit').source, 'builtin');
@@ -86,6 +90,7 @@ describe('loadSkills — Claude command auto-detect', () => {
     assert.ok(skills.has('ship'));
     assert.equal(skills.get('ship').source, 'claude');
     assert.equal(skills.get('ship').description, 'Ship changes');
+    assert.equal(skills.get('ship').promptTemplateLoaded, false);
   });
 
   it('loads nested Claude commands and flattens path separators to hyphens', async () => {
@@ -109,6 +114,23 @@ describe('loadSkills — Claude command auto-detect', () => {
     const skills = await loadSkills(tmpDir);
     assert.equal(skills.get('deploy').source, 'workspace');
     assert.equal(skills.get('deploy').description, 'Push deploy');
+  });
+
+  it('loads third-party prompt templates only when requested', async () => {
+    const claudeDir = path.join(tmpDir, '.claude', 'commands');
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.writeFile(path.join(claudeDir, 'debug.md'), '# Debug\n\nInspect the issue.\n\n{{args}}\n');
+
+    const skills = await loadSkills(tmpDir);
+    const debugSkill = skills.get('debug');
+    assert.equal(debugSkill.source, 'claude');
+    assert.equal(debugSkill.promptTemplateLoaded, false);
+    assert.equal(debugSkill.promptTemplate, undefined);
+
+    const prompt = await getSkillPromptTemplate(debugSkill);
+    assert.ok(prompt.includes('Inspect the issue.'));
+    assert.equal(debugSkill.promptTemplateLoaded, true);
+    assert.ok(debugSkill.promptTemplate.includes('{{args}}'));
   });
 });
 

@@ -14,7 +14,7 @@ import { loadConfig, saveConfig, applyConfigToEnv, getConfigPath, maskSecret } f
 import { aggregateStats, formatStats } from './stats.mjs';
 import { getToolCallMetrics } from './tool-call-metrics.mjs';
 import { getSocketPath, getPidPath } from './pushd.mjs';
-import { loadSkills, interpolateSkill } from './skill-loader.mjs';
+import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
 import { createCompleter } from './completer.mjs';
 import { fmt, Spinner } from './format.mjs';
 
@@ -596,7 +596,8 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
         const skill = skills.get(cmdName);
         if (skill) {
           const args = spaceIdx === -1 ? '' : line.slice(spaceIdx + 1).trim();
-          const prompt = interpolateSkill(skill.promptTemplate, args);
+          const promptTemplate = await getSkillPromptTemplate(skill);
+          const prompt = interpolateSkill(promptTemplate, args);
           state.messages.push({ role: 'user', content: prompt });
           await appendSessionEvent(state, 'user_message', { chars: prompt.length, preview: prompt.slice(0, 280), skill: cmdName });
 
@@ -1390,7 +1391,8 @@ export async function main() {
       const available = [...skillMap.keys()].join(', ') || '(none)';
       throw new Error(`Unknown skill: ${values.skill}. Available: ${available}`);
     }
-    task = interpolateSkill(skill.promptTemplate, task);
+    const promptTemplate = await getSkillPromptTemplate(skill);
+    task = interpolateSkill(promptTemplate, task);
   }
 
   if (!runHeadlessMode) {

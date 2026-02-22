@@ -27,13 +27,14 @@ export const RESERVED_COMMANDS = new Set([
 ]);
 
 /**
- * @typedef {{ name: string, description: string, promptTemplate: string, source: 'builtin'|'workspace'|'claude', filePath: string }} Skill
+ * @typedef {{ name: string, description: string, promptTemplate?: string, promptTemplateLoaded?: boolean, source: 'builtin'|'workspace'|'claude', filePath: string }} Skill
  */
 
 /**
  * Parse a single .md file into a Skill, or return null if invalid.
  */
-function parseSkillFile(raw, name, source, filePath) {
+function parseSkillFile(raw, name, source, filePath, options = {}) {
+  const includePromptTemplate = options.includePromptTemplate !== false;
   const lines = raw.split('\n');
 
   // First # heading = description
@@ -53,7 +54,14 @@ function parseSkillFile(raw, name, source, filePath) {
   const promptTemplate = lines.slice(bodyStart).join('\n').trim();
   if (!promptTemplate) return null;
 
-  return { name, description, promptTemplate, source, filePath };
+  const skill = { name, description, source, filePath };
+  if (includePromptTemplate) {
+    skill.promptTemplate = promptTemplate;
+    skill.promptTemplateLoaded = true;
+  } else {
+    skill.promptTemplateLoaded = false;
+  }
+  return skill;
 }
 
 /**
@@ -62,6 +70,7 @@ function parseSkillFile(raw, name, source, filePath) {
  */
 async function scanDir(dir, source, options = {}) {
   const recursive = options.recursive === true;
+  const eagerPromptTemplate = options.eagerPromptTemplate !== false;
   /** @type {Map<string, Skill>} */
   const skills = new Map();
 
@@ -94,7 +103,7 @@ async function scanDir(dir, source, options = {}) {
       const filePath = path.join(currentDir, entry.name);
       try {
         const raw = await fs.readFile(filePath, 'utf8');
-        const skill = parseSkillFile(raw, name, source, filePath);
+        const skill = parseSkillFile(raw, name, source, filePath, { includePromptTemplate: eagerPromptTemplate });
         if (skill) skills.set(name, skill);
       } catch {
         // Skip unreadable files
@@ -113,11 +122,11 @@ async function scanDir(dir, source, options = {}) {
  * @returns {Promise<Map<string, Skill>>}
  */
 export async function loadSkills(workspaceRoot) {
-  const builtin = await scanDir(BUILTIN_DIR, 'builtin');
+  const builtin = await scanDir(BUILTIN_DIR, 'builtin', { eagerPromptTemplate: true });
   const claudeCommandsDir = path.join(workspaceRoot, CLAUDE_COMMANDS_DIR);
-  const claude = await scanDir(claudeCommandsDir, 'claude', { recursive: true });
+  const claude = await scanDir(claudeCommandsDir, 'claude', { recursive: true, eagerPromptTemplate: false });
   const workspaceDir = path.join(workspaceRoot, WORKSPACE_DIR);
-  const workspace = await scanDir(workspaceDir, 'workspace');
+  const workspace = await scanDir(workspaceDir, 'workspace', { eagerPromptTemplate: false });
 
   // Precedence: builtin < Claude commands < Push workspace skills
   const merged = new Map(builtin);
@@ -128,6 +137,33 @@ export async function loadSkills(workspaceRoot) {
     merged.set(name, skill);
   }
   return merged;
+}
+
+/**
+ * Load a skill template on demand (used for third-party skills).
+ * Mutates the skill object in place so subsequent invocations are cached in memory.
+ * @param {Skill} skill
+ * @returns {Promise<string>}
+ */
+export async function getSkillPromptTemplate(skill) {
+  if (!skill || typeof skill !== 'object') {
+    throw new Error('Invalid skill object');
+  }
+  if (typeof skill.promptTemplate === 'string' && skill.promptTemplate.length > 0) {
+    skill.promptTemplateLoaded = true;
+    return skill.promptTemplate;
+  }
+
+  const raw = await fs.readFile(skill.filePath, 'utf8');
+  const parsed = parseSkillFile(raw, skill.name, skill.source, skill.filePath, { includePromptTemplate: true });
+  if (!parsed || typeof parsed.promptTemplate !== 'string' || !parsed.promptTemplate) {
+    throw new Error(`Invalid skill file: ${skill.filePath}`);
+  }
+
+  skill.description = parsed.description;
+  skill.promptTemplate = parsed.promptTemplate;
+  skill.promptTemplateLoaded = true;
+  return skill.promptTemplate;
 }
 
 /**

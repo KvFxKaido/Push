@@ -21,7 +21,7 @@ import { getCuratedModels, fetchModels } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.mjs';
-import { loadSkills, interpolateSkill } from './skill-loader.mjs';
+import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
 import { createTabCompleter } from './tui-completer.mjs';
 
 // ── TUI state ───────────────────────────────────────────────────────
@@ -1579,7 +1579,8 @@ export async function runTUI(options = {}) {
         // Check if it's a skill name
         const skill = skills.get(cmd);
         if (skill) {
-          const prompt = interpolateSkill(skill.promptTemplate, arg);
+          const promptTemplate = await getSkillPromptTemplate(skill);
+          const prompt = interpolateSkill(promptTemplate, arg);
           addTranscriptEntry(tuiState, 'user', text);
           composer.clear();
           tuiState.dirty.add('all');
