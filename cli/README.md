@@ -94,7 +94,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | Variable | Purpose |
 |---|---|
 | `PUSH_PROVIDER` | Default provider (`ollama`, `mistral`, `openrouter`, `zai`, `google`, `zen`) |
-| `PUSH_OLLAMA_URL` | Ollama endpoint (default: `http://localhost:11434/v1/chat/completions`) |
+| `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
 | `PUSH_MISTRAL_URL` | Mistral endpoint (default: `https://api.mistral.ai/v1/chat/completions`) |
@@ -127,7 +127,7 @@ All six providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5x
 
 | Provider | Default model | Requires key |
 |---|---|---|
-| `ollama` | `gemini-3-flash-preview` | No (local) |
+| `ollama` | `gemini-3-flash-preview` | Yes |
 | `mistral` | `devstral-small-latest` | Yes |
 | `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
 | `zai` | `glm-4.5` | Yes |

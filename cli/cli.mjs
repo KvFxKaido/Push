@@ -1195,7 +1195,7 @@ export async function main() {
   }
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
-    throw new Error(`Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach. See: push --help`);
+    throw new Error(`Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui. See: push --help`);
   }
 
   const provider = parseProvider(values.provider);

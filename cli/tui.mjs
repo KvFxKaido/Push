@@ -559,23 +559,61 @@ export async function runTUI(options = {}) {
   const config = await loadConfig();
   applyConfigToEnv(config);
 
-  const providerName = (options.provider || process.env.PUSH_PROVIDER || config.provider || 'ollama').toLowerCase();
-  const providerConfig = PROVIDER_CONFIGS[providerName];
-  if (!providerConfig) throw new Error(`Unknown provider: ${providerName}`);
-  const apiKey = resolveApiKey(providerConfig);
-  const cwd = path.resolve(options.cwd || process.cwd());
   const maxRounds = options.maxRounds || DEFAULT_MAX_ROUNDS;
-  const requestedModel = options.model || providerConfig.defaultModel;
-
-  // Mutable context for mid-session switching
-  const ctx = { providerConfig, apiKey };
 
   // ── Session init ─────────────────────────────────────────────────
 
   let state;
   if (options.sessionId) {
     state = await loadSessionState(options.sessionId);
+    // Optional resume overrides
+    let stateChanged = false;
+
+    if (options.provider) {
+      const overrideProvider = options.provider.toLowerCase();
+      const overrideConfig = PROVIDER_CONFIGS[overrideProvider];
+      if (!overrideConfig) throw new Error(`Unknown provider: ${overrideProvider}`);
+      if (overrideProvider !== state.provider) {
+        const oldConfig = PROVIDER_CONFIGS[state.provider];
+        if (!oldConfig) throw new Error(`Unknown provider in session: ${state.provider}`);
+
+        const oldFC = resolveNativeFC(oldConfig);
+        const newFC = resolveNativeFC(overrideConfig);
+
+        state.provider = overrideProvider;
+        state.model = options.model || overrideConfig.defaultModel;
+        if (oldFC !== newFC && state.messages?.[0]?.role === 'system') {
+          state.messages[0] = {
+            role: 'system',
+            content: await buildSystemPrompt(state.cwd, { useNativeFC: newFC }),
+          };
+        }
+        stateChanged = true;
+      }
+    }
+
+    if (options.model && options.model !== state.model) {
+      state.model = options.model;
+      stateChanged = true;
+    }
+
+    if (options.cwd) {
+      const resolvedCwd = path.resolve(options.cwd);
+      if (resolvedCwd !== state.cwd) {
+        state.cwd = resolvedCwd;
+        stateChanged = true;
+      }
+    }
+
+    if (stateChanged) {
+      await saveSessionState(state);
+    }
   } else {
+    const providerName = (options.provider || process.env.PUSH_PROVIDER || config.provider || 'ollama').toLowerCase();
+    const providerConfig = PROVIDER_CONFIGS[providerName];
+    if (!providerConfig) throw new Error(`Unknown provider: ${providerName}`);
+    const cwd = path.resolve(options.cwd || process.cwd());
+    const requestedModel = options.model || providerConfig.defaultModel;
     const useNativeFC = resolveNativeFC(providerConfig);
     const sessionId = makeSessionId();
     const now = Date.now();
@@ -607,6 +645,15 @@ export async function runTUI(options = {}) {
     await saveSessionState(state);
   }
 
+  const activeProviderConfig = PROVIDER_CONFIGS[state.provider];
+  if (!activeProviderConfig) throw new Error(`Unknown provider in session: ${state.provider}`);
+
+  // Mutable context for mid-session switching
+  const ctx = {
+    providerConfig: activeProviderConfig,
+    apiKey: resolveApiKey(activeProviderConfig),
+  };
+
   // ── Git branch (best-effort) ─────────────────────────────────────
 
   let branch = '';
@@ -614,7 +661,7 @@ export async function runTUI(options = {}) {
     const { execFile } = await import('node:child_process');
     const { promisify } = await import('node:util');
     const execAsync = promisify(execFile);
-    const { stdout } = await execAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd });
+    const { stdout } = await execAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: state.cwd });
     branch = stdout.trim();
   } catch { /* not a git repo */ }
 
@@ -811,6 +858,31 @@ export async function runTUI(options = {}) {
     ctx, skills, getCuratedModels, getProviderList,
   });
 
+  function formatError(err) {
+    if (err instanceof Error && err.message) return err.message;
+    return String(err);
+  }
+
+  function handleAsyncError(err, context = '') {
+    const message = context ? `${context}: ${formatError(err)}` : formatError(err);
+    addTranscriptEntry(tuiState, 'error', message);
+    tuiState.dirty.add('all');
+    scheduler.flush();
+  }
+
+  function runAsync(action, context = '') {
+    try {
+      const maybePromise = action();
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        void maybePromise.catch((err) => {
+          handleAsyncError(err, context);
+        });
+      }
+    } catch (err) {
+      handleAsyncError(err, context);
+    }
+  }
+
   // ── Actions ──────────────────────────────────────────────────────
 
   /** Run the assistant loop on a user message (or skill-expanded prompt). */
@@ -898,7 +970,7 @@ export async function runTUI(options = {}) {
     }
 
     state.model = target;
-    saveSessionState(state);
+    await saveSessionState(state);
     addTranscriptEntry(tuiState, 'status', `Model switched to: ${target}`);
     tuiState.dirty.add('all');
     scheduler.flush();
@@ -1306,11 +1378,11 @@ export async function runTUI(options = {}) {
       // Number keys 1–8: jump + activate
       if (key.ch >= '1' && key.ch <= '8') {
         ms.cursor = parseInt(key.ch, 10) - 1;
-        activateConfigItem(ms.cursor);
+        await activateConfigItem(ms.cursor);
         return;
       }
       if (key.name === 'return') {
-        activateConfigItem(ms.cursor);
+        await activateConfigItem(ms.cursor);
         return;
       }
       return;
@@ -1372,7 +1444,7 @@ export async function runTUI(options = {}) {
     }
   }
 
-  function activateConfigItem(index) {
+  async function activateConfigItem(index) {
     const ms = tuiState.configModalState;
     const providers = getProviderList();
     if (index < providers.length) {
@@ -1392,7 +1464,7 @@ export async function runTUI(options = {}) {
       const current = process.env.PUSH_LOCAL_SANDBOX || (config.localSandbox !== undefined ? String(config.localSandbox) : 'off');
       const isOn = current === 'true' || current === '1';
       config.localSandbox = !isOn;
-      saveConfig(config);
+      await saveConfig(config);
       process.env.PUSH_LOCAL_SANDBOX = String(!isOn);
     }
     tuiState.dirty.add('all');
@@ -1435,14 +1507,14 @@ export async function runTUI(options = {}) {
 
     // Config modal: swallow all keys
     if (tuiState.configModalOpen) {
-      handleConfigModalInput(key);
+      runAsync(() => handleConfigModalInput(key), 'config input failed');
       return;
     }
 
     // Provider modal: number keys switch provider
     if (tuiState.providerModalOpen) {
       if (key.ch >= '1' && key.ch <= '9') {
-        switchProvider(parseInt(key.ch, 10) - 1);
+        runAsync(() => switchProvider(parseInt(key.ch, 10) - 1), 'provider switch failed');
         return;
       }
       if (key.name === 'escape') {
@@ -1473,7 +1545,7 @@ export async function runTUI(options = {}) {
 
     switch (action) {
       case 'send':
-        sendMessage();
+        runAsync(() => sendMessage(), 'send failed');
         return;
       case 'newline':
         composer.insertNewline();
