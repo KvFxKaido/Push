@@ -199,10 +199,10 @@ Sessions persist to `~/.push/sessions/<session-id>/` by default. Each session ha
 If no `PUSH_SESSION_DIR` is set, the CLI also reads legacy workspace-local sessions from `.push/sessions/` in the current directory when listing or resuming by id.
 
 ```bash
-./push sessions                                  # list all sessions (shows name when set)
-./push sessions --json                           # list as JSON
-./push sessions rename sess_abc123 "PR review"   # rename a session
-./push sessions rename sess_abc123 --clear       # clear a session name
+./push resume                                    # list resumable sessions (shows name when set)
+./push resume --json                             # list as JSON
+./push resume rename sess_abc123 "PR review"     # rename a session
+./push resume rename sess_abc123 --clear         # clear a session name
 ./push --session sess_abc123 # resume
 ```
 
@@ -276,7 +276,7 @@ push                                Start TUI when enabled, otherwise interactiv
 push --session <id>                 Resume session (TUI when enabled, otherwise interactive)
 push run --task "..."               Headless mode (single task)
 push run "..."                      Headless mode (positional)
-push sessions                       List saved sessions
+push resume                         List resumable sessions
 push stats                          Show provider compliance stats
 push daemon status|start|stop       Manage pushd daemon
 push attach <session-id>            Attach to daemon-backed session
@@ -296,7 +296,7 @@ Options:
   --task <text>           Task for headless mode
   --accept <cmd>          Acceptance check (repeatable)
   --max-rounds <n>        Tool-loop cap (default: 8, max: 30)
-  --json                  JSON output (headless/sessions)
+  --json                  JSON output (headless/resume)
   --sandbox               Enable local Docker sandbox
   --no-sandbox            Disable local Docker sandbox
   -h, --help              Show help

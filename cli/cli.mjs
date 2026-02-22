@@ -30,7 +30,7 @@ const KNOWN_OPTIONS = new Set([
   'help', 'sandbox', 'no-sandbox', 'version',
 ]);
 
-const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'sessions', 'skills', 'stats', 'daemon', 'attach', 'tui']);
+const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'resume', 'sessions', 'skills', 'stats', 'daemon', 'attach', 'tui']);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
 function clamp(value, min, max) {
@@ -52,7 +52,7 @@ Usage:
   push --session <id>           Resume session (TUI when enabled, otherwise interactive)
   push run --task "..."         Run once in headless mode
   push run "..."                Run once in headless mode
-  push sessions                 List saved sessions
+  push resume                   List resumable sessions
   push skills                   List available skills
   push stats                    Show provider compliance stats
   push daemon start             Start background daemon
@@ -79,7 +79,7 @@ Options:
   --accept <cmd>                Acceptance check command (repeatable)
   --max-rounds <n>              Tool-loop cap per user prompt (default: 8)
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
-  --json                        JSON output in headless mode / sessions
+  --json                        JSON output in headless mode / resume
   --sandbox                     Enable local Docker sandbox
   --no-sandbox                  Disable local Docker sandbox
   -v, --version                 Show version
@@ -670,7 +670,7 @@ async function initSession(sessionId, provider, model, cwd) {
       return await loadSessionState(sessionId);
     } catch (err) {
       if (err.code === 'ENOENT' || (err.message && err.message.includes('ENOENT'))) {
-        throw new Error(`Session not found: ${sessionId}. Use "push sessions" to list available sessions.`);
+        throw new Error(`Session not found: ${sessionId}. Use "push resume" to list available sessions.`);
       }
       throw err;
     }
@@ -1205,16 +1205,16 @@ export async function main() {
     return runConfigSubcommand(values, positionals);
   }
 
-  if (subcommand === 'sessions') {
+  if (subcommand === 'resume' || subcommand === 'sessions') {
     const sessionsCmd = positionals[1] || '';
     if (sessionsCmd === 'rename') {
       const sessionId = positionals[2];
       const nameArg = positionals.slice(3).join(' ').trim();
       if (!sessionId) {
-        throw new Error('Usage: push sessions rename <session-id> <name|--clear>');
+        throw new Error('Usage: push resume rename <session-id> <name|--clear>');
       }
       if (!nameArg) {
-        throw new Error('Usage: push sessions rename <session-id> <name|--clear>');
+        throw new Error('Usage: push resume rename <session-id> <name|--clear>');
       }
       const state = await loadSessionState(sessionId);
       if (nameArg === '--clear') {
@@ -1239,7 +1239,7 @@ export async function main() {
       return 0;
     }
     if (sessionsCmd) {
-      throw new Error(`Unknown sessions subcommand: ${sessionsCmd}. Supported: rename`);
+      throw new Error(`Unknown resume subcommand: ${sessionsCmd}. Supported: rename`);
     }
 
     const sessions = await listSessions();
