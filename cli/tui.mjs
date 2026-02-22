@@ -19,11 +19,12 @@ import {
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
 import { getCuratedModels, fetchModels } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, deleteSession } from './session-store.mjs';
-import { buildSystemPrompt, buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
+import { buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.mjs';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
 import { createTabCompleter } from './tui-completer.mjs';
 import { appendUserMessageWithFileReferences } from './file-references.mjs';
+import { compactContext } from './context-manager.mjs';
 
 // ── TUI state ───────────────────────────────────────────────────────
 
@@ -64,6 +65,8 @@ function createTUIState() {
 }
 
 // ── Transcript management ───────────────────────────────────────────
+
+const DEFAULT_COMPACT_TURNS = 6;
 
 function addTranscriptEntry(tuiState, role, text) {
   tuiState.transcript.push({ role, text, timestamp: Date.now() });
@@ -1164,7 +1167,7 @@ export async function runTUI(options = {}) {
     return createTabCompleter({
       ctx, skills, getCuratedModels, getProviderList,
       workspaceRoot: state.cwd,
-      extraCommands: ['resume'],
+      extraCommands: ['resume', 'compact'],
     });
   }
 
@@ -1230,6 +1233,48 @@ export async function runTUI(options = {}) {
       tuiState.dirty.add('all');
       scheduler.flush();
     }
+  }
+
+  async function compactSessionContext(rawArg) {
+    const arg = String(rawArg || '').trim();
+    let preserveTurns = DEFAULT_COMPACT_TURNS;
+    if (arg) {
+      if (!/^\d+$/.test(arg)) {
+        addTranscriptEntry(tuiState, 'warning', 'Usage: /compact [turns] (positive integer)');
+        scheduler.flush();
+        return;
+      }
+      preserveTurns = Math.max(1, Math.min(64, Number.parseInt(arg, 10)));
+    }
+
+    const result = compactContext(state.messages, { preserveTurns });
+    if (!result.compacted) {
+      addTranscriptEntry(
+        tuiState,
+        'status',
+        `Nothing to compact (turns: ${result.totalTurns}, preserve: ${result.preserveTurns}).`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    state.messages = result.messages;
+    await appendSessionEvent(state, 'context_compacted', {
+      preserveTurns: result.preserveTurns,
+      totalTurns: result.totalTurns,
+      compactedMessages: result.compactedCount,
+      removedCount: result.removedCount,
+      beforeTokens: result.beforeTokens,
+      afterTokens: result.afterTokens,
+    });
+    await saveSessionState(state);
+
+    addTranscriptEntry(
+      tuiState,
+      'status',
+      `Compacted context: ${result.compactedCount} messages -> 1 summary (kept last ${result.preserveTurns} turns, ~${result.beforeTokens} -> ~${result.afterTokens} tokens).`,
+    );
+    scheduler.flush();
   }
 
   async function renameCurrentSession(rawName) {
@@ -1992,6 +2037,7 @@ export async function runTUI(options = {}) {
           '  /config sandbox on|off  Toggle local Docker sandbox',
           '  /skills              List available skills',
           '  /skills reload       Reload workspace + Claude skills',
+          `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)`,
           '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
           '  /resume              Open resumable session picker',
           '  /resume <session-id> Switch to a saved session',
@@ -2089,6 +2135,10 @@ export async function runTUI(options = {}) {
           addTranscriptEntry(tuiState, 'status', lines.join('\n'));
         }
         scheduler.flush();
+        return true;
+
+      case 'compact':
+        await compactSessionContext(arg || null);
         return true;
 
       default: {

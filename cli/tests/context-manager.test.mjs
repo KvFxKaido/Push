@@ -7,6 +7,7 @@ import {
   getContextBudget,
   isToolResultMessage,
   isParseErrorMessage,
+  compactContext,
   trimContext,
 } from '../context-manager.mjs';
 
@@ -377,5 +378,66 @@ describe('trimContext — edge cases', () => {
       assert.equal(defaultResult.trimmed, true);
       assert.equal(geminiResult.trimmed, false);
     }
+  });
+});
+
+// ─── compactContext: user-triggered compaction ─────────────────────
+
+describe('compactContext', () => {
+  it('compacts older messages into a single digest while preserving last N turns', () => {
+    const msgs = [
+      makeSystemMsg(200),
+      makeUserMsg('Turn 1 user'),
+      makeAssistantMsg('Turn 1 assistant'),
+      makeToolResult('read_file', 1200),
+      makeUserMsg('Turn 2 user'),
+      makeAssistantMsg('Turn 2 assistant'),
+      makeToolResult('search_files', 1200),
+      makeUserMsg('Turn 3 user'),
+      makeAssistantMsg('Turn 3 assistant'),
+    ];
+
+    const result = compactContext(msgs, { preserveTurns: 1 });
+
+    assert.equal(result.compacted, true);
+    assert.equal(result.totalTurns, 3);
+    assert.equal(result.preserveTurns, 1);
+    assert.equal(result.compactedCount, 5);
+    assert.ok(result.afterTokens < result.beforeTokens, 'token count should decrease');
+
+    const digestIdx = result.messages.findIndex((m) => m.content.includes('[CONTEXT DIGEST]'));
+    assert.ok(digestIdx >= 0, 'should include a context digest message');
+    assert.equal(result.messages[0].role, 'system');
+    assert.equal(result.messages[1].content, 'Turn 1 user', 'first user message should be preserved');
+    assert.ok(result.messages.some((m) => m.content === 'Turn 3 user'), 'latest user turn should be preserved');
+    assert.ok(result.messages.some((m) => m.content === 'Turn 3 assistant'), 'latest assistant reply should be preserved');
+    assert.ok(!result.messages.some((m) => m.content === 'Turn 2 user'), 'older middle turn should be compacted');
+  });
+
+  it('returns a no-op copy when there are not enough turns to compact', () => {
+    const msgs = [makeSystemMsg(100), makeUserMsg('Only turn'), makeAssistantMsg('Reply')];
+    const result = compactContext(msgs, { preserveTurns: 3 });
+
+    assert.equal(result.compacted, false);
+    assert.equal(result.totalTurns, 1);
+    assert.equal(result.messages.length, msgs.length);
+    assert.notEqual(result.messages, msgs);
+  });
+
+  it('does not mutate original messages', () => {
+    const msgs = [
+      makeSystemMsg(100),
+      makeUserMsg('Turn 1 user'),
+      makeAssistantMsg('Turn 1 assistant'),
+      makeUserMsg('Turn 2 user'),
+      makeAssistantMsg('Turn 2 assistant'),
+      makeUserMsg('Turn 3 user'),
+      makeAssistantMsg('Turn 3 assistant'),
+    ];
+    const original = msgs.map((m) => ({ ...m }));
+
+    compactContext(msgs, { preserveTurns: 1 });
+
+    assert.deepEqual(msgs, original);
   });
 });

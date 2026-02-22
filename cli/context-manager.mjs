@@ -180,6 +180,131 @@ function applyHardFallback(messages, maxTokens) {
   return hardResult;
 }
 
+function normalizeMessages(messages) {
+  return messages.map((msg) => ({
+    ...msg,
+    content: toContentString(msg.content),
+  }));
+}
+
+/**
+ * User-triggered compaction: replace older messages with a single digest while
+ * preserving the system prompt, the first real user message, and the last N
+ * real user turns (plus everything after the earliest preserved turn).
+ *
+ * Returns:
+ * {
+ *   messages,
+ *   compacted,
+ *   beforeTokens,
+ *   afterTokens,
+ *   removedCount,          // net message count reduction
+ *   compactedCount,        // number of source messages summarized into digest
+ *   preserveTurns,
+ *   totalTurns,
+ * }
+ */
+export function compactContext(messages, options = {}) {
+  if (!messages || messages.length === 0) {
+    return {
+      messages: [],
+      compacted: false,
+      beforeTokens: 0,
+      afterTokens: 0,
+      removedCount: 0,
+      compactedCount: 0,
+      preserveTurns: 0,
+      totalTurns: 0,
+    };
+  }
+
+  const requestedTurns = Number.isInteger(options.preserveTurns)
+    ? options.preserveTurns
+    : Number.parseInt(String(options.preserveTurns ?? '6'), 10);
+  const preserveTurns = Number.isFinite(requestedTurns)
+    ? Math.max(1, Math.min(64, requestedTurns))
+    : 6;
+
+  const normalizedMessages = normalizeMessages(messages);
+  const beforeTokens = estimateContextTokens(normalizedMessages);
+
+  const firstUserIdx = normalizedMessages.findIndex((m) => isFirstUserMessage(m));
+  const realUserIndices = [];
+  for (let i = 0; i < normalizedMessages.length; i++) {
+    if (isFirstUserMessage(normalizedMessages[i])) realUserIndices.push(i);
+  }
+  const totalTurns = realUserIndices.length;
+
+  if (totalTurns <= preserveTurns) {
+    return {
+      messages: [...normalizedMessages],
+      compacted: false,
+      beforeTokens,
+      afterTokens: beforeTokens,
+      removedCount: 0,
+      compactedCount: 0,
+      preserveTurns,
+      totalTurns,
+    };
+  }
+
+  const tailTurnIdx = realUserIndices[Math.max(0, totalTurns - preserveTurns)];
+  const protectedIdx = new Set();
+  if (normalizedMessages[0]?.role === 'system') protectedIdx.add(0);
+  if (firstUserIdx >= 0) protectedIdx.add(firstUserIdx);
+  for (let i = tailTurnIdx; i < normalizedMessages.length; i++) protectedIdx.add(i);
+
+  const removed = [];
+  for (let i = 0; i < normalizedMessages.length; i++) {
+    if (!protectedIdx.has(i)) removed.push(normalizedMessages[i]);
+  }
+
+  if (removed.length === 0) {
+    return {
+      messages: [...normalizedMessages],
+      compacted: false,
+      beforeTokens,
+      afterTokens: beforeTokens,
+      removedCount: 0,
+      compactedCount: 0,
+      preserveTurns,
+      totalTurns,
+    };
+  }
+
+  const digestMessage = { role: 'user', content: buildContextDigest(removed) };
+  const kept = [];
+  let digestInserted = false;
+  for (let i = 0; i < normalizedMessages.length; i++) {
+    if (protectedIdx.has(i)) {
+      kept.push(normalizedMessages[i]);
+      if (!digestInserted && firstUserIdx >= 0 && i === firstUserIdx) {
+        kept.push(digestMessage);
+        digestInserted = true;
+      }
+      continue;
+    }
+
+    if (!digestInserted && firstUserIdx < 0 && i === 0) {
+      kept.push(digestMessage);
+      digestInserted = true;
+    }
+  }
+  if (!digestInserted) kept.splice(Math.min(1, kept.length), 0, digestMessage);
+
+  const afterTokens = estimateContextTokens(kept);
+  return {
+    messages: kept,
+    compacted: true,
+    beforeTokens,
+    afterTokens,
+    removedCount: normalizedMessages.length - kept.length,
+    compactedCount: removed.length,
+    preserveTurns,
+    totalTurns,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
@@ -195,10 +320,7 @@ export function trimContext(messages, providerId, model) {
     return { messages: [], trimmed: false, beforeTokens: 0, afterTokens: 0, removedCount: 0 };
   }
 
-  const normalizedMessages = messages.map((msg) => ({
-    ...msg,
-    content: toContentString(msg.content),
-  }));
+  const normalizedMessages = normalizeMessages(messages);
 
   const budget = getContextBudget(providerId, model);
   const beforeTokens = estimateContextTokens(normalizedMessages);

@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
 import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
-import { buildSystemPrompt, buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
+import { buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, saveConfig, applyConfigToEnv, getConfigPath, maskSecret } from './config-store.mjs';
 import { aggregateStats, formatStats } from './stats.mjs';
 import { getToolCallMetrics } from './tool-call-metrics.mjs';
@@ -18,6 +18,7 @@ import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-lo
 import { createCompleter } from './completer.mjs';
 import { fmt, Spinner } from './format.mjs';
 import { appendUserMessageWithFileReferences } from './file-references.mjs';
+import { compactContext } from './context-manager.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -33,6 +34,7 @@ const KNOWN_OPTIONS = new Set([
 
 const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'resume', 'sessions', 'skills', 'stats', 'daemon', 'attach', 'tui']);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
+const DEFAULT_COMPACT_TURNS = 6;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -431,6 +433,40 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
     return skills.size;
   }
 
+  async function compactSessionContext(rawArg) {
+    const arg = String(rawArg || '').trim();
+    let preserveTurns = DEFAULT_COMPACT_TURNS;
+    if (arg) {
+      if (!/^\d+$/.test(arg)) {
+        process.stdout.write('Usage: /compact [turns] (positive integer)\n');
+        return;
+      }
+      preserveTurns = clamp(Number.parseInt(arg, 10), 1, 64);
+    }
+
+    const result = compactContext(state.messages, { preserveTurns });
+    if (!result.compacted) {
+      process.stdout.write(`Nothing to compact (turns: ${result.totalTurns}, preserve: ${result.preserveTurns}).\n`);
+      return;
+    }
+
+    state.messages = result.messages;
+    await appendSessionEvent(state, 'context_compacted', {
+      preserveTurns: result.preserveTurns,
+      totalTurns: result.totalTurns,
+      compactedMessages: result.compactedCount,
+      removedCount: result.removedCount,
+      beforeTokens: result.beforeTokens,
+      afterTokens: result.afterTokens,
+    });
+    await saveSessionState(state);
+
+    process.stdout.write(
+      `Compacted context: ${result.compactedCount} messages -> 1 summary ` +
+      `(kept last ${result.preserveTurns} turns, ~${result.beforeTokens} -> ~${result.afterTokens} tokens).\n`,
+    );
+  }
+
   const completer = createCompleter({ ctx, skills, getCuratedModels, getProviderList, workspaceRoot: state.cwd });
   const rl = createInterface({
     input: process.stdin,
@@ -487,6 +523,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           `  ${fmt.bold('/provider')} <name|#>   Switch provider\n` +
           `  ${fmt.bold('/skills')}              List available skills\n` +
           `  ${fmt.bold('/skills')} reload       Reload workspace + Claude skills\n` +
+          `  ${fmt.bold('/compact')} [turns]     Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)\n` +
           `  ${fmt.bold('/<skill>')} [args]      Run a skill (e.g. /commit, /review src/app.ts)\n` +
           `  ${fmt.dim('@path[:line[-end]]')}     Preload file refs into context (e.g. @src/app.ts:10-40)\n` +
           `  ${fmt.bold('/session')}             Print session id\n` +
@@ -576,6 +613,13 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           continue;
         }
         process.stdout.write('Usage: /skills | /skills reload\n');
+        continue;
+      }
+
+      // /compact [turns] — user-triggered context compaction
+      if (line === '/compact' || line.startsWith('/compact ')) {
+        const arg = line.slice('/compact'.length).trim();
+        await compactSessionContext(arg || null);
         continue;
       }
 

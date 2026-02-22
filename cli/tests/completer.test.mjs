@@ -72,6 +72,7 @@ describe('createCompleter', () => {
     assert.ok(hits.includes('/model'));
     assert.ok(hits.includes('/provider'));
     assert.ok(hits.includes('/skills'));
+    assert.ok(hits.includes('/compact'));
     // Skills
     assert.ok(hits.includes('/commit'));
     assert.ok(hits.includes('/review'));
@@ -84,10 +85,10 @@ describe('createCompleter', () => {
     assert.equal(sub, '/he');
   });
 
-  it('/com → [/commit] (loaded skill)', () => {
+  it('/com → reserved + skill matches', () => {
     const c = makeCompleter();
     const [hits, sub] = c('/com');
-    assert.deepEqual(hits, ['/commit']);
+    assert.deepEqual(hits, ['/compact', '/commit']);
     assert.equal(sub, '/com');
   });
 
