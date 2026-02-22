@@ -101,11 +101,13 @@ function renderHeader(buf, layout, theme, { provider, model, session, cwd, runSt
       ? theme.style('state.error', glyphs.statusDot)
       : theme.style('state.success', glyphs.statusDot);
 
-  // ── Top border: ┌─ Push ──...──┐ ──────────────────────────────
-  // Fixed chars: ┌─ (2) + space (1) + Push (4) + space (1) + fill + ┐ (1) = 9 + fill = width
-  const topFill = glyphs.horizontal.repeat(Math.max(0, width - 9));
+  // ── Top border: ┌─ ⬡ Push ──...──┐ ────────────────────────────
+  // Fixed chars: ┌─ (2) + space (1) + ⬡ (1) + space (1) + Push (4) + space (1) + fill + ┐ (1) = 11 + fill = width
+  const topFill = glyphs.horizontal.repeat(Math.max(0, width - 11));
   const topBorder =
     theme.style('fg.dim', `${glyphs.topLeft}${glyphs.horizontal} `) +
+    theme.style('accent.link', '\u2B21') +
+    ' ' +
     theme.bold(theme.style('fg.primary', 'Push')) +
     theme.style('fg.dim', ` ${topFill}${glyphs.topRight}`);
   buf.writeLine(top, left, topBorder);
