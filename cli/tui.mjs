@@ -1042,6 +1042,16 @@ export async function runTUI(options = {}) {
 
   const skills = await loadSkills(state.cwd);
 
+  async function reloadSkillsMap() {
+    const fresh = await loadSkills(state.cwd);
+    skills.clear();
+    for (const [name, skill] of fresh) {
+      skills.set(name, skill);
+    }
+    tabCompleter.reset();
+    return skills.size;
+  }
+
   const tabCompleter = createTabCompleter({
     ctx, skills, getCuratedModels, getProviderList,
   });
@@ -1481,6 +1491,7 @@ export async function runTUI(options = {}) {
           '  /config tavily <key> Set Tavily web search API key',
           '  /config sandbox on|off  Toggle local Docker sandbox',
           '  /skills              List available skills',
+          '  /skills reload       Reload workspace + Claude skills',
           '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
           '  /session             Print session id',
           '  /session rename <name>  Rename current session (--clear to unset)',
@@ -1536,12 +1547,27 @@ export async function runTUI(options = {}) {
         return true;
 
       case 'skills':
+        if (arg === 'reload') {
+          const count = await reloadSkillsMap();
+          addTranscriptEntry(tuiState, 'status', `Reloaded skills: ${count}`);
+          scheduler.flush();
+          return true;
+        }
+        if (arg) {
+          addTranscriptEntry(tuiState, 'warning', 'Usage: /skills | /skills reload');
+          scheduler.flush();
+          return true;
+        }
         if (skills.size === 0) {
           addTranscriptEntry(tuiState, 'status', 'No skills loaded.');
         } else {
           const lines = [];
           for (const [name, skill] of skills) {
-            const tag = skill.source === 'workspace' ? ' (workspace)' : '';
+            const tag = skill.source === 'workspace'
+              ? ' (workspace)'
+              : skill.source === 'claude'
+                ? ' (claude)'
+                : '';
             lines.push(`  /${name}  ${skill.description}${tag}`);
           }
           addTranscriptEntry(tuiState, 'status', lines.join('\n'));

@@ -122,6 +122,13 @@ describe('createCompleter', () => {
     assert.equal(sub, 'rename --');
   });
 
+  it('/skills + partial subcommand → reload completion', () => {
+    const c = makeCompleter();
+    const [hits, sub] = c('/skills re');
+    assert.deepEqual(hits, ['reload']);
+    assert.equal(sub, 're');
+  });
+
   it('unknown /foo with no matching skill → empty', () => {
     const c = makeCompleter();
     const [hits, sub] = c('/foo');

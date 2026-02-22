@@ -61,6 +61,11 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
       return subs.filter(s => s.startsWith(arg)).map(s => prefix + s);
     }
 
+    if (cmd === 'skills') {
+      const subs = ['reload'];
+      return subs.filter(s => s.startsWith(arg)).map(s => prefix + s);
+    }
+
     if (cmd === 'config') {
       const parts = arg.split(' ');
       if (parts.length <= 1) {

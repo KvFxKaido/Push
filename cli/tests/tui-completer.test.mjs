@@ -78,6 +78,12 @@ describe('createTabCompleter', () => {
     assert.equal(result.text, '/session rename ');
   });
 
+  it('completes skills subcommands', () => {
+    const result = tc.tab('/skills re', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/skills reload');
+  });
+
   it('cycles forward through candidates', () => {
     const r1 = tc.tab('/provider ', false);
     assert.notEqual(r1, null);

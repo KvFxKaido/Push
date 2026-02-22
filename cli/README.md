@@ -44,7 +44,16 @@ In-session commands:
 - `/provider <name|#>` — switch provider by name or list number
 - `/session` — print current session id
 - `/session rename <name>` — rename the current session (`--clear` to unset)
+- `/skills reload` — reload skill files from `.push/skills` and `.claude/commands`
 - `/exit` or `/quit` — exit interactive mode
+
+Skill discovery:
+- Built-ins are always available.
+- Push auto-loads workspace skills from `.push/skills/*.md`.
+- Push also auto-detects Claude command files from `.claude/commands/**/*.md` and exposes them as skills.
+- Nested Claude command paths are flattened to hyphenated names (example: `.claude/commands/git/pr-review.md` -> `/git-pr-review`).
+- If names collide, `.push/skills` overrides Claude commands, and Claude commands override built-ins.
+- Skills are loaded at startup; run `/skills reload` in REPL/TUI to refresh without restarting.
 
 ### Headless
 

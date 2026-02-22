@@ -431,6 +431,15 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
   const config = await loadConfig();
   const skills = await loadSkills(state.cwd);
 
+  async function reloadSkillsMap() {
+    const fresh = await loadSkills(state.cwd);
+    skills.clear();
+    for (const [name, skill] of fresh) {
+      skills.set(name, skill);
+    }
+    return skills.size;
+  }
+
   const completer = createCompleter({ ctx, skills, getCuratedModels, getProviderList });
   const rl = createInterface({
     input: process.stdin,
@@ -488,6 +497,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           `  ${fmt.bold('/provider')}            Show all providers with status\n` +
           `  ${fmt.bold('/provider')} <name|#>   Switch provider\n` +
           `  ${fmt.bold('/skills')}              List available skills\n` +
+          `  ${fmt.bold('/skills')} reload       Reload workspace + Claude skills\n` +
           `  ${fmt.bold('/<skill>')} [args]      Run a skill (e.g. /commit, /review src/app.ts)\n` +
           `  ${fmt.bold('/session')}             Print session id\n` +
           `  ${fmt.bold('/session')} rename <name>  Rename current session (${fmt.dim('--clear')} to unset)\n` +
@@ -553,15 +563,29 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       }
 
       // /skills — list loaded skills
-      if (line === '/skills') {
-        if (skills.size === 0) {
-          process.stdout.write('No skills loaded.\n');
-        } else {
-          for (const [name, skill] of skills) {
-            const tag = skill.source === 'workspace' ? fmt.dim(' (workspace)') : '';
-            process.stdout.write(`  ${fmt.bold('/' + name)}  ${skill.description}${tag}\n`);
+      if (line === '/skills' || line.startsWith('/skills ')) {
+        const arg = line.slice('/skills'.length).trim();
+        if (!arg) {
+          if (skills.size === 0) {
+            process.stdout.write('No skills loaded.\n');
+          } else {
+            for (const [name, skill] of skills) {
+              const tag = skill.source === 'workspace'
+                ? fmt.dim(' (workspace)')
+                : skill.source === 'claude'
+                  ? fmt.dim(' (claude)')
+                  : '';
+              process.stdout.write(`  ${fmt.bold('/' + name)}  ${skill.description}${tag}\n`);
+            }
           }
+          continue;
         }
+        if (arg === 'reload') {
+          const count = await reloadSkillsMap();
+          process.stdout.write(`Reloaded skills: ${count}\n`);
+          continue;
+        }
+        process.stdout.write('Usage: /skills | /skills reload\n');
         continue;
       }
 
@@ -1273,7 +1297,11 @@ export async function main() {
       return 0;
     }
     for (const [name, skill] of skills) {
-      const tag = skill.source === 'workspace' ? fmt.dim(' (workspace)') : '';
+      const tag = skill.source === 'workspace'
+        ? fmt.dim(' (workspace)')
+        : skill.source === 'claude'
+          ? fmt.dim(' (claude)')
+          : '';
       process.stdout.write(`  ${fmt.bold('/' + name)}  ${skill.description}${tag}\n`);
     }
     return 0;

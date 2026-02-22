@@ -16,6 +16,7 @@ const BUILTIN_DIR = path.join(__dirname, 'skills');
 
 /** Workspace skills override built-in skills of the same name */
 const WORKSPACE_DIR = '.push/skills';
+const CLAUDE_COMMANDS_DIR = '.claude/commands';
 
 /** Skill names must be lowercase alphanumeric with optional hyphens, no leading/trailing hyphen */
 const NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -26,7 +27,7 @@ export const RESERVED_COMMANDS = new Set([
 ]);
 
 /**
- * @typedef {{ name: string, description: string, promptTemplate: string, source: 'builtin'|'workspace', filePath: string }} Skill
+ * @typedef {{ name: string, description: string, promptTemplate: string, source: 'builtin'|'workspace'|'claude', filePath: string }} Skill
  */
 
 /**
@@ -59,34 +60,49 @@ function parseSkillFile(raw, name, source, filePath) {
  * Scan a directory for .md skill files.
  * Returns a Map<name, Skill>. Silently skips files with invalid names or parse failures.
  */
-async function scanDir(dir, source) {
+async function scanDir(dir, source, options = {}) {
+  const recursive = options.recursive === true;
   /** @type {Map<string, Skill>} */
   const skills = new Map();
 
-  let entries;
-  try {
-    entries = await fs.readdir(dir);
-  } catch (err) {
-    if (err.code === 'ENOENT') return skills;
-    throw err;
-  }
-
-  for (const entry of entries) {
-    if (!entry.endsWith('.md')) continue;
-
-    const name = entry.slice(0, -3);
-    if (!NAME_RE.test(name)) continue;
-    if (RESERVED_COMMANDS.has(name)) continue;
-
-    const filePath = path.join(dir, entry);
+  async function walk(currentDir, relPrefix = '') {
+    let entries;
     try {
-      const raw = await fs.readFile(filePath, 'utf8');
-      const skill = parseSkillFile(raw, name, source, filePath);
-      if (skill) skills.set(name, skill);
-    } catch {
-      // Skip unreadable files
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch (err) {
+      if (err.code === 'ENOENT') return;
+      throw err;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (!recursive) continue;
+        const nextPrefix = relPrefix ? path.join(relPrefix, entry.name) : entry.name;
+        await walk(path.join(currentDir, entry.name), nextPrefix);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+
+      const relFile = relPrefix ? path.join(relPrefix, entry.name) : entry.name;
+      const relStem = relFile.slice(0, -3);
+      const name = recursive
+        ? relStem.split(path.sep).join('-')
+        : relStem;
+      if (!NAME_RE.test(name)) continue;
+      if (RESERVED_COMMANDS.has(name)) continue;
+
+      const filePath = path.join(currentDir, entry.name);
+      try {
+        const raw = await fs.readFile(filePath, 'utf8');
+        const skill = parseSkillFile(raw, name, source, filePath);
+        if (skill) skills.set(name, skill);
+      } catch {
+        // Skip unreadable files
+      }
     }
   }
+
+  await walk(dir);
 
   return skills;
 }
@@ -98,11 +114,16 @@ async function scanDir(dir, source) {
  */
 export async function loadSkills(workspaceRoot) {
   const builtin = await scanDir(BUILTIN_DIR, 'builtin');
+  const claudeCommandsDir = path.join(workspaceRoot, CLAUDE_COMMANDS_DIR);
+  const claude = await scanDir(claudeCommandsDir, 'claude', { recursive: true });
   const workspaceDir = path.join(workspaceRoot, WORKSPACE_DIR);
   const workspace = await scanDir(workspaceDir, 'workspace');
 
-  // Workspace wins — overlay onto builtin map
+  // Precedence: builtin < Claude commands < Push workspace skills
   const merged = new Map(builtin);
+  for (const [name, skill] of claude) {
+    merged.set(name, skill);
+  }
   for (const [name, skill] of workspace) {
     merged.set(name, skill);
   }

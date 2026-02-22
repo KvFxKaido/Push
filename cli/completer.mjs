@@ -56,6 +56,12 @@ export function createCompleter({ ctx, skills, getCuratedModels, getProviderList
       return [hits, arg];
     }
 
+    if (cmd === 'skills') {
+      const subs = ['reload'];
+      const hits = subs.filter(s => s.startsWith(arg));
+      return [hits, arg];
+    }
+
     // Skill args, unknown commands — no completion
     return [[], arg];
   };

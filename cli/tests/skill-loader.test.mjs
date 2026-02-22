@@ -76,6 +76,42 @@ describe('loadSkills — workspace override', () => {
   });
 });
 
+describe('loadSkills — Claude command auto-detect', () => {
+  it('loads workspace Claude commands from .claude/commands', async () => {
+    const cmdDir = path.join(tmpDir, '.claude', 'commands');
+    await fs.mkdir(cmdDir, { recursive: true });
+    await fs.writeFile(path.join(cmdDir, 'ship.md'), '# Ship changes\n\nRun release checks and ship.\n\n{{args}}\n');
+
+    const skills = await loadSkills(tmpDir);
+    assert.ok(skills.has('ship'));
+    assert.equal(skills.get('ship').source, 'claude');
+    assert.equal(skills.get('ship').description, 'Ship changes');
+  });
+
+  it('loads nested Claude commands and flattens path separators to hyphens', async () => {
+    const nested = path.join(tmpDir, '.claude', 'commands', 'git');
+    await fs.mkdir(nested, { recursive: true });
+    await fs.writeFile(path.join(nested, 'pr-review.md'), '# Review PR\n\nReview the PR.\n');
+
+    const skills = await loadSkills(tmpDir);
+    assert.ok(skills.has('git-pr-review'));
+    assert.equal(skills.get('git-pr-review').source, 'claude');
+  });
+
+  it('Push workspace skills override Claude commands of the same name', async () => {
+    const claudeDir = path.join(tmpDir, '.claude', 'commands');
+    const pushDir = path.join(tmpDir, '.push', 'skills');
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.mkdir(pushDir, { recursive: true });
+    await fs.writeFile(path.join(claudeDir, 'deploy.md'), '# Claude deploy\n\nClaude flow.\n');
+    await fs.writeFile(path.join(pushDir, 'deploy.md'), '# Push deploy\n\nPush flow.\n');
+
+    const skills = await loadSkills(tmpDir);
+    assert.equal(skills.get('deploy').source, 'workspace');
+    assert.equal(skills.get('deploy').description, 'Push deploy');
+  });
+});
+
 describe('loadSkills — validation', () => {
   it('ignores non-.md files', async () => {
     const skillDir = path.join(tmpDir, '.push', 'skills');
