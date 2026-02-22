@@ -62,7 +62,7 @@ Post-bootstrap harness transition also shipped on 2026-02-20.
 
 ## W6: Web Search Expansion (Shipped, 2026-02-21)
 
-- Added `web_search` tool support to the CLI tool protocol and native FC schemas.
+- Added `web_search` tool support to the CLI tool protocol and (at the time) native FC schemas. Historical note: native FC was later removed in favor of a unified prompt-engineered tool path.
 - Added Tavily-backed web search path keyed by `PUSH_TAVILY_API_KEY` (with env fallbacks).
 - Added Ollama native web search path (`https://ollama.com/api/web_search`) when provider/key are available.
 - Added backend policy control via `PUSH_WEB_SEARCH_BACKEND` (`auto`, `tavily`, `ollama`, `duckduckgo`).

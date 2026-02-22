@@ -1,8 +1,8 @@
 # Push Efficiency Plan
 
 ## Status
-- Last updated: 2026-02-21
-- State: Partially shipped — Priority 1 complete, Priority 2 mostly complete, follow-up optimization pending
+- Last updated: 2026-02-22
+- State: Partially shipped — Priority 1 complete, Priority 2 architecture simplified (prompt-engineered only), follow-up optimization pending
 - Scope: CLI + Web app — both share the same architectural patterns
 
 ## Implementation Status Snapshot (2026-02-21)
@@ -51,90 +51,36 @@ Push is model-agnostic by design. The current tool protocol (prompt-engineered J
 
 ---
 
-## Priority 2 — Native Function Calling (with Fallback)
+## Priority 2 — Prompt-Engineered Tool-Loop Efficiency (Unified Path)
 
-**Status (2026-02-21):** Mostly shipped (dual-mode active; automatic capability probing still pending)
+**Status (2026-02-22):** Architecture simplification shipped (native function-calling removed); optimization follow-up pending
 
-**Problem:** Prompt-engineered tools cost ~15-20% token overhead:
+**Problem:** Prompt-engineered tools still cost ~15-20% token overhead:
 - ~800 char `TOOL_PROTOCOL` prompt in every system message
 - Model wastes tokens on markdown fencing around every tool call
 - Malformed calls happen (tracked by `tool-call-metrics.mjs` / `tool-call-metrics.ts`)
-- Models are trained on native function calling — prompt-engineered is fighting their training
+- Prompt assembly mistakes (duplicate protocol injection, wrong-role protocol leakage) can create regressions
 
 **Current state:**
-- Both CLI (`tools.mjs`) and web app (`tool-dispatch.ts`) use regex detection on accumulated text
+- Both CLI (`tools.mjs`) and web app (`tool-dispatch.ts`) use prompt-engineered JSON tool calls detected from accumulated text
 - Tool results are injected as `role: "user"` messages wrapped in `[TOOL_RESULT]...[/TOOL_RESULT]`
-- Most target providers now support native function calling:
-  - Ollama: supported since 0.5+ (check via `/api/show` → template includes `.ToolCalls`)
-  - Mistral: always supported
-  - OpenRouter: passes through native tool_use for Claude/GPT/Gemini
+- The codebase no longer uses provider-native function-calling request schemas or `delta.tool_calls` parsing in the web app
 
-**Architecture — what changes and what doesn't:**
-
-```
-                        ┌─────────────────────┐
-                        │   DETECTION LAYER    │ ← THIS CHANGES
-                        │  (dual-mode: native  │
-                        │   or regex fallback)  │
-                        └──────────┬────────────┘
-                                   │
-                        { tool: "sandbox_read_file", args: { path: "..." } }
-                                   │
-                        ┌──────────▼────────────┐
-                        │   EXECUTION LAYER     │ ← NO CHANGE
-                        │  (sandbox-client.ts,  │
-                        │   tools.mjs, etc.)    │
-                        └──────────┬────────────┘
-                                   │
-                        POST /api/sandbox/read
-                                   │
-                        ┌──────────▼────────────┐
-                        │   SANDBOX (Modal)     │ ← ZERO CHANGE
-                        │   Cloudflare Worker   │ ← ZERO CHANGE
-                        └───────────────────────┘
-```
-
-**Dual-mode approach:**
-
-```
-Provider connection
-  │
-  ├─ Probe: does this provider+model support function calling?
-  │
-  ├─ YES → native mode
-  │   ├─ Request: include tools[] array in API body
-  │   ├─ SSE parsing: accumulate delta.tool_calls[].function.arguments
-  │   ├─ Detection: structured tool_calls array (already parsed, no regex)
-  │   ├─ Results: role: "tool" with tool_call_id
-  │   └─ System prompt: omit TOOL_PROTOCOL block (~800 chars saved per round)
-  │
-  └─ NO → fallback mode (current behavior, unchanged)
-      ├─ Request: messages only
-      ├─ SSE parsing: accumulate delta.content
-      ├─ Detection: regex scan for JSON blocks in text
-      ├─ Results: role: "user" with [TOOL_RESULT] wrapper
-      └─ System prompt: include TOOL_PROTOCOL block
-```
-
-**Key detail — message format:**
-
-| Aspect | Prompt-engineered (current) | Native function calling |
-|--------|----------------------------|------------------------|
-| **Tool call** | Text in assistant message: `` ```json\n{"tool":"...","args":{...}}\n``` `` | Structured: `tool_calls: [{ id, function: { name, arguments } }]` |
-| **Tool result** | `role: "user"`, content: `[TOOL_RESULT]...[/TOOL_RESULT]` | `role: "tool"`, `tool_call_id: "call_1"`, content: result text |
-| **Prompt overhead** | ~800 chars TOOL_PROTOCOL per session | Zero (tool defs go in API request, not prompt) |
-| **Malformed calls** | Possible (regex miss, invalid JSON, wrong shape) | Impossible (API-level validation) |
-
-**Context trimming interaction:** Trimming must understand both formats. Native FC pairs a `tool_calls` assistant message with subsequent `role: "tool"` messages. Prompt-engineered pairs are `[TOOL_RESULT]` blocks inside `role: "user"` messages. The trimmer needs to keep pairs together in both cases.
+**Optimization focus (without changing tool mode):**
+- Keep protocol injection role-scoped (Orchestrator vs Coder vs Auditor) to avoid prompt leakage
+- Eliminate duplicate protocol blocks in shared prompt pipelines
+- Reduce prompt verbosity where possible (compact wording, no redundant examples)
+- Improve malformed-call recovery and diagnostics to reduce retry rounds
+- Continue context trimming and result compaction improvements for tool-heavy sessions
 
 **What changes:**
-- `cli/provider.mjs` — SSE parser handles `delta.tool_calls` chunks; request body includes `tools[]` when native
-- `cli/engine.mjs` — message formatting uses `role: "tool"` when native; detection path branches
-- `cli/tools.mjs` — export tool definitions as OpenAI-format function schemas (for `tools[]` array)
-- `app/src/lib/orchestrator.ts` — same SSE parser changes for web app
-- `app/src/lib/tool-dispatch.ts` — structured detection path alongside regex
-- `app/src/hooks/useChat.ts` — message formatting for native mode
+- `app/src/lib/orchestrator.ts` — shared prompt assembly guardrails (override prompt pass-through, role-scoped protocol injection)
+- `app/src/lib/tool-dispatch.ts` — continue improving malformed-call recovery, detection accuracy, and multi-tool dispatch efficiency
+- `app/src/hooks/useChat.ts` / `cli/engine.mjs` — reduce round churn via better retry feedback and context trimming
+- `cli/provider.mjs` / web streaming paths — keep SSE parsing focused on `delta.content` and reasoning tokens
 - No sandbox changes (`sandbox-client.ts`, `sandbox-tools.ts`, Modal, Worker — all untouched)
+
+**Historical note (superseded):** An earlier dual-mode native function-calling plan existed, but production was simplified to a unified prompt-engineered path on 2026-02-22. Keep that design discussion in git history only.
 
 ---
 
@@ -175,5 +121,5 @@ CLI uses character count (`contextChars`) as a proxy. Real token counting requir
 ## Implementation Order
 
 1. [x] **Context trimming (CLI)** — shipped.
-2. [~] **Native function calling (dual-mode)** — shipped for CLI + web with fallback; capability probing per provider/model still pending.
+2. [~] **Prompt-engineered tool-loop efficiency** — unified prompt-engineered path shipped; continue incremental prompt/trim/retry optimizations.
 3. [x] **Hashline** — no action needed; continue monitoring token costs in real sessions.

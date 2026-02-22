@@ -1,17 +1,17 @@
 # Push Harness Reliability Plan (Hashline Included)
 
 ## Status
-- Last updated: 2026-02-21
+- Last updated: 2026-02-22
 - State: Track A shipped (hashline active), Track B complete, Track C extended (metrics + settings diagnostics shipped), Track E wishlist outcomes shipped, Track D (server-side background jobs) deferred
 - Intent: Improve coding task success by upgrading the harness, not just swapping models
 
-## Implementation Status Snapshot (2026-02-21)
+## Implementation Status Snapshot (2026-02-22)
 
 - [x] Track A (hashline edit reliability) shipped and active.
 - [x] Track B (range reads + truncation-aware safety) complete.
 - [x] Track C Phase 1 + structured malformed-call feedback shipped.
 - [x] Track C metrics/visibility shipped: malformed-call metrics by provider/model are instrumented and exposed in Settings diagnostics.
-- [~] Track C native function-calling cost reduction is partially shipped (Mistral/OpenRouter native FC with fallback; Ollama remains prompt-engineered by default).
+- [x] Track C architecture simplification shipped: unified prompt-engineered tool path is active; native function-calling experiments were removed from the production web path.
 - [x] Track E (error taxonomy, meta envelope, edit diffs) shipped.
 - [ ] Track D remains deferred in current PWA scope.
 
@@ -132,7 +132,7 @@ Done (2026-02-14):
 - [x] Garbled messages hidden from chat UI via `isToolCall: true` + `stripToolCallPayload` extension.
 
 Remaining scope:
-- Consider native function calling for providers that support it (reduces prompt-engineering tax, but must coexist with JSON-block providers).
+- Reduce prompt-engineering tax within the unified path (protocol sizing, role-scoped prompt injection, malformed-call recovery, diagnostics-driven tuning).
 
 Done (2026-02-19, Agent Experience Wishlist):
 - [x] Structured malformed-call feedback to agent — `[TOOL_CALL_PARSE_ERROR]` header with `error_type`, `detected_tool`, and `problem` fields injected into correction messages. Closes the loop between Track C telemetry and agent behavior.
@@ -204,7 +204,7 @@ Now:
 3. Expand operator-visibility diagnostics (`toolMeta`) across remaining error paths.
 
 Next:
-1. Evaluate whether Ollama default should move toward native function-calling in selected environments.
+1. Reduce prompt/tool protocol overhead without reintroducing native function-calling (compact protocol variants, duplication audits, role-scoped injection).
 2. Add a lightweight compliance score surface (provider/model trend view) if dogfood metrics are stable.
 3. Revisit Track D only if roadmap scope changes (native app or deeper daemon-first runtime).
 

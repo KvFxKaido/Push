@@ -1,11 +1,13 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-02-20
+Last updated: 2026-02-22
 
 This is the single source of truth for active product and engineering direction.
 
 `documents/` is a draft lab for spikes, explorations, and non-final plans.
 Only decisions promoted into this file should be treated as implementation commitments.
+
+Current cycle emphasis: terminal UX improvements (CLI-first, transcript-first, no full-screen TUI rewrite).
 
 ## How We Use This
 
@@ -25,8 +27,10 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
-| Harness Reliability Program (Tracks A-C + E) | in_progress | Execute harness-first reliability roadmap: edit reliability, read efficiency, tool-loop robustness, and operator visibility improvements | Hashline protocol, truncation-aware safety, and Agent Experience Wishlist (Tracks A-C) live; Track E (Visibility) ongoing; Track D (server-side background jobs) deferred |
-| Push CLI Muscle-Memory UX | in_progress | Drop full-screen TUI direction and align CLI interaction model with Claude Code/Codex-style muscle memory using a transcript-first REPL | Direction and baseline shipped (interactive REPL, config init/show/set, enriched provider diagnostics, advanced harness semantics without checkpoint resume); remaining work is daemon attach/event-stream UX and protocol/schema hardening |
+| Push CLI Muscle-Memory UX | in_progress | Continue aligning `push` with Claude Code/Codex-style terminal muscle memory using a transcript-first REPL (no full-screen TUI) | Session flow feels transcript-first (prompting, interrupts, outputs, tool visibility), common tasks require fewer commands/flags, and day-to-day usage no longer depends on roadmap-specific operator knowledge |
+| `pushd` Attach + Event Stream UX | planned | Ship explicit CLI client flows for daemon attach/resume and event streaming over the existing NDJSON socket protocol | User can attach to a live session, watch events in a readable transcript, and recover after disconnect without manual state inspection |
+| CLI/TUI-lite Ergonomics | planned | Add terminal UX improvements that stop short of a full-screen TUI (session picker, transcript navigation, command shortcuts, compact status surfaces) | Interactive users can navigate session history and active runs faster without leaving the transcript-first model |
+| CLI Protocol/Schema Hardening | planned | Harden protocol envelopes and optional schema validation for daemon/client interoperability | Schema validation mode exists for core events; protocol regressions fail tests before release |
 | Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
 | Roadmap Hygiene Automation | planned | Lightweight template/checklist for promoting `documents/` ideas into this file | New roadmap items consistently include scope + acceptance criteria |
@@ -35,6 +39,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
+| Harness Reliability Program (Tracks A-C + E) | done | Shipped the harness-first reliability push: hashline edits, range reads + truncation-aware safety, garbled tool-call recovery, structured error taxonomy, multi-tool dispatch, meta envelopes, acceptance criteria, working memory, symbol reads, and patchsets | Core checklist shipped; harness reliability remains an ongoing product priority, with future work handled as incremental maintenance rather than a roadmap checklist |
 | Push CLI Foundation + Harness Transition (No Checkpoint Resume) | done | Built modular `push`/`pushd` foundation and added advanced harness semantics to CLI runtime: multi-tool turns (parallel reads + single mutation), hashline `edit_file`, working memory updates, malformed tool-call diagnostics, file-ledger/meta envelopes, and headless acceptance checks | `push` supports config init/show/set and persisted defaults; `run --json`/`sessions --json` stable; protocol envelope persisted in session events; advanced harness features shipped in `9ec31c5` with passing `scripts/push/tests/*.test.mjs` |
 | Resumable Sessions (Phases 1-4) | done | Added interruption-safe run checkpointing + resume flow across orchestrator and coder delegation, including reconciliation and lock safety | Interrupted runs surface a `ResumeBanner`; resume revalidates sandbox/branch/repo, injects `[SESSION_RESUMED]` with sandbox HEAD/dirty/diff context, preserves coder state, and records resume telemetry |
 | Agent Experience Wishlist (Track C) | done | Implement 10 harness improvements: structured error taxonomy, edit diffs, multi-tool per turn, universal meta envelope, and machine-readable tool-call feedback | All items shipped and verified in harness metrics (Commit 0336f11) |
@@ -50,6 +55,7 @@ Only decisions promoted into this file should be treated as implementation commi
 
 | Date | Decision | Source |
 |---|---|---|
+| 2026-02-22 | Roadmap focus shifted to CLI/TUI terminal UX improvements; harness reliability program moved from active checklist to completed baseline priority | Documentation/roadmap update |
 | 2026-02-20 | Push CLI foundation and harness transition shipped in staged commits (`53b3c29`, `9b10856`, `aa80d7f`, `9ec31c5`) with checkpoint resume intentionally deferred for CLI | Implementation session |
 | 2026-02-20 | Track D server-side background jobs deferred; resumable sessions remain the active interruption-recovery strategy | Product scope decision |
 | 2026-02-20 | Push CLI direction changed: no full-screen TUI; target transcript-first interactive REPL with Claude Code/Codex muscle memory | Product scope decision |

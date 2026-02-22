@@ -9,7 +9,8 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Type:** AI Coding Agent — Mobile PWA + Local CLI
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** Multi-provider support (Ollama, Mistral, OpenRouter) via OpenAI-compatible SSE streaming.
+*   **AI Backend:** Multi-provider support (Ollama, Mistral, OpenRouter, Z.AI, Google, OpenCode Zen) via OpenAI-compatible SSE streaming.
+*   **Current Product Focus:** CLI/TUI terminal UX improvements (CLI-first, transcript-first; no full-screen TUI rewrite).
 
 ## Tech Stack
 
@@ -19,7 +20,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 | **Styling** | Tailwind CSS 3, shadcn/ui (Radix primitives) |
 | **Backend** | Cloudflare Workers (TypeScript) |
 | **Sandbox** | Modal (Serverless Python Containers) |
-| **AI Integration** | OpenAI-compatible Streaming (Ollama, Mistral, OpenRouter) |
+| **AI Integration** | OpenAI-compatible Streaming (Ollama, Mistral, OpenRouter, Z.AI, Google, OpenCode Zen) |
 | **APIs** | GitHub REST API |
 
 ## Architecture
@@ -36,7 +37,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Web Search Tools:** Mid-conversation web search via Tavily (premium), Ollama native search, or DuckDuckGo fallback. Prompt-engineered JSON format, client-side dispatch.
 *   **Browser Tools (Optional):** Sandbox-backed webpage screenshot + text extraction (server-side browser credentials injected by Worker).
 *   **Coder Delegation:** Orchestrator delegates via `delegate_coder`. Supports `acceptanceCriteria[]` (shell commands run post-task). Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — survives context trimming.
-*   **Harness Focus:** Active reliability tracks are tracked in `documents/plans/Harness Reliability Plan.md`. Track B complete (range reads, edit guard, auto-expand). **Agent Experience Wishlist shipped** (`documents/analysis/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`.
+*   **Harness Priority:** Push still prioritizes harness reliability over model churn, but the major checklist is shipped. `documents/plans/Harness Reliability Plan.md` is now reference/planning history rather than an active checklist in the product docs. **Agent Experience Wishlist shipped** (`documents/analysis/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`.
 *   **User Identity:** Display name, bio, and GitHub login set in Settings. Stored in localStorage via `useUserProfile` hook. Injected into Orchestrator and Coder system prompts via `buildUserIdentityBlock()`.
 *   **Scratchpad:** Shared persistent notepad for user/AI collaboration.
 *   **Active Branch Model:** There is always exactly one Active Branch per repo session — commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Branch switching is available in history drawer, home page, and workspace selector. Branch creation via workspace/header action on main; feature branches show "Merge into main". Non-default inactive branches can be deleted in the workspace selector.
@@ -50,6 +51,8 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 ## Push CLI
 
 Local coding agent for the terminal. Same role-based agent architecture as the web app, operating directly on the filesystem.
+
+Current roadmap focus is improving terminal ergonomics around the transcript-first CLI flow (`push`) and daemon attach/event streaming (`pushd`), not building a full-screen TUI.
 
 ### Quick Start
 ```bash
@@ -68,13 +71,16 @@ Local coding agent for the terminal. Same role-based agent architecture as the w
 | `read_file` | read | Read file with hashline-anchored line numbers |
 | `list_dir` | read | List directory contents |
 | `search_files` | read | Ripgrep text search (falls back to grep) |
+| `web_search` | read | Search the public web (backend configurable: `auto`/`tavily`/`ollama`/`duckduckgo`) |
 | `read_symbols` | read | Extract function/class/type declarations (regex-based) |
 | `git_status` | read | Workspace git status (branch, dirty files) |
 | `git_diff` | read | Show git diff (file-scoped, staged) |
 | `exec` | mutate | Run a shell command |
 | `write_file` | mutate | Write entire file (auto-backed up) |
 | `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
+| `undo_edit` | mutate | Restore a file from the most recent tool-created backup |
 | `git_commit` | mutate | Stage and commit files (excludes `.push/` internal state) |
+| `save_memory` | memory | Persist concise project learnings across sessions (`.push/memory.md`) |
 | `coder_update_state` | memory | Update working memory |
 
 **Read/mutate split:** Multiple read-only tools run in parallel per turn. Only one mutating tool allowed per turn.
@@ -91,7 +97,7 @@ Local coding agent for the terminal. Same role-based agent architecture as the w
 *   `.push/` internal state (sessions, backups) excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Three providers: Ollama (local), Mistral, OpenRouter. All use OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Six providers: Ollama, Mistral, OpenRouter, Z.AI, Google, OpenCode Zen. All use OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
 
 ## Directory Structure
 
@@ -180,7 +186,7 @@ Push/
 ### Environment
 Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI.
 
-Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
+Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZAI_API_KEY` (Z.AI), `VITE_GOOGLE_API_KEY` (Google), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
 
 ## Coding Conventions
 *   **TypeScript:** Strict mode enabled. Explicit return types required on exported functions.

@@ -60,7 +60,7 @@ The app is free. AI usage depends on the provider and plan you choose.
 
 ## Reliability & Harness
 
-Push prioritizes harness reliability over raw model capability. Current shipped features:
+Push prioritizes harness reliability over raw model capability. Core shipped capabilities include:
 
 - **Range-aware file reads** — `sandbox_read_file` supports `start_line`/`end_line` with line-numbered output for precise context
 - **Hashline edits** — `sandbox_edit_file` uses 7-char content hashes as line references, eliminating line-number drift
@@ -76,7 +76,7 @@ Push prioritizes harness reliability over raw model capability. Current shipped 
 - **Symbol extraction** — `sandbox_read_symbols` extracts function/class/type indexes without reading full files
 - **Multi-file patchsets** — `sandbox_apply_patchset` validates all edits before writing any files
 
-Next up: visibility polish, telemetry, and provider-compliance diagnostics. See `documents/plans/Harness Reliability Plan.md` for the full plan.
+Harness reliability remains a core product priority. `documents/plans/Harness Reliability Plan.md` is kept as planning/reference history, not an active README checklist.
 
 ## Getting Started
 
@@ -192,17 +192,6 @@ Six AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter*
 There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, console, scratchpad, and commit/push are unified in the **Workspace Hub**. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
 
 If a run is interrupted (phone lock/background), Push checkpoints state and surfaces a **ResumeBanner** on return. Resume validates sandbox/branch/repo identity, fetches sandbox status (HEAD/dirty/diff), injects a reconciliation message, and continues the tool loop.
-
-## Harness Focus
-
-Current harness priorities from `documents/plans/Harness Reliability Plan.md`:
-
-- [x] stale-write protection + write-path telemetry baseline
-- [x] improved operator visibility (Coder status events in console, cleaner dialogue/tool display)
-- [x] read-path efficiency (`sandbox_read_file` range args, line-numbered output, truncation-aware edit safety)
-- [x] garbled tool-call recovery (three-phase diagnosis, JSON repair, truncation detection, specific error feedback)
-- [x] hashline edit protocol (`sandbox_edit_file` with content-addressed line hashes)
-- [x] Agent Experience Wishlist — shipped (error taxonomy, multi-tool dispatch, meta envelope, acceptance criteria, working memory, structured malformed-call feedback, edit result diffs, `sandbox_read_symbols`, `sandbox_apply_patchset`)
 
 ## Project Structure
 
