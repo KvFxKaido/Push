@@ -108,8 +108,8 @@ describe('DEFAULT_MODELS', () => {
     mistral: 'devstral-small-latest',
     openrouter: 'anthropic/claude-sonnet-4.6',
     zai: 'glm-4.5',
-    google: 'gemini-2.5-flash',
-    zen: 'qwen3-coder',
+    google: 'gemini-3.1-pro-preview',
+    zen: 'big-pickle',
   };
 
   it('has correct hardcoded defaults', () => {

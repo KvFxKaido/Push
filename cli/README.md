@@ -122,10 +122,10 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_ZAI_MODEL` | Z.AI model (default: `glm-4.5`) |
 | `PUSH_GOOGLE_URL` | Google OpenAI-compatible endpoint (default: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`) |
 | `PUSH_GOOGLE_API_KEY` | Google API key |
-| `PUSH_GOOGLE_MODEL` | Google model (default: `gemini-2.5-flash`) |
+| `PUSH_GOOGLE_MODEL` | Google model (default: `gemini-3.1-pro-preview`) |
 | `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`) |
 | `PUSH_ZEN_API_KEY` | OpenCode Zen API key |
-| `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `qwen3-coder`) |
+| `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `big-pickle`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
@@ -144,8 +144,8 @@ All six providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5x
 | `mistral` | `devstral-small-latest` | Yes |
 | `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
 | `zai` | `glm-4.5` | Yes |
-| `google` | `gemini-2.5-flash` | Yes |
-| `zen` | `qwen3-coder` | Yes |
+| `google` | `gemini-3.1-pro-preview` | Yes |
+| `zen` | `big-pickle` | Yes |
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 

@@ -46,7 +46,7 @@ export const PROVIDER_CONFIGS = {
   google: {
     id: 'google',
     url: process.env.PUSH_GOOGLE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-    defaultModel: process.env.PUSH_GOOGLE_MODEL || 'gemini-2.5-flash',
+    defaultModel: process.env.PUSH_GOOGLE_MODEL || 'gemini-3.1-pro-preview',
     apiKeyEnv: [
       'PUSH_GOOGLE_API_KEY',
       'GOOGLE_API_KEY',
@@ -59,7 +59,7 @@ export const PROVIDER_CONFIGS = {
   zen: {
     id: 'zen',
     url: process.env.PUSH_ZEN_URL || 'https://opencode.ai/zen/v1/chat/completions',
-    defaultModel: process.env.PUSH_ZEN_MODEL || 'qwen3-coder',
+    defaultModel: process.env.PUSH_ZEN_MODEL || 'big-pickle',
     apiKeyEnv: [
       'PUSH_ZEN_API_KEY',
       'ZEN_API_KEY',

@@ -36,6 +36,7 @@ export const ZAI_MODELS = [
 ];
 
 export const GOOGLE_MODELS = [
+  'gemini-3.1-pro-preview',
   'gemini-2.5-flash',
   'gemini-2.5-pro',
   'gemini-2.0-flash',
@@ -64,8 +65,8 @@ export const DEFAULT_MODELS = {
   mistral: 'devstral-small-latest',
   openrouter: 'anthropic/claude-sonnet-4.6',
   zai: 'glm-4.5',
-  google: 'gemini-2.5-flash',
-  zen: 'qwen3-coder',
+  google: 'gemini-3.1-pro-preview',
+  zen: 'big-pickle',
 };
 
 /**
