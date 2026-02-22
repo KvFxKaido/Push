@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
 export const PROTOCOL_VERSION = 'push.runtime.v1';
+const SESSION_ROOT_SYMBOL = Symbol('push.sessionRoot');
 
 // Session IDs must match the output of makeSessionId(): sess_<base36>_<6 hex chars>
 export const SESSION_ID_RE = /^sess_[a-z0-9]+_[a-f0-9]{6}$/;
@@ -24,42 +26,83 @@ export function makeRunId() {
 }
 
 export function getSessionRoot() {
-  return process.env.PUSH_SESSION_DIR || path.join(process.cwd(), '.push', 'sessions');
+  return process.env.PUSH_SESSION_DIR || path.join(os.homedir(), '.push', 'sessions');
 }
 
-export function getSessionDir(sessionId) {
+function getLegacySessionRoot() {
+  return path.join(process.cwd(), '.push', 'sessions');
+}
+
+function getSessionRootsForRead() {
+  if (process.env.PUSH_SESSION_DIR) {
+    return [path.resolve(process.env.PUSH_SESSION_DIR)];
+  }
+  // Backward-compatible read path: global store + legacy cwd-local store.
+  const roots = [path.resolve(getSessionRoot()), path.resolve(getLegacySessionRoot())];
+  return [...new Set(roots)];
+}
+
+function getSessionDirInRoot(root, sessionId) {
   validateSessionId(sessionId);
-  const root = path.resolve(getSessionRoot());
-  const dir = path.resolve(root, sessionId);
+  const resolvedRoot = path.resolve(root);
+  const dir = path.resolve(resolvedRoot, sessionId);
   // Belt-and-suspenders: even if the regex is bypassed, prevent path traversal
-  if (!dir.startsWith(`${root}${path.sep}`) && dir !== root) {
+  if (!dir.startsWith(`${resolvedRoot}${path.sep}`) && dir !== resolvedRoot) {
     throw new Error('Session dir escapes session root');
   }
   return dir;
 }
 
-function getStatePath(sessionId) {
-  return path.join(getSessionDir(sessionId), 'state.json');
+export function getSessionDir(sessionId) {
+  return getSessionDirInRoot(getSessionRoot(), sessionId);
 }
 
-function getEventsPath(sessionId) {
-  return path.join(getSessionDir(sessionId), 'events.jsonl');
+function getStatePathInRoot(root, sessionId) {
+  return path.join(getSessionDirInRoot(root, sessionId), 'state.json');
 }
 
-async function ensureSessionDir(sessionId) {
-  const dir = getSessionDir(sessionId);
+function getEventsPathInRoot(root, sessionId) {
+  return path.join(getSessionDirInRoot(root, sessionId), 'events.jsonl');
+}
+
+function attachSessionRoot(state, root) {
+  if (!state || typeof state !== 'object') return;
+  Object.defineProperty(state, SESSION_ROOT_SYMBOL, {
+    value: path.resolve(root),
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+}
+
+function getAttachedSessionRoot(state) {
+  if (!state || typeof state !== 'object') return null;
+  const root = state[SESSION_ROOT_SYMBOL];
+  return typeof root === 'string' ? root : null;
+}
+
+function getStateSessionRoot(state) {
+  return getAttachedSessionRoot(state) || path.resolve(getSessionRoot());
+}
+
+async function ensureSessionDir(sessionId, root) {
+  const dir = getSessionDirInRoot(root, sessionId);
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   // Ensure permissions even if dir already existed with looser perms
   await fs.chmod(dir, 0o700);
 }
 
 export async function saveSessionState(state) {
+  const root = getStateSessionRoot(state);
+  attachSessionRoot(state, root);
   state.updatedAt = Date.now();
-  await ensureSessionDir(state.sessionId);
-  await fs.writeFile(getStatePath(state.sessionId), JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 });
+  await ensureSessionDir(state.sessionId, root);
+  await fs.writeFile(getStatePathInRoot(root, state.sessionId), JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 });
 }
 
 export async function appendSessionEvent(state, type, payload, runId = null) {
+  const root = getStateSessionRoot(state);
+  attachSessionRoot(state, root);
   state.eventSeq += 1;
   state.updatedAt = Date.now();
   const event = {
@@ -72,21 +115,40 @@ export async function appendSessionEvent(state, type, payload, runId = null) {
     type,
     payload,
   };
-  await ensureSessionDir(state.sessionId);
-  await fs.appendFile(getEventsPath(state.sessionId), `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
+  await ensureSessionDir(state.sessionId, root);
+  await fs.appendFile(getEventsPathInRoot(root, state.sessionId), `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
+}
+
+async function resolveSessionRootForRead(sessionId) {
+  const roots = getSessionRootsForRead();
+  for (const root of roots) {
+    const statePath = getStatePathInRoot(root, sessionId);
+    try {
+      await fs.access(statePath);
+      return root;
+    } catch {
+      // continue
+    }
+  }
+  return null;
 }
 
 export async function loadSessionState(sessionId) {
-  const raw = await fs.readFile(getStatePath(sessionId), 'utf8');
+  validateSessionId(sessionId);
+  const root = await resolveSessionRootForRead(sessionId) || path.resolve(getSessionRoot());
+  const raw = await fs.readFile(getStatePathInRoot(root, sessionId), 'utf8');
   const parsed = JSON.parse(raw);
   if (!parsed || parsed.sessionId !== sessionId || !Array.isArray(parsed.messages)) {
     throw new Error(`Invalid session state: ${sessionId}`);
   }
+  attachSessionRoot(parsed, root);
   return parsed;
 }
 
 export async function loadSessionEvents(sessionId) {
-  const eventsPath = getEventsPath(sessionId);
+  validateSessionId(sessionId);
+  const root = await resolveSessionRootForRead(sessionId) || path.resolve(getSessionRoot());
+  const eventsPath = getEventsPathInRoot(root, sessionId);
   try {
     const raw = await fs.readFile(eventsPath, 'utf8');
     return raw.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -97,31 +159,44 @@ export async function loadSessionEvents(sessionId) {
 }
 
 export async function listSessions() {
-  const root = getSessionRoot();
-  try {
-    const entries = await fs.readdir(root, { withFileTypes: true });
-    const rows = [];
+  const roots = getSessionRootsForRead();
+  const byId = new Map();
+
+  for (const root of roots) {
+    let entries;
+    try {
+      entries = await fs.readdir(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      // Skip entries that don't match valid session id format
       if (!SESSION_ID_RE.test(entry.name)) continue;
       try {
-        const statePath = getStatePath(entry.name);
+        const statePath = getStatePathInRoot(root, entry.name);
         const raw = await fs.readFile(statePath, 'utf8');
         const state = JSON.parse(raw);
-        rows.push({
-          sessionId: state.sessionId,
-          updatedAt: state.updatedAt,
-          provider: state.provider,
-          model: state.model,
-          cwd: state.cwd,
-        });
+        const sessionId = typeof state.sessionId === 'string' ? state.sessionId : entry.name;
+        if (!SESSION_ID_RE.test(sessionId)) continue;
+
+        const row = {
+          sessionId,
+          updatedAt: Number.isFinite(Number(state.updatedAt)) ? Number(state.updatedAt) : 0,
+          provider: typeof state.provider === 'string' ? state.provider : 'unknown',
+          model: typeof state.model === 'string' ? state.model : 'unknown',
+          cwd: typeof state.cwd === 'string' ? state.cwd : '',
+        };
+
+        const existing = byId.get(sessionId);
+        if (!existing || row.updatedAt > existing.updatedAt) {
+          byId.set(sessionId, row);
+        }
       } catch {
-        // ignore malformed sessions
+        // Ignore malformed sessions.
       }
     }
-    return rows.sort((a, b) => b.updatedAt - a.updatedAt);
-  } catch {
-    return [];
   }
+
+  return [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }

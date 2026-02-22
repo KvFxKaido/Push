@@ -43,6 +43,7 @@ function createTUIState() {
     // UI toggles
     toolPaneOpen: false,
     providerModalOpen: false,
+    providerModalCursor: 0,
     modelModalOpen: false,
     modelModalState: null,   // { providerId, models[], cursor, loading, source, error }
     configModalOpen: false,
@@ -350,10 +351,10 @@ function renderApprovalModal(buf, theme, rows, cols, approval) {
   }
 }
 
-function renderProviderModal(buf, theme, rows, cols, currentProvider, currentModel) {
+function renderProviderModal(buf, theme, rows, cols, currentProvider, currentModel, cursor = 0) {
   const { glyphs } = theme;
   const providers = getProviderList();
-  const modalWidth = Math.min(50, cols - 8);
+  const modalWidth = Math.min(56, cols - 8);
 
   const lines = [
     theme.bold(theme.style('fg.primary', '  Provider / Model')),
@@ -363,10 +364,14 @@ function renderProviderModal(buf, theme, rows, cols, currentProvider, currentMod
   for (let i = 0; i < providers.length; i++) {
     const p = providers[i];
     const isCurrent = p.id === currentProvider;
+    const isCursor = i === cursor;
     const hasKey = p.hasKey ? theme.style('state.success', glyphs.check) : theme.style('fg.dim', '-');
-    const marker = isCurrent ? theme.style('accent.primary', glyphs.prompt) : ' ';
-    const name = isCurrent ? theme.style('accent.primary', p.id) : theme.style('fg.secondary', p.id);
-    lines.push(`  ${marker} ${i + 1}. ${name}  ${hasKey}`);
+    const marker = isCursor ? theme.style('accent.primary', glyphs.prompt) : ' ';
+    let name = theme.style('fg.secondary', p.id);
+    if (isCurrent) name = theme.style('fg.primary', p.id);
+    if (isCursor) name = theme.style('accent.primary', p.id);
+    const currentTag = isCurrent ? theme.style('fg.dim', ' (current)') : '';
+    lines.push(`  ${marker} ${i + 1}. ${name}  ${hasKey}${currentTag}`);
   }
 
   lines.push('');
@@ -380,7 +385,7 @@ function renderProviderModal(buf, theme, rows, cols, currentProvider, currentMod
   }
 
   lines.push('');
-  lines.push(`  ${theme.style('fg.dim', 'Press number to switch, Esc to close')}`);
+  lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter switch  Esc close  1-9 quick pick')}`);
 
   const modalHeight = lines.length + 2;
   const modalTop = Math.floor((rows - modalHeight) / 2);
@@ -793,7 +798,7 @@ export async function runTUI(options = {}) {
       renderApprovalModal(screenBuf, theme, rows, cols, tuiState.approval);
     }
     if (tuiState.providerModalOpen) {
-      renderProviderModal(screenBuf, theme, rows, cols, state.provider, state.model);
+      renderProviderModal(screenBuf, theme, rows, cols, state.provider, state.model, tuiState.providerModalCursor);
     }
     if (tuiState.modelModalOpen && tuiState.modelModalState) {
       renderModelModal(screenBuf, theme, rows, cols, tuiState.modelModalState, state.model);
@@ -1127,17 +1132,7 @@ export async function runTUI(options = {}) {
     const providers = getProviderList();
 
     if (!arg) {
-      const lines = ['Providers:'];
-      for (let i = 0; i < providers.length; i++) {
-        const p = providers[i];
-        const isCurrent = p.id === state.provider;
-        const keyStatus = p.hasKey ? '✓' : '-';
-        const marker = isCurrent ? '›' : ' ';
-        lines.push(`  ${marker} ${i + 1}. ${p.id}  [${keyStatus}]${isCurrent ? ' ← current' : ''}`);
-      }
-      lines.push('Use /provider <name|#> to switch.');
-      addTranscriptEntry(tuiState, 'status', lines.join('\n'));
-      scheduler.flush();
+      openProviderSwitcher();
       return;
     }
 
@@ -1295,7 +1290,7 @@ export async function runTUI(options = {}) {
           'Commands:',
           '  /model               Open navigable model picker',
           '  /model <name|#>      Switch model',
-          '  /provider            Show all providers with status',
+          '  /provider            Open navigable provider picker',
           '  /provider <name|#>   Switch provider',
           '  /config              Show config overview (keys masked)',
           '  /config key <secret> Set API key for current provider',
@@ -1427,6 +1422,9 @@ export async function runTUI(options = {}) {
   }
 
   function openProviderSwitcher() {
+    const providers = getProviderList();
+    const currentIndex = providers.findIndex((p) => p.id === state.provider);
+    tuiState.providerModalCursor = currentIndex >= 0 ? currentIndex : 0;
     tuiState.providerModalOpen = true;
     tuiState.dirty.add('all');
     scheduler.flush();
@@ -1443,6 +1441,7 @@ export async function runTUI(options = {}) {
     }
     if (tuiState.providerModalOpen) {
       tuiState.providerModalOpen = false;
+      tuiState.providerModalCursor = 0;
       tuiState.dirty.add('all');
       scheduler.flush();
     }
@@ -1480,10 +1479,44 @@ export async function runTUI(options = {}) {
     await saveSessionState(state);
     addTranscriptEntry(tuiState, 'status', `Switched to ${target.id} | model: ${state.model}`);
     tuiState.providerModalOpen = false;
+    tuiState.providerModalCursor = index;
     tuiState.modelModalOpen = false;
     tuiState.modelModalState = null;
     tuiState.dirty.add('all');
     scheduler.flush();
+  }
+
+  async function handleProviderModalInput(key) {
+    const providers = getProviderList();
+    if (providers.length === 0) return;
+
+    if (key.name === 'escape') {
+      closeModal();
+      return;
+    }
+    if (key.name === 'up') {
+      tuiState.providerModalCursor = (tuiState.providerModalCursor - 1 + providers.length) % providers.length;
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+      return;
+    }
+    if (key.name === 'down') {
+      tuiState.providerModalCursor = (tuiState.providerModalCursor + 1) % providers.length;
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+      return;
+    }
+    if (key.ch >= '1' && key.ch <= '9') {
+      const idx = parseInt(key.ch, 10) - 1;
+      if (idx >= 0 && idx < providers.length) {
+        await switchProvider(idx);
+      }
+      return;
+    }
+    if (key.name === 'return') {
+      await switchProvider(tuiState.providerModalCursor);
+      return;
+    }
   }
 
   // ── Config modal lifecycle ────────────────────────────────────────
@@ -1669,17 +1702,10 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    // Provider modal: number keys switch provider
+    // Provider modal: navigable list + number quick-pick
     if (tuiState.providerModalOpen) {
-      if (key.ch >= '1' && key.ch <= '9') {
-        runAsync(() => switchProvider(parseInt(key.ch, 10) - 1), 'provider switch failed');
-        return;
-      }
-      if (key.name === 'escape') {
-        closeModal();
-        return;
-      }
-      return; // swallow other keys when modal is open
+      runAsync(() => handleProviderModalInput(key), 'provider switch failed');
+      return;
     }
 
     // Tab completion — intercept before keybind map

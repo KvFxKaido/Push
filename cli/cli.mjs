@@ -416,6 +416,18 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
 
   const approvalFn = makeInteractiveApprovalFn(rl);
   const onEvent = makeCLIEventHandler();
+  let runInFlight = false;
+  let exitRequestedBySigint = false;
+
+  const onPromptSigint = () => {
+    // During assistant execution, per-run SIGINT handlers cancel the run.
+    if (runInFlight) return;
+    if (exitRequestedBySigint) return;
+    exitRequestedBySigint = true;
+    process.stdout.write(`\n${fmt.dim('[autosave]')} Ctrl+C received — saving session and exiting...\n`);
+    rl.close();
+  };
+  rl.on('SIGINT', onPromptSigint);
 
   const nativeFC = resolveNativeFC(ctx.providerConfig);
   process.stdout.write(
@@ -431,7 +443,14 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
 
   try {
     while (true) {
-      const line = (await rl.question('\n> ')).trim();
+      let inputLine;
+      try {
+        inputLine = await rl.question('\n> ');
+      } catch (err) {
+        if (exitRequestedBySigint || err?.code === 'ERR_USE_AFTER_CLOSE') break;
+        throw err;
+      }
+      const line = inputLine.trim();
       if (!line) continue;
 
       if (line === '/exit' || line === '/quit') break;
@@ -495,6 +514,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           const ac = new AbortController();
           const onSigint = () => ac.abort();
           process.on('SIGINT', onSigint);
+          runInFlight = true;
 
           try {
             const result = await runAssistantLoop(state, ctx.providerConfig, ctx.apiKey, maxRounds, {
@@ -514,6 +534,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
               process.stderr.write(`${fmt.error('Error:')} ${message}\n`);
             }
           } finally {
+            runInFlight = false;
             process.removeListener('SIGINT', onSigint);
           }
           continue;
@@ -530,6 +551,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       const ac = new AbortController();
       const onSigint = () => ac.abort();
       process.on('SIGINT', onSigint);
+      runInFlight = true;
 
       try {
         const result = await runAssistantLoop(state, ctx.providerConfig, ctx.apiKey, maxRounds, {
@@ -556,10 +578,12 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           process.stderr.write(`${fmt.error('Error:')} ${message}\n`);
         }
       } finally {
+        runInFlight = false;
         process.removeListener('SIGINT', onSigint);
       }
     }
   } finally {
+    rl.removeListener('SIGINT', onPromptSigint);
     rl.close();
     await saveSessionState(state);
   }

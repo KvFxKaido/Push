@@ -118,7 +118,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_NATIVE_FC` | Native function-calling override: `0`/`false` = off, `1`/`true` = on |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
-| `PUSH_SESSION_DIR` | Override session storage location |
+| `PUSH_SESSION_DIR` | Override session storage location (default: `~/.push/sessions`) |
 | `PUSH_CONFIG_PATH` | Override config file path |
 
 Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VITE_TAVILY_API_KEY`, etc.) are also checked.
@@ -189,10 +189,12 @@ The `a3b8c1f` is a 7-char SHA-1 hash of the line content. Edits reference lines 
 
 ## Sessions
 
-Sessions persist to `.push/sessions/<session-id>/` in the workspace root. Each session has:
+Sessions persist to `~/.push/sessions/<session-id>/` by default. Each session has:
 
 - `state.json` — full conversation state (messages, working memory, provider info)
 - `events.jsonl` — append-only event log (tool calls, results, errors, run outcomes)
+
+If no `PUSH_SESSION_DIR` is set, the CLI also reads legacy workspace-local sessions from `.push/sessions/` in the current directory when listing or resuming by id.
 
 ```bash
 ./push sessions              # list all sessions
