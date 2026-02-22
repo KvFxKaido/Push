@@ -51,7 +51,7 @@ function createTUIState() {
     providerModalOpen: false,
     providerModalCursor: 0,
     resumeModalOpen: false,
-    resumeModalState: null,  // { loading, rows[], cursor, error, confirmDeleteId }
+    resumeModalState: null,  // { loading, rows[], cursor, error, confirmDeleteId, mode, renameTargetId, renameBuf, renameCursor }
     modelModalOpen: false,
     modelModalState: null,   // { providerId, models[], cursor, loading, source, error }
     configModalOpen: false,
@@ -552,7 +552,8 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
     '',
   ];
 
-  if (!modalState || modalState.loading) {
+    const isRenameMode = modalState?.mode === 'rename';
+    if (!modalState || modalState.loading) {
     lines.push(`  ${theme.style('fg.dim', 'Loading resumable sessions...')}`);
   } else if (modalState.error) {
     lines.push(`  ${theme.style('state.error', modalState.error)}`);
@@ -582,11 +583,14 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
       const deleteTag = modalState.confirmDeleteId === row.sessionId
         ? theme.style('state.warn', ' [delete?]')
         : '';
+      const renameTag = modalState.mode === 'rename' && modalState.renameTargetId === row.sessionId
+        ? theme.style('accent.primary', ' [rename]')
+        : '';
       const meta = truncate(
         `${row.provider}/${row.model} · ${path.basename(row.cwd || '.') || '.'} · ${formatRelativeTime(row.updatedAt)}`,
         Math.max(12, modalWidth - 16),
       );
-      lines.push(`  ${marker} ${num} ${primary}${currentTag}${deleteTag}`);
+      lines.push(`  ${marker} ${num} ${primary}${currentTag}${deleteTag}${renameTag}`);
       lines.push(`      ${theme.style('fg.dim', meta)}`);
     }
     if (end < count) {
@@ -599,15 +603,27 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
       const selectedName = selected.sessionName ? `name: ${selected.sessionName} · ` : '';
       lines.push(`  ${theme.style('fg.muted', `${selectedName}id: ${selected.sessionId}`)}`);
       lines.push(`  ${theme.style('fg.dim', truncate(selected.cwd || '.', modalWidth - 4))}`);
+      if (isRenameMode && modalState.renameTargetId === selected.sessionId) {
+        lines.push('');
+        lines.push(`  ${theme.style('fg.muted', 'Rename (empty = clear):')}`);
+        const inputWidth = modalWidth - 8;
+        const inputDisplay = modalState.renameBuf || '';
+        const shown = inputDisplay
+          ? truncate(inputDisplay, inputWidth)
+          : theme.style('fg.dim', '_'.repeat(Math.min(36, inputWidth)));
+        lines.push(`  ${theme.style('accent.primary', '\u203A')} ${shown}`);
+      }
     }
   }
 
   lines.push('');
-  if (modalState?.confirmDeleteId) {
+  if (isRenameMode) {
+    lines.push(`  ${theme.style('accent.primary', 'Enter')} save  ${theme.style('accent.primary', 'Esc')} cancel  ${theme.style('fg.dim', 'Backspace/Delete edit')}`);
+  } else if (modalState?.confirmDeleteId) {
     lines.push(`  ${theme.style('state.warn', 'Delete selected session? Enter or D to confirm · Esc to cancel')}`);
     lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 change selection (cancels delete)  1-9 quick pick')}`);
   } else {
-    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter resume  D delete  Esc close  1-9 quick pick')}`);
+    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter resume  R rename  D delete  Esc close  1-9 quick pick')}`);
   }
 
   const modalHeight = lines.length + 2;
@@ -1359,6 +1375,10 @@ export async function runTUI(options = {}) {
       cursor: 0,
       error: null,
       confirmDeleteId: null,
+      mode: 'list',
+      renameTargetId: null,
+      renameBuf: '',
+      renameCursor: 0,
     };
     tuiState.dirty.add('all');
     scheduler.flush();
@@ -1372,6 +1392,10 @@ export async function runTUI(options = {}) {
         cursor: currentIndex >= 0 ? currentIndex : 0,
         error: null,
         confirmDeleteId: null,
+        mode: 'list',
+        renameTargetId: null,
+        renameBuf: '',
+        renameCursor: 0,
       };
     } catch (err) {
       tuiState.resumeModalState = {
@@ -1380,6 +1404,10 @@ export async function runTUI(options = {}) {
         cursor: 0,
         error: `Failed to list sessions: ${formatError(err)}`,
         confirmDeleteId: null,
+        mode: 'list',
+        renameTargetId: null,
+        renameBuf: '',
+        renameCursor: 0,
       };
     }
 
@@ -1390,10 +1418,69 @@ export async function runTUI(options = {}) {
   async function handleResumeModalInput(key) {
     const ms = tuiState.resumeModalState;
     if (!ms) return;
-    const deleteRequested = (key.name === 'delete')
-      || (key.ch && !key.ctrl && !key.meta && ['d', 'x'].includes(String(key.ch).toLowerCase()));
+    const renameRequested = key.ch && !key.ctrl && !key.meta && String(key.ch).toLowerCase() === 'r';
+    const deleteRequested = (ms.mode !== 'rename') && ((key.name === 'delete')
+      || (key.ch && !key.ctrl && !key.meta && ['d', 'x'].includes(String(key.ch).toLowerCase())));
+
+    const exitRenameMode = () => {
+      ms.mode = 'list';
+      ms.renameTargetId = null;
+      ms.renameBuf = '';
+      ms.renameCursor = 0;
+      ms.confirmDeleteId = null;
+    };
+
+    const rows = Array.isArray(ms.rows) ? ms.rows : [];
+
+    async function saveRename() {
+      const targetId = ms.renameTargetId;
+      if (!targetId) {
+        exitRenameMode();
+        return;
+      }
+      const trimmed = ms.renameBuf.trim();
+      try {
+        if (targetId === state.sessionId) {
+          if (trimmed) state.sessionName = trimmed;
+          else delete state.sessionName;
+          await appendSessionEvent(state, 'session_renamed', { name: trimmed || null });
+          await saveSessionState(state);
+        } else {
+          const targetState = await loadSessionState(targetId);
+          if (trimmed) targetState.sessionName = trimmed;
+          else delete targetState.sessionName;
+          await appendSessionEvent(targetState, 'session_renamed', { name: trimmed || null });
+          await saveSessionState(targetState);
+        }
+
+        const nextRows = await listSessions();
+        ms.rows = nextRows;
+        const nextIndex = nextRows.findIndex((r) => r.sessionId === targetId);
+        ms.cursor = nextIndex >= 0 ? nextIndex : Math.min(ms.cursor, Math.max(0, nextRows.length - 1));
+        ms.error = null;
+        exitRenameMode();
+
+        if (trimmed) {
+          addTranscriptEntry(tuiState, 'status', `Session renamed: ${JSON.stringify(trimmed)} (${targetId})`);
+        } else {
+          addTranscriptEntry(tuiState, 'status', `Session name cleared: ${targetId}`);
+        }
+      } catch (err) {
+        ms.error = `Rename failed: ${formatError(err)}`;
+      } finally {
+        tuiState.dirty.add('all');
+        scheduler.flush();
+      }
+    }
 
     if (key.name === 'escape') {
+      if (ms.mode === 'rename') {
+        exitRenameMode();
+        ms.error = null;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
       if (ms.confirmDeleteId) {
         ms.confirmDeleteId = null;
         ms.error = null;
@@ -1405,8 +1492,70 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    const rows = Array.isArray(ms.rows) ? ms.rows : [];
     if (rows.length === 0 || ms.loading) {
+      return;
+    }
+
+    if (ms.mode === 'rename') {
+      if (key.name === 'return') {
+        await saveRename();
+        return;
+      }
+      if (key.name === 'backspace') {
+        if (ms.renameCursor > 0) {
+          ms.renameBuf = ms.renameBuf.slice(0, ms.renameCursor - 1) + ms.renameBuf.slice(ms.renameCursor);
+          ms.renameCursor--;
+        }
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'delete') {
+        if (ms.renameCursor < ms.renameBuf.length) {
+          ms.renameBuf = ms.renameBuf.slice(0, ms.renameCursor) + ms.renameBuf.slice(ms.renameCursor + 1);
+        }
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'left') {
+        if (ms.renameCursor > 0) ms.renameCursor--;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'right') {
+        if (ms.renameCursor < ms.renameBuf.length) ms.renameCursor++;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'home') {
+        ms.renameCursor = 0;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'end') {
+        ms.renameCursor = ms.renameBuf.length;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.ctrl && key.name === 'u') {
+        ms.renameBuf = '';
+        ms.renameCursor = 0;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.ch && !key.ctrl && !key.meta) {
+        ms.renameBuf = ms.renameBuf.slice(0, ms.renameCursor) + key.ch + ms.renameBuf.slice(ms.renameCursor);
+        ms.renameCursor += key.ch.length;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
       return;
     }
 
@@ -1433,6 +1582,19 @@ export async function runTUI(options = {}) {
         ms.error = null;
         await switchToSessionById(rows[idx].sessionId, { closePicker: true });
       }
+      return;
+    }
+    if (renameRequested) {
+      const row = rows[ms.cursor];
+      if (!row) return;
+      ms.mode = 'rename';
+      ms.renameTargetId = row.sessionId;
+      ms.renameBuf = row.sessionName || '';
+      ms.renameCursor = ms.renameBuf.length;
+      ms.confirmDeleteId = null;
+      ms.error = null;
+      tuiState.dirty.add('all');
+      scheduler.schedule();
       return;
     }
     if (deleteRequested) {
@@ -2354,6 +2516,18 @@ export async function runTUI(options = {}) {
       if (!normalized) return;
       ms.editBuf = ms.editBuf.slice(0, ms.editCursor) + normalized + ms.editBuf.slice(ms.editCursor);
       ms.editCursor += normalized.length;
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+      return;
+    }
+
+    // Resume modal rename mode is also a single-line text input.
+    if (tuiState.resumeModalOpen && tuiState.resumeModalState?.mode === 'rename') {
+      const ms = tuiState.resumeModalState;
+      const normalized = text.replace(/\r\n/g, '\n').replace(/[\r\n]/g, '');
+      if (!normalized) return;
+      ms.renameBuf = ms.renameBuf.slice(0, ms.renameCursor) + normalized + ms.renameBuf.slice(ms.renameCursor);
+      ms.renameCursor += normalized.length;
       tuiState.dirty.add('all');
       scheduler.schedule();
       return;
