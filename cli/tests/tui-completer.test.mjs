@@ -22,7 +22,12 @@ function makeDeps(providerId = 'ollama') {
     { id: 'zai' }, { id: 'google' }, { id: 'zen' },
   ];
 
-  return { ctx, skills, getCuratedModels, getProviderList };
+  const getPathCompletions = (_root, fragment) => {
+    const all = ['src/', 'src/app.ts', 'src/api/', 'README.md'];
+    return all.filter((p) => p.startsWith(fragment));
+  };
+
+  return { ctx, skills, getCuratedModels, getProviderList, workspaceRoot: '/tmp/workspace', getPathCompletions };
 }
 
 // ── Tab (cycling) ─────────────────────────────────────────────────
@@ -40,6 +45,20 @@ describe('createTabCompleter', () => {
     assert.equal(tc.tab('hello', false), null);
   });
 
+  it('completes @ref paths in plain text', () => {
+    const r = tc.tab('inspect @src/a', false);
+    assert.notEqual(r, null);
+    assert.equal(r.text, 'inspect @src/app.ts');
+    assert.equal(r.total, 2);
+  });
+
+  it('completes @ref paths inside skill args', () => {
+    const r = tc.tab('/review @RE', false);
+    assert.notEqual(r, null);
+    assert.equal(r.text, '/review @README.md');
+    assert.equal(r.total, 1);
+  });
+
   it('completes command names', () => {
     const result = tc.tab('/mo', false);
     assert.notEqual(result, null);
@@ -51,6 +70,13 @@ describe('createTabCompleter', () => {
     const result = tc.tab('/ne', false);
     assert.notEqual(result, null);
     assert.equal(result.text, '/new ');
+  });
+
+  it('completes /resume command when provided as extra command', () => {
+    tc = createTabCompleter({ ...makeDeps(), extraCommands: ['resume'] });
+    const result = tc.tab('/res', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/resume ');
   });
 
   it('completes skill names', () => {
@@ -198,6 +224,14 @@ describe('suggest (live preview)', () => {
     tc.suggest('hello');
     assert.equal(tc.isActive(), false);
     assert.equal(tc.getState(), null);
+  });
+
+  it('suggest previews @ref candidates in plain text', () => {
+    tc.suggest('inspect @src/a');
+    const s = tc.getState();
+    assert.notEqual(s, null);
+    assert.deepEqual(s.items, ['@src/app.ts', '@src/api/']);
+    assert.equal(s.index, -1);
   });
 
   it('does not override cycling state', () => {

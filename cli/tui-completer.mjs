@@ -11,30 +11,62 @@
  */
 
 import { RESERVED_COMMANDS } from './skill-loader.mjs';
+import { extractAtReferenceCompletionTarget, listReferencePathCompletionsSync } from './path-completion.mjs';
 
 /**
  * @param {{ providerConfig: { id: string } }} deps.ctx  Mutable runtime context
  * @param {Map<string, any>} deps.skills                 Loaded skill map
  * @param {(id: string) => string[]} deps.getCuratedModels
  * @param {() => Array<{ id: string }>} deps.getProviderList
+ * @param {string} [deps.workspaceRoot]
+ * @param {(workspaceRoot: string, fragment: string) => string[]} [deps.getPathCompletions]
+ * @param {string[]} [deps.extraCommands]
  */
-export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderList }) {
+export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderList, workspaceRoot, getPathCompletions, extraCommands = [] }) {
   let candidates = null; // string[] | null — resolved candidate list
   let index = -1;        // -1 = preview, >= 0 = cycling
+  let lastResolvedText = null;
+  let lastResolvedCandidates = null;
+  const pathCompleter = getPathCompletions ?? listReferencePathCompletionsSync;
 
   /** Resolve candidates for the given text (mirrors completer.mjs logic). */
   function resolve(text) {
-    if (!text.startsWith('/')) return [];
+    if (text === lastResolvedText && Array.isArray(lastResolvedCandidates)) {
+      return lastResolvedCandidates;
+    }
+
+    if (workspaceRoot) {
+      const target = extractAtReferenceCompletionTarget(text);
+      if (target) {
+        const prefix = text.slice(0, target.start);
+        const suffix = text.slice(target.end);
+        const pathHits = pathCompleter(workspaceRoot, target.fragment);
+        const resolved = pathHits.map((p) => `${prefix}@${p}${suffix}`);
+        lastResolvedText = text;
+        lastResolvedCandidates = resolved;
+        return resolved;
+      }
+    }
+
+    if (!text.startsWith('/')) {
+      lastResolvedText = text;
+      lastResolvedCandidates = [];
+      return [];
+    }
 
     const spaceIdx = text.indexOf(' ');
 
     if (spaceIdx === -1) {
       // Completing command/skill name: /mo → /model
+      const commandNames = [...new Set([...RESERVED_COMMANDS, ...extraCommands])];
       const all = [
-        ...[...RESERVED_COMMANDS].map(c => '/' + c + ' '),
+        ...commandNames.map(c => '/' + c + ' '),
         ...[...skills.keys()].map(s => '/' + s + ' '),
       ];
-      return all.filter(c => c.startsWith(text));
+      const resolved = all.filter(c => c.startsWith(text));
+      lastResolvedText = text;
+      lastResolvedCandidates = resolved;
+      return resolved;
     }
 
     // Completing argument after "/command "
@@ -44,26 +76,41 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
 
     if (cmd === 'model') {
       const models = getCuratedModels(ctx.providerConfig.id);
-      return models.filter(m => m.startsWith(arg)).map(m => prefix + m);
+      const resolved = models.filter(m => m.startsWith(arg)).map(m => prefix + m);
+      lastResolvedText = text;
+      lastResolvedCandidates = resolved;
+      return resolved;
     }
 
     if (cmd === 'provider') {
       const ids = getProviderList().map(p => p.id);
-      return ids.filter(p => p.startsWith(arg)).map(p => prefix + p);
+      const resolved = ids.filter(p => p.startsWith(arg)).map(p => prefix + p);
+      lastResolvedText = text;
+      lastResolvedCandidates = resolved;
+      return resolved;
     }
 
     if (cmd === 'session') {
       if (arg.startsWith('rename ')) {
         const clearArg = 'rename --clear';
-        return clearArg.startsWith(arg) ? [prefix + clearArg] : [];
+        const resolved = clearArg.startsWith(arg) ? [prefix + clearArg] : [];
+        lastResolvedText = text;
+        lastResolvedCandidates = resolved;
+        return resolved;
       }
       const subs = ['rename '];
-      return subs.filter(s => s.startsWith(arg)).map(s => prefix + s);
+      const resolved = subs.filter(s => s.startsWith(arg)).map(s => prefix + s);
+      lastResolvedText = text;
+      lastResolvedCandidates = resolved;
+      return resolved;
     }
 
     if (cmd === 'skills') {
       const subs = ['reload'];
-      return subs.filter(s => s.startsWith(arg)).map(s => prefix + s);
+      const resolved = subs.filter(s => s.startsWith(arg)).map(s => prefix + s);
+      lastResolvedText = text;
+      lastResolvedCandidates = resolved;
+      return resolved;
     }
 
     if (cmd === 'config') {
@@ -71,7 +118,10 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
       if (parts.length <= 1) {
         // First arg: subcommand
         const subs = ['key', 'url', 'tavily', 'sandbox'];
-        return subs.filter(s => s.startsWith(arg)).map(s => prefix + s + ' ');
+        const resolved = subs.filter(s => s.startsWith(arg)).map(s => prefix + s + ' ');
+        lastResolvedText = text;
+        lastResolvedCandidates = resolved;
+        return resolved;
       }
       const sub = parts[0];
       const rest = parts.slice(1).join(' ');
@@ -79,15 +129,25 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
       if (sub === 'key') {
         // Second arg: optional provider name
         const ids = getProviderList().map(p => p.id);
-        return ids.filter(p => p.startsWith(rest)).map(p => subPrefix + p + ' ');
+        const resolved = ids.filter(p => p.startsWith(rest)).map(p => subPrefix + p + ' ');
+        lastResolvedText = text;
+        lastResolvedCandidates = resolved;
+        return resolved;
       }
       if (sub === 'sandbox') {
         const opts = ['on', 'off'];
-        return opts.filter(o => o.startsWith(rest)).map(o => subPrefix + o);
+        const resolved = opts.filter(o => o.startsWith(rest)).map(o => subPrefix + o);
+        lastResolvedText = text;
+        lastResolvedCandidates = resolved;
+        return resolved;
       }
+      lastResolvedText = text;
+      lastResolvedCandidates = [];
       return [];
     }
 
+    lastResolvedText = text;
+    lastResolvedCandidates = [];
     return [];
   }
 
@@ -143,6 +203,8 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
   function reset() {
     candidates = null;
     index = -1;
+    lastResolvedText = null;
+    lastResolvedCandidates = null;
   }
 
   /** Whether candidates are visible (preview or cycling). */
@@ -165,6 +227,10 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
     if (!candidates) return null;
     // Extract display labels: for "/model foo" → "foo", for "/help " → "/help"
     const items = candidates.map(c => {
+      if (!c.startsWith('/')) {
+        const target = extractAtReferenceCompletionTarget(c);
+        return target ? target.token : c;
+      }
       const trimmed = c.trimEnd();
       const sp = trimmed.indexOf(' ');
       if (sp === -1) return trimmed;        // bare command (shouldn't happen, but safe)

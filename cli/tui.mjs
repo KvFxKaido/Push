@@ -18,7 +18,7 @@ import {
 } from './tui-renderer.mjs';
 import { PROVIDER_CONFIGS, resolveApiKey, resolveNativeFC, getProviderList } from './provider.mjs';
 import { getCuratedModels, fetchModels } from './model-catalog.mjs';
-import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState } from './session-store.mjs';
+import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, deleteSession } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.mjs';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
@@ -50,6 +50,8 @@ function createTUIState() {
     reasoningStreaming: false,
     providerModalOpen: false,
     providerModalCursor: 0,
+    resumeModalOpen: false,
+    resumeModalState: null,  // { loading, rows[], cursor, error, confirmDeleteId }
     modelModalOpen: false,
     modelModalState: null,   // { providerId, models[], cursor, loading, source, error }
     configModalOpen: false,
@@ -525,6 +527,99 @@ function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
   }
 }
 
+function formatRelativeTime(ts) {
+  if (!Number.isFinite(Number(ts)) || Number(ts) <= 0) return 'unknown';
+  const deltaMs = Math.max(0, Date.now() - Number(ts));
+  const sec = Math.floor(deltaMs / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  const iso = new Date(Number(ts)).toISOString();
+  return iso.slice(0, 16).replace('T', ' ');
+}
+
+function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId) {
+  const { glyphs } = theme;
+  const modalWidth = Math.min(92, cols - 8);
+  const listHeight = Math.max(6, Math.min(12, rows - 18));
+
+  const lines = [
+    theme.bold(theme.style('fg.primary', '  Resume Session')),
+    '',
+  ];
+
+  if (!modalState || modalState.loading) {
+    lines.push(`  ${theme.style('fg.dim', 'Loading resumable sessions...')}`);
+  } else if (modalState.error) {
+    lines.push(`  ${theme.style('state.error', modalState.error)}`);
+  } else if (!Array.isArray(modalState.rows) || modalState.rows.length === 0) {
+    lines.push(`  ${theme.style('fg.dim', 'No resumable sessions found.')}`);
+  } else {
+    const count = modalState.rows.length;
+    let start = 0;
+    if (count > listHeight) {
+      start = Math.max(0, modalState.cursor - Math.floor(listHeight / 2));
+      start = Math.min(start, count - listHeight);
+    }
+    const end = Math.min(count, start + listHeight);
+
+    for (let i = start; i < end; i++) {
+      const row = modalState.rows[i];
+      const isCursor = i === modalState.cursor;
+      const isCurrent = row.sessionId === currentSessionId;
+      const marker = isCursor ? theme.style('accent.primary', glyphs.prompt) : ' ';
+      const num = padTo(`${i + 1}.`, 4);
+      const primaryRaw = row.sessionName || row.sessionId;
+      const primaryText = truncate(primaryRaw, Math.max(16, modalWidth - 42));
+      const primary = isCursor
+        ? theme.style('accent.primary', primaryText)
+        : theme.style('fg.primary', primaryText);
+      const currentTag = isCurrent ? theme.style('fg.dim', ' (current)') : '';
+      const deleteTag = modalState.confirmDeleteId === row.sessionId
+        ? theme.style('state.warn', ' [delete?]')
+        : '';
+      const meta = truncate(
+        `${row.provider}/${row.model} · ${path.basename(row.cwd || '.') || '.'} · ${formatRelativeTime(row.updatedAt)}`,
+        Math.max(12, modalWidth - 16),
+      );
+      lines.push(`  ${marker} ${num} ${primary}${currentTag}${deleteTag}`);
+      lines.push(`      ${theme.style('fg.dim', meta)}`);
+    }
+    if (end < count) {
+      lines.push(`  ${theme.style('fg.dim', `... ${count - end} more`)}`);
+    }
+    lines.push('');
+
+    const selected = modalState.rows[modalState.cursor];
+    if (selected) {
+      const selectedName = selected.sessionName ? `name: ${selected.sessionName} · ` : '';
+      lines.push(`  ${theme.style('fg.muted', `${selectedName}id: ${selected.sessionId}`)}`);
+      lines.push(`  ${theme.style('fg.dim', truncate(selected.cwd || '.', modalWidth - 4))}`);
+    }
+  }
+
+  lines.push('');
+  if (modalState?.confirmDeleteId) {
+    lines.push(`  ${theme.style('state.warn', 'Delete selected session? Enter or D to confirm · Esc to cancel')}`);
+    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 change selection (cancels delete)  1-9 quick pick')}`);
+  } else {
+    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter resume  D delete  Esc close  1-9 quick pick')}`);
+  }
+
+  const modalHeight = lines.length + 2;
+  const modalTop = Math.floor((rows - modalHeight) / 2);
+  const modalLeft = Math.floor((cols - modalWidth) / 2);
+
+  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
+  for (let i = 0; i < boxLines.length; i++) {
+    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
+  }
+}
+
 // ── Config modal ─────────────────────────────────────────────────────
 
 /** Mask an input string: show dots except last 4 chars for verification. */
@@ -800,13 +895,17 @@ export async function runTUI(options = {}) {
   // ── Git branch (best-effort) ─────────────────────────────────────
 
   let branch = '';
-  try {
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execAsync = promisify(execFile);
-    const { stdout } = await execAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: state.cwd });
-    branch = stdout.trim();
-  } catch { /* not a git repo */ }
+  async function refreshBranchLabel() {
+    branch = '';
+    try {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execAsync = promisify(execFile);
+      const { stdout } = await execAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: state.cwd });
+      branch = stdout.trim();
+    } catch { /* not a git repo */ }
+  }
+  await refreshBranchLabel();
 
   // ── Abort controller ─────────────────────────────────────────────
 
@@ -886,6 +985,9 @@ export async function runTUI(options = {}) {
     }
     if (tuiState.providerModalOpen) {
       renderProviderModal(screenBuf, theme, rows, cols, state.provider, state.model, tuiState.providerModalCursor);
+    }
+    if (tuiState.resumeModalOpen && tuiState.resumeModalState) {
+      renderResumeModal(screenBuf, theme, rows, cols, tuiState.resumeModalState, state.sessionId);
     }
     if (tuiState.modelModalOpen && tuiState.modelModalState) {
       renderModelModal(screenBuf, theme, rows, cols, tuiState.modelModalState, state.model);
@@ -1053,9 +1155,15 @@ export async function runTUI(options = {}) {
     return skills.size;
   }
 
-  const tabCompleter = createTabCompleter({
-    ctx, skills, getCuratedModels, getProviderList,
-  });
+  function createCurrentTabCompleter() {
+    return createTabCompleter({
+      ctx, skills, getCuratedModels, getProviderList,
+      workspaceRoot: state.cwd,
+      extraCommands: ['resume'],
+    });
+  }
+
+  let tabCompleter = createCurrentTabCompleter();
 
   function formatError(err) {
     if (err instanceof Error && err.message) return err.message;
@@ -1143,6 +1251,261 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  function resetTUIViewForSessionChange() {
+    tuiState.runState = 'idle';
+    tuiState.streamBuf = '';
+    tuiState.approval = null;
+    approvalResolve = null;
+    tuiState.reasoningModalOpen = false;
+    tuiState.reasoningBuf = '';
+    tuiState.lastReasoning = '';
+    tuiState.reasoningStreaming = false;
+    tuiState.transcript = [];
+    tuiState.toolFeed = [];
+    tuiState.scrollOffset = 0;
+    tuiState.providerModalOpen = false;
+    tuiState.providerModalCursor = 0;
+    tuiState.resumeModalOpen = false;
+    tuiState.resumeModalState = null;
+    tuiState.modelModalOpen = false;
+    tuiState.modelModalState = null;
+    tuiState.configModalOpen = false;
+    tuiState.configModalState = null;
+    composer.clear();
+    tabCompleter = createCurrentTabCompleter();
+    tabCompleter.reset();
+  }
+
+  async function switchToSessionById(targetSessionId, { closePicker = true } = {}) {
+    if (!targetSessionId) return false;
+    if (tuiState.runState !== 'idle') {
+      addTranscriptEntry(tuiState, 'warning', 'Cannot resume another session while a run is active.');
+      scheduler.flush();
+      return false;
+    }
+
+    if (targetSessionId === state.sessionId) {
+      if (closePicker) {
+        tuiState.resumeModalOpen = false;
+        tuiState.resumeModalState = null;
+      }
+      addTranscriptEntry(tuiState, 'status', `Already on session: ${state.sessionId}`);
+      scheduler.flush();
+      return true;
+    }
+
+    let nextState;
+    try {
+      nextState = await loadSessionState(targetSessionId);
+    } catch (err) {
+      addTranscriptEntry(tuiState, 'error', `Failed to load session ${targetSessionId}: ${formatError(err)}`);
+      scheduler.flush();
+      return false;
+    }
+
+    const nextProviderConfig = PROVIDER_CONFIGS[nextState.provider];
+    if (!nextProviderConfig) {
+      addTranscriptEntry(tuiState, 'error', `Cannot resume ${targetSessionId}: unknown provider "${nextState.provider}".`);
+      scheduler.flush();
+      return false;
+    }
+
+    let nextApiKey;
+    try {
+      nextApiKey = resolveApiKey(nextProviderConfig);
+    } catch (err) {
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        `Cannot resume ${targetSessionId}: missing API key for ${nextProviderConfig.id} (${formatError(err)}).`,
+      );
+      scheduler.flush();
+      return false;
+    }
+
+    const previousSessionId = state.sessionId;
+    await saveSessionState(state);
+    state = nextState;
+    ctx.providerConfig = nextProviderConfig;
+    ctx.apiKey = nextApiKey;
+
+    await refreshBranchLabel();
+    resetTUIViewForSessionChange();
+    await reloadSkillsMap();
+
+    const nameSuffix = state.sessionName ? ` (${JSON.stringify(state.sessionName)})` : '';
+    addTranscriptEntry(
+      tuiState,
+      'status',
+      `Resumed session: ${state.sessionId}${nameSuffix} (from ${previousSessionId}) [${state.provider}/${state.model}]`,
+    );
+    addTranscriptEntry(tuiState, 'status', `Workspace: ${state.cwd}`);
+    tuiState.dirty.add('all');
+    scheduler.flush();
+    return true;
+  }
+
+  async function openResumeModal() {
+    if (tuiState.runState !== 'idle') {
+      addTranscriptEntry(tuiState, 'warning', 'Cannot open resume picker while a run is active.');
+      scheduler.flush();
+      return;
+    }
+
+    tuiState.resumeModalOpen = true;
+    tuiState.resumeModalState = {
+      loading: true,
+      rows: [],
+      cursor: 0,
+      error: null,
+      confirmDeleteId: null,
+    };
+    tuiState.dirty.add('all');
+    scheduler.flush();
+
+    try {
+      const rows = await listSessions();
+      const currentIndex = rows.findIndex((row) => row.sessionId === state.sessionId);
+      tuiState.resumeModalState = {
+        loading: false,
+        rows,
+        cursor: currentIndex >= 0 ? currentIndex : 0,
+        error: null,
+        confirmDeleteId: null,
+      };
+    } catch (err) {
+      tuiState.resumeModalState = {
+        loading: false,
+        rows: [],
+        cursor: 0,
+        error: `Failed to list sessions: ${formatError(err)}`,
+        confirmDeleteId: null,
+      };
+    }
+
+    tuiState.dirty.add('all');
+    scheduler.flush();
+  }
+
+  async function handleResumeModalInput(key) {
+    const ms = tuiState.resumeModalState;
+    if (!ms) return;
+    const deleteRequested = (key.name === 'delete')
+      || (key.ch && !key.ctrl && !key.meta && ['d', 'x'].includes(String(key.ch).toLowerCase()));
+
+    if (key.name === 'escape') {
+      if (ms.confirmDeleteId) {
+        ms.confirmDeleteId = null;
+        ms.error = null;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      closeModal();
+      return;
+    }
+
+    const rows = Array.isArray(ms.rows) ? ms.rows : [];
+    if (rows.length === 0 || ms.loading) {
+      return;
+    }
+
+    if (key.name === 'up') {
+      ms.cursor = (ms.cursor - 1 + rows.length) % rows.length;
+      ms.confirmDeleteId = null;
+      ms.error = null;
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+      return;
+    }
+    if (key.name === 'down') {
+      ms.cursor = (ms.cursor + 1) % rows.length;
+      ms.confirmDeleteId = null;
+      ms.error = null;
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+      return;
+    }
+    if (key.ch >= '1' && key.ch <= '9') {
+      const idx = parseInt(key.ch, 10) - 1;
+      if (idx >= 0 && idx < rows.length) {
+        ms.confirmDeleteId = null;
+        ms.error = null;
+        await switchToSessionById(rows[idx].sessionId, { closePicker: true });
+      }
+      return;
+    }
+    if (deleteRequested) {
+      const row = rows[ms.cursor];
+      if (!row) return;
+      if (row.sessionId === state.sessionId) {
+        ms.error = 'Cannot delete the currently active session.';
+        ms.confirmDeleteId = null;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (ms.confirmDeleteId !== row.sessionId) {
+        ms.confirmDeleteId = row.sessionId;
+        ms.error = null;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+
+      try {
+        const deleted = await deleteSession(row.sessionId);
+        if (deleted === 0) {
+          ms.error = `Session not found: ${row.sessionId}`;
+        } else {
+          const displayName = row.sessionName ? `${JSON.stringify(row.sessionName)} (${row.sessionId})` : row.sessionId;
+          addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
+          const nextRows = await listSessions();
+          ms.rows = nextRows;
+          ms.cursor = nextRows.length === 0 ? 0 : Math.min(ms.cursor, nextRows.length - 1);
+          ms.error = null;
+        }
+      } catch (err) {
+        ms.error = `Delete failed: ${formatError(err)}`;
+      } finally {
+        ms.confirmDeleteId = null;
+        tuiState.dirty.add('all');
+        scheduler.flush();
+      }
+      return;
+    }
+    if (key.name === 'return') {
+      const row = rows[ms.cursor];
+      if (row) {
+        if (ms.confirmDeleteId === row.sessionId) {
+          try {
+            const deleted = await deleteSession(row.sessionId);
+            if (deleted === 0) {
+              ms.error = `Session not found: ${row.sessionId}`;
+            } else {
+              const displayName = row.sessionName ? `${JSON.stringify(row.sessionName)} (${row.sessionId})` : row.sessionId;
+              addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
+              const nextRows = await listSessions();
+              ms.rows = nextRows;
+              ms.cursor = nextRows.length === 0 ? 0 : Math.min(ms.cursor, nextRows.length - 1);
+              ms.error = null;
+            }
+          } catch (err) {
+            ms.error = `Delete failed: ${formatError(err)}`;
+          } finally {
+            ms.confirmDeleteId = null;
+            tuiState.dirty.add('all');
+            scheduler.flush();
+          }
+          return;
+        }
+        ms.error = null;
+        await switchToSessionById(row.sessionId, { closePicker: true });
+      }
+      return;
+    }
+  }
+
   async function startNewSession() {
     if (tuiState.runState !== 'idle') {
       addTranscriptEntry(tuiState, 'warning', 'Cannot start a new session while a run is active.');
@@ -1153,25 +1516,8 @@ export async function runTUI(options = {}) {
     const previousSessionId = state.sessionId;
     await saveSessionState(state);
     state = await createFreshSessionState(state.provider, state.model, state.cwd);
-
-    tuiState.runState = 'idle';
-    tuiState.streamBuf = '';
-    tuiState.approval = null;
-    tuiState.reasoningModalOpen = false;
-    tuiState.reasoningBuf = '';
-    tuiState.lastReasoning = '';
-    tuiState.reasoningStreaming = false;
-    tuiState.transcript = [];
-    tuiState.toolFeed = [];
-    tuiState.scrollOffset = 0;
-    tuiState.providerModalOpen = false;
-    tuiState.providerModalCursor = 0;
-    tuiState.modelModalOpen = false;
-    tuiState.modelModalState = null;
-    tuiState.configModalOpen = false;
-    tuiState.configModalState = null;
-    composer.clear();
-    tabCompleter.reset();
+    await refreshBranchLabel();
+    resetTUIViewForSessionChange();
 
     addTranscriptEntry(
       tuiState,
@@ -1496,6 +1842,8 @@ export async function runTUI(options = {}) {
           '  /skills              List available skills',
           '  /skills reload       Reload workspace + Claude skills',
           '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
+          '  /resume              Open resumable session picker',
+          '  /resume <session-id> Switch to a saved session',
           '  @path[:line[-end]]   Preload file refs into context',
           '  /session             Print session id',
           '  /session rename <name>  Rename current session (--clear to unset)',
@@ -1540,6 +1888,19 @@ export async function runTUI(options = {}) {
         }
         addTranscriptEntry(tuiState, 'warning', 'Usage: /session | /session rename <name> | /session rename --clear');
         scheduler.flush();
+        return true;
+
+      case 'resume':
+        if (!arg) {
+          await openResumeModal();
+          return true;
+        }
+        if (!/^sess_[a-z0-9]+_[a-f0-9]{6}$/.test(arg)) {
+          addTranscriptEntry(tuiState, 'warning', 'Usage: /resume | /resume <session-id>');
+          scheduler.flush();
+          return true;
+        }
+        await switchToSessionById(arg, { closePicker: false });
         return true;
 
       case 'model':
@@ -1703,6 +2064,14 @@ export async function runTUI(options = {}) {
       tuiState.providerModalCursor = 0;
       tuiState.dirty.add('all');
       scheduler.flush();
+      return;
+    }
+    if (tuiState.resumeModalOpen) {
+      tuiState.resumeModalOpen = false;
+      tuiState.resumeModalState = null;
+      tuiState.dirty.add('all');
+      scheduler.flush();
+      return;
     }
     if (tuiState.runState === 'awaiting_approval' && approvalResolve) {
       // Esc on approval = deny
@@ -1996,6 +2365,7 @@ export async function runTUI(options = {}) {
       tuiState.reasoningModalOpen ||
       tuiState.modelModalOpen ||
       tuiState.providerModalOpen ||
+      tuiState.resumeModalOpen ||
       (tuiState.runState === 'awaiting_approval' && tuiState.approval)
     ) {
       return;
@@ -2084,6 +2454,10 @@ export async function runTUI(options = {}) {
     // Provider modal: navigable list + number quick-pick
     if (tuiState.providerModalOpen) {
       runAsync(() => handleProviderModalInput(key), 'provider switch failed');
+      return;
+    }
+    if (tuiState.resumeModalOpen) {
+      runAsync(() => handleResumeModalInput(key), 'resume picker input failed');
       return;
     }
 

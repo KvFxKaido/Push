@@ -2,6 +2,7 @@
 // Separate file for testability — pure function with injected deps.
 
 import { RESERVED_COMMANDS } from './skill-loader.mjs';
+import { extractAtReferenceCompletionTarget, listReferencePathCompletionsSync } from './path-completion.mjs';
 
 /**
  * Creates a readline-compatible completer function.
@@ -10,11 +11,25 @@ import { RESERVED_COMMANDS } from './skill-loader.mjs';
  * @param {Map<string, any>} deps.skills                 Loaded skill map
  * @param {(id: string) => string[]} deps.getCuratedModels
  * @param {() => Array<{ id: string }>} deps.getProviderList
+ * @param {string} [deps.workspaceRoot]                    Workspace root for @file completion
+ * @param {(workspaceRoot: string, fragment: string) => string[]} [deps.getPathCompletions]
  * @returns {(line: string) => [string[], string]}
  */
-export function createCompleter({ ctx, skills, getCuratedModels, getProviderList }) {
+export function createCompleter({ ctx, skills, getCuratedModels, getProviderList, workspaceRoot, getPathCompletions }) {
+  const pathCompleter = getPathCompletions ?? listReferencePathCompletionsSync;
+
   return (line) => {
-    // Only complete slash commands
+    if (workspaceRoot) {
+      const target = extractAtReferenceCompletionTarget(line);
+      if (target) {
+        const hits = pathCompleter(workspaceRoot, target.fragment).map((p) => `@${p}`);
+        if (hits.length > 0) {
+          return [hits, target.token];
+        }
+      }
+    }
+
+    // Only complete slash commands (non-@ path completion handled above)
     if (!line.startsWith('/')) return [[], line];
 
     const spaceIdx = line.indexOf(' ');

@@ -441,7 +441,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
     return skills.size;
   }
 
-  const completer = createCompleter({ ctx, skills, getCuratedModels, getProviderList });
+  const completer = createCompleter({ ctx, skills, getCuratedModels, getProviderList, workspaceRoot: state.cwd });
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,

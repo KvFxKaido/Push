@@ -15,6 +15,11 @@ function makeCompleter(overrides = {}) {
     skills,
     getCuratedModels: overrides.getCuratedModels ?? ((id) => id === 'ollama' ? OLLAMA_MODELS : []),
     getProviderList: overrides.getProviderList ?? (() => PROVIDERS),
+    workspaceRoot: overrides.workspaceRoot ?? '/tmp/workspace',
+    getPathCompletions: overrides.getPathCompletions ?? ((_root, fragment) => {
+      const all = ['src/', 'src/app.ts', 'src/api/', 'README.md'];
+      return all.filter((p) => p.startsWith(fragment));
+    }),
   });
 }
 
@@ -31,6 +36,27 @@ describe('createCompleter', () => {
     const [hits, sub] = c('fix the bug');
     assert.deepEqual(hits, []);
     assert.equal(sub, 'fix the bug');
+  });
+
+  it('plain text @ref → path completions', () => {
+    const c = makeCompleter();
+    const [hits, sub] = c('inspect @src/a');
+    assert.deepEqual(hits, ['@src/app.ts', '@src/api/']);
+    assert.equal(sub, '@src/a');
+  });
+
+  it('skill args can still complete @ref paths', () => {
+    const c = makeCompleter();
+    const [hits, sub] = c('/review @RE');
+    assert.deepEqual(hits, ['@README.md']);
+    assert.equal(sub, '@RE');
+  });
+
+  it('ignores email-like @ usage', () => {
+    const c = makeCompleter();
+    const [hits, sub] = c('email me foo@bar.com');
+    assert.deepEqual(hits, []);
+    assert.equal(sub, 'email me foo@bar.com');
   });
 
   it('/ alone → all commands + skills', () => {

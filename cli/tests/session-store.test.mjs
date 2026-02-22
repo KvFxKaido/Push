@@ -8,7 +8,19 @@ import os from 'node:os';
 const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-'));
 process.env.PUSH_SESSION_DIR = tmpDir;
 
-const { makeSessionId, makeRunId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, getSessionDir, validateSessionId, SESSION_ID_RE, PROTOCOL_VERSION } = await import('../session-store.mjs');
+const {
+  makeSessionId,
+  makeRunId,
+  saveSessionState,
+  appendSessionEvent,
+  loadSessionState,
+  listSessions,
+  deleteSession,
+  getSessionDir,
+  validateSessionId,
+  SESSION_ID_RE,
+  PROTOCOL_VERSION,
+} = await import('../session-store.mjs');
 
 after(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
@@ -159,6 +171,30 @@ describe('listSessions', () => {
     }
     const named = sessions.find((s) => s.sessionId === id2);
     assert.equal(named?.sessionName, 'Review auth middleware');
+  });
+});
+
+// ─── deleteSession ───────────────────────────────────────────────
+
+describe('deleteSession', () => {
+  it('deletes an existing session directory and removes it from listings', async () => {
+    const id = makeSessionId();
+    await saveSessionState({
+      sessionId: id, createdAt: Date.now(), updatedAt: Date.now(),
+      provider: 'ollama', model: 'delete-me', cwd: '/tmp', rounds: 0, eventSeq: 0, messages: [],
+    });
+
+    const deleted = await deleteSession(id);
+    assert.equal(deleted, 1);
+
+    const sessions = await listSessions();
+    assert.ok(!sessions.some((s) => s.sessionId === id));
+    await assert.rejects(() => loadSessionState(id), /ENOENT/);
+  });
+
+  it('returns 0 when the session does not exist', async () => {
+    const deleted = await deleteSession('sess_abc123_def456');
+    assert.equal(deleted, 0);
   });
 });
 

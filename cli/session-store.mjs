@@ -158,6 +158,27 @@ export async function loadSessionEvents(sessionId) {
   }
 }
 
+export async function deleteSession(sessionId) {
+  validateSessionId(sessionId);
+  const roots = getSessionRootsForRead();
+  let deleted = 0;
+
+  for (const root of roots) {
+    const dir = getSessionDirInRoot(root, sessionId);
+    try {
+      await fs.rm(dir, { recursive: true, force: false });
+      deleted += 1;
+    } catch (err) {
+      if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return deleted;
+}
+
 export async function listSessions() {
   const roots = getSessionRootsForRead();
   const byId = new Map();
