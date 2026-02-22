@@ -179,6 +179,7 @@ export function createKeybindMap() {
   bind('M-return',     'newline');         // Alt+Enter (universal fallback)
   bind('C-c',          'cancel_or_exit');
   bind('C-t',          'toggle_tools');
+  bind('C-g',          'toggle_reasoning');
   bind('C-l',          'clear_viewport');
   bind('C-r',          'reattach');
   bind('C-y',          'approve');

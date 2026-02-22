@@ -124,15 +124,17 @@ async function runAcceptanceChecks(cwd, checks) {
 }
 
 function makeCLIEventHandler() {
-  let isThinking = false;
+  let isAssistantStreaming = false;
+  let isReasoningStreaming = false;
   const spinner = new Spinner();
 
   return (event) => {
     switch (event.type) {
       case 'tool_call':
-        if (isThinking) {
+        if (isReasoningStreaming || isAssistantStreaming) {
           process.stdout.write('\n');
-          isThinking = false;
+          isReasoningStreaming = false;
+          isAssistantStreaming = false;
         }
         spinner.stop();
         process.stdout.write(`${fmt.dim('[tool]')} ${event.payload.toolName}\n`);
@@ -157,16 +159,39 @@ function makeCLIEventHandler() {
         break;
       case 'assistant_token':
         spinner.stop();
-        if (!isThinking) {
+        if (isReasoningStreaming) {
+          process.stdout.write('\n');
+          isReasoningStreaming = false;
+        }
+        if (!isAssistantStreaming) {
           process.stdout.write(`\n${fmt.bold(fmt.cyan('assistant>'))} `);
-          isThinking = true;
+          isAssistantStreaming = true;
         }
         process.stdout.write(event.payload.text);
         break;
-      case 'assistant_done':
-        if (isThinking) {
+      case 'assistant_thinking_token':
+        spinner.stop();
+        if (isAssistantStreaming) {
           process.stdout.write('\n');
-          isThinking = false;
+          isAssistantStreaming = false;
+        }
+        if (!isReasoningStreaming) {
+          process.stdout.write(`\n${fmt.dim('reasoning>')} `);
+          isReasoningStreaming = true;
+        }
+        process.stdout.write(fmt.dim(event.payload.text));
+        break;
+      case 'assistant_thinking_done':
+        if (isReasoningStreaming) {
+          process.stdout.write('\n');
+          isReasoningStreaming = false;
+        }
+        break;
+      case 'assistant_done':
+        if (isReasoningStreaming || isAssistantStreaming) {
+          process.stdout.write('\n');
+          isReasoningStreaming = false;
+          isAssistantStreaming = false;
         }
         break;
       case 'warning':

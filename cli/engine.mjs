@@ -219,9 +219,18 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     }
 
     const useNativeFC = resolveNativeFC(providerConfig);
-    const fcOptions = useNativeFC
-      ? { tools: CLI_TOOL_SCHEMAS, toolChoice: providerConfig.toolChoice || 'auto', forceNativeFC: true }
-      : undefined;
+    const streamOptions = {
+      ...(useNativeFC
+        ? { tools: CLI_TOOL_SCHEMAS, toolChoice: providerConfig.toolChoice || 'auto', forceNativeFC: true }
+        : {}),
+      onThinkingToken: emit ? (token) => {
+        if (token === null) {
+          dispatchEvent('assistant_thinking_done', {});
+          return;
+        }
+        dispatchEvent('assistant_thinking_token', { text: token });
+      } : undefined,
+    };
 
     let assistantText;
     try {
@@ -235,7 +244,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
         },
         undefined,
         signal,
-        fcOptions,
+        streamOptions,
       );
     } catch (err) {
       const isAbort = (err instanceof Error && err.name === 'AbortError') || signal?.aborted;

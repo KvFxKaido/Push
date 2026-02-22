@@ -1,6 +1,6 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { PROVIDER_CONFIGS, resolveNativeFC } from '../provider.mjs';
+import { PROVIDER_CONFIGS, resolveNativeFC, createReasoningTokenParser } from '../provider.mjs';
 import { CLI_TOOL_SCHEMAS } from '../tool-schemas.mjs';
 import { detectAllToolCalls } from '../tools.mjs';
 
@@ -217,6 +217,63 @@ describe('native FC bridge round-trip', () => {
 
     const bridged = simulateBridge(nativeCalls);
     assert.equal(bridged, '', 'entries without name should produce no output');
+  });
+});
+
+// ─── Reasoning / <think> parsing ───────────────────────────────────
+
+describe('createReasoningTokenParser', () => {
+  function collect() {
+    const content = [];
+    const thinking = [];
+    const parser = createReasoningTokenParser(
+      (token) => content.push(token),
+      (token) => thinking.push(token),
+    );
+    return { parser, content, thinking };
+  }
+
+  it('strips <think> blocks from visible content and emits thinking separately', () => {
+    const { parser, content, thinking } = collect();
+    parser.pushContent('Hello <think>step 1</think>world');
+    parser.flush();
+
+    assert.deepEqual(content, ['Hello ', 'world']);
+    assert.deepEqual(thinking, ['step 1', null]);
+  });
+
+  it('handles split <think> tags across streamed chunks', () => {
+    const { parser, content, thinking } = collect();
+    parser.pushContent('Hi <th');
+    parser.pushContent('ink>abc');
+    parser.pushContent(' def</th');
+    parser.pushContent('ink> done');
+    parser.flush();
+
+    assert.equal(content.join(''), 'Hi done');
+    const thinkingText = thinking.filter((t) => t !== null).join('');
+    assert.equal(thinkingText, 'abc def');
+    assert.equal(thinking[thinking.length - 1], null);
+  });
+
+  it('routes native reasoning_content and closes before visible content', () => {
+    const { parser, content, thinking } = collect();
+    parser.pushReasoning('planning');
+    parser.pushReasoning(' now');
+    parser.pushContent('Answer');
+    parser.flush();
+
+    assert.deepEqual(content, ['Answer']);
+    assert.deepEqual(thinking, ['planning', ' now', null]);
+  });
+
+  it('closes native reasoning stream on flush when no visible content arrives', () => {
+    const { parser, content, thinking } = collect();
+    parser.pushReasoning('internal');
+    parser.flush();
+
+    assert.deepEqual(content, []);
+    assert.deepEqual(thinking, ['internal', null]);
   });
 });
 

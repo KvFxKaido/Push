@@ -43,6 +43,10 @@ function createTUIState() {
     approval: null,    // { kind, summary, details }
     // UI toggles
     toolPaneOpen: false,
+    reasoningModalOpen: false,
+    reasoningBuf: '',
+    lastReasoning: '',
+    reasoningStreaming: false,
     providerModalOpen: false,
     providerModalCursor: 0,
     modelModalOpen: false,
@@ -305,6 +309,7 @@ function renderFooter(buf, layout, theme, tuiState, keybindHints) {
   } else {
     leftHints = [
       theme.style('accent.link', 'Ctrl+T') + theme.style('fg.dim', ' tools'),
+      theme.style('accent.link', 'Ctrl+G') + theme.style('fg.dim', ' reasoning'),
       theme.style('accent.link', 'Ctrl+C') + theme.style('fg.dim', ' cancel'),
       theme.style('accent.link', 'Ctrl+P') + theme.style('fg.dim', ' provider'),
     ].join('  ');
@@ -357,6 +362,51 @@ function renderApprovalModal(buf, theme, rows, cols, approval) {
   const modalLeft = Math.floor((cols - modalWidth) / 2);
 
   // Draw box
+  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
+  for (let i = 0; i < boxLines.length; i++) {
+    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
+  }
+}
+
+function renderReasoningModal(buf, theme, rows, cols, tuiState) {
+  const { glyphs } = theme;
+  const modalWidth = Math.min(80, cols - 8);
+  const modalHeight = Math.min(22, rows - 6);
+  const bodyWidth = Math.max(10, modalWidth - 4);
+  const bodyHeight = Math.max(6, modalHeight - 6);
+  const modalTop = Math.floor((rows - modalHeight) / 2);
+  const modalLeft = Math.floor((cols - modalWidth) / 2);
+
+  const live = tuiState.reasoningStreaming;
+  const text = tuiState.reasoningBuf || tuiState.lastReasoning || '';
+  const lines = [
+    theme.bold(theme.style('fg.primary', `  Reasoning ${live ? '(live)' : ''}`)),
+    '',
+  ];
+
+  if (!text.trim()) {
+    lines.push(`  ${theme.style('fg.dim', 'No reasoning captured yet in this TUI session.')}`);
+  } else {
+    const wrapped = [];
+    for (const rawLine of text.split('\n')) {
+      const chunks = wordWrap(rawLine, bodyWidth);
+      if (chunks.length === 0) wrapped.push('');
+      else wrapped.push(...chunks);
+    }
+    const hidden = Math.max(0, wrapped.length - bodyHeight);
+    const visible = wrapped.slice(Math.max(0, wrapped.length - bodyHeight));
+    if (hidden > 0) {
+      lines.push(`  ${theme.style('fg.dim', `[${hidden} more lines above]`)}`);
+      lines.push('');
+    }
+    for (const line of visible) {
+      lines.push(`  ${theme.style('fg.dim', line)}`);
+    }
+  }
+
+  lines.push('');
+  lines.push(`  ${theme.style('accent.link', 'Ctrl+G')} toggle  ${theme.style('accent.link', 'Esc')} close`);
+
   const boxLines = drawBox(lines, modalWidth, glyphs, theme);
   for (let i = 0; i < boxLines.length; i++) {
     buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
@@ -830,6 +880,9 @@ export async function runTUI(options = {}) {
     if (tuiState.runState === 'awaiting_approval' && tuiState.approval) {
       renderApprovalModal(screenBuf, theme, rows, cols, tuiState.approval);
     }
+    if (tuiState.reasoningModalOpen) {
+      renderReasoningModal(screenBuf, theme, rows, cols, tuiState);
+    }
     if (tuiState.providerModalOpen) {
       renderProviderModal(screenBuf, theme, rows, cols, state.provider, state.model, tuiState.providerModalCursor);
     }
@@ -866,6 +919,22 @@ export async function runTUI(options = {}) {
 
   function handleEngineEvent(event) {
     switch (event.type) {
+      case 'assistant_thinking_token':
+        tuiState.reasoningBuf += event.payload.text;
+        tuiState.reasoningStreaming = true;
+        tuiState.dirty.add(tuiState.reasoningModalOpen ? 'all' : 'footer');
+        scheduler.schedule();
+        break;
+
+      case 'assistant_thinking_done':
+        tuiState.reasoningStreaming = false;
+        if (tuiState.reasoningBuf.trim()) {
+          tuiState.lastReasoning = tuiState.reasoningBuf;
+        }
+        if (tuiState.reasoningModalOpen) tuiState.dirty.add('all');
+        scheduler.schedule();
+        break;
+
       case 'assistant_token':
         tuiState.streamBuf += event.payload.text;
         tuiState.scrollOffset = 0; // auto-scroll on new tokens
@@ -877,6 +946,10 @@ export async function runTUI(options = {}) {
         if (tuiState.streamBuf) {
           addTranscriptEntry(tuiState, 'assistant', tuiState.streamBuf);
           tuiState.streamBuf = '';
+        }
+        tuiState.reasoningStreaming = false;
+        if (tuiState.reasoningBuf.trim()) {
+          tuiState.lastReasoning = tuiState.reasoningBuf;
         }
         scheduler.schedule();
         break;
@@ -938,6 +1011,10 @@ export async function runTUI(options = {}) {
       case 'run_complete':
         tuiState.runState = 'idle';
         tuiState.streamBuf = '';
+        tuiState.reasoningStreaming = false;
+        if (tuiState.reasoningBuf.trim()) {
+          tuiState.lastReasoning = tuiState.reasoningBuf;
+        }
         tuiState.dirty.add('all');
         process.stdout.write('\x07'); // bell
         scheduler.schedule();
@@ -999,6 +1076,8 @@ export async function runTUI(options = {}) {
   /** Run the assistant loop on a user message (or skill-expanded prompt). */
   async function runPrompt(text) {
     tuiState.runState = 'running';
+    tuiState.reasoningBuf = '';
+    tuiState.reasoningStreaming = false;
     tuiState.dirty.add('all');
     scheduler.flush();
 
@@ -1065,6 +1144,10 @@ export async function runTUI(options = {}) {
     tuiState.runState = 'idle';
     tuiState.streamBuf = '';
     tuiState.approval = null;
+    tuiState.reasoningModalOpen = false;
+    tuiState.reasoningBuf = '';
+    tuiState.lastReasoning = '';
+    tuiState.reasoningStreaming = false;
     tuiState.transcript = [];
     tuiState.toolFeed = [];
     tuiState.scrollOffset = 0;
@@ -1416,6 +1499,7 @@ export async function runTUI(options = {}) {
           '  PageUp/Down   Scroll transcript',
           '  Ctrl+L        Clear viewport (preserves history)',
           '  Ctrl+T        Toggle tool pane',
+          '  Ctrl+G        Toggle reasoning pane',
           '  Ctrl+C        Cancel run / exit',
           '  Ctrl+Y        Approve',
           '  Ctrl+N        Deny',
@@ -1541,6 +1625,18 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  function toggleReasoningModal() {
+    tuiState.reasoningModalOpen = !tuiState.reasoningModalOpen;
+    tuiState.dirty.add('all');
+    scheduler.flush();
+  }
+
+  function handleReasoningModalInput(key) {
+    if (key.name === 'escape' || (key.ctrl && key.name === 'g')) {
+      toggleReasoningModal();
+    }
+  }
+
   function clearViewport() {
     process.stdout.write(ESC.clearScreen);
     tuiState.dirty.add('all');
@@ -1559,6 +1655,12 @@ export async function runTUI(options = {}) {
   function closeModal() {
     if (tuiState.configModalOpen) {
       closeConfigModal();
+      return;
+    }
+    if (tuiState.reasoningModalOpen) {
+      tuiState.reasoningModalOpen = false;
+      tuiState.dirty.add('all');
+      scheduler.flush();
       return;
     }
     if (tuiState.modelModalOpen) {
@@ -1860,6 +1962,7 @@ export async function runTUI(options = {}) {
     // For non-text modals, ignore paste rather than mutating the hidden composer.
     if (
       tuiState.configModalOpen ||
+      tuiState.reasoningModalOpen ||
       tuiState.modelModalOpen ||
       tuiState.providerModalOpen ||
       (tuiState.runState === 'awaiting_approval' && tuiState.approval)
@@ -1936,6 +2039,11 @@ export async function runTUI(options = {}) {
       return;
     }
 
+    if (tuiState.reasoningModalOpen) {
+      handleReasoningModalInput(key);
+      return;
+    }
+
     // Model modal: navigable list
     if (tuiState.modelModalOpen) {
       runAsync(() => handleModelModalInput(key), 'model picker input failed');
@@ -1985,6 +2093,9 @@ export async function runTUI(options = {}) {
         return;
       case 'toggle_tools':
         toggleTools();
+        return;
+      case 'toggle_reasoning':
+        toggleReasoningModal();
         return;
       case 'clear_viewport':
         clearViewport();

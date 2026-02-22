@@ -150,6 +150,108 @@ function bridgeNativeToolCalls(pendingCalls) {
   return bridged;
 }
 
+/**
+ * Split provider output into visible assistant content vs reasoning/thinking tokens.
+ * Handles both explicit `<think>...</think>` blocks in streamed content and native
+ * `reasoning_content` deltas (routed via pushReasoning()).
+ */
+export function createReasoningTokenParser(onContentToken, onThinkingToken) {
+  let insideThink = false;
+  let tagBuffer = '';
+  let thinkingOpen = false;
+
+  function emitContent(token) {
+    if (!token) return;
+    onContentToken?.(token);
+  }
+
+  function emitThinking(token) {
+    if (!token) return;
+    thinkingOpen = true;
+    onThinkingToken?.(token);
+  }
+
+  function closeThinking() {
+    if (!thinkingOpen) return;
+    thinkingOpen = false;
+    onThinkingToken?.(null);
+  }
+
+  function pushContent(rawToken) {
+    if (!rawToken) return;
+    tagBuffer += rawToken;
+
+    // Detect <think> opening outside a think block.
+    if (!insideThink && tagBuffer.includes('<think>')) {
+      const parts = tagBuffer.split('<think>');
+      const before = parts.shift() || '';
+      const afterOpen = parts.join('<think>');
+      if (before) {
+        closeThinking();
+        emitContent(before);
+      }
+      insideThink = true;
+      thinkingOpen = true;
+      tagBuffer = '';
+      if (afterOpen) {
+        pushContent(afterOpen);
+      }
+      return;
+    }
+
+    // Inside <think>...</think> — emit to reasoning channel.
+    if (insideThink) {
+      if (tagBuffer.includes('</think>')) {
+        const thinkContent = tagBuffer.split('</think>')[0];
+        if (thinkContent) emitThinking(thinkContent);
+        closeThinking();
+
+        const after = tagBuffer.split('</think>').slice(1).join('</think>');
+        insideThink = false;
+        tagBuffer = '';
+        const cleaned = after.replace(/^\s+/, '');
+        if (cleaned) emitContent(cleaned);
+      } else {
+        // Hold a short tail so split closing tags can still be detected.
+        const safe = tagBuffer.slice(0, -10);
+        if (safe) emitThinking(safe);
+        tagBuffer = tagBuffer.slice(-10);
+      }
+      return;
+    }
+
+    // Normal content — flush when we are not holding a possible partial tag.
+    if (tagBuffer.length > 50 || !tagBuffer.includes('<')) {
+      closeThinking(); // native reasoning_content often precedes visible content
+      emitContent(tagBuffer);
+      tagBuffer = '';
+    }
+  }
+
+  function pushReasoning(token) {
+    emitThinking(token);
+  }
+
+  function flush() {
+    if (insideThink) {
+      if (tagBuffer) emitThinking(tagBuffer);
+      insideThink = false;
+      tagBuffer = '';
+      closeThinking();
+      return;
+    }
+    if (tagBuffer) {
+      closeThinking();
+      emitContent(tagBuffer);
+      tagBuffer = '';
+      return;
+    }
+    closeThinking();
+  }
+
+  return { pushContent, pushReasoning, flush, closeThinking };
+}
+
 export async function streamCompletion(config, apiKey, model, messages, onToken, timeoutMs = DEFAULT_TIMEOUT_MS, externalSignal = null, options = undefined) {
   let lastError;
 
@@ -224,6 +326,13 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
       const decoder = new TextDecoder();
       let buffer = '';
       let accumulated = '';
+      const reasoningParser = createReasoningTokenParser(
+        (token) => {
+          accumulated += token;
+          if (onToken) onToken(token);
+        },
+        options?.onThinkingToken,
+      );
 
       // Accumulate native tool calls by index (same bridge pattern as web app)
       const pendingNativeToolCalls = new Map();
@@ -246,13 +355,17 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
             const choice = parsed.choices?.[0];
             if (!choice) continue;
 
+            const reasoningToken = choice.delta?.reasoning_content;
+            if (reasoningToken) {
+              reasoningParser.pushReasoning(reasoningToken);
+            }
+
             const token =
               choice.delta?.content ??
               choice.message?.content ??
               '';
             if (token) {
-              accumulated += token;
-              if (onToken) onToken(token);
+              reasoningParser.pushContent(token);
             }
 
             // Accumulate native tool calls (delta.tool_calls)
@@ -276,8 +389,7 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
             if (reason === 'tool_calls' || reason === 'stop' || reason === 'end_turn' || reason === 'length') {
               if (pendingNativeToolCalls.size > 0) {
                 const bridged = bridgeNativeToolCalls(pendingNativeToolCalls);
-                accumulated += bridged;
-                if (onToken) onToken(bridged);
+                reasoningParser.pushContent(bridged);
                 pendingNativeToolCalls.clear();
               }
             }
@@ -290,10 +402,10 @@ export async function streamCompletion(config, apiKey, model, messages, onToken,
       // Flush any remaining native tool calls on stream end
       if (pendingNativeToolCalls.size > 0) {
         const bridged = bridgeNativeToolCalls(pendingNativeToolCalls);
-        accumulated += bridged;
-        if (onToken) onToken(bridged);
+        reasoningParser.pushContent(bridged);
         pendingNativeToolCalls.clear();
       }
+      reasoningParser.flush();
 
       clearTimeout(timeout);
       return accumulated;

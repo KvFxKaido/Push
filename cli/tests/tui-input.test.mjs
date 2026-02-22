@@ -195,6 +195,12 @@ describe('createKeybindMap', () => {
     assert.equal(map.lookup(key), 'toggle_tools');
   });
 
+  it('maps Ctrl+G to toggle_reasoning', () => {
+    const map = createKeybindMap();
+    const key = parseKey(Buffer.from([0x07]));
+    assert.equal(map.lookup(key), 'toggle_reasoning');
+  });
+
   it('maps Ctrl+Y to approve', () => {
     const map = createKeybindMap();
     const key = parseKey(Buffer.from([0x19]));
