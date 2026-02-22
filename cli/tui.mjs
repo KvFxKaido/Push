@@ -1034,6 +1034,10 @@ export async function runTUI(options = {}) {
     }
 
     state.model = target;
+    // Persist per-provider model default (matches classic REPL behavior).
+    if (!config[ctx.providerConfig.id]) config[ctx.providerConfig.id] = {};
+    config[ctx.providerConfig.id].model = target;
+    await saveConfig(config);
     await saveSessionState(state);
     addTranscriptEntry(tuiState, 'status', `Model switched to: ${target}`);
     if (closePicker) {
@@ -1516,6 +1520,9 @@ export async function runTUI(options = {}) {
       state.messages[0] = { role: 'system', content: await buildSystemPrompt(state.cwd, { useNativeFC: newFC }) };
     }
 
+    // Persist current default provider (matches classic REPL behavior).
+    config.provider = target.id;
+    await saveConfig(config);
     await saveSessionState(state);
     addTranscriptEntry(tuiState, 'status', `Switched to ${target.id} | model: ${state.model}`);
     tuiState.providerModalOpen = false;
