@@ -23,6 +23,7 @@ import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engin
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.mjs';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
 import { createTabCompleter } from './tui-completer.mjs';
+import { appendUserMessageWithFileReferences } from './file-references.mjs';
 
 // ── TUI state ───────────────────────────────────────────────────────
 
@@ -1084,14 +1085,16 @@ export async function runTUI(options = {}) {
   // ── Actions ──────────────────────────────────────────────────────
 
   /** Run the assistant loop on a user message (or skill-expanded prompt). */
-  async function runPrompt(text) {
+  async function runPrompt(text, options = {}) {
     tuiState.runState = 'running';
     tuiState.reasoningBuf = '';
     tuiState.reasoningStreaming = false;
     tuiState.dirty.add('all');
     scheduler.flush();
 
-    state.messages.push({ role: 'user', content: text });
+    await appendUserMessageWithFileReferences(state, text, state.cwd, {
+      referenceSourceText: options.referenceSourceText,
+    });
     await appendSessionEvent(state, 'user_message', { chars: text.length, preview: text.slice(0, 280) });
 
     runAbort = new AbortController();
@@ -1493,6 +1496,7 @@ export async function runTUI(options = {}) {
           '  /skills              List available skills',
           '  /skills reload       Reload workspace + Claude skills',
           '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
+          '  @path[:line[-end]]   Preload file refs into context',
           '  /session             Print session id',
           '  /session rename <name>  Rename current session (--clear to unset)',
           '  /exit                Exit TUI',
@@ -1585,7 +1589,7 @@ export async function runTUI(options = {}) {
           composer.clear();
           tuiState.dirty.add('all');
           await appendSessionEvent(state, 'user_message', { chars: prompt.length, preview: prompt.slice(0, 280), skill: cmd });
-          await runPrompt(prompt);
+          await runPrompt(prompt, { referenceSourceText: arg });
           return true;
         }
 

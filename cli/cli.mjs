@@ -17,6 +17,7 @@ import { getSocketPath, getPidPath } from './pushd.mjs';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
 import { createCompleter } from './completer.mjs';
 import { fmt, Spinner } from './format.mjs';
+import { appendUserMessageWithFileReferences } from './file-references.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -215,7 +216,7 @@ function makeCLIEventHandler() {
 }
 
 async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks, { allowExec = false } = {}) {
-  state.messages.push({ role: 'user', content: task });
+  await appendUserMessageWithFileReferences(state, task, state.cwd);
   await appendSessionEvent(state, 'user_message', { chars: task.length, preview: task.slice(0, 280) });
 
   const ac = new AbortController();
@@ -499,6 +500,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           `  ${fmt.bold('/skills')}              List available skills\n` +
           `  ${fmt.bold('/skills')} reload       Reload workspace + Claude skills\n` +
           `  ${fmt.bold('/<skill>')} [args]      Run a skill (e.g. /commit, /review src/app.ts)\n` +
+          `  ${fmt.dim('@path[:line[-end]]')}     Preload file refs into context (e.g. @src/app.ts:10-40)\n` +
           `  ${fmt.bold('/session')}             Print session id\n` +
           `  ${fmt.bold('/session')} rename <name>  Rename current session (${fmt.dim('--clear')} to unset)\n` +
           `  ${fmt.bold('/exit')} | ${fmt.bold('/quit')}        Exit\n`,
@@ -598,7 +600,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           const args = spaceIdx === -1 ? '' : line.slice(spaceIdx + 1).trim();
           const promptTemplate = await getSkillPromptTemplate(skill);
           const prompt = interpolateSkill(promptTemplate, args);
-          state.messages.push({ role: 'user', content: prompt });
+          await appendUserMessageWithFileReferences(state, prompt, state.cwd, { referenceSourceText: args });
           await appendSessionEvent(state, 'user_message', { chars: prompt.length, preview: prompt.slice(0, 280), skill: cmdName });
 
           const ac = new AbortController();
@@ -635,7 +637,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
         continue;
       }
 
-      state.messages.push({ role: 'user', content: line });
+      await appendUserMessageWithFileReferences(state, line, state.cwd);
       await appendSessionEvent(state, 'user_message', { chars: line.length, preview: line.slice(0, 280) });
 
       const ac = new AbortController();

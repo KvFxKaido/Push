@@ -29,6 +29,7 @@ import {
   PROTOCOL_VERSION,
 } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
+import { appendUserMessageWithFileReferences } from './file-references.mjs';
 
 const VERSION = '0.1.0';
 const CAPABILITIES = ['stream_tokens', 'approvals'];
@@ -210,7 +211,7 @@ async function handleSendUserMessage(req, emitEvent) {
   });
 
   // Run the assistant loop asynchronously
-  state.messages.push({ role: 'user', content: text });
+  await appendUserMessageWithFileReferences(state, text, state.cwd);
   await appendSessionEvent(state, 'user_message', { chars: text.length, preview: text.slice(0, 280) }, runId);
 
   const providerConfig = PROVIDER_CONFIGS[state.provider];

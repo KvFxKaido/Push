@@ -45,6 +45,7 @@ In-session commands:
 - `/session` — print current session id
 - `/session rename <name>` — rename the current session (`--clear` to unset)
 - `/skills reload` — reload skill files from `.push/skills` and `.claude/commands`
+- `@path[:line[-end]]` — preload file references into context (example: `@src/app.ts:120-180`)
 - `/exit` or `/quit` — exit interactive mode
 
 Skill discovery:
