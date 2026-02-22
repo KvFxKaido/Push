@@ -556,6 +556,19 @@ describe('createComposer', () => {
     assert.equal(c.getCursor().line, 2);
     assert.equal(c.getCursor().col, 5);
   });
+
+  it('insertText normalizes CRLF to single newlines', () => {
+    const c = createComposer();
+    c.insertText('line1\r\nline2\r\nline3');
+    assert.deepEqual(c.getLines(), ['line1', 'line2', 'line3']);
+    assert.equal(c.getCursor().line, 2);
+  });
+
+  it('insertText normalizes standalone CR to newline', () => {
+    const c = createComposer();
+    c.insertText('line1\rline2');
+    assert.deepEqual(c.getLines(), ['line1', 'line2']);
+  });
 });
 
 // ─── createInputHistory ────────────────────────────────────────

@@ -8,6 +8,7 @@
 
 import process from 'node:process';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 import { createTheme } from './tui-theme.mjs';
 import { parseKey, createKeybindMap, createComposer, createInputHistory } from './tui-input.mjs';
@@ -1730,17 +1731,52 @@ export async function runTUI(options = {}) {
   let pasteMode = false;
   let pasteBuf = '';
 
+  // Stream-safe decoding: StringDecoder holds incomplete UTF-8 byte
+  // sequences across data events (prevents replacement characters for
+  // CJK/emoji split across chunks). pendingInput holds character strings
+  // that might be partial paste markers at chunk boundaries.
+  const utf8Decoder = new StringDecoder('utf8');
+  let pendingInput = '';
+
+  /**
+   * Check if str ends with a proper prefix of marker.
+   * Returns the length of the matching suffix, or 0.
+   */
+  function partialMarkerSuffix(str, marker) {
+    const maxLen = Math.min(str.length, marker.length - 1);
+    for (let len = maxLen; len >= 1; len--) {
+      if (str.endsWith(marker.slice(0, len))) {
+        return len;
+      }
+    }
+    return 0;
+  }
+
   // ── Input handler ────────────────────────────────────────────────
 
   function onData(data) {
-    const str = Buffer.isBuffer(data) ? data.toString('utf8') : data;
+    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    const decoded = utf8Decoder.write(buf);
+    if (!decoded) return; // Incomplete UTF-8 sequence, wait for more bytes
+    const str = pendingInput + decoded;
+    pendingInput = '';
+    processInput(str);
+  }
 
+  function processInput(str) {
     // ── Bracketed paste handling (before parseKey) ──
     if (pasteMode) {
       const endIdx = str.indexOf(PASTE_END);
       if (endIdx === -1) {
-        // Still buffering paste data
-        pasteBuf += str;
+        // No end marker found. Hold a potential partial marker at the tail
+        // so we can match it if the rest arrives in the next chunk.
+        const held = partialMarkerSuffix(str, PASTE_END);
+        if (held > 0) {
+          pasteBuf += str.slice(0, -held);
+          pendingInput = str.slice(-held);
+        } else {
+          pasteBuf += str;
+        }
         return;
       }
       // End of paste
@@ -1752,7 +1788,7 @@ export async function runTUI(options = {}) {
       scheduler.schedule();
       // Process any data after the paste end marker
       const after = str.slice(endIdx + PASTE_END.length);
-      if (after.length > 0) onData(after);
+      if (after.length > 0) processInput(after);
       return;
     }
 
@@ -1761,18 +1797,19 @@ export async function runTUI(options = {}) {
     if (startIdx !== -1) {
       // Process data before paste marker
       const before = str.slice(0, startIdx);
-      if (before.length > 0) onData(before);
+      if (before.length > 0) processInput(before);
       // Enter paste mode
       pasteMode = true;
       pasteBuf = '';
       // Process data after paste start marker (may contain paste end too)
       const after = str.slice(startIdx + PASTE_START.length);
-      if (after.length > 0) onData(after);
+      if (after.length > 0) processInput(after);
       return;
     }
 
-    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-    const key = parseKey(buf);
+    // Normal key input
+    const keyBuf = Buffer.from(str);
+    const key = parseKey(keyBuf);
 
     // Config modal: swallow all keys
     if (tuiState.configModalOpen) {

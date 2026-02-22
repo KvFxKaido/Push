@@ -448,8 +448,10 @@ export function createComposer() {
 
   /** Insert a text blob (possibly multi-line). Used for paste. */
   function insertText(text) {
-    for (const ch of text) {
-      if (ch === '\n' || ch === '\r') {
+    // Normalize line endings: \r\n → \n, standalone \r → \n
+    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    for (const ch of normalized) {
+      if (ch === '\n') {
         insertNewline();
       } else {
         insertChar(ch);
