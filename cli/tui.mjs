@@ -646,6 +646,41 @@ export async function runTUI(options = {}) {
 
   const maxRounds = options.maxRounds || DEFAULT_MAX_ROUNDS;
 
+  async function createFreshSessionState(providerName, requestedModel, cwd) {
+    const providerConfig = PROVIDER_CONFIGS[providerName];
+    if (!providerConfig) throw new Error(`Unknown provider: ${providerName}`);
+    const useNativeFC = resolveNativeFC(providerConfig);
+    const sessionId = makeSessionId();
+    const now = Date.now();
+    const nextState = {
+      sessionId,
+      createdAt: now,
+      updatedAt: now,
+      provider: providerName,
+      model: requestedModel,
+      cwd,
+      rounds: 0,
+      eventSeq: 0,
+      workingMemory: {
+        plan: '',
+        openTasks: [],
+        filesTouched: [],
+        assumptions: [],
+        errorsEncountered: [],
+      },
+      messages: [{ role: 'system', content: await buildSystemPrompt(cwd, { useNativeFC }) }],
+    };
+    await appendSessionEvent(nextState, 'session_started', {
+      sessionId,
+      state: 'idle',
+      mode: 'tui',
+      provider: providerName,
+      nativeFC: useNativeFC,
+    });
+    await saveSessionState(nextState);
+    return nextState;
+  }
+
   // ── Session init ─────────────────────────────────────────────────
 
   let state;
@@ -695,39 +730,11 @@ export async function runTUI(options = {}) {
     }
   } else {
     const providerName = (options.provider || process.env.PUSH_PROVIDER || config.provider || 'ollama').toLowerCase();
+    const cwd = path.resolve(options.cwd || process.cwd());
     const providerConfig = PROVIDER_CONFIGS[providerName];
     if (!providerConfig) throw new Error(`Unknown provider: ${providerName}`);
-    const cwd = path.resolve(options.cwd || process.cwd());
     const requestedModel = options.model || providerConfig.defaultModel;
-    const useNativeFC = resolveNativeFC(providerConfig);
-    const sessionId = makeSessionId();
-    const now = Date.now();
-    state = {
-      sessionId,
-      createdAt: now,
-      updatedAt: now,
-      provider: providerName,
-      model: requestedModel,
-      cwd,
-      rounds: 0,
-      eventSeq: 0,
-      workingMemory: {
-        plan: '',
-        openTasks: [],
-        filesTouched: [],
-        assumptions: [],
-        errorsEncountered: [],
-      },
-      messages: [{ role: 'system', content: await buildSystemPrompt(cwd, { useNativeFC }) }],
-    };
-    await appendSessionEvent(state, 'session_started', {
-      sessionId,
-      state: 'idle',
-      mode: 'tui',
-      provider: providerName,
-      nativeFC: useNativeFC,
-    });
-    await saveSessionState(state);
+    state = await createFreshSessionState(providerName, requestedModel, cwd);
   }
 
   const activeProviderConfig = PROVIDER_CONFIGS[state.provider];
@@ -1018,6 +1025,65 @@ export async function runTUI(options = {}) {
       tuiState.dirty.add('all');
       scheduler.flush();
     }
+  }
+
+  async function renameCurrentSession(rawName) {
+    const trimmed = typeof rawName === 'string' ? rawName.trim() : '';
+    if (!trimmed) {
+      addTranscriptEntry(tuiState, 'warning', 'Usage: /session rename <name> | /session rename --clear');
+      scheduler.flush();
+      return;
+    }
+
+    if (trimmed === '--clear') {
+      delete state.sessionName;
+      await appendSessionEvent(state, 'session_renamed', { name: null });
+      await saveSessionState(state);
+      addTranscriptEntry(tuiState, 'status', 'Session name cleared.');
+      scheduler.flush();
+      return;
+    }
+
+    state.sessionName = trimmed;
+    await appendSessionEvent(state, 'session_renamed', { name: trimmed });
+    await saveSessionState(state);
+    addTranscriptEntry(tuiState, 'status', `Session renamed: ${JSON.stringify(trimmed)}`);
+    scheduler.flush();
+  }
+
+  async function startNewSession() {
+    if (tuiState.runState !== 'idle') {
+      addTranscriptEntry(tuiState, 'warning', 'Cannot start a new session while a run is active.');
+      scheduler.flush();
+      return;
+    }
+
+    const previousSessionId = state.sessionId;
+    await saveSessionState(state);
+    state = await createFreshSessionState(state.provider, state.model, state.cwd);
+
+    tuiState.runState = 'idle';
+    tuiState.streamBuf = '';
+    tuiState.approval = null;
+    tuiState.transcript = [];
+    tuiState.toolFeed = [];
+    tuiState.scrollOffset = 0;
+    tuiState.providerModalOpen = false;
+    tuiState.providerModalCursor = 0;
+    tuiState.modelModalOpen = false;
+    tuiState.modelModalState = null;
+    tuiState.configModalOpen = false;
+    tuiState.configModalState = null;
+    composer.clear();
+    tabCompleter.reset();
+
+    addTranscriptEntry(
+      tuiState,
+      'status',
+      `Started new session: ${state.sessionId} (from ${previousSessionId}) [${state.provider}/${state.model}]`,
+    );
+    tuiState.dirty.add('all');
+    scheduler.flush();
   }
 
   async function switchModel(target, { closePicker = false } = {}) {
@@ -1321,6 +1387,7 @@ export async function runTUI(options = {}) {
       case 'help':
         addTranscriptEntry(tuiState, 'status', [
           'Commands:',
+          '  /new                 Start a new session (same provider/model/cwd)',
           '  /model               Open navigable model picker',
           '  /model <name|#>      Switch model',
           '  /provider            Open navigable provider picker',
@@ -1333,6 +1400,7 @@ export async function runTUI(options = {}) {
           '  /skills              List available skills',
           '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
           '  /session             Print session id',
+          '  /session rename <name>  Rename current session (--clear to unset)',
           '  /exit                Exit TUI',
           '',
           'Keybinds:',
@@ -1356,8 +1424,22 @@ export async function runTUI(options = {}) {
         scheduler.flush();
         return true;
 
+      case 'new':
+        await startNewSession();
+        return true;
+
       case 'session':
-        addTranscriptEntry(tuiState, 'status', `session: ${state.sessionId}`);
+        if (!arg) {
+          const nameSuffix = state.sessionName ? ` (${JSON.stringify(state.sessionName)})` : '';
+          addTranscriptEntry(tuiState, 'status', `session: ${state.sessionId}${nameSuffix}`);
+          scheduler.flush();
+          return true;
+        }
+        if (arg === 'rename' || arg.startsWith('rename ')) {
+          await renameCurrentSession(arg.slice('rename'.length));
+          return true;
+        }
+        addTranscriptEntry(tuiState, 'warning', 'Usage: /session | /session rename <name> | /session rename --clear');
         scheduler.flush();
         return true;
 

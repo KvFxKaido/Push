@@ -457,6 +457,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
       if (line === '/help') {
         process.stdout.write(
           `Commands:\n` +
+          `  ${fmt.bold('/new')}                 Start a new session (same provider/model/cwd)\n` +
           `  ${fmt.bold('/model')}               Show current model + available models\n` +
           `  ${fmt.bold('/model')} <name|#>      Switch model\n` +
           `  ${fmt.bold('/provider')}            Show all providers with status\n` +
@@ -464,12 +465,51 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           `  ${fmt.bold('/skills')}              List available skills\n` +
           `  ${fmt.bold('/<skill>')} [args]      Run a skill (e.g. /commit, /review src/app.ts)\n` +
           `  ${fmt.bold('/session')}             Print session id\n` +
+          `  ${fmt.bold('/session')} rename <name>  Rename current session (${fmt.dim('--clear')} to unset)\n` +
           `  ${fmt.bold('/exit')} | ${fmt.bold('/quit')}        Exit\n`,
         );
         continue;
       }
-      if (line === '/session') {
-        process.stdout.write(`session: ${state.sessionId}\n`);
+      if (line === '/new') {
+        const previousSessionId = state.sessionId;
+        await saveSessionState(state);
+        state = await initSession(null, state.provider, state.model, state.cwd);
+        process.stdout.write(
+          `Started new session: ${state.sessionId} ` +
+          `(${fmt.dim(`from ${previousSessionId}`)}) ` +
+          `${fmt.dim(`[${state.provider}/${state.model}]`)}\n`,
+        );
+        continue;
+      }
+      if (line === '/session' || line.startsWith('/session ')) {
+        const arg = line.slice('/session'.length).trim();
+        if (!arg) {
+          const nameSuffix = state.sessionName ? ` (${JSON.stringify(state.sessionName)})` : '';
+          process.stdout.write(`session: ${state.sessionId}${nameSuffix}\n`);
+          continue;
+        }
+
+        if (arg === 'rename' || arg.startsWith('rename ')) {
+          const rawName = arg.slice('rename'.length).trim();
+          if (!rawName) {
+            process.stdout.write('Usage: /session rename <name> | /session rename --clear\n');
+            continue;
+          }
+          if (rawName === '--clear') {
+            delete state.sessionName;
+            await appendSessionEvent(state, 'session_renamed', { name: null });
+            await saveSessionState(state);
+            process.stdout.write('Session name cleared.\n');
+            continue;
+          }
+          state.sessionName = rawName;
+          await appendSessionEvent(state, 'session_renamed', { name: rawName });
+          await saveSessionState(state);
+          process.stdout.write(`Session renamed: ${JSON.stringify(rawName)}\n`);
+          continue;
+        }
+
+        process.stdout.write('Usage: /session | /session rename <name> | /session rename --clear\n');
         continue;
       }
 
@@ -1141,6 +1181,42 @@ export async function main() {
   }
 
   if (subcommand === 'sessions') {
+    const sessionsCmd = positionals[1] || '';
+    if (sessionsCmd === 'rename') {
+      const sessionId = positionals[2];
+      const nameArg = positionals.slice(3).join(' ').trim();
+      if (!sessionId) {
+        throw new Error('Usage: push sessions rename <session-id> <name|--clear>');
+      }
+      if (!nameArg) {
+        throw new Error('Usage: push sessions rename <session-id> <name|--clear>');
+      }
+      const state = await loadSessionState(sessionId);
+      if (nameArg === '--clear') {
+        delete state.sessionName;
+        await appendSessionEvent(state, 'session_renamed', { name: null });
+        await saveSessionState(state);
+        if (values.json) {
+          process.stdout.write(`${JSON.stringify({ ok: true, sessionId, sessionName: null }, null, 2)}\n`);
+        } else {
+          process.stdout.write(`Cleared session name: ${sessionId}\n`);
+        }
+        return 0;
+      }
+      state.sessionName = nameArg;
+      await appendSessionEvent(state, 'session_renamed', { name: nameArg });
+      await saveSessionState(state);
+      if (values.json) {
+        process.stdout.write(`${JSON.stringify({ ok: true, sessionId, sessionName: nameArg }, null, 2)}\n`);
+      } else {
+        process.stdout.write(`Renamed ${sessionId} -> ${JSON.stringify(nameArg)}\n`);
+      }
+      return 0;
+    }
+    if (sessionsCmd) {
+      throw new Error(`Unknown sessions subcommand: ${sessionsCmd}. Supported: rename`);
+    }
+
     const sessions = await listSessions();
     if (values.json) {
       process.stdout.write(`${JSON.stringify(sessions, null, 2)}\n`);
@@ -1151,8 +1227,9 @@ export async function main() {
       return 0;
     }
     for (const row of sessions) {
+      const namePart = row.sessionName ? `  name=${JSON.stringify(row.sessionName)}` : '';
       process.stdout.write(
-        `${row.sessionId}  ${new Date(row.updatedAt).toISOString()}  ${row.provider}/${row.model}  ${row.cwd}\n`,
+        `${row.sessionId}  ${new Date(row.updatedAt).toISOString()}  ${row.provider}/${row.model}  ${row.cwd}${namePart}\n`,
       );
     }
     return 0;

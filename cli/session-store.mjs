@@ -186,6 +186,7 @@ export async function listSessions() {
           provider: typeof state.provider === 'string' ? state.provider : 'unknown',
           model: typeof state.model === 'string' ? state.model : 'unknown',
           cwd: typeof state.cwd === 'string' ? state.cwd : '',
+          sessionName: typeof state.sessionName === 'string' ? state.sessionName.trim() : '',
         };
 
         const existing = byId.get(sessionId);

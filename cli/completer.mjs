@@ -45,6 +45,17 @@ export function createCompleter({ ctx, skills, getCuratedModels, getProviderList
       return [hits, arg];
     }
 
+    if (cmd === 'session') {
+      if (arg.startsWith('rename ')) {
+        const clearArg = 'rename --clear';
+        const hits = clearArg.startsWith(arg) ? [clearArg] : [];
+        return [hits, arg];
+      }
+      const subs = ['rename '];
+      const hits = subs.filter(s => s.startsWith(arg));
+      return [hits, arg];
+    }
+
     // Skill args, unknown commands — no completion
     return [[], arg];
   };

@@ -37,11 +37,13 @@ If `PUSH_TUI_ENABLED=1`, bare `./push` launches the full-screen TUI by default. 
 In-session commands:
 
 - `/help` — show commands
+- `/new` — start a fresh session in the same workspace/provider/model
 - `/model` — show current model and curated list for the active provider
 - `/model <name|#>` — switch model by name or list number
 - `/provider` — show providers with key/native-FC status
 - `/provider <name|#>` — switch provider by name or list number
 - `/session` — print current session id
+- `/session rename <name>` — rename the current session (`--clear` to unset)
 - `/exit` or `/quit` — exit interactive mode
 
 ### Headless
@@ -197,8 +199,10 @@ Sessions persist to `~/.push/sessions/<session-id>/` by default. Each session ha
 If no `PUSH_SESSION_DIR` is set, the CLI also reads legacy workspace-local sessions from `.push/sessions/` in the current directory when listing or resuming by id.
 
 ```bash
-./push sessions              # list all sessions
-./push sessions --json       # list as JSON
+./push sessions                                  # list all sessions (shows name when set)
+./push sessions --json                           # list as JSON
+./push sessions rename sess_abc123 "PR review"   # rename a session
+./push sessions rename sess_abc123 --clear       # clear a session name
 ./push --session sess_abc123 # resume
 ```
 
@@ -301,11 +305,13 @@ Options:
 Interactive slash commands:
 
 ```
+/new                      Start a new session (same provider/model/cwd)
 /model                    Show model list for current provider
 /model <name|#>           Switch model
 /provider                 Show providers and current status
 /provider <name|#>        Switch provider
 /session                  Print session id
+/session rename <name>    Rename current session (--clear to unset)
 /exit | /quit             Exit interactive mode
 ```
 

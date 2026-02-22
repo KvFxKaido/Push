@@ -42,6 +42,7 @@ describe('createCompleter', () => {
     assert.ok(hits.includes('/exit'));
     assert.ok(hits.includes('/quit'));
     assert.ok(hits.includes('/session'));
+    assert.ok(hits.includes('/new'));
     assert.ok(hits.includes('/model'));
     assert.ok(hits.includes('/provider'));
     assert.ok(hits.includes('/skills'));
@@ -105,6 +106,20 @@ describe('createCompleter', () => {
     const [hits, sub] = c('/provider ol');
     assert.deepEqual(hits, ['ollama']);
     assert.equal(sub, 'ol');
+  });
+
+  it('/session + partial subcommand → rename completion', () => {
+    const c = makeCompleter();
+    const [hits, sub] = c('/session re');
+    assert.deepEqual(hits, ['rename ']);
+    assert.equal(sub, 're');
+  });
+
+  it('/session rename -- partial → clear option completion', () => {
+    const c = makeCompleter();
+    const [hits, sub] = c('/session rename --');
+    assert.deepEqual(hits, ['rename --clear']);
+    assert.equal(sub, 'rename --');
   });
 
   it('unknown /foo with no matching skill → empty', () => {

@@ -52,6 +52,15 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
       return ids.filter(p => p.startsWith(arg)).map(p => prefix + p);
     }
 
+    if (cmd === 'session') {
+      if (arg.startsWith('rename ')) {
+        const clearArg = 'rename --clear';
+        return clearArg.startsWith(arg) ? [prefix + clearArg] : [];
+      }
+      const subs = ['rename '];
+      return subs.filter(s => s.startsWith(arg)).map(s => prefix + s);
+    }
+
     if (cmd === 'config') {
       const parts = arg.split(' ');
       if (parts.length <= 1) {

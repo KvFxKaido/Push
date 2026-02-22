@@ -47,6 +47,12 @@ describe('createTabCompleter', () => {
     assert.equal(result.total, 1);
   });
 
+  it('completes /new command', () => {
+    const result = tc.tab('/ne', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/new ');
+  });
+
   it('completes skill names', () => {
     tc.reset();
     const result = tc.tab('/comm', false);
@@ -64,6 +70,12 @@ describe('createTabCompleter', () => {
     const result = tc.tab('/provider ol', false);
     assert.notEqual(result, null);
     assert.equal(result.text, '/provider ollama');
+  });
+
+  it('completes session subcommands', () => {
+    const result = tc.tab('/session re', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/session rename ');
   });
 
   it('cycles forward through candidates', () => {

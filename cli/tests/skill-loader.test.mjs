@@ -137,7 +137,7 @@ describe('loadSkills — validation', () => {
 
 describe('RESERVED_COMMANDS', () => {
   it('contains expected commands', () => {
-    for (const cmd of ['help', 'exit', 'quit', 'session', 'model', 'provider', 'skills']) {
+    for (const cmd of ['help', 'exit', 'quit', 'new', 'session', 'model', 'provider', 'skills']) {
       assert.ok(RESERVED_COMMANDS.has(cmd), `Should contain "${cmd}"`);
     }
   });

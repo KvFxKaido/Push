@@ -141,6 +141,7 @@ describe('listSessions', () => {
     await saveSessionState({
       sessionId: id2, createdAt: 2000, updatedAt: 2000,
       provider: 'mistral', model: 'b', cwd: '/tmp', rounds: 0, eventSeq: 0, messages: [],
+      sessionName: 'Review auth middleware',
     });
 
     const sessions = await listSessions();
@@ -154,7 +155,10 @@ describe('listSessions', () => {
       assert.ok(typeof s.updatedAt === 'number');
       assert.ok(s.provider);
       assert.ok(s.model);
+      assert.equal(typeof s.sessionName, 'string');
     }
+    const named = sessions.find((s) => s.sessionId === id2);
+    assert.equal(named?.sessionName, 'Review auth middleware');
   });
 });
 
