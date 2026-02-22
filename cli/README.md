@@ -22,7 +22,7 @@ This walks you through provider, model, API key, and sandbox settings using numb
 
 ## Modes
 
-### Interactive (default)
+### Interactive (default fallback)
 
 ```bash
 ./push
@@ -31,6 +31,8 @@ This walks you through provider, model, API key, and sandbox settings using numb
 ```
 
 Starts a REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (rm -rf, sudo, force-push, etc.) prompt for approval before running.
+
+If `PUSH_TUI_ENABLED=1`, bare `./push` launches the full-screen TUI by default. Use `./push tui` explicitly to force TUI mode, or unset the flag to use the classic REPL as default.
 
 In-session commands:
 
@@ -264,8 +266,8 @@ cli/
 ## CLI reference
 
 ```
-push                                Start interactive session
-push --session <id>                 Resume interactive session
+push                                Start TUI when enabled, otherwise interactive session
+push --session <id>                 Resume session (TUI when enabled, otherwise interactive)
 push run --task "..."               Headless mode (single task)
 push run "..."                      Headless mode (positional)
 push sessions                       List saved sessions

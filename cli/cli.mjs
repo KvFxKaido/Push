@@ -48,8 +48,8 @@ function printHelp() {
     `Push CLI (bootstrap)
 
 Usage:
-  push                          Start interactive session
-  push --session <id>           Resume interactive session
+  push                          Start TUI when enabled, otherwise interactive session
+  push --session <id>           Resume session (TUI when enabled, otherwise interactive)
   push run --task "..."         Run once in headless mode
   push run "..."                Run once in headless mode
   push sessions                 List saved sessions
@@ -1111,6 +1111,7 @@ export async function main() {
   }
 
   const subcommand = positionals[0] || '';
+  const tuiEnabled = process.env.PUSH_TUI_ENABLED === '1' || process.env.PUSH_TUI_ENABLED === 'true';
   if (subcommand === 'config') {
     return runConfigSubcommand(values, positionals);
   }
@@ -1176,7 +1177,7 @@ export async function main() {
   }
 
   if (subcommand === 'tui') {
-    if (process.env.PUSH_TUI_ENABLED !== '1' && process.env.PUSH_TUI_ENABLED !== 'true') {
+    if (!tuiEnabled) {
       throw new Error('TUI is behind a feature flag. Set PUSH_TUI_ENABLED=1 to enable it.');
     }
     if (!process.stdin.isTTY) {
@@ -1270,6 +1271,18 @@ export async function main() {
     const apiKey = resolveApiKey(providerConfig);
     const allowExec = values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
     return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks, { allowExec });
+  }
+
+  // Default UX: bare "push" opens TUI when enabled.
+  if (subcommand === '' && tuiEnabled) {
+    if (!process.stdin.isTTY) {
+      throw new Error('TUI requires a TTY terminal.');
+    }
+    const { runTUI } = await import('./tui.mjs');
+    return runTUI({
+      sessionId: state.sessionId,
+      maxRounds,
+    });
   }
 
   if (!process.stdin.isTTY) {
