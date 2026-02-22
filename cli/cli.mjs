@@ -30,7 +30,7 @@ const KNOWN_OPTIONS = new Set([
   'tavily-key', 'tavilyKey', 'search-backend', 'searchBackend',
   'task', 'accept', 'max-rounds', 'maxRounds', 'json', 'headless',
   'allow-exec', 'allowExec', 'skill', 'mode',
-  'help', 'sandbox', 'no-sandbox', 'version',
+  'help', 'sandbox', 'no-sandbox', 'version', 'exec-mode',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set(['', 'run', 'config', 'resume', 'sessions', 'skills', 'stats', 'daemon', 'attach', 'tui']);
@@ -1074,11 +1074,20 @@ async function runConfigSubcommand(values, positionals) {
     next.localSandbox = false;
     changed = true;
   }
+  const execModeArg = values['exec-mode'];
+  if (execModeArg) {
+    const VALID_EXEC_MODES = new Set(['strict', 'auto', 'yolo']);
+    if (!VALID_EXEC_MODES.has(execModeArg)) {
+      throw new Error(`Invalid --exec-mode "${execModeArg}". Valid values: strict, auto, yolo`);
+    }
+    next.execMode = execModeArg;
+    changed = true;
+  }
 
   next[provider] = branch;
 
   if (!changed) {
-    throw new Error('No config changes provided. Use one or more of: --provider, --model, --url, --api-key, --tavily-key, --search-backend, --sandbox, --no-sandbox');
+    throw new Error('No config changes provided. Use one or more of: --provider, --model, --url, --api-key, --tavily-key, --search-backend, --sandbox, --no-sandbox, --exec-mode');
   }
 
   const configPath = await saveConfig(next);
@@ -1090,7 +1099,8 @@ async function runConfigSubcommand(values, positionals) {
     `${fmt.dim('apiKey:')} ${next[provider]?.apiKey ? maskSecret(next[provider].apiKey) : '(unchanged)'}\n` +
     `${fmt.dim('tavilyKey:')} ${next.tavilyApiKey ? maskSecret(next.tavilyApiKey) : '(unchanged)'}\n` +
     `${fmt.dim('webSearch:')} ${next.webSearchBackend || 'auto'}\n` +
-    `${fmt.dim('localSandbox:')} ${next.localSandbox ?? '(unchanged)'}\n`
+    `${fmt.dim('localSandbox:')} ${next.localSandbox ?? '(unchanged)'}\n` +
+    `${fmt.dim('execMode:')} ${next.execMode || '(unchanged)'}\n`
   );
   return 0;
 }
@@ -1271,6 +1281,7 @@ export async function main() {
       mode: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       sandbox: { type: 'boolean' },
+      'exec-mode': { type: 'string' },
       'no-sandbox': { type: 'boolean' },
       version: { type: 'boolean', short: 'v' },
     },

@@ -728,6 +728,9 @@ function getConfigItems(providerList, config) {
   const sandbox = process.env.PUSH_LOCAL_SANDBOX || (config.localSandbox !== undefined ? String(config.localSandbox) : 'off');
   const sandboxOn = sandbox === 'true' || sandbox === '1';
   items.push({ type: 'sandbox', id: 'sandbox', sandboxOn });
+  // ExecMode
+  const execMode = process.env.PUSH_EXEC_MODE || config.execMode || 'auto';
+  items.push({ type: 'execMode', id: 'execMode', execMode });
   return items;
 }
 
@@ -776,6 +779,13 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
           ? theme.style('accent.primary', 'sandbox')
           : theme.style('fg.secondary', 'sandbox');
         lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${status}`);
+      } else if (item.type === 'execMode') {
+        const modeColor = item.execMode === 'yolo' ? 'state.warning' : item.execMode === 'auto' ? 'state.success' : 'fg.secondary';
+        const modeStr = theme.style(modeColor, item.execMode);
+        const name = isCursor
+          ? theme.style('accent.primary', 'execMode')
+          : theme.style('fg.secondary', 'execMode');
+        lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${modeStr}`);
       }
 
       // Visual gap between providers and extras
@@ -831,6 +841,35 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
     lines.push(`  ${theme.style('accent.primary', '\u203A')} ${inputPad}`);
     lines.push('');
     lines.push(`  ${theme.style('fg.dim', 'Paste key + Enter to save \u00B7 Esc cancel')}`);
+
+    const modalHeight = lines.length + 2;
+    const modalTop = Math.floor((rows - modalHeight) / 2);
+    const modalLeft = Math.floor((cols - modalWidth) / 2);
+
+    const boxLines = drawBox(lines, modalWidth, glyphs, theme);
+    for (let i = 0; i < boxLines.length; i++) {
+      buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
+    }
+  } else if (modalState.mode === 'pick') {
+    // ── Pick mode (exec mode selection) ──
+    const EXEC_MODES = [
+      { id: 'strict', desc: 'prompt before every exec command' },
+      { id: 'auto',   desc: 'prompt only for high-risk commands' },
+      { id: 'yolo',   desc: 'no exec prompts' },
+    ];
+    const lines = [
+      theme.bold(theme.style('fg.primary', '  Exec mode')),
+      '',
+    ];
+    for (let i = 0; i < EXEC_MODES.length; i++) {
+      const m = EXEC_MODES[i];
+      const isCursor = i === modalState.pickCursor;
+      const marker = isCursor ? theme.style('accent.primary', '\u203A') : ' ';
+      const label = isCursor ? theme.style('accent.primary', m.id) : theme.style('fg.secondary', m.id);
+      lines.push(`  ${marker} ${padTo(label, 8)}  ${theme.style('fg.dim', m.desc)}`);
+    }
+    lines.push('');
+    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 select  Enter save  Esc cancel')}`);
 
     const modalHeight = lines.length + 2;
     const modalTop = Math.floor((rows - modalHeight) / 2);
@@ -2547,7 +2586,7 @@ export async function runTUI(options = {}) {
 
   function openConfigModal() {
     tuiState.configModalOpen = true;
-    tuiState.configModalState = { mode: 'list', cursor: 0, editTarget: '', editBuf: '', editCursor: 0 };
+    tuiState.configModalState = { mode: 'list', cursor: 0, editTarget: '', editBuf: '', editCursor: 0, pickCursor: 0 };
     tuiState.dirty.add('all');
     scheduler.flush();
   }
@@ -2559,8 +2598,8 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
-  /** Total config items: 6 providers + tavily + sandbox = 8. */
-  const CONFIG_ITEM_COUNT = 8;
+  /** Total config items: 6 providers + tavily + sandbox + execMode = 9. */
+  const CONFIG_ITEM_COUNT = 9;
 
   async function handleConfigModalInput(key) {
     const ms = tuiState.configModalState;
@@ -2584,8 +2623,8 @@ export async function runTUI(options = {}) {
         scheduler.schedule();
         return;
       }
-      // Number keys 1–8: jump + activate
-      if (key.ch >= '1' && key.ch <= '8') {
+      // Number keys 1–9: jump + activate
+      if (key.ch >= '1' && key.ch <= '9') {
         ms.cursor = parseInt(key.ch, 10) - 1;
         await activateConfigItem(ms.cursor);
         return;
@@ -2651,6 +2690,40 @@ export async function runTUI(options = {}) {
       }
       return;
     }
+
+    if (ms.mode === 'pick') {
+      // ── Pick mode input (exec mode selection) ──
+      const EXEC_MODES = ['strict', 'auto', 'yolo'];
+      if (key.name === 'escape') {
+        ms.mode = 'list';
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'up') {
+        ms.pickCursor = (ms.pickCursor - 1 + EXEC_MODES.length) % EXEC_MODES.length;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'down') {
+        ms.pickCursor = (ms.pickCursor + 1) % EXEC_MODES.length;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'return') {
+        const chosen = EXEC_MODES[ms.pickCursor];
+        config.execMode = chosen;
+        await saveConfig(config);
+        process.env.PUSH_EXEC_MODE = chosen;
+        ms.mode = 'list';
+        tuiState.dirty.add('all');
+        scheduler.flush();
+        return;
+      }
+      return;
+    }
   }
 
   async function activateConfigItem(index) {
@@ -2675,6 +2748,12 @@ export async function runTUI(options = {}) {
       config.localSandbox = !isOn;
       await saveConfig(config);
       process.env.PUSH_LOCAL_SANDBOX = String(!isOn);
+    } else if (index === providers.length + 2) {
+      // ExecMode → enter pick mode
+      const EXEC_MODES = ['strict', 'auto', 'yolo'];
+      const current = process.env.PUSH_EXEC_MODE || config.execMode || 'auto';
+      ms.mode = 'pick';
+      ms.pickCursor = Math.max(0, EXEC_MODES.indexOf(current));
     }
     tuiState.dirty.add('all');
     scheduler.flush();
