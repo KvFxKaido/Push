@@ -10,7 +10,7 @@ import process from 'node:process';
 import path from 'node:path';
 
 import { createTheme } from './tui-theme.mjs';
-import { parseKey, createKeybindMap, createComposer } from './tui-input.mjs';
+import { parseKey, createKeybindMap, createComposer, createInputHistory } from './tui-input.mjs';
 import {
   ESC, getTermSize, visibleWidth, truncate, wordWrap, padTo,
   drawBox, drawDivider, createScreenBuffer, createRenderScheduler, computeLayout,
@@ -48,6 +48,8 @@ function createTUIState() {
     modelModalState: null,   // { providerId, models[], cursor, loading, source, error }
     configModalOpen: false,
     configModalState: null,  // { mode: 'list'|'edit', cursor: 0, editTarget: '', editBuf: '', editCursor: 0 }
+    // Scrollback offset (0 = pinned to bottom, positive = scrolled up by N lines)
+    scrollOffset: 0,
     // Dirty flags for selective re-render
     dirty: new Set(['all']),
   };
@@ -60,6 +62,7 @@ function addTranscriptEntry(tuiState, role, text) {
   if (tuiState.transcript.length > MAX_TRANSCRIPT) {
     tuiState.transcript.splice(0, tuiState.transcript.length - MAX_TRANSCRIPT);
   }
+  tuiState.scrollOffset = 0; // auto-scroll to bottom on new content
   tuiState.dirty.add('transcript');
 }
 
@@ -162,14 +165,22 @@ function renderTranscript(buf, layout, theme, tuiState) {
     }
   }
 
-  // Take the last `height` lines (scroll to bottom)
-  const startIdx = Math.max(0, visibleLines.length - height);
+  // Take the last `height` lines (scroll to bottom), adjusted by scrollOffset
+  const maxScroll = Math.max(0, visibleLines.length - height);
+  const effectiveOffset = Math.min(tuiState.scrollOffset, maxScroll);
+  const startIdx = Math.max(0, maxScroll - effectiveOffset);
   const slice = visibleLines.slice(startIdx, startIdx + height);
 
   // Render
   for (let r = 0; r < height; r++) {
     const line = r < slice.length ? slice[r] : '';
     buf.writeLine(top + r, left, padTo(line, width));
+  }
+
+  // Scroll indicator when not at bottom
+  if (effectiveOffset > 0) {
+    const indicator = theme.style('fg.dim', `[+${effectiveOffset} lines]`);
+    buf.writeLine(top + height - 1, left + width - visibleWidth(indicator) - 1, indicator);
   }
 }
 
@@ -625,6 +636,7 @@ export async function runTUI(options = {}) {
   const composer = createComposer();
   const keybinds = createKeybindMap();
   const screenBuf = createScreenBuffer();
+  const inputHistory = createInputHistory();
 
   // ── Resolve provider/session ─────────────────────────────────────
 
@@ -743,7 +755,7 @@ export async function runTUI(options = {}) {
 
   // ── Enter alternate screen ───────────────────────────────────────
 
-  process.stdout.write(ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen);
+  process.stdout.write(ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen + ESC.bracketedPasteOn);
 
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
@@ -755,6 +767,19 @@ export async function runTUI(options = {}) {
 
   function render() {
     const { rows, cols } = getTermSize();
+
+    // Min terminal size guard
+    if (rows < 16 || cols < 60) {
+      screenBuf.clear();
+      screenBuf.write(ESC.clearScreen);
+      const msg = 'Terminal too small (need 60x16)';
+      const msgRow = Math.max(1, Math.floor(rows / 2));
+      const msgCol = Math.max(1, Math.floor((cols - msg.length) / 2) + 1);
+      screenBuf.writeLine(msgRow, msgCol, msg);
+      screenBuf.flush();
+      return;
+    }
+
     const layout = computeLayout(rows, cols, {
       toolPaneOpen: tuiState.toolPaneOpen,
       composerLines: composer.getLines().length,
@@ -811,7 +836,8 @@ export async function runTUI(options = {}) {
     const cursor = composer.getCursor();
     const candidateOffset = tabState ? 1 : 0;
     const cursorRow = layout.composer.top + 1 + candidateOffset + cursor.line;
-    const cursorCol = layout.innerLeft + 2 + cursor.col; // +2 for prompt prefix
+    const cursorLine = composer.getLines()[cursor.line] || '';
+    const cursorCol = layout.innerLeft + 2 + visibleWidth(cursorLine.slice(0, cursor.col)); // +2 for prompt prefix, CJK-aware
     screenBuf.write(ESC.cursorTo(cursorRow, cursorCol));
 
     // Show cursor only when idle
@@ -834,6 +860,7 @@ export async function runTUI(options = {}) {
     switch (event.type) {
       case 'assistant_token':
         tuiState.streamBuf += event.payload.text;
+        tuiState.scrollOffset = 0; // auto-scroll on new tokens
         tuiState.dirty.add('transcript');
         scheduler.schedule();
         break;
@@ -904,6 +931,7 @@ export async function runTUI(options = {}) {
         tuiState.runState = 'idle';
         tuiState.streamBuf = '';
         tuiState.dirty.add('all');
+        process.stdout.write('\x07'); // bell
         scheduler.schedule();
         break;
     }
@@ -1305,9 +1333,17 @@ export async function runTUI(options = {}) {
           'Keybinds:',
           '  Enter         Send message',
           '  Alt+Enter     New line in composer',
-          '  Ctrl+C        Cancel run / exit',
+          '  Up/Down       Input history (single-line)',
+          '  Ctrl+A/E      Start/end of line',
+          '  Ctrl+U        Kill to line start',
+          '  Ctrl+K        Kill to line end',
+          '  Ctrl+W        Kill word backward',
+          '  Ctrl+D        Delete forward / exit when empty',
+          '  Ctrl+Left/Right  Word navigation',
+          '  PageUp/Down   Scroll transcript',
+          '  Ctrl+L        Clear viewport (preserves history)',
           '  Ctrl+T        Toggle tool pane',
-          '  Ctrl+L        Clear viewport',
+          '  Ctrl+C        Cancel run / exit',
           '  Ctrl+Y        Approve',
           '  Ctrl+N        Deny',
           '  Ctrl+P        Provider switcher',
@@ -1366,6 +1402,9 @@ export async function runTUI(options = {}) {
     const text = composer.getText().trim();
     if (!text || tuiState.runState !== 'idle') return;
 
+    inputHistory.push(text);
+    inputHistory.reset();
+
     // Slash command dispatch
     if (text.startsWith('/')) {
       composer.clear();
@@ -1416,7 +1455,7 @@ export async function runTUI(options = {}) {
   }
 
   function clearViewport() {
-    tuiState.transcript = [];
+    process.stdout.write(ESC.clearScreen);
     tuiState.dirty.add('all');
     scheduler.flush();
   }
@@ -1684,9 +1723,54 @@ export async function runTUI(options = {}) {
   let exitResolve;
   const exitPromise = new Promise((resolve) => { exitResolve = resolve; });
 
+  // ── Bracketed paste state ────────────────────────────────────────
+
+  const PASTE_START = '\x1b[200~';
+  const PASTE_END   = '\x1b[201~';
+  let pasteMode = false;
+  let pasteBuf = '';
+
   // ── Input handler ────────────────────────────────────────────────
 
   function onData(data) {
+    const str = Buffer.isBuffer(data) ? data.toString('utf8') : data;
+
+    // ── Bracketed paste handling (before parseKey) ──
+    if (pasteMode) {
+      const endIdx = str.indexOf(PASTE_END);
+      if (endIdx === -1) {
+        // Still buffering paste data
+        pasteBuf += str;
+        return;
+      }
+      // End of paste
+      pasteBuf += str.slice(0, endIdx);
+      composer.insertText(pasteBuf);
+      pasteBuf = '';
+      pasteMode = false;
+      tuiState.dirty.add('composer');
+      scheduler.schedule();
+      // Process any data after the paste end marker
+      const after = str.slice(endIdx + PASTE_END.length);
+      if (after.length > 0) onData(after);
+      return;
+    }
+
+    // Check for paste start marker (may appear mid-chunk)
+    const startIdx = str.indexOf(PASTE_START);
+    if (startIdx !== -1) {
+      // Process data before paste marker
+      const before = str.slice(0, startIdx);
+      if (before.length > 0) onData(before);
+      // Enter paste mode
+      pasteMode = true;
+      pasteBuf = '';
+      // Process data after paste start marker (may contain paste end too)
+      const after = str.slice(startIdx + PASTE_START.length);
+      if (after.length > 0) onData(after);
+      return;
+    }
+
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const key = parseKey(buf);
 
@@ -1766,6 +1850,66 @@ export async function runTUI(options = {}) {
       case 'close_modal':
         closeModal();
         return;
+      case 'line_start':
+        composer.moveHome();
+        tuiState.dirty.add('composer');
+        scheduler.schedule();
+        return;
+      case 'line_end':
+        composer.moveEnd();
+        tuiState.dirty.add('composer');
+        scheduler.schedule();
+        return;
+      case 'kill_line_backward':
+        composer.killLineBackward();
+        tuiState.dirty.add('composer');
+        scheduler.schedule();
+        return;
+      case 'kill_line_forward':
+        composer.killLineForward();
+        tuiState.dirty.add('composer');
+        scheduler.schedule();
+        return;
+      case 'kill_word_backward':
+        composer.killWordBackward();
+        tuiState.dirty.add('composer');
+        scheduler.schedule();
+        return;
+      case 'delete_or_exit':
+        if (composer.isEmpty() && tuiState.runState === 'idle') {
+          exitResolve();
+        } else {
+          composer.deleteForward();
+          tuiState.dirty.add('composer');
+          scheduler.schedule();
+        }
+        return;
+      case 'word_left':
+        composer.moveWordLeft();
+        tuiState.dirty.add('composer');
+        scheduler.schedule();
+        return;
+      case 'word_right':
+        composer.moveWordRight();
+        tuiState.dirty.add('composer');
+        scheduler.schedule();
+        return;
+      case 'scroll_up': {
+        const { rows } = getTermSize();
+        const step = Math.max(1, Math.floor(rows / 3));
+        tuiState.scrollOffset += step;
+        tuiState.dirty.add('transcript');
+        scheduler.schedule();
+        return;
+      }
+      case 'scroll_down': {
+        const { rows } = getTermSize();
+        const step = Math.max(1, Math.floor(rows / 3));
+        tuiState.scrollOffset = Math.max(0, tuiState.scrollOffset - step);
+        tuiState.dirty.add('transcript');
+        scheduler.schedule();
+        return;
+      }
     }
 
     // If idle and it's a printable char, feed to composer
@@ -1802,12 +1946,32 @@ export async function runTUI(options = {}) {
       return;
     }
     if (key.name === 'up') {
+      // Input history: recall older entry when on first line with single-line content
+      if (composer.getLines().length === 1 && composer.getCursor().line === 0) {
+        const recalled = inputHistory.up(composer.getText());
+        if (recalled !== null) {
+          composer.setText(recalled);
+          tuiState.dirty.add('composer');
+          scheduler.schedule();
+          return;
+        }
+      }
       composer.moveUp();
       tuiState.dirty.add('composer');
       scheduler.schedule();
       return;
     }
     if (key.name === 'down') {
+      // Input history: recall newer entry when navigating
+      if (inputHistory.isNavigating()) {
+        const recalled = inputHistory.down(composer.getText());
+        if (recalled !== null) {
+          composer.setText(recalled);
+          tuiState.dirty.add('composer');
+          scheduler.schedule();
+          return;
+        }
+      }
       composer.moveDown();
       tuiState.dirty.add('composer');
       scheduler.schedule();
@@ -1828,6 +1992,30 @@ export async function runTUI(options = {}) {
   }
 
   process.stdin.on('data', onData);
+
+  // ── Signal handling ─────────────────────────────────────────────
+
+  function emergencyCleanup() {
+    try {
+      process.stdout.write(ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset);
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    } catch { /* best-effort */ }
+  }
+
+  function onSignal(sig) {
+    emergencyCleanup();
+    process.exit(128 + (sig === 'SIGTERM' ? 15 : sig === 'SIGHUP' ? 1 : 2));
+  }
+
+  function onUncaughtException(err) {
+    emergencyCleanup();
+    process.stderr.write(`\nPush TUI fatal: ${err?.message || err}\n`);
+    process.exit(1);
+  }
+
+  process.on('SIGTERM', onSignal);
+  process.on('SIGHUP', onSignal);
+  process.on('uncaughtException', onUncaughtException);
 
   // ── Resize handler ───────────────────────────────────────────────
 
@@ -1853,10 +2041,13 @@ export async function runTUI(options = {}) {
     scheduler.destroy();
     process.stdin.removeListener('data', onData);
     process.stdout.removeListener('resize', onResize);
+    process.removeListener('SIGTERM', onSignal);
+    process.removeListener('SIGHUP', onSignal);
+    process.removeListener('uncaughtException', onUncaughtException);
 
     if (runAbort) runAbort.abort();
 
-    process.stdout.write(ESC.cursorShow + ESC.altScreenOff + ESC.reset);
+    process.stdout.write(ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset);
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }

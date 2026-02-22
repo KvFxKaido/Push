@@ -19,6 +19,9 @@ export const ESC = {
   // Mouse tracking (not used in Phase 1 but reserved)
   mouseOn:        '\x1b[?1000h',
   mouseOff:       '\x1b[?1000l',
+  // Bracketed paste mode
+  bracketedPasteOn:  '\x1b[?2004h',
+  bracketedPasteOff: '\x1b[?2004l',
 };
 
 // ── Terminal size ───────────────────────────────────────────────────
@@ -37,38 +40,77 @@ export function stripAnsi(str) {
   return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
 }
 
-/** Get visible width of a string (excluding ANSI escapes). */
-export function visibleWidth(str) {
-  return stripAnsi(str).length;
+/**
+ * Get terminal display width of a single Unicode codepoint.
+ * Returns 2 for fullwidth/CJK, 0 for combining marks, 1 for everything else.
+ */
+export function charWidth(cp) {
+  // Combining marks (zero width)
+  if ((cp >= 0x0300 && cp <= 0x036F) ||   // Combining Diacritical Marks
+      (cp >= 0x1AB0 && cp <= 0x1AFF) ||   // Combining Diacritical Marks Extended
+      (cp >= 0x1DC0 && cp <= 0x1DFF) ||   // Combining Diacritical Marks Supplement
+      (cp >= 0x20D0 && cp <= 0x20FF) ||   // Combining Diacritical Marks for Symbols
+      (cp >= 0xFE00 && cp <= 0xFE0F) ||   // Variation Selectors
+      (cp >= 0xFE20 && cp <= 0xFE2F) ||   // Combining Half Marks
+      (cp >= 0xE0100 && cp <= 0xE01EF)) { // Variation Selectors Supplement
+    return 0;
+  }
+  // Fullwidth and wide characters (width 2)
+  if ((cp >= 0x1100 && cp <= 0x115F) ||   // Hangul Jamo
+      (cp >= 0x2E80 && cp <= 0x303E) ||   // CJK Radicals, Kangxi, CJK Symbols
+      (cp >= 0x3041 && cp <= 0x33BF) ||   // Hiragana, Katakana, Bopomofo, CJK Compat
+      (cp >= 0x3400 && cp <= 0x4DBF) ||   // CJK Unified Ext A
+      (cp >= 0x4E00 && cp <= 0xA4CF) ||   // CJK Unified, Yi Syllables/Radicals
+      (cp >= 0xA960 && cp <= 0xA97C) ||   // Hangul Jamo Extended-A
+      (cp >= 0xAC00 && cp <= 0xD7AF) ||   // Hangul Syllables
+      (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK Compatibility Ideographs
+      (cp >= 0xFE30 && cp <= 0xFE6F) ||   // CJK Compatibility Forms + Small Forms
+      (cp >= 0xFF01 && cp <= 0xFF60) ||   // Fullwidth ASCII variants
+      (cp >= 0xFFE0 && cp <= 0xFFE6) ||   // Fullwidth signs
+      (cp >= 0x1F300 && cp <= 0x1F9FF) || // Misc Symbols & Pictographs, Emoticons, etc.
+      (cp >= 0x20000 && cp <= 0x2FA1F)) { // CJK Ext B-F, CJK Compat Ideographs Supp
+    return 2;
+  }
+  return 1;
 }
 
-/** Truncate a string to maxWidth visible characters, adding ellipsis if needed. */
+/** Get visible width of a string (excluding ANSI escapes, CJK-aware). */
+export function visibleWidth(str) {
+  const stripped = stripAnsi(str);
+  let w = 0;
+  for (const ch of stripped) {
+    w += charWidth(ch.codePointAt(0));
+  }
+  return w;
+}
+
+/** Truncate a string to maxWidth visible columns, adding ellipsis if needed. */
 export function truncate(str, maxWidth, ellipsis = '…') {
   if (maxWidth <= 0) return '';
-  const stripped = stripAnsi(str);
-  if (stripped.length <= maxWidth) return str;
+  if (visibleWidth(str) <= maxWidth) return str;
 
-  // Walk through original string, tracking visible chars
+  // Walk through original string, tracking visible columns (CJK-aware)
   let visible = 0;
   let result = '';
-  const ellLen = ellipsis.length;
-  const target = maxWidth - ellLen;
+  const ellW = visibleWidth(ellipsis);
+  const target = maxWidth - ellW;
   let inEsc = false;
 
-  for (let i = 0; i < str.length; i++) {
-    if (str[i] === '\x1b') {
+  for (const ch of str) {
+    if (ch === '\x1b') {
       inEsc = true;
-      result += str[i];
+      result += ch;
       continue;
     }
     if (inEsc) {
-      result += str[i];
-      if (/[a-zA-Z]/.test(str[i])) inEsc = false;
+      result += ch;
+      if (/[a-zA-Z]/.test(ch)) inEsc = false;
       continue;
     }
-    if (visible >= target) break;
-    result += str[i];
-    visible++;
+    const w = charWidth(ch.codePointAt(0));
+    if (visible + w > target) break;
+    result += ch;
+    visible += w;
   }
 
   return result + '\x1b[0m' + ellipsis;
@@ -100,11 +142,21 @@ export function wordWrap(text, maxWidth) {
       if (currentWidth === 0) {
         // First word on line — accept it even if too long
         if (wWidth > maxWidth) {
-          // Hard break long word
+          // Hard break long word (CJK-aware)
           const stripped = stripAnsi(word);
-          for (let i = 0; i < stripped.length; i += maxWidth) {
-            result.push(stripped.slice(i, i + maxWidth));
+          let chunk = '';
+          let chunkW = 0;
+          for (const ch of stripped) {
+            const cw = charWidth(ch.codePointAt(0));
+            if (chunkW + cw > maxWidth && chunk) {
+              result.push(chunk);
+              chunk = '';
+              chunkW = 0;
+            }
+            chunk += ch;
+            chunkW += cw;
           }
+          if (chunk) result.push(chunk);
           current = '';
           currentWidth = 0;
         } else {
@@ -118,9 +170,19 @@ export function wordWrap(text, maxWidth) {
         result.push(current);
         if (wWidth > maxWidth) {
           const stripped = stripAnsi(word);
-          for (let i = 0; i < stripped.length; i += maxWidth) {
-            result.push(stripped.slice(i, i + maxWidth));
+          let chunk = '';
+          let chunkW = 0;
+          for (const ch of stripped) {
+            const cw = charWidth(ch.codePointAt(0));
+            if (chunkW + cw > maxWidth && chunk) {
+              result.push(chunk);
+              chunk = '';
+              chunkW = 0;
+            }
+            chunk += ch;
+            chunkW += cw;
           }
+          if (chunk) result.push(chunk);
           current = '';
           currentWidth = 0;
         } else {

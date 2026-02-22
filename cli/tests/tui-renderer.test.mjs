@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   stripAnsi, visibleWidth, truncate, wordWrap, padTo,
   drawBox, drawDivider, computeLayout,
-  createScreenBuffer, createRenderScheduler,
+  createScreenBuffer, createRenderScheduler, charWidth,
 } from '../tui-renderer.mjs';
 import { createTheme, GLYPHS_UNICODE, GLYPHS_ASCII } from '../tui-theme.mjs';
 
@@ -257,5 +257,58 @@ describe('createRenderScheduler', () => {
     scheduler.flush();
     assert.ok(called);
     scheduler.destroy();
+  });
+});
+
+// ─── charWidth ─────────────────────────────────────────────────
+
+describe('charWidth', () => {
+  it('returns 1 for ASCII characters', () => {
+    assert.equal(charWidth('A'.codePointAt(0)), 1);
+    assert.equal(charWidth('z'.codePointAt(0)), 1);
+    assert.equal(charWidth(' '.codePointAt(0)), 1);
+  });
+
+  it('returns 2 for CJK ideographs', () => {
+    assert.equal(charWidth('中'.codePointAt(0)), 2); // U+4E2D
+    assert.equal(charWidth('漢'.codePointAt(0)), 2); // U+6F22
+  });
+
+  it('returns 2 for Hiragana/Katakana', () => {
+    assert.equal(charWidth('あ'.codePointAt(0)), 2); // U+3042
+    assert.equal(charWidth('カ'.codePointAt(0)), 2); // U+30AB
+  });
+
+  it('returns 2 for Hangul syllables', () => {
+    assert.equal(charWidth('한'.codePointAt(0)), 2); // U+D55C
+  });
+
+  it('returns 2 for fullwidth ASCII variants', () => {
+    assert.equal(charWidth('Ａ'.codePointAt(0)), 2); // U+FF21
+  });
+
+  it('returns 0 for combining marks', () => {
+    assert.equal(charWidth(0x0301), 0); // Combining acute accent
+    assert.equal(charWidth(0x0300), 0); // Combining grave accent
+  });
+
+  it('returns 2 for emoji', () => {
+    assert.equal(charWidth('🎉'.codePointAt(0)), 2); // U+1F389
+  });
+});
+
+// ─── visibleWidth with CJK ─────────────────────────────────────
+
+describe('visibleWidth (CJK)', () => {
+  it('counts CJK characters as width 2', () => {
+    assert.equal(visibleWidth('中文'), 4);
+  });
+
+  it('counts mixed ASCII + CJK', () => {
+    assert.equal(visibleWidth('hi中文'), 6); // 2 + 4
+  });
+
+  it('ignores ANSI codes around CJK', () => {
+    assert.equal(visibleWidth('\x1b[31m中\x1b[0m'), 2);
   });
 });

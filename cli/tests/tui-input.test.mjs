@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseKey, createKeybindMap, createComposer } from '../tui-input.mjs';
+import { parseKey, createKeybindMap, createComposer, createInputHistory } from '../tui-input.mjs';
 
 // ─── parseKey ───────────────────────────────────────────────────
 
@@ -406,5 +406,224 @@ describe('createComposer', () => {
     c.setText('');
     assert.equal(c.getText(), '');
     assert.deepEqual(c.getCursor(), { line: 0, col: 0 });
+  });
+
+  // ─── Word navigation ──────────────────────────────────────────
+
+  it('moveWordRight skips to next word boundary', () => {
+    const c = createComposer();
+    c.setText('hello world foo');
+    c.moveHome();
+    c.moveWordRight();
+    assert.equal(c.getCursor().col, 6); // after "hello "
+  });
+
+  it('moveWordLeft skips to previous word boundary', () => {
+    const c = createComposer();
+    c.setText('hello world');
+    // cursor at end (col 11)
+    c.moveWordLeft();
+    assert.equal(c.getCursor().col, 6); // before "world"
+  });
+
+  it('moveWordLeft from middle of word goes to word start', () => {
+    const c = createComposer();
+    c.setText('hello world');
+    c.moveHome();
+    c.moveWordRight(); // at col 6
+    c.moveLeft();      // col 5 (the space)
+    c.moveWordLeft();
+    assert.equal(c.getCursor().col, 0);
+  });
+
+  it('moveWordRight wraps to next line at end', () => {
+    const c = createComposer();
+    c.setText('abc\ndef');
+    c.moveHome(); // line 0, col 0
+    c.moveEnd();  // line 0, col 3 (we're on line 1 after setText, so reset)
+    // Need to set up properly
+    const c2 = createComposer();
+    c2.insertChar('abc');
+    c2.insertNewline();
+    c2.insertChar('def');
+    // cursor at line 1, col 3
+    c2.moveUp(); c2.moveEnd(); // line 0, col 3
+    c2.moveWordRight(); // should wrap to line 1, col 0
+    assert.equal(c2.getCursor().line, 1);
+    assert.equal(c2.getCursor().col, 0);
+  });
+
+  it('moveWordLeft wraps to previous line at start', () => {
+    const c = createComposer();
+    c.insertChar('abc');
+    c.insertNewline();
+    c.insertChar('def');
+    c.moveHome(); // line 1, col 0
+    c.moveWordLeft(); // should wrap to line 0, end
+    assert.equal(c.getCursor().line, 0);
+    assert.equal(c.getCursor().col, 3);
+  });
+
+  it('moveWordRight handles punctuation', () => {
+    const c = createComposer();
+    c.setText('foo.bar baz');
+    c.moveHome();
+    c.moveWordRight();
+    assert.equal(c.getCursor().col, 4); // skips "foo" (word) then "." (non-word), lands at "bar"
+  });
+
+  // ─── Kill operations ──────────────────────────────────────────
+
+  it('killLineBackward deletes to line start', () => {
+    const c = createComposer();
+    c.setText('hello world');
+    // cursor at col 5
+    c.moveHome();
+    for (let i = 0; i < 5; i++) c.moveRight();
+    const killed = c.killLineBackward();
+    assert.equal(killed, 'hello');
+    assert.equal(c.getText(), ' world');
+    assert.equal(c.getCursor().col, 0);
+  });
+
+  it('killLineForward deletes to line end', () => {
+    const c = createComposer();
+    c.setText('hello world');
+    c.moveHome();
+    for (let i = 0; i < 5; i++) c.moveRight();
+    const killed = c.killLineForward();
+    assert.equal(killed, ' world');
+    assert.equal(c.getText(), 'hello');
+    assert.equal(c.getCursor().col, 5);
+  });
+
+  it('killWordBackward deletes to previous word', () => {
+    const c = createComposer();
+    c.setText('hello world');
+    const killed = c.killWordBackward();
+    assert.equal(killed, 'world');
+    assert.equal(c.getText(), 'hello ');
+  });
+
+  it('killWordBackward from middle of word', () => {
+    const c = createComposer();
+    c.setText('hello world');
+    c.moveLeft(); c.moveLeft(); // col 9, in "world"
+    const killed = c.killWordBackward();
+    assert.equal(killed, 'wor');
+    assert.equal(c.getText(), 'hello ld');
+  });
+
+  it('killLineBackward returns empty when at start', () => {
+    const c = createComposer();
+    c.setText('hello');
+    c.moveHome();
+    const killed = c.killLineBackward();
+    assert.equal(killed, '');
+    assert.equal(c.getText(), 'hello');
+  });
+
+  it('killLineForward returns empty when at end', () => {
+    const c = createComposer();
+    c.setText('hello');
+    const killed = c.killLineForward();
+    assert.equal(killed, '');
+    assert.equal(c.getText(), 'hello');
+  });
+
+  it('killWordBackward at start does nothing', () => {
+    const c = createComposer();
+    c.setText('hello');
+    c.moveHome();
+    const killed = c.killWordBackward();
+    assert.equal(killed, '');
+    assert.equal(c.getText(), 'hello');
+  });
+
+  // ─── insertText ────────────────────────────────────────────────
+
+  it('insertText handles single-line paste', () => {
+    const c = createComposer();
+    c.insertText('hello world');
+    assert.equal(c.getText(), 'hello world');
+    assert.deepEqual(c.getCursor(), { line: 0, col: 11 });
+  });
+
+  it('insertText handles multi-line paste', () => {
+    const c = createComposer();
+    c.insertText('line1\nline2\nline3');
+    assert.deepEqual(c.getLines(), ['line1', 'line2', 'line3']);
+    assert.equal(c.getCursor().line, 2);
+    assert.equal(c.getCursor().col, 5);
+  });
+});
+
+// ─── createInputHistory ────────────────────────────────────────
+
+describe('createInputHistory', () => {
+  it('starts not navigating', () => {
+    const h = createInputHistory();
+    assert.equal(h.isNavigating(), false);
+  });
+
+  it('up returns null when empty', () => {
+    const h = createInputHistory();
+    assert.equal(h.up(''), null);
+  });
+
+  it('down returns null when not navigating', () => {
+    const h = createInputHistory();
+    assert.equal(h.down(''), null);
+  });
+
+  it('push + up recalls last entry', () => {
+    const h = createInputHistory();
+    h.push('hello');
+    h.push('world');
+    const recalled = h.up('current');
+    assert.equal(recalled, 'world');
+    assert.equal(h.isNavigating(), true);
+  });
+
+  it('up twice goes to older entry', () => {
+    const h = createInputHistory();
+    h.push('first');
+    h.push('second');
+    h.up('current');
+    const recalled = h.up('');
+    assert.equal(recalled, 'first');
+  });
+
+  it('up at oldest returns null', () => {
+    const h = createInputHistory();
+    h.push('only');
+    h.up('current');
+    assert.equal(h.up(''), null);
+  });
+
+  it('down past newest restores stashed text', () => {
+    const h = createInputHistory();
+    h.push('old');
+    h.up('my typing');
+    const restored = h.down('');
+    assert.equal(restored, 'my typing');
+    assert.equal(h.isNavigating(), false);
+  });
+
+  it('deduplicates consecutive entries', () => {
+    const h = createInputHistory();
+    h.push('same');
+    h.push('same');
+    h.up('');
+    assert.equal(h.up(''), null); // only one entry
+  });
+
+  it('reset clears navigation state', () => {
+    const h = createInputHistory();
+    h.push('test');
+    h.up('');
+    assert.equal(h.isNavigating(), true);
+    h.reset();
+    assert.equal(h.isNavigating(), false);
   });
 });

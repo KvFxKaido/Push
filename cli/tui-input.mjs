@@ -186,7 +186,83 @@ export function createKeybindMap() {
   bind('C-p',          'provider_switcher');
   bind('escape',       'close_modal');
 
+  // Composer editing (Emacs-style)
+  bind('C-a',          'line_start');
+  bind('C-e',          'line_end');
+  bind('C-u',          'kill_line_backward');
+  bind('C-k',          'kill_line_forward');
+  bind('C-w',          'kill_word_backward');
+  bind('C-d',          'delete_or_exit');
+
+  // Word navigation
+  bind('C-left',       'word_left');
+  bind('C-right',      'word_right');
+
+  // Scrollback
+  bind('pageup',       'scroll_up');
+  bind('pagedown',     'scroll_down');
+
   return { bind, lookup, serializeKey };
+}
+
+// ── Input history ───────────────────────────────────────────────────
+
+/**
+ * Create an input history ring.
+ * Remembers past inputs and supports up/down recall with stashed current text.
+ */
+export function createInputHistory(maxSize = 100) {
+  const entries = [];
+  let index = -1;       // -1 = not navigating
+  let stashedText = ''; // current text saved on first Up
+
+  /** Add an entry (dedup consecutive, cap at maxSize). */
+  function push(text) {
+    if (!text) return;
+    if (entries.length > 0 && entries[entries.length - 1] === text) return;
+    entries.push(text);
+    if (entries.length > maxSize) entries.shift();
+  }
+
+  /** Navigate up (older). Returns recalled text or null. */
+  function up(currentText) {
+    if (entries.length === 0) return null;
+    if (index === -1) {
+      // First up: stash current text, start at newest
+      stashedText = currentText;
+      index = entries.length - 1;
+    } else if (index > 0) {
+      index--;
+    } else {
+      return null; // already at oldest
+    }
+    return entries[index];
+  }
+
+  /** Navigate down (newer). Returns recalled text, stashed text, or null. */
+  function down(currentText) {
+    if (index === -1) return null;
+    if (index < entries.length - 1) {
+      index++;
+      return entries[index];
+    }
+    // Past newest → restore stashed
+    index = -1;
+    return stashedText;
+  }
+
+  /** Reset navigation state (call after sending). */
+  function reset() {
+    index = -1;
+    stashedText = '';
+  }
+
+  /** Are we currently navigating history? */
+  function isNavigating() {
+    return index !== -1;
+  }
+
+  return { push, up, down, reset, isNavigating };
 }
 
 // ── Composer (multi-line text editor) ───────────────────────────────
@@ -299,6 +375,88 @@ export function createComposer() {
     cursor.col = lines[cursor.line].length;
   }
 
+  /** Helper: is a character a "word" character (letter, digit, underscore). */
+  function isWordChar(ch) {
+    return /[\w]/.test(ch);
+  }
+
+  /** Move cursor left by one word (skip non-word, then word chars). */
+  function moveWordLeft() {
+    // At start of line? Wrap to end of previous line
+    if (cursor.col === 0 && cursor.line > 0) {
+      cursor.line -= 1;
+      cursor.col = lines[cursor.line].length;
+      return;
+    }
+    const line = lines[cursor.line];
+    let col = cursor.col;
+    // Skip non-word characters (whitespace/punctuation) going left
+    while (col > 0 && !isWordChar(line[col - 1])) col--;
+    // Skip word characters going left
+    while (col > 0 && isWordChar(line[col - 1])) col--;
+    cursor.col = col;
+  }
+
+  /** Move cursor right by one word (skip word, then non-word chars). */
+  function moveWordRight() {
+    const line = lines[cursor.line];
+    // At end of line? Wrap to start of next line
+    if (cursor.col >= line.length && cursor.line < lines.length - 1) {
+      cursor.line += 1;
+      cursor.col = 0;
+      return;
+    }
+    let col = cursor.col;
+    // Skip word characters going right
+    while (col < line.length && isWordChar(line[col])) col++;
+    // Skip non-word characters going right
+    while (col < line.length && !isWordChar(line[col])) col++;
+    cursor.col = col;
+  }
+
+  /** Delete from cursor to start of current line. Returns killed text. */
+  function killLineBackward() {
+    const line = lines[cursor.line];
+    const killed = line.slice(0, cursor.col);
+    lines[cursor.line] = line.slice(cursor.col);
+    cursor.col = 0;
+    return killed;
+  }
+
+  /** Delete from cursor to end of current line. Returns killed text. */
+  function killLineForward() {
+    const line = lines[cursor.line];
+    const killed = line.slice(cursor.col);
+    lines[cursor.line] = line.slice(0, cursor.col);
+    return killed;
+  }
+
+  /** Delete from cursor to previous word boundary. Returns killed text. */
+  function killWordBackward() {
+    const line = lines[cursor.line];
+    const startCol = cursor.col;
+    let col = cursor.col;
+    // Skip non-word characters going left
+    while (col > 0 && !isWordChar(line[col - 1])) col--;
+    // Skip word characters going left
+    while (col > 0 && isWordChar(line[col - 1])) col--;
+    const killed = line.slice(col, startCol);
+    lines[cursor.line] = line.slice(0, col) + line.slice(startCol);
+    cursor.col = col;
+    return killed;
+  }
+
+  /** Insert a text blob (possibly multi-line). Used for paste. */
+  function insertText(text) {
+    for (const ch of text) {
+      if (ch === '\n' || ch === '\r') {
+        insertNewline();
+      } else {
+        insertChar(ch);
+      }
+    }
+  }
+
   function setText(text) {
     lines = text.split('\n');
     cursor.line = lines.length - 1;
@@ -324,6 +482,12 @@ export function createComposer() {
     moveDown,
     moveHome,
     moveEnd,
+    moveWordLeft,
+    moveWordRight,
+    killLineBackward,
+    killLineForward,
+    killWordBackward,
+    insertText,
     setText,
     isEmpty,
   };
