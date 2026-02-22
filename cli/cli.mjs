@@ -7,6 +7,7 @@ import process from 'node:process';
 import { execFile } from 'node:child_process';
 
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
+import { matchingRiskPatternIndex } from './tools.mjs';
 import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
 import { buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
@@ -217,7 +218,7 @@ function makeCLIEventHandler() {
   };
 }
 
-async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks, { allowExec = false } = {}) {
+async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks, { allowExec = false, safeExecPatterns = [] } = {}) {
   await appendUserMessageWithFileReferences(state, task, state.cwd);
   await appendSessionEvent(state, 'user_message', { chars: task.length, preview: task.slice(0, 280) });
 
@@ -231,6 +232,7 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
       signal: ac.signal,
       emit: null,
       allowExec,
+      safeExecPatterns,
     });
     await saveSessionState(state);
 
@@ -311,10 +313,29 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
 }
 
 function makeInteractiveApprovalFn(rl) {
+  const trustedPatterns = new Set();
+
   return async (tool, detail) => {
+    // Session trust: auto-approve if this risk pattern was previously trusted
+    const patIdx = matchingRiskPatternIndex(detail);
+    if (patIdx >= 0 && trustedPatterns.has(patIdx)) {
+      process.stdout.write(`\n${fmt.dim('[auto-approved]')} ${tool}: ${detail}\n`);
+      return true;
+    }
+
     process.stdout.write(`\n${fmt.yellow('[!]')} ${fmt.warn('High-risk operation detected:')}\n    ${tool}: ${detail}\n`);
-    const answer = await rl.question('    Allow? (y/N) ');
-    return answer.trim().toLowerCase() === 'y';
+    const answer = await rl.question('    Allow? (y/N/a=always) ');
+    const choice = answer.trim().toLowerCase();
+
+    if (choice === 'a') {
+      if (patIdx >= 0) {
+        trustedPatterns.add(patIdx);
+        process.stdout.write(`    ${fmt.dim('[trusted for session]')}\n`);
+      }
+      return true;
+    }
+
+    return choice === 'y';
   };
 }
 
@@ -422,6 +443,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
   // Mutable context — allows mid-session provider/model switching
   const ctx = { providerConfig, apiKey };
   const config = await loadConfig();
+  const safeExecPatterns = Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [];
   const skills = await loadSkills(state.cwd);
 
   async function reloadSkillsMap() {
@@ -645,6 +667,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
               approvalFn,
               signal: ac.signal,
               emit: onEvent,
+              safeExecPatterns,
             });
             await saveSessionState(state);
           } catch (err) {
@@ -682,6 +705,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds) {
           approvalFn,
           signal: ac.signal,
           emit: onEvent,
+          safeExecPatterns,
         });
         await saveSessionState(state);
         if (result.outcome === 'aborted') {
@@ -798,6 +822,7 @@ function sanitizeConfig(config) {
     localSandbox: config.localSandbox ?? null,
     tavilyApiKey: config.tavilyApiKey ? maskSecret(config.tavilyApiKey) : null,
     webSearchBackend: config.webSearchBackend || null,
+    safeExecPatterns: Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [],
     ollama: config.ollama ? redactProvider(config.ollama) : {},
     mistral: config.mistral ? redactProvider(config.mistral) : {},
     openrouter: config.openrouter ? redactProvider(config.openrouter) : {},
@@ -1460,7 +1485,8 @@ export async function main() {
     // don't mask argument or environment errors.
     const apiKey = resolveApiKey(providerConfig);
     const allowExec = values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
-    return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks, { allowExec });
+    const headlessSafePatterns = Array.isArray(persistedConfig.safeExecPatterns) ? persistedConfig.safeExecPatterns : [];
+    return runHeadless(state, providerConfig, apiKey, task, maxRounds, values.json, acceptanceChecks, { allowExec, safeExecPatterns: headlessSafePatterns });
   }
 
   // Default UX: bare "push" opens TUI when enabled.

@@ -47,6 +47,69 @@ export function isHighRiskCommand(command) {
   return HIGH_RISK_PATTERNS.some((pattern) => pattern.test(command));
 }
 
+/**
+ * Returns the index of the first matching HIGH_RISK_PATTERNS entry, or -1.
+ * Used by session-trust to track which risk *category* was approved.
+ */
+export function matchingRiskPatternIndex(command) {
+  for (let i = 0; i < HIGH_RISK_PATTERNS.length; i++) {
+    if (HIGH_RISK_PATTERNS[i].test(command)) return i;
+  }
+  return -1;
+}
+
+// ── Safe-command allowlist ────────────────────────────────────────
+// Conservative built-in patterns for common dev operations.
+// Anchored to $ to prevent bypass via chained commands.
+const BUILTIN_SAFE_PATTERNS = [
+  // rm -rf of known build/cache dirs (must be the last argument)
+  /\brm\s+(-[a-zA-Z]*\s+)*-*(rf|fr)\s+(node_modules|dist|build|\.next|coverage|__pycache__|\.cache|tmp)\s*$/,
+  // chmod with common safe permission modes
+  /\bchmod\s+(644|755|600|700|775)\s+\S+\s*$/,
+  // git checkout restoring a specific file (not bare "git checkout .")
+  /\bgit\s+checkout\s+\.\s+--\s+\S+/,
+  /\bgit\s+checkout\s+--\s+\S+/,
+];
+
+/**
+ * Parse a user-configured safe pattern string into a test function.
+ * - Strings wrapped in /slashes/ are treated as regex.
+ * - Other strings are treated as prefix matches.
+ * Returns null if the pattern is invalid.
+ */
+function parseUserSafePattern(pattern) {
+  if (typeof pattern !== 'string' || !pattern.trim()) return null;
+  const trimmed = pattern.trim();
+
+  // Regex form: /pattern/
+  if (trimmed.startsWith('/') && trimmed.endsWith('/') && trimmed.length > 2) {
+    try {
+      const re = new RegExp(trimmed.slice(1, -1));
+      return (cmd) => re.test(cmd);
+    } catch {
+      return null; // invalid regex — silently skip
+    }
+  }
+
+  // Prefix match
+  return (cmd) => cmd.startsWith(trimmed);
+}
+
+/**
+ * Check if a command matches the safe-command allowlist.
+ * Checks built-in patterns first, then user-configured patterns.
+ */
+export function isSafeCommand(command, userPatterns = []) {
+  if (BUILTIN_SAFE_PATTERNS.some((p) => p.test(command))) return true;
+
+  for (const raw of userPatterns) {
+    const matcher = parseUserSafePattern(raw);
+    if (matcher && matcher(command)) return true;
+  }
+
+  return false;
+}
+
 export function isReadOnlyToolCall(call) {
   return Boolean(call && READ_ONLY_TOOLS.has(call.tool));
 }
@@ -774,30 +837,33 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           };
         }
 
-        if (isHighRiskCommand(command)) {
-          const { approvalFn } = options;
-          if (!approvalFn) {
-            return {
-              ok: false,
-              text: `Blocked: "${command}" is a high-risk command. Not allowed in headless mode without approval.`,
-              structuredError: {
-                code: 'APPROVAL_REQUIRED',
-                message: 'High-risk command blocked in non-interactive mode',
-                retryable: false,
-              },
-            };
-          }
-          const approved = await approvalFn('exec', command);
-          if (!approved) {
-            return {
-              ok: false,
-              text: `Denied by user: "${command}" was not approved for execution.`,
-              structuredError: {
-                code: 'APPROVAL_DENIED',
-                message: 'User denied high-risk command',
-                retryable: false,
-              },
-            };
+        // Safe-command allowlist: skip high-risk gate for known-safe patterns
+        if (!isSafeCommand(command, options.safeExecPatterns)) {
+          if (isHighRiskCommand(command)) {
+            const { approvalFn } = options;
+            if (!approvalFn) {
+              return {
+                ok: false,
+                text: `Blocked: "${command}" is a high-risk command. Not allowed in headless mode without approval.`,
+                structuredError: {
+                  code: 'APPROVAL_REQUIRED',
+                  message: 'High-risk command blocked in non-interactive mode',
+                  retryable: false,
+                },
+              };
+            }
+            const approved = await approvalFn('exec', command);
+            if (!approved) {
+              return {
+                ok: false,
+                text: `Denied by user: "${command}" was not approved for execution.`,
+                structuredError: {
+                  code: 'APPROVAL_DENIED',
+                  message: 'User denied high-risk command',
+                  retryable: false,
+                },
+              };
+            }
           }
         }
 

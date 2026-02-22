@@ -22,6 +22,7 @@ import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, 
 import { buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.mjs';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
+import { matchingRiskPatternIndex } from './tools.mjs';
 import { createTabCompleter } from './tui-completer.mjs';
 import { appendUserMessageWithFileReferences } from './file-references.mjs';
 import { compactContext } from './context-manager.mjs';
@@ -308,8 +309,9 @@ function renderFooter(buf, layout, theme, tuiState, keybindHints) {
   let leftHints;
   if (tuiState.runState === 'awaiting_approval') {
     leftHints = [
-      theme.style('accent.link', 'Ctrl+Y') + theme.style('fg.dim', ' approve'),
-      theme.style('accent.link', 'Ctrl+N') + theme.style('fg.dim', ' deny'),
+      theme.style('accent.link', 'Ctrl+Y / y') + theme.style('fg.dim', ' approve'),
+      theme.style('accent.link', 'a') + theme.style('fg.dim', ' always'),
+      theme.style('accent.link', 'Ctrl+N / n') + theme.style('fg.dim', ' deny'),
       theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' dismiss'),
     ].join('  ');
   } else {
@@ -358,8 +360,9 @@ function renderApprovalModal(buf, theme, rows, cols, approval) {
 
   lines.push('');
   lines.push(
-    `  ${theme.style('accent.link', 'Ctrl+Y')} approve  ` +
-    `${theme.style('accent.link', 'Ctrl+N')} deny  ` +
+    `  ${theme.style('accent.link', 'Ctrl+Y / y')} approve  ` +
+    `${theme.style('accent.link', 'a')} always  ` +
+    `${theme.style('accent.link', 'Ctrl+N / n')} deny  ` +
     `${theme.style('accent.link', 'Esc')} close`
   );
 
@@ -808,6 +811,7 @@ export async function runTUI(options = {}) {
 
   const config = await loadConfig();
   applyConfigToEnv(config);
+  const safeExecPatterns = Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [];
 
   const maxRounds = options.maxRounds || DEFAULT_MAX_ROUNDS;
 
@@ -1136,12 +1140,22 @@ export async function runTUI(options = {}) {
   // ── Approval handling ────────────────────────────────────────────
 
   let approvalResolve = null;
+  const trustedPatterns = new Set();
 
   function makeApprovalFn() {
     return (tool, detail) => {
+      const patternIndex = matchingRiskPatternIndex(detail);
+
+      // Session trust: auto-approve if this risk pattern was previously trusted
+      if (patternIndex >= 0 && trustedPatterns.has(patternIndex)) {
+        addTranscriptEntry(tuiState, 'status', `[auto-approved] ${tool}: ${detail}`);
+        scheduler.schedule();
+        return Promise.resolve(true);
+      }
+
       return new Promise((resolve) => {
         tuiState.runState = 'awaiting_approval';
-        tuiState.approval = { kind: tool, summary: detail };
+        tuiState.approval = { kind: tool, summary: detail, patternIndex };
         approvalResolve = resolve;
         tuiState.dirty.add('all');
         scheduler.flush();
@@ -1220,6 +1234,7 @@ export async function runTUI(options = {}) {
         approvalFn: makeApprovalFn(),
         signal: runAbort.signal,
         emit: handleEngineEvent,
+        safeExecPatterns,
       });
       await saveSessionState(state);
     } catch (err) {
@@ -2201,6 +2216,22 @@ export async function runTUI(options = {}) {
     }
   }
 
+  function alwaysApproveAction() {
+    if (approvalResolve) {
+      const patIdx = tuiState.approval?.patternIndex;
+      if (typeof patIdx === 'number' && patIdx >= 0) {
+        trustedPatterns.add(patIdx);
+        addTranscriptEntry(tuiState, 'status', '[trusted for session]');
+      }
+      approvalResolve(true);
+      approvalResolve = null;
+      tuiState.approval = null;
+      tuiState.runState = 'running';
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+    }
+  }
+
   function denyAction() {
     if (approvalResolve) {
       approvalResolve(false);
@@ -2209,6 +2240,35 @@ export async function runTUI(options = {}) {
       tuiState.runState = 'running';
       tuiState.dirty.add('all');
       scheduler.schedule();
+    }
+  }
+
+  /** Dedicated input handler for the approval modal — bare keys, no keybind map. */
+  function handleApprovalModalInput(key) {
+    if (key.name === 'y' && !key.ctrl && !key.meta) {
+      approveAction();
+      return;
+    }
+    if (key.name === 'a' && !key.ctrl && !key.meta) {
+      alwaysApproveAction();
+      return;
+    }
+    if (key.name === 'n' && !key.ctrl && !key.meta) {
+      denyAction();
+      return;
+    }
+    if (key.name === 'escape') {
+      denyAction();
+      return;
+    }
+    // Ctrl+Y and Ctrl+N still work (from keybind map fallthrough)
+    if (key.ctrl && key.name === 'y') {
+      approveAction();
+      return;
+    }
+    if (key.ctrl && key.name === 'n') {
+      denyAction();
+      return;
     }
   }
 
@@ -2640,6 +2700,12 @@ export async function runTUI(options = {}) {
     // Normal key input
     const keyBuf = Buffer.from(str);
     const key = parseKey(keyBuf);
+
+    // Approval modal: dedicated handler with bare y/a/n keys
+    if (tuiState.runState === 'awaiting_approval' && tuiState.approval) {
+      handleApprovalModalInput(key);
+      return;
+    }
 
     // Config modal: swallow all keys
     if (tuiState.configModalOpen) {

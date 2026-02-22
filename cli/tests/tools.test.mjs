@@ -9,6 +9,8 @@ import {
   ensureInsideWorkspace,
   executeToolCall,
   isHighRiskCommand,
+  matchingRiskPatternIndex,
+  isSafeCommand,
   truncateText,
 } from '../tools.mjs';
 
@@ -408,6 +410,159 @@ describe('exec headless hardening', () => {
       );
       assert.equal(result.ok, true);
       assert.ok(result.text.includes('safe'));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── matchingRiskPatternIndex ───────────────────────────────────
+
+describe('matchingRiskPatternIndex', () => {
+  it('returns >= 0 for known high-risk commands', () => {
+    assert.ok(matchingRiskPatternIndex('rm -rf /tmp/stuff') >= 0);
+    assert.ok(matchingRiskPatternIndex('sudo apt install foo') >= 0);
+    assert.ok(matchingRiskPatternIndex('git push --force') >= 0);
+  });
+
+  it('returns same index for commands matching the same pattern', () => {
+    const idx1 = matchingRiskPatternIndex('rm -rf /tmp/a');
+    const idx2 = matchingRiskPatternIndex('rm -rf /var/b');
+    assert.equal(idx1, idx2);
+  });
+
+  it('returns -1 for safe commands', () => {
+    assert.equal(matchingRiskPatternIndex('ls -la'), -1);
+    assert.equal(matchingRiskPatternIndex('npm install'), -1);
+    assert.equal(matchingRiskPatternIndex('git status'), -1);
+  });
+
+  it('returns different indices for different risk categories', () => {
+    const rmIdx = matchingRiskPatternIndex('rm -rf /tmp');
+    const sudoIdx = matchingRiskPatternIndex('sudo rm file');
+    assert.notEqual(rmIdx, sudoIdx);
+  });
+});
+
+// ─── isSafeCommand ──────────────────────────────────────────────
+
+describe('isSafeCommand', () => {
+  it('matches built-in: rm -rf node_modules', () => {
+    assert.equal(isSafeCommand('rm -rf node_modules'), true);
+  });
+
+  it('matches built-in: rm -rf dist', () => {
+    assert.equal(isSafeCommand('rm -rf dist'), true);
+  });
+
+  it('matches built-in: rm -rf build', () => {
+    assert.equal(isSafeCommand('rm -rf build'), true);
+  });
+
+  it('matches built-in: rm -rf .next', () => {
+    assert.equal(isSafeCommand('rm -rf .next'), true);
+  });
+
+  it('matches built-in: rm -rf coverage', () => {
+    assert.equal(isSafeCommand('rm -rf coverage'), true);
+  });
+
+  it('matches built-in: chmod 644 file', () => {
+    assert.equal(isSafeCommand('chmod 644 myfile.txt'), true);
+  });
+
+  it('matches built-in: chmod 755 script', () => {
+    assert.equal(isSafeCommand('chmod 755 script.sh'), true);
+  });
+
+  it('rejects unsafe: rm -rf /', () => {
+    assert.equal(isSafeCommand('rm -rf /'), false);
+  });
+
+  it('rejects chained command escaping anchored pattern', () => {
+    assert.equal(isSafeCommand('rm -rf node_modules && rm -rf /'), false);
+  });
+
+  it('rejects rm -rf of unknown directory', () => {
+    assert.equal(isSafeCommand('rm -rf /var/important'), false);
+  });
+
+  it('returns false for non-high-risk commands (passthrough)', () => {
+    assert.equal(isSafeCommand('ls -la'), false);
+    assert.equal(isSafeCommand('npm install'), false);
+  });
+
+  it('user prefix patterns work', () => {
+    assert.equal(isSafeCommand('npm run build', ['npm run ']), true);
+    assert.equal(isSafeCommand('npm publish', ['npm run ']), false);
+  });
+
+  it('user regex patterns (in /slashes/) work', () => {
+    assert.equal(isSafeCommand('make clean', ['/^make\\s/']), true);
+    assert.equal(isSafeCommand('remake stuff', ['/^make\\s/']), false);
+  });
+
+  it('invalid regex gracefully ignored', () => {
+    // Should not throw, should just not match
+    assert.equal(isSafeCommand('anything', ['/[invalid/']), false);
+  });
+
+  it('empty/null patterns ignored', () => {
+    assert.equal(isSafeCommand('rm -rf dist', [null, '', undefined]), true); // built-in still works
+    assert.equal(isSafeCommand('rm -rf /', [null, '', undefined]), false);
+  });
+});
+
+// ─── Safe command bypasses approval ─────────────────────────────
+
+describe('safe command exec bypass', () => {
+  it('safe command executes without calling approvalFn', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-safe-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'rm -rf node_modules' } },
+        root,
+        {
+          approvalFn: async () => { throw new Error('should not be called'); },
+        },
+      );
+      // rm -rf node_modules is safe — should not trigger approvalFn
+      assert.equal(result.ok, true);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('safe command still blocked in headless without --allow-exec', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-safe-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'rm -rf node_modules' } },
+        root,
+        { /* no approvalFn, no allowExec */ },
+      );
+      assert.equal(result.ok, false);
+      assert.ok(result.text.includes('headless'));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('user safeExecPatterns bypass approval', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-safe-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'sudo echo safe-pattern-test' } },
+        root,
+        {
+          approvalFn: async () => { throw new Error('should not be called'); },
+          allowExec: true,
+          safeExecPatterns: ['sudo echo'],
+        },
+      );
+      // sudo echo matches user prefix — should not prompt
+      assert.equal(result.ok, true);
+      assert.ok(result.text.includes('safe-pattern-test'));
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
