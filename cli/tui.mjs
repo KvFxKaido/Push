@@ -94,32 +94,52 @@ function renderHeader(buf, layout, theme, { provider, model, session, cwd, runSt
   const { glyphs } = theme;
   const { top, left, width } = layout.header;
 
-  // Line 1: product name + provider badge
-  const providerBadge = theme.style('fg.secondary', `[${provider}]`);
+  // Status dot
   const stateDot = runState === 'running'
     ? theme.style('state.warn', glyphs.statusDot)
     : runState === 'awaiting_approval'
       ? theme.style('state.error', glyphs.statusDot)
       : theme.style('state.success', glyphs.statusDot);
 
-  const line1 = `${theme.bold(theme.style('fg.primary', 'Push'))} ${providerBadge} ${stateDot} ${theme.style('fg.dim', runState)}`;
-  buf.writeLine(top, left, padTo(line1, width));
+  // ── Top border: ┌─ Push ──...──┐ ──────────────────────────────
+  // Fixed chars: ┌─ (2) + space (1) + Push (4) + space (1) + fill + ┐ (1) = 9 + fill = width
+  const topFill = glyphs.horizontal.repeat(Math.max(0, width - 9));
+  const topBorder =
+    theme.style('fg.dim', `${glyphs.topLeft}${glyphs.horizontal} `) +
+    theme.bold(theme.style('fg.primary', 'Push')) +
+    theme.style('fg.dim', ` ${topFill}${glyphs.topRight}`);
+  buf.writeLine(top, left, topBorder);
 
-  // Line 2: model
-  const modelLabel = theme.style('fg.muted', 'model:');
-  const modelValue = theme.style('fg.primary', ` ${model}`);
-  buf.writeLine(top + 1, left, padTo(`${modelLabel}${modelValue}`, width));
+  // ── Content row: │  ● state  provider · model   ~/dir · branch  │ ──
+  const sep = theme.style('fg.dim', '·');
+  const stateLabel = theme.style('fg.dim', runState);
+  const providerStr = theme.style('accent.link', provider);
+  const modelStr = theme.bold(theme.style('fg.primary', model));
+  const leftInner = `${stateDot} ${stateLabel}  ${providerStr} ${sep} ${modelStr}`;
 
-  // Line 3: directory + branch
-  const dirLabel = theme.style('fg.muted', 'dir:');
-  const dirValue = theme.style('fg.secondary', ` ${truncate(cwd, width - 20)}`);
-  const branchStr = branch ? `  ${theme.style('fg.dim', 'branch:')} ${theme.style('accent.link', branch)}` : '';
-  buf.writeLine(top + 2, left, padTo(`${dirLabel}${dirValue}${branchStr}`, width));
+  const homeDir = process.env.HOME || '';
+  const shortCwd = homeDir && cwd.startsWith(homeDir) ? '~' + cwd.slice(homeDir.length) : cwd;
+  const branchPart = branch ? ` ${sep} ${theme.style('accent.link', branch)}` : '';
+  const rightInner = theme.style('fg.secondary', truncate(shortCwd, Math.floor(width * 0.35))) + branchPart;
 
-  // Line 4: session id + hint
+  // │  leftInner[gap]rightInner  │  — inner content width = width - 6
+  const gapLen = Math.max(1, width - 6 - visibleWidth(leftInner) - visibleWidth(rightInner));
+  const contentRow =
+    theme.style('fg.dim', glyphs.vertical) +
+    `  ${leftInner}${' '.repeat(gapLen)}${rightInner}  ` +
+    theme.style('fg.dim', glyphs.vertical);
+  buf.writeLine(top + 1, left, contentRow);
+
+  // ── Bottom border: └──...──┘ ─────────────────────────────────
+  const bottomBorder = theme.style('fg.dim',
+    `${glyphs.bottomLeft}${glyphs.horizontal.repeat(width - 2)}${glyphs.bottomRight}`
+  );
+  buf.writeLine(top + 2, left, bottomBorder);
+
+  // ── Session line (indented to align with box inner content) ───
   const sessLabel = theme.style('fg.dim', `session: ${session}`);
   const hint = theme.style('accent.link', '/model');
-  buf.writeLine(top + 3, left, padTo(`${sessLabel}  ${hint}`, width));
+  buf.writeLine(top + 3, left, padTo(`  ${sessLabel}  ${hint}`, width));
 }
 
 function renderTranscript(buf, layout, theme, tuiState) {
@@ -3223,9 +3243,6 @@ export async function runTUI(options = {}) {
 
   // ── Initial render ───────────────────────────────────────────────
 
-  addTranscriptEntry(tuiState, 'status',
-    `Session started. Provider: ${state.provider}, Model: ${state.model}`
-  );
   scheduler.flush();
 
   // ── Wait for exit ────────────────────────────────────────────────
