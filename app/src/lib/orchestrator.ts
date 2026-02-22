@@ -957,6 +957,33 @@ async function streamSSEChatOnce(
     const parser = createThinkTokenParser((token) => chunker.push(token), onThinkingToken);
     let usage: StreamUsage | undefined;
 
+    // Compatibility bridge: some providers may emit OpenAI-style `delta.tool_calls`
+    // even when we are not sending `tools[]` (prompt-engineered mode). Accumulate
+    // those deltas and re-emit them as our fenced JSON tool blocks so the existing
+    // text-based tool dispatch path still works.
+    const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
+    const flushNativeToolCalls = () => {
+      if (pendingNativeToolCalls.size === 0) return;
+      for (const [, tc] of pendingNativeToolCalls) {
+        if (!tc.name && !tc.args) continue;
+        if (tc.name) {
+          try {
+            const parsedArgs = tc.args ? JSON.parse(tc.args) : {};
+            parser.push(`\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`);
+          } catch {
+            // If arguments are malformed/incomplete, still emit a tool shell so
+            // malformed-call diagnostics can guide the model to retry.
+            parser.push(`\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: {} })}\n\`\`\`\n`);
+          }
+        } else if (tc.args) {
+          // No function name yet — fall back to raw args so downstream malformed
+          // tool-call diagnostics can detect and report the issue.
+          parser.push(tc.args);
+        }
+      }
+      pendingNativeToolCalls.clear();
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -971,6 +998,7 @@ async function streamSSEChatOnce(
         if (!trimmed) continue;
 
         if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
+          flushNativeToolCalls();
           parser.flush();
           chunker.flush();
           onDone(usage);
@@ -1006,7 +1034,25 @@ async function streamSSEChatOnce(
             if (stallTimeoutMs) resetStallTimer();
           }
 
+          // Some providers may emit native tool call deltas even in prompt-engineered mode.
+          const toolCalls = choice.delta?.tool_calls;
+          if (toolCalls) {
+            for (const tc of toolCalls) {
+              const idx = typeof tc.index === 'number' ? tc.index : 0;
+              const fnCall = tc.function;
+              if (!fnCall) continue;
+              if (!pendingNativeToolCalls.has(idx)) {
+                pendingNativeToolCalls.set(idx, { name: '', args: '' });
+              }
+              const entry = pendingNativeToolCalls.get(idx)!;
+              if (typeof fnCall.name === 'string') entry.name = fnCall.name;
+              if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
+            }
+            if (stallTimeoutMs) resetStallTimer();
+          }
+
           if (checkFinishReason(choice)) {
+            flushNativeToolCalls();
             parser.flush();
             chunker.flush();
             onDone(usage);
@@ -1018,6 +1064,7 @@ async function streamSSEChatOnce(
       }
     }
 
+    flushNativeToolCalls();
     parser.flush();
     chunker.flush();
     onDone(usage);
