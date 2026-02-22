@@ -930,12 +930,7 @@ async function streamSSEChatOnce(
       const hasGitHub = Boolean(workspaceContext);
       const schemas = getToolSchemas({ hasSandbox, hasGitHub, providerType });
       if (schemas.length > 0) {
-        // For Mistral, include web_search as a tool type alongside function schemas
-        const tools: unknown[] = [...schemas];
-        if (providerType === 'mistral') {
-          tools.push({ type: 'web_search' });
-        }
-        requestBody.tools = tools;
+        requestBody.tools = schemas;
         requestBody.tool_choice = toolChoice || 'auto';
       }
     }
@@ -1198,14 +1193,12 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       const model = modelOverride || getMistralModelName();
 
       // Native FC mode: bypass Agents API entirely, use standard chat completions
-      // with function schemas + web_search as a tool type in the request body.
+      // with function schemas in the request body.
       // The Agents API path is kept as fallback if native FC is ever disabled.
       let agentApiUrl: string | undefined;
       let agentBodyTransform: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined;
 
       // Only use Agents API if NOT using native FC (fallback path)
-      // With native FC, web_search is included as a tool type in the tools[] array
-      // via the bodyTransform below, so Agents API is unnecessary.
       // For now, native FC is always on for Mistral — keep agent path as dead code
       // so it's easy to revert if needed.
 

@@ -759,11 +759,11 @@ export function getToolSchemas(options: GetToolSchemasOptions = {}): NativeToolS
   schemas.push(...SCRATCHPAD_TOOL_SCHEMAS);
 
   // Web search:
-  // - Mistral uses its native web_search tool type in request tools[]
   // - Ollama uses prompt-engineered client-side dispatch
-  // - OpenRouter/Z.AI/Google/Zen receive web_search as a function schema
+  // - All native FC providers receive web_search as a function schema
   if (
-    options.providerType === 'openrouter'
+    options.providerType === 'mistral'
+    || options.providerType === 'openrouter'
     || options.providerType === 'zai'
     || options.providerType === 'google'
     || options.providerType === 'zen'
