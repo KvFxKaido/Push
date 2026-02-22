@@ -16,10 +16,10 @@ afterEach(async () => {
 });
 
 describe('loadSkills — built-in', () => {
-  it('returns all 5 built-in skills', async () => {
+  it('returns all built-in skills', async () => {
     const skills = await loadSkills(tmpDir);
     const names = [...skills.keys()].sort();
-    assert.deepEqual(names, ['commit', 'explain', 'fix', 'review', 'test']);
+    assert.deepEqual(names, ['commit', 'explain', 'fix', 'playwright', 'review', 'skill-creator', 'test']);
   });
 
   it('each built-in has name, description, promptTemplate, source=builtin', async () => {
@@ -189,7 +189,7 @@ describe('loadSkills — validation', () => {
   it('handles missing workspace skills dir gracefully', async () => {
     // tmpDir has no .push/skills/ — should not throw
     const skills = await loadSkills(tmpDir);
-    assert.ok(skills.size >= 5); // at least the built-ins
+    assert.ok(skills.size >= 7); // at least the built-ins
   });
 });
 
