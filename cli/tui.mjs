@@ -190,6 +190,24 @@ function renderTranscript(buf, layout, theme, tuiState) {
         const prefix = i === 0 ? '  WARN: ' : '        ';
         visibleLines.push(theme.style('state.warn', prefix + warnLines[i]));
       }
+    } else if (entry.role === 'reasoning') {
+      // Compact dim marker — full content available in Ctrl+G modal
+      visibleLines.push(theme.style('fg.dim', '  · thinking'));
+
+    } else if (entry.role === 'verdict') {
+      const isApproved = entry.verdict === 'APPROVED';
+      const icon = isApproved ? glyphs.check : glyphs.cross_mark;
+      const label = isApproved
+        ? theme.style('state.success', `${icon} APPROVED`)
+        : theme.style('state.error', `${icon} DENIED`);
+      const kindStr = entry.kind ? theme.style('fg.dim', ` ${entry.kind}`) : '';
+      const summaryStr = entry.summary
+        ? theme.style('fg.muted', '  ' + truncate(entry.summary, width - 20))
+        : '';
+      visibleLines.push(`  ${label}${kindStr}${summaryStr}`);
+
+    } else if (entry.role === 'divider') {
+      visibleLines.push(theme.style('fg.dim', glyphs.horizontal.repeat(Math.min(width, 40))));
     }
   }
 
@@ -1159,20 +1177,26 @@ export async function runTUI(options = {}) {
   function handleEngineEvent(event) {
     switch (event.type) {
       case 'assistant_thinking_token':
+        if (!tuiState.reasoningStreaming) {
+          thinkingPhaseStart = tuiState.reasoningBuf.length; // mark start of this chunk
+        }
         tuiState.reasoningBuf += event.payload.text;
         tuiState.reasoningStreaming = true;
         tuiState.dirty.add(tuiState.reasoningModalOpen ? 'all' : 'footer');
         scheduler.schedule();
         break;
 
-      case 'assistant_thinking_done':
+      case 'assistant_thinking_done': {
         tuiState.reasoningStreaming = false;
-        if (tuiState.reasoningBuf.trim()) {
+        const chunk = tuiState.reasoningBuf.slice(thinkingPhaseStart).trim();
+        if (chunk) {
           tuiState.lastReasoning = tuiState.reasoningBuf;
+          addTranscriptEntry(tuiState, 'reasoning', chunk);
         }
         if (tuiState.reasoningModalOpen) tuiState.dirty.add('all');
         scheduler.schedule();
         break;
+      }
 
       case 'assistant_token':
         tuiState.streamBuf += event.payload.text;
@@ -1265,6 +1289,7 @@ export async function runTUI(options = {}) {
 
   let approvalResolve = null;
   const trustedPatterns = new Set();
+  let thinkingPhaseStart = 0;
 
   // ── Ask-user handling ─────────────────────────────────────────────
 
@@ -2360,6 +2385,9 @@ export async function runTUI(options = {}) {
         if (skill) {
           const promptTemplate = await getSkillPromptTemplate(skill);
           const prompt = interpolateSkill(promptTemplate, arg);
+          if (tuiState.transcript.length > 0) {
+            tuiState.transcript.push({ role: 'divider', timestamp: Date.now() });
+          }
           addTranscriptEntry(tuiState, 'user', text);
           composer.clear();
           tuiState.dirty.add('all');
@@ -2391,6 +2419,9 @@ export async function runTUI(options = {}) {
       if (handled) return;
     }
 
+    if (tuiState.transcript.length > 0) {
+      tuiState.transcript.push({ role: 'divider', timestamp: Date.now() });
+    }
     addTranscriptEntry(tuiState, 'user', text);
     composer.clear();
     tuiState.dirty.add('all');
@@ -2406,6 +2437,10 @@ export async function runTUI(options = {}) {
 
   function approveAction() {
     if (approvalResolve) {
+      if (tuiState.approval) {
+        tuiState.transcript.push({ role: 'verdict', verdict: 'APPROVED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, timestamp: Date.now() });
+        tuiState.dirty.add('transcript');
+      }
       approvalResolve(true);
       approvalResolve = null;
       tuiState.approval = null;
@@ -2420,7 +2455,10 @@ export async function runTUI(options = {}) {
       const patIdx = tuiState.approval?.patternIndex;
       if (typeof patIdx === 'number' && patIdx >= 0) {
         trustedPatterns.add(patIdx);
-        addTranscriptEntry(tuiState, 'status', '[trusted for session]');
+      }
+      if (tuiState.approval) {
+        tuiState.transcript.push({ role: 'verdict', verdict: 'APPROVED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, trusted: true, timestamp: Date.now() });
+        tuiState.dirty.add('transcript');
       }
       approvalResolve(true);
       approvalResolve = null;
@@ -2433,6 +2471,10 @@ export async function runTUI(options = {}) {
 
   function denyAction() {
     if (approvalResolve) {
+      if (tuiState.approval) {
+        tuiState.transcript.push({ role: 'verdict', verdict: 'DENIED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, timestamp: Date.now() });
+        tuiState.dirty.add('transcript');
+      }
       approvalResolve(false);
       approvalResolve = null;
       tuiState.approval = null;
