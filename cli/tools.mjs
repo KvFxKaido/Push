@@ -135,7 +135,7 @@ Available tools:
 - git_commit(message, paths?) — stage and commit files (all files if paths not specified)
 - undo_edit(path) — restore a file from its most recent backup (created before each write/edit)
 - save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session.
-- coder_update_state(plan?, openTasks?, filesTouched?, assumptions?, errorsEncountered?) — update working memory (no filesystem action)
+- coder_update_state(plan?, openTasks?, filesTouched?, assumptions?, errorsEncountered?, currentPhase?, completedPhases?) — update working memory (no filesystem action). currentPhase is the current task phase; completedPhases is a list of completed phases (retroactive tracking supported).
 - ask_user(question, choices?) — pause and ask the operator a clarifying question; choices is an optional string[] of suggested answers. Use only when a critical ambiguity would cause significant wasted work — avoid for questions you can reasonably assume.
 
 Rules:

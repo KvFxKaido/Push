@@ -811,6 +811,8 @@ async function initSession(sessionId, provider, model, cwd) {
       filesTouched: [],
       assumptions: [],
       errorsEncountered: [],
+      currentPhase: '',
+      completedPhases: [],
     },
     messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
   };

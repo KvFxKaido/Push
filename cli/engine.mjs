@@ -16,6 +16,8 @@ function createWorkingMemory() {
     filesTouched: [],
     assumptions: [],
     errorsEncountered: [],
+    currentPhase: '',
+    completedPhases: [],
   };
 }
 
@@ -43,6 +45,8 @@ function applyWorkingMemoryUpdate(state, args) {
   if (Array.isArray(args.filesTouched)) mem.filesTouched = uniqueStrings(args.filesTouched);
   if (Array.isArray(args.assumptions)) mem.assumptions = uniqueStrings(args.assumptions);
   if (Array.isArray(args.errorsEncountered)) mem.errorsEncountered = uniqueStrings(args.errorsEncountered);
+  if (typeof args.currentPhase === 'string') mem.currentPhase = args.currentPhase;
+  if (Array.isArray(args.completedPhases)) mem.completedPhases = uniqueStrings(args.completedPhases);
 
   return mem;
 }

@@ -964,6 +964,8 @@ export async function runTUI(options = {}) {
         filesTouched: [],
         assumptions: [],
         errorsEncountered: [],
+        currentPhase: '',
+        completedPhases: [],
       },
       messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
     };
