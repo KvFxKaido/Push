@@ -96,6 +96,8 @@ function detectUpdateStateCall(text: string): Partial<CoderWorkingMemory> | null
       if (Array.isArray(args.filesTouched)) state.filesTouched = args.filesTouched.filter((v): v is string => typeof v === 'string');
       if (Array.isArray(args.assumptions)) state.assumptions = args.assumptions.filter((v): v is string => typeof v === 'string');
       if (Array.isArray(args.errorsEncountered)) state.errorsEncountered = args.errorsEncountered.filter((v): v is string => typeof v === 'string');
+      if (typeof args.currentPhase === 'string') state.currentPhase = args.currentPhase;
+      if (Array.isArray(args.completedPhases)) state.completedPhases = args.completedPhases.filter((v): v is string => typeof v === 'string');
       if (Object.keys(state).length === 0) return null;
       return state;
     }
@@ -113,6 +115,8 @@ function formatCoderState(mem: CoderWorkingMemory): string {
   if (mem.filesTouched?.length) lines.push(`Files touched: ${mem.filesTouched.join(', ')}`);
   if (mem.assumptions?.length) lines.push(`Assumptions: ${mem.assumptions.join('; ')}`);
   if (mem.errorsEncountered?.length) lines.push(`Errors: ${mem.errorsEncountered.join('; ')}`);
+  if (mem.currentPhase) lines.push(`Phase: ${mem.currentPhase}`);
+  if (mem.completedPhases?.length) lines.push(`Completed: ${mem.completedPhases.join(', ')}`);
   lines.push('[/CODER_STATE]');
   return lines.join('\n');
 }
@@ -259,8 +263,9 @@ Interactive Checkpoints:
 
 Working Memory:
 - Use coder_update_state to save your plan and track progress. Your state is injected into every tool result so it survives context trimming.
-- Format: {"tool": "coder_update_state", "args": {"plan": "...", "openTasks": ["..."], "filesTouched": ["..."], "assumptions": ["..."], "errorsEncountered": ["..."]}}
+- Format: {"tool": "coder_update_state", "args": {"plan": "...", "openTasks": ["..."], "filesTouched": ["..."], "assumptions": ["..."], "errorsEncountered": ["..."], "currentPhase": "...", "completedPhases": ["..."]}}
 - All fields are optional — only include what changed. Call it early (after reading files) and update as you go.
+- Phase tracking is optional and retroactive — you discover phases as you work and declare them. Example: "currentPhase":"Analyzing requirements", "completedPhases":["File discovery"]
 
 ${sandboxBlock}`;
 }

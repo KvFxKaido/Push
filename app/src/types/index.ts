@@ -191,6 +191,10 @@ export interface CoderWorkingMemory {
   filesTouched?: string[];
   assumptions?: string[];
   errorsEncountered?: string[];
+  /** Current phase the Coder is working on (optional retroactive progress tracking) */
+  currentPhase?: string;
+  /** List of phases that have been completed (optional retroactive progress tracking) */
+  completedPhases?: string[];
 }
 
 // --- Acceptance criteria for Coder delegation ---
