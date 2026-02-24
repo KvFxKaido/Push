@@ -319,6 +319,15 @@ parseKey() → Key object { name, ch, ctrl, meta, sequence }
 Mode router → Handler
 ```
 
+### Raw Input Chunk Tokenization
+
+Some terminal/automation layers (including `terminal-mcp` `type(...)`) may write multiple keypresses in a single stdin chunk. The TUI tokenizes raw chunks before `parseKey()` so concatenated printable characters and repeated escape sequences (e.g. multiple arrows) are split into key-sized units.
+
+Important behavior:
+- non-escape text is split by Unicode code point
+- concatenated CSI/SS3 escape sequences are split into separate key tokens
+- incomplete escape sequences are preserved as a single chunk (not over-split)
+
 ### Key Object Structure
 
 ```javascript
