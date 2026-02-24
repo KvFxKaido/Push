@@ -48,6 +48,11 @@ function createTUIState() {
     userQuestion: null,  // { question: string, choices?: string[] }
     // UI toggles
     toolPaneOpen: false,
+    toolJsonPayloadsExpanded: false,
+    payloadInspectorOpen: false,
+    payloadCursorId: null,
+    expandedToolJsonPayloadIds: new Set(),
+    payloadBlocks: [],
     reasoningModalOpen: false,
     reasoningBuf: '',
     lastReasoning: '',
@@ -89,6 +94,232 @@ function addToolFeedEntry(tuiState, entry) {
 }
 
 // ── Pane renderers ──────────────────────────────────────────────────
+
+function makeBadge(theme, label, { fg = 'fg.primary', bg = 'border.default', bold = true } = {}) {
+  const text = ` ${label} `;
+  const styled = theme.styleFgBg(fg, bg, text);
+  return bold ? theme.bold(styled) : styled;
+}
+
+function safeJsonStringify(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '[unserializable]';
+  }
+}
+
+function summarizeToolArgs(args, maxWidth) {
+  if (!args || typeof args !== 'object') return '';
+  let preview = '';
+  if (typeof args.command === 'string' && args.command) {
+    preview = args.command;
+  } else if (typeof args.path === 'string' && args.path) {
+    preview = args.path;
+  } else if (typeof args.file === 'string' && args.file) {
+    preview = args.file;
+  } else {
+    preview = safeJsonStringify(args);
+  }
+  return truncate(preview, Math.max(1, maxWidth));
+}
+
+function parseJsonToolCalls(text) {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.tool === 'string') {
+      return [{ tool: parsed.tool, args: parsed.args ?? null }];
+    }
+    if (Array.isArray(parsed)) {
+      const calls = parsed
+        .filter((item) => item && typeof item === 'object' && typeof item.tool === 'string')
+        .map((item) => ({ tool: item.tool, args: item.args ?? null }));
+      return calls.length ? calls : null;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
+function pushWrappedLines(out, text, width, {
+  firstPrefix = '',
+  nextPrefix = firstPrefix,
+  styleFn = (s) => s,
+} = {}) {
+  const raw = String(text ?? '');
+  const rawLines = raw.split('\n');
+  let firstRendered = false;
+
+  for (const rawLine of rawLines) {
+    const wrapWidth = Math.max(1, width - visibleWidth(firstRendered ? nextPrefix : firstPrefix));
+    const wrapped = wordWrap(rawLine, wrapWidth);
+    const segments = wrapped.length ? wrapped : [''];
+    for (const segment of segments) {
+      const prefix = firstRendered ? nextPrefix : firstPrefix;
+      out.push(prefix + styleFn(segment));
+      firstRendered = true;
+    }
+  }
+
+  if (!firstRendered) {
+    out.push(firstPrefix);
+  }
+}
+
+function renderAssistantEntryLines(out, text, width, theme, {
+  streaming = false,
+  expandToolJsonPayloads = false,
+  entryKey = null,
+  payloadUI = null, // { blocks, cursorId, expandedIds, inspectorOpen }
+} = {}) {
+  const badge = makeBadge(theme, streaming ? 'AI *' : 'AI', { fg: 'bg.base', bg: 'accent.primary' });
+  const firstPrefix = `${badge} `;
+  const nextPrefix = ' '.repeat(Math.max(2, visibleWidth(firstPrefix)));
+  let canUseFirstPrefix = true;
+  let jsonFenceOrdinal = 0;
+
+  const pushAssistant = (lineText, styleFn = (s) => theme.style('fg.primary', s)) => {
+    pushWrappedLines(out, lineText, width, {
+      firstPrefix: canUseFirstPrefix ? firstPrefix : nextPrefix,
+      nextPrefix,
+      styleFn,
+    });
+    canUseFirstPrefix = false;
+  };
+
+  const pushToolSummary = (summary) => {
+    pushAssistant(summary, (s) => theme.style('accent.secondary', s));
+  };
+
+  const pushCodeLine = (line) => {
+    pushAssistant(line, (s) => theme.style('fg.secondary', s));
+  };
+
+  const lines = String(text ?? '').split('\n');
+  let fenceLang = null;
+  let fenceBuf = [];
+
+  const flushFence = () => {
+    const body = fenceBuf.join('\n').trim();
+    const lang = (fenceLang || '').toLowerCase();
+    const jsonFenceIndex = lang === 'json' ? jsonFenceOrdinal++ : null;
+    const payloadId = (lang === 'json' && entryKey != null)
+      ? `${entryKey}:json:${jsonFenceIndex}`
+      : null;
+    const selected = Boolean(payloadId && payloadUI?.cursorId === payloadId);
+    const expandedByBlock = Boolean(payloadId && payloadUI?.expandedIds?.has(payloadId));
+    const expanded = expandToolJsonPayloads || expandedByBlock;
+
+    if (lang === 'json' && body) {
+      const toolCalls = parseJsonToolCalls(body);
+      if (toolCalls) {
+        const blockStart = out.length;
+        const marker = expanded ? (theme.unicode ? '▾' : 'v') : (theme.unicode ? '▸' : '>');
+        const countLabel = toolCalls.length === 1 ? '1 tool call' : `${toolCalls.length} tool calls`;
+        const modeHint = expanded ? 'expanded' : 'collapsed';
+        const headerText = `${marker} JSON payload · ${countLabel} · ${modeHint}`;
+        pushAssistant(headerText, (s) => {
+          if (selected && payloadUI?.inspectorOpen) return theme.inverse(s);
+          return theme.style('fg.dim', s);
+        });
+
+        if (expanded) {
+          for (const codeLine of fenceBuf) {
+            pushCodeLine(codeLine);
+          }
+        } else {
+          for (const call of toolCalls) {
+            const preview = summarizeToolArgs(call.args, Math.max(10, width - 28));
+            const summary = preview
+              ? `${theme.glyphs.arrow} ${call.tool}  ${theme.style('fg.dim', preview)}`
+              : `${theme.glyphs.arrow} ${call.tool}`;
+            pushToolSummary(summary);
+          }
+        }
+
+        if (payloadId && Array.isArray(payloadUI?.blocks)) {
+          payloadUI.blocks.push({
+            id: payloadId,
+            startLine: blockStart,
+            endLine: Math.max(blockStart, out.length - 1),
+            expanded,
+            selected,
+            visible: false,
+            toolCount: toolCalls.length,
+          });
+        }
+
+        fenceLang = null;
+        fenceBuf = [];
+        return;
+      }
+    }
+
+    if (body) {
+      const label = lang ? `code (${lang})` : 'code';
+      pushAssistant(label, (s) => theme.style('fg.dim', s));
+      for (const codeLine of fenceBuf) {
+        pushCodeLine(codeLine);
+      }
+    }
+
+    fenceLang = null;
+    fenceBuf = [];
+  };
+
+  for (const rawLine of lines) {
+    const fenceMatch = rawLine.match(/^```([A-Za-z0-9_-]+)?\s*$/);
+    if (fenceMatch) {
+      if (fenceLang == null) {
+        fenceLang = fenceMatch[1] || '';
+        fenceBuf = [];
+      } else {
+        flushFence();
+      }
+      continue;
+    }
+    if (fenceLang != null) {
+      fenceBuf.push(rawLine);
+      continue;
+    }
+
+    const line = rawLine;
+    if (line.trim() === '') {
+      pushAssistant('', (s) => s);
+      continue;
+    }
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
+      pushAssistant(
+        theme.glyphs.horizontal.repeat(Math.max(6, Math.min(width - visibleWidth(nextPrefix), 24))),
+        (s) => theme.style('fg.dim', s)
+      );
+      continue;
+    }
+
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
+    if (heading) {
+      pushAssistant(heading[2], (s) => theme.bold(theme.style('accent.link', s)));
+      continue;
+    }
+
+    const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+    if (bullet) {
+      const indent = ' '.repeat(Math.min(4, bullet[1].length));
+      pushAssistant(`${indent}${bullet[2]} ${bullet[3]}`, (s) => theme.style('fg.primary', s));
+      continue;
+    }
+
+    if (/^\s*>\s+/.test(line)) {
+      pushAssistant(line.replace(/^\s*>\s+/, ''), (s) => theme.style('fg.secondary', s));
+      continue;
+    }
+
+    pushAssistant(line, (s) => theme.style('fg.primary', s));
+  }
+
+  if (fenceLang != null) flushFence();
+}
 
 function renderHeader(buf, layout, theme, { provider, model, session, cwd, runState, branch }) {
   const { glyphs } = theme;
@@ -150,56 +381,84 @@ function renderTranscript(buf, layout, theme, tuiState) {
 
   // Build visible lines from transcript (bottom-aligned)
   const visibleLines = [];
+  const payloadBlocks = [];
+  const payloadUI = {
+    blocks: payloadBlocks,
+    cursorId: tuiState.payloadCursorId,
+    expandedIds: tuiState.expandedToolJsonPayloadIds,
+    inspectorOpen: tuiState.payloadInspectorOpen,
+  };
 
-  for (const entry of tuiState.transcript) {
+  for (let entryIndex = 0; entryIndex < tuiState.transcript.length; entryIndex++) {
+    const entry = tuiState.transcript[entryIndex];
     if (entry.role === 'user') {
-      const prefix = theme.style('accent.primary', glyphs.prompt + ' ');
-      const wrapped = wordWrap(entry.text, width - 2);
+      const prefix = makeBadge(theme, 'YOU', { fg: 'bg.base', bg: 'accent.secondary' }) + ' ';
+      const nextPrefix = ' '.repeat(Math.max(2, visibleWidth(prefix)));
+      const wrapped = wordWrap(entry.text, Math.max(1, width - visibleWidth(prefix)));
       for (let i = 0; i < wrapped.length; i++) {
-        visibleLines.push(i === 0 ? prefix + theme.style('fg.primary', wrapped[i]) : '  ' + theme.style('fg.primary', wrapped[i]));
+        visibleLines.push(i === 0
+          ? prefix + theme.style('fg.primary', wrapped[i])
+          : nextPrefix + theme.style('fg.primary', wrapped[i]));
       }
     } else if (entry.role === 'assistant') {
-      const wrapped = wordWrap(entry.text, width);
-      for (const line of wrapped) {
-        visibleLines.push(theme.style('fg.primary', line));
-      }
+      renderAssistantEntryLines(visibleLines, entry.text, width, theme, {
+        expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
+        entryKey: `${entry.timestamp ?? 0}:${entryIndex}`,
+        payloadUI,
+      });
     } else if (entry.role === 'tool_call') {
-      const ok = !entry.error;
-      const status = ok
-        ? theme.style('state.success', 'OK')
-        : theme.style('state.error', 'ERR');
+      const pending = entry.error !== true && !entry.duration;
+      const status = pending
+        ? theme.style('accent.secondary', '…')
+        : entry.error
+          ? theme.style('state.error', glyphs.cross_mark || 'ERR')
+          : theme.style('state.success', glyphs.check || 'OK');
+      const badge = makeBadge(theme, 'TOOL', { fg: 'bg.base', bg: 'border.hover', bold: false });
       const dur = entry.duration ? theme.style('fg.dim', ` ${entry.duration}ms`) : '';
-      visibleLines.push(
-        theme.style('fg.muted', `  ${glyphs.horizontal} `) +
-        theme.style('fg.secondary', entry.text) +
-        ` ${status}${dur}`
-      );
+      const prefix = `${badge} `;
+      const base = `${status} ${entry.text}${dur}`;
+      pushWrappedLines(visibleLines, base, width, {
+        firstPrefix: prefix,
+        nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
+        styleFn: (s) => theme.style('fg.secondary', s),
+      });
     } else if (entry.role === 'status') {
-      for (const line of wordWrap(entry.text, width - 2)) {
-        visibleLines.push(theme.style('fg.dim', '  ' + line));
-      }
+      const badge = makeBadge(theme, 'INFO', { fg: 'bg.base', bg: 'border.default', bold: false });
+      const prefix = `${badge} `;
+      pushWrappedLines(visibleLines, entry.text, width, {
+        firstPrefix: prefix,
+        nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
+        styleFn: (s) => theme.style('fg.dim', s),
+      });
     } else if (entry.role === 'error') {
-      const errLines = wordWrap(entry.text, width - 10);
-      for (let i = 0; i < errLines.length; i++) {
-        const prefix = i === 0 ? '  ERROR: ' : '         ';
-        visibleLines.push(theme.style('state.error', prefix + errLines[i]));
-      }
+      const badge = makeBadge(theme, 'ERR', { fg: 'fg.primary', bg: 'state.error' });
+      const prefix = `${badge} `;
+      pushWrappedLines(visibleLines, entry.text, width, {
+        firstPrefix: prefix,
+        nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
+        styleFn: (s) => theme.style('state.error', s),
+      });
     } else if (entry.role === 'warning') {
-      const warnLines = wordWrap(entry.text, width - 9);
-      for (let i = 0; i < warnLines.length; i++) {
-        const prefix = i === 0 ? '  WARN: ' : '        ';
-        visibleLines.push(theme.style('state.warn', prefix + warnLines[i]));
-      }
+      const badge = makeBadge(theme, 'WARN', { fg: 'bg.base', bg: 'state.warn' });
+      const prefix = `${badge} `;
+      pushWrappedLines(visibleLines, entry.text, width, {
+        firstPrefix: prefix,
+        nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
+        styleFn: (s) => theme.style('state.warn', s),
+      });
     } else if (entry.role === 'reasoning') {
       // Compact dim marker — full content available in Ctrl+G modal
-      visibleLines.push(theme.style('fg.dim', '  · thinking'));
+      visibleLines.push(
+        `${makeBadge(theme, 'THINK', { fg: 'bg.base', bg: 'border.default', bold: false })} ` +
+        theme.style('fg.dim', 'thinking')
+      );
 
     } else if (entry.role === 'verdict') {
       const isApproved = entry.verdict === 'APPROVED';
       const icon = isApproved ? glyphs.check : glyphs.cross_mark;
       const label = isApproved
-        ? theme.style('state.success', `${icon} APPROVED`)
-        : theme.style('state.error', `${icon} DENIED`);
+        ? makeBadge(theme, `${icon} APPROVED`, { fg: 'fg.primary', bg: 'state.success' })
+        : makeBadge(theme, `${icon} DENIED`, { fg: 'fg.primary', bg: 'state.error' });
       const kindStr = entry.kind ? theme.style('fg.dim', ` ${entry.kind}`) : '';
       const summaryStr = entry.summary
         ? theme.style('fg.muted', '  ' + truncate(entry.summary, width - 20))
@@ -213,10 +472,11 @@ function renderTranscript(buf, layout, theme, tuiState) {
 
   // Add streaming buffer if assistant is currently streaming
   if (tuiState.streamBuf) {
-    const wrapped = wordWrap(tuiState.streamBuf, width);
-    for (const line of wrapped) {
-      visibleLines.push(theme.style('fg.primary', line));
-    }
+    renderAssistantEntryLines(visibleLines, tuiState.streamBuf, width, theme, {
+      streaming: true,
+      expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
+      payloadUI: null,
+    });
   }
 
   // Take the last `height` lines (scroll to bottom), adjusted by scrollOffset
@@ -224,6 +484,25 @@ function renderTranscript(buf, layout, theme, tuiState) {
   const effectiveOffset = Math.min(tuiState.scrollOffset, maxScroll);
   const startIdx = Math.max(0, maxScroll - effectiveOffset);
   const slice = visibleLines.slice(startIdx, startIdx + height);
+
+  for (const block of payloadBlocks) {
+    block.visible = block.endLine >= startIdx && block.startLine < (startIdx + height);
+  }
+  tuiState.payloadBlocks = payloadBlocks;
+  if (tuiState.payloadCursorId && !payloadBlocks.some((b) => b.id === tuiState.payloadCursorId)) {
+    tuiState.payloadCursorId = null;
+  }
+  if (tuiState.payloadInspectorOpen) {
+    const selectedVisible = tuiState.payloadCursorId
+      ? payloadBlocks.some((b) => b.id === tuiState.payloadCursorId && b.visible)
+      : false;
+    if (!selectedVisible) {
+      const visibleBlock = payloadBlocks.find((b) => b.visible);
+      if (visibleBlock) {
+        tuiState.payloadCursorId = visibleBlock.id;
+      }
+    }
+  }
 
   // Render
   for (let r = 0; r < height; r++) {
@@ -244,18 +523,17 @@ function renderToolPane(buf, layout, theme, tuiState) {
   const { glyphs } = theme;
 
   // Title
-  const title = theme.style('fg.secondary', ' Tools ');
+  const count = theme.style('fg.dim', String(tuiState.toolFeed.length));
+  const title = `${makeBadge(theme, 'TOOLS', { fg: 'bg.base', bg: 'accent.secondary' })} ${count}`;
   buf.writeLine(top, left, padTo(title, width));
 
   // Tool feed entries (bottom-aligned)
   const lines = [];
   for (const entry of tuiState.toolFeed) {
     if (entry.type === 'call') {
-      const argsPreview = entry.args
-        ? truncate(JSON.stringify(entry.args), width - entry.name.length - 6)
-        : '';
+      const argsPreview = summarizeToolArgs(entry.args, Math.max(8, width - entry.name.length - 8));
       lines.push(
-        theme.style('accent.secondary', glyphs.prompt) + ' ' +
+        theme.style('accent.secondary', glyphs.arrow || glyphs.prompt) + ' ' +
         theme.style('fg.primary', entry.name) +
         (argsPreview ? ' ' + theme.style('fg.dim', argsPreview) : '')
       );
@@ -264,7 +542,7 @@ function renderToolPane(buf, layout, theme, tuiState) {
       const status = ok
         ? theme.style('state.success', glyphs.check || 'OK')
         : theme.style('state.error', glyphs.cross_mark || 'ERR');
-      const dur = entry.duration ? theme.style('fg.dim', `${entry.duration}ms`) : '';
+      const dur = entry.duration ? theme.style('fg.dim', `${entry.duration}ms`) : theme.style('fg.dim', 'done');
       const preview = entry.preview
         ? ' ' + theme.style('fg.dim', truncate(entry.preview, width - 20))
         : '';
@@ -363,9 +641,17 @@ function renderFooter(buf, layout, theme, tuiState, keybindHints) {
       theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' submit answer'),
       theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' skip'),
     ].join('  ');
+  } else if (tuiState.payloadInspectorOpen) {
+    leftHints = [
+      theme.style('accent.link', 'j/k,↑↓') + theme.style('fg.dim', ' move'),
+      theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' toggle'),
+      theme.style('accent.link', 'a') + theme.style('fg.dim', tuiState.toolJsonPayloadsExpanded ? ' all:expanded' : ' all:collapsed'),
+      theme.style('accent.link', 'Esc / Ctrl+O') + theme.style('fg.dim', ' close'),
+    ].join('  ');
   } else {
     leftHints = [
       theme.style('accent.link', 'Ctrl+T') + theme.style('fg.dim', ' tools'),
+      theme.style('accent.link', 'Ctrl+O') + theme.style('fg.dim', ' payloads'),
       theme.style('accent.link', 'Ctrl+G') + theme.style('fg.dim', ' reasoning'),
       theme.style('accent.link', 'Ctrl+C') + theme.style('fg.dim', ' cancel'),
       theme.style('accent.link', 'Ctrl+P') + theme.style('fg.dim', ' provider'),
@@ -379,6 +665,8 @@ function renderFooter(buf, layout, theme, tuiState, keybindHints) {
       ? theme.style('state.error', 'awaiting approval')
       : tuiState.runState === 'awaiting_user_question'
         ? theme.style('accent.primary', 'awaiting answer')
+        : tuiState.payloadInspectorOpen
+          ? theme.style('accent.secondary', 'payload inspect')
         : theme.style('state.success', 'idle');
 
   // Layout left/right
@@ -1542,6 +1830,11 @@ export async function runTUI(options = {}) {
     tuiState.streamBuf = '';
     tuiState.approval = null;
     approvalResolve = null;
+    tuiState.payloadInspectorOpen = false;
+    tuiState.payloadCursorId = null;
+    tuiState.toolJsonPayloadsExpanded = false;
+    tuiState.expandedToolJsonPayloadIds = new Set();
+    tuiState.payloadBlocks = [];
     tuiState.reasoningModalOpen = false;
     tuiState.reasoningBuf = '';
     tuiState.lastReasoning = '';
@@ -2299,11 +2592,13 @@ export async function runTUI(options = {}) {
           '  PageUp/Down   Scroll transcript',
           '  Ctrl+L        Clear viewport (preserves history)',
           '  Ctrl+T        Toggle tool pane',
+          '  Ctrl+O        Payload inspector mode (per-block expand/collapse)',
           '  Ctrl+G        Toggle reasoning pane',
           '  Ctrl+C        Cancel run / exit',
           '  Ctrl+Y        Approve',
           '  Ctrl+N        Deny',
           '  Ctrl+P        Provider switcher',
+          '  Payload inspector: j/k or arrows move, Enter toggles block, a toggles all',
         ].join('\n'));
         scheduler.flush();
         return true;
@@ -2521,6 +2816,78 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  function getVisiblePayloadBlocks() {
+    return Array.isArray(tuiState.payloadBlocks)
+      ? tuiState.payloadBlocks.filter((b) => b.visible)
+      : [];
+  }
+
+  function openPayloadInspector() {
+    const visibleBlocks = getVisiblePayloadBlocks();
+    const fallback = visibleBlocks[visibleBlocks.length - 1]
+      || tuiState.payloadBlocks[tuiState.payloadBlocks.length - 1]
+      || null;
+    if (!fallback) {
+      process.stdout.write('\x07');
+      return;
+    }
+    tuiState.payloadInspectorOpen = true;
+    const cursorExists = tuiState.payloadCursorId && tuiState.payloadBlocks.some((b) => b.id === tuiState.payloadCursorId);
+    if (!cursorExists) {
+      tuiState.payloadCursorId = fallback.id;
+    }
+    tuiState.dirty.add('all');
+    scheduler.flush();
+  }
+
+  function closePayloadInspector() {
+    tuiState.payloadInspectorOpen = false;
+    tuiState.dirty.add('all');
+    scheduler.flush();
+  }
+
+  function toggleToolJsonPayloads() {
+    if (!tuiState.payloadInspectorOpen) {
+      openPayloadInspector();
+      return;
+    }
+    closePayloadInspector();
+  }
+
+  function movePayloadCursor(delta) {
+    const visibleBlocks = getVisiblePayloadBlocks();
+    if (visibleBlocks.length === 0) return;
+    const currentIdx = visibleBlocks.findIndex((b) => b.id === tuiState.payloadCursorId);
+    const nextIdx = currentIdx >= 0
+      ? (currentIdx + delta + visibleBlocks.length) % visibleBlocks.length
+      : (delta >= 0 ? 0 : visibleBlocks.length - 1);
+    tuiState.payloadCursorId = visibleBlocks[nextIdx].id;
+    tuiState.dirty.add('transcript');
+    scheduler.schedule();
+  }
+
+  function toggleFocusedPayloadBlock() {
+    const visibleBlocks = getVisiblePayloadBlocks();
+    const block = visibleBlocks.find((b) => b.id === tuiState.payloadCursorId)
+      || visibleBlocks[0]
+      || null;
+    if (!block) return;
+    tuiState.payloadCursorId = block.id;
+    if (tuiState.expandedToolJsonPayloadIds.has(block.id)) {
+      tuiState.expandedToolJsonPayloadIds.delete(block.id);
+    } else {
+      tuiState.expandedToolJsonPayloadIds.add(block.id);
+    }
+    tuiState.dirty.add('transcript');
+    scheduler.flush();
+  }
+
+  function toggleAllToolJsonPayloads() {
+    tuiState.toolJsonPayloadsExpanded = !tuiState.toolJsonPayloadsExpanded;
+    tuiState.dirty.add('all');
+    scheduler.flush();
+  }
+
   function toggleReasoningModal() {
     tuiState.reasoningModalOpen = !tuiState.reasoningModalOpen;
     tuiState.dirty.add('all');
@@ -2530,6 +2897,54 @@ export async function runTUI(options = {}) {
   function handleReasoningModalInput(key) {
     if (key.name === 'escape' || (key.ctrl && key.name === 'g')) {
       toggleReasoningModal();
+    }
+  }
+
+  function handlePayloadInspectorInput(key) {
+    if (key.name === 'escape' || (key.ctrl && key.name === 'o')) {
+      closePayloadInspector();
+      return;
+    }
+    if (key.ctrl && key.name === 'c') {
+      if (tuiState.runState === 'running') {
+        cancelRun();
+      } else {
+        exitResolve();
+      }
+      return;
+    }
+    if (key.ctrl && key.name === 'l') {
+      clearViewport();
+      return;
+    }
+    if (key.name === 'up' || (!key.ctrl && !key.meta && key.name === 'k')) {
+      movePayloadCursor(-1);
+      return;
+    }
+    if (key.name === 'down' || (!key.ctrl && !key.meta && key.name === 'j')) {
+      movePayloadCursor(1);
+      return;
+    }
+    if (key.name === 'return' || key.name === 'enter' || key.ch === ' ') {
+      toggleFocusedPayloadBlock();
+      return;
+    }
+    if (!key.ctrl && !key.meta && key.name === 'a') {
+      toggleAllToolJsonPayloads();
+      return;
+    }
+    if (key.name === 'pageup') {
+      const { rows } = getTermSize();
+      tuiState.scrollOffset += Math.max(1, Math.floor(rows / 3));
+      tuiState.dirty.add('transcript');
+      scheduler.schedule();
+      return;
+    }
+    if (key.name === 'pagedown') {
+      const { rows } = getTermSize();
+      tuiState.scrollOffset = Math.max(0, tuiState.scrollOffset - Math.max(1, Math.floor(rows / 3)));
+      tuiState.dirty.add('transcript');
+      scheduler.schedule();
     }
   }
 
@@ -2557,6 +2972,10 @@ export async function runTUI(options = {}) {
       tuiState.reasoningModalOpen = false;
       tuiState.dirty.add('all');
       scheduler.flush();
+      return;
+    }
+    if (tuiState.payloadInspectorOpen) {
+      closePayloadInspector();
       return;
     }
     if (tuiState.modelModalOpen) {
@@ -3007,6 +3426,11 @@ export async function runTUI(options = {}) {
       return;
     }
 
+    if (tuiState.payloadInspectorOpen) {
+      handlePayloadInspectorInput(key);
+      return;
+    }
+
     // Model modal: navigable list
     if (tuiState.modelModalOpen) {
       runAsync(() => handleModelModalInput(key), 'model picker input failed');
@@ -3060,6 +3484,9 @@ export async function runTUI(options = {}) {
         return;
       case 'toggle_tools':
         toggleTools();
+        return;
+      case 'toggle_tool_json_payloads':
+        toggleToolJsonPayloads();
         return;
       case 'toggle_reasoning':
         toggleReasoningModal();
