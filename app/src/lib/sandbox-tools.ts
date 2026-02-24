@@ -757,8 +757,6 @@ export async function executeSandboxToolCall(
             version: expanded.version ?? readResult.version,
           };
         }
-        }
-
         // 2. Apply hashline edits
         const editResult = await applyHashlineEdits(readResult.content, edits);
 
@@ -2104,4 +2102,3 @@ ${BROWSER_RULES_BLOCK}- sandbox_diff shows what you've changed — review before
 - Before delegating code changes, prefer sandbox_search to quickly locate relevant files/functions and provide precise context.
 - Use sandbox_run_tests BEFORE committing to catch regressions early. It's faster than sandbox_exec("npm test") and gives structured results.
 - Use sandbox_check_types to validate TypeScript/Python code before committing. Catches type errors that tests might miss.`;
-
