@@ -20,7 +20,18 @@ describe('splitRawInputChunk', () => {
 
   it('does not split chunks containing escape sequences', () => {
     assert.deepEqual(splitRawInputChunk('\x1b[A'), ['\x1b[A']);
-    assert.deepEqual(splitRawInputChunk('a\x1b[B'), ['a\x1b[B']);
+  });
+
+  it('splits concatenated escape sequences and mixed chunks', () => {
+    assert.deepEqual(splitRawInputChunk('\x1b[A\x1b[B'), ['\x1b[A', '\x1b[B']);
+    assert.deepEqual(splitRawInputChunk('\x1b\r\x1b[A'), ['\x1b\r', '\x1b[A']);
+    assert.deepEqual(splitRawInputChunk('ab\x1b[Acd'), ['a', 'b', '\x1b[A', 'c', 'd']);
+  });
+
+  it('preserves incomplete escape sequences at end of chunk', () => {
+    assert.deepEqual(splitRawInputChunk('\x1b['), ['\x1b[']);
+    assert.deepEqual(splitRawInputChunk('ab\x1b['), ['a', 'b', '\x1b[']);
+    assert.deepEqual(splitRawInputChunk('\x1bO'), ['\x1bO']);
   });
 });
 

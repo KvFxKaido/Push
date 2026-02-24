@@ -5,18 +5,70 @@
 
 // ── Key sequence parsing ────────────────────────────────────────────
 
+function codePointCharLength(str, index) {
+  const cp = str.codePointAt(index);
+  return cp !== undefined && cp > 0xffff ? 2 : 1;
+}
+
+function readEscapeSequence(str, start) {
+  if (str[start] !== '\x1b') return null;
+  const rest = str.slice(start);
+
+  // CSI sequence: ESC [ ... final-byte
+  // We split on any complete CSI final byte, even if parseKey() later classifies
+  // it as unknown. This keeps concatenated sequences tokenized correctly.
+  const csiMatch = rest.match(/^\x1b\[[0-9;]*[A-Za-z~]/);
+  if (csiMatch) return csiMatch[0];
+
+  // SS3 sequence: ESC O X
+  if (rest.startsWith('\x1bO')) {
+    if (rest.length >= 3) return rest.slice(0, 3);
+    return null; // incomplete
+  }
+
+  // Alt/meta + next code point (same ambiguity as parseKey on ESC-prefixed input).
+  if (rest.length >= 2) {
+    const len = codePointCharLength(rest, 1);
+    if (rest.length >= 1 + len) return rest.slice(0, 1 + len);
+  }
+
+  // Lone ESC (e.g. user pressed Escape)
+  return '\x1b';
+}
+
 /**
  * Split a raw stdin chunk into key-sized string units when it is safe to do so.
  *
- * We only split chunks that contain no ESC bytes so escape sequences (CSI/SS3,
- * Alt-modified keys, bracketed paste markers, etc.) stay intact for the caller.
- * This helps automation layers that write multiple printable characters at once.
+ * This handles:
+ * - multi-char printable chunks from automation layers (e.g. terminal-mcp `type`)
+ * - concatenated escape sequences in one write (e.g. two arrows)
+ *
+ * Incomplete CSI/SS3 sequences are left intact as a single chunk.
  */
 export function splitRawInputChunk(str) {
   if (!str) return [];
-  if (str.includes('\x1b')) return [str];
-  const chars = Array.from(str);
-  return chars.length > 1 ? chars : [str];
+
+  const out = [];
+  let i = 0;
+  while (i < str.length) {
+    if (str[i] === '\x1b') {
+      const esc = readEscapeSequence(str, i);
+      if (!esc) {
+        // Incomplete escape sequence at end of chunk; keep it intact.
+        out.push(str.slice(i));
+        break;
+      }
+      out.push(esc);
+      i += esc.length;
+      continue;
+    }
+
+    const len = codePointCharLength(str, i);
+    out.push(str.slice(i, i + len));
+    i += len;
+  }
+
+  return out;
 }
 
 /**
