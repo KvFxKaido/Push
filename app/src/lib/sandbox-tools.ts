@@ -495,7 +495,7 @@ export async function executeSandboxToolCall(
     switch (call.tool) {
       case 'sandbox_exec': {
         const start = Date.now();
-        const result = await execInSandbox(sandboxId, call.args.command, normalizeSandboxWorkdir(call.args.workdir));
+        const result = await execInSandbox(sandboxId, call.args.command, call.args.workdir);
         const durationMs = Date.now() - start;
 
         const lines: string[] = [
