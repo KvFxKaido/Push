@@ -77,6 +77,7 @@ import {
 } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
 import { fileLedger } from './file-awareness-ledger';
+import { calculateLineHash } from './hashline';
 
 // ---------------------------------------------------------------------------
 // 1. Tool validation -- sandbox_browser_screenshot
@@ -1094,5 +1095,80 @@ describe('executeSandboxToolCall -- edit guard', () => {
     // Should succeed — the empty file was read, auto-expand should work
     expect(result.text).toContain('Wrote /workspace/src/empty.ts');
     expect(result.text).not.toContain('Edit guard');
+  });
+});
+
+describe('sandbox path normalization', () => {
+  it('normalizes relative read paths under /workspace', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_read_file',
+      args: { path: 'app/src/lib/sandbox-tools.ts' },
+    });
+    expect(result).not.toBeNull();
+    expect(result).toEqual({
+      tool: 'sandbox_read_file',
+      args: { path: '/workspace/app/src/lib/sandbox-tools.ts', start_line: undefined, end_line: undefined },
+    });
+  });
+
+  it('normalizes workspace-prefixed exec workdir', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'pwd', workdir: 'workspace/app' } },
+      'sb-123',
+    );
+
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-123', 'pwd', '/workspace/app');
+  });
+});
+
+describe('sandbox_edit_file large file fallback', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('re-reads truncated files in chunks before applying hashline edits', async () => {
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({
+        content: 'line 1\nline 2',
+        truncated: true,
+        version: 'v1',
+      })
+      .mockResolvedValueOnce({
+        content: 'line 1\nline 2\n',
+        truncated: false,
+        version: 'v1',
+        start_line: 1,
+        end_line: 400,
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        truncated: false,
+        version: 'v1',
+        start_line: 3,
+        end_line: 402,
+      });
+
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 20 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: 'diff', stderr: '', exitCode: 0, truncated: false });
+
+    const ref = await calculateLineHash('line 1');
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path: '/workspace/demo.txt',
+          edits: [{ op: 'replace_line', ref, content: 'line one' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/demo.txt');
+    expect(sandboxClient.readFromSandbox).toHaveBeenNthCalledWith(2, 'sb-123', '/workspace/demo.txt', 1, 400);
   });
 });
