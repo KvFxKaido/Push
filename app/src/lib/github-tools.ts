@@ -1491,6 +1491,7 @@ export async function executeCreateBranch(repo: string, branchName: string, from
   }
 
   return {
+    branchSwitch: branchName,
     text: [
       `[Tool Result — create_branch]`,
       `Branch "${branchName}" created on ${repo} from ${sourceRef} (${sha.slice(0, 7)}).`,
