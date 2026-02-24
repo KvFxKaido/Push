@@ -52,6 +52,22 @@ function fileVersionKey(sandboxId: string, path: string): string {
   return `${sandboxId}:${path}`;
 }
 
+
+function normalizeSandboxPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return '/workspace';
+  if (trimmed === '/workspace' || trimmed === 'workspace') return '/workspace';
+  if (trimmed.startsWith('/workspace/')) return trimmed.replace(/\/+/g, '/');
+  if (trimmed.startsWith('workspace/')) return `/${trimmed}`.replace(/\/+/g, '/');
+  if (trimmed.startsWith('/')) return trimmed.replace(/\/+/g, '/');
+  return `/workspace/${trimmed}`.replace(/\/+/g, '/');
+}
+
+function normalizeSandboxWorkdir(workdir?: string): string | undefined {
+  if (typeof workdir !== 'string') return undefined;
+  return normalizeSandboxPath(workdir);
+}
+
 // --- Browser tool error taxonomy ---
 
 const BROWSER_ERROR_MESSAGES: Record<string, string> = {
@@ -274,23 +290,23 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
   const args = asRecord(parsedObj.args) || {};
 
   if (tool === 'sandbox_exec' && typeof args.command === 'string') {
-    return { tool: 'sandbox_exec', args: { command: args.command, workdir: typeof args.workdir === 'string' ? args.workdir : undefined } };
+    return { tool: 'sandbox_exec', args: { command: args.command, workdir: normalizeSandboxWorkdir(typeof args.workdir === 'string' ? args.workdir : undefined) } };
   }
   if ((tool === 'sandbox_read_file' || tool === 'read_sandbox_file') && typeof args.path === 'string') {
     const startLine = parsePositiveIntegerArg(args.start_line);
     const endLine = parsePositiveIntegerArg(args.end_line);
     if (startLine === null || endLine === null) return null;
     if (startLine !== undefined && endLine !== undefined && startLine > endLine) return null;
-    return { tool: 'sandbox_read_file', args: { path: args.path, start_line: startLine, end_line: endLine } };
+    return { tool: 'sandbox_read_file', args: { path: normalizeSandboxPath(args.path), start_line: startLine, end_line: endLine } };
   }
   if ((tool === 'sandbox_search' || tool === 'search_sandbox') && typeof args.query === 'string') {
-    return { tool: 'sandbox_search', args: { query: args.query, path: typeof args.path === 'string' ? args.path : undefined } };
+    return { tool: 'sandbox_search', args: { query: args.query, path: typeof args.path === 'string' ? normalizeSandboxPath(args.path) : undefined } };
   }
   if (tool === 'sandbox_write_file' && typeof args.path === 'string' && typeof args.content === 'string') {
     return {
       tool: 'sandbox_write_file',
       args: {
-        path: args.path,
+        path: normalizeSandboxPath(args.path),
         content: args.content,
         expected_version: typeof args.expected_version === 'string' ? args.expected_version : undefined,
       },
@@ -300,14 +316,14 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
     return {
       tool: "sandbox_edit_file",
       args: {
-        path: args.path,
+        path: normalizeSandboxPath(args.path),
         edits: args.edits as HashlineOp[],
         expected_version: typeof args.expected_version === "string" ? args.expected_version : undefined,
       },
     };
   }
   if (tool === 'sandbox_list_dir' || tool === 'list_sandbox_dir') {
-    return { tool: 'sandbox_list_dir', args: { path: typeof args.path === 'string' ? args.path : undefined } };
+    return { tool: 'sandbox_list_dir', args: { path: typeof args.path === 'string' ? normalizeSandboxPath(args.path) : undefined } };
   }
   if (tool === 'sandbox_diff') {
     return { tool: 'sandbox_diff', args: {} };
@@ -332,7 +348,7 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
     return { tool: 'sandbox_browser_extract', args: { url: browserUrl, instruction: typeof args.instruction === 'string' ? args.instruction : undefined } };
   }
   if (tool === 'sandbox_download') {
-    return { tool: 'sandbox_download', args: { path: typeof args.path === 'string' ? args.path : undefined } };
+    return { tool: 'sandbox_download', args: { path: typeof args.path === 'string' ? normalizeSandboxPath(args.path) : undefined } };
   }
   if (tool === 'sandbox_save_draft') {
     return {
@@ -412,6 +428,41 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+
+async function readFullFileByChunks(
+  sandboxId: string,
+  path: string,
+  versionHint?: string | null,
+): Promise<{ content: string; version?: string | null }> {
+  const chunkSize = 400;
+  const maxChunks = 200;
+  const collected: string[] = [];
+  let startLine = 1;
+  let version = versionHint;
+
+  for (let i = 0; i < maxChunks; i += 1) {
+    const range = await readFromSandbox(sandboxId, path, startLine, startLine + chunkSize - 1) as FileReadResult & { error?: string };
+    if (range.error) throw new Error(range.error);
+    if (!version && typeof range.version === 'string' && range.version) {
+      version = range.version;
+    }
+    if (!range.content) break;
+
+    const lines = range.content.split('\n');
+    const hadTrailingNewline = range.content.endsWith('\n');
+    const normalized = hadTrailingNewline ? lines.slice(0, -1) : lines;
+
+    collected.push(...normalized);
+    if (normalized.length < chunkSize) break;
+    startLine += normalized.length;
+  }
+
+  return {
+    content: collected.join('\n'),
+    version,
+  };
+}
+
 // --- Diff parsing (shared via diff-utils) ---
 
 // --- Execution ---
@@ -429,7 +480,7 @@ export async function executeSandboxToolCall(
     switch (call.tool) {
       case 'sandbox_exec': {
         const start = Date.now();
-        const result = await execInSandbox(sandboxId, call.args.command, call.args.workdir);
+        const result = await execInSandbox(sandboxId, call.args.command, normalizeSandboxWorkdir(call.args.workdir));
         const durationMs = Date.now() - start;
 
         const lines: string[] = [
@@ -584,7 +635,7 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_search': {
         const query = call.args.query.trim();
-        const searchPath = (call.args.path || '/workspace').trim() || '/workspace';
+        const searchPath = normalizeSandboxPath((call.args.path || '/workspace').trim() || '/workspace');
 
         if (!query) {
           return { text: '[Tool Error] sandbox_search requires a non-empty query.' };
@@ -641,7 +692,7 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_list_dir': {
-        const dirPath = call.args.path || '/workspace';
+        const dirPath = normalizeSandboxPath(call.args.path || '/workspace');
         const entries = await listDirectory(sandboxId, dirPath);
 
         const dirs = entries.filter((e) => e.type === 'directory');
@@ -676,10 +727,20 @@ export async function executeSandboxToolCall(
         const { path, edits, expected_version } = call.args;
 
         // 1. Read the current file content
-        const readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        let readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
         if (readResult.error) {
           const err = classifyError(readResult.error, path);
           return { text: formatStructuredError(err, formatSandboxError(readResult.error, path)), structuredError: err };
+        }
+
+        if (readResult.truncated) {
+          const expanded = await readFullFileByChunks(sandboxId, path, readResult.version);
+          readResult = {
+            ...readResult,
+            content: expanded.content,
+            truncated: false,
+            version: expanded.version ?? readResult.version,
+          };
         }
 
         // 2. Apply hashline edits
@@ -756,14 +817,24 @@ export async function executeSandboxToolCall(
             const autoReadResult = await readFromSandbox(sandboxId, call.args.path) as FileReadResult & { error?: string };
             if (!autoReadResult.error && autoReadResult.content !== undefined) {
               // Record the auto-read in the ledger
-              const autoLineCount = autoReadResult.content.split('\n').length;
+              let autoReadContent = autoReadResult.content;
+              let autoReadVersion = autoReadResult.version;
+              let autoReadTruncated = Boolean(autoReadResult.truncated);
+              if (autoReadTruncated) {
+                const expanded = await readFullFileByChunks(sandboxId, call.args.path, autoReadResult.version);
+                autoReadContent = expanded.content;
+                autoReadVersion = expanded.version ?? autoReadVersion;
+                autoReadTruncated = false;
+              }
+
+              const autoLineCount = autoReadContent.split('\n').length;
               fileLedger.recordRead(call.args.path, {
-                truncated: Boolean(autoReadResult.truncated),
+                truncated: autoReadTruncated,
                 totalLines: autoLineCount,
               });
               // Update version cache
-              if (typeof autoReadResult.version === 'string' && autoReadResult.version) {
-                sandboxFileVersions.set(cacheKey, autoReadResult.version);
+              if (typeof autoReadVersion === 'string' && autoReadVersion) {
+                sandboxFileVersions.set(cacheKey, autoReadVersion);
               }
               fileLedger.recordAutoExpandSuccess();
               console.debug(`[edit-guard] Auto-expanded "${call.args.path}" (${autoLineCount} lines) — proceeding with write.`);
@@ -1473,7 +1544,7 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_download': {
-        const archivePath = call.args.path || '/workspace';
+        const archivePath = normalizeSandboxPath(call.args.path || '/workspace');
         const result = await downloadFromSandbox(sandboxId, archivePath);
 
         if (!result.ok || !result.archiveBase64) {
