@@ -11,6 +11,8 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 import { createTheme } from './tui-theme.mjs';
+import { renderStatusBar, renderKeybindHints, getCompactGitStatus, estimateTokens } from './tui-status.mjs';
+import { filterSessions } from './tui-fuzzy.mjs';
 import { parseKey, createKeybindMap, createComposer, createInputHistory } from './tui-input.mjs';
 import {
   ESC, getTermSize, visibleWidth, truncate, wordWrap, padTo,
@@ -38,6 +40,8 @@ function createTUIState() {
     runState: 'idle',
     // Transcript: array of { role, text, timestamp }
     transcript: [],
+    transcriptVersion: 0,
+    transcriptRenderCache: null, // { key, lines, payloadBlocks }
     // Streaming token accumulator (for in-progress assistant response)
     streamBuf: '',
     // Tool feed: array of { type: 'call'|'result', name, args?, duration?, error?, preview?, timestamp }
@@ -69,6 +73,8 @@ function createTUIState() {
     scrollOffset: 0,
     // Dirty flags for selective re-render
     dirty: new Set(['all']),
+    // Git status for status bar
+    gitStatus: null,  // { branch, dirty, ahead, behind }
   };
 }
 
@@ -76,13 +82,23 @@ function createTUIState() {
 
 const DEFAULT_COMPACT_TURNS = 6;
 
-function addTranscriptEntry(tuiState, role, text) {
-  tuiState.transcript.push({ role, text, timestamp: Date.now() });
+function invalidateTranscriptRenderCache(tuiState) {
+  tuiState.transcriptVersion = (tuiState.transcriptVersion || 0) + 1;
+  tuiState.transcriptRenderCache = null;
+}
+
+function pushTranscriptEntry(tuiState, entry, { autoScroll = true } = {}) {
+  tuiState.transcript.push(entry);
   if (tuiState.transcript.length > MAX_TRANSCRIPT) {
     tuiState.transcript.splice(0, tuiState.transcript.length - MAX_TRANSCRIPT);
   }
-  tuiState.scrollOffset = 0; // auto-scroll to bottom on new content
+  invalidateTranscriptRenderCache(tuiState);
+  if (autoScroll) tuiState.scrollOffset = 0;
   tuiState.dirty.add('transcript');
+}
+
+function addTranscriptEntry(tuiState, role, text) {
+  pushTranscriptEntry(tuiState, { role, text, timestamp: Date.now() });
 }
 
 function addToolFeedEntry(tuiState, entry) {
@@ -379,100 +395,131 @@ function renderTranscript(buf, layout, theme, tuiState) {
   const { top, left, width, height } = layout.transcript;
   const { glyphs } = theme;
 
-  // Build visible lines from transcript (bottom-aligned)
-  const visibleLines = [];
-  const payloadBlocks = [];
-  const payloadUI = {
-    blocks: payloadBlocks,
-    cursorId: tuiState.payloadCursorId,
-    expandedIds: tuiState.expandedToolJsonPayloadIds,
-    inspectorOpen: tuiState.payloadInspectorOpen,
-  };
+  const expandedPayloadIdsKey = tuiState.toolJsonPayloadsExpanded
+    ? 'all'
+    : Array.from(tuiState.expandedToolJsonPayloadIds).sort().join('|');
+  const transcriptCacheKey = [
+    width,
+    tuiState.transcriptVersion,
+    tuiState.toolJsonPayloadsExpanded ? 1 : 0,
+    tuiState.payloadInspectorOpen ? 1 : 0,
+    tuiState.payloadCursorId || '',
+    expandedPayloadIdsKey,
+  ].join('::');
 
-  for (let entryIndex = 0; entryIndex < tuiState.transcript.length; entryIndex++) {
-    const entry = tuiState.transcript[entryIndex];
-    if (entry.role === 'user') {
-      const prefix = makeBadge(theme, 'YOU', { fg: 'bg.base', bg: 'accent.secondary' }) + ' ';
-      const nextPrefix = ' '.repeat(Math.max(2, visibleWidth(prefix)));
-      const wrapped = wordWrap(entry.text, Math.max(1, width - visibleWidth(prefix)));
-      for (let i = 0; i < wrapped.length; i++) {
-        visibleLines.push(i === 0
-          ? prefix + theme.style('fg.primary', wrapped[i])
-          : nextPrefix + theme.style('fg.primary', wrapped[i]));
+  let cached = tuiState.transcriptRenderCache;
+  if (!cached || cached.key !== transcriptCacheKey) {
+    // Build per-entry rendered blocks and cache them. This lets us only
+    // assemble the visible window on each frame.
+    const entryBlocks = [];
+    let totalLines = 0;
+
+    for (let entryIndex = 0; entryIndex < tuiState.transcript.length; entryIndex++) {
+      const entry = tuiState.transcript[entryIndex];
+      const entryLines = [];
+      const localPayloadBlocks = [];
+      const payloadUI = {
+        blocks: localPayloadBlocks,
+        cursorId: tuiState.payloadCursorId,
+        expandedIds: tuiState.expandedToolJsonPayloadIds,
+        inspectorOpen: tuiState.payloadInspectorOpen,
+      };
+
+      if (entry.role === 'user') {
+        const prefix = makeBadge(theme, 'YOU', { fg: 'bg.base', bg: 'accent.secondary' }) + ' ';
+        const nextPrefix = ' '.repeat(Math.max(2, visibleWidth(prefix)));
+        const wrapped = wordWrap(entry.text, Math.max(1, width - visibleWidth(prefix)));
+        for (let i = 0; i < wrapped.length; i++) {
+          entryLines.push(i === 0
+            ? prefix + theme.style('fg.primary', wrapped[i])
+            : nextPrefix + theme.style('fg.primary', wrapped[i]));
+        }
+      } else if (entry.role === 'assistant') {
+        renderAssistantEntryLines(entryLines, entry.text, width, theme, {
+          expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
+          entryKey: `${entry.timestamp ?? 0}:${entryIndex}`,
+          payloadUI,
+        });
+      } else if (entry.role === 'tool_call') {
+        const pending = entry.error !== true && !entry.duration;
+        const status = pending
+          ? theme.style('accent.secondary', '…')
+          : entry.error
+            ? theme.style('state.error', glyphs.cross_mark || 'ERR')
+            : theme.style('state.success', glyphs.check || 'OK');
+        const badge = makeBadge(theme, 'TOOL', { fg: 'bg.base', bg: 'border.hover', bold: false });
+        const dur = entry.duration ? theme.style('fg.dim', ` ${entry.duration}ms`) : '';
+        const prefix = `${badge} `;
+        const base = `${status} ${entry.text}${dur}`;
+        pushWrappedLines(entryLines, base, width, {
+          firstPrefix: prefix,
+          nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
+          styleFn: (s) => theme.style('fg.secondary', s),
+        });
+      } else if (entry.role === 'status') {
+        const badge = makeBadge(theme, 'INFO', { fg: 'bg.base', bg: 'border.default', bold: false });
+        const prefix = `${badge} `;
+        pushWrappedLines(entryLines, entry.text, width, {
+          firstPrefix: prefix,
+          nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
+          styleFn: (s) => theme.style('fg.dim', s),
+        });
+      } else if (entry.role === 'error') {
+        const badge = makeBadge(theme, 'ERR', { fg: 'fg.primary', bg: 'state.error' });
+        const prefix = `${badge} `;
+        pushWrappedLines(entryLines, entry.text, width, {
+          firstPrefix: prefix,
+          nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
+          styleFn: (s) => theme.style('state.error', s),
+        });
+      } else if (entry.role === 'warning') {
+        const badge = makeBadge(theme, 'WARN', { fg: 'bg.base', bg: 'state.warn' });
+        const prefix = `${badge} `;
+        pushWrappedLines(entryLines, entry.text, width, {
+          firstPrefix: prefix,
+          nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
+          styleFn: (s) => theme.style('state.warn', s),
+        });
+      } else if (entry.role === 'reasoning') {
+        entryLines.push(
+          `${makeBadge(theme, 'THINK', { fg: 'bg.base', bg: 'border.default', bold: false })} ` +
+          theme.style('fg.dim', 'thinking')
+        );
+
+      } else if (entry.role === 'verdict') {
+        const isApproved = entry.verdict === 'APPROVED';
+        const icon = isApproved ? glyphs.check : glyphs.cross_mark;
+        const label = isApproved
+          ? makeBadge(theme, `${icon} APPROVED`, { fg: 'fg.primary', bg: 'state.success' })
+          : makeBadge(theme, `${icon} DENIED`, { fg: 'fg.primary', bg: 'state.error' });
+        const kindStr = entry.kind ? theme.style('fg.dim', ` ${entry.kind}`) : '';
+        const summaryStr = entry.summary
+          ? theme.style('fg.muted', '  ' + truncate(entry.summary, width - 20))
+          : '';
+        entryLines.push(`  ${label}${kindStr}${summaryStr}`);
+
+      } else if (entry.role === 'divider') {
+        entryLines.push(theme.style('fg.dim', glyphs.horizontal.repeat(Math.min(width, 40))));
       }
-    } else if (entry.role === 'assistant') {
-      renderAssistantEntryLines(visibleLines, entry.text, width, theme, {
-        expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
-        entryKey: `${entry.timestamp ?? 0}:${entryIndex}`,
-        payloadUI,
-      });
-    } else if (entry.role === 'tool_call') {
-      const pending = entry.error !== true && !entry.duration;
-      const status = pending
-        ? theme.style('accent.secondary', '…')
-        : entry.error
-          ? theme.style('state.error', glyphs.cross_mark || 'ERR')
-          : theme.style('state.success', glyphs.check || 'OK');
-      const badge = makeBadge(theme, 'TOOL', { fg: 'bg.base', bg: 'border.hover', bold: false });
-      const dur = entry.duration ? theme.style('fg.dim', ` ${entry.duration}ms`) : '';
-      const prefix = `${badge} `;
-      const base = `${status} ${entry.text}${dur}`;
-      pushWrappedLines(visibleLines, base, width, {
-        firstPrefix: prefix,
-        nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-        styleFn: (s) => theme.style('fg.secondary', s),
-      });
-    } else if (entry.role === 'status') {
-      const badge = makeBadge(theme, 'INFO', { fg: 'bg.base', bg: 'border.default', bold: false });
-      const prefix = `${badge} `;
-      pushWrappedLines(visibleLines, entry.text, width, {
-        firstPrefix: prefix,
-        nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-        styleFn: (s) => theme.style('fg.dim', s),
-      });
-    } else if (entry.role === 'error') {
-      const badge = makeBadge(theme, 'ERR', { fg: 'fg.primary', bg: 'state.error' });
-      const prefix = `${badge} `;
-      pushWrappedLines(visibleLines, entry.text, width, {
-        firstPrefix: prefix,
-        nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-        styleFn: (s) => theme.style('state.error', s),
-      });
-    } else if (entry.role === 'warning') {
-      const badge = makeBadge(theme, 'WARN', { fg: 'bg.base', bg: 'state.warn' });
-      const prefix = `${badge} `;
-      pushWrappedLines(visibleLines, entry.text, width, {
-        firstPrefix: prefix,
-        nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-        styleFn: (s) => theme.style('state.warn', s),
-      });
-    } else if (entry.role === 'reasoning') {
-      // Compact dim marker — full content available in Ctrl+G modal
-      visibleLines.push(
-        `${makeBadge(theme, 'THINK', { fg: 'bg.base', bg: 'border.default', bold: false })} ` +
-        theme.style('fg.dim', 'thinking')
-      );
 
-    } else if (entry.role === 'verdict') {
-      const isApproved = entry.verdict === 'APPROVED';
-      const icon = isApproved ? glyphs.check : glyphs.cross_mark;
-      const label = isApproved
-        ? makeBadge(theme, `${icon} APPROVED`, { fg: 'fg.primary', bg: 'state.success' })
-        : makeBadge(theme, `${icon} DENIED`, { fg: 'fg.primary', bg: 'state.error' });
-      const kindStr = entry.kind ? theme.style('fg.dim', ` ${entry.kind}`) : '';
-      const summaryStr = entry.summary
-        ? theme.style('fg.muted', '  ' + truncate(entry.summary, width - 20))
-        : '';
-      visibleLines.push(`  ${label}${kindStr}${summaryStr}`);
-
-    } else if (entry.role === 'divider') {
-      visibleLines.push(theme.style('fg.dim', glyphs.horizontal.repeat(Math.min(width, 40))));
+      const block = {
+        lineCount: entryLines.length,
+        lines: entryLines,
+        payloadBlocks: localPayloadBlocks,
+      };
+      entryBlocks.push(block);
+      totalLines += block.lineCount;
     }
+
+    cached = { key: transcriptCacheKey, entryBlocks, totalLines };
+    tuiState.transcriptRenderCache = cached;
   }
+
+  const streamingLines = [];
 
   // Add streaming buffer if assistant is currently streaming
   if (tuiState.streamBuf) {
-    renderAssistantEntryLines(visibleLines, tuiState.streamBuf, width, theme, {
+    renderAssistantEntryLines(streamingLines, tuiState.streamBuf, width, theme, {
       streaming: true,
       expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
       payloadUI: null,
@@ -480,14 +527,51 @@ function renderTranscript(buf, layout, theme, tuiState) {
   }
 
   // Take the last `height` lines (scroll to bottom), adjusted by scrollOffset
-  const maxScroll = Math.max(0, visibleLines.length - height);
+  const totalLineCount = (cached.totalLines || 0) + streamingLines.length;
+  const maxScroll = Math.max(0, totalLineCount - height);
   const effectiveOffset = Math.min(tuiState.scrollOffset, maxScroll);
   const startIdx = Math.max(0, maxScroll - effectiveOffset);
-  const slice = visibleLines.slice(startIdx, startIdx + height);
+  const endIdxExclusive = startIdx + height;
 
-  for (const block of payloadBlocks) {
-    block.visible = block.endLine >= startIdx && block.startLine < (startIdx + height);
+  const slice = [];
+  const payloadBlocks = [];
+  let cursor = 0;
+  for (const block of cached.entryBlocks || []) {
+    const blockStart = cursor;
+    const blockEnd = blockStart + block.lineCount;
+    cursor = blockEnd;
+
+    if (block.lineCount === 0) continue;
+    if (blockEnd <= startIdx || blockStart >= endIdxExclusive) continue;
+
+    const localStart = Math.max(0, startIdx - blockStart);
+    const localEnd = Math.min(block.lineCount, endIdxExclusive - blockStart);
+    for (let i = localStart; i < localEnd; i++) {
+      slice.push(block.lines[i]);
+    }
+
+    for (const pb of block.payloadBlocks || []) {
+      const startLine = blockStart + pb.startLine;
+      const endLine = blockStart + pb.endLine;
+      payloadBlocks.push({
+        ...pb,
+        startLine,
+        endLine,
+        visible: endLine >= startIdx && startLine < endIdxExclusive,
+      });
+    }
   }
+
+  const streamingStart = cached.totalLines || 0;
+  const streamingEnd = streamingStart + streamingLines.length;
+  if (streamingEnd > startIdx && streamingStart < endIdxExclusive) {
+    const localStart = Math.max(0, startIdx - streamingStart);
+    const localEnd = Math.min(streamingLines.length, endIdxExclusive - streamingStart);
+    for (let i = localStart; i < localEnd; i++) {
+      slice.push(streamingLines[i]);
+    }
+  }
+
   tuiState.payloadBlocks = payloadBlocks;
   if (tuiState.payloadCursorId && !payloadBlocks.some((b) => b.id === tuiState.payloadCursorId)) {
     tuiState.payloadCursorId = null;
@@ -622,60 +706,6 @@ function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
       buf.writeLine(contentTop + r, left, ' '.repeat(width));
     }
   }
-}
-
-function renderFooter(buf, layout, theme, tuiState, keybindHints) {
-  const { top, left, width } = layout.footer;
-
-  // Left: keybind hints
-  let leftHints;
-  if (tuiState.runState === 'awaiting_approval') {
-    leftHints = [
-      theme.style('accent.link', 'Ctrl+Y / y') + theme.style('fg.dim', ' approve'),
-      theme.style('accent.link', 'a') + theme.style('fg.dim', ' always'),
-      theme.style('accent.link', 'Ctrl+N / n') + theme.style('fg.dim', ' deny'),
-      theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' dismiss'),
-    ].join('  ');
-  } else if (tuiState.runState === 'awaiting_user_question') {
-    leftHints = [
-      theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' submit answer'),
-      theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' skip'),
-    ].join('  ');
-  } else if (tuiState.payloadInspectorOpen) {
-    leftHints = [
-      theme.style('accent.link', 'j/k,↑↓') + theme.style('fg.dim', ' move'),
-      theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' toggle'),
-      theme.style('accent.link', 'a') + theme.style('fg.dim', tuiState.toolJsonPayloadsExpanded ? ' all:expanded' : ' all:collapsed'),
-      theme.style('accent.link', 'Esc / Ctrl+O') + theme.style('fg.dim', ' close'),
-    ].join('  ');
-  } else {
-    leftHints = [
-      theme.style('accent.link', 'Ctrl+T') + theme.style('fg.dim', ' tools'),
-      theme.style('accent.link', 'Ctrl+O') + theme.style('fg.dim', ' payloads'),
-      theme.style('accent.link', 'Ctrl+G') + theme.style('fg.dim', ' reasoning'),
-      theme.style('accent.link', 'Ctrl+C') + theme.style('fg.dim', ' cancel'),
-      theme.style('accent.link', 'Ctrl+P') + theme.style('fg.dim', ' provider'),
-    ].join('  ');
-  }
-
-  // Right: state indicator
-  const stateLabel = tuiState.runState === 'running'
-    ? theme.style('state.warn', 'running')
-    : tuiState.runState === 'awaiting_approval'
-      ? theme.style('state.error', 'awaiting approval')
-      : tuiState.runState === 'awaiting_user_question'
-        ? theme.style('accent.primary', 'awaiting answer')
-        : tuiState.payloadInspectorOpen
-          ? theme.style('accent.secondary', 'payload inspect')
-        : theme.style('state.success', 'idle');
-
-  // Layout left/right
-  const rightWidth = visibleWidth(stateLabel);
-  const leftWidth = width - rightWidth - 2;
-  const leftStr = truncate(leftHints, leftWidth);
-  const rightStr = stateLabel;
-
-  buf.writeLine(top, left, padTo(leftStr, leftWidth) + '  ' + rightStr);
 }
 
 function renderApprovalModal(buf, theme, rows, cols, approval) {
@@ -928,93 +958,170 @@ function formatRelativeTime(ts) {
 
 function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId) {
   const { glyphs } = theme;
-  const modalWidth = Math.min(92, cols - 8);
-  const listHeight = Math.max(6, Math.min(12, rows - 18));
-
-  const lines = [
-    theme.bold(theme.style('fg.primary', '  Resume Session')),
-    '',
-  ];
-
-    const isRenameMode = modalState?.mode === 'rename';
+  
+  // Two-column layout: sessions list + preview
+  const totalWidth = Math.min(140, cols - 4);
+  const listWidth = Math.floor(totalWidth * 0.55);
+  const previewWidth = totalWidth - listWidth - 1; // -1 for divider
+  const listHeight = Math.max(8, Math.min(16, rows - 12));
+  const totalHeight = listHeight + 8; // + header + filter + hints + borders
+  
+  const modalTop = Math.max(2, Math.floor((rows - totalHeight) / 2));
+  const modalLeft = Math.floor((cols - totalWidth) / 2);
+  
+  const isRenameMode = modalState?.mode === 'rename';
+  const isFilterMode = modalState?.mode === 'filter';
+  
+  // Helper to draw the list side
+  function renderList() {
+    const lines = [theme.bold(theme.style('fg.primary', '  Resume Session'))];
+    
+    // Filter bar
+    if (isFilterMode) {
+      const filterText = modalState.filterBuf || '';
+      const filterDisplay = filterText || theme.style('fg.dim', 'type to filter...');
+      lines.push(`  ${theme.style('accent.primary', '/')} ${filterDisplay}`);
+    } else {
+      const filterHint = modalState?.filterBuf 
+        ? `${theme.style('accent.primary', 'filter:')} ${truncate(modalState.filterBuf, listWidth - 20)}`
+        : theme.style('fg.dim', '  Press / to filter');
+      lines.push(filterHint);
+    }
+    lines.push(theme.style('fg.dim', glyphs.horizontal.repeat(listWidth - 4)));
+    
     if (!modalState || modalState.loading) {
-    lines.push(`  ${theme.style('fg.dim', 'Loading resumable sessions...')}`);
-  } else if (modalState.error) {
-    lines.push(`  ${theme.style('state.error', modalState.error)}`);
-  } else if (!Array.isArray(modalState.rows) || modalState.rows.length === 0) {
-    lines.push(`  ${theme.style('fg.dim', 'No resumable sessions found.')}`);
-  } else {
-    const count = modalState.rows.length;
-    let start = 0;
-    if (count > listHeight) {
-      start = Math.max(0, modalState.cursor - Math.floor(listHeight / 2));
-      start = Math.min(start, count - listHeight);
-    }
-    const end = Math.min(count, start + listHeight);
-
-    for (let i = start; i < end; i++) {
-      const row = modalState.rows[i];
-      const isCursor = i === modalState.cursor;
-      const isCurrent = row.sessionId === currentSessionId;
-      const marker = isCursor ? theme.style('accent.primary', glyphs.prompt) : ' ';
-      const num = padTo(`${i + 1}.`, 4);
-      const primaryRaw = row.sessionName || row.sessionId;
-      const primaryText = truncate(primaryRaw, Math.max(16, modalWidth - 42));
-      const primary = isCursor
-        ? theme.style('accent.primary', primaryText)
-        : theme.style('fg.primary', primaryText);
-      const currentTag = isCurrent ? theme.style('fg.dim', ' (current)') : '';
-      const deleteTag = modalState.confirmDeleteId === row.sessionId
-        ? theme.style('state.warn', ' [delete?]')
-        : '';
-      const renameTag = modalState.mode === 'rename' && modalState.renameTargetId === row.sessionId
-        ? theme.style('accent.primary', ' [rename]')
-        : '';
-      const meta = truncate(
-        `${row.provider}/${row.model} · ${path.basename(row.cwd || '.') || '.'} · ${formatRelativeTime(row.updatedAt)}`,
-        Math.max(12, modalWidth - 16),
-      );
-      lines.push(`  ${marker} ${num} ${primary}${currentTag}${deleteTag}${renameTag}`);
-      lines.push(`      ${theme.style('fg.dim', meta)}`);
-    }
-    if (end < count) {
-      lines.push(`  ${theme.style('fg.dim', `... ${count - end} more`)}`);
-    }
-    lines.push('');
-
-    const selected = modalState.rows[modalState.cursor];
-    if (selected) {
-      const selectedName = selected.sessionName ? `name: ${selected.sessionName} · ` : '';
-      lines.push(`  ${theme.style('fg.muted', `${selectedName}id: ${selected.sessionId}`)}`);
-      lines.push(`  ${theme.style('fg.dim', truncate(selected.cwd || '.', modalWidth - 4))}`);
-      if (isRenameMode && modalState.renameTargetId === selected.sessionId) {
-        lines.push('');
-        lines.push(`  ${theme.style('fg.muted', 'Rename (empty = clear):')}`);
-        const inputWidth = modalWidth - 8;
-        const inputDisplay = modalState.renameBuf || '';
-        const shown = inputDisplay
-          ? truncate(inputDisplay, inputWidth)
-          : theme.style('fg.dim', '_'.repeat(Math.min(36, inputWidth)));
-        lines.push(`  ${theme.style('accent.primary', '\u203A')} ${shown}`);
+      lines.push(`  ${theme.style('fg.dim', 'Loading...')}`);
+    } else if (modalState.error) {
+      lines.push(`  ${theme.style('state.error', modalState.error)}`);
+    } else if (!Array.isArray(modalState.filteredRows) || modalState.filteredRows.length === 0) {
+      lines.push(`  ${theme.style('fg.dim', modalState.filterBuf ? 'No matching sessions.' : 'No resumable sessions.')}`);
+    } else {
+      const count = modalState.filteredRows.length;
+      let start = 0;
+      if (count > listHeight - 3) {
+        start = Math.max(0, modalState.cursor - Math.floor((listHeight - 3) / 2));
+        start = Math.min(start, count - (listHeight - 3));
+      }
+      const end = Math.min(count, start + listHeight - 3);
+      
+      for (let i = start; i < end; i++) {
+        const row = modalState.filteredRows[i].item;
+        const isCursor = i === modalState.cursor;
+        const isCurrent = row.sessionId === currentSessionId;
+        const marker = isCursor ? theme.style('accent.primary', glyphs.prompt) : ' ';
+        const num = padTo(`${i + 1}.`, 4);
+        const primaryRaw = row.sessionName || row.sessionId.slice(0, 20);
+        const primaryText = truncate(primaryRaw, Math.max(12, listWidth - 30));
+        const primary = isCursor
+          ? theme.style('accent.primary', primaryText)
+          : theme.style('fg.primary', primaryText);
+        const currentTag = isCurrent ? theme.style('state.success', ' ●') : '';
+        const deleteTag = modalState.confirmDeleteId === row.sessionId
+          ? theme.style('state.warn', ' [del?]')
+          : '';
+        const renameTag = isRenameMode && modalState.renameTargetId === row.sessionId
+          ? theme.style('accent.secondary', ' [ren]')
+          : '';
+        lines.push(` ${marker} ${num}${primary}${currentTag}${deleteTag}${renameTag}`);
+        
+        const meta = truncate(
+          `${row.provider}/${row.model} · ${formatRelativeTime(row.updatedAt)}`,
+          listWidth - 10,
+        );
+        lines.push(`      ${theme.style('fg.dim', meta)}`);
+      }
+      if (end < count) {
+        lines.push(`  ${theme.style('fg.dim', `... ${count - end} more`)}`);
       }
     }
+    
+    // Fill remaining space
+    while (lines.length < listHeight + 3) {
+      lines.push('');
+    }
+    
+    return lines;
   }
-
-  lines.push('');
+  
+  // Helper to draw the preview side
+  function renderPreview() {
+    const lines = [theme.bold(theme.style('fg.primary', '  Preview'))];
+    lines.push(theme.style('fg.dim', glyphs.horizontal.repeat(previewWidth - 4)));
+    
+    const selected = modalState?.filteredRows?.[modalState?.cursor]?.item;
+    
+    if (!selected) {
+      lines.push(`  ${theme.style('fg.dim', 'Select a session to preview')}`);
+    } else if (modalState?.preview?.loading) {
+      lines.push(`  ${theme.style('fg.dim', 'Loading preview...')}`);
+    } else if (modalState?.preview?.error) {
+      lines.push(`  ${theme.style('state.error', modalState.preview.error)}`);
+    } else if (!modalState?.preview?.messages?.length) {
+      lines.push(`  ${theme.style('fg.dim', 'No messages in session')}`);
+    } else {
+      const msgs = modalState.preview.messages.slice(-4);
+      for (const msg of msgs) {
+        const role = msg.role === 'user' ? theme.style('accent.secondary', 'You:') : theme.style('accent.primary', 'AI:');
+        const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+        const preview = truncate(content.replace(/\n/g, ' '), previewWidth - 10);
+        lines.push(`  ${role} ${theme.style('fg.secondary', preview)}`);
+      }
+    }
+    
+    // Session details section
+    if (selected) {
+      lines.push('');
+      lines.push(theme.style('fg.dim', glyphs.horizontal.repeat(previewWidth - 4)));
+      lines.push(`  ${theme.style('fg.muted', 'ID:')} ${theme.style('fg.secondary', selected.sessionId)}`);
+      if (selected.sessionName) {
+        lines.push(`  ${theme.style('fg.muted', 'Name:')} ${theme.style('fg.primary', selected.sessionName)}`);
+      }
+      lines.push(`  ${theme.style('fg.muted', 'Path:')} ${theme.style('fg.secondary', truncate(selected.cwd || '.', previewWidth - 12))}`);
+      lines.push(`  ${theme.style('fg.muted', 'Model:')} ${theme.style('fg.secondary', `${selected.provider}/${selected.model}`)}`);
+    }
+    
+    // Fill remaining space
+    while (lines.length < listHeight + 3) {
+      lines.push('');
+    }
+    
+    return lines;
+  }
+  
+  // Draw both sides
+  const listLines = renderList();
+  const previewLines = renderPreview();
+  
+  const combinedLines = [];
+  for (let i = 0; i < Math.max(listLines.length, previewLines.length); i++) {
+    const left = padTo(listLines[i] || '', listWidth);
+    const divider = theme.style('fg.dim', i === 0 ? '┬' : i === Math.max(listLines.length, previewLines.length) - 1 ? '┴' : '│');
+    const right = previewLines[i] || '';
+    combinedLines.push(left + divider + right);
+  }
+  
+  // Add hints at the bottom
+  combinedLines.push(theme.style('fg.dim', glyphs.horizontal.repeat(totalWidth)));
   if (isRenameMode) {
-    lines.push(`  ${theme.style('accent.primary', 'Enter')} save  ${theme.style('accent.primary', 'Esc')} cancel  ${theme.style('fg.dim', 'Backspace/Delete edit')}`);
+    combinedLines.push(`  ${theme.style('accent.primary', 'Enter')} save  ${theme.style('accent.primary', 'Esc')} cancel  ${theme.style('fg.dim', 'Type to rename')}`);
+  } else if (isFilterMode) {
+    combinedLines.push(`  ${theme.style('accent.primary', 'Enter')} apply filter  ${theme.style('accent.primary', 'Esc')} clear  ${theme.style('fg.dim', 'Type to search')}`);
   } else if (modalState?.confirmDeleteId) {
-    lines.push(`  ${theme.style('state.warn', 'Delete selected session? Enter or D to confirm · Esc to cancel')}`);
-    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 change selection (cancels delete)  1-9 quick pick')}`);
+    combinedLines.push(`  ${theme.style('state.warn', 'Enter/D to confirm delete · Esc to cancel')}`);
   } else {
-    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter resume  R rename  D delete  Esc close  1-9 quick pick')}`);
+    const hints = [
+      theme.style('accent.link', '↑↓') + theme.style('fg.dim', ' nav '),
+      theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' resume '),
+      theme.style('accent.link', '/') + theme.style('fg.dim', ' filter '),
+      theme.style('accent.link', 'R') + theme.style('fg.dim', ' rename '),
+      theme.style('accent.link', 'D') + theme.style('fg.dim', ' delete '),
+      theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' close'),
+    ].join(' ');
+    combinedLines.push(`  ${hints}`);
   }
-
-  const modalHeight = lines.length + 2;
-  const modalTop = Math.floor((rows - modalHeight) / 2);
-  const modalLeft = Math.floor((cols - modalWidth) / 2);
-
-  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
+  
+  // Draw the box
+  const boxLines = drawBox(combinedLines, totalWidth, glyphs, theme);
   for (let i = 0; i < boxLines.length; i++) {
     buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
   }
@@ -1347,6 +1454,28 @@ export async function runTUI(options = {}) {
     } catch { /* not a git repo */ }
   }
   await refreshBranchLabel();
+  
+  // ── Git status (for status bar) ───────────────────────────────────
+  let scheduler = null;
+  
+  async function refreshGitStatus() {
+    const status = await getCompactGitStatus(state.cwd);
+    if (JSON.stringify(status) !== JSON.stringify(tuiState.gitStatus)) {
+      tuiState.gitStatus = status;
+      tuiState.dirty.add('footer');
+      scheduler?.schedule();
+    }
+  }
+  
+  // Initial git status
+  await refreshGitStatus();
+  
+  // Periodic git status refresh (every 5 seconds)
+  let gitStatusInterval = setInterval(() => {
+    void refreshGitStatus();
+  }, 5000);
+  
+  // Git status will be refreshed periodically and after certain events
 
   // ── Abort controller ─────────────────────────────────────────────
 
@@ -1362,6 +1491,22 @@ export async function runTUI(options = {}) {
   process.stdin.resume();
   process.stdin.setEncoding(null);
 
+  let layoutCache = null; // { key, layout }
+  let renderFrameMeta = {
+    rows: 0,
+    cols: 0,
+    layoutKey: '',
+    hadOverlay: false,
+    tooSmall: false,
+    initialized: false,
+  };
+
+  function getVisibleOverlayKind() {
+    if (tuiState.runState === 'awaiting_approval' && tuiState.approval) return 'approval';
+    if (tuiState.runState === 'awaiting_user_question' && tuiState.userQuestion) return 'question';
+    return getActiveOverlayModal();
+  }
+
   // ── Render function ──────────────────────────────────────────────
 
   function render() {
@@ -1376,68 +1521,126 @@ export async function runTUI(options = {}) {
       const msgCol = Math.max(1, Math.floor((cols - msg.length) / 2) + 1);
       screenBuf.writeLine(msgRow, msgCol, msg);
       screenBuf.flush();
+      renderFrameMeta = { rows, cols, layoutKey: '', hadOverlay: false, tooSmall: true, initialized: true };
       return;
     }
 
-    const layout = computeLayout(rows, cols, {
-      toolPaneOpen: tuiState.toolPaneOpen,
-      composerLines: composer.getLines().length,
-    });
+    const composerLines = composer.getLines().length;
+    const layoutKey = `${rows}x${cols}:${tuiState.toolPaneOpen ? 1 : 0}:${composerLines}`;
+    let layout = layoutCache?.key === layoutKey ? layoutCache.layout : null;
+    if (!layout) {
+      layout = computeLayout(rows, cols, {
+        toolPaneOpen: tuiState.toolPaneOpen,
+        composerLines,
+      });
+      layoutCache = { key: layoutKey, layout };
+    }
 
     screenBuf.clear();
 
-    // Background fill
-    screenBuf.write(theme.bg('bg.base'));
-    screenBuf.write(ESC.clearScreen);
-
-    // Panes
-    renderHeader(screenBuf, layout, theme, {
-      provider: state.provider,
-      model: state.model,
-      session: state.sessionId,
-      cwd: state.cwd,
-      runState: tuiState.runState,
-      branch,
-    });
-
-    // Divider between header and transcript
-    screenBuf.writeLine(
-      layout.header.top + layout.header.height,
-      layout.innerLeft,
-      drawDivider(layout.innerWidth, theme.glyphs, theme)
-    );
-
-    renderTranscript(screenBuf, layout, theme, tuiState);
-    renderToolPane(screenBuf, layout, theme, tuiState);
     // Live-suggest candidates from current composer text (no-op when cycling)
     tabCompleter.suggest(composer.getText());
     const tabState = tabCompleter.isActive()
       ? { hint: tabCompleter.getHint(), candidates: tabCompleter.getState() }
       : null;
-    renderComposer(screenBuf, layout, theme, composer, tuiState, tabState);
-    renderFooter(screenBuf, layout, theme, tuiState);
 
-    // Modals (overlay)
-    if (tuiState.runState === 'awaiting_approval' && tuiState.approval) {
-      renderApprovalModal(screenBuf, theme, rows, cols, tuiState.approval);
+    const overlayKind = getVisibleOverlayKind();
+    const mustFullRedraw =
+      tuiState.dirty.has('all') ||
+      !renderFrameMeta.initialized ||
+      renderFrameMeta.tooSmall ||
+      renderFrameMeta.rows !== rows ||
+      renderFrameMeta.cols !== cols ||
+      renderFrameMeta.layoutKey !== layoutKey ||
+      renderFrameMeta.hadOverlay ||
+      Boolean(overlayKind);
+
+    const renderHeaderRegion = () => {
+      renderHeader(screenBuf, layout, theme, {
+        provider: state.provider,
+        model: state.model,
+        session: state.sessionId,
+        cwd: state.cwd,
+        runState: tuiState.runState,
+        branch,
+      });
+      screenBuf.writeLine(
+        layout.header.top + layout.header.height,
+        layout.innerLeft,
+        drawDivider(layout.innerWidth, theme.glyphs, theme)
+      );
+    };
+
+    const renderFooterRegion = () => {
+      const isStreaming = tuiState.runState === 'running' && tuiState.streamBuf.length > 0;
+      renderStatusBar(screenBuf, layout, theme, {
+        gitStatus: tuiState.gitStatus,
+        cwd: state.cwd,
+        tokens: estimateTokens(state.messages),
+        isStreaming,
+        messageCount: state.messages?.length || 0,
+      });
+      renderKeybindHints(screenBuf, layout, theme, tuiState);
+    };
+
+    if (mustFullRedraw) {
+      // Background fill
+      screenBuf.write(theme.bg('bg.base'));
+      screenBuf.write(ESC.clearScreen);
+
+      renderHeaderRegion();
+      renderTranscript(screenBuf, layout, theme, tuiState);
+      renderToolPane(screenBuf, layout, theme, tuiState);
+      renderComposer(screenBuf, layout, theme, composer, tuiState, tabState);
+      renderFooterRegion();
+    } else {
+      screenBuf.write(theme.bg('bg.base'));
+      if (tuiState.dirty.has('header')) {
+        renderHeaderRegion();
+      }
+      if (tuiState.dirty.has('transcript')) {
+        renderTranscript(screenBuf, layout, theme, tuiState);
+      }
+      if (tuiState.dirty.has('tools')) {
+        renderToolPane(screenBuf, layout, theme, tuiState);
+      }
+      if (tuiState.dirty.has('composer')) {
+        renderComposer(screenBuf, layout, theme, composer, tuiState, tabState);
+      }
+      if (tuiState.dirty.has('footer')) {
+        renderFooterRegion();
+      }
     }
-    if (tuiState.runState === 'awaiting_user_question' && tuiState.userQuestion) {
-      renderQuestionModal(screenBuf, theme, rows, cols, tuiState.userQuestion, questionInputBuf);
-    }
-    if (tuiState.reasoningModalOpen) {
-      renderReasoningModal(screenBuf, theme, rows, cols, tuiState);
-    }
-    if (tuiState.providerModalOpen) {
-      renderProviderModal(screenBuf, theme, rows, cols, state.provider, state.model, tuiState.providerModalCursor);
-    }
-    if (tuiState.resumeModalOpen && tuiState.resumeModalState) {
-      renderResumeModal(screenBuf, theme, rows, cols, tuiState.resumeModalState, state.sessionId);
-    }
-    if (tuiState.modelModalOpen && tuiState.modelModalState) {
-      renderModelModal(screenBuf, theme, rows, cols, tuiState.modelModalState, state.model);
-    }
-    if (tuiState.configModalOpen && tuiState.configModalState) {
-      renderConfigModal(screenBuf, theme, rows, cols, tuiState.configModalState, config);
+
+    // Overlays (approval/question are run-state overlays; others are UI overlays)
+    switch (overlayKind) {
+      case 'approval':
+        renderApprovalModal(screenBuf, theme, rows, cols, tuiState.approval);
+        break;
+      case 'question':
+        renderQuestionModal(screenBuf, theme, rows, cols, tuiState.userQuestion, questionInputBuf);
+        break;
+      case 'reasoning':
+        renderReasoningModal(screenBuf, theme, rows, cols, tuiState);
+        break;
+      case 'provider':
+        renderProviderModal(screenBuf, theme, rows, cols, state.provider, state.model, tuiState.providerModalCursor);
+        break;
+      case 'resume':
+        if (tuiState.resumeModalState) {
+          renderResumeModal(screenBuf, theme, rows, cols, tuiState.resumeModalState, state.sessionId);
+        }
+        break;
+      case 'model':
+        if (tuiState.modelModalState) {
+          renderModelModal(screenBuf, theme, rows, cols, tuiState.modelModalState, state.model);
+        }
+        break;
+      case 'config':
+        if (tuiState.configModalState) {
+          renderConfigModal(screenBuf, theme, rows, cols, tuiState.configModalState, config);
+        }
+        break;
     }
 
     // Position cursor in composer (offset by 1 if candidates bar is visible)
@@ -1458,9 +1661,17 @@ export async function runTUI(options = {}) {
     screenBuf.write(theme.RESET);
     screenBuf.flush();
     tuiState.dirty.clear();
+    renderFrameMeta = {
+      rows,
+      cols,
+      layoutKey,
+      hadOverlay: Boolean(overlayKind),
+      tooSmall: false,
+      initialized: true,
+    };
   }
 
-  const scheduler = createRenderScheduler(render);
+  scheduler = createRenderScheduler(render);
 
   // ── Engine event handler ─────────────────────────────────────────
 
@@ -1492,6 +1703,7 @@ export async function runTUI(options = {}) {
         tuiState.streamBuf += event.payload.text;
         tuiState.scrollOffset = 0; // auto-scroll on new tokens
         tuiState.dirty.add('transcript');
+        tuiState.dirty.add('footer'); // LIVE indicator
         scheduler.schedule();
         break;
 
@@ -1500,6 +1712,7 @@ export async function runTUI(options = {}) {
           addTranscriptEntry(tuiState, 'assistant', tuiState.streamBuf);
           tuiState.streamBuf = '';
         }
+        tuiState.dirty.add('footer'); // LIVE indicator clears
         tuiState.reasoningStreaming = false;
         if (tuiState.reasoningBuf.trim()) {
           tuiState.lastReasoning = tuiState.reasoningBuf;
@@ -1513,14 +1726,12 @@ export async function runTUI(options = {}) {
           name: event.payload.toolName,
           args: event.payload.args,
         });
-        addTranscriptEntry(tuiState, 'tool_call', {
+        pushTranscriptEntry(tuiState, {
+          role: 'tool_call',
           text: event.payload.toolName,
           error: false,
+          timestamp: Date.now(),
         });
-        // Override: store as tool_call transcript entry with tool metadata
-        const tc = tuiState.transcript[tuiState.transcript.length - 1];
-        tc.text = event.payload.toolName;
-        tc.role = 'tool_call';
         scheduler.schedule();
         break;
 
@@ -1535,14 +1746,24 @@ export async function runTUI(options = {}) {
           preview: text.slice(0, 100),
         });
         // Update the last tool_call transcript entry with result info
+        let updatedTranscriptToolCall = false;
         for (let i = tuiState.transcript.length - 1; i >= 0; i--) {
           if (tuiState.transcript[i].role === 'tool_call' && tuiState.transcript[i].text === event.payload.toolName) {
             tuiState.transcript[i].error = isError;
             tuiState.transcript[i].duration = event.payload.durationMs;
+            updatedTranscriptToolCall = true;
             break;
           }
         }
+        if (updatedTranscriptToolCall) {
+          invalidateTranscriptRenderCache(tuiState);
+          tuiState.dirty.add('transcript');
+        }
         scheduler.schedule();
+        // Refresh git status after file-modifying operations
+        if (!isError && ['write_file', 'edit_file', 'git_commit', 'exec'].includes(event.payload.toolName)) {
+          setTimeout(() => refreshGitStatus(), 300);
+        }
         break;
       }
 
@@ -1830,25 +2051,22 @@ export async function runTUI(options = {}) {
     tuiState.streamBuf = '';
     tuiState.approval = null;
     approvalResolve = null;
-    tuiState.payloadInspectorOpen = false;
+    setActiveOverlayModal(null);
     tuiState.payloadCursorId = null;
     tuiState.toolJsonPayloadsExpanded = false;
     tuiState.expandedToolJsonPayloadIds = new Set();
     tuiState.payloadBlocks = [];
-    tuiState.reasoningModalOpen = false;
     tuiState.reasoningBuf = '';
     tuiState.lastReasoning = '';
     tuiState.reasoningStreaming = false;
     tuiState.transcript = [];
+    tuiState.transcriptVersion = 0;
+    tuiState.transcriptRenderCache = null;
     tuiState.toolFeed = [];
     tuiState.scrollOffset = 0;
-    tuiState.providerModalOpen = false;
     tuiState.providerModalCursor = 0;
-    tuiState.resumeModalOpen = false;
     tuiState.resumeModalState = null;
-    tuiState.modelModalOpen = false;
     tuiState.modelModalState = null;
-    tuiState.configModalOpen = false;
     tuiState.configModalState = null;
     composer.clear();
     tabCompleter = createCurrentTabCompleter();
@@ -1865,7 +2083,7 @@ export async function runTUI(options = {}) {
 
     if (targetSessionId === state.sessionId) {
       if (closePicker) {
-        tuiState.resumeModalOpen = false;
+        setActiveOverlayModal(null);
         tuiState.resumeModalState = null;
       }
       addTranscriptEntry(tuiState, 'status', `Already on session: ${state.sessionId}`);
@@ -1933,17 +2151,21 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    tuiState.resumeModalOpen = true;
+    setActiveOverlayModal('resume');
     tuiState.resumeModalState = {
       loading: true,
       rows: [],
+      filteredRows: [],
       cursor: 0,
       error: null,
       confirmDeleteId: null,
-      mode: 'list',
+      mode: 'list',  // 'list', 'rename', 'filter'
       renameTargetId: null,
       renameBuf: '',
       renameCursor: 0,
+      filterBuf: '',
+      filterCursor: 0,
+      preview: null,  // { messages: [], loading }
     };
     tuiState.dirty.add('all');
     scheduler.flush();
@@ -1951,9 +2173,10 @@ export async function runTUI(options = {}) {
     try {
       const rows = await listSessions();
       const currentIndex = rows.findIndex((row) => row.sessionId === state.sessionId);
-      tuiState.resumeModalState = {
+      const ms = {
         loading: false,
         rows,
+        filteredRows: rows.map(r => ({ item: r, score: 1 })),
         cursor: currentIndex >= 0 ? currentIndex : 0,
         error: null,
         confirmDeleteId: null,
@@ -1961,11 +2184,18 @@ export async function runTUI(options = {}) {
         renameTargetId: null,
         renameBuf: '',
         renameCursor: 0,
+        filterBuf: '',
+        filterCursor: 0,
+        preview: null,
       };
+      tuiState.resumeModalState = ms;
+      // Load preview for initially selected session
+      await loadSessionPreview(ms);
     } catch (err) {
       tuiState.resumeModalState = {
         loading: false,
         rows: [],
+        filteredRows: [],
         cursor: 0,
         error: `Failed to list sessions: ${formatError(err)}`,
         confirmDeleteId: null,
@@ -1973,19 +2203,59 @@ export async function runTUI(options = {}) {
         renameTargetId: null,
         renameBuf: '',
         renameCursor: 0,
+        filterBuf: '',
+        filterCursor: 0,
+        preview: null,
       };
     }
 
     tuiState.dirty.add('all');
     scheduler.flush();
   }
+  
+  async function loadSessionPreview(ms) {
+    if (!ms) return;
+    const selected = ms.filteredRows[ms.cursor]?.item;
+    if (!selected) {
+      ms.preview = null;
+      return;
+    }
+    
+    ms.preview = { loading: true, messages: [] };
+    tuiState.dirty.add('all');
+    scheduler.schedule();
+    
+    try {
+      const sessionState = await loadSessionState(selected.sessionId);
+      // Get last 5 user/assistant message pairs
+      const messages = (sessionState.messages || [])
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .slice(-6);
+      ms.preview = { loading: false, messages };
+    } catch {
+      ms.preview = { loading: false, messages: [], error: 'Failed to load preview' };
+    }
+    tuiState.dirty.add('all');
+    scheduler.schedule();
+  }
+  
+  function updateFilteredRows(ms) {
+    if (!ms.filterBuf) {
+      ms.filteredRows = ms.rows.map(r => ({ item: r, score: 1 }));
+    } else {
+      ms.filteredRows = filterSessions(ms.rows, ms.filterBuf);
+    }
+    // Keep cursor in bounds
+    ms.cursor = Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
+  }
 
   async function handleResumeModalInput(key) {
     const ms = tuiState.resumeModalState;
     if (!ms) return;
-    const renameRequested = key.ch && !key.ctrl && !key.meta && String(key.ch).toLowerCase() === 'r';
-    const deleteRequested = (ms.mode !== 'rename') && ((key.name === 'delete')
+    const renameRequested = ms.mode === 'list' && key.ch && !key.ctrl && !key.meta && String(key.ch).toLowerCase() === 'r';
+    const deleteRequested = (ms.mode !== 'rename' && ms.mode !== 'filter') && ((key.name === 'delete')
       || (key.ch && !key.ctrl && !key.meta && ['d', 'x'].includes(String(key.ch).toLowerCase())));
+    const filterRequested = ms.mode === 'list' && key.ch === '/' && !key.ctrl && !key.meta;
 
     const exitRenameMode = () => {
       ms.mode = 'list';
@@ -1994,8 +2264,12 @@ export async function runTUI(options = {}) {
       ms.renameCursor = 0;
       ms.confirmDeleteId = null;
     };
+    
+    const exitFilterMode = () => {
+      ms.mode = 'list';
+    };
 
-    const rows = Array.isArray(ms.rows) ? ms.rows : [];
+    const visibleRows = Array.isArray(ms.filteredRows) ? ms.filteredRows : [];
 
     async function saveRename() {
       const targetId = ms.renameTargetId;
@@ -2020,8 +2294,9 @@ export async function runTUI(options = {}) {
 
         const nextRows = await listSessions();
         ms.rows = nextRows;
-        const nextIndex = nextRows.findIndex((r) => r.sessionId === targetId);
-        ms.cursor = nextIndex >= 0 ? nextIndex : Math.min(ms.cursor, Math.max(0, nextRows.length - 1));
+        updateFilteredRows(ms);
+        const nextIndex = ms.filteredRows.findIndex((r) => r.item.sessionId === targetId);
+        ms.cursor = nextIndex >= 0 ? nextIndex : Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
         ms.error = null;
         exitRenameMode();
 
@@ -2039,8 +2314,86 @@ export async function runTUI(options = {}) {
     }
 
     if (key.name === 'escape') {
-      if (ms.mode === 'rename') {
+      if (ms.mode === 'filter') {
+      if (key.name === 'return') {
+        exitFilterMode();
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'backspace') {
+        if (ms.filterCursor > 0) {
+          ms.filterBuf = ms.filterBuf.slice(0, ms.filterCursor - 1) + ms.filterBuf.slice(ms.filterCursor);
+          ms.filterCursor--;
+          updateFilteredRows(ms);
+        }
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'delete') {
+        if (ms.filterCursor < ms.filterBuf.length) {
+          ms.filterBuf = ms.filterBuf.slice(0, ms.filterCursor) + ms.filterBuf.slice(ms.filterCursor + 1);
+          updateFilteredRows(ms);
+        }
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'left') {
+        if (ms.filterCursor > 0) ms.filterCursor--;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'right') {
+        if (ms.filterCursor < ms.filterBuf.length) ms.filterCursor++;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'home') {
+        ms.filterCursor = 0;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.name === 'end') {
+        ms.filterCursor = ms.filterBuf.length;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.ctrl && key.name === 'u') {
+        ms.filterBuf = '';
+        ms.filterCursor = 0;
+        updateFilteredRows(ms);
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (key.ch && !key.ctrl && !key.meta) {
+        ms.filterBuf = ms.filterBuf.slice(0, ms.filterCursor) + key.ch + ms.filterBuf.slice(ms.filterCursor);
+        ms.filterCursor += key.ch.length;
+        updateFilteredRows(ms);
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      return;
+    }
+
+    if (ms.mode === 'rename') {
         exitRenameMode();
+        ms.error = null;
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        return;
+      }
+      if (ms.mode === 'filter') {
+        ms.filterBuf = '';
+        updateFilteredRows(ms);
+        exitFilterMode();
         ms.error = null;
         tuiState.dirty.add('all');
         scheduler.schedule();
@@ -2057,7 +2410,7 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    if (rows.length === 0 || ms.loading) {
+    if (visibleRows.length === 0 || ms.loading) {
       return;
     }
 
@@ -2125,15 +2478,26 @@ export async function runTUI(options = {}) {
     }
 
     if (key.name === 'up') {
-      ms.cursor = (ms.cursor - 1 + rows.length) % rows.length;
+      ms.cursor = (ms.cursor - 1 + visibleRows.length) % visibleRows.length;
       ms.confirmDeleteId = null;
       ms.error = null;
+      await loadSessionPreview(ms);
       tuiState.dirty.add('all');
       scheduler.schedule();
       return;
     }
     if (key.name === 'down') {
-      ms.cursor = (ms.cursor + 1) % rows.length;
+      ms.cursor = (ms.cursor + 1) % visibleRows.length;
+      ms.confirmDeleteId = null;
+      ms.error = null;
+      await loadSessionPreview(ms);
+      tuiState.dirty.add('all');
+      scheduler.schedule();
+      return;
+    }
+    if (filterRequested) {
+      ms.mode = 'filter';
+      ms.filterCursor = ms.filterBuf.length;
       ms.confirmDeleteId = null;
       ms.error = null;
       tuiState.dirty.add('all');
@@ -2142,15 +2506,15 @@ export async function runTUI(options = {}) {
     }
     if (key.ch >= '1' && key.ch <= '9') {
       const idx = parseInt(key.ch, 10) - 1;
-      if (idx >= 0 && idx < rows.length) {
+      if (idx >= 0 && idx < visibleRows.length) {
         ms.confirmDeleteId = null;
         ms.error = null;
-        await switchToSessionById(rows[idx].sessionId, { closePicker: true });
+        await switchToSessionById(visibleRows[idx].item.sessionId, { closePicker: true });
       }
       return;
     }
     if (renameRequested) {
-      const row = rows[ms.cursor];
+      const row = visibleRows[ms.cursor]?.item;
       if (!row) return;
       ms.mode = 'rename';
       ms.renameTargetId = row.sessionId;
@@ -2163,7 +2527,7 @@ export async function runTUI(options = {}) {
       return;
     }
     if (deleteRequested) {
-      const row = rows[ms.cursor];
+      const row = visibleRows[ms.cursor]?.item;
       if (!row) return;
       if (row.sessionId === state.sessionId) {
         ms.error = 'Cannot delete the currently active session.';
@@ -2189,7 +2553,8 @@ export async function runTUI(options = {}) {
           addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
           const nextRows = await listSessions();
           ms.rows = nextRows;
-          ms.cursor = nextRows.length === 0 ? 0 : Math.min(ms.cursor, nextRows.length - 1);
+          updateFilteredRows(ms);
+          ms.cursor = Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
           ms.error = null;
         }
       } catch (err) {
@@ -2202,7 +2567,7 @@ export async function runTUI(options = {}) {
       return;
     }
     if (key.name === 'return') {
-      const row = rows[ms.cursor];
+      const row = visibleRows[ms.cursor]?.item;
       if (row) {
         if (ms.confirmDeleteId === row.sessionId) {
           try {
@@ -2214,7 +2579,8 @@ export async function runTUI(options = {}) {
               addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
               const nextRows = await listSessions();
               ms.rows = nextRows;
-              ms.cursor = nextRows.length === 0 ? 0 : Math.min(ms.cursor, nextRows.length - 1);
+              updateFilteredRows(ms);
+              ms.cursor = Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
               ms.error = null;
             }
           } catch (err) {
@@ -2286,7 +2652,7 @@ export async function runTUI(options = {}) {
   }
 
   function closeModelModal() {
-    tuiState.modelModalOpen = false;
+    setActiveOverlayModal(null);
     tuiState.modelModalState = null;
     tuiState.dirty.add('all');
     scheduler.flush();
@@ -2297,7 +2663,7 @@ export async function runTUI(options = {}) {
     const initialModels = getCuratedModels(providerId);
     const initialCursor = Math.max(0, initialModels.indexOf(state.model));
 
-    tuiState.modelModalOpen = true;
+    setActiveOverlayModal('model');
     tuiState.modelModalState = {
       providerId,
       models: initialModels,
@@ -2311,7 +2677,7 @@ export async function runTUI(options = {}) {
 
     const { models, source, error } = await fetchModels(ctx.providerConfig, ctx.apiKey);
     const ms = tuiState.modelModalState;
-    if (!ms || !tuiState.modelModalOpen || ms.providerId !== providerId) return;
+    if (!ms || getActiveOverlayModal() !== 'model' || ms.providerId !== providerId) return;
 
     ms.models = models;
     ms.source = source;
@@ -2683,7 +3049,7 @@ export async function runTUI(options = {}) {
           const promptTemplate = await getSkillPromptTemplate(skill);
           const prompt = interpolateSkill(promptTemplate, arg);
           if (tuiState.transcript.length > 0) {
-            tuiState.transcript.push({ role: 'divider', timestamp: Date.now() });
+            pushTranscriptEntry(tuiState, { role: 'divider', timestamp: Date.now() });
           }
           addTranscriptEntry(tuiState, 'user', text);
           composer.clear();
@@ -2717,7 +3083,7 @@ export async function runTUI(options = {}) {
     }
 
     if (tuiState.transcript.length > 0) {
-      tuiState.transcript.push({ role: 'divider', timestamp: Date.now() });
+      pushTranscriptEntry(tuiState, { role: 'divider', timestamp: Date.now() });
     }
     addTranscriptEntry(tuiState, 'user', text);
     composer.clear();
@@ -2735,8 +3101,7 @@ export async function runTUI(options = {}) {
   function approveAction() {
     if (approvalResolve) {
       if (tuiState.approval) {
-        tuiState.transcript.push({ role: 'verdict', verdict: 'APPROVED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, timestamp: Date.now() });
-        tuiState.dirty.add('transcript');
+        pushTranscriptEntry(tuiState, { role: 'verdict', verdict: 'APPROVED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, timestamp: Date.now() });
       }
       approvalResolve(true);
       approvalResolve = null;
@@ -2754,8 +3119,7 @@ export async function runTUI(options = {}) {
         trustedPatterns.add(patIdx);
       }
       if (tuiState.approval) {
-        tuiState.transcript.push({ role: 'verdict', verdict: 'APPROVED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, trusted: true, timestamp: Date.now() });
-        tuiState.dirty.add('transcript');
+        pushTranscriptEntry(tuiState, { role: 'verdict', verdict: 'APPROVED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, trusted: true, timestamp: Date.now() });
       }
       approvalResolve(true);
       approvalResolve = null;
@@ -2769,8 +3133,7 @@ export async function runTUI(options = {}) {
   function denyAction() {
     if (approvalResolve) {
       if (tuiState.approval) {
-        tuiState.transcript.push({ role: 'verdict', verdict: 'DENIED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, timestamp: Date.now() });
-        tuiState.dirty.add('transcript');
+        pushTranscriptEntry(tuiState, { role: 'verdict', verdict: 'DENIED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, timestamp: Date.now() });
       }
       approvalResolve(false);
       approvalResolve = null;
@@ -2816,6 +3179,28 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  // Overlay modals are mutually exclusive (approval/question are separate run states).
+  // Centralizing the open/close logic keeps the boolean fields in sync while we
+  // migrate toward a stricter modal state machine.
+  function getActiveOverlayModal() {
+    if (tuiState.configModalOpen) return 'config';
+    if (tuiState.reasoningModalOpen) return 'reasoning';
+    if (tuiState.payloadInspectorOpen) return 'payload_inspector';
+    if (tuiState.modelModalOpen) return 'model';
+    if (tuiState.providerModalOpen) return 'provider';
+    if (tuiState.resumeModalOpen) return 'resume';
+    return null;
+  }
+
+  function setActiveOverlayModal(modalName) {
+    tuiState.configModalOpen = modalName === 'config';
+    tuiState.reasoningModalOpen = modalName === 'reasoning';
+    tuiState.payloadInspectorOpen = modalName === 'payload_inspector';
+    tuiState.modelModalOpen = modalName === 'model';
+    tuiState.providerModalOpen = modalName === 'provider';
+    tuiState.resumeModalOpen = modalName === 'resume';
+  }
+
   function getVisiblePayloadBlocks() {
     return Array.isArray(tuiState.payloadBlocks)
       ? tuiState.payloadBlocks.filter((b) => b.visible)
@@ -2831,7 +3216,7 @@ export async function runTUI(options = {}) {
       process.stdout.write('\x07');
       return;
     }
-    tuiState.payloadInspectorOpen = true;
+    setActiveOverlayModal('payload_inspector');
     const cursorExists = tuiState.payloadCursorId && tuiState.payloadBlocks.some((b) => b.id === tuiState.payloadCursorId);
     if (!cursorExists) {
       tuiState.payloadCursorId = fallback.id;
@@ -2841,7 +3226,7 @@ export async function runTUI(options = {}) {
   }
 
   function closePayloadInspector() {
-    tuiState.payloadInspectorOpen = false;
+    setActiveOverlayModal(null);
     tuiState.dirty.add('all');
     scheduler.flush();
   }
@@ -2889,7 +3274,7 @@ export async function runTUI(options = {}) {
   }
 
   function toggleReasoningModal() {
-    tuiState.reasoningModalOpen = !tuiState.reasoningModalOpen;
+    setActiveOverlayModal(tuiState.reasoningModalOpen ? null : 'reasoning');
     tuiState.dirty.add('all');
     scheduler.flush();
   }
@@ -2958,39 +3343,40 @@ export async function runTUI(options = {}) {
     const providers = getProviderList();
     const currentIndex = providers.findIndex((p) => p.id === state.provider);
     tuiState.providerModalCursor = currentIndex >= 0 ? currentIndex : 0;
-    tuiState.providerModalOpen = true;
+    setActiveOverlayModal('provider');
     tuiState.dirty.add('all');
     scheduler.flush();
   }
 
   function closeModal() {
-    if (tuiState.configModalOpen) {
+    const activeOverlay = getActiveOverlayModal();
+    if (activeOverlay === 'config') {
       closeConfigModal();
       return;
     }
-    if (tuiState.reasoningModalOpen) {
-      tuiState.reasoningModalOpen = false;
+    if (activeOverlay === 'reasoning') {
+      setActiveOverlayModal(null);
       tuiState.dirty.add('all');
       scheduler.flush();
       return;
     }
-    if (tuiState.payloadInspectorOpen) {
+    if (activeOverlay === 'payload_inspector') {
       closePayloadInspector();
       return;
     }
-    if (tuiState.modelModalOpen) {
+    if (activeOverlay === 'model') {
       closeModelModal();
       return;
     }
-    if (tuiState.providerModalOpen) {
-      tuiState.providerModalOpen = false;
+    if (activeOverlay === 'provider') {
+      setActiveOverlayModal(null);
       tuiState.providerModalCursor = 0;
       tuiState.dirty.add('all');
       scheduler.flush();
       return;
     }
-    if (tuiState.resumeModalOpen) {
-      tuiState.resumeModalOpen = false;
+    if (activeOverlay === 'resume') {
+      setActiveOverlayModal(null);
       tuiState.resumeModalState = null;
       tuiState.dirty.add('all');
       scheduler.flush();
@@ -3026,9 +3412,8 @@ export async function runTUI(options = {}) {
     await saveConfig(config);
     await saveSessionState(state);
     addTranscriptEntry(tuiState, 'status', `Switched to ${target.id} | model: ${state.model}`);
-    tuiState.providerModalOpen = false;
+    setActiveOverlayModal(null);
     tuiState.providerModalCursor = index;
-    tuiState.modelModalOpen = false;
     tuiState.modelModalState = null;
     tuiState.dirty.add('all');
     scheduler.flush();
@@ -3070,14 +3455,14 @@ export async function runTUI(options = {}) {
   // ── Config modal lifecycle ────────────────────────────────────────
 
   function openConfigModal() {
-    tuiState.configModalOpen = true;
+    setActiveOverlayModal('config');
     tuiState.configModalState = { mode: 'list', cursor: 0, editTarget: '', editBuf: '', editCursor: 0, pickCursor: 0 };
     tuiState.dirty.add('all');
     scheduler.flush();
   }
 
   function closeConfigModal() {
-    tuiState.configModalOpen = false;
+    setActiveOverlayModal(null);
     tuiState.configModalState = null;
     tuiState.dirty.add('all');
     scheduler.flush();
@@ -3305,7 +3690,7 @@ export async function runTUI(options = {}) {
 
     // Config edit mode is a single-line secret input; paste should target the
     // modal buffer instead of the main composer, and newlines should be dropped.
-    if (tuiState.configModalOpen && tuiState.configModalState?.mode === 'edit') {
+    if (getActiveOverlayModal() === 'config' && tuiState.configModalState?.mode === 'edit') {
       const ms = tuiState.configModalState;
       const normalized = text.replace(/\r\n/g, '\n').replace(/[\r\n]/g, '');
       if (!normalized) return;
@@ -3317,7 +3702,7 @@ export async function runTUI(options = {}) {
     }
 
     // Resume modal rename mode is also a single-line text input.
-    if (tuiState.resumeModalOpen && tuiState.resumeModalState?.mode === 'rename') {
+    if (getActiveOverlayModal() === 'resume' && tuiState.resumeModalState?.mode === 'rename') {
       const ms = tuiState.resumeModalState;
       const normalized = text.replace(/\r\n/g, '\n').replace(/[\r\n]/g, '');
       if (!normalized) return;
@@ -3329,14 +3714,7 @@ export async function runTUI(options = {}) {
     }
 
     // For non-text modals, ignore paste rather than mutating the hidden composer.
-    if (
-      tuiState.configModalOpen ||
-      tuiState.reasoningModalOpen ||
-      tuiState.modelModalOpen ||
-      tuiState.providerModalOpen ||
-      tuiState.resumeModalOpen ||
-      (tuiState.runState === 'awaiting_approval' && tuiState.approval)
-    ) {
+    if (getActiveOverlayModal() || (tuiState.runState === 'awaiting_approval' && tuiState.approval)) {
       return;
     }
 
@@ -3415,36 +3793,28 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    // Config modal: swallow all keys
-    if (tuiState.configModalOpen) {
-      runAsync(() => handleConfigModalInput(key), 'config input failed');
-      return;
-    }
-
-    if (tuiState.reasoningModalOpen) {
-      handleReasoningModalInput(key);
-      return;
-    }
-
-    if (tuiState.payloadInspectorOpen) {
-      handlePayloadInspectorInput(key);
-      return;
-    }
-
-    // Model modal: navigable list
-    if (tuiState.modelModalOpen) {
-      runAsync(() => handleModelModalInput(key), 'model picker input failed');
-      return;
-    }
-
-    // Provider modal: navigable list + number quick-pick
-    if (tuiState.providerModalOpen) {
-      runAsync(() => handleProviderModalInput(key), 'provider switch failed');
-      return;
-    }
-    if (tuiState.resumeModalOpen) {
-      runAsync(() => handleResumeModalInput(key), 'resume picker input failed');
-      return;
+    // UI overlay modal router
+    switch (getActiveOverlayModal()) {
+      case 'config':
+        runAsync(() => handleConfigModalInput(key), 'config input failed');
+        return;
+      case 'reasoning':
+        handleReasoningModalInput(key);
+        return;
+      case 'payload_inspector':
+        handlePayloadInspectorInput(key);
+        return;
+      case 'model':
+        runAsync(() => handleModelModalInput(key), 'model picker input failed');
+        return;
+      case 'provider':
+        runAsync(() => handleProviderModalInput(key), 'provider switch failed');
+        return;
+      case 'resume':
+        runAsync(() => handleResumeModalInput(key), 'resume picker input failed');
+        return;
+      default:
+        break;
     }
 
     // Tab completion — intercept before keybind map
@@ -3724,6 +4094,7 @@ export async function runTUI(options = {}) {
     await exitPromise;
   } finally {
     // ── Cleanup ──────────────────────────────────────────────────
+    clearInterval(gitStatusInterval);
     scheduler.destroy();
     process.stdin.removeListener('data', onData);
     process.stdout.removeListener('resize', onResize);
