@@ -6,6 +6,20 @@
 // ── Key sequence parsing ────────────────────────────────────────────
 
 /**
+ * Split a raw stdin chunk into key-sized string units when it is safe to do so.
+ *
+ * We only split chunks that contain no ESC bytes so escape sequences (CSI/SS3,
+ * Alt-modified keys, bracketed paste markers, etc.) stay intact for the caller.
+ * This helps automation layers that write multiple printable characters at once.
+ */
+export function splitRawInputChunk(str) {
+  if (!str) return [];
+  if (str.includes('\x1b')) return [str];
+  const chars = Array.from(str);
+  return chars.length > 1 ? chars : [str];
+}
+
+/**
  * Parse a raw stdin buffer into a structured key object.
  * Returns { name, ctrl, shift, meta, sequence, ch }
  */

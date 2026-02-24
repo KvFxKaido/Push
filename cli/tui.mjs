@@ -15,7 +15,7 @@ import { renderStatusBar, renderKeybindHints, getCompactGitStatus, estimateToken
 import { filterSessions } from './tui-fuzzy.mjs';
 import { applySingleLineEditKey, getListNavigationAction, moveCursorCircular } from './tui-modal-input.mjs';
 import { drawModalBoxAt, getCenteredModalRect, getWindowedListRange, renderCenteredModalBox } from './tui-widgets.mjs';
-import { parseKey, createKeybindMap, createComposer, createInputHistory } from './tui-input.mjs';
+import { parseKey, splitRawInputChunk, createKeybindMap, createComposer, createInputHistory } from './tui-input.mjs';
 import {
   ESC, getTermSize, visibleWidth, truncate, wordWrap, padTo,
   drawDivider, createScreenBuffer, createRenderScheduler, computeLayout,
@@ -3563,6 +3563,15 @@ export async function runTUI(options = {}) {
     }
 
     // Normal key input
+    // Some automation layers (e.g. terminal-mcp `type`) write multiple printable
+    // characters in a single stdin chunk. `parseKey()` parses one key sequence, so
+    // split safe non-escape chunks into per-character events here.
+    const splitChunks = splitRawInputChunk(str);
+    if (splitChunks.length > 1) {
+      for (const ch of splitChunks) processInput(ch);
+      return;
+    }
+
     const keyBuf = Buffer.from(str);
     const key = parseKey(keyBuf);
 

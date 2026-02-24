@@ -1,8 +1,28 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseKey, createKeybindMap, createComposer, createInputHistory } from '../tui-input.mjs';
+import { parseKey, splitRawInputChunk, createKeybindMap, createComposer, createInputHistory } from '../tui-input.mjs';
 
 // ─── parseKey ───────────────────────────────────────────────────
+
+describe('splitRawInputChunk', () => {
+  it('splits multi-char printable chunks for automation typing', () => {
+    assert.deepEqual(splitRawInputChunk('bc'), ['b', 'c']);
+    assert.deepEqual(splitRawInputChunk('/session'), ['/', 's', 'e', 's', 's', 'i', 'o', 'n']);
+  });
+
+  it('preserves single-char chunks', () => {
+    assert.deepEqual(splitRawInputChunk('a'), ['a']);
+  });
+
+  it('splits multi-byte unicode characters safely by code point', () => {
+    assert.deepEqual(splitRawInputChunk('é好'), ['é', '好']);
+  });
+
+  it('does not split chunks containing escape sequences', () => {
+    assert.deepEqual(splitRawInputChunk('\x1b[A'), ['\x1b[A']);
+    assert.deepEqual(splitRawInputChunk('a\x1b[B'), ['a\x1b[B']);
+  });
+});
 
 describe('parseKey', () => {
   it('parses printable ASCII characters', () => {
