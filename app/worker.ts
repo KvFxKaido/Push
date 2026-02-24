@@ -1297,11 +1297,14 @@ async function handleGitHubAppOAuth(request: Request, env: Env): Promise<Respons
     const jwt = await generateGitHubAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
     const instTokenData = await exchangeForInstallationToken(jwt, installationId);
 
+    const botCommitIdentity = await fetchGitHubAppBotCommitIdentity(installation.app_slug);
+
     return Response.json({
       token: instTokenData.token,
       expires_at: instTokenData.expires_at,
       installation_id: installationId,
       user: oauthUser || installationAccount,
+      commit_identity: botCommitIdentity,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1361,10 +1364,12 @@ async function handleGitHubAppToken(request: Request, env: Env): Promise<Respons
   try {
     const jwt = await generateGitHubAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
     const tokenData = await exchangeForInstallationToken(jwt, installationId);
-    const installationAccount = await fetchInstallationAccount(jwt, installationId);
+    const installationMeta = await fetchInstallationMetadata(jwt, installationId);
+    const botCommitIdentity = await fetchGitHubAppBotCommitIdentity(installationMeta.app_slug);
     return Response.json({
       ...tokenData,
-      user: installationAccount,
+      user: installationMeta.account,
+      commit_identity: botCommitIdentity,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1493,10 +1498,10 @@ async function exchangeForInstallationToken(
   return await response.json() as { token: string; expires_at: string };
 }
 
-async function fetchInstallationAccount(
+async function fetchInstallationMetadata(
   jwt: string,
   installationId: string
-): Promise<{ login: string; avatar_url: string } | null> {
+): Promise<{ account: { login: string; avatar_url: string } | null; app_slug: string | null }> {
   const response = await fetch(
     `https://api.github.com/app/installations/${encodeURIComponent(installationId)}`,
     {
@@ -1509,18 +1514,50 @@ async function fetchInstallationAccount(
     }
   );
   if (!response.ok) {
-    return null;
+    return { account: null, app_slug: null };
   }
 
   const data = await response.json() as {
+    app_slug?: unknown;
     account?: { login?: unknown; avatar_url?: unknown };
   };
-  if (!data.account || typeof data.account.login !== 'string') {
+  const account = data.account && typeof data.account.login === 'string'
+    ? {
+        login: data.account.login,
+        avatar_url: typeof data.account.avatar_url === 'string' ? data.account.avatar_url : '',
+      }
+    : null;
+  const appSlug = typeof data.app_slug === 'string' && data.app_slug.trim() ? data.app_slug : null;
+  return { account, app_slug: appSlug };
+}
+
+async function fetchGitHubAppBotCommitIdentity(
+  appSlug: string | null | undefined,
+): Promise<{ name: string; email: string; login: string; avatar_url: string } | null> {
+  if (!appSlug || !appSlug.trim()) return null;
+  const botLogin = `${appSlug}[bot]`;
+  try {
+    const response = await fetch(
+      `https://api.github.com/users/${encodeURIComponent(botLogin)}`,
+      {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'Push-App/1.0.0',
+        },
+      }
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as { id?: unknown; login?: unknown; avatar_url?: unknown };
+    if (typeof data.id !== 'number' || !Number.isFinite(data.id)) return null;
+    const login = typeof data.login === 'string' && data.login.trim() ? data.login : botLogin;
+    return {
+      name: login,
+      email: `${data.id}+${login}@users.noreply.github.com`,
+      login,
+      avatar_url: typeof data.avatar_url === 'string' ? data.avatar_url : '',
+    };
+  } catch {
     return null;
   }
-
-  return {
-    login: data.account.login,
-    avatar_url: typeof data.account.avatar_url === 'string' ? data.account.avatar_url : '',
-  };
 }

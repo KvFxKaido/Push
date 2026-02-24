@@ -117,6 +117,22 @@ def _fetch_github_user(token: str) -> tuple[str, str]:
         return "Push User", "sandbox@push.app"
 
 
+def _parse_commit_identity(value: object) -> tuple[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    name = value.get("name")
+    email = value.get("email")
+    if not isinstance(name, str) or not isinstance(email, str):
+        return None
+    name = name.strip()
+    email = email.strip()
+    if not name or not email:
+        return None
+    if len(name) > 200 or len(email) > 320:
+        return None
+    return name, email
+
+
 def _issue_owner_token(sb: modal.Sandbox) -> str | None:
     token = secrets.token_urlsafe(32)
     p = sb.exec(
@@ -278,6 +294,7 @@ def create(data: dict):
     )
 
     github_token = data.get("github_token", "")
+    provided_identity = _parse_commit_identity(data.get("github_identity"))
     repo = data.get("repo", "")
     branch = data.get("branch", "main")
 
@@ -303,7 +320,9 @@ def create(data: dict):
             return {"error": f"Workspace setup failed: {stderr}", "sandbox_id": None}
 
     # Configure git identity so commits work inside the sandbox
-    if repo and github_token:
+    if provided_identity:
+        name, email = provided_identity
+    elif repo and github_token:
         name, email = _fetch_github_user(github_token)
     else:
         name, email = "Push User", "sandbox@push.app"

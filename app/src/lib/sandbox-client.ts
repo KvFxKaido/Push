@@ -14,6 +14,11 @@ export interface SandboxSession {
   error?: string;
 }
 
+export interface GitCommitIdentity {
+  name: string;
+  email: string;
+}
+
 export interface ExecResult {
   stdout: string;
   stderr: string;
@@ -291,10 +296,16 @@ export async function createSandbox(
   repo: string,
   branch?: string,
   githubToken?: string,
+  githubIdentity?: GitCommitIdentity,
 ): Promise<SandboxSession> {
   const data = await sandboxFetch<{ sandbox_id: string | null; owner_token?: string; status?: string; error?: string }>(
     'create',
-    { repo, branch: branch || 'main', github_token: githubToken || '' },
+    {
+      repo,
+      branch: branch || 'main',
+      github_token: githubToken || '',
+      github_identity: githubIdentity ? { name: githubIdentity.name, email: githubIdentity.email } : undefined,
+    },
   );
 
   if (!data.sandbox_id || !data.owner_token) {

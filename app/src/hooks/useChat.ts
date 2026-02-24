@@ -54,6 +54,7 @@ const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
 const OAUTH_STORAGE_KEY = 'github_access_token';
 const APP_TOKEN_STORAGE_KEY = 'github_app_token';
+const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
@@ -110,6 +111,21 @@ function generateTitle(messages: ChatMessage[]): string {
 
 function getGitHubAuthToken(): string {
   return safeStorageGet(APP_TOKEN_STORAGE_KEY) || safeStorageGet(OAUTH_STORAGE_KEY) || GITHUB_TOKEN;
+}
+
+function getGitHubAppCommitIdentity(): { name: string; email: string } | undefined {
+  const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY);
+  if (!appToken) return undefined;
+  try {
+    const raw = safeStorageGet(APP_COMMIT_IDENTITY_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { name?: unknown; email?: unknown };
+    if (typeof parsed.name !== 'string' || !parsed.name.trim()) return undefined;
+    if (typeof parsed.email !== 'string' || !parsed.email.trim()) return undefined;
+    return { name: parsed.name, email: parsed.email };
+  } catch {
+    return undefined;
+  }
 }
 
 // --- Checkpoint helpers (Resumable Sessions Phase 1) ---
@@ -1866,6 +1882,7 @@ export function useChat(
                     const sourceRepo = repoRef.current!;
                     const sourceBranch = branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || 'main';
                     const authToken = getGitHubAuthToken();
+                    const appCommitIdentity = getGitHubAppCommitIdentity();
 
                     updateAgentStatus(
                       { active: true, phase: 'Preparing parallel coder workers...' },
@@ -1904,7 +1921,7 @@ export function useChat(
                           // a fresh sandbox before giving up.
                           let workerSandboxId = '';
                           for (let setupAttempt = 0; setupAttempt < 2; setupAttempt++) {
-                            const workerSession = await createSandbox(sourceRepo, sourceBranch, authToken);
+                            const workerSession = await createSandbox(sourceRepo, sourceBranch, authToken, appCommitIdentity);
                             if (workerSession.status === 'error' || !workerSession.sandboxId) {
                               throw new Error(workerSession.error || `Failed to create worker sandbox for task ${taskIndex + 1}.`);
                             }

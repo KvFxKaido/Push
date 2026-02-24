@@ -7,6 +7,7 @@ const INSTALLATION_ID_KEY = 'github_app_installation_id';
 const TOKEN_KEY = 'github_app_token';
 const TOKEN_EXPIRY_KEY = 'github_app_token_expiry';
 const USER_KEY = 'github_app_user';
+const COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 
 // Refresh token 5 minutes before expiry
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -24,7 +25,21 @@ type TokenResponse = {
   permissions: Record<string, string>;
   repository_selection: string;
   user?: GitHubUser | null;
+  commit_identity?: GitHubAppCommitIdentity | null;
 };
+
+type GitHubAppCommitIdentity = {
+  name: string;
+  email: string;
+};
+
+function coerceCommitIdentity(value: unknown): GitHubAppCommitIdentity | null {
+  if (!value || typeof value !== 'object') return null;
+  const parsed = value as { name?: unknown; email?: unknown };
+  if (typeof parsed.name !== 'string' || !parsed.name.trim()) return null;
+  if (typeof parsed.email !== 'string' || !parsed.email.trim()) return null;
+  return { name: parsed.name, email: parsed.email };
+}
 
 type UseGitHubAppAuth = {
   token: string;
@@ -186,6 +201,14 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     }
   }, []);
 
+  const saveCommitIdentity = useCallback((identity: GitHubAppCommitIdentity | null) => {
+    if (identity) {
+      safeStorageSet(COMMIT_IDENTITY_KEY, JSON.stringify(identity));
+    } else {
+      safeStorageRemove(COMMIT_IDENTITY_KEY);
+    }
+  }, []);
+
   // Schedule token refresh before expiry
   const scheduleRefresh = useCallback((expiresAt: string, instId: string) => {
     if (refreshTimeoutRef.current) {
@@ -203,13 +226,17 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
         safeStorageSet(TOKEN_EXPIRY_KEY, data.expires_at);
         setToken(data.token);
         setTokenExpiry(data.expires_at);
+        const commitIdentity = coerceCommitIdentity(data.commit_identity);
+        if (commitIdentity) {
+          saveCommitIdentity(commitIdentity);
+        }
         scheduleRefresh(data.expires_at, instId);
       } catch (err) {
         console.error('[Push] Token refresh failed:', err);
         // Don't clear auth on refresh failure — user can still use current token
       }
     }, refreshIn);
-  }, []);
+  }, [saveCommitIdentity]);
 
   // Fetch token for installation
   const fetchAndSetToken = useCallback(async (instId: string): Promise<boolean> => {
@@ -233,6 +260,11 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
       setToken(data.token);
       setTokenExpiry(data.expires_at);
 
+      const commitIdentity = coerceCommitIdentity(data.commit_identity);
+      if (commitIdentity) {
+        saveCommitIdentity(commitIdentity);
+      }
+
       const userFromResponse = data.user && data.user.login ? data.user : null;
       if (userFromResponse) {
         saveValidatedUser(userFromResponse);
@@ -254,7 +286,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     } finally {
       setLoading(false);
     }
-  }, [saveValidatedUser, scheduleRefresh]);
+  }, [saveCommitIdentity, saveValidatedUser, scheduleRefresh]);
 
   // Handle OAuth code callback (auto-connect flow)
   const handleOAuthCallback = useCallback(async (code: string) => {
@@ -271,6 +303,11 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
       setInstallationId(data.installation_id);
       setToken(data.token);
       setTokenExpiry(data.expires_at);
+
+      const commitIdentity = coerceCommitIdentity(data.commit_identity);
+      if (commitIdentity) {
+        saveCommitIdentity(commitIdentity);
+      }
 
       const userFromResponse = data.user && data.user.login ? data.user : null;
       if (userFromResponse) {
@@ -289,7 +326,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     } finally {
       setLoading(false);
     }
-  }, [saveValidatedUser, scheduleRefresh]);
+  }, [saveCommitIdentity, saveValidatedUser, scheduleRefresh]);
 
   // Handle installation callback from GitHub (install flow) or OAuth code callback (connect flow)
   useEffect(() => {
@@ -398,6 +435,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     safeStorageRemove(TOKEN_KEY);
     safeStorageRemove(TOKEN_EXPIRY_KEY);
     safeStorageRemove(USER_KEY);
+    safeStorageRemove(COMMIT_IDENTITY_KEY);
     setInstallationId('');
     setToken('');
     setTokenExpiry('');

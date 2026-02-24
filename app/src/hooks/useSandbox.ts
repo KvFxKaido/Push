@@ -13,6 +13,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { createSandbox, cleanupSandbox, execInSandbox, setSandboxOwnerToken, getSandboxOwnerToken } from '@/lib/sandbox-client';
+import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 
@@ -20,6 +21,7 @@ export type SandboxStatus = 'idle' | 'creating' | 'ready' | 'error';
 
 const OAUTH_STORAGE_KEY = 'github_access_token';
 const APP_TOKEN_STORAGE_KEY = 'github_app_token';
+const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 
 const SANDBOX_SESSION_KEY = 'sandbox_session';
@@ -35,6 +37,21 @@ interface PersistedSandboxSession {
 
 function getGitHubToken(): string {
   return safeStorageGet(APP_TOKEN_STORAGE_KEY) || safeStorageGet(OAUTH_STORAGE_KEY) || GITHUB_TOKEN;
+}
+
+function getGitHubAppCommitIdentity(): GitCommitIdentity | undefined {
+  const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY);
+  if (!appToken) return undefined;
+  try {
+    const raw = safeStorageGet(APP_COMMIT_IDENTITY_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { name?: unknown; email?: unknown };
+    if (typeof parsed.name !== 'string' || !parsed.name.trim()) return undefined;
+    if (typeof parsed.email !== 'string' || !parsed.email.trim()) return undefined;
+    return { name: parsed.name, email: parsed.email };
+  } catch {
+    return undefined;
+  }
 }
 
 function saveSession(session: PersistedSandboxSession): void {
@@ -176,7 +193,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
       try {
         // Empty repo = sandbox mode (ephemeral workspace, no clone, no token needed)
         const token = repo ? getGitHubToken() : '';
-        const session = await createSandbox(repo, branch, token);
+        const session = await createSandbox(repo, branch, token, getGitHubAppCommitIdentity());
 
         if (session.status === 'error') {
           setStatus('error');
