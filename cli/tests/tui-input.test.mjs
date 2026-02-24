@@ -33,6 +33,12 @@ describe('splitRawInputChunk', () => {
     assert.deepEqual(splitRawInputChunk('ab\x1b['), ['a', 'b', '\x1b[']);
     assert.deepEqual(splitRawInputChunk('\x1bO'), ['\x1bO']);
   });
+
+  it('keeps Alt-modified multi-byte characters grouped as one token', () => {
+    assert.deepEqual(splitRawInputChunk('\x1béx'), ['\x1bé', 'x']);
+    assert.deepEqual(splitRawInputChunk('\x1b😀x'), ['\x1b😀', 'x']);
+    assert.deepEqual(splitRawInputChunk('\x1b😀\x1b[A'), ['\x1b😀', '\x1b[A']);
+  });
 });
 
 describe('parseKey', () => {
