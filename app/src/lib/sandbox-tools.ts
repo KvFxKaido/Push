@@ -753,9 +753,10 @@ export async function executeSandboxToolCall(
           readResult = {
             ...readResult,
             content: expanded.content,
-            truncated: false,
+            truncated: expanded.truncated,
             version: expanded.version ?? readResult.version,
           };
+        }
         }
 
         // 2. Apply hashline edits
