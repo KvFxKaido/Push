@@ -13,10 +13,12 @@ import { StringDecoder } from 'node:string_decoder';
 import { createTheme } from './tui-theme.mjs';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus, estimateTokens } from './tui-status.mjs';
 import { filterSessions } from './tui-fuzzy.mjs';
+import { applySingleLineEditKey, getListNavigationAction, moveCursorCircular } from './tui-modal-input.mjs';
+import { drawModalBoxAt, getCenteredModalRect, getWindowedListRange, renderCenteredModalBox } from './tui-widgets.mjs';
 import { parseKey, createKeybindMap, createComposer, createInputHistory } from './tui-input.mjs';
 import {
   ESC, getTermSize, visibleWidth, truncate, wordWrap, padTo,
-  drawBox, drawDivider, createScreenBuffer, createRenderScheduler, computeLayout,
+  drawDivider, createScreenBuffer, createRenderScheduler, computeLayout,
 } from './tui-renderer.mjs';
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
 import { getCuratedModels, fetchModels } from './model-catalog.mjs';
@@ -391,6 +393,28 @@ function renderHeader(buf, layout, theme, { provider, model, session, cwd, runSt
   buf.writeLine(top + 3, left, padTo(`  ${sessLabel}  ${hint}`, width));
 }
 
+function findFirstIntersectingTranscriptBlock(entryBlocks, targetLine) {
+  let lo = 0;
+  let hi = entryBlocks.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((entryBlocks[mid]?.endLine ?? 0) <= targetLine) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function findFirstTranscriptBlockStartingAtOrAfter(entryBlocks, targetLine) {
+  let lo = 0;
+  let hi = entryBlocks.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((entryBlocks[mid]?.startLine ?? 0) < targetLine) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function renderTranscript(buf, layout, theme, tuiState) {
   const { top, left, width, height } = layout.transcript;
   const { glyphs } = theme;
@@ -502,13 +526,16 @@ function renderTranscript(buf, layout, theme, tuiState) {
         entryLines.push(theme.style('fg.dim', glyphs.horizontal.repeat(Math.min(width, 40))));
       }
 
+      const blockStartLine = totalLines;
       const block = {
         lineCount: entryLines.length,
+        startLine: blockStartLine,
+        endLine: blockStartLine + entryLines.length,
         lines: entryLines,
         payloadBlocks: localPayloadBlocks,
       };
       entryBlocks.push(block);
-      totalLines += block.lineCount;
+      totalLines = block.endLine;
     }
 
     cached = { key: transcriptCacheKey, entryBlocks, totalLines };
@@ -535,11 +562,14 @@ function renderTranscript(buf, layout, theme, tuiState) {
 
   const slice = [];
   const payloadBlocks = [];
-  let cursor = 0;
-  for (const block of cached.entryBlocks || []) {
-    const blockStart = cursor;
-    const blockEnd = blockStart + block.lineCount;
-    cursor = blockEnd;
+  const entryBlocks = cached.entryBlocks || [];
+  const startBlockIdx = findFirstIntersectingTranscriptBlock(entryBlocks, startIdx);
+  const endBlockIdxExclusive = findFirstTranscriptBlockStartingAtOrAfter(entryBlocks, endIdxExclusive);
+
+  for (let bi = startBlockIdx; bi < endBlockIdxExclusive; bi++) {
+    const block = entryBlocks[bi];
+    const blockStart = block.startLine ?? 0;
+    const blockEnd = block.endLine ?? (blockStart + block.lineCount);
 
     if (block.lineCount === 0) continue;
     if (blockEnd <= startIdx || blockStart >= endIdxExclusive) continue;
@@ -710,7 +740,6 @@ function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
 
 function renderApprovalModal(buf, theme, rows, cols, approval) {
   if (!approval) return;
-  const { glyphs } = theme;
 
   // Modal dimensions
   const modalWidth = Math.min(60, cols - 8);
@@ -734,21 +763,11 @@ function renderApprovalModal(buf, theme, rows, cols, approval) {
     `${theme.style('accent.link', 'Ctrl+N / n')} deny  ` +
     `${theme.style('accent.link', 'Esc')} close`
   );
-
-  const modalHeight = lines.length + 2; // +2 for top/bottom border
-  const modalTop = Math.floor((rows - modalHeight) / 2);
-  const modalLeft = Math.floor((cols - modalWidth) / 2);
-
-  // Draw box
-  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
-  for (let i = 0; i < boxLines.length; i++) {
-    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
-  }
+  renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
 }
 
 function renderQuestionModal(buf, theme, rows, cols, userQuestion, inputBuf) {
   if (!userQuestion) return;
-  const { glyphs } = theme;
 
   const modalWidth = Math.min(64, cols - 8);
   const lines = [
@@ -774,19 +793,10 @@ function renderQuestionModal(buf, theme, rows, cols, userQuestion, inputBuf) {
   lines.push(`  ${theme.style('fg.dim', '›')} ${inputDisplay}`);
   lines.push('');
   lines.push(`  ${theme.style('accent.link', 'Enter')} ${theme.style('fg.dim', 'submit')}  ${theme.style('accent.link', 'Esc')} ${theme.style('fg.dim', 'skip')}`);
-
-  const modalHeight = lines.length + 2;
-  const modalTop = Math.floor((rows - modalHeight) / 2);
-  const modalLeft = Math.floor((cols - modalWidth) / 2);
-
-  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
-  for (let i = 0; i < boxLines.length; i++) {
-    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
-  }
+  renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
 }
 
 function renderReasoningModal(buf, theme, rows, cols, tuiState) {
-  const { glyphs } = theme;
   const modalWidth = Math.min(80, cols - 8);
   const modalHeight = Math.min(22, rows - 6);
   const bodyWidth = Math.max(10, modalWidth - 4);
@@ -823,11 +833,7 @@ function renderReasoningModal(buf, theme, rows, cols, tuiState) {
 
   lines.push('');
   lines.push(`  ${theme.style('accent.link', 'Ctrl+G')} toggle  ${theme.style('accent.link', 'Esc')} close`);
-
-  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
-  for (let i = 0; i < boxLines.length; i++) {
-    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
-  }
+  drawModalBoxAt(buf, theme, modalTop, modalLeft, modalWidth, lines);
 }
 
 function renderProviderModal(buf, theme, rows, cols, currentProvider, currentModel, cursor = 0) {
@@ -865,15 +871,7 @@ function renderProviderModal(buf, theme, rows, cols, currentProvider, currentMod
 
   lines.push('');
   lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter switch  Esc close  1-9 quick pick')}`);
-
-  const modalHeight = lines.length + 2;
-  const modalTop = Math.floor((rows - modalHeight) / 2);
-  const modalLeft = Math.floor((cols - modalWidth) / 2);
-
-  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
-  for (let i = 0; i < boxLines.length; i++) {
-    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
-  }
+  renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
 }
 
 function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
@@ -893,12 +891,7 @@ function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
     lines.push(`  ${theme.style('fg.dim', 'No models found. Use /model <name> for custom values.')}`);
   } else {
     const count = modalState.models.length;
-    let start = 0;
-    if (count > listHeight) {
-      start = Math.max(0, modalState.cursor - Math.floor(listHeight / 2));
-      start = Math.min(start, count - listHeight);
-    }
-    const end = Math.min(count, start + listHeight);
+    const { start, end } = getWindowedListRange(count, modalState.cursor, listHeight);
 
     for (let i = start; i < end; i++) {
       const isCursor = i === modalState.cursor;
@@ -930,15 +923,7 @@ function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
     lines.push(`  ${theme.style('fg.dim', `${modalState.models.length} curated models`)}`);
   }
   lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter select  Esc close  1-9 quick pick')}`);
-
-  const modalHeight = lines.length + 2;
-  const modalTop = Math.floor((rows - modalHeight) / 2);
-  const modalLeft = Math.floor((cols - modalWidth) / 2);
-
-  const boxLines = drawBox(lines, modalWidth, glyphs, theme);
-  for (let i = 0; i < boxLines.length; i++) {
-    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
-  }
+  renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
 }
 
 function formatRelativeTime(ts) {
@@ -966,8 +951,7 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
   const listHeight = Math.max(8, Math.min(16, rows - 12));
   const totalHeight = listHeight + 8; // + header + filter + hints + borders
   
-  const modalTop = Math.max(2, Math.floor((rows - totalHeight) / 2));
-  const modalLeft = Math.floor((cols - totalWidth) / 2);
+  const { top: modalTop, left: modalLeft } = getCenteredModalRect(rows, cols, totalWidth, totalHeight, { minTop: 2 });
   
   const isRenameMode = modalState?.mode === 'rename';
   const isFilterMode = modalState?.mode === 'filter';
@@ -997,12 +981,7 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
       lines.push(`  ${theme.style('fg.dim', modalState.filterBuf ? 'No matching sessions.' : 'No resumable sessions.')}`);
     } else {
       const count = modalState.filteredRows.length;
-      let start = 0;
-      if (count > listHeight - 3) {
-        start = Math.max(0, modalState.cursor - Math.floor((listHeight - 3) / 2));
-        start = Math.min(start, count - (listHeight - 3));
-      }
-      const end = Math.min(count, start + listHeight - 3);
+      const { start, end } = getWindowedListRange(count, modalState.cursor, listHeight - 3);
       
       for (let i = start; i < end; i++) {
         const row = modalState.filteredRows[i].item;
@@ -1121,10 +1100,7 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
   }
   
   // Draw the box
-  const boxLines = drawBox(combinedLines, totalWidth, glyphs, theme);
-  for (let i = 0; i < boxLines.length; i++) {
-    buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
-  }
+  drawModalBoxAt(buf, theme, modalTop, modalLeft, totalWidth, combinedLines);
 }
 
 // ── Config modal ─────────────────────────────────────────────────────
@@ -1232,14 +1208,7 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
       `  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter edit  Esc close')}`
     );
 
-    const modalHeight = lines.length + 2;
-    const modalTop = Math.floor((rows - modalHeight) / 2);
-    const modalLeft = Math.floor((cols - modalWidth) / 2);
-
-    const boxLines = drawBox(lines, modalWidth, glyphs, theme);
-    for (let i = 0; i < boxLines.length; i++) {
-      buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
-    }
+    renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
   } else if (modalState.mode === 'edit') {
     // ── Edit mode ──
     const targetLabel = modalState.editTarget;
@@ -1277,14 +1246,7 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
     lines.push('');
     lines.push(`  ${theme.style('fg.dim', 'Paste key + Enter to save \u00B7 Esc cancel')}`);
 
-    const modalHeight = lines.length + 2;
-    const modalTop = Math.floor((rows - modalHeight) / 2);
-    const modalLeft = Math.floor((cols - modalWidth) / 2);
-
-    const boxLines = drawBox(lines, modalWidth, glyphs, theme);
-    for (let i = 0; i < boxLines.length; i++) {
-      buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
-    }
+    renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
   } else if (modalState.mode === 'pick') {
     // ── Pick mode (exec mode selection) ──
     const EXEC_MODES = [
@@ -1306,14 +1268,7 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
     lines.push('');
     lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 select  Enter save  Esc cancel')}`);
 
-    const modalHeight = lines.length + 2;
-    const modalTop = Math.floor((rows - modalHeight) / 2);
-    const modalLeft = Math.floor((cols - modalWidth) / 2);
-
-    const boxLines = drawBox(lines, modalWidth, glyphs, theme);
-    for (let i = 0; i < boxLines.length; i++) {
-      buf.writeLine(modalTop + i, modalLeft, boxLines[i]);
-    }
+    renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
   }
 }
 
@@ -2252,10 +2207,21 @@ export async function runTUI(options = {}) {
   async function handleResumeModalInput(key) {
     const ms = tuiState.resumeModalState;
     if (!ms) return;
-    const renameRequested = ms.mode === 'list' && key.ch && !key.ctrl && !key.meta && String(key.ch).toLowerCase() === 'r';
-    const deleteRequested = (ms.mode !== 'rename' && ms.mode !== 'filter') && ((key.name === 'delete')
-      || (key.ch && !key.ctrl && !key.meta && ['d', 'x'].includes(String(key.ch).toLowerCase())));
+
+    const renameRequested = ms.mode === 'list'
+      && key.ch && !key.ctrl && !key.meta
+      && String(key.ch).toLowerCase() === 'r';
+    const deleteRequested = (ms.mode !== 'rename' && ms.mode !== 'filter') && (
+      key.name === 'delete'
+      || (key.ch && !key.ctrl && !key.meta && ['d', 'x'].includes(String(key.ch).toLowerCase()))
+    );
     const filterRequested = ms.mode === 'list' && key.ch === '/' && !key.ctrl && !key.meta;
+
+    const markDirty = (flush = false) => {
+      tuiState.dirty.add('all');
+      if (flush) scheduler.flush();
+      else scheduler.schedule();
+    };
 
     const exitRenameMode = () => {
       ms.mode = 'list';
@@ -2264,12 +2230,34 @@ export async function runTUI(options = {}) {
       ms.renameCursor = 0;
       ms.confirmDeleteId = null;
     };
-    
+
     const exitFilterMode = () => {
       ms.mode = 'list';
     };
 
     const visibleRows = Array.isArray(ms.filteredRows) ? ms.filteredRows : [];
+
+    async function deleteResumeRow(row) {
+      try {
+        const deleted = await deleteSession(row.sessionId);
+        if (deleted === 0) {
+          ms.error = `Session not found: ${row.sessionId}`;
+        } else {
+          const displayName = row.sessionName ? `${JSON.stringify(row.sessionName)} (${row.sessionId})` : row.sessionId;
+          addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
+          const nextRows = await listSessions();
+          ms.rows = nextRows;
+          updateFilteredRows(ms);
+          ms.cursor = Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
+          ms.error = null;
+        }
+      } catch (err) {
+        ms.error = `Delete failed: ${formatError(err)}`;
+      } finally {
+        ms.confirmDeleteId = null;
+        markDirty(true);
+      }
+    }
 
     async function saveRename() {
       const targetId = ms.renameTargetId;
@@ -2277,6 +2265,7 @@ export async function runTUI(options = {}) {
         exitRenameMode();
         return;
       }
+
       const trimmed = ms.renameBuf.trim();
       try {
         if (targetId === state.sessionId) {
@@ -2308,86 +2297,15 @@ export async function runTUI(options = {}) {
       } catch (err) {
         ms.error = `Rename failed: ${formatError(err)}`;
       } finally {
-        tuiState.dirty.add('all');
-        scheduler.flush();
+        markDirty(true);
       }
     }
 
     if (key.name === 'escape') {
-      if (ms.mode === 'filter') {
-      if (key.name === 'return') {
-        exitFilterMode();
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'backspace') {
-        if (ms.filterCursor > 0) {
-          ms.filterBuf = ms.filterBuf.slice(0, ms.filterCursor - 1) + ms.filterBuf.slice(ms.filterCursor);
-          ms.filterCursor--;
-          updateFilteredRows(ms);
-        }
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'delete') {
-        if (ms.filterCursor < ms.filterBuf.length) {
-          ms.filterBuf = ms.filterBuf.slice(0, ms.filterCursor) + ms.filterBuf.slice(ms.filterCursor + 1);
-          updateFilteredRows(ms);
-        }
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'left') {
-        if (ms.filterCursor > 0) ms.filterCursor--;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'right') {
-        if (ms.filterCursor < ms.filterBuf.length) ms.filterCursor++;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'home') {
-        ms.filterCursor = 0;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'end') {
-        ms.filterCursor = ms.filterBuf.length;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.ctrl && key.name === 'u') {
-        ms.filterBuf = '';
-        ms.filterCursor = 0;
-        updateFilteredRows(ms);
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.ch && !key.ctrl && !key.meta) {
-        ms.filterBuf = ms.filterBuf.slice(0, ms.filterCursor) + key.ch + ms.filterBuf.slice(ms.filterCursor);
-        ms.filterCursor += key.ch.length;
-        updateFilteredRows(ms);
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      return;
-    }
-
-    if (ms.mode === 'rename') {
+      if (ms.mode === 'rename') {
         exitRenameMode();
         ms.error = null;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
+        markDirty();
         return;
       }
       if (ms.mode === 'filter') {
@@ -2395,18 +2313,31 @@ export async function runTUI(options = {}) {
         updateFilteredRows(ms);
         exitFilterMode();
         ms.error = null;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
+        markDirty();
         return;
       }
       if (ms.confirmDeleteId) {
         ms.confirmDeleteId = null;
         ms.error = null;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
+        markDirty();
         return;
       }
       closeModal();
+      return;
+    }
+
+    if (ms.mode === 'filter') {
+      const edit = applySingleLineEditKey(ms.filterBuf, ms.filterCursor, key, { submitOnReturn: true });
+      if (!edit.handled) return;
+      if (edit.submitted) {
+        exitFilterMode();
+        markDirty();
+        return;
+      }
+      ms.filterBuf = edit.text;
+      ms.filterCursor = edit.cursor;
+      if (edit.changed) updateFilteredRows(ms);
+      markDirty();
       return;
     }
 
@@ -2415,104 +2346,46 @@ export async function runTUI(options = {}) {
     }
 
     if (ms.mode === 'rename') {
-      if (key.name === 'return') {
+      const edit = applySingleLineEditKey(ms.renameBuf, ms.renameCursor, key, { submitOnReturn: true });
+      if (!edit.handled) return;
+      if (edit.submitted) {
         await saveRename();
         return;
       }
-      if (key.name === 'backspace') {
-        if (ms.renameCursor > 0) {
-          ms.renameBuf = ms.renameBuf.slice(0, ms.renameCursor - 1) + ms.renameBuf.slice(ms.renameCursor);
-          ms.renameCursor--;
-        }
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'delete') {
-        if (ms.renameCursor < ms.renameBuf.length) {
-          ms.renameBuf = ms.renameBuf.slice(0, ms.renameCursor) + ms.renameBuf.slice(ms.renameCursor + 1);
-        }
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'left') {
-        if (ms.renameCursor > 0) ms.renameCursor--;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'right') {
-        if (ms.renameCursor < ms.renameBuf.length) ms.renameCursor++;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'home') {
-        ms.renameCursor = 0;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'end') {
-        ms.renameCursor = ms.renameBuf.length;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.ctrl && key.name === 'u') {
-        ms.renameBuf = '';
-        ms.renameCursor = 0;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.ch && !key.ctrl && !key.meta) {
-        ms.renameBuf = ms.renameBuf.slice(0, ms.renameCursor) + key.ch + ms.renameBuf.slice(ms.renameCursor);
-        ms.renameCursor += key.ch.length;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
+      ms.renameBuf = edit.text;
+      ms.renameCursor = edit.cursor;
+      markDirty();
       return;
     }
 
-    if (key.name === 'up') {
-      ms.cursor = (ms.cursor - 1 + visibleRows.length) % visibleRows.length;
+    const nav = getListNavigationAction(key);
+    if (nav?.type === 'move') {
+      ms.cursor = moveCursorCircular(ms.cursor, visibleRows.length, nav.delta);
       ms.confirmDeleteId = null;
       ms.error = null;
       await loadSessionPreview(ms);
-      tuiState.dirty.add('all');
-      scheduler.schedule();
+      markDirty();
       return;
     }
-    if (key.name === 'down') {
-      ms.cursor = (ms.cursor + 1) % visibleRows.length;
-      ms.confirmDeleteId = null;
-      ms.error = null;
-      await loadSessionPreview(ms);
-      tuiState.dirty.add('all');
-      scheduler.schedule();
-      return;
-    }
+
     if (filterRequested) {
       ms.mode = 'filter';
       ms.filterCursor = ms.filterBuf.length;
       ms.confirmDeleteId = null;
       ms.error = null;
-      tuiState.dirty.add('all');
-      scheduler.schedule();
+      markDirty();
       return;
     }
-    if (key.ch >= '1' && key.ch <= '9') {
-      const idx = parseInt(key.ch, 10) - 1;
-      if (idx >= 0 && idx < visibleRows.length) {
+
+    if (nav?.type === 'select_index') {
+      if (nav.index >= 0 && nav.index < visibleRows.length) {
         ms.confirmDeleteId = null;
         ms.error = null;
-        await switchToSessionById(visibleRows[idx].item.sessionId, { closePicker: true });
+        await switchToSessionById(visibleRows[nav.index].item.sessionId, { closePicker: true });
       }
       return;
     }
+
     if (renameRequested) {
       const row = visibleRows[ms.cursor]?.item;
       if (!row) return;
@@ -2522,80 +2395,38 @@ export async function runTUI(options = {}) {
       ms.renameCursor = ms.renameBuf.length;
       ms.confirmDeleteId = null;
       ms.error = null;
-      tuiState.dirty.add('all');
-      scheduler.schedule();
+      markDirty();
       return;
     }
+
     if (deleteRequested) {
       const row = visibleRows[ms.cursor]?.item;
       if (!row) return;
       if (row.sessionId === state.sessionId) {
         ms.error = 'Cannot delete the currently active session.';
         ms.confirmDeleteId = null;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
+        markDirty();
         return;
       }
       if (ms.confirmDeleteId !== row.sessionId) {
         ms.confirmDeleteId = row.sessionId;
         ms.error = null;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
+        markDirty();
         return;
       }
-
-      try {
-        const deleted = await deleteSession(row.sessionId);
-        if (deleted === 0) {
-          ms.error = `Session not found: ${row.sessionId}`;
-        } else {
-          const displayName = row.sessionName ? `${JSON.stringify(row.sessionName)} (${row.sessionId})` : row.sessionId;
-          addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
-          const nextRows = await listSessions();
-          ms.rows = nextRows;
-          updateFilteredRows(ms);
-          ms.cursor = Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
-          ms.error = null;
-        }
-      } catch (err) {
-        ms.error = `Delete failed: ${formatError(err)}`;
-      } finally {
-        ms.confirmDeleteId = null;
-        tuiState.dirty.add('all');
-        scheduler.flush();
-      }
+      await deleteResumeRow(row);
       return;
     }
-    if (key.name === 'return') {
+
+    if (nav?.type === 'confirm') {
       const row = visibleRows[ms.cursor]?.item;
-      if (row) {
-        if (ms.confirmDeleteId === row.sessionId) {
-          try {
-            const deleted = await deleteSession(row.sessionId);
-            if (deleted === 0) {
-              ms.error = `Session not found: ${row.sessionId}`;
-            } else {
-              const displayName = row.sessionName ? `${JSON.stringify(row.sessionName)} (${row.sessionId})` : row.sessionId;
-              addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
-              const nextRows = await listSessions();
-              ms.rows = nextRows;
-              updateFilteredRows(ms);
-              ms.cursor = Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
-              ms.error = null;
-            }
-          } catch (err) {
-            ms.error = `Delete failed: ${formatError(err)}`;
-          } finally {
-            ms.confirmDeleteId = null;
-            tuiState.dirty.add('all');
-            scheduler.flush();
-          }
-          return;
-        }
-        ms.error = null;
-        await switchToSessionById(row.sessionId, { closePicker: true });
+      if (!row) return;
+      if (ms.confirmDeleteId === row.sessionId) {
+        await deleteResumeRow(row);
+        return;
       }
-      return;
+      ms.error = null;
+      await switchToSessionById(row.sessionId, { closePicker: true });
     }
   }
 
@@ -2704,35 +2535,26 @@ export async function runTUI(options = {}) {
   async function handleModelModalInput(key) {
     const ms = tuiState.modelModalState;
     if (!ms) return;
-
-    if (key.name === 'escape') {
+    const action = getListNavigationAction(key);
+    if (!action) return;
+    if (action.type === 'cancel') {
       closeModelModal();
       return;
     }
-    if (key.name === 'up') {
+    if (action.type === 'move') {
       if (ms.models.length > 0) {
-        ms.cursor = (ms.cursor - 1 + ms.models.length) % ms.models.length;
+        ms.cursor = moveCursorCircular(ms.cursor, ms.models.length, action.delta);
       }
       tuiState.dirty.add('all');
       scheduler.schedule();
       return;
     }
-    if (key.name === 'down') {
-      if (ms.models.length > 0) {
-        ms.cursor = (ms.cursor + 1) % ms.models.length;
-      }
-      tuiState.dirty.add('all');
-      scheduler.schedule();
+    if (action.type === 'select_index') {
+      await selectModelFromPicker(action.index);
       return;
     }
-    if (key.ch >= '1' && key.ch <= '9') {
-      const idx = parseInt(key.ch, 10) - 1;
-      await selectModelFromPicker(idx);
-      return;
-    }
-    if (key.name === 'return') {
+    if (action.type === 'confirm') {
       await selectModelFromPicker(ms.cursor);
-      return;
     }
   }
 
@@ -3422,33 +3244,26 @@ export async function runTUI(options = {}) {
   async function handleProviderModalInput(key) {
     const providers = getProviderList();
     if (providers.length === 0) return;
-
-    if (key.name === 'escape') {
+    const action = getListNavigationAction(key);
+    if (!action) return;
+    if (action.type === 'cancel') {
       closeModal();
       return;
     }
-    if (key.name === 'up') {
-      tuiState.providerModalCursor = (tuiState.providerModalCursor - 1 + providers.length) % providers.length;
+    if (action.type === 'move') {
+      tuiState.providerModalCursor = moveCursorCircular(tuiState.providerModalCursor, providers.length, action.delta);
       tuiState.dirty.add('all');
       scheduler.schedule();
       return;
     }
-    if (key.name === 'down') {
-      tuiState.providerModalCursor = (tuiState.providerModalCursor + 1) % providers.length;
-      tuiState.dirty.add('all');
-      scheduler.schedule();
-      return;
-    }
-    if (key.ch >= '1' && key.ch <= '9') {
-      const idx = parseInt(key.ch, 10) - 1;
-      if (idx >= 0 && idx < providers.length) {
-        await switchProvider(idx);
+    if (action.type === 'select_index') {
+      if (action.index >= 0 && action.index < providers.length) {
+        await switchProvider(action.index);
       }
       return;
     }
-    if (key.name === 'return') {
+    if (action.type === 'confirm') {
       await switchProvider(tuiState.providerModalCursor);
-      return;
     }
   }
 
@@ -3476,30 +3291,24 @@ export async function runTUI(options = {}) {
     if (!ms) return;
 
     if (ms.mode === 'list') {
-      // ── List mode input ──
-      if (key.name === 'escape') {
+      const action = getListNavigationAction(key);
+      if (!action) return;
+      if (action.type === 'cancel') {
         closeConfigModal();
         return;
       }
-      if (key.name === 'up') {
-        ms.cursor = (ms.cursor - 1 + CONFIG_ITEM_COUNT) % CONFIG_ITEM_COUNT;
+      if (action.type === 'move') {
+        ms.cursor = moveCursorCircular(ms.cursor, CONFIG_ITEM_COUNT, action.delta);
         tuiState.dirty.add('all');
         scheduler.schedule();
         return;
       }
-      if (key.name === 'down') {
-        ms.cursor = (ms.cursor + 1) % CONFIG_ITEM_COUNT;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      // Number keys 1–9: jump + activate
-      if (key.ch >= '1' && key.ch <= '9') {
-        ms.cursor = parseInt(key.ch, 10) - 1;
+      if (action.type === 'select_index') {
+        ms.cursor = action.index;
         await activateConfigItem(ms.cursor);
         return;
       }
-      if (key.name === 'return') {
+      if (action.type === 'confirm') {
         await activateConfigItem(ms.cursor);
         return;
       }
@@ -3507,9 +3316,13 @@ export async function runTUI(options = {}) {
     }
 
     if (ms.mode === 'edit') {
-      // ── Edit mode input ──
-      if (key.name === 'escape') {
-        // Discard, back to list
+      const edit = applySingleLineEditKey(ms.editBuf, ms.editCursor, key, {
+        submitOnReturn: true,
+        cancelOnEscape: true,
+      });
+      if (!edit.handled) return;
+
+      if (edit.canceled) {
         ms.mode = 'list';
         ms.editBuf = '';
         ms.editCursor = 0;
@@ -3517,8 +3330,8 @@ export async function runTUI(options = {}) {
         scheduler.schedule();
         return;
       }
-      if (key.name === 'return') {
-        // Save if non-empty, then return to list
+
+      if (edit.submitted) {
         if (ms.editBuf) {
           await saveConfigKey(ms.editTarget, ms.editBuf);
         }
@@ -3529,60 +3342,32 @@ export async function runTUI(options = {}) {
         scheduler.flush();
         return;
       }
-      if (key.name === 'backspace') {
-        if (ms.editCursor > 0) {
-          ms.editBuf = ms.editBuf.slice(0, ms.editCursor - 1) + ms.editBuf.slice(ms.editCursor);
-          ms.editCursor--;
-        }
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'left') {
-        if (ms.editCursor > 0) ms.editCursor--;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'right') {
-        if (ms.editCursor < ms.editBuf.length) ms.editCursor++;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      // Printable characters
-      if (key.ch && !key.ctrl && !key.meta) {
-        ms.editBuf = ms.editBuf.slice(0, ms.editCursor) + key.ch + ms.editBuf.slice(ms.editCursor);
-        ms.editCursor += key.ch.length;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
+
+      ms.editBuf = edit.text;
+      ms.editCursor = edit.cursor;
+      tuiState.dirty.add('all');
+      scheduler.schedule();
       return;
     }
 
     if (ms.mode === 'pick') {
       // ── Pick mode input (exec mode selection) ──
       const EXEC_MODES = ['strict', 'auto', 'yolo'];
-      if (key.name === 'escape') {
+      const action = getListNavigationAction(key, { allowNumbers: false });
+      if (!action) return;
+      if (action.type === 'cancel') {
         ms.mode = 'list';
         tuiState.dirty.add('all');
         scheduler.schedule();
         return;
       }
-      if (key.name === 'up') {
-        ms.pickCursor = (ms.pickCursor - 1 + EXEC_MODES.length) % EXEC_MODES.length;
+      if (action.type === 'move') {
+        ms.pickCursor = moveCursorCircular(ms.pickCursor, EXEC_MODES.length, action.delta);
         tuiState.dirty.add('all');
         scheduler.schedule();
         return;
       }
-      if (key.name === 'down') {
-        ms.pickCursor = (ms.pickCursor + 1) % EXEC_MODES.length;
-        tuiState.dirty.add('all');
-        scheduler.schedule();
-        return;
-      }
-      if (key.name === 'return') {
+      if (action.type === 'confirm') {
         const chosen = EXEC_MODES[ms.pickCursor];
         config.execMode = chosen;
         await saveConfig(config);

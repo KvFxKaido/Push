@@ -53,6 +53,8 @@ The Push TUI is a custom-built, zero-dependency terminal interface implemented i
 | `tui-input.mjs` | Key parsing, input history, text composer | ~430 |
 | `tui-status.mjs` | Git status, token estimation, status bar | ~270 |
 | `tui-fuzzy.mjs` | Fuzzy filtering for session picker | ~150 |
+| `tui-modal-input.mjs` | Reusable modal list navigation + single-line edit helpers | ~150 |
+| `tui-widgets.mjs` | Composable modal box + list-window render helpers | ~60 |
 | `tui-completer.mjs` | Tab completion for commands | ~280 |
 
 ### Data Flow
@@ -371,9 +373,12 @@ function processInput(key) {
 - Command pattern (async/await is more idiomatic for Node.js)
 - Full Elm Architecture (overkill for our scope)
 
+**Implemented after studying Bubble Tea:**
+- Incremental modal router (shared overlay selector for render/input)
+- More reusable modal/list interaction patterns (shared helpers instead of per-modal key handling)
+
 **Potential improvements:**
 - More formalized message types with discriminated unions
-- Extract common patterns into composable widgets
 
 ### Ink (React) - vadimdemedes/ink
 
@@ -394,9 +399,11 @@ function processInput(key) {
 
 **Implemented after studying Ink:**
 - `<Static>`-like transcript render caching for stable transcript content
+- Reusable modal input helpers (single-line editor + list navigation "hook-like" patterns)
+- Composable modal widget helpers (centered box + list window helpers)
 
 **Potential improvements:**
-- Extract input handling into reusable hooks
+- Extract more renderer/state patterns into reusable hook-like helpers if modal complexity grows
 
 ### Ratatui (Rust) - ratatui/ratatui
 
@@ -418,10 +425,11 @@ function processInput(key) {
 **Implemented after studying Ratatui:**
 - Layout caching (memoized by terminal size + pane state)
 - Windowed transcript assembly over cached entry blocks (virtualized composition)
+- Prefix-indexed transcript block line ranges with binary-searched visible block lookup (deeper transcript virtualization step)
 
 **Potential improvements:**
 - Consider constraint-based layouts if UI complexity grows
-- Deeper line-level virtualization if transcript complexity grows further
+- Lazy line materialization for very large partially visible transcript blocks
 
 ## Performance Considerations
 
@@ -433,14 +441,15 @@ function processInput(key) {
 4. **Layout caching** - Reuse computed pane geometry when terminal/layout inputs are unchanged
 5. **Transcript render caching** - Cache rendered transcript entry blocks for stable content
 6. **Windowed transcript assembly** - Build only the visible transcript window (+ streaming tail) each frame
-7. **Transcript capping** - Max 2000 entries to prevent unbounded growth
-8. **Tool feed capping** - Max 200 entries
+7. **Indexed transcript block ranges** - Prefix line ranges + binary search to skip scanning all transcript blocks each frame
+8. **Transcript capping** - Max 2000 entries to prevent unbounded growth
+9. **Tool feed capping** - Max 200 entries
 
 ### Potential Future Optimizations
 
 1. **Line-level virtualization**
-   - Current: transcript is windowed at cached entry-block granularity
-   - Improvement: skip per-entry line materialization for partially visible large blocks
+   - Current: visible window lookup is binary-searched over cached transcript block line ranges
+   - Improvement: skip full line materialization for very large partially visible blocks (lazy per-block slices)
 
 2. **Cached modal render buffers**
    - Reuse modal frame rendering for static modal states (e.g., provider list)
