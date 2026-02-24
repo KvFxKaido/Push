@@ -840,7 +840,7 @@ export async function executeSandboxToolCall(
                 const expanded = await readFullFileByChunks(sandboxId, call.args.path, autoReadResult.version);
                 autoReadContent = expanded.content;
                 autoReadVersion = expanded.version ?? autoReadVersion;
-                autoReadTruncated = false;
+                autoReadTruncated = expanded.truncated;
               }
 
               const autoLineCount = autoReadContent.split('\n').length;
