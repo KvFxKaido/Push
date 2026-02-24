@@ -374,7 +374,7 @@ export function computeLayout(rows, cols, { toolPaneOpen = false, composerLines 
   const innerLeft = outerMarginCol + 1; // 1-indexed for ANSI
 
   const headerHeight = 4;   // product line, model, directory, hint
-  const footerHeight = 1;
+  const footerHeight = 2;   // status bar + keybind hints
   const composerHeight = Math.max(3, Math.min(7, composerLines + 2)); // +2 for border
 
   const headerTop = outerMarginRow + 1; // 1-indexed

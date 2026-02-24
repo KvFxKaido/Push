@@ -116,6 +116,8 @@ export const GLYPHS_UNICODE = {
   arrow:       '→',
   check:       '✓',
   cross_mark:  '✗',
+  branch:      '',
+  folder:      '',
 };
 
 export const GLYPHS_ASCII = {
@@ -137,6 +139,8 @@ export const GLYPHS_ASCII = {
   arrow:       '->',
   check:       'ok',
   cross_mark:  'x',
+  branch:      'git:',
+  folder:      'dir:',
 };
 
 // ── Theme factory ───────────────────────────────────────────────────

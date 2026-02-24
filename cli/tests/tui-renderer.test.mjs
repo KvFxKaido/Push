@@ -187,9 +187,9 @@ describe('computeLayout', () => {
     assert.equal(layout.header.height, 4);
   });
 
-  it('footer has 1 row', () => {
+  it('footer has 2 rows', () => {
     const layout = computeLayout(24, 80);
-    assert.equal(layout.footer.height, 1);
+    assert.equal(layout.footer.height, 2);
   });
 
   it('composer has min 3 rows', () => {

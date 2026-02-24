@@ -25,7 +25,7 @@ const MANIFEST_FILES = [
 
 // ─── Git info ───────────────────────────────────────────────────
 
-async function getGitInfo(cwd) {
+export async function getGitInfo(cwd) {
   try {
     const { stdout } = await execFileAsync('git', ['status', '--short', '--branch'], {
       cwd,
