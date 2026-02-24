@@ -1096,6 +1096,31 @@ describe('executeSandboxToolCall -- edit guard', () => {
     expect(result.text).toContain('Wrote /workspace/src/empty.ts');
     expect(result.text).not.toContain('Edit guard');
   });
+
+  it('keeps edit guard blocked when chunk hydration remains truncated', async () => {
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({
+        content: 'minified-start',
+        truncated: true,
+        version: 'v1',
+      } as unknown as sandboxClient.FileReadResult)
+      .mockResolvedValueOnce({
+        content: 'aaaaaaaaaa',
+        truncated: true,
+        version: 'v1',
+        start_line: 1,
+        end_line: 400,
+      } as unknown as sandboxClient.FileReadResult);
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/src/big.min.js', content: 'replacement' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edit guard');
+    expect(result.text).toContain('too large to fully load');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
 });
 
 describe('sandbox path normalization', () => {
@@ -1170,5 +1195,38 @@ describe('sandbox_edit_file large file fallback', () => {
 
     expect(result.text).toContain('Edited /workspace/demo.txt');
     expect(sandboxClient.readFromSandbox).toHaveBeenNthCalledWith(2, 'sb-123', '/workspace/demo.txt', 1, 400);
+  });
+
+  it('blocks sandbox_edit_file when chunk hydration remains truncated', async () => {
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({
+        content: 'line 1\nline 2',
+        truncated: true,
+        version: 'v1',
+      })
+      .mockResolvedValueOnce({
+        content: 'line 1\nline 2',
+        truncated: true,
+        version: 'v1',
+        start_line: 1,
+        end_line: 400,
+      } as unknown as sandboxClient.FileReadResult);
+
+    const ref = await calculateLineHash('line 1');
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path: '/workspace/demo.txt',
+          edits: [{ op: 'replace_line', ref, content: 'line one' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_edit_file]');
+    expect(result.text).toContain('Chunked hydration remained truncated');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 });

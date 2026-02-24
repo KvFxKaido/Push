@@ -453,12 +453,19 @@ async function readFullFileByChunks(
       break;
     }
 
+    // Backend may truncate a single line-range response by payload size (50k chars).
+    // In that case we cannot prove EOF or safely continue line-based hydration.
+    if (range.truncated) {
+      truncated = true;
+    }
+
     const lines = range.content.split('\n');
     const hadTrailingNewline = range.content.endsWith('\n');
     lastHadTrailingNewline = hadTrailingNewline;
     const normalized = hadTrailingNewline ? lines.slice(0, -1) : lines;
 
     collected.push(...normalized);
+    if (range.truncated) break;
     if (normalized.length < chunkSize) break;
     startLine += normalized.length;
     
@@ -495,7 +502,7 @@ export async function executeSandboxToolCall(
     switch (call.tool) {
       case 'sandbox_exec': {
         const start = Date.now();
-        const result = await execInSandbox(sandboxId, call.args.command, call.args.workdir);
+        const result = await execInSandbox(sandboxId, call.args.command, normalizeSandboxWorkdir(call.args.workdir));
         const durationMs = Date.now() - start;
 
         const lines: string[] = [
@@ -750,6 +757,23 @@ export async function executeSandboxToolCall(
 
         if (readResult.truncated) {
           const expanded = await readFullFileByChunks(sandboxId, path, readResult.version);
+          if (expanded.truncated) {
+            const err: StructuredToolError = {
+              type: 'EDIT_GUARD_BLOCKED',
+              retryable: false,
+              message: `Edit guard: ${path} is too large to fully load safely.`,
+              detail: 'Chunk hydration remained truncated',
+            };
+            return {
+              text: formatStructuredError(err, [
+                `[Tool Error — sandbox_edit_file]`,
+                `Edit guard: ${path} is too large to fully load safely.`,
+                `Chunked hydration remained truncated (likely due to payload limits on a single line range).`,
+                `Use sandbox_read_file with narrower start_line/end_line ranges and retry with targeted edits.`,
+              ].join('\n')),
+              structuredError: err,
+            };
+          }
           readResult = {
             ...readResult,
             content: expanded.content,
