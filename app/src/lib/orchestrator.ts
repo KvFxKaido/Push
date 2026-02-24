@@ -402,7 +402,24 @@ Boundaries:
 Error recovery:
 - If a tool result contains an error, diagnose it and retry with corrected arguments — don't just report the error.
 - Never claim a task is complete unless a tool result confirms success.
-- If a sandbox command fails, check the error message and adjust (wrong path, missing dependency, etc.).`;
+- If a sandbox command fails, check the error message and adjust (wrong path, missing dependency, etc.).
+
+## Efficient Delegation with File Context
+
+When delegating coding tasks to the Coder via delegate_coder, significantly improve efficiency by passing relevant file context:
+
+1. Scan conversation history for your previous tool calls (read_file, grep_file, search_files, list_directory).
+2. Identify file paths from arguments.
+3. Include them in the delegate_coder "files" array.
+
+Example:
+If you read "src/auth.ts", use:
+{"tool": "delegate_coder", "args": { "task": "...", "files": ["src/auth.ts"] }}
+
+Rules:
+- Only include files actually read in this conversation.
+- Don't guess. If unsure, omit the files field.
+- Prioritize correctness over optimization.`;
 
 const DEMO_WELCOME = `Welcome to **Push** — your AI coding agent with direct repo access.
 
