@@ -65,6 +65,10 @@ Use this file to navigate active design/planning docs versus historical referenc
   - Status: Active protocol spec for `pushd` messaging.
 - `cli/design/Push CLI TUI Visual Language Spec.md`
   - Status: Proposed visual language and terminal theming spec for `push tui` Phase 1.
+- `cli/design/TUI Architecture.md`
+  - Status: Complete architectural overview of the TUI implementation, patterns, and lessons from other libraries.
+- `cli/design/TUI Visual System.md`
+  - Status: Detailed visual design system, layout specs, color tokens, and interaction patterns.
 - `cli/schemas/` (see `cli/schemas/README.md`)
   - Status: Active JSON Schema artifacts for runtime protocol envelopes/payloads.
 
