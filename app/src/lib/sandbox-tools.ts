@@ -433,12 +433,14 @@ async function readFullFileByChunks(
   sandboxId: string,
   path: string,
   versionHint?: string | null,
-): Promise<{ content: string; version?: string | null }> {
+): Promise<{ content: string; version?: string | null; truncated: boolean }> {
   const chunkSize = 400;
   const maxChunks = 200;
   const collected: string[] = [];
   let startLine = 1;
   let version = versionHint;
+  let truncated = false;
+  let lastHadTrailingNewline = false;
 
   for (let i = 0; i < maxChunks; i += 1) {
     const range = await readFromSandbox(sandboxId, path, startLine, startLine + chunkSize - 1) as FileReadResult & { error?: string };
@@ -446,23 +448,36 @@ async function readFullFileByChunks(
     if (!version && typeof range.version === 'string' && range.version) {
       version = range.version;
     }
-    if (!range.content) break;
+    if (!range.content) {
+      lastHadTrailingNewline = false;
+      break;
+    }
 
     const lines = range.content.split('\n');
     const hadTrailingNewline = range.content.endsWith('\n');
+    lastHadTrailingNewline = hadTrailingNewline;
     const normalized = hadTrailingNewline ? lines.slice(0, -1) : lines;
 
     collected.push(...normalized);
     if (normalized.length < chunkSize) break;
     startLine += normalized.length;
+    
+    if (i === maxChunks - 1 && normalized.length === chunkSize) {
+      truncated = true;
+    }
+  }
+
+  let content = collected.join('\n');
+  if (lastHadTrailingNewline) {
+    content += '\n';
   }
 
   return {
-    content: collected.join('\n'),
+    content,
     version,
+    truncated,
   };
 }
-
 // --- Diff parsing (shared via diff-utils) ---
 
 // --- Execution ---
