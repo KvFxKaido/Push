@@ -31,6 +31,11 @@ Concrete JSON Schemas for this protocol live in `documents/cli/schemas/`:
 - `documents/cli/schemas/push-runtime-event-envelope.schema.json`
 - `documents/cli/schemas/push-runtime-defs.schema.json`
 
+Current implementation status:
+- These schema files are maintained as protocol/spec artifacts.
+- They are not currently wired into runtime validation or automated tests.
+- Validation integration remains a future implementation step (see CLI bootstrap plan notes).
+
 ## Non-Goals (MVP)
 
 - cross-machine multi-user collaboration
