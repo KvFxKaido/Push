@@ -8,7 +8,7 @@ export const OPENROUTER_MODELS = [
   'anthropic/claude-opus-4.6',
   'anthropic/claude-haiku-4.5',
   'openai/gpt-5.2-codex',
-  'openai/gpt-5.1-codex',
+  'openai/gpt-5.3-codex',
   'stepfun/step-3.5-flash:free',
   'qwen/qwen3-coder:free',
   'deepseek/deepseek-r1-0528:free',
@@ -43,6 +43,8 @@ export const GOOGLE_MODELS = [
 ];
 
 export const ZEN_MODELS = [
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.2-codex',
   'qwen3-coder',
   'kimi-k2.5',
   'kimi-k2.5-free',
