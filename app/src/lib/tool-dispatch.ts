@@ -427,11 +427,12 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
     }
   }
 
-  // Phase 4: Natural language tool intent — telemetry only. Records intent misses
-  // for provider compliance tracking, but does NOT trigger a retry. The prompt
-  // already instructs models never to describe tool use in prose.
+  // Phase 4: Natural language tool intent — actionable. These are high-signal
+  // cases ("I'll use sandbox_exec...") where the model clearly intended a tool
+  // call but emitted prose instead of JSON; return a diagnosis so the caller can
+  // inject a correction and retry.
   const nlIntent = detectNaturalLanguageToolIntent(text);
-  if (nlIntent) return { ...nlIntent, telemetryOnly: true };
+  if (nlIntent) return nlIntent;
 
   return null;
 }

@@ -7,6 +7,7 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
 
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('delegate_coder');
+    expect(result?.telemetryOnly).toBeUndefined();
   });
 
   it('does not flag explanatory prose as tool intent', () => {
