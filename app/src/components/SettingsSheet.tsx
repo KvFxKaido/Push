@@ -1148,6 +1148,7 @@ export function SettingsSheet({
               placeholder="MiniMax API key"
               saveLabel="Save MiniMax key"
               hint="MiniMax OpenAI-compatible API key for https://api.minimax.io/v1."
+              savedHint="MiniMax-M2.5-highspeed requires the High-Speed subscription. Coding Plan supports MiniMax-M2.5, MiniMax-M2.1, and MiniMax-M2."
               model={{
                 value: ai.minimaxModel,
                 set: ai.setMinimaxModel,
