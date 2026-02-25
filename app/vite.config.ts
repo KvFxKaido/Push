@@ -1,4 +1,5 @@
 import path from "path"
+import https from "node:https"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 // https://vite.dev/config/
@@ -11,6 +12,7 @@ const API_PROXY_ORIGIN = (() => {
   }
 })();
 const SRC_ROOT = path.resolve(__dirname, './src');
+const IPV4_HTTPS_AGENT = new https.Agent({ keepAlive: true, family: 4 });
 
 function packageChunkName(moduleId: string): string | null {
   const normalized = moduleId.replace(/\\/g, '/');
@@ -160,6 +162,7 @@ export default defineConfig({
       '/google': {
         target: 'https://generativelanguage.googleapis.com',
         changeOrigin: true,
+        agent: IPV4_HTTPS_AGENT,
         rewrite: (path) => path.replace(/^\/google/, ''),
       },
       '/opencode': {
