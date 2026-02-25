@@ -44,9 +44,9 @@ export const GOOGLE_MODELS = [
 
 export const MINIMAX_MODELS = [
   'MiniMax-M2.5',
-  'MiniMax-M2-her',
   'MiniMax-M2.1',
   'MiniMax-M2',
+  'MiniMax-M2.5-highspeed',
 ];
 
 export const ZEN_MODELS = [

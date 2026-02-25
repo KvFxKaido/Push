@@ -44,9 +44,9 @@ export const ZAI_MODELS: string[] = [
 
 export const MINIMAX_MODELS: string[] = [
   'MiniMax-M2.5',
-  'MiniMax-M2-her',
   'MiniMax-M2.1',
   'MiniMax-M2',
+  'MiniMax-M2.5-highspeed',
 ];
 
 export const GOOGLE_MODELS: string[] = [
