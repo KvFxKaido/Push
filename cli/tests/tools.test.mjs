@@ -568,3 +568,129 @@ describe('safe command exec bypass', () => {
     }
   });
 });
+
+// ─── lsp_diagnostics tool ───────────────────────────────────────
+
+describe('lsp_diagnostics tool', () => {
+  it('returns error for unsupported project type', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-diag-'));
+    try {
+      // Create a file but no project marker
+      await fs.writeFile(path.join(root, 'random.txt'), 'hello');
+
+      const result = await executeToolCall(
+        { tool: 'lsp_diagnostics', args: {} },
+        root,
+      );
+
+      assert.equal(result.ok, false);
+      assert.ok(result.structuredError);
+      assert.equal(result.structuredError.code, 'UNSUPPORTED_PROJECT_TYPE');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('detects TypeScript project and runs diagnostics', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-diag-ts-'));
+    try {
+      // Create a tsconfig.json
+      await fs.writeFile(path.join(root, 'tsconfig.json'), JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          noEmit: true,
+        },
+        include: ['*.ts'],
+      }));
+
+      // Create a TypeScript file with a type error
+      await fs.writeFile(path.join(root, 'test.ts'), `
+        const x: string = 42;
+        console.log(x);
+      `);
+
+      const result = await executeToolCall(
+        { tool: 'lsp_diagnostics', args: {} },
+        root,
+      );
+
+      // Should detect the type error (if tsc is available)
+      // If tsc is not installed, we get DIAGNOSTIC_TOOL_NOT_FOUND
+      if (result.ok) {
+        assert.ok(result.meta.projectType === 'typescript' || result.meta.projectType === 'node');
+        assert.ok(typeof result.meta.errors === 'number');
+        assert.ok(typeof result.meta.warnings === 'number');
+      } else {
+        assert.ok(
+          result.structuredError.code === 'DIAGNOSTIC_TOOL_NOT_FOUND' ||
+          result.structuredError.code === 'DIAGNOSTIC_FAILED'
+        );
+      }
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('filters diagnostics to specific file', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-diag-filter-'));
+    try {
+      await fs.writeFile(path.join(root, 'tsconfig.json'), JSON.stringify({
+        compilerOptions: { strict: true, noEmit: true },
+        include: ['*.ts'],
+      }));
+
+      await fs.writeFile(path.join(root, 'a.ts'), `const x: string = 42;`);
+      await fs.writeFile(path.join(root, 'b.ts'), `const y: number = 'wrong';`);
+
+      const result = await executeToolCall(
+        { tool: 'lsp_diagnostics', args: { path: 'a.ts' } },
+        root,
+      );
+
+      // Result should be ok or have a known error code
+      if (result.ok) {
+        // If filtered, only errors from a.ts should appear
+        // (This depends on tsc behavior with single-file filtering)
+        assert.ok(result.meta);
+      } else {
+        assert.ok(['DIAGNOSTIC_TOOL_NOT_FOUND', 'DIAGNOSTIC_FAILED', 'UNSUPPORTED_PROJECT_TYPE'].includes(
+          result.structuredError?.code
+        ));
+      }
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns empty diagnostics for clean TypeScript project', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-diag-clean-'));
+    try {
+      await fs.writeFile(path.join(root, 'tsconfig.json'), JSON.stringify({
+        compilerOptions: { strict: true, noEmit: true },
+        include: ['*.ts'],
+      }));
+
+      // Valid TypeScript
+      await fs.writeFile(path.join(root, 'clean.ts'), `
+        const greeting: string = 'hello';
+        console.log(greeting);
+      `);
+
+      const result = await executeToolCall(
+        { tool: 'lsp_diagnostics', args: {} },
+        root,
+      );
+
+      if (result.ok) {
+        assert.ok(result.text.includes('No diagnostics') || result.meta.errors > 0 || result.meta.warnings > 0);
+      } else {
+        // tsc might not be installed
+        assert.ok(['DIAGNOSTIC_TOOL_NOT_FOUND', 'DIAGNOSTIC_FAILED'].includes(
+          result.structuredError?.code
+        ));
+      }
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});

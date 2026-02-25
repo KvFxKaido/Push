@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.mjs';
+import { runDiagnostics } from './diagnostics.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -17,7 +18,7 @@ const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_
 const OLLAMA_API_KEY_ENV_VARS = ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'];
 const WEB_SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
-const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'git_status', 'git_diff']);
+const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'git_status', 'git_diff', 'lsp_diagnostics']);
 
 // Patterns that indicate high-risk shell commands requiring user approval
 const HIGH_RISK_PATTERNS = [
@@ -134,6 +135,7 @@ Available tools:
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - git_commit(message, paths?) — stage and commit files (all files if paths not specified)
 - undo_edit(path) — restore a file from its most recent backup (created before each write/edit)
+- lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session.
 - coder_update_state(plan?, openTasks?, filesTouched?, assumptions?, errorsEncountered?, currentPhase?, completedPhases?) — update working memory (no filesystem action). currentPhase is the current task phase; completedPhases is a list of completed phases (retroactive tracking supported).
 - ask_user(question, choices?) — pause and ask the operator a clarifying question; choices is an optional string[] of suggested answers. Use only when a critical ambiguity would cause significant wasted work — avoid for questions you can reasonably assume.
@@ -1209,10 +1211,61 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         };
       }
 
+      case 'lsp_diagnostics': {
+        const specificPath = call.args.path ? await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path')) : null;
+        const result = await runDiagnostics(workspaceRoot, specificPath);
+
+        if (result.error) {
+          return {
+            ok: false,
+            text: `Diagnostics error: ${result.error.message}`,
+            structuredError: {
+              code: result.error.code,
+              message: result.error.message,
+              retryable: result.error.retryable,
+            },
+            meta: { projectType: result.projectType },
+          };
+        }
+
+        const { diagnostics, projectType } = result;
+
+        if (diagnostics.length === 0) {
+          return {
+            ok: true,
+            text: `No diagnostics found (${projectType} project).`,
+            meta: { projectType, errors: 0, warnings: 0 },
+          };
+        }
+
+        const errors = diagnostics.filter(d => d.severity === 'error');
+        const warnings = diagnostics.filter(d => d.severity === 'warning');
+
+        // Format diagnostics for readable output
+        const formatted = diagnostics
+          .slice(0, 50) // Limit to first 50 to avoid flooding context
+          .map(d => `${d.file}:${d.line}:${d.col} [${d.severity}] ${d.code ? `(${d.code}) ` : ''}${d.message}`)
+          .join('\n');
+
+        const moreMsg = diagnostics.length > 50 ? `\n\n...and ${diagnostics.length - 50} more issues` : '';
+
+        return {
+          ok: true,
+          text: `Found ${errors.length} error(s) and ${warnings.length} warning(s) in ${projectType} project:\n\n${formatted}${moreMsg}`,
+          meta: {
+            projectType,
+            errors: errors.length,
+            warnings: warnings.length,
+            total: diagnostics.length,
+            diagnostics: diagnostics.slice(0, 50), // Include structured data for programmatic use
+          },
+        };
+      }
+
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, write_file, edit_file, undo_edit, read_symbols, git_status, git_diff, git_commit, save_memory`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, write_file, edit_file, undo_edit, read_symbols, git_status, git_diff, git_commit, save_memory, lsp_diagnostics`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,

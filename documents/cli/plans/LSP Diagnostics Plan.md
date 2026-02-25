@@ -1,6 +1,8 @@
 # LSP Diagnostics for Push CLI
 
-Brainstorm document. Not committed to implementation yet.
+Status: **Shipped** (2026-02-25)
+
+Implementation: `cli/diagnostics.mjs`, integrated into `cli/tools.mjs`
 
 ## Problem
 
