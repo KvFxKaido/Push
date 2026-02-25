@@ -1,6 +1,7 @@
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
+import { getMinimaxKey } from '@/hooks/useMinimaxConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
@@ -16,6 +17,10 @@ const MISTRAL_MODELS_URL = import.meta.env.DEV
 const OPENROUTER_MODELS_URL = import.meta.env.DEV
   ? '/openrouter/v1/models'
   : '/api/openrouter/models';
+
+const MINIMAX_MODELS_URL = import.meta.env.DEV
+  ? '/minimax/v1/models'
+  : '/api/minimax/models';
 
 const ZAI_MODELS_URL = import.meta.env.DEV
   ? '/zai/api/coding/paas/v4/models'
@@ -95,6 +100,10 @@ export async function fetchMistralModels(): Promise<string[]> {
 
 export async function fetchOpenRouterModels(): Promise<string[]> {
   return fetchProviderModels(OPENROUTER_MODELS_URL, getOpenRouterKey(), 'OpenRouter');
+}
+
+export async function fetchMinimaxModels(): Promise<string[]> {
+  return fetchProviderModels(MINIMAX_MODELS_URL, getMinimaxKey(), 'MiniMax');
 }
 
 export async function fetchZaiModels(): Promise<string[]> {

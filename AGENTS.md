@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: Ollama, Mistral, OpenRouter, Z.AI, Google, OpenCode Zen (user picks, all roles) |
+| AI | Multi-backend: Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen (user picks, all roles) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -38,7 +38,7 @@ The active backend serves all three roles. The user picks a backend in Settings;
 
 ### AI Backends
 
-Six providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, and `/api/zen/chat`.
+Seven providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, `/api/minimax/chat`, and `/api/zen/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
@@ -47,6 +47,7 @@ Six providers, all using OpenAI-compatible SSE streaming. Any single API key is 
 | **OpenRouter** | claude-sonnet-4.6 |
 | **Z.AI** | glm-4.5 |
 | **Google Gemini** | gemini-2.5-flash |
+| **MiniMax** | MiniMax-M2.5 |
 | **OpenCode Zen** | qwen3-coder |
 
 **OpenRouter** provides access to 50+ models through a single API. Push includes 12 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, 2 Codex variants (5.3/5.2), Step 3.5 Flash (free), Qwen3 Coder (free), DeepSeek R1 0528 (free), Gemini 3.1 Pro Preview/3 Flash, Grok 4.1, and Kimi K2.5.
@@ -176,7 +177,7 @@ Read-only tools run in parallel per turn. Only one mutating tool allowed per tur
 Workspace jail, high-risk command detection, tool loop detection, max rounds cap, output truncation. `.push/` internal state excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Six providers (Ollama, Mistral, OpenRouter, Z.AI, Google, OpenCode Zen), all OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Seven providers (Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen), all OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
 
 ## Directory Structure
 
@@ -277,6 +278,7 @@ Push/
 | `hooks/useOpenRouterConfig.ts` | OpenRouter backend configuration and model selection |
 | `hooks/useZaiConfig.ts` | Z.AI backend configuration and model selection |
 | `hooks/useGoogleConfig.ts` | Google backend configuration and model selection |
+| `hooks/useMinimaxConfig.ts` | MiniMax backend configuration and model selection |
 | `hooks/useZenConfig.ts` | OpenCode Zen backend configuration and model selection |
 | `hooks/useApiKeyConfig.ts` | Factory for provider API key hooks (shared localStorage getter + env var fallback + React hook) |
 | `hooks/useExpandable.ts` | Generic expandable/collapsible UI state |

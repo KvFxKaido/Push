@@ -9,6 +9,7 @@ interface Env {
   OLLAMA_API_KEY?: string;
   MISTRAL_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
+  MINIMAX_API_KEY?: string;
   ZAI_API_KEY?: string;
   GOOGLE_API_KEY?: string;
   ZEN_API_KEY?: string;
@@ -95,6 +96,16 @@ export default {
     // API route: model catalog proxy to OpenRouter
     if (url.pathname === '/api/openrouter/models' && request.method === 'GET') {
       return handleOpenRouterModels(request, env);
+    }
+
+    // API route: streaming proxy to MiniMax (SSE, OpenAI-compatible)
+    if (url.pathname === '/api/minimax/chat' && request.method === 'POST') {
+      return handleMinimaxChat(request, env);
+    }
+
+    // API route: model catalog proxy to MiniMax
+    if (url.pathname === '/api/minimax/models' && request.method === 'GET') {
+      return handleMinimaxModels(request, env);
     }
 
     // API route: streaming proxy to Z.AI (SSE, OpenAI-compatible)
@@ -730,6 +741,7 @@ interface HealthStatus {
     ollama: { status: 'ok' | 'unconfigured'; configured: boolean };
     mistral: { status: 'ok' | 'unconfigured'; configured: boolean };
     openrouter: { status: 'ok' | 'unconfigured'; configured: boolean };
+    minimax: { status: 'ok' | 'unconfigured'; configured: boolean };
     zai: { status: 'ok' | 'unconfigured'; configured: boolean };
     google: { status: 'ok' | 'unconfigured'; configured: boolean };
     zen: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -744,6 +756,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
   const mistralConfigured = Boolean(env.MISTRAL_API_KEY);
   const openRouterConfigured = Boolean(env.OPENROUTER_API_KEY);
+  const minimaxConfigured = Boolean(env.MINIMAX_API_KEY);
   const zaiConfigured = Boolean(env.ZAI_API_KEY);
   const googleConfigured = Boolean(env.GOOGLE_API_KEY);
   const zenConfigured = Boolean(env.ZEN_API_KEY);
@@ -764,7 +777,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     }
   }
 
-  const hasAnyLlm = ollamaConfigured || mistralConfigured || openRouterConfigured || zaiConfigured || googleConfigured || zenConfigured;
+  const hasAnyLlm = ollamaConfigured || mistralConfigured || openRouterConfigured || minimaxConfigured || zaiConfigured || googleConfigured || zenConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -777,6 +790,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       ollama: { status: ollamaConfigured ? 'ok' : 'unconfigured', configured: ollamaConfigured },
       mistral: { status: mistralConfigured ? 'ok' : 'unconfigured', configured: mistralConfigured },
       openrouter: { status: openRouterConfigured ? 'ok' : 'unconfigured', configured: openRouterConfigured },
+      minimax: { status: minimaxConfigured ? 'ok' : 'unconfigured', configured: minimaxConfigured },
       zai: { status: zaiConfigured ? 'ok' : 'unconfigured', configured: zaiConfigured },
       google: { status: googleConfigured ? 'ok' : 'unconfigured', configured: googleConfigured },
       zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
@@ -858,6 +872,27 @@ const handleOpenRouterModels = createJsonProxyHandler({
   buildAuth: standardAuth('OPENROUTER_API_KEY'),
   keyMissingError: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
   timeoutError: 'OpenRouter model list timed out after 30 seconds',
+});
+
+// --- MiniMax (OpenAI-compatible endpoint) ---
+
+const handleMinimaxChat = createStreamProxyHandler({
+  name: 'MiniMax API', logTag: 'api/minimax/chat',
+  upstreamUrl: 'https://api.minimax.io/v1/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: standardAuth('MINIMAX_API_KEY'),
+  keyMissingError: 'MiniMax API key not configured. Add it in Settings or set MINIMAX_API_KEY on the Worker.',
+  timeoutError: 'MiniMax request timed out after 120 seconds',
+});
+
+const handleMinimaxModels = createJsonProxyHandler({
+  name: 'MiniMax API', logTag: 'api/minimax/models',
+  upstreamUrl: 'https://api.minimax.io/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('MINIMAX_API_KEY'),
+  keyMissingError: 'MiniMax API key not configured. Add it in Settings or set MINIMAX_API_KEY on the Worker.',
+  timeoutError: 'MiniMax model list timed out after 30 seconds',
 });
 
 // --- Z.AI (OpenAI-compatible coding endpoint) ---

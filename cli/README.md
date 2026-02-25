@@ -107,7 +107,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `mistral`, `openrouter`, `zai`, `google`, `zen`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `mistral`, `openrouter`, `zai`, `google`, `minimax`, `zen`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
@@ -123,6 +123,9 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_GOOGLE_URL` | Google OpenAI-compatible endpoint (default: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`) |
 | `PUSH_GOOGLE_API_KEY` | Google API key |
 | `PUSH_GOOGLE_MODEL` | Google model (default: `gemini-3.1-pro-preview`) |
+| `PUSH_MINIMAX_URL` | MiniMax OpenAI-compatible endpoint (default: `https://api.minimax.io/v1/chat/completions`) |
+| `PUSH_MINIMAX_API_KEY` | MiniMax API key |
+| `PUSH_MINIMAX_MODEL` | MiniMax model (default: `MiniMax-M2.5`) |
 | `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`) |
 | `PUSH_ZEN_API_KEY` | OpenCode Zen API key |
 | `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `big-pickle`) |
@@ -136,7 +139,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-All six providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+All seven providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -145,6 +148,7 @@ All six providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5x
 | `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
 | `zai` | `glm-4.5` | Yes |
 | `google` | `gemini-3.1-pro-preview` | Yes |
+| `minimax` | `MiniMax-M2.5` | Yes |
 | `zen` | `big-pickle` | Yes |
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.

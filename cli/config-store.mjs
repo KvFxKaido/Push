@@ -76,6 +76,11 @@ export function applyConfigToEnv(config) {
   setEnvIfMissing('PUSH_GOOGLE_API_KEY', google.apiKey);
   setEnvIfMissing('PUSH_GOOGLE_MODEL', google.model);
 
+  const minimax = ensureObject(config.minimax);
+  setEnvIfMissing('PUSH_MINIMAX_URL', minimax.url);
+  setEnvIfMissing('PUSH_MINIMAX_API_KEY', minimax.apiKey);
+  setEnvIfMissing('PUSH_MINIMAX_MODEL', minimax.model);
+
   const zen = ensureObject(config.zen);
   setEnvIfMissing('PUSH_ZEN_URL', zen.url);
   setEnvIfMissing('PUSH_ZEN_API_KEY', zen.apiKey);

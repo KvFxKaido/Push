@@ -43,6 +43,14 @@ interface ChatInputProps {
     openRouterModelOptions: string[];
     isOpenRouterModelLocked: boolean;
     onSelectOpenRouterModel: (model: string) => void;
+    minimaxModel: string;
+    minimaxModelOptions: string[];
+    minimaxModelsLoading: boolean;
+    minimaxModelsError: string | null;
+    minimaxModelsUpdatedAt: number | null;
+    isMinimaxModelLocked: boolean;
+    refreshMinimaxModels: () => void;
+    onSelectMinimaxModel: (model: string) => void;
     zaiModel: string;
     zaiModelOptions: string[];
     zaiModelsLoading: boolean;
@@ -77,6 +85,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
   mistral: 'Mistral',
   openrouter: 'OpenRouter',
+  minimax: 'MiniMax',
   zai: 'Z.AI',
   google: 'Google',
   zen: 'OpenCode Zen',
@@ -87,6 +96,7 @@ const PROVIDER_ICONS: Record<AIProviderType, string> = {
   ollama: '🦙',
   mistral: '🌪️',
   openrouter: '🔀',
+  minimax: '🧠',
   zai: '🟦',
   google: '🔎',
   zen: '🧘',
@@ -262,6 +272,7 @@ export function ChatInput({
     if (selectedProvider === 'ollama') return providerControls.ollamaModel;
     if (selectedProvider === 'mistral') return providerControls.mistralModel;
     if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
+    if (selectedProvider === 'minimax') return providerControls.minimaxModel;
     if (selectedProvider === 'zai') return providerControls.zaiModel;
     if (selectedProvider === 'google') return providerControls.googleModel;
     if (selectedProvider === 'zen') return providerControls.zenModel;
@@ -279,6 +290,7 @@ export function ChatInput({
     if (!providerControls) return false;
     if (selectedProvider === 'ollama') return providerControls.ollamaModelsLoading;
     if (selectedProvider === 'mistral') return providerControls.mistralModelsLoading;
+    if (selectedProvider === 'minimax') return providerControls.minimaxModelsLoading;
     if (selectedProvider === 'zai') return providerControls.zaiModelsLoading;
     if (selectedProvider === 'google') return providerControls.googleModelsLoading;
     if (selectedProvider === 'zen') return providerControls.zenModelsLoading;
@@ -289,17 +301,19 @@ export function ChatInput({
     if (!providerControls) return null;
     if (selectedProvider === 'ollama') return formatTimeAgo(providerControls.ollamaModelsUpdatedAt);
     if (selectedProvider === 'mistral') return formatTimeAgo(providerControls.mistralModelsUpdatedAt);
+    if (selectedProvider === 'minimax') return formatTimeAgo(providerControls.minimaxModelsUpdatedAt);
     if (selectedProvider === 'zai') return formatTimeAgo(providerControls.zaiModelsUpdatedAt);
     if (selectedProvider === 'google') return formatTimeAgo(providerControls.googleModelsUpdatedAt);
     if (selectedProvider === 'zen') return formatTimeAgo(providerControls.zenModelsUpdatedAt);
     return null;
   })();
 
-  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'zai' || selectedProvider === 'google' || selectedProvider === 'zen';
+  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'minimax' || selectedProvider === 'zai' || selectedProvider === 'google' || selectedProvider === 'zen';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
     if (selectedProvider === 'mistral') providerControls.refreshMistralModels();
+    if (selectedProvider === 'minimax') providerControls.refreshMinimaxModels();
     if (selectedProvider === 'zai') providerControls.refreshZaiModels();
     if (selectedProvider === 'google') providerControls.refreshGoogleModels();
     if (selectedProvider === 'zen') providerControls.refreshZenModels();
@@ -552,6 +566,41 @@ export function ChatInput({
                             <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isZaiModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'minimax' && (
+                        <>
+                          <select
+                            value={providerControls.minimaxModel}
+                            disabled={!canChangeModel || providerControls.minimaxModelsLoading || providerControls.minimaxModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectMinimaxModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {(providerControls.minimaxModelOptions.length > 0
+                              ? providerControls.minimaxModelOptions
+                              : [providerControls.minimaxModel]
+                            ).map((model) => (
+                              <option key={model || '__default'} value={model}>
+                                {model || '(default)'}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.minimaxModelsLoading && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Loading MiniMax models...</p>
+                          )}
+                          {!providerControls.minimaxModelsLoading && providerControls.minimaxModelOptions.length === 0 && !providerControls.minimaxModelsError && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
+                          )}
+                          {providerControls.minimaxModelsError && (
+                            <p className="px-1 text-[10px] text-amber-400">{providerControls.minimaxModelsError}</p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                          )}
+                          {providerControls.isMinimaxModelLocked && (
                             <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

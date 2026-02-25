@@ -10,6 +10,7 @@ import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
+import { useMinimaxConfig } from '@/hooks/useMinimaxConfig';
 import { useZaiConfig } from '@/hooks/useZaiConfig';
 import { useGoogleConfig } from '@/hooks/useGoogleConfig';
 import { useZenConfig } from '@/hooks/useZenConfig';
@@ -19,6 +20,7 @@ import {
   setPreferredProvider,
   clearPreferredProvider,
   OPENROUTER_MODELS,
+  MINIMAX_MODELS,
   ZAI_MODELS,
   GOOGLE_MODELS,
   ZEN_MODELS,
@@ -29,6 +31,7 @@ import {
   fetchOllamaModels,
   fetchMistralModels,
   fetchOpenRouterModels,
+  fetchMinimaxModels,
   fetchZaiModels,
   fetchGoogleModels,
   fetchZenModels,
@@ -245,6 +248,7 @@ function App() {
   const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
   const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
   const { setKey: setOpenRouterKey, clearKey: clearOpenRouterKey, hasKey: hasOpenRouterKey, model: openRouterModel, setModel: setOpenRouterModel } = useOpenRouterConfig();
+  const { setKey: setMinimaxKey, clearKey: clearMinimaxKey, hasKey: hasMinimaxKey, model: minimaxModel, setModel: setMinimaxModel } = useMinimaxConfig();
   const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey, model: zaiModel, setModel: setZaiModel } = useZaiConfig();
   const { setKey: setGoogleKey, clearKey: clearGoogleKey, hasKey: hasGoogleKey, model: googleModel, setModel: setGoogleModel } = useGoogleConfig();
   const { setKey: setZenKey, clearKey: clearZenKey, hasKey: hasZenKey, model: zenModel, setModel: setZenModel } = useZenConfig();
@@ -258,6 +262,7 @@ function App() {
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [mistralKeyInput, setMistralKeyInput] = useState('');
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
+  const [minimaxKeyInput, setMinimaxKeyInput] = useState('');
   const [zaiKeyInput, setZaiKeyInput] = useState('');
   const [googleKeyInput, setGoogleKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
@@ -266,24 +271,28 @@ function App() {
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [mistralModels, setMistralModels] = useState<string[]>([]);
   const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
+  const [minimaxModels, setMinimaxModels] = useState<string[]>([]);
   const [zaiModels, setZaiModels] = useState<string[]>([]);
   const [googleModels, setGoogleModels] = useState<string[]>([]);
   const [zenModels, setZenModels] = useState<string[]>([]);
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
   const [mistralModelsLoading, setMistralModelsLoading] = useState(false);
   const [openRouterModelsLoading, setOpenRouterModelsLoading] = useState(false);
+  const [minimaxModelsLoading, setMinimaxModelsLoading] = useState(false);
   const [zaiModelsLoading, setZaiModelsLoading] = useState(false);
   const [googleModelsLoading, setGoogleModelsLoading] = useState(false);
   const [zenModelsLoading, setZenModelsLoading] = useState(false);
   const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
   const [mistralModelsError, setMistralModelsError] = useState<string | null>(null);
   const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
+  const [minimaxModelsError, setMinimaxModelsError] = useState<string | null>(null);
   const [zaiModelsError, setZaiModelsError] = useState<string | null>(null);
   const [googleModelsError, setGoogleModelsError] = useState<string | null>(null);
   const [zenModelsError, setZenModelsError] = useState<string | null>(null);
   const [ollamaModelsUpdatedAt, setOllamaModelsUpdatedAt] = useState<number | null>(null);
   const [mistralModelsUpdatedAt, setMistralModelsUpdatedAt] = useState<number | null>(null);
   const [openRouterModelsUpdatedAt, setOpenRouterModelsUpdatedAt] = useState<number | null>(null);
+  const [minimaxModelsUpdatedAt, setMinimaxModelsUpdatedAt] = useState<number | null>(null);
   const [zaiModelsUpdatedAt, setZaiModelsUpdatedAt] = useState<number | null>(null);
   const [googleModelsUpdatedAt, setGoogleModelsUpdatedAt] = useState<number | null>(null);
   const [zenModelsUpdatedAt, setZenModelsUpdatedAt] = useState<number | null>(null);
@@ -293,6 +302,7 @@ function App() {
   // Keep Zen first so backend pickers surface the recommended default.
   const availableProviders = ([
     ['zen', 'OpenCode Zen', hasZenKey],
+    ['minimax', 'MiniMax', hasMinimaxKey],
     ['ollama', 'Ollama', hasOllamaKey],
     ['mistral', 'Mistral', hasMistralKey],
     ['openrouter', 'OpenRouter', hasOpenRouterKey],
@@ -352,6 +362,7 @@ function App() {
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
   const isMistralModelLocked = isModelLocked && lockedProvider === 'mistral';
+  const isMinimaxModelLocked = isModelLocked && lockedProvider === 'minimax';
   const isZaiModelLocked = isModelLocked && lockedProvider === 'zai';
   const isGoogleModelLocked = isModelLocked && lockedProvider === 'google';
   const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
@@ -422,6 +433,20 @@ function App() {
       failureMessage: 'Failed to load OpenRouter models.',
     });
   }, [hasOpenRouterKey, openRouterModelsLoading, refreshModels]);
+
+  const refreshMinimaxModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: hasMinimaxKey,
+      isLoading: minimaxModelsLoading,
+      setLoading: setMinimaxModelsLoading,
+      setError: setMinimaxModelsError,
+      setModels: setMinimaxModels,
+      setUpdatedAt: setMinimaxModelsUpdatedAt,
+      fetchModels: fetchMinimaxModels,
+      emptyMessage: 'No models returned by MiniMax.',
+      failureMessage: 'Failed to load MiniMax models.',
+    });
+  }, [hasMinimaxKey, minimaxModelsLoading, refreshModels]);
 
   const refreshZaiModels = useCallback(async () => {
     await refreshModels({
@@ -552,6 +577,12 @@ function App() {
   }, [hasMistralKey, mistralModels.length, mistralModelsLoading, refreshMistralModels]);
 
   useEffect(() => {
+    if (hasMinimaxKey && minimaxModels.length === 0 && !minimaxModelsLoading) {
+      refreshMinimaxModels();
+    }
+  }, [hasMinimaxKey, minimaxModels.length, minimaxModelsLoading, refreshMinimaxModels]);
+
+  useEffect(() => {
     if (hasZaiKey && zaiModels.length === 0 && !zaiModelsLoading) {
       refreshZaiModels();
     }
@@ -602,6 +633,14 @@ function App() {
   }, [hasOpenRouterKey]);
 
   useEffect(() => {
+    if (!hasMinimaxKey) {
+      setMinimaxModels([]);
+      setMinimaxModelsError(null);
+      setMinimaxModelsUpdatedAt(null);
+    }
+  }, [hasMinimaxKey]);
+
+  useEffect(() => {
     if (!hasZaiKey) {
       setZaiModels([]);
       setZaiModelsError(null);
@@ -644,6 +683,10 @@ function App() {
   const zaiModelOptions = useMemo(() => {
     return includeSelectedModel(zaiModels, zaiModel);
   }, [zaiModels, zaiModel]);
+
+  const minimaxModelOptions = useMemo(() => {
+    return includeSelectedModel(minimaxModels, minimaxModel);
+  }, [minimaxModels, minimaxModel]);
 
   const googleModelOptions = useMemo(() => {
     return includeSelectedModel(googleModels, googleModel);
@@ -1021,6 +1064,11 @@ function App() {
     ensureUnlockedChatForProviderChange();
     setOpenRouterModel(model);
   }, [ensureUnlockedChatForProviderChange, setOpenRouterModel]);
+
+  const handleSelectMinimaxModelFromChat = useCallback((model: string) => {
+    ensureUnlockedChatForProviderChange();
+    setMinimaxModel(model);
+  }, [ensureUnlockedChatForProviderChange, setMinimaxModel]);
 
   const handleSelectZaiModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
@@ -1430,6 +1478,19 @@ function App() {
         setOpenRouterKeyInput,
         setOpenRouterKey,
         clearOpenRouterKey,
+        hasMinimaxKey,
+        minimaxModel,
+        setMinimaxModel,
+        minimaxModelOptions: minimaxModelOptions.length > 0 ? minimaxModelOptions : MINIMAX_MODELS,
+        minimaxModelsLoading,
+        minimaxModelsError,
+        minimaxModelsUpdatedAt,
+        isMinimaxModelLocked,
+        refreshMinimaxModels,
+        minimaxKeyInput,
+        setMinimaxKeyInput,
+        setMinimaxKey,
+        clearMinimaxKey,
         hasZaiKey,
         zaiModel,
         setZaiModel,
@@ -1940,6 +2001,14 @@ function App() {
           openRouterModelOptions: openRouterModels.length > 0 ? openRouterModels : OPENROUTER_MODELS,
           isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
           onSelectOpenRouterModel: handleSelectOpenRouterModelFromChat,
+          minimaxModel,
+          minimaxModelOptions: minimaxModelOptions.length > 0 ? minimaxModelOptions : MINIMAX_MODELS,
+          minimaxModelsLoading,
+          minimaxModelsError,
+          minimaxModelsUpdatedAt,
+          isMinimaxModelLocked,
+          refreshMinimaxModels,
+          onSelectMinimaxModel: handleSelectMinimaxModelFromChat,
           zaiModel,
           zaiModelOptions: zaiModelOptions.length > 0 ? zaiModelOptions : ZAI_MODELS,
           zaiModelsLoading,

@@ -41,6 +41,7 @@ import {
   getMistralModelName,
   getOllamaModelName,
   getOpenRouterModelName,
+  getMinimaxModelName,
   getZaiModelName,
   getGoogleModelName,
   getZenModelName,
@@ -74,6 +75,8 @@ function getCurrentModelForProvider(provider: AIProviderType | ActiveProvider): 
       return getMistralModelName();
     case 'openrouter':
       return getOpenRouterModelName();
+    case 'minimax':
+      return getMinimaxModelName();
     case 'zai':
       return getZaiModelName();
     case 'google':

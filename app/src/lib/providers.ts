@@ -9,6 +9,8 @@ export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 export const MISTRAL_DEFAULT_MODEL = 'devstral-small-latest';
 // OpenRouter default model — Claude Sonnet 4.6
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
+// MiniMax OpenAI-compatible endpoint default model
+export const MINIMAX_DEFAULT_MODEL = 'MiniMax-M2.5';
 // Z.AI (GLM) default model
 export const ZAI_DEFAULT_MODEL = 'glm-4.5';
 // Google OpenAI-compatible endpoint default model
@@ -38,6 +40,14 @@ export const OPENROUTER_MODELS: string[] = [
 
 export const ZAI_MODELS: string[] = [
   'glm-4.5',
+];
+
+export const MINIMAX_MODELS: string[] = [
+  'MiniMax-M2.5',
+  'MiniMax-M2.5-highspeed',
+  'MiniMax-M2',
+  'MiniMax-M2.1',
+  'MiniMax-M2.1-highspeed',
 ];
 
 export const GOOGLE_MODELS: string[] = [
@@ -145,6 +155,36 @@ export const PROVIDERS: AIProviderConfig[] = [
         provider: 'openrouter',
         role: 'auditor',
         context: 200_000,
+      },
+    ],
+  },
+  {
+    type: 'minimax',
+    name: 'MiniMax',
+    description: 'MiniMax OpenAI-compatible API',
+    envKey: 'VITE_MINIMAX_API_KEY',
+    envUrl: 'https://platform.minimax.io',
+    models: [
+      {
+        id: MINIMAX_DEFAULT_MODEL,
+        name: 'MiniMax (Orchestrator)',
+        provider: 'minimax',
+        role: 'orchestrator',
+        context: 204_800,
+      },
+      {
+        id: MINIMAX_DEFAULT_MODEL,
+        name: 'MiniMax (Coder)',
+        provider: 'minimax',
+        role: 'coder',
+        context: 204_800,
+      },
+      {
+        id: MINIMAX_DEFAULT_MODEL,
+        name: 'MiniMax (Auditor)',
+        provider: 'minimax',
+        role: 'auditor',
+        context: 204_800,
       },
     ],
   },
@@ -279,6 +319,10 @@ const openRouterModel = createModelNameStorage('openrouter_model', OPENROUTER_DE
 export const getOpenRouterModelName = openRouterModel.get;
 export const setOpenRouterModelName = openRouterModel.set;
 
+const minimaxModel = createModelNameStorage('minimax_model', MINIMAX_DEFAULT_MODEL);
+export const getMinimaxModelName = minimaxModel.get;
+export const setMinimaxModelName = minimaxModel.set;
+
 const zaiModel = createModelNameStorage('zai_model', ZAI_DEFAULT_MODEL);
 export const getZaiModelName = zaiModel.get;
 export const setZaiModelName = zaiModel.set;
@@ -296,6 +340,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
   mistral: getMistralModelName,
   openrouter: getOpenRouterModelName,
+  minimax: getMinimaxModelName,
   zai: getZaiModelName,
   google: getGoogleModelName,
   zen: getZenModelName,
@@ -319,11 +364,11 @@ export function getModelForRole(
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen';
+export type PreferredProvider = 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (stored === 'ollama' || stored === 'mistral' || stored === 'openrouter' || stored === 'zai' || stored === 'google' || stored === 'zen') return stored;
+  if (stored === 'ollama' || stored === 'mistral' || stored === 'openrouter' || stored === 'minimax' || stored === 'zai' || stored === 'google' || stored === 'zen') return stored;
   return null;
 }
 

@@ -15,7 +15,7 @@ export const USER_PROFILE_DEFAULTS: UserProfile = {
 
 export type AgentRole = 'orchestrator' | 'coder' | 'auditor';
 
-export type AIProviderType = 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen' | 'demo';
+export type AIProviderType = 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'demo';
 
 export interface AIModel {
   id: string;

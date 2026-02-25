@@ -17,6 +17,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
   mistral: 'Mistral',
   openrouter: 'OpenRouter',
+  minimax: 'MiniMax',
   zai: 'Z.AI',
   google: 'Google',
   zen: 'OpenCode Zen',
@@ -111,6 +112,20 @@ export interface SettingsAIProps {
   setOpenRouterKeyInput: (v: string) => void;
   setOpenRouterKey: (v: string) => void;
   clearOpenRouterKey: () => void;
+  // MiniMax
+  hasMinimaxKey: boolean;
+  minimaxModel: string;
+  setMinimaxModel: (v: string) => void;
+  minimaxModelOptions: string[];
+  minimaxModelsLoading: boolean;
+  minimaxModelsError: string | null;
+  minimaxModelsUpdatedAt: number | null;
+  isMinimaxModelLocked: boolean;
+  refreshMinimaxModels: () => void;
+  minimaxKeyInput: string;
+  setMinimaxKeyInput: (v: string) => void;
+  setMinimaxKey: (v: string) => void;
+  clearMinimaxKey: () => void;
   // Z.AI
   hasZaiKey: boolean;
   zaiModel: string;
@@ -1112,6 +1127,39 @@ export function SettingsSheet({
                 loading: ai.openRouterModelsLoading,
                 error: ai.openRouterModelsError,
                 updatedAt: ai.openRouterModelsUpdatedAt,
+              }}
+            />
+          </div>
+
+          {/* MiniMax */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-push-fg-secondary">MiniMax</label>
+            <ProviderKeySection
+              label="MiniMax"
+              hasKey={ai.hasMinimaxKey}
+              keyInput={ai.minimaxKeyInput}
+              setKeyInput={ai.setMinimaxKeyInput}
+              saveKey={() => ai.setMinimaxKey(ai.minimaxKeyInput.trim())}
+              clearKey={ai.clearMinimaxKey}
+              activeBackend={ai.activeBackend}
+              backendId="minimax"
+              clearPreferredProvider={ai.clearPreferredProvider}
+              setActiveBackend={ai.setActiveBackend}
+              placeholder="MiniMax API key"
+              saveLabel="Save MiniMax key"
+              hint="MiniMax OpenAI-compatible API key for https://api.minimax.io/v1."
+              model={{
+                value: ai.minimaxModel,
+                set: ai.setMinimaxModel,
+                options: ai.minimaxModelOptions,
+                isLocked: ai.isMinimaxModelLocked,
+                lockedModel: ai.lockedModel,
+              }}
+              refresh={{
+                trigger: ai.refreshMinimaxModels,
+                loading: ai.minimaxModelsLoading,
+                error: ai.minimaxModelsError,
+                updatedAt: ai.minimaxModelsUpdatedAt,
               }}
             />
           </div>

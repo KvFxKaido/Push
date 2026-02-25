@@ -56,6 +56,17 @@ export const PROVIDER_CONFIGS = {
     ],
     requiresKey: true,
   },
+  minimax: {
+    id: 'minimax',
+    url: process.env.PUSH_MINIMAX_URL || 'https://api.minimax.io/v1/chat/completions',
+    defaultModel: process.env.PUSH_MINIMAX_MODEL || 'MiniMax-M2.5',
+    apiKeyEnv: [
+      'PUSH_MINIMAX_API_KEY',
+      'MINIMAX_API_KEY',
+      'VITE_MINIMAX_API_KEY',
+    ],
+    requiresKey: true,
+  },
   zen: {
     id: 'zen',
     url: process.env.PUSH_ZEN_URL || 'https://opencode.ai/zen/v1/chat/completions',

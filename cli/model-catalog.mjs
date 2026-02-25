@@ -42,6 +42,14 @@ export const GOOGLE_MODELS = [
   'gemini-2.0-flash',
 ];
 
+export const MINIMAX_MODELS = [
+  'MiniMax-M2.5',
+  'MiniMax-M2.5-highspeed',
+  'MiniMax-M2',
+  'MiniMax-M2.1',
+  'MiniMax-M2.1-highspeed',
+];
+
 export const ZEN_MODELS = [
   'openai/gpt-5.3-codex',
   'openai/gpt-5.2-codex',
@@ -58,6 +66,7 @@ const CATALOG = {
   openrouter: OPENROUTER_MODELS,
   zai: ZAI_MODELS,
   google: GOOGLE_MODELS,
+  minimax: MINIMAX_MODELS,
   zen: ZEN_MODELS,
 };
 
@@ -68,6 +77,7 @@ export const DEFAULT_MODELS = {
   openrouter: 'anthropic/claude-sonnet-4.6',
   zai: 'glm-4.5',
   google: 'gemini-3.1-pro-preview',
+  minimax: 'MiniMax-M2.5',
   zen: 'big-pickle',
 };
 

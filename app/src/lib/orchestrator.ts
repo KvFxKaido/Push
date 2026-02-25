@@ -6,6 +6,7 @@ import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
+import { getMinimaxKey } from '@/hooks/useMinimaxConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
@@ -16,6 +17,7 @@ import {
   getMistralModelName,
   getPreferredProvider,
   getOpenRouterModelName,
+  getMinimaxModelName,
   getZaiModelName,
   getGoogleModelName,
   getZenModelName,
@@ -72,6 +74,11 @@ const ZAI_API_URL = import.meta.env.DEV
   ? '/zai/api/coding/paas/v4/chat/completions'
   : '/api/zai/chat';
 
+// MiniMax OpenAI-compatible endpoint.
+const MINIMAX_API_URL = import.meta.env.DEV
+  ? '/minimax/v1/chat/completions'
+  : '/api/minimax/chat';
+
 // Google Gemini OpenAI-compatible endpoint.
 const GOOGLE_API_URL = import.meta.env.DEV
   ? '/google/v1beta/openai/chat/completions'
@@ -117,7 +124,7 @@ function normalizeModelName(model?: string): string {
 }
 
 export function getContextBudget(
-  provider?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen' | 'demo',
+  provider?: 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'demo',
   model?: string,
 ): ContextBudget {
   const normalizedModel = normalizeModelName(model);
@@ -491,7 +498,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen',
+  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen',
   providerModel?: string,
 ): LLMMessage[] {
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
@@ -781,7 +788,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen';
+  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen';
   /** Override the fetch URL (e.g., Mistral Agents API uses a different endpoint) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -1201,6 +1208,20 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       providerType: 'openrouter',
     }),
   },
+  minimax: {
+    getKey: getMinimaxKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'MiniMax',
+      apiUrl: MINIMAX_API_URL,
+      apiKey,
+      model: modelOverride || getMinimaxModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('MiniMax'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
+      providerType: 'minimax',
+    }),
+  },
   zai: {
     getKey: getZaiKey,
     buildConfig: (apiKey, modelOverride) => ({
@@ -1299,6 +1320,7 @@ type StreamChatFn = (
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 export const streamMistralChat: StreamChatFn = (...args) => streamProviderChat('mistral', ...args);
 export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
+export const streamMinimaxChat: StreamChatFn = (...args) => streamProviderChat('minimax', ...args);
 export const streamZaiChat: StreamChatFn = (...args) => streamProviderChat('zai', ...args);
 export const streamGoogleChat: StreamChatFn = (...args) => streamProviderChat('google', ...args);
 export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
@@ -1307,13 +1329,14 @@ export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen'
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'zai' | 'google' | 'zen' | 'demo';
+export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'demo';
 
 /** Key getter for each configurable provider. */
 const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
   ollama:      getOllamaKey,
   mistral:     getMistralKey,
   openrouter:  getOpenRouterKey,
+  minimax:     getMinimaxKey,
   zai:         getZaiKey,
   google:      getGoogleKey,
   zen:         getZenKey,
@@ -1323,7 +1346,7 @@ const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
  * Fallback order when no preference is set (or the preferred key is gone).
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'zen', 'ollama', 'mistral', 'openrouter', 'zai', 'google',
+  'zen', 'minimax', 'ollama', 'mistral', 'openrouter', 'zai', 'google',
 ];
 
 /**
@@ -1355,6 +1378,7 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'ollama':  return { providerType: 'ollama' as const,  streamFn: streamOllamaChat };
     case 'mistral': return { providerType: 'mistral' as const, streamFn: streamMistralChat };
     case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
+    case 'minimax': return { providerType: 'minimax' as const, streamFn: streamMinimaxChat };
     case 'zai': return { providerType: 'zai' as const, streamFn: streamZaiChat };
     case 'google': return { providerType: 'google' as const, streamFn: streamGoogleChat };
     case 'zen': return { providerType: 'zen' as const, streamFn: streamZenChat };
@@ -1404,6 +1428,10 @@ export async function streamChat(
 
   if (provider === 'openrouter') {
     return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'minimax') {
+    return streamMinimaxChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   if (provider === 'zai') {
