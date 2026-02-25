@@ -1598,12 +1598,25 @@ export async function runTUI(options = {}) {
         break;
     }
 
-    // Position cursor in composer (offset by 1 if candidates bar is visible)
-    const cursor = composer.getCursor();
-    const candidateOffset = tabState ? 1 : 0;
-    const cursorRow = layout.composer.top + 1 + candidateOffset + cursor.line;
-    const cursorLine = composer.getLines()[cursor.line] || '';
-    const cursorCol = layout.innerLeft + 2 + visibleWidth(cursorLine.slice(0, cursor.col)); // +2 for prompt prefix, CJK-aware
+    // Position cursor — in modal edit mode, place cursor in the modal input field
+    let cursorRow, cursorCol;
+    if (overlayKind === 'config' && tuiState.configModalState?.mode === 'edit') {
+      const ms = tuiState.configModalState;
+      const modalWidth = Math.min(50, cols - 8);
+      const { left, top } = getCenteredModalRect(rows, cols, modalWidth, 8); // 8 lines tall for edit mode
+      // Edit mode layout: title(1) + blank(1) + current(1) + blank(1) + input(1) + blank(1) + help(1) = ~7 lines
+      // Input line is at offset 4 from top (0-indexed: 0=title, 1=blank, 2=current, 3=blank, 4=input)
+      cursorRow = top + 4;
+      // Cursor col: left padding (2) + prompt '› ' (2) + edit cursor position
+      cursorCol = left + 2 + 2 + ms.editCursor;
+    } else {
+      // Position cursor in composer (offset by 1 if candidates bar is visible)
+      const cursor = composer.getCursor();
+      const candidateOffset = tabState ? 1 : 0;
+      cursorRow = layout.composer.top + 1 + candidateOffset + cursor.line;
+      const cursorLine = composer.getLines()[cursor.line] || '';
+      cursorCol = layout.innerLeft + 2 + visibleWidth(cursorLine.slice(0, cursor.col)); // +2 for prompt prefix, CJK-aware
+    }
     screenBuf.write(ESC.cursorTo(cursorRow, cursorCol));
 
     // Show cursor only when idle
