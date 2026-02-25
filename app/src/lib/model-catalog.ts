@@ -59,14 +59,30 @@ function normalizeModelList(payload: unknown): string[] {
     }
   };
 
+  const visited = new WeakSet<object>();
+  const fromRecord = (rec: Record<string, unknown>) => {
+    if (visited.has(rec)) return;
+    visited.add(rec);
+
+    if (Array.isArray(rec.data)) fromArray(rec.data);
+    if (Array.isArray(rec.models)) fromArray(rec.models);
+    if (Array.isArray(rec.items)) fromArray(rec.items);
+    if (Array.isArray(rec.list)) fromArray(rec.list);
+    if (Array.isArray(rec.model_list)) fromArray(rec.model_list);
+
+    const nestedData = asRecord(rec.data);
+    if (nestedData) fromRecord(nestedData);
+    const nestedResult = asRecord(rec.result);
+    if (nestedResult) fromRecord(nestedResult);
+    const nestedOutput = asRecord(rec.output);
+    if (nestedOutput) fromRecord(nestedOutput);
+  };
+
   if (Array.isArray(payload)) {
     fromArray(payload);
   } else {
     const rec = asRecord(payload);
-    if (rec) {
-      if (Array.isArray(rec.data)) fromArray(rec.data);
-      if (Array.isArray(rec.models)) fromArray(rec.models);
-    }
+    if (rec) fromRecord(rec);
   }
 
   return Array.from(ids).sort((a, b) => a.localeCompare(b));
