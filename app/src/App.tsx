@@ -685,7 +685,8 @@ function App() {
   }, [zaiModels, zaiModel]);
 
   const minimaxModelOptions = useMemo(() => {
-    return includeSelectedModel(minimaxModels, minimaxModel);
+    const merged = [...new Set([...MINIMAX_MODELS, ...minimaxModels])];
+    return includeSelectedModel(merged, minimaxModel);
   }, [minimaxModels, minimaxModel]);
 
   const googleModelOptions = useMemo(() => {
