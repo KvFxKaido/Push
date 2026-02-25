@@ -23,7 +23,7 @@ export const OPENROUTER_MODELS: string[] = [
   'anthropic/claude-haiku-4.5',
   // OpenAI Codex
   'openai/gpt-5.2-codex',
-  'openai/gpt-5.1-codex',
+  'openai/gpt-5.3-codex',
   // Free model picks
   'stepfun/step-3.5-flash:free',
   'qwen/qwen3-coder:free',
@@ -48,6 +48,8 @@ export const GOOGLE_MODELS: string[] = [
 ];
 
 export const ZEN_MODELS: string[] = [
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.2-codex',
   'qwen3-coder',
   'kimi-k2.5',
   'kimi-k2.5-free',
