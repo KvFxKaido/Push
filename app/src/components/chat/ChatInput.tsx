@@ -279,6 +279,9 @@ export function ChatInput({
     return 'demo';
   })();
 
+  const showMinimaxHighspeedNotice =
+    selectedProvider === 'minimax' && selectedModel === 'MiniMax-M2.5-highspeed';
+
   const canChangeProvider = Boolean(providerControls);
   const canChangeModel = Boolean(providerControls);
   const backendValues = providerControls?.availableProviders.map(([value]) => value) ?? [];
@@ -598,6 +601,11 @@ export function ChatInput({
                           )}
                           {selectedModelUpdatedAgo && (
                             <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                          )}
+                          {showMinimaxHighspeedNotice && (
+                            <p className="px-1 text-[10px] text-amber-400">
+                              MiniMax-M2.5-highspeed requires the High-Speed subscription.
+                            </p>
                           )}
                           {providerControls.isMinimaxModelLocked && (
                             <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
