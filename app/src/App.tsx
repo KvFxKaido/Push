@@ -31,7 +31,6 @@ import {
   fetchOllamaModels,
   fetchMistralModels,
   fetchOpenRouterModels,
-  fetchMinimaxModels,
   fetchZaiModels,
   fetchGoogleModels,
   fetchZenModels,
@@ -271,28 +270,28 @@ function App() {
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [mistralModels, setMistralModels] = useState<string[]>([]);
   const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
-  const [minimaxModels, setMinimaxModels] = useState<string[]>([]);
+  const minimaxModels = MINIMAX_MODELS;
   const [zaiModels, setZaiModels] = useState<string[]>([]);
   const [googleModels, setGoogleModels] = useState<string[]>([]);
   const [zenModels, setZenModels] = useState<string[]>([]);
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
   const [mistralModelsLoading, setMistralModelsLoading] = useState(false);
   const [openRouterModelsLoading, setOpenRouterModelsLoading] = useState(false);
-  const [minimaxModelsLoading, setMinimaxModelsLoading] = useState(false);
+  const minimaxModelsLoading = false;
   const [zaiModelsLoading, setZaiModelsLoading] = useState(false);
   const [googleModelsLoading, setGoogleModelsLoading] = useState(false);
   const [zenModelsLoading, setZenModelsLoading] = useState(false);
   const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
   const [mistralModelsError, setMistralModelsError] = useState<string | null>(null);
   const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
-  const [minimaxModelsError, setMinimaxModelsError] = useState<string | null>(null);
+  const minimaxModelsError = null;
   const [zaiModelsError, setZaiModelsError] = useState<string | null>(null);
   const [googleModelsError, setGoogleModelsError] = useState<string | null>(null);
   const [zenModelsError, setZenModelsError] = useState<string | null>(null);
   const [ollamaModelsUpdatedAt, setOllamaModelsUpdatedAt] = useState<number | null>(null);
   const [mistralModelsUpdatedAt, setMistralModelsUpdatedAt] = useState<number | null>(null);
   const [openRouterModelsUpdatedAt, setOpenRouterModelsUpdatedAt] = useState<number | null>(null);
-  const [minimaxModelsUpdatedAt, setMinimaxModelsUpdatedAt] = useState<number | null>(null);
+  const minimaxModelsUpdatedAt = null;
   const [zaiModelsUpdatedAt, setZaiModelsUpdatedAt] = useState<number | null>(null);
   const [googleModelsUpdatedAt, setGoogleModelsUpdatedAt] = useState<number | null>(null);
   const [zenModelsUpdatedAt, setZenModelsUpdatedAt] = useState<number | null>(null);
@@ -434,19 +433,9 @@ function App() {
     });
   }, [hasOpenRouterKey, openRouterModelsLoading, refreshModels]);
 
-  const refreshMinimaxModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: hasMinimaxKey,
-      isLoading: minimaxModelsLoading,
-      setLoading: setMinimaxModelsLoading,
-      setError: setMinimaxModelsError,
-      setModels: setMinimaxModels,
-      setUpdatedAt: setMinimaxModelsUpdatedAt,
-      fetchModels: fetchMinimaxModels,
-      emptyMessage: 'No models returned by MiniMax.',
-      failureMessage: 'Failed to load MiniMax models.',
-    });
-  }, [hasMinimaxKey, minimaxModelsLoading, refreshModels]);
+  const refreshMinimaxModels = useCallback(() => {
+    // MiniMax uses a fixed curated list for now; live /models is flaky on some accounts/plans.
+  }, []);
 
   const refreshZaiModels = useCallback(async () => {
     await refreshModels({
@@ -577,12 +566,6 @@ function App() {
   }, [hasMistralKey, mistralModels.length, mistralModelsLoading, refreshMistralModels]);
 
   useEffect(() => {
-    if (hasMinimaxKey && minimaxModels.length === 0 && !minimaxModelsLoading) {
-      refreshMinimaxModels();
-    }
-  }, [hasMinimaxKey, minimaxModels.length, minimaxModelsLoading, refreshMinimaxModels]);
-
-  useEffect(() => {
     if (hasZaiKey && zaiModels.length === 0 && !zaiModelsLoading) {
       refreshZaiModels();
     }
@@ -633,14 +616,6 @@ function App() {
   }, [hasOpenRouterKey]);
 
   useEffect(() => {
-    if (!hasMinimaxKey) {
-      setMinimaxModels([]);
-      setMinimaxModelsError(null);
-      setMinimaxModelsUpdatedAt(null);
-    }
-  }, [hasMinimaxKey]);
-
-  useEffect(() => {
     if (!hasZaiKey) {
       setZaiModels([]);
       setZaiModelsError(null);
@@ -685,9 +660,8 @@ function App() {
   }, [zaiModels, zaiModel]);
 
   const minimaxModelOptions = useMemo(() => {
-    const merged = [...new Set([...MINIMAX_MODELS, ...minimaxModels])];
-    return includeSelectedModel(merged, minimaxModel);
-  }, [minimaxModels, minimaxModel]);
+    return includeSelectedModel(MINIMAX_MODELS, minimaxModel);
+  }, [minimaxModel]);
 
   const googleModelOptions = useMemo(() => {
     return includeSelectedModel(googleModels, googleModel);

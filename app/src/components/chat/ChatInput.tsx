@@ -308,12 +308,11 @@ export function ChatInput({
     return null;
   })();
 
-  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'minimax' || selectedProvider === 'zai' || selectedProvider === 'google' || selectedProvider === 'zen';
+  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'zai' || selectedProvider === 'google' || selectedProvider === 'zen';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
     if (selectedProvider === 'mistral') providerControls.refreshMistralModels();
-    if (selectedProvider === 'minimax') providerControls.refreshMinimaxModels();
     if (selectedProvider === 'zai') providerControls.refreshZaiModels();
     if (selectedProvider === 'google') providerControls.refreshGoogleModels();
     if (selectedProvider === 'zen') providerControls.refreshZenModels();

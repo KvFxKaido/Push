@@ -1155,12 +1155,6 @@ export function SettingsSheet({
                 isLocked: ai.isMinimaxModelLocked,
                 lockedModel: ai.lockedModel,
               }}
-              refresh={{
-                trigger: ai.refreshMinimaxModels,
-                loading: ai.minimaxModelsLoading,
-                error: ai.minimaxModelsError,
-                updatedAt: ai.minimaxModelsUpdatedAt,
-              }}
             />
           </div>
 
