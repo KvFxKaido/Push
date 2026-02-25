@@ -36,6 +36,8 @@ const ZEN_MODELS_URL = import.meta.env.DEV
 
 import { asRecord } from './utils';
 
+const MODELS_FETCH_TIMEOUT_MS = 12_000;
+
 function normalizeModelList(payload: unknown): string[] {
   const ids = new Set<string>();
 
@@ -91,19 +93,32 @@ function normalizeModelList(payload: unknown): string[] {
 async function fetchProviderModels(url: string, key: string | null, providerName: string): Promise<string[]> {
   const headers: HeadersInit = {};
   if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
 
-  const res = await fetch(url, {
-    method: 'GET',
-    headers,
-  });
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
 
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(`${providerName} model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`${providerName} model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as unknown;
+    return normalizeModelList(payload);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`${providerName} model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-
-  const payload = (await res.json()) as unknown;
-  return normalizeModelList(payload);
 }
 
 export async function fetchOllamaModels(): Promise<string[]> {
