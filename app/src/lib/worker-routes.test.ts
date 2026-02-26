@@ -184,3 +184,49 @@ describe('Worker payload enrichment for browser routes', () => {
     expect(result.browserbase_project_id).toBeUndefined();
   });
 });
+
+
+describe('Modal base URL normalization', () => {
+  function normalizeModalBase(input: string): string | null {
+    if (!input.startsWith('https://')) return null;
+    if (input.endsWith('/')) return null;
+
+    const parsed = new URL(input);
+    const host = parsed.hostname;
+
+    if (!host.endsWith('.modal.run')) {
+      return host.includes('--') ? `${parsed.protocol}//${host}` : null;
+    }
+
+    const rootHost = host.slice(0, -'.modal.run'.length);
+    if (!rootHost.includes('--')) return null;
+
+    const suffixes = new Set(Object.values(SANDBOX_ROUTES));
+    for (const fn of suffixes) {
+      const suffix = `-${fn}`;
+      if (rootHost.endsWith(suffix)) {
+        return `${parsed.protocol}//${rootHost.slice(0, -suffix.length)}`;
+      }
+    }
+
+    return `${parsed.protocol}//${rootHost}`;
+  }
+
+  it('accepts canonical app base URL', () => {
+    expect(normalizeModalBase('https://user--push-sandbox')).toBe('https://user--push-sandbox');
+  });
+
+  it('accepts full app host with .modal.run suffix', () => {
+    expect(normalizeModalBase('https://user--push-sandbox.modal.run')).toBe('https://user--push-sandbox');
+  });
+
+  it('accepts full function URL and strips function suffix', () => {
+    expect(normalizeModalBase('https://user--push-sandbox-create.modal.run')).toBe('https://user--push-sandbox');
+    expect(normalizeModalBase('https://user--push-sandbox-exec-command.modal.run')).toBe('https://user--push-sandbox');
+  });
+
+  it('rejects non-https and trailing slash forms', () => {
+    expect(normalizeModalBase('http://user--push-sandbox')).toBeNull();
+    expect(normalizeModalBase('https://user--push-sandbox/')).toBeNull();
+  });
+});
