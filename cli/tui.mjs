@@ -1113,7 +1113,7 @@ function maskInput(str) {
 
 /**
  * Build the ordered list of config items.
- * Items 0–5: providers, 6: tavily, 7: sandbox, 8: execMode, 9: explain.
+ * Provider rows followed by: tavily, sandbox, execMode, explain.
  */
 function getConfigItems(providerList, config) {
   const items = [];
@@ -1404,6 +1404,21 @@ export async function runTUI(options = {}) {
       provider: state.provider,
     });
     await saveSessionState(state);
+  }
+
+  async function refreshSystemPromptForConfigChange() {
+    if (!state || !Array.isArray(state.messages) || !state.cwd) return;
+    const sysMsg = state.messages[0];
+    if (!sysMsg || sysMsg.role !== 'system') return;
+
+    // Replace the object so any in-flight enrichment promise writes to the stale
+    // message object instead of clobbering this refreshed prompt.
+    state.messages[0] = { role: 'system', content: buildSystemPromptBase(state.cwd) };
+    await ensureSystemPromptReady(state);
+
+    if (sessionPersisted) {
+      await saveSessionState(state);
+    }
   }
 
   // ── Git branch (best-effort) ─────────────────────────────────────
@@ -2756,6 +2771,7 @@ export async function runTUI(options = {}) {
       config.explainMode = enabled;
       await saveConfig(config);
       process.env.PUSH_EXPLAIN_MODE = String(enabled);
+      await refreshSystemPromptForConfigChange();
 
       addTranscriptEntry(tuiState, 'status', `Explain mode: ${enabled ? 'on' : 'off'}`);
       scheduler.flush();
@@ -3325,8 +3341,9 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
-  /** Total config items: 6 providers + tavily + sandbox + execMode + explain = 10. */
-  const CONFIG_ITEM_COUNT = 10;
+  function getConfigItemCount() {
+    return getProviderList().length + 4;
+  }
 
   async function handleConfigModalInput(key) {
     const ms = tuiState.configModalState;
@@ -3340,7 +3357,7 @@ export async function runTUI(options = {}) {
         return;
       }
       if (action.type === 'move') {
-        ms.cursor = moveCursorCircular(ms.cursor, CONFIG_ITEM_COUNT, action.delta);
+        ms.cursor = moveCursorCircular(ms.cursor, getConfigItemCount(), action.delta);
         tuiState.dirty.add('all');
         scheduler.schedule();
         return;
@@ -3457,6 +3474,7 @@ export async function runTUI(options = {}) {
       config.explainMode = !isOn;
       await saveConfig(config);
       process.env.PUSH_EXPLAIN_MODE = String(!isOn);
+      await refreshSystemPromptForConfigChange();
     }
     tuiState.dirty.add('all');
     scheduler.flush();

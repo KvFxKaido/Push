@@ -47,7 +47,9 @@ export function applyConfigToEnv(config) {
     process.env.PUSH_LOCAL_SANDBOX = String(config.localSandbox);
   }
   if (config.explainMode !== undefined) {
-    process.env.PUSH_EXPLAIN_MODE = String(config.explainMode);
+    if (!process.env.PUSH_EXPLAIN_MODE) {
+      process.env.PUSH_EXPLAIN_MODE = String(config.explainMode);
+    }
   }
   setEnvIfMissing('PUSH_TAVILY_API_KEY', config.tavilyApiKey);
   setEnvIfMissing('PUSH_WEB_SEARCH_BACKEND', config.webSearchBackend);
