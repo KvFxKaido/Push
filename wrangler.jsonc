@@ -4,5 +4,16 @@
   "compatibility_date": "2026-02-01",
   "assets": {
     "directory": "./app/dist"
-  }
+  },
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      // Unique integer string per CF account. Change if you have multiple rate-limiting namespaces.
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ]
 }

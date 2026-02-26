@@ -20,6 +20,7 @@ interface Env {
   BROWSERBASE_PROJECT_ID?: string;
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
+  RATE_LIMITER: RateLimit;
   // GitHub App credentials
   GITHUB_APP_ID?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
@@ -31,9 +32,6 @@ interface Env {
 
 const MAX_BODY_SIZE_BYTES = 512 * 1024; // 512KB default
 const RESTORE_MAX_BODY_SIZE_BYTES = 12 * 1024 * 1024; // 12MB for snapshot restore payloads
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 120; // Raised from 30 — tool-heavy workflows (Coder delegation, web search, sandbox ops) can easily hit 30+ requests/min in normal use
-const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -210,30 +208,13 @@ function getClientIp(request: Request): string {
   return 'unknown';
 }
 
-function cleanupRateLimitStore(now: number) {
-  if (rateLimitStore.size < 1000) return;
-  for (const [ip, entry] of rateLimitStore.entries()) {
-    if (now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
-      rateLimitStore.delete(ip);
-    }
+function wlog(level: 'info' | 'warn' | 'error', event: string, data?: Record<string, unknown>): void {
+  const entry = JSON.stringify({ level, event, ts: new Date().toISOString(), ...data });
+  if (level === 'error') {
+    console.error(entry);
+  } else {
+    console.log(entry);
   }
-}
-
-function checkRateLimit(ip: string, now: number): { allowed: boolean; retryAfter: number } {
-  const entry = rateLimitStore.get(ip);
-
-  if (!entry || now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
-    rateLimitStore.set(ip, { count: 1, windowStart: now });
-    return { allowed: true, retryAfter: 0 };
-  }
-
-  if (entry.count >= RATE_LIMIT_MAX) {
-    const retryAfter = Math.ceil((RATE_LIMIT_WINDOW_MS - (now - entry.windowStart)) / 1000);
-    return { allowed: false, retryAfter };
-  }
-
-  entry.count += 1;
-  return { allowed: true, retryAfter: 0 };
 }
 
 async function readBodyText(
@@ -308,13 +289,12 @@ async function runPreamble(
     return Response.json({ error: originCheck.error }, { status: 403 });
   }
 
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
+  const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: getClientIp(request) });
+  if (!rateLimitOk) {
+    wlog('warn', 'rate_limited', { ip: getClientIp(request), path: new URL(request.url).pathname });
     return Response.json(
       { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
+      { status: 429, headers: { 'Retry-After': '60' } },
     );
   }
 
@@ -371,7 +351,7 @@ function createStreamProxyHandler(
     if (preamble instanceof Response) return preamble;
     const { authHeader, bodyText } = preamble;
 
-    console.log(`[${config.logTag}] Forwarding request (${bodyText.length} bytes)`);
+    wlog('info', 'request', { route: config.logTag, bytes: bodyText.length });
 
     const upstreamUrl = typeof config.upstreamUrl === 'function'
       ? config.upstreamUrl(request)
@@ -401,11 +381,11 @@ function createStreamProxyHandler(
         clearTimeout(timeoutId);
       }
 
-      console.log(`[${config.logTag}] Upstream responded: ${upstream.status}`);
+      wlog('info', 'upstream_ok', { route: config.logTag, status: upstream.status });
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
-        console.error(`[${config.logTag}] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
+        wlog('error', 'upstream_error', { route: config.logTag, status: upstream.status, body: errBody.slice(0, 500) });
         // Strip HTML error pages (e.g. Cloudflare 403/503 pages) — return a clean message
         const isHtml = /<\s*html[\s>]/i.test(errBody) || /<\s*!doctype/i.test(errBody);
         const errDetail = isHtml
@@ -449,7 +429,7 @@ function createStreamProxyHandler(
       const isTimeout = err instanceof Error && err.name === 'AbortError';
       const status = isTimeout ? 504 : 502;
       const error = isTimeout ? config.timeoutError : message;
-      console.error(`[${config.logTag}] Unhandled: ${message}`);
+      wlog('error', 'unhandled', { route: config.logTag, message, timeout: isTimeout });
       return Response.json({ error }, { status });
     }
   };
@@ -487,7 +467,7 @@ function createJsonProxyHandler(
     if (preamble instanceof Response) return preamble;
     const { authHeader, bodyText } = preamble;
 
-    console.log(`[${config.logTag}] Forwarding request${needsBody ? ` (${bodyText.length} bytes)` : ''}`);
+    wlog('info', 'request', { route: config.logTag, ...(needsBody ? { bytes: bodyText.length } : {}) });
 
     try {
       const controller = new AbortController();
@@ -512,7 +492,7 @@ function createJsonProxyHandler(
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
-        console.error(`[${config.logTag}] Upstream ${upstream.status}: ${errBody.slice(0, 500)}`);
+        wlog('error', 'upstream_error', { route: config.logTag, status: upstream.status, body: errBody.slice(0, 500) });
         return Response.json(
           { error: `${config.name} error ${upstream.status}: ${errBody.slice(0, 200)}` },
           { status: upstream.status },
@@ -526,7 +506,7 @@ function createJsonProxyHandler(
       const isTimeout = err instanceof Error && err.name === 'AbortError';
       const status = isTimeout ? 504 : 500;
       const error = isTimeout ? config.timeoutError : message;
-      console.error(`[${config.logTag}] Error: ${message}`);
+      wlog('error', 'unhandled', { route: config.logTag, message, timeout: isTimeout });
       return Response.json({ error }, { status });
     }
   };
@@ -563,13 +543,12 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   }
 
   // Rate limit
-  const now = Date.now();
-  cleanupRateLimitStore(now);
-  const rateLimit = checkRateLimit(getClientIp(request), now);
-  if (!rateLimit.allowed) {
+  const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: getClientIp(request) });
+  if (!rateLimitOk) {
+    wlog('warn', 'rate_limited', { ip: getClientIp(request), path: `api/sandbox/${route}` });
     return Response.json(
       { error: 'Rate limit exceeded. Try again later.' },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } },
+      { status: 429, headers: { 'Retry-After': '60' } },
     );
   }
 
@@ -635,7 +614,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
 
     if (!upstream.ok) {
       const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/sandbox/${route}] Modal ${upstream.status}: ${errBody.slice(0, 500)}`);
+      wlog('error', 'modal_error', { route, status: upstream.status, body: errBody.slice(0, 500) });
 
       // Provide actionable error messages based on status code
       let code = 'MODAL_ERROR';
@@ -681,7 +660,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isTimeout = err instanceof Error && err.name === 'AbortError';
-    console.error(`[api/sandbox/${route}] Error: ${message}`);
+    wlog('error', 'sandbox_error', { route, message, timeout: isTimeout });
 
     if (isTimeout) {
       return Response.json({
@@ -997,7 +976,7 @@ async function handleTavilySearch(request: Request, env: Env): Promise<Response>
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  console.log(`[api/search/tavily] Tavily search: "${query}"`);
+  wlog('info', 'search', { provider: 'tavily', query });
 
   try {
     const controller = new AbortController();
@@ -1023,7 +1002,7 @@ async function handleTavilySearch(request: Request, env: Env): Promise<Response>
 
     if (!upstream.ok) {
       const errBody = await upstream.text().catch(() => '');
-      console.error(`[api/search/tavily] Tavily returned ${upstream.status}: ${errBody.slice(0, 200)}`);
+      wlog('error', 'upstream_error', { route: 'api/search/tavily', status: upstream.status, body: errBody.slice(0, 200) });
       return Response.json(
         { error: `Tavily returned ${upstream.status}: ${errBody.slice(0, 200)}` },
         { status: upstream.status },
@@ -1041,14 +1020,14 @@ async function handleTavilySearch(request: Request, env: Env): Promise<Response>
       content: r.content,
     }));
 
-    console.log(`[api/search/tavily] Got ${results.length} results for "${query}"`);
+    wlog('info', 'search_results', { provider: 'tavily', query, count: results.length });
     return Response.json({ results });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isTimeout = err instanceof Error && err.name === 'AbortError';
     const status = isTimeout ? 504 : 500;
     const error = isTimeout ? 'Tavily search timed out after 30 seconds' : message;
-    console.error(`[api/search/tavily] Error: ${message}`);
+    wlog('error', 'search_error', { provider: 'tavily', message, timeout: isTimeout });
     return Response.json({ error }, { status });
   }
 }
@@ -1116,7 +1095,7 @@ async function handleFreeSearch(request: Request, env: Env): Promise<Response> {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  console.log(`[api/search] DuckDuckGo search: "${query}"`);
+  wlog('info', 'search', { provider: 'ddg', query });
 
   try {
     const controller = new AbortController();
@@ -1146,14 +1125,14 @@ async function handleFreeSearch(request: Request, env: Env): Promise<Response> {
     const html = await upstream.text();
     const results = parseDuckDuckGoHTML(html);
 
-    console.log(`[api/search] Parsed ${results.length} results for "${query}"`);
+    wlog('info', 'search_results', { provider: 'ddg', query, count: results.length });
     return Response.json({ results });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isTimeout = err instanceof Error && err.name === 'AbortError';
     const status = isTimeout ? 504 : 500;
     const error = isTimeout ? 'Search timed out after 15 seconds' : message;
-    console.error(`[api/search] Error: ${message}`);
+    wlog('error', 'search_error', { provider: 'ddg', message, timeout: isTimeout });
     return Response.json({ error }, { status });
   }
 }
@@ -1209,13 +1188,13 @@ async function handleGitHubAppOAuth(request: Request, env: Env): Promise<Respons
 
     if (!tokenRes.ok) {
       const errBody = await tokenRes.text().catch(() => '');
-      console.error('[github/app-oauth] Token exchange failed:', tokenRes.status, errBody.slice(0, 300));
+      wlog('error', 'github_oauth_error', { step: 'token_exchange', status: tokenRes.status, body: errBody.slice(0, 300) });
       return Response.json({ error: `GitHub OAuth token exchange failed (${tokenRes.status})` }, { status: 502 });
     }
 
     const tokenData = await tokenRes.json() as { access_token?: string; error?: string; error_description?: string };
     if (tokenData.error || !tokenData.access_token) {
-      console.error('[github/app-oauth] OAuth error:', tokenData.error, tokenData.error_description);
+      wlog('error', 'github_oauth_error', { step: 'token_parse', error: tokenData.error, description: tokenData.error_description });
       return Response.json({
         error: tokenData.error_description || tokenData.error || 'OAuth token exchange failed',
       }, { status: 400 });
@@ -1257,7 +1236,7 @@ async function handleGitHubAppOAuth(request: Request, env: Env): Promise<Respons
 
     if (!installRes.ok) {
       const errBody = await installRes.text().catch(() => '');
-      console.error('[github/app-oauth] Installations fetch failed:', installRes.status, errBody.slice(0, 300));
+      wlog('error', 'github_oauth_error', { step: 'installations', status: installRes.status, body: errBody.slice(0, 300) });
       return Response.json({ error: `Failed to fetch installations (${installRes.status})` }, { status: 502 });
     }
 
@@ -1319,7 +1298,7 @@ async function handleGitHubAppOAuth(request: Request, env: Env): Promise<Respons
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[github/app-oauth] Error:', message);
+    wlog('error', 'github_oauth_error', { step: 'unknown', message });
     return Response.json({ error: `GitHub App OAuth failed: ${message}` }, { status: 500 });
   }
 }
@@ -1384,7 +1363,7 @@ async function handleGitHubAppToken(request: Request, env: Env): Promise<Respons
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[github/app-token] Error:', message);
+    wlog('error', 'github_token_error', { message });
     return Response.json({ error: `GitHub App authentication failed: ${message}` }, { status: 500 });
   }
 }
