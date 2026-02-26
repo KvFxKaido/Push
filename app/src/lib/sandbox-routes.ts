@@ -58,12 +58,9 @@ export function resolveModalSandboxBase(baseUrl: string): { ok: true; base: stri
       const suffix = `-${fn}`;
       if (!rootHost.endsWith(suffix)) continue;
 
-      const candidate = rootHost.slice(0, -suffix.length);
-      // Preserve canonical app names that happen to end with route-like words
-      // such as "-create" (for example, "alice--my-create.modal.run").
-      const candidateAppName = candidate.split('--')[1] ?? '';
-      if (!candidateAppName.includes('-')) {
-        continue;
+      // We prioritize properly identifying function URLs (e.g., user--push-create)
+      // over preserving canonical URLs that end in route names, because users
+      // overwhelmingly paste function URLs from Modal deployment outputs.
       }
 
       return { ok: true, base: `${parsed.protocol}//${candidate}` };
