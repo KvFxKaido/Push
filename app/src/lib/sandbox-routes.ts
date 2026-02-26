@@ -46,24 +46,31 @@ export function resolveModalSandboxBase(baseUrl: string): { ok: true; base: stri
     }
 
     const rootHost = host.slice(0, -'.modal.run'.length);
-    if (!rootHost.includes('--')) {
+    const namespaceSeparator = rootHost.indexOf('--');
+
+    if (namespaceSeparator <= 0 || namespaceSeparator === rootHost.length - 2) {
       return {
         ok: false,
         code: 'MODAL_URL_INVALID',
         details: `MODAL_SANDBOX_BASE_URL must include the Modal app namespace (got host: ${host})`,
       };
     }
-    for (const fn of new Set(Object.values(SANDBOX_ROUTES))) {
-    for (const fn of Object.values(SANDBOX_ROUTES)) {
-      const suffix = `-${fn}`;
-      if (!rootHost.endsWith(suffix)) continue;
 
-      // We prioritize properly identifying function URLs (e.g., user--push-create)
-      // over preserving canonical URLs that end in route names, because users
-      // overwhelmingly paste function URLs from Modal deployment outputs.
+    const namespace = rootHost.slice(0, namespaceSeparator + 2);
+    const appOrFunctionName = rootHost.slice(namespaceSeparator + 2);
+
+    for (const fn of new Set(Object.values(SANDBOX_ROUTES))) {
+      const suffix = `-${fn}`;
+      if (!appOrFunctionName.endsWith(suffix)) {
+        continue;
       }
 
-      return { ok: true, base: `${parsed.protocol}//${candidate}` };
+      // Prefer parsing as function URL when it matches a known route suffix,
+      // because users commonly paste Modal function URLs from deploy output.
+      const appName = appOrFunctionName.slice(0, -suffix.length);
+      if (appName.length > 0) {
+        return { ok: true, base: `${parsed.protocol}//${namespace}${appName}` };
+      }
     }
 
     return { ok: true, base: `${parsed.protocol}//${rootHost}` };

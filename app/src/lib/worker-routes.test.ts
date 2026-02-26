@@ -167,6 +167,7 @@ describe('Modal base URL normalization', () => {
   it('strips function URL for single-word app names', () => {
     expect(resolveModalSandboxBase('https://alice--push-create.modal.run')).toEqual({ ok: true, base: 'https://alice--push' });
     expect(resolveModalSandboxBase('https://alice--push-cleanup.modal.run')).toEqual({ ok: true, base: 'https://alice--push' });
+    expect(resolveModalSandboxBase('https://alice--sandbox-create.modal.run')).toEqual({ ok: true, base: 'https://alice--sandbox' });
   });
 
   it('rejects non-https and trailing slash forms', () => {
