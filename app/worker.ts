@@ -5,6 +5,8 @@
  * Only unmatched requests (like /api/kimi/chat) reach this Worker.
  */
 
+import { SANDBOX_ROUTES, buildModalFunctionUrl, resolveModalSandboxBase } from './src/lib/sandbox-modal';
+
 interface Env {
   MOONSHOT_API_KEY?: string;
   OLLAMA_API_KEY?: string;
@@ -32,21 +34,6 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 120; // Raised from 30 — tool-heavy workflows (Coder delegation, web search, sandbox ops) can easily hit 30+ requests/min in normal use
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
 
-// Sandbox endpoint name mapping: /api/sandbox/{route} → Modal function name
-const SANDBOX_ROUTES: Record<string, string> = {
-  create: 'create',
-  exec: 'exec-command',
-  read: 'file-ops',
-  write: 'file-ops',
-  diff: 'get-diff',
-  cleanup: 'cleanup',
-  list: 'file-ops',
-  delete: 'file-ops',
-  restore: 'file-ops',
-  'browser-screenshot': 'browser-screenshot',
-  'browser-extract': 'browser-extract',
-  download: 'create-archive',
-};
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -284,20 +271,12 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
     }, { status: 503 });
   }
 
-  // Validate URL format to catch common configuration mistakes
-  if (!baseUrl.startsWith('https://') || !baseUrl.includes('--')) {
+  const normalizedBase = resolveModalSandboxBase(baseUrl);
+  if (!normalizedBase.ok) {
     return Response.json({
       error: 'Sandbox misconfigured',
-      code: 'MODAL_URL_INVALID',
-      details: `MODAL_SANDBOX_BASE_URL must be https://<username>--push-sandbox (got: ${baseUrl.slice(0, 50)}...)`,
-    }, { status: 503 });
-  }
-
-  if (baseUrl.endsWith('/')) {
-    return Response.json({
-      error: 'Sandbox misconfigured',
-      code: 'MODAL_URL_TRAILING_SLASH',
-      details: 'MODAL_SANDBOX_BASE_URL must not have a trailing slash. Remove the trailing / and redeploy.',
+      code: normalizedBase.code,
+      details: normalizedBase.details,
     }, { status: 503 });
   }
 
@@ -358,7 +337,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
 
   // Forward to Modal web endpoint
   // Modal web endpoints follow pattern: {base}-{function_name}.modal.run
-  const modalUrl = `${baseUrl}-${modalFunction}.modal.run`;
+  const modalUrl = buildModalFunctionUrl(normalizedBase.base, modalFunction);
 
   try {
     const controller = new AbortController();
@@ -485,12 +464,10 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   let sandboxError: string | undefined;
 
   if (sandboxUrl) {
-    if (!sandboxUrl.startsWith('https://') || !sandboxUrl.includes('--')) {
+    const normalizedBase = resolveModalSandboxBase(sandboxUrl);
+    if (!normalizedBase.ok) {
       sandboxStatus = 'misconfigured';
-      sandboxError = 'MODAL_SANDBOX_BASE_URL format is invalid';
-    } else if (sandboxUrl.endsWith('/')) {
-      sandboxStatus = 'misconfigured';
-      sandboxError = 'MODAL_SANDBOX_BASE_URL has trailing slash';
+      sandboxError = normalizedBase.details;
     } else {
       sandboxStatus = 'ok';
     }
