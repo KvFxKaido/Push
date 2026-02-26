@@ -164,9 +164,9 @@ describe('Modal base URL normalization', () => {
     expect(resolveModalSandboxBase('https://user--push-sandbox-exec-command.modal.run')).toEqual({ ok: true, base: 'https://user--push-sandbox' });
   });
 
-  it('preserves app names that naturally end in known route suffixes', () => {
-    expect(resolveModalSandboxBase('https://alice--my-create.modal.run')).toEqual({ ok: true, base: 'https://alice--my-create' });
-    expect(resolveModalSandboxBase('https://alice--my-cleanup.modal.run')).toEqual({ ok: true, base: 'https://alice--my-cleanup' });
+  it('strips function URL for single-word app names', () => {
+    expect(resolveModalSandboxBase('https://alice--push-create.modal.run')).toEqual({ ok: true, base: 'https://alice--push' });
+    expect(resolveModalSandboxBase('https://alice--push-cleanup.modal.run')).toEqual({ ok: true, base: 'https://alice--push' });
   });
 
   it('rejects non-https and trailing slash forms', () => {
