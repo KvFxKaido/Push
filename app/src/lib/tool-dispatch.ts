@@ -318,7 +318,7 @@ const NL_INTENT_PATTERNS: NLIntentPattern[] = [
     exampleJson: '{"tool": "delegate_coder", "args": {"task": "describe the task here"}}',
   },
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:task\\s+)?(?:to\\s+)?(?:the\\s+)?coder(?:\\s+agent)?`, 'i'),
+    regex: /\bdelegat(?:e|ing)\s+(?:this\s+)?(?:task\s+)?(?:to\s+)?(?:the\s+)?coder\s+agent/i,
     toolName: 'delegate_coder',
     exampleJson: '{"tool": "delegate_coder", "args": {"task": "describe the task here"}}',
   },
