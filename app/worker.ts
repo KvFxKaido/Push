@@ -49,6 +49,65 @@ const SANDBOX_ROUTES: Record<string, string> = {
   download: 'create-archive',
 };
 
+function resolveModalSandboxBase(baseUrl: string): { ok: true; base: string } | { ok: false; code: string; details: string } {
+  if (!baseUrl.startsWith('https://')) {
+    return {
+      ok: false,
+      code: 'MODAL_URL_INVALID',
+      details: `MODAL_SANDBOX_BASE_URL must start with https:// (got: ${baseUrl.slice(0, 50)}...)`,
+    };
+  }
+
+  if (baseUrl.endsWith('/')) {
+    return {
+      ok: false,
+      code: 'MODAL_URL_TRAILING_SLASH',
+      details: 'MODAL_SANDBOX_BASE_URL must not have a trailing slash. Remove the trailing / and redeploy.',
+    };
+  }
+
+  try {
+    const parsed = new URL(baseUrl);
+    const host = parsed.hostname;
+
+    if (!host.endsWith('.modal.run')) {
+      if (!host.includes('--')) {
+        return {
+          ok: false,
+          code: 'MODAL_URL_INVALID',
+          details: `MODAL_SANDBOX_BASE_URL must include the Modal app namespace (got host: ${host})`,
+        };
+      }
+      return { ok: true, base: `${parsed.protocol}//${host}` };
+    }
+
+    const rootHost = host.slice(0, -'.modal.run'.length);
+    if (!rootHost.includes('--')) {
+      return {
+        ok: false,
+        code: 'MODAL_URL_INVALID',
+        details: `MODAL_SANDBOX_BASE_URL must include the Modal app namespace (got host: ${host})`,
+      };
+    }
+
+    const knownFunctionSuffixes = new Set(Object.values(SANDBOX_ROUTES));
+    for (const fn of knownFunctionSuffixes) {
+      const suffix = `-${fn}`;
+      if (rootHost.endsWith(suffix)) {
+        return { ok: true, base: `${parsed.protocol}//${rootHost.slice(0, -suffix.length)}` };
+      }
+    }
+
+    return { ok: true, base: `${parsed.protocol}//${rootHost}` };
+  } catch {
+    return {
+      ok: false,
+      code: 'MODAL_URL_INVALID',
+      details: `MODAL_SANDBOX_BASE_URL is not a valid URL (got: ${baseUrl.slice(0, 50)}...)`,
+    };
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -561,20 +620,12 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
     }, { status: 503 });
   }
 
-  // Validate URL format to catch common configuration mistakes
-  if (!baseUrl.startsWith('https://') || !baseUrl.includes('--')) {
+  const resolvedBase = resolveModalSandboxBase(baseUrl);
+  if (!resolvedBase.ok) {
     return Response.json({
       error: 'Sandbox misconfigured',
-      code: 'MODAL_URL_INVALID',
-      details: `MODAL_SANDBOX_BASE_URL must be https://<username>--push-sandbox (got: ${baseUrl.slice(0, 50)}...)`,
-    }, { status: 503 });
-  }
-
-  if (baseUrl.endsWith('/')) {
-    return Response.json({
-      error: 'Sandbox misconfigured',
-      code: 'MODAL_URL_TRAILING_SLASH',
-      details: 'MODAL_SANDBOX_BASE_URL must not have a trailing slash. Remove the trailing / and redeploy.',
+      code: resolvedBase.code,
+      details: resolvedBase.details,
     }, { status: 503 });
   }
 
@@ -635,7 +686,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
 
   // Forward to Modal web endpoint
   // Modal web endpoints follow pattern: {base}-{function_name}.modal.run
-  const modalUrl = `${baseUrl}-${modalFunction}.modal.run`;
+  const modalUrl = `${resolvedBase.base}-${modalFunction}.modal.run`;
 
   try {
     const controller = new AbortController();
@@ -766,14 +817,12 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   let sandboxError: string | undefined;
 
   if (sandboxUrl) {
-    if (!sandboxUrl.startsWith('https://') || !sandboxUrl.includes('--')) {
-      sandboxStatus = 'misconfigured';
-      sandboxError = 'MODAL_SANDBOX_BASE_URL format is invalid';
-    } else if (sandboxUrl.endsWith('/')) {
-      sandboxStatus = 'misconfigured';
-      sandboxError = 'MODAL_SANDBOX_BASE_URL has trailing slash';
-    } else {
+    const resolvedBase = resolveModalSandboxBase(sandboxUrl);
+    if (resolvedBase.ok) {
       sandboxStatus = 'ok';
+    } else {
+      sandboxStatus = 'misconfigured';
+      sandboxError = resolvedBase.details;
     }
   }
 
