@@ -60,6 +60,10 @@ const NEEDS_ENRICHMENT = '[WORKSPACE_PENDING]';
  * and render the UI without blocking on git or filesystem.
  */
 export function buildSystemPromptBase(workspaceRoot) {
+  const explainBlock = process.env.PUSH_EXPLAIN_MODE === 'true'
+    ? `\nExplain mode is active. After each significant action, add a brief [explain] note (2–3 lines) describing the pattern or architectural convention at play — not what you just did, but why this approach fits the codebase. Focus on patterns the user can recognize next time (e.g. "this follows the hook factory pattern used across all provider configs" or "edit expressed as hashline ops to avoid line-number drift"). Keep it concise and skip it for trivial changes.\n`
+    : '';
+
   return `You are a coding assistant running in a local workspace.
 Workspace root: ${workspaceRoot}
 
@@ -69,7 +73,7 @@ If the user's message does not require reading files or running commands, respon
 Each tool-loop round is expensive — plan before acting, batch related reads, and avoid exploratory browsing unless the user asks for it.
 Use coder_update_state to keep a concise working plan; it is persisted and reinjected.
 Use save_memory to persist learnings across sessions (build commands, project patterns, conventions).
-
+${explainBlock}
 ${TOOL_PROTOCOL}
 ${NEEDS_ENRICHMENT}`;
 }

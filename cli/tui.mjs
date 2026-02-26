@@ -1113,7 +1113,7 @@ function maskInput(str) {
 
 /**
  * Build the ordered list of config items.
- * Items 0–5: providers, 6: tavily, 7: sandbox.
+ * Items 0–5: providers, 6: tavily, 7: sandbox, 8: execMode, 9: explain.
  */
 function getConfigItems(providerList, config) {
   const items = [];
@@ -1142,6 +1142,9 @@ function getConfigItems(providerList, config) {
   // ExecMode
   const execMode = process.env.PUSH_EXEC_MODE || config.execMode || 'auto';
   items.push({ type: 'execMode', id: 'execMode', execMode });
+  // ExplainMode
+  const explainOn = process.env.PUSH_EXPLAIN_MODE === 'true' || config.explainMode === true;
+  items.push({ type: 'explain', id: 'explain', explainOn });
   return items;
 }
 
@@ -1197,6 +1200,14 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
           ? theme.style('accent.primary', 'execMode')
           : theme.style('fg.secondary', 'execMode');
         lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${modeStr}`);
+      } else if (item.type === 'explain') {
+        const status = item.explainOn
+          ? theme.style('state.success', 'on')
+          : theme.style('fg.dim', 'off');
+        const name = isCursor
+          ? theme.style('accent.primary', 'explain')
+          : theme.style('fg.secondary', 'explain');
+        lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${status}`);
       }
 
       // Visual gap between providers and extras
@@ -2734,7 +2745,24 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    addTranscriptEntry(tuiState, 'warning', `Unknown config subcommand: ${sub}. Try: key, url, tavily, sandbox`);
+    if (sub === 'explain') {
+      if (parts.length < 2 || (parts[1] !== 'on' && parts[1] !== 'off')) {
+        addTranscriptEntry(tuiState, 'warning', 'Usage: /config explain on|off');
+        scheduler.flush();
+        return;
+      }
+
+      const enabled = parts[1] === 'on';
+      config.explainMode = enabled;
+      await saveConfig(config);
+      process.env.PUSH_EXPLAIN_MODE = String(enabled);
+
+      addTranscriptEntry(tuiState, 'status', `Explain mode: ${enabled ? 'on' : 'off'}`);
+      scheduler.flush();
+      return;
+    }
+
+    addTranscriptEntry(tuiState, 'warning', `Unknown config subcommand: ${sub}. Try: key, url, tavily, sandbox, explain`);
     scheduler.flush();
   }
 
@@ -2769,6 +2797,7 @@ export async function runTUI(options = {}) {
           '  /config url <url>    Set endpoint URL for current provider',
           '  /config tavily <key> Set Tavily web search API key',
           '  /config sandbox on|off  Toggle local Docker sandbox',
+          '  /config explain on|off  Toggle pattern explanations',
           '  /skills              List available skills',
           '  /skills reload       Reload workspace + Claude skills',
           `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)`,
@@ -3296,8 +3325,8 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
-  /** Total config items: 6 providers + tavily + sandbox + execMode = 9. */
-  const CONFIG_ITEM_COUNT = 9;
+  /** Total config items: 6 providers + tavily + sandbox + execMode + explain = 10. */
+  const CONFIG_ITEM_COUNT = 10;
 
   async function handleConfigModalInput(key) {
     const ms = tuiState.configModalState;
@@ -3422,6 +3451,12 @@ export async function runTUI(options = {}) {
       const current = process.env.PUSH_EXEC_MODE || config.execMode || 'auto';
       ms.mode = 'pick';
       ms.pickCursor = Math.max(0, EXEC_MODES.indexOf(current));
+    } else if (index === providers.length + 3) {
+      // ExplainMode → toggle directly
+      const isOn = process.env.PUSH_EXPLAIN_MODE === 'true' || config.explainMode === true;
+      config.explainMode = !isOn;
+      await saveConfig(config);
+      process.env.PUSH_EXPLAIN_MODE = String(!isOn);
     }
     tuiState.dirty.add('all');
     scheduler.flush();
