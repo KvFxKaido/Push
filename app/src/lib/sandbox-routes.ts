@@ -53,7 +53,7 @@ export function resolveModalSandboxBase(baseUrl: string): { ok: true; base: stri
         details: `MODAL_SANDBOX_BASE_URL must include the Modal app namespace (got host: ${host})`,
       };
     }
-
+    for (const fn of new Set(Object.values(SANDBOX_ROUTES))) {
     for (const fn of Object.values(SANDBOX_ROUTES)) {
       const suffix = `-${fn}`;
       if (!rootHost.endsWith(suffix)) continue;
