@@ -8,6 +8,7 @@
 
 import process from 'node:process';
 import path from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
 import { createTheme } from './tui-theme.mjs';
@@ -22,7 +23,7 @@ import {
 } from './tui-renderer.mjs';
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
 import { getCuratedModels, fetchModels } from './model-catalog.mjs';
-import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, deleteSession } from './session-store.mjs';
+import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, deleteSession, getSessionRoot } from './session-store.mjs';
 import { buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.mjs';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
@@ -35,6 +36,75 @@ import { compactContext } from './context-manager.mjs';
 
 const MAX_TRANSCRIPT = 2000;   // max lines in transcript buffer
 const MAX_TOOL_FEED = 200;     // max items in tool feed
+
+function safeRealpath(targetPath) {
+  try {
+    return realpathSync(targetPath);
+  } catch {
+    return path.resolve(targetPath);
+  }
+}
+
+function isPathWithin(root, candidate) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidate);
+  return (
+    resolvedCandidate === resolvedRoot ||
+    resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)
+  );
+}
+
+function findContainingPushRepoRoot(startDir) {
+  let dir = safeRealpath(startDir);
+
+  while (true) {
+    const hasMarkers =
+      existsSync(path.join(dir, 'push')) &&
+      existsSync(path.join(dir, 'AGENTS.md')) &&
+      existsSync(path.join(dir, 'cli', 'cli.mjs')) &&
+      existsSync(path.join(dir, 'cli', 'tui.mjs'));
+    if (hasMarkers) return dir;
+
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+  function getRuntimeOriginWarning(workspaceCwd) {
+  const repoRoot = findContainingPushRepoRoot(workspaceCwd);
+  if (!repoRoot) return null;
+
+  const rawEntry = process.argv[1];
+  if (!rawEntry || !rawEntry.trim()) return null;
+
+  const runtimeEntry = safeRealpath(rawEntry);
+  if (isPathWithin(repoRoot, runtimeEntry)) return null;
+
+  return [
+    'Workspace looks like the Push repo, but this TUI is running from a different CLI install.',
+    `runtime: ${runtimeEntry}`,
+    `repo launcher: ${path.join(repoRoot, 'push')}`,
+    'tip: use `./push` or `bash ./push` here to test local changes.',
+  ].join('\n');
+}
+
+function getRuntimeOriginMismatch(workspaceCwd) {
+  const repoRoot = findContainingPushRepoRoot(workspaceCwd);
+  if (!repoRoot) return null;
+
+  const rawEntry = process.argv[1];
+  if (!rawEntry || !rawEntry.trim()) {
+    return { repoRoot, runtimeEntry: '', mismatched: false };
+  }
+
+  const runtimeEntry = safeRealpath(rawEntry);
+  return {
+    repoRoot,
+    runtimeEntry,
+    mismatched: !isPathWithin(repoRoot, runtimeEntry),
+  };
+}
 
 function createTUIState() {
   return {
@@ -1450,6 +1520,11 @@ export async function runTUI(options = {}) {
   
   // Initial git status
   await refreshGitStatus();
+
+  const runtimeOriginWarning = getRuntimeOriginWarning(state.cwd);
+  if (runtimeOriginWarning) {
+    addTranscriptEntry(tuiState, 'warning', runtimeOriginWarning);
+  }
   
   // Periodic git status refresh (every 5 seconds)
   let gitStatusInterval = setInterval(() => {
@@ -1669,6 +1744,12 @@ export async function runTUI(options = {}) {
 
   // ── Engine event handler ─────────────────────────────────────────
 
+  function flushPendingAssistantStream() {
+    if (!tuiState.streamBuf) return;
+    addTranscriptEntry(tuiState, 'assistant', tuiState.streamBuf);
+    tuiState.streamBuf = '';
+  }
+
   function handleEngineEvent(event) {
     switch (event.type) {
       case 'assistant_thinking_token':
@@ -1772,13 +1853,18 @@ export async function runTUI(options = {}) {
         break;
 
       case 'error':
+        // Preserve any partial streamed assistant text/tool-call JSON before
+        // logging the provider/tool error, so failures do not look blank.
+        flushPendingAssistantStream();
         addTranscriptEntry(tuiState, 'error', event.payload.message);
         scheduler.schedule();
         break;
 
       case 'run_complete':
         tuiState.runState = 'idle';
-        tuiState.streamBuf = '';
+        // assistant_done normally flushes the stream; this is a fallback for
+        // failed/aborted runs that ended after partial output.
+        flushPendingAssistantStream();
         tuiState.reasoningStreaming = false;
         if (tuiState.reasoningBuf.trim()) {
           tuiState.lastReasoning = tuiState.reasoningBuf;
@@ -1902,7 +1988,7 @@ export async function runTUI(options = {}) {
     return createTabCompleter({
       ctx, skills, getCuratedModels, getProviderList,
       workspaceRoot: state.cwd,
-      extraCommands: ['resume', 'compact'],
+      extraCommands: ['resume', 'compact', 'debug'],
     });
   }
 
@@ -2782,6 +2868,50 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  function handleDebugCommand(arg) {
+    const sub = (arg || '').trim();
+    if (!sub) {
+      addTranscriptEntry(tuiState, 'warning', 'Usage: /debug runtime');
+      scheduler.flush();
+      return;
+    }
+
+    if (sub !== 'runtime') {
+      addTranscriptEntry(tuiState, 'warning', `Unknown debug subcommand: ${sub}. Try: runtime`);
+      scheduler.flush();
+      return;
+    }
+
+    const mismatch = getRuntimeOriginMismatch(state.cwd);
+    const sessionRoot = getSessionRoot();
+    const runtimeEntry = process.argv[1] ? safeRealpath(process.argv[1]) : '(unknown)';
+    const runtimeDir = process.argv[1] ? path.dirname(runtimeEntry) : '(unknown)';
+    const repoRoot = mismatch?.repoRoot || '(not detected)';
+    const expectedLauncher = mismatch?.repoRoot ? path.join(mismatch.repoRoot, 'push') : '(not detected)';
+
+    const lines = [
+      'Runtime Debug:',
+      `  cwd: ${process.cwd()}`,
+      `  workspace: ${state.cwd}`,
+      `  node: ${process.execPath}`,
+      `  argv[1]: ${runtimeEntry}`,
+      `  runtime dir: ${runtimeDir}`,
+      `  repo root (detected): ${repoRoot}`,
+      `  repo launcher (expected): ${expectedLauncher}`,
+      `  repo runtime mismatch: ${mismatch ? (mismatch.mismatched ? 'yes' : 'no') : 'n/a'}`,
+      `  provider: ${ctx.providerConfig.id}`,
+      `  provider url: ${ctx.providerConfig.url}`,
+      `  model: ${state.model}`,
+      `  session id: ${state.sessionId}`,
+      `  session root: ${sessionRoot}`,
+      `  session dir (current root): ${path.join(sessionRoot, state.sessionId)}`,
+      `  api key loaded: ${ctx.apiKey ? 'yes' : 'no'}`,
+    ];
+
+    addTranscriptEntry(tuiState, 'status', lines.join('\n'));
+    scheduler.flush();
+  }
+
   /** Dispatch slash commands. Returns true if handled. */
   async function handleSlashCommand(text) {
     if (!text.startsWith('/')) return false;
@@ -2800,6 +2930,10 @@ export async function runTUI(options = {}) {
         await handleConfigCommand(arg || null);
         return true;
 
+      case 'debug':
+        handleDebugCommand(arg || null);
+        return true;
+
       case 'help':
         addTranscriptEntry(tuiState, 'status', [
           'Commands:',
@@ -2814,6 +2948,7 @@ export async function runTUI(options = {}) {
           '  /config tavily <key> Set Tavily web search API key',
           '  /config sandbox on|off  Toggle local Docker sandbox',
           '  /config explain on|off  Toggle pattern explanations',
+          '  /debug runtime       Show runtime path/provider/session diagnostics',
           '  /skills              List available skills',
           '  /skills reload       Reload workspace + Claude skills',
           `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)`,

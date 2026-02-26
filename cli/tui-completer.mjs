@@ -113,6 +113,14 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
       return resolved;
     }
 
+    if (cmd === 'debug') {
+      const subs = ['runtime'];
+      const resolved = subs.filter(s => s.startsWith(arg)).map(s => prefix + s);
+      lastResolvedText = text;
+      lastResolvedCandidates = resolved;
+      return resolved;
+    }
+
     if (cmd === 'config') {
       const parts = arg.split(' ');
       if (parts.length <= 1) {

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCompleter } from '../completer.mjs';
 
-const OLLAMA_MODELS = ['gemini-3-flash-preview', 'qwen3', 'llama4', 'devstral'];
+const OLLAMA_MODELS = ['gemini-3-flash-preview'];
 const PROVIDERS = [{ id: 'ollama' }, { id: 'mistral' }, { id: 'openrouter' }, { id: 'zai' }, { id: 'google' }, { id: 'zen' }];
 
 function makeCompleter(overrides = {}) {

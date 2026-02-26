@@ -12,7 +12,7 @@ function makeDeps(providerId = 'ollama') {
   skills.set('review', { description: 'review code' });
 
   const getCuratedModels = (id) => {
-    if (id === 'ollama') return ['gemini-3-flash-preview', 'qwen3', 'llama4', 'devstral'];
+    if (id === 'ollama') return ['gemini-3-flash-preview'];
     if (id === 'mistral') return ['devstral-small-latest', 'mistral-large-latest'];
     return [];
   };
@@ -79,6 +79,13 @@ describe('createTabCompleter', () => {
     assert.equal(result.text, '/resume ');
   });
 
+  it('completes /debug command when provided as extra command', () => {
+    tc = createTabCompleter({ ...makeDeps(), extraCommands: ['debug'] });
+    const result = tc.tab('/deb', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/debug ');
+  });
+
   it('completes skill names', () => {
     tc.reset();
     const result = tc.tab('/comm', false);
@@ -108,6 +115,13 @@ describe('createTabCompleter', () => {
     const result = tc.tab('/skills re', false);
     assert.notEqual(result, null);
     assert.equal(result.text, '/skills reload');
+  });
+
+  it('completes debug subcommands', () => {
+    tc = createTabCompleter({ ...makeDeps(), extraCommands: ['debug'] });
+    const result = tc.tab('/debug ru', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/debug runtime');
   });
 
   it('cycles forward through candidates', () => {
@@ -265,10 +279,10 @@ describe('suggest (live preview)', () => {
   });
 
   it('suggest shows model args', () => {
-    tc.suggest('/model q');
+    tc.suggest('/model gem');
     const s = tc.getState();
     assert.notEqual(s, null);
-    assert.equal(s.items[0], 'qwen3');
+    assert.equal(s.items[0], 'gemini-3-flash-preview');
     assert.equal(s.index, -1);
   });
 });

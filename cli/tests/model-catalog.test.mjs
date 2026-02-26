@@ -109,6 +109,7 @@ describe('DEFAULT_MODELS', () => {
     openrouter: 'anthropic/claude-sonnet-4.6',
     zai: 'glm-4.5',
     google: 'gemini-3.1-pro-preview',
+    minimax: 'MiniMax-M2.5',
     zen: 'big-pickle',
   };
 
@@ -123,7 +124,7 @@ describe('DEFAULT_MODELS', () => {
   });
 
   it('covers all providers', () => {
-    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['google', 'mistral', 'ollama', 'openrouter', 'zai', 'zen']);
+    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['google', 'minimax', 'mistral', 'ollama', 'openrouter', 'zai', 'zen']);
   });
 
   it('each default appears in its curated list', () => {

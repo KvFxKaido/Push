@@ -19,10 +19,9 @@ export const OPENROUTER_MODELS = [
 ];
 
 export const OLLAMA_MODELS = [
+  // Cloud-first curated fallback. Live `/models` fetch and free-text entry
+  // cover account-specific availability beyond this baseline.
   'gemini-3-flash-preview',
-  'qwen3',
-  'llama4',
-  'devstral',
 ];
 
 export const MISTRAL_MODELS = [
