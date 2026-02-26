@@ -1,34 +1,5 @@
-/**
- * Tests for browser tool route mapping in worker.ts.
- *
- * The worker defines SANDBOX_ROUTES mapping route names to Modal function names.
- * These tests verify the browser routes are correctly mapped and that the worker
- * enriches browser payloads with Browserbase credentials.
- *
- * Since worker.ts is a Cloudflare Worker module (not a standard Node module),
- * we extract and test the route mapping logic directly rather than importing
- * the worker module.
- */
-
 import { describe, it, expect } from 'vitest';
-
-// The SANDBOX_ROUTES map from worker.ts.
-// We replicate it here to test as a unit, since importing the worker module
-// would pull in Cloudflare-specific types (Fetcher, etc.) that don't exist in Node.
-const SANDBOX_ROUTES: Record<string, string> = {
-  create: 'create',
-  exec: 'exec-command',
-  read: 'file-ops',
-  write: 'file-ops',
-  diff: 'get-diff',
-  cleanup: 'cleanup',
-  list: 'file-ops',
-  delete: 'file-ops',
-  restore: 'file-ops',
-  'browser-screenshot': 'browser-screenshot',
-  'browser-extract': 'browser-extract',
-  download: 'create-archive',
-};
+import { SANDBOX_ROUTES, resolveModalSandboxBase } from './sandbox-routes';
 
 // ---------------------------------------------------------------------------
 // 1. Route mapping — browser-screenshot
@@ -117,12 +88,6 @@ describe('Modal URL construction for browser routes', () => {
 // ---------------------------------------------------------------------------
 
 describe('Worker payload enrichment for browser routes', () => {
-  // Simulates the worker's payload enrichment logic for browser routes.
-  // From worker.ts lines 267-285:
-  //   if (route === 'browser-screenshot' || route === 'browser-extract') {
-  //     payload.browserbase_api_key = env.BROWSERBASE_API_KEY || '';
-  //     payload.browserbase_project_id = env.BROWSERBASE_PROJECT_ID || '';
-  //   }
   function enrichPayload(
     route: string,
     payload: Record<string, unknown>,
@@ -185,48 +150,27 @@ describe('Worker payload enrichment for browser routes', () => {
   });
 });
 
-
 describe('Modal base URL normalization', () => {
-  function normalizeModalBase(input: string): string | null {
-    if (!input.startsWith('https://')) return null;
-    if (input.endsWith('/')) return null;
-
-    const parsed = new URL(input);
-    const host = parsed.hostname;
-
-    if (!host.endsWith('.modal.run')) {
-      return host.includes('--') ? `${parsed.protocol}//${host}` : null;
-    }
-
-    const rootHost = host.slice(0, -'.modal.run'.length);
-    if (!rootHost.includes('--')) return null;
-
-    const suffixes = new Set(Object.values(SANDBOX_ROUTES));
-    for (const fn of suffixes) {
-      const suffix = `-${fn}`;
-      if (rootHost.endsWith(suffix)) {
-        return `${parsed.protocol}//${rootHost.slice(0, -suffix.length)}`;
-      }
-    }
-
-    return `${parsed.protocol}//${rootHost}`;
-  }
-
   it('accepts canonical app base URL', () => {
-    expect(normalizeModalBase('https://user--push-sandbox')).toBe('https://user--push-sandbox');
+    expect(resolveModalSandboxBase('https://user--push-sandbox')).toEqual({ ok: true, base: 'https://user--push-sandbox' });
   });
 
   it('accepts full app host with .modal.run suffix', () => {
-    expect(normalizeModalBase('https://user--push-sandbox.modal.run')).toBe('https://user--push-sandbox');
+    expect(resolveModalSandboxBase('https://user--push-sandbox.modal.run')).toEqual({ ok: true, base: 'https://user--push-sandbox' });
   });
 
   it('accepts full function URL and strips function suffix', () => {
-    expect(normalizeModalBase('https://user--push-sandbox-create.modal.run')).toBe('https://user--push-sandbox');
-    expect(normalizeModalBase('https://user--push-sandbox-exec-command.modal.run')).toBe('https://user--push-sandbox');
+    expect(resolveModalSandboxBase('https://user--push-sandbox-create.modal.run')).toEqual({ ok: true, base: 'https://user--push-sandbox' });
+    expect(resolveModalSandboxBase('https://user--push-sandbox-exec-command.modal.run')).toEqual({ ok: true, base: 'https://user--push-sandbox' });
+  });
+
+  it('preserves app names that naturally end in known route suffixes', () => {
+    expect(resolveModalSandboxBase('https://alice--my-create.modal.run')).toEqual({ ok: true, base: 'https://alice--my-create' });
+    expect(resolveModalSandboxBase('https://alice--my-cleanup.modal.run')).toEqual({ ok: true, base: 'https://alice--my-cleanup' });
   });
 
   it('rejects non-https and trailing slash forms', () => {
-    expect(normalizeModalBase('http://user--push-sandbox')).toBeNull();
-    expect(normalizeModalBase('https://user--push-sandbox/')).toBeNull();
+    expect(resolveModalSandboxBase('http://user--push-sandbox')).toMatchObject({ ok: false, code: 'MODAL_URL_INVALID' });
+    expect(resolveModalSandboxBase('https://user--push-sandbox/')).toMatchObject({ ok: false, code: 'MODAL_URL_TRAILING_SLASH' });
   });
 });
