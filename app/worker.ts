@@ -5,6 +5,8 @@
  * Only unmatched requests (like /api/ollama/chat) reach this Worker.
  */
 
+import { SANDBOX_ROUTES, resolveModalSandboxBase } from './src/lib/sandbox-routes';
+
 interface Env {
   OLLAMA_API_KEY?: string;
   MISTRAL_API_KEY?: string;
@@ -32,81 +34,6 @@ const RESTORE_MAX_BODY_SIZE_BYTES = 12 * 1024 * 1024; // 12MB for snapshot resto
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 120; // Raised from 30 — tool-heavy workflows (Coder delegation, web search, sandbox ops) can easily hit 30+ requests/min in normal use
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
-
-// Sandbox endpoint name mapping: /api/sandbox/{route} → Modal function name
-const SANDBOX_ROUTES: Record<string, string> = {
-  create: 'create',
-  exec: 'exec-command',
-  read: 'file-ops',
-  write: 'file-ops',
-  diff: 'get-diff',
-  cleanup: 'cleanup',
-  list: 'file-ops',
-  delete: 'file-ops',
-  restore: 'file-ops',
-  'browser-screenshot': 'browser-screenshot',
-  'browser-extract': 'browser-extract',
-  download: 'create-archive',
-};
-
-function resolveModalSandboxBase(baseUrl: string): { ok: true; base: string } | { ok: false; code: string; details: string } {
-  if (!baseUrl.startsWith('https://')) {
-    return {
-      ok: false,
-      code: 'MODAL_URL_INVALID',
-      details: `MODAL_SANDBOX_BASE_URL must start with https:// (got: ${baseUrl.slice(0, 50)}...)`,
-    };
-  }
-
-  if (baseUrl.endsWith('/')) {
-    return {
-      ok: false,
-      code: 'MODAL_URL_TRAILING_SLASH',
-      details: 'MODAL_SANDBOX_BASE_URL must not have a trailing slash. Remove the trailing / and redeploy.',
-    };
-  }
-
-  try {
-    const parsed = new URL(baseUrl);
-    const host = parsed.hostname;
-
-    if (!host.endsWith('.modal.run')) {
-      if (!host.includes('--')) {
-        return {
-          ok: false,
-          code: 'MODAL_URL_INVALID',
-          details: `MODAL_SANDBOX_BASE_URL must include the Modal app namespace (got host: ${host})`,
-        };
-      }
-      return { ok: true, base: `${parsed.protocol}//${host}` };
-    }
-
-    const rootHost = host.slice(0, -'.modal.run'.length);
-    if (!rootHost.includes('--')) {
-      return {
-        ok: false,
-        code: 'MODAL_URL_INVALID',
-        details: `MODAL_SANDBOX_BASE_URL must include the Modal app namespace (got host: ${host})`,
-      };
-    }
-
-    const knownFunctionSuffixes = new Set(Object.values(SANDBOX_ROUTES));
-    for (const fn of knownFunctionSuffixes) {
-      const suffix = `-${fn}`;
-      if (rootHost.endsWith(suffix)) {
-        return { ok: true, base: `${parsed.protocol}//${rootHost.slice(0, -suffix.length)}` };
-      }
-    }
-
-    return { ok: true, base: `${parsed.protocol}//${rootHost}` };
-  } catch {
-    return {
-      ok: false,
-      code: 'MODAL_URL_INVALID',
-      details: `MODAL_SANDBOX_BASE_URL is not a valid URL (got: ${baseUrl.slice(0, 50)}...)`,
-    };
-  }
-}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
