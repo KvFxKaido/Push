@@ -283,7 +283,7 @@ export async function runCoderAgent(
   signal?: AbortSignal,
   onCheckpoint?: (question: string, context: string) => Promise<string>,
   acceptanceCriteria?: AcceptanceCriterion[],
-  onWorkingMemoryUpdate?: (state: string) => void,
+  onWorkingMemoryUpdate?: (state: CoderWorkingMemory) => void,
 ): Promise<{ summary: string; cards: ChatCard[]; rounds: number; checkpoints: number; criteriaResults?: CriterionResult[] }> {
   // Resolve provider and model for the 'coder' role via providers.ts
   const activeProvider = getActiveProvider();
@@ -454,7 +454,9 @@ export async function runCoderAgent(
 
       // Notify caller of latest working memory state (for checkpoint capture)
       if (onWorkingMemoryUpdate) {
-        onWorkingMemoryUpdate(formatCoderState(workingMemory));
+      if (onWorkingMemoryUpdate) {
+        onWorkingMemoryUpdate(workingMemory);
+      }
       }
 
       // If only a state update was emitted (no sandbox tool AND no checkpoint), inject ack and continue

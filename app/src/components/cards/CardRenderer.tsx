@@ -21,6 +21,7 @@ import { SandboxDownloadCard } from './SandboxDownloadCard';
 import { WorkflowRunsCard } from './WorkflowRunsCard';
 import { WorkflowLogsCard } from './WorkflowLogsCard';
 import { WebSearchCard } from './WebSearchCard';
+import { CoderProgressCard } from './CoderProgressCard';
 
 interface CardRendererProps {
   card: ChatCard;
@@ -98,6 +99,8 @@ function renderCard(card: ChatCard, messageId?: string, cardIndex?: number, onAc
       return <WorkflowLogsCard data={card.data} />;
     case 'web-search':
       return <WebSearchCard data={card.data} />;
+    case 'coder-progress':
+      return <CoderProgressCard data={card.data} />;
     default:
       return null;
   }

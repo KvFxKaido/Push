@@ -182,7 +182,8 @@ export type ChatCard =
   | { type: 'workflow-runs'; data: WorkflowRunsCardData }
   | { type: 'workflow-logs'; data: WorkflowLogsCardData }
   | { type: 'web-search'; data: WebSearchCardData }
-  | { type: 'ask-user'; data: AskUserCardData };
+  | { type: 'ask-user'; data: AskUserCardData }
+  | { type: 'coder-progress'; data: CoderWorkingMemory };
 
 // --- Coder working memory ---
 
