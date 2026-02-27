@@ -3,6 +3,7 @@ import { TOOL_PROTOCOL } from './github-tools';
 import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
@@ -417,7 +418,7 @@ Boundaries:
 
 You can emit multiple tool calls in one response. The runtime splits them into parallel reads and an optional trailing mutation:
 - Read-only calls (read_file, sandbox_read_file, sandbox_search, list_directory, sandbox_list_dir, sandbox_diff, fetch_pr, list_prs, list_commits, search_files, list_commit_files, fetch_checks, list_branches, get_workflow_runs, get_workflow_logs, check_pr_mergeable, find_existing_pr) execute in parallel.
-- If you include a mutating call (edit, write, exec, commit, push, delegate, etc.), place it LAST — it runs after all reads complete.
+- If you include a mutating call (edit, write, exec, commit, push, delegate, ask_user, etc.), place it LAST — it runs after all reads complete.
 - Maximum 6 parallel read-only calls per turn. If you need more, split across turns.
 
 ## Tool Routing

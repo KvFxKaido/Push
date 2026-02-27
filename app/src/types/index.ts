@@ -181,7 +181,8 @@ export type ChatCard =
   | { type: 'sandbox-download'; data: SandboxDownloadCardData }
   | { type: 'workflow-runs'; data: WorkflowRunsCardData }
   | { type: 'workflow-logs'; data: WorkflowLogsCardData }
-  | { type: 'web-search'; data: WebSearchCardData };
+  | { type: 'web-search'; data: WebSearchCardData }
+  | { type: 'ask-user'; data: AskUserCardData };
 
 // --- Coder working memory ---
 
@@ -606,6 +607,18 @@ export interface WebSearchResult {
 export interface WebSearchCardData {
   query: string;
   results: WebSearchResult[];
+}
+
+export interface AskUserOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface AskUserCardData {
+  question: string;
+  options: AskUserOption[];
+  multiSelect?: boolean;
 }
 
 // --- Resumable Sessions (Phase 1) ---

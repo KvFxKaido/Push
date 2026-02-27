@@ -12,6 +12,7 @@ import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, IMPLEMENTED_SANDBOX_TOOLS, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
 import { detectWebSearchToolCall, executeWebSearch, type WebSearchToolCall } from './web-search-tools';
+import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { execInSandbox } from './sandbox-client';
 import { asRecord, detectToolFromText, extractBareToolJsonObjects, repairToolJson, detectTruncatedToolCall, diagnoseJsonSyntaxError } from './utils';
@@ -208,7 +209,8 @@ export type AnyToolCall =
   | { source: 'sandbox'; call: SandboxToolCall }
   | { source: 'delegate'; call: { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[]; acceptanceCriteria?: AcceptanceCriterion[] } } }
   | { source: 'scratchpad'; call: ScratchpadToolCall }
-  | { source: 'web-search'; call: WebSearchToolCall };
+  | { source: 'web-search'; call: WebSearchToolCall }
+  | { source: 'ask-user'; call: AskUserToolCall };
 
 /**
  * Scan assistant output for any tool call (GitHub, Sandbox, Scratchpad, or delegation).
@@ -226,6 +228,10 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   // Check web search tool
   const webSearchCall = detectWebSearchToolCall(text);
   if (webSearchCall) return { source: 'web-search', call: webSearchCall };
+
+  // Check ask_user tool
+  const askUserCall = detectAskUserToolCall(text);
+  if (askUserCall) return { source: 'ask-user', call: askUserCall };
 
   // Check sandbox tools (sandbox_ prefix)
   const sandboxCall = detectSandboxToolCall(text);
@@ -326,6 +332,13 @@ export async function executeAnyToolCall(
       return executeWebSearch(toolCall.call.args.query, provider);
     }
 
+    case 'ask-user':
+      return {
+        text: '[Tool Result] Question sent to user. The system will wait for their response.',
+        card: { type: 'ask-user', data: toolCall.call.args }
+      };
+    }
+
     default:
       return { text: '[Tool Error] Unknown tool source.' };
   }
@@ -353,7 +366,7 @@ const GITHUB_TOOL_NAMES = new Set([
 ]);
 
 const OTHER_TOOL_NAMES = new Set([
-  'delegate_coder', 'set_scratchpad', 'append_scratchpad', 'read_scratchpad', 'web_search',
+  'delegate_coder', 'set_scratchpad', 'append_scratchpad', 'read_scratchpad', 'web_search', 'ask_user',
 ]);
 
 export const KNOWN_TOOL_NAMES = new Set([
@@ -372,7 +385,9 @@ export function getToolSource(toolName: string | null): AnyToolCall['source'] {
   if (IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) return 'sandbox';
   if (toolName === 'delegate_coder') return 'delegate';
   if (toolName === 'web_search') return 'web-search';
+  if (toolName === 'ask_user') return 'ask-user';
   if (['set_scratchpad', 'append_scratchpad', 'read_scratchpad'].includes(toolName)) return 'scratchpad';
+  if (toolName === 'ask_user') return 'ask-user';
   return 'sandbox'; // Fallback
 }
 
@@ -505,6 +520,7 @@ const TOOL_ARG_HINTS: Record<string, string> = {
   sandbox_push: '{"tool": "sandbox_push", "args": {}}',
   delegate_coder: '{"tool": "delegate_coder", "args": {"task": "describe the task"}}',
   web_search: '{"tool": "web_search", "args": {"query": "search query"}}',
+  ask_user: '{"tool": "ask_user", "args": {"question": "...?", "options": [{"id": "1", "label": "..."}]}}',
 };
 
 /** Build an actionable validation error message, including arg hints when available. */
