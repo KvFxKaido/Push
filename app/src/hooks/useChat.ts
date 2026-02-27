@@ -1745,7 +1745,22 @@ export function useChat(
                   const msgs = [...conv.messages];
                   const lastIdx = msgs.length - 1;
                   if (msgs[lastIdx]?.role === 'assistant') {
-                    msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, thinking: thinkingAccumulated || undefined, status: 'done', isToolCall: true };
+                    msgs[lastIdx] = {
+                      ...msgs[lastIdx],
+                      content: accumulated,
+                      thinking: thinkingAccumulated || undefined,
+                      status: 'done',
+                      isToolCall: true,
+                      isMalformed: true,
+                      toolMeta: {
+                        toolName: diagnosis.toolName || 'unknown',
+                        source: 'sandbox',
+                        provider: lockedProviderForChat,
+                        durationMs: 0,
+                        isError: true,
+                        triggeredBy: 'assistant',
+                      },
+                    };
                   }
                   return { ...prev, [chatId]: { ...conv, messages: [...msgs, errorMsg] } };
                 });
@@ -1784,7 +1799,22 @@ export function useChat(
                   const msgs = [...conv.messages];
                   const lastIdx = msgs.length - 1;
                   if (msgs[lastIdx]?.role === 'assistant') {
-                    msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, thinking: thinkingAccumulated || undefined, status: 'done', isToolCall: true };
+                    msgs[lastIdx] = {
+                      ...msgs[lastIdx],
+                      content: accumulated,
+                      thinking: thinkingAccumulated || undefined,
+                      status: 'done',
+                      isToolCall: true,
+                      isMalformed: true,
+                      toolMeta: {
+                        toolName: diagnosis.toolName || 'unknown',
+                        source: 'sandbox',
+                        provider: lockedProviderForChat,
+                        durationMs: 0,
+                        isError: true,
+                        triggeredBy: 'assistant',
+                      },
+                    };
                   }
                   return { ...prev, [chatId]: { ...conv, messages: [...msgs, recoveryMsg] } };
                 });

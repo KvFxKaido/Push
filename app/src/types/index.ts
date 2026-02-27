@@ -152,6 +152,7 @@ export interface ChatMessage {
   attachments?: AttachmentData[];  // User-attached files
   isToolCall?: boolean;    // Assistant message that requested a tool
   isToolResult?: boolean;  // Synthetic user message carrying tool data
+  isMalformed?: boolean;   // Assistant message that attempted a tool call but produced invalid JSON
   /** Provenance metadata — present on tool result messages for audit trail. */
   toolMeta?: ToolMeta;
 }
