@@ -7,7 +7,7 @@
  * to the correct implementation.
  */
 
-import type { ToolExecutionResult, AcceptanceCriterion } from '@/types';
+import type { ToolExecutionResult, AcceptanceCriterion, StructuredToolError } from '@/types';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, IMPLEMENTED_SANDBOX_TOOLS, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
@@ -297,7 +297,16 @@ export async function executeAnyToolCall(
 
     case 'sandbox':
       if (!sandboxId) {
-        return { text: '[Tool Error] No active sandbox. Start a sandbox first.' };
+        const err: StructuredToolError = {
+          type: 'SANDBOX_UNREACHABLE',
+          retryable: true,
+          message: 'No active sandbox session',
+          detail: `Attempted tool: ${toolCall.call.tool}`,
+        };
+        return {
+          text: `[Tool Error] No active sandbox. The sandbox may still be starting — wait a moment and retry. If this persists, the user needs to start a sandbox from the UI.\nerror_type: ${err.type}\nretryable: ${err.retryable}`,
+          structuredError: err,
+        };
       }
       return executeSandboxToolCall(toolCall.call, sandboxId);
 
