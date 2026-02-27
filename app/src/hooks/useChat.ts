@@ -17,6 +17,7 @@ import type {
   ToolMeta,
   LoopPhase,
   RunCheckpoint,
+  CoderWorkingMemory,
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, detectAllToolCalls, getToolSource } from '@/lib/tool-dispatch';
@@ -662,7 +663,7 @@ export function useChat(
       accumulated: checkpointAccumulatedRef.current,
       thinkingAccumulated: checkpointThinkingRef.current,
       coderDelegationActive: checkpointPhaseRef.current === 'delegating_coder',
-      lastCoderState: checkpointPhaseRef.current === 'delegating_coder' ? lastCoderStateRef.current : null,
+      lastCoderState: checkpointPhaseRef.current === 'delegating_coder' && lastCoderStateRef.current ? JSON.stringify(lastCoderStateRef.current) : null,
       savedAt: Date.now(),
       provider: checkpointProviderRef.current as AIProviderType,
       model: checkpointModelRef.current,
@@ -676,7 +677,7 @@ export function useChat(
   }, []);
 
   // Ref for Phase 3: last Coder working memory state
-  const lastCoderStateRef = useRef<string | null>(null);
+  const lastCoderStateRef = useRef<CoderWorkingMemory | null>(null);
 
   // Tab lock refs
   const tabLockIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
