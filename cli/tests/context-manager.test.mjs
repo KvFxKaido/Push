@@ -137,7 +137,18 @@ describe('getContextBudget', () => {
     assert.equal(budget.maxTokens, 950_000);
   });
 
-  it('returns default budget for Gemini model on other providers', () => {
+  it('returns Gemini budget for Zen with Gemini model', () => {
+    const budget = getContextBudget('zen', 'gemini-3-flash');
+    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.maxTokens, 950_000);
+  });
+
+  it('returns default budget for non-Gemini Zen model', () => {
+    const budget = getContextBudget('zen', 'big-pickle');
+    assert.equal(budget.targetTokens, 88_000);
+  });
+
+  it('returns default budget for Gemini model on unsupported providers', () => {
     const budget = getContextBudget('mistral', 'gemini-3-flash-preview');
     assert.equal(budget.targetTokens, 88_000);
   });

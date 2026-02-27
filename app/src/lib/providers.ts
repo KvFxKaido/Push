@@ -60,6 +60,8 @@ export const ZEN_MODELS: string[] = [
   'openai/gpt-5.3-codex',
   'openai/gpt-5.2-codex',
   'qwen3-coder',
+  'gemini-3-flash',
+  'gemini-3-pro',
   'kimi-k2.5',
   'kimi-k2.5-free',
   'minimax-m2.5-free',

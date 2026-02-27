@@ -52,7 +52,7 @@ export function estimateContextTokens(messages) {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BUDGET = { targetTokens: 88_000, maxTokens: 100_000 };
-// Gemini models (1M context window) — Google, Ollama, and OpenRouter with Gemini models
+// Gemini models (1M context window) — Google, Ollama, OpenRouter, and Zen with Gemini models
 const GEMINI_BUDGET = { targetTokens: 900_000, maxTokens: 950_000 };
 
 export function getContextBudget(providerId, model) {
@@ -61,10 +61,10 @@ export function getContextBudget(providerId, model) {
     return { ...GEMINI_BUDGET };
   }
 
-  // Ollama or OpenRouter running a Gemini model — same 1M budget
+  // Ollama, OpenRouter, or Zen running a Gemini model — same 1M budget
   const normalized = (model || '').trim().toLowerCase();
   if (
-    (providerId === 'ollama' || providerId === 'openrouter') &&
+    (providerId === 'ollama' || providerId === 'openrouter' || providerId === 'zen') &&
     normalized.includes('gemini')
   ) {
     return { ...GEMINI_BUDGET };
