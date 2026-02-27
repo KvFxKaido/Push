@@ -339,7 +339,7 @@ const OTHER_TOOL_NAMES = new Set([
   'delegate_coder', 'set_scratchpad', 'append_scratchpad', 'read_scratchpad', 'web_search',
 ]);
 
-const KNOWN_TOOL_NAMES = new Set([
+export const KNOWN_TOOL_NAMES = new Set([
   ...IMPLEMENTED_SANDBOX_TOOLS,
   ...GITHUB_TOOL_NAMES,
   ...OTHER_TOOL_NAMES,

@@ -3,6 +3,7 @@ import { TOOL_PROTOCOL } from './github-tools';
 import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -986,12 +987,23 @@ async function streamSSEChatOnce(
     // even when we are not sending `tools[]` (prompt-engineered mode). Accumulate
     // those deltas and re-emit them as our fenced JSON tool blocks so the existing
     // text-based tool dispatch path still works.
+    // Only tool names in KNOWN_TOOL_NAMES are converted — anything else (e.g.
+    // Google Gemini's internal "node_source") is silently dropped to prevent
+    // leaking raw API data into the chat.
+
     const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
     const flushNativeToolCalls = () => {
       if (pendingNativeToolCalls.size === 0) return;
       for (const [, tc] of pendingNativeToolCalls) {
         if (!tc.name && !tc.args) continue;
         if (tc.name) {
+          // Only convert tool calls that match our prompt-engineered tool
+          // protocol.  Unknown names (e.g. Gemini's "node_source") are
+          // internal model machinery — drop them regardless of payload size.
+          if (!KNOWN_TOOL_NAMES.has(tc.name)) {
+            console.warn(`[Push] Native tool call "${tc.name}" is not a known tool — dropped`);
+            continue;
+          }
           try {
             const parsedArgs = tc.args ? JSON.parse(tc.args) : {};
             parser.push(`\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`);
@@ -1001,9 +1013,9 @@ async function streamSSEChatOnce(
             parser.push(`\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: {} })}\n\`\`\`\n`);
           }
         } else if (tc.args) {
-          // No function name yet — fall back to raw args so downstream malformed
-          // tool-call diagnostics can detect and report the issue.
-          parser.push(tc.args);
+          // No function name — never push raw args directly to the parser.
+          // That leaks unformatted API data into the chat output.
+          console.warn('[Push] Native tool call with no function name — args dropped:', tc.args.slice(0, 200));
         }
       }
       pendingNativeToolCalls.clear();
@@ -1068,6 +1080,7 @@ async function streamSSEChatOnce(
               if (!fnCall) continue;
               if (!pendingNativeToolCalls.has(idx)) {
                 pendingNativeToolCalls.set(idx, { name: '', args: '' });
+                console.log(`[Push] Native tool call delta detected (idx=${idx}, name=${fnCall.name || '(none)'})`);
               }
               const entry = pendingNativeToolCalls.get(idx)!;
               if (typeof fnCall.name === 'string') entry.name = fnCall.name;
@@ -1175,7 +1188,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       totalTimeoutMs: 180_000,
       errorMessages: buildErrorMessages('Ollama Cloud', 'server may be cold-starting.'),
       parseError: (p, f) => parseProviderError(p, f),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls', 'function_call']),
       shouldResetStallOnReasoning: true,
       providerType: 'ollama',
     }),
@@ -1190,7 +1203,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Mistral'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls', 'function_call']),
       providerType: 'mistral' as const,
     }),
   },
@@ -1204,7 +1217,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('OpenRouter'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'openrouter',
     }),
   },
@@ -1218,7 +1231,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('MiniMax'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'minimax',
     }),
   },
@@ -1232,7 +1245,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Z.AI'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'zai',
     }),
   },
@@ -1246,7 +1259,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Google'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'google',
     }),
   },
@@ -1260,7 +1273,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('OpenCode Zen'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'zen',
     }),
   },
