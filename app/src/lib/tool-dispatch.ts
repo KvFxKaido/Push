@@ -380,7 +380,7 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
 
   // Phase 2: Validation failure — JSON parses (or repairs), has a known tool name,
   // but the subsystem validator rejected it (wrong/missing args)
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
+  const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
   let fenceMatch;
   while ((fenceMatch = fenceRegex.exec(text)) !== null) {
     const toolName = extractKnownToolName(fenceMatch[1].trim());
