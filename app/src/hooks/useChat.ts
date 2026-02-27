@@ -1264,6 +1264,9 @@ export function useChat(
       // Cap diagnosis-triggered retries per turn to prevent correction spirals.
       let diagnosisRetries = 0;
       const MAX_DIAGNOSIS_RETRIES = 2;
+      // After exhausting retries, one recovery round tells the model to respond
+      // in plain text instead of retrying the failed tool call.
+      let recoveryAttempted = false;
 
       // --- Resumable Sessions: initialize checkpoint refs ---
       checkpointChatIdRef.current = chatId;
@@ -1753,8 +1756,47 @@ export function useChat(
                   errorMsg,
                 ];
                 continue; // Re-stream so the LLM can retry
+              } else if (!diagnosis.telemetryOnly && !recoveryAttempted) {
+                // Retry cap reached — inject a recovery message asking the model
+                // to abandon the failed tool and respond in plain text.
+                recoveryAttempted = true;
+                console.warn(`[Push] Diagnosis retry cap reached (${MAX_DIAGNOSIS_RETRIES}) — injecting recovery message`);
+                const recoveryMsg: ChatMessage = {
+                  id: createId(),
+                  role: 'user',
+                  content: `[TOOL_CALL_PARSE_ERROR]\nYou have failed to form a valid "${diagnosis.toolName || 'unknown'}" tool call after ${MAX_DIAGNOSIS_RETRIES} attempts. STOP trying to call this tool. Instead, respond to the user in plain text — summarize what you were trying to do and what you found so far. If you need to use a different tool, you may do so.`,
+                  timestamp: Date.now(),
+                  status: 'done',
+                  isToolResult: true,
+                  toolMeta: {
+                    toolName: diagnosis.toolName || 'unknown',
+                    source: 'sandbox',
+                    provider: lockedProviderForChat,
+                    durationMs: 0,
+                    isError: true,
+                    triggeredBy: 'assistant',
+                  },
+                };
+
+                setConversations((prev) => {
+                  const conv = prev[chatId];
+                  if (!conv) return prev;
+                  const msgs = [...conv.messages];
+                  const lastIdx = msgs.length - 1;
+                  if (msgs[lastIdx]?.role === 'assistant') {
+                    msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, thinking: thinkingAccumulated || undefined, status: 'done', isToolCall: true };
+                  }
+                  return { ...prev, [chatId]: { ...conv, messages: [...msgs, recoveryMsg] } };
+                });
+
+                apiMessages = [
+                  ...apiMessages,
+                  { id: createId(), role: 'assistant' as const, content: accumulated, timestamp: Date.now(), status: 'done' as const },
+                  recoveryMsg,
+                ];
+                continue; // One more round — model should respond in plain text
               } else if (!diagnosis.telemetryOnly) {
-                console.warn(`[Push] Diagnosis retry cap reached (${MAX_DIAGNOSIS_RETRIES}) — letting message through`);
+                console.warn(`[Push] Recovery also failed — letting message through`);
               }
             }
 
