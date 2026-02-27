@@ -174,6 +174,97 @@ function diagnoseExecFailure(stderr: string): string | null {
   return null;
 }
 
+// --- Search hint builder ---
+
+/**
+ * Build actionable hints when sandbox_search returns no results.
+ * Helps the model pivot quickly instead of guessing blindly.
+ */
+function buildSearchNoResultsHints(query: string, searchPath: string): string[] {
+  const hints: string[] = [];
+
+  // Detect naming convention and suggest alternatives
+  const isCamelOrPascal = /[a-z][A-Z]/.test(query) || /^[A-Z][a-z]/.test(query);
+  const isSnakeCase = /_[a-z]/.test(query);
+  const isScreamingSnake = /^[A-Z_]+$/.test(query) && query.includes('_');
+
+  if (isCamelOrPascal || isSnakeCase || isScreamingSnake) {
+    hints.push(`Search is case-sensitive. Try a partial/lowercase substring (e.g., "${extractKeyword(query)}") to catch different naming conventions.`);
+  }
+
+  // Multi-word queries — suggest shorter terms
+  if (query.includes(' ') || query.length > 25) {
+    const shorter = query.split(/[\s_]+/)[0];
+    if (shorter && shorter !== query) {
+      hints.push(`Query may be too specific. Try a shorter term like "${shorter}".`);
+    }
+  }
+
+  // Path filter is narrowing results
+  if (searchPath !== '/workspace') {
+    hints.push(`Path is scoped to ${searchPath}. Try without a path filter to search the full workspace, or use sandbox_list_dir("${searchPath}") to verify the path exists.`);
+  }
+
+  // General fallback suggestions
+  if (hints.length === 0) {
+    hints.push('Try a shorter or more generic substring — partial matches work (e.g., "buildPrompt" instead of "buildOrchestratorPrompt").');
+  }
+
+  hints.push('Use sandbox_list_dir to browse the project structure, or sandbox_read_symbols(path) to extract function/class names from a specific file.');
+
+  return hints;
+}
+
+/**
+ * Extract the most distinctive keyword from a query for suggestion purposes.
+ * Splits camelCase/PascalCase/snake_case and picks the most meaningful word.
+ */
+function extractKeyword(query: string): string {
+  // Split on camelCase boundaries, underscores, spaces
+  const parts = query
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/[\s_-]+/)
+    .map(p => p.toLowerCase())
+    .filter(p => p.length > 2);
+
+  // Skip common prefixes like "build", "get", "set", "is", "has"
+  const skipPrefixes = new Set(['build', 'get', 'set', 'is', 'has', 'create', 'make', 'init', 'the']);
+  const meaningful = parts.filter(p => !skipPrefixes.has(p));
+
+  return (meaningful[0] || parts[0] || query).toLowerCase();
+}
+
+/**
+ * Build actionable hints when sandbox_search fails due to a path error.
+ */
+function buildSearchPathErrorHints(stderr: string, searchPath: string): string {
+  const lower = stderr.toLowerCase();
+
+  if (lower.includes('no such file or directory') || lower.includes('enoent')) {
+    // Extract parent dir for suggestion
+    const parent = searchPath.replace(/\/[^/]+\/?$/, '') || '/workspace';
+    return [
+      `[Tool Error] Search path "${searchPath}" does not exist.`,
+      `Hint: Use sandbox_list_dir("${parent}") to see what directories are available.`,
+      `error_type: FILE_NOT_FOUND`,
+      `retryable: false`,
+    ].join('\n');
+  }
+
+  if (lower.includes('is a directory') === false && lower.includes('permission denied')) {
+    return [
+      `[Tool Error] Permission denied searching "${searchPath}".`,
+      `Hint: Check path permissions with sandbox_exec("ls -la ${searchPath}").`,
+      `error_type: AUTH_FAILURE`,
+      `retryable: false`,
+    ].join('\n');
+  }
+
+  // Fallback — still provide some guidance
+  return '';
+}
+
 // --- Structured error classification ---
 
 /**
@@ -747,9 +838,21 @@ export async function executeSandboxToolCall(
         if (result.exitCode !== 0 && !result.stdout.trim()) {
           // rg returns exit code 1 when no matches; treat as a normal "no results" case.
           if (result.exitCode === 1) {
+            const hints = buildSearchNoResultsHints(query, searchPath);
             return {
-              text: `[Tool Result — sandbox_search]\nNo matches for "${query}" in ${searchPath}.`,
+              text: [
+                `[Tool Result — sandbox_search]`,
+                `No matches for "${query}" in ${searchPath}.`,
+                '',
+                'Suggestions:',
+                ...hints.map(h => `- ${h}`),
+              ].join('\n'),
             };
+          }
+          // Exit code 2+ usually means path or argument error — provide specific guidance
+          const pathHint = buildSearchPathErrorHints(result.stderr || '', searchPath);
+          if (pathHint) {
+            return { text: pathHint };
           }
           return {
             text: formatSandboxError(result.stderr || 'Search failed', `sandbox_search (${searchPath})`),
@@ -758,8 +861,15 @@ export async function executeSandboxToolCall(
 
         const output = result.stdout.trim();
         if (!output) {
+          const hints = buildSearchNoResultsHints(query, searchPath);
           return {
-            text: `[Tool Result — sandbox_search]\nNo matches for "${query}" in ${searchPath}.`,
+            text: [
+              `[Tool Result — sandbox_search]`,
+              `No matches for "${query}" in ${searchPath}.`,
+              '',
+              'Suggestions:',
+              ...hints.map(h => `- ${h}`),
+            ].join('\n'),
           };
         }
 
@@ -2151,7 +2261,7 @@ SANDBOX TOOLS — You have access to a code sandbox (persistent container with t
 Additional tools available when sandbox is active:
 - sandbox_exec(command, workdir?) — Run a shell command in the sandbox (default workdir: /workspace)
 - sandbox_read_file(path, start_line?, end_line?) — Read a file from the sandbox filesystem. Only works on files — fails on directories. Use start_line/end_line to read a specific line range (1-indexed). When a range is specified, output includes line numbers for reference.
-- sandbox_search(query, path?) — Search file contents in the sandbox (uses rg/grep). Fast way to locate functions, symbols, and strings before editing.
+- sandbox_search(query, path?) — Search file contents in the sandbox (uses rg/grep). Case-sensitive by default; supports regex patterns. Fast way to locate functions, symbols, and strings before editing. Tip: use short, distinctive substrings rather than full names to catch different naming conventions.
 - sandbox_list_dir(path?) — List files and folders in a sandbox directory (default: /workspace). Use this to explore the project structure before reading specific files.
 - sandbox_write_file(path, content, expected_version?) — Write or overwrite a file in the sandbox. If expected_version is provided, stale writes are rejected.
 - sandbox_edit_file(path, edits, expected_version?) — Edit a file using 7-char content hashes. edits is an array of HashlineOp: { op: "replace_line" | "insert_after" | "insert_before" | "delete_line", ref: string (hash), content: string }.
@@ -2194,5 +2304,6 @@ ${BROWSER_RULES_BLOCK}- sandbox_diff shows what you've changed — review before
 - Keep commands focused — avoid long-running servers or background processes
 - IMPORTANT: sandbox_read_file only works on files, not directories. To explore the project structure, use sandbox_list_dir first, then read specific files.
 - Before delegating code changes, prefer sandbox_search to quickly locate relevant files/functions and provide precise context.
+- Search strategy: Start with short, distinctive substrings. If no results, broaden the term or drop the path filter. Use sandbox_list_dir to verify paths exist. Use sandbox_read_symbols(path) to discover function/class names in a specific file without reading the whole file.
 - Use sandbox_run_tests BEFORE committing to catch regressions early. It's faster than sandbox_exec("npm test") and gives structured results.
 - Use sandbox_check_types to validate TypeScript/Python code before committing. Catches type errors that tests might miss.`;

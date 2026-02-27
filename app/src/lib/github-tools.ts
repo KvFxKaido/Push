@@ -1052,7 +1052,56 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
   const totalCount = data.total_count || 0;
 
   if (totalCount === 0) {
-    return { text: `[Tool Result — search_files]\nNo files found matching "${query}"${path ? ` in ${path}` : ''}.` };
+    const hints: string[] = [];
+
+    // Path filter might be too narrow
+    if (path) {
+      hints.push(`Path is scoped to "${path}". Try without a path filter to search the full repo, or use list_directory("${path}") to verify the path exists and is correct.`);
+    }
+
+    // Detect naming convention and suggest alternatives
+    const isCamelOrPascal = /[a-z][A-Z]/.test(query) || /^[A-Z][a-z]/.test(query);
+    const isSnakeCase = /_[a-z]/.test(query);
+    const isScreamingSnake = /^[A-Z_]+$/.test(query) && query.includes('_');
+    if (isCamelOrPascal || isSnakeCase || isScreamingSnake) {
+      // Extract a simpler keyword from compound names
+      const parts = query
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        .split(/[\s_-]+/)
+        .filter(p => p.length > 2);
+      if (parts.length > 1) {
+        hints.push(`Try a partial term like "${parts[parts.length - 1]}" — the codebase may use a different naming convention (camelCase vs snake_case vs PascalCase).`);
+      }
+    }
+
+    // Multi-word or long queries
+    if (query.includes(' ') && !isCamelOrPascal && !isSnakeCase) {
+      const shorter = query.split(/\s+/)[0];
+      if (shorter && shorter.length > 2) {
+        hints.push(`Query may be too specific. Try a shorter term like "${shorter}".`);
+      }
+    }
+
+    // GitHub indexing caveat
+    if (branch) {
+      hints.push(`GitHub code search primarily indexes the default branch. Results for branch "${branch}" may be incomplete.`);
+    }
+
+    if (hints.length === 0) {
+      hints.push('Try a shorter or more generic search term — partial words work well.');
+    }
+    hints.push('Use list_directory to browse the repo structure and find where key files live.');
+
+    return {
+      text: [
+        `[Tool Result — search_files]`,
+        `No files found matching "${query}"${path ? ` in ${path}` : ''}.`,
+        '',
+        'Suggestions:',
+        ...hints.map(h => `- ${h}`),
+      ].join('\n'),
+    };
   }
 
   // Parse search results — GitHub returns file info with text_matches fragments
@@ -1854,7 +1903,7 @@ Available tools:
 - list_branches(repo) — List branches with default/protected status
 - delegate_coder(task?, tasks?, files?, acceptanceCriteria?) — Delegate coding to the Coder agent (requires sandbox). Use "task" for one task, or "tasks" array for batch independent tasks. Batch tasks may run in isolated worker sandboxes for parallel execution. Optional "acceptanceCriteria" is an array of machine-checkable checks: [{"id": "tests", "check": "npm test", "exitCode": 0, "description": "Tests pass"}]. Checks run after the Coder finishes.
 - fetch_checks(repo, ref?) — Get CI/CD status for a commit. ref defaults to HEAD of default branch. Use after a successful push to check CI.
-- search_files(repo, query, path?, branch?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/"). Note: GitHub code search indexes the default branch; branch filter is best-effort.
+- search_files(repo, query, path?, branch?) — Search for code/text across the repo. Faster than manual list_directory traversal. Use path to limit scope (e.g., "src/"). Note: GitHub code search indexes the default branch; branch filter is best-effort. Tip: use short, distinctive substrings (e.g., "buildPrompt" not "buildOrchestratorPrompt") to catch partial matches and different naming conventions.
 - list_commit_files(repo, ref) — List files changed in a commit without the full diff. Lighter than fetch_pr. ref can be SHA, branch, or tag.
 - trigger_workflow(repo, workflow, ref?, inputs?) — Trigger a workflow_dispatch event. "workflow" is the filename (e.g. "deploy.yml") or workflow ID. ref defaults to the repo's default branch. inputs is an optional key-value map matching the workflow's inputs.
 - get_workflow_runs(repo, workflow?, branch?, status?, count?) — List recent GitHub Actions runs. Filter by workflow name/file, branch, or status ("completed", "in_progress", "queued"). count defaults to 10, max 20. Shows run status, conclusion, trigger event, and actor.
@@ -1883,6 +1932,7 @@ Rules:
 - For "what branches exist?" use list_branches
 - For "find [pattern] in [file]" use grep_file — returns matching lines with line numbers and context
 - For "find [pattern]" or "where is [thing]" across the repo use search_files — saves multiple round-trips vs manual browsing
+- Search strategy: Start with short, distinctive substrings. If no results, broaden the term or drop the path filter. Use list_directory to verify paths and explore the project structure. Use grep_file to search within a known file.
 - For "what files changed in [commit]" use list_commit_files — lighter than fetch_pr when you just need the file list
 - For "deploy" or "run workflow" use trigger_workflow, then suggest get_workflow_runs to check status
 - For "show CI runs" or "what workflows ran" use get_workflow_runs
