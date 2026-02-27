@@ -102,8 +102,9 @@ export type ContextMode = 'graceful' | 'none';
 // Rolling window config — token-based context management
 const DEFAULT_CONTEXT_MAX_TOKENS = 100_000; // Hard cap
 const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for system prompt + response
-const GEMINI3_FLASH_CONTEXT_MAX_TOKENS = 128_000;
-const GEMINI3_FLASH_CONTEXT_TARGET_TOKENS = 112_000;
+// Gemini models (1M context window) — Google, Ollama, OpenRouter, and Zen with Gemini models
+const GEMINI_CONTEXT_MAX_TOKENS = 950_000;
+const GEMINI_CONTEXT_TARGET_TOKENS = 900_000;
 
 export interface ContextBudget {
   maxTokens: number;
@@ -115,9 +116,9 @@ const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
 };
 
-const GEMINI3_FLASH_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GEMINI3_FLASH_CONTEXT_MAX_TOKENS,
-  targetTokens: GEMINI3_FLASH_CONTEXT_TARGET_TOKENS,
+const GEMINI_CONTEXT_BUDGET: ContextBudget = {
+  maxTokens: GEMINI_CONTEXT_MAX_TOKENS,
+  targetTokens: GEMINI_CONTEXT_TARGET_TOKENS,
 };
 
 function normalizeModelName(model?: string): string {
@@ -128,13 +129,18 @@ export function getContextBudget(
   provider?: 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'demo',
   model?: string,
 ): ContextBudget {
-  const normalizedModel = normalizeModelName(model);
+  // Google provider always runs Gemini models — full 1M budget
+  if (provider === 'google') {
+    return GEMINI_CONTEXT_BUDGET;
+  }
 
+  // Ollama, OpenRouter, or Zen running a Gemini model — same 1M budget
+  const normalizedModel = normalizeModelName(model);
   if (
-    provider === 'ollama' &&
-    (normalizedModel === 'gemini-3-flash-preview' || normalizedModel.includes('gemini-3-flash'))
+    (provider === 'ollama' || provider === 'openrouter' || provider === 'zen') &&
+    normalizedModel.includes('gemini')
   ) {
-    return GEMINI3_FLASH_CONTEXT_BUDGET;
+    return GEMINI_CONTEXT_BUDGET;
   }
 
   return DEFAULT_CONTEXT_BUDGET;

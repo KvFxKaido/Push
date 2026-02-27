@@ -109,24 +109,47 @@ describe('getContextBudget', () => {
     assert.equal(budget.maxTokens, 100_000);
   });
 
-  it('returns Gemini 3 Flash budget for exact model name', () => {
+  it('returns Gemini budget for exact model name on Ollama', () => {
     const budget = getContextBudget('ollama', 'gemini-3-flash-preview');
-    assert.equal(budget.targetTokens, 112_000);
-    assert.equal(budget.maxTokens, 128_000);
+    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.maxTokens, 950_000);
   });
 
-  it('matches gemini-3-flash variants case-insensitively', () => {
+  it('matches gemini variants case-insensitively on Ollama', () => {
     const budget = getContextBudget('ollama', 'Gemini-3-Flash-Preview');
-    assert.equal(budget.targetTokens, 112_000);
+    assert.equal(budget.targetTokens, 900_000);
   });
 
-  it('matches model names containing gemini-3-flash', () => {
+  it('matches model names containing gemini on Ollama', () => {
     const budget = getContextBudget('ollama', 'my-gemini-3-flash-custom');
-    assert.equal(budget.targetTokens, 112_000);
+    assert.equal(budget.targetTokens, 900_000);
   });
 
-  it('returns default budget for Gemini model on non-ollama provider', () => {
-    const budget = getContextBudget('openrouter', 'gemini-3-flash-preview');
+  it('returns Gemini budget for Google provider regardless of model', () => {
+    const budget = getContextBudget('google', 'gemini-3.1-pro-preview');
+    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.maxTokens, 950_000);
+  });
+
+  it('returns Gemini budget for OpenRouter with Gemini model', () => {
+    const budget = getContextBudget('openrouter', 'google/gemini-3.1-pro-preview');
+    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.maxTokens, 950_000);
+  });
+
+  it('returns Gemini budget for Zen with Gemini model', () => {
+    const budget = getContextBudget('zen', 'gemini-3-flash');
+    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.maxTokens, 950_000);
+  });
+
+  it('returns default budget for non-Gemini Zen model', () => {
+    const budget = getContextBudget('zen', 'big-pickle');
+    assert.equal(budget.targetTokens, 88_000);
+  });
+
+  it('returns default budget for Gemini model on unsupported providers', () => {
+    const budget = getContextBudget('mistral', 'gemini-3-flash-preview');
     assert.equal(budget.targetTokens, 88_000);
   });
 
@@ -364,13 +387,13 @@ describe('trimContext — edge cases', () => {
 
   it('uses Gemini budget when appropriate', () => {
     const msgs = [makeSystemMsg(500), makeUserMsg('Hello')];
-    // Add enough to exceed 88K but not 112K
+    // Add enough to exceed 88K but not 900K
     for (let i = 0; i < 12; i++) {
       msgs.push(...makeToolPair(`tool_${i}`, 20000));
     }
 
     const tokens = estimateContextTokens(msgs);
-    if (tokens > 88_000 && tokens <= 112_000) {
+    if (tokens > 88_000 && tokens <= 900_000) {
       // With default budget it would trim, with Gemini it wouldn't
       const defaultResult = trimContext(msgs, 'ollama', 'test-model');
       const geminiResult = trimContext(msgs, 'ollama', 'gemini-3-flash-preview');
