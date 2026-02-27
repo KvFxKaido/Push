@@ -3,6 +3,7 @@ import { TOOL_PROTOCOL } from './github-tools';
 import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -986,10 +987,9 @@ async function streamSSEChatOnce(
     // even when we are not sending `tools[]` (prompt-engineered mode). Accumulate
     // those deltas and re-emit them as our fenced JSON tool blocks so the existing
     // text-based tool dispatch path still works.
-    // Max args size for native tool calls — anything larger is likely a raw API
-    // response leaked by the provider (e.g. Google Gemini grounding/code execution),
-    // not a legitimate tool invocation.
-    const NATIVE_TOOL_ARGS_MAX = 4096;
+    // Only tool names in KNOWN_TOOL_NAMES are converted — anything else (e.g.
+    // Google Gemini's internal "node_source") is silently dropped to prevent
+    // leaking raw API data into the chat.
 
     const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
     const flushNativeToolCalls = () => {
@@ -997,10 +997,11 @@ async function streamSSEChatOnce(
       for (const [, tc] of pendingNativeToolCalls) {
         if (!tc.name && !tc.args) continue;
         if (tc.name) {
-          // Guard against providers that emit non-tool-protocol function names
-          // (e.g. Google Gemini's internal "node_source") with huge payloads.
-          if (tc.args.length > NATIVE_TOOL_ARGS_MAX) {
-            console.warn(`[Push] Native tool call "${tc.name}" args too large (${tc.args.length} bytes) — dropped to prevent chat data leak`);
+          // Only convert tool calls that match our prompt-engineered tool
+          // protocol.  Unknown names (e.g. Gemini's "node_source") are
+          // internal model machinery — drop them regardless of payload size.
+          if (!KNOWN_TOOL_NAMES.has(tc.name)) {
+            console.warn(`[Push] Native tool call "${tc.name}" is not a known tool — dropped`);
             continue;
           }
           try {
