@@ -19,7 +19,7 @@ import type {
   RunCheckpoint,
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
-import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
+import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, detectAllToolCalls, getToolSource } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent, generateCheckpointAnswer } from '@/lib/coder-agent';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -1672,7 +1672,7 @@ export function useChat(
                 isToolResult: true,
                 toolMeta: {
                   toolName: unimplementedTool,
-                  source: 'sandbox',
+                  source: getToolSource(unimplementedTool),
                   provider: lockedProviderForChat,
                   durationMs: 0,
                   isError: true,
@@ -1731,7 +1731,7 @@ export function useChat(
                   isToolResult: true,
                   toolMeta: {
                     toolName: diagnosis.toolName || 'unknown',
-                    source: 'sandbox',
+                    source: diagnosis.source || 'sandbox',
                     provider: lockedProviderForChat,
                     durationMs: 0,
                     isError: true,
@@ -1754,7 +1754,7 @@ export function useChat(
                       isMalformed: true,
                       toolMeta: {
                         toolName: diagnosis.toolName || 'unknown',
-                        source: 'sandbox',
+                        source: diagnosis.source || 'sandbox',
                         provider: lockedProviderForChat,
                         durationMs: 0,
                         isError: true,
@@ -1785,7 +1785,7 @@ export function useChat(
                   isToolResult: true,
                   toolMeta: {
                     toolName: diagnosis.toolName || 'unknown',
-                    source: 'sandbox',
+                    source: diagnosis.source || 'sandbox',
                     provider: lockedProviderForChat,
                     durationMs: 0,
                     isError: true,
@@ -1808,7 +1808,7 @@ export function useChat(
                       isMalformed: true,
                       toolMeta: {
                         toolName: diagnosis.toolName || 'unknown',
-                        source: 'sandbox',
+                        source: diagnosis.source || 'sandbox',
                         provider: lockedProviderForChat,
                         durationMs: 0,
                         isError: true,

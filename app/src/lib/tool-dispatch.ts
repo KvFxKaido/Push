@@ -370,6 +370,7 @@ export interface ToolCallDiagnosis {
   reason: 'truncated' | 'validation_failed' | 'malformed_json' | 'natural_language_intent';
   toolName: string | null;
   errorMessage: string;
+  source?: AnyToolCall['source'];
   /** When true, record the metric but do not inject an error or trigger a retry. */
   telemetryOnly?: boolean;
 }
@@ -391,6 +392,7 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
     return {
       reason: 'truncated',
       toolName: truncated.toolName,
+      source: getToolSource(truncated.toolName),
       errorMessage: `Your tool call for "${truncated.toolName}" was truncated (JSON cut off). Please retry with the complete JSON block.`,
     };
   }
@@ -406,6 +408,7 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
         reason: 'validation_failed',
         toolName,
         errorMessage: buildValidationErrorMessage(toolName),
+        source: getToolSource(toolName),
       };
     }
   }
@@ -417,6 +420,7 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
         reason: 'validation_failed',
         toolName: obj.tool,
         errorMessage: buildValidationErrorMessage(obj.tool),
+        source: getToolSource(obj.tool),
       };
     }
   }
@@ -427,6 +431,16 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
   // gets actionable feedback like "missing opening brace" instead of silence.
   const malformedDiagnosis = diagnoseMalformedToolJson(text);
   if (malformedDiagnosis) return malformedDiagnosis;
+
+export function getToolSource(toolName: string | null): AnyToolCall['source'] {
+  if (!toolName) return 'sandbox';
+  if (GITHUB_TOOL_NAMES.has(toolName)) return 'github';
+  if (IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) return 'sandbox';
+  if (toolName === 'delegate_coder') return 'delegate';
+  if (toolName === 'web_search') return 'web-search';
+  if (['set_scratchpad', 'append_scratchpad', 'read_scratchpad'].includes(toolName)) return 'scratchpad';
+  return 'sandbox'; // Fallback
+}
 
   // Phase 3.5: Bare JSON args — telemetry only. Records the metric so we can track
   // how often models emit bare args, but does NOT trigger a retry (too imprecise).
@@ -586,6 +600,7 @@ function tryDiagnoseFragment(fragment: string): ToolCallDiagnosis | null {
     reason: 'malformed_json',
     toolName,
     errorMessage: `Your call to "${toolName}" has a JSON syntax error: ${syntaxError.message}${hintBlock}\n\nPlease output a valid JSON block with balanced braces and proper quoting.`,
+    source: getToolSource(toolName),
   };
 }
 

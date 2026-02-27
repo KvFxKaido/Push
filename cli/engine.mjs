@@ -427,7 +427,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
         };
 
         await appendSessionEvent(state, 'tool_result', {
-          source: 'sandbox',
+          source: call.source || 'sandbox',
           toolName: call.tool,
           durationMs: 0,
           isError: true,
@@ -444,9 +444,9 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
           ),
         });
         toolsUsed.add(call.tool);
-        dispatchEvent('tool_call', { source: 'sandbox', toolName: call.tool, args: call.args });
+        dispatchEvent('tool_call', { source: call.source || 'sandbox', toolName: call.tool, args: call.args });
         dispatchEvent('tool_result', {
-          source: 'sandbox',
+          source: call.source || 'sandbox',
           toolName: call.tool,
           isError: true,
           text: result.text,
