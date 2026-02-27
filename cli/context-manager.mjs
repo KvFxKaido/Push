@@ -52,16 +52,22 @@ export function estimateContextTokens(messages) {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BUDGET = { targetTokens: 88_000, maxTokens: 100_000 };
-const GEMINI3_FLASH_BUDGET = { targetTokens: 112_000, maxTokens: 128_000 };
+// Gemini models (1M context window) — used for Google provider and Ollama with Gemini models
+const GEMINI_BUDGET = { targetTokens: 900_000, maxTokens: 950_000 };
 
 export function getContextBudget(providerId, model) {
-  const normalized = (model || '').trim().toLowerCase();
+  // Google provider always runs Gemini models — full 1M budget
+  if (providerId === 'google') {
+    return { ...GEMINI_BUDGET };
+  }
 
+  // Ollama running a Gemini model — same 1M budget
+  const normalized = (model || '').trim().toLowerCase();
   if (
     providerId === 'ollama' &&
-    (normalized === 'gemini-3-flash-preview' || normalized.includes('gemini-3-flash'))
+    normalized.includes('gemini')
   ) {
-    return { ...GEMINI3_FLASH_BUDGET };
+    return { ...GEMINI_BUDGET };
   }
 
   return { ...DEFAULT_BUDGET };
