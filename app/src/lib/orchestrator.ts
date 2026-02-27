@@ -576,6 +576,9 @@ function toLLMMessages(
 
     // Web search tool — prompt-engineered, all providers use client-side dispatch
     systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
+
+    // Ask-user tool — structured questions with tap-friendly options
+    systemContent += '\n' + ASK_USER_TOOL_PROTOCOL;
   }
 
   const llmMessages: LLMMessage[] = [

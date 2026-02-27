@@ -43,14 +43,15 @@ Ask a question with 2-4 defined options.
 export function detectAskUserToolCall(text: string): AskUserToolCall | null {
   return detectToolFromText<AskUserToolCall>(text, (parsed) => {
     if (typeof parsed === 'object' && parsed !== null && 'tool' in parsed && parsed.tool === 'ask_user') {
-      const p = parsed as any;
-      if (p.args && typeof p.args.question === 'string' && Array.isArray(p.args.options)) {
+      const p = parsed as Record<string, unknown>;
+      const args = p.args as Record<string, unknown> | undefined;
+      if (args && typeof args.question === 'string' && Array.isArray(args.options)) {
         return {
           tool: 'ask_user',
           args: {
-            question: p.args.question,
-            options: p.args.options,
-            multiSelect: !!p.args.multiSelect
+            question: args.question,
+            options: args.options as AskUserCardData['options'],
+            multiSelect: !!args.multiSelect
           }
         };
       }

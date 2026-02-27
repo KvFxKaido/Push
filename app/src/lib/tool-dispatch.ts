@@ -337,7 +337,6 @@ export async function executeAnyToolCall(
         text: '[Tool Result] Question sent to user. The system will wait for their response.',
         card: { type: 'ask-user', data: toolCall.call.args }
       };
-    }
 
     default:
       return { text: '[Tool Error] Unknown tool source.' };
