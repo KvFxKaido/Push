@@ -139,8 +139,12 @@ export function ciStatusBg(status: string | null): string {
  *
  * Handles:
  * - Trailing commas before } or ]
+ * - Double commas (model stutter): {,, → {,
  * - Single quotes (only when no double quotes present in value positions)
  * - Unquoted keys: {tool: "x"} → {"tool": "x"}
+ * - Python-style literals: True/False/None → true/false/null
+ * - Raw control characters inside strings (strip or escape)
+ * - Auto-close truncated JSON (missing trailing braces/brackets)
  */
 export function repairToolJson(candidate: string): Record<string, unknown> | null {
   let repaired = candidate;
@@ -148,23 +152,119 @@ export function repairToolJson(candidate: string): Record<string, unknown> | nul
   // 1. Strip trailing commas before } or ]
   repaired = repaired.replace(/,\s*([}\]])/g, '$1');
 
-  // 2. Single quotes → double quotes (only if string uses single-quote style throughout)
+  // 2. Double commas (model stutter under stream pressure)
+  repaired = repaired.replace(/,(\s*),/g, ',');
+
+  // 3. Single quotes → double quotes (only if string uses single-quote style throughout)
   if (repaired.includes("'") && !/"\s*:/.test(repaired)) {
     repaired = repaired.replace(/'/g, '"');
   }
 
-  // 3. Unquoted keys: {tool: "x", args: {...}} → {"tool": "x", "args": {...}}
+  // 4. Unquoted keys: {tool: "x", args: {...}} → {"tool": "x", "args": {...}}
   repaired = repaired.replace(/([{,])\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
 
+  // 5. Python-style literals (outside of quoted strings)
+  repaired = replacePythonLiterals(repaired);
+
+  // 6. Raw control characters inside strings (tabs OK, strip others)
+  // eslint-disable-next-line no-control-regex
+  repaired = repaired.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+
+  if (tryParseToolJson(repaired)) return tryParseToolJson(repaired);
+
+  // 7. Auto-close truncated JSON — if braces/brackets are unbalanced,
+  //    try appending closing characters. Only safe when the opening looks
+  //    like a tool call (has "tool" key pattern).
+  const autoClosed = tryAutoCloseJson(repaired);
+  if (autoClosed) return autoClosed;
+
+  return null;
+}
+
+/**
+ * Replace Python-style True/False/None with JSON equivalents,
+ * but only when they appear outside of quoted strings.
+ */
+function replacePythonLiterals(text: string): string {
+  // Only bother if any Python-style literal is present
+  if (!/\b(?:True|False|None)\b/.test(text)) return text;
+  // Replace outside of strings: scan character-by-character
+  let result = '';
+  let inString = false;
+  let escaped = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (escaped) { result += ch; escaped = false; i++; continue; }
+    if (ch === '\\' && inString) { result += ch; escaped = true; i++; continue; }
+    if (ch === '"') { inString = !inString; result += ch; i++; continue; }
+    if (inString) { result += ch; i++; continue; }
+    // Outside string — check for Python literals
+    if (text.startsWith('True', i) && !/\w/.test(text[i + 4] || '')) {
+      result += 'true'; i += 4; continue;
+    }
+    if (text.startsWith('False', i) && !/\w/.test(text[i + 5] || '')) {
+      result += 'false'; i += 5; continue;
+    }
+    if (text.startsWith('None', i) && !/\w/.test(text[i + 4] || '')) {
+      result += 'null'; i += 4; continue;
+    }
+    result += ch; i++;
+  }
+  return result;
+}
+
+/**
+ * Try JSON.parse and return a tool object or null.
+ */
+function tryParseToolJson(text: string): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(repaired);
+    const parsed = JSON.parse(text);
     if (parsed && typeof parsed === 'object' && typeof parsed.tool === 'string') {
       return parsed as Record<string, unknown>;
     }
   } catch {
-    // Repair wasn't enough
+    // parse failed
   }
   return null;
+}
+
+/**
+ * Try to auto-close truncated JSON by appending missing closing braces/brackets.
+ * Only attempts this if the text starts with `{` and contains a "tool" key pattern,
+ * and the depth is small (≤ 3 unmatched openers) to avoid nonsensical recovery.
+ */
+function tryAutoCloseJson(text: string): Record<string, unknown> | null {
+  if (!text.startsWith('{')) return null;
+  // Quick check for tool-call shape
+  if (!/["']tool["']\s*:/.test(text)) return null;
+
+  // Count unbalanced braces/brackets (respecting strings)
+  const stack: ('{' | '[')[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') stack.push('{');
+    if (ch === '[') stack.push('[');
+    if (ch === '}') { if (stack.length && stack[stack.length - 1] === '{') stack.pop(); }
+    if (ch === ']') { if (stack.length && stack[stack.length - 1] === '[') stack.pop(); }
+  }
+
+  if (stack.length === 0 || stack.length > 3) return null;
+
+  // If we're inside a string (unmatched quote), close the string first
+  let suffix = '';
+  if (inString) suffix += '"';
+  // Close openers in reverse order
+  for (let i = stack.length - 1; i >= 0; i--) {
+    suffix += stack[i] === '{' ? '}' : ']';
+  }
+
+  return tryParseToolJson(text + suffix);
 }
 
 /**
@@ -273,24 +373,42 @@ export function extractBareToolJsonObjects(text: string): unknown[] {
 /**
  * Generic tool detection: scans text for fenced JSON blocks and bare JSON,
  * delegates validation to the provided `validate` function.
+ *
+ * Supports:
+ * - Triple-backtick fences (```) with optional language hint
+ * - 4+ backtick fences (some models use ```` for nesting)
+ * - Tilde fences (~~~) per CommonMark
+ * - Prose-surrounded JSON within fenced blocks (extracts the JSON object)
  */
 export function detectToolFromText<T>(
   text: string,
   validate: (parsed: unknown) => T | null,
 ): T | null {
-  const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
+  // Match backtick fences (3+), optional language hint, and tilde fences (3+)
+  const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
   let match;
 
   while ((match = fenceRegex.exec(text)) !== null) {
+    const content = match[1].trim();
+
+    // Phase 1: Direct JSON.parse
     try {
-      const parsed = JSON.parse(match[1].trim());
+      const parsed = JSON.parse(content);
       const result = validate(parsed);
       if (result) return result;
     } catch {
-      // Not valid JSON — try repair on fenced content
-      const repaired = repairToolJson(match[1].trim());
+      // Phase 2: JSON repair on fenced content
+      const repaired = repairToolJson(content);
       if (repaired) {
         const result = validate(repaired);
+        if (result) return result;
+      }
+
+      // Phase 3: Prose-surrounded JSON — model put explanatory text around
+      // the JSON inside the fence. Extract the JSON object from within.
+      const innerObjects = extractBareToolJsonObjects(content);
+      for (const innerParsed of innerObjects) {
+        const result = validate(innerParsed);
         if (result) return result;
       }
     }
