@@ -986,12 +986,23 @@ async function streamSSEChatOnce(
     // even when we are not sending `tools[]` (prompt-engineered mode). Accumulate
     // those deltas and re-emit them as our fenced JSON tool blocks so the existing
     // text-based tool dispatch path still works.
+    // Max args size for native tool calls — anything larger is likely a raw API
+    // response leaked by the provider (e.g. Google Gemini grounding/code execution),
+    // not a legitimate tool invocation.
+    const NATIVE_TOOL_ARGS_MAX = 4096;
+
     const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
     const flushNativeToolCalls = () => {
       if (pendingNativeToolCalls.size === 0) return;
       for (const [, tc] of pendingNativeToolCalls) {
         if (!tc.name && !tc.args) continue;
         if (tc.name) {
+          // Guard against providers that emit non-tool-protocol function names
+          // (e.g. Google Gemini's internal "node_source") with huge payloads.
+          if (tc.args.length > NATIVE_TOOL_ARGS_MAX) {
+            console.warn(`[Push] Native tool call "${tc.name}" args too large (${tc.args.length} bytes) — dropped to prevent chat data leak`);
+            continue;
+          }
           try {
             const parsedArgs = tc.args ? JSON.parse(tc.args) : {};
             parser.push(`\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`);
@@ -1001,9 +1012,9 @@ async function streamSSEChatOnce(
             parser.push(`\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: {} })}\n\`\`\`\n`);
           }
         } else if (tc.args) {
-          // No function name yet — fall back to raw args so downstream malformed
-          // tool-call diagnostics can detect and report the issue.
-          parser.push(tc.args);
+          // No function name — never push raw args directly to the parser.
+          // That leaks unformatted API data into the chat output.
+          console.warn('[Push] Native tool call with no function name — args dropped:', tc.args.slice(0, 200));
         }
       }
       pendingNativeToolCalls.clear();
@@ -1068,6 +1079,7 @@ async function streamSSEChatOnce(
               if (!fnCall) continue;
               if (!pendingNativeToolCalls.has(idx)) {
                 pendingNativeToolCalls.set(idx, { name: '', args: '' });
+                console.log(`[Push] Native tool call delta detected (idx=${idx}, name=${fnCall.name || '(none)'})`);
               }
               const entry = pendingNativeToolCalls.get(idx)!;
               if (typeof fnCall.name === 'string') entry.name = fnCall.name;
@@ -1246,7 +1258,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Google'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn']),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'google',
     }),
   },
