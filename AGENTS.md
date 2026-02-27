@@ -46,9 +46,9 @@ Seven providers, all using OpenAI-compatible SSE streaming. Any single API key i
 | **Mistral Vibe** | devstral-small-latest |
 | **OpenRouter** | claude-sonnet-4.6 |
 | **Z.AI** | glm-4.5 |
-| **Google Gemini** | gemini-2.5-flash |
+| **Google Gemini** | gemini-3.1-pro-preview |
 | **MiniMax** | MiniMax-M2.5 |
-| **OpenCode Zen** | qwen3-coder |
+| **OpenCode Zen** | big-pickle |
 
 **OpenRouter** provides access to 50+ models through a single API. Push includes 12 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, 2 Codex variants (5.3/5.2), Step 3.5 Flash (free), Qwen3 Coder (free), DeepSeek R1 0528 (free), Gemini 3.1 Pro Preview/3 Flash, Grok 4.1, and Kimi K2.5.
 

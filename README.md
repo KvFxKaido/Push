@@ -89,7 +89,7 @@ npm run dev
 For local auth/sandbox routes (`/api/*`), run the Worker in a second terminal:
 
 ```bash
-cd /home/ishaw/projects/Push
+cd /workspace/Push
 npx wrangler dev --port 8787
 ```
 
