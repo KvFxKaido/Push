@@ -14,7 +14,7 @@ import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-
 import { detectWebSearchToolCall, executeWebSearch, type WebSearchToolCall } from './web-search-tools';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { execInSandbox } from './sandbox-client';
-import { asRecord, detectToolFromText, extractBareToolJsonObjects, repairToolJson, detectTruncatedToolCall } from './utils';
+import { asRecord, detectToolFromText, extractBareToolJsonObjects, repairToolJson, detectTruncatedToolCall, diagnoseJsonSyntaxError } from './utils';
 
 // Re-export for backwards compatibility — other modules import from here
 export { extractBareToolJsonObjects };
@@ -421,8 +421,12 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
     }
   }
 
-  // Phase 3: REMOVED — broad pattern /[{,]\s*["']?tool["']?\s*:\s*["']/ had too many
-  // false positives on legitimate prose and user-directed demonstrations.
+  // Phase 3: Malformed JSON — the text contains something that looks like a tool call
+  // (has "tool": "<known_name>" or similar) but is structurally broken JSON that
+  // repair couldn't fix. Return a specific syntax-error diagnosis so the model
+  // gets actionable feedback like "missing opening brace" instead of silence.
+  const malformedDiagnosis = diagnoseMalformedToolJson(text);
+  if (malformedDiagnosis) return malformedDiagnosis;
 
   // Phase 3.5: Bare JSON args — telemetry only. Records the metric so we can track
   // how often models emit bare args, but does NOT trigger a retry (too imprecise).
@@ -496,6 +500,131 @@ function buildValidationErrorMessage(toolName: string): string {
       + 'Check required fields and retry.';
   }
   return `Your call to "${toolName}" has invalid or missing arguments. Check the tool protocol and retry with the correct argument format.`;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Malformed JSON diagnosis — catches structurally broken tool calls
+// that repair couldn't fix and returns a pinpointed syntax error.
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan text for fragments that look like tool calls (contain `"tool": "<known_name>"`)
+ * but are structurally broken JSON. Uses `diagnoseJsonSyntaxError()` to pinpoint
+ * the specific problem (missing brace, unterminated string, unbalanced brackets, etc.).
+ *
+ * Returns a diagnosis with `reason: 'malformed_json'` and an actionable error message,
+ * or null if no such fragment is found.
+ */
+function diagnoseMalformedToolJson(text: string): ToolCallDiagnosis | null {
+  // Strategy: find regions of text that contain a known tool name in a
+  // tool-call-like pattern but failed to parse. We look for:
+  //   1. Fenced code blocks containing tool-like content that isn't valid JSON
+  //   2. Bare text containing `"tool": "<name>"` patterns outside valid JSON
+
+  // Check fenced blocks first (higher signal)
+  const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
+  let fenceMatch;
+  while ((fenceMatch = fenceRegex.exec(text)) !== null) {
+    const content = fenceMatch[1].trim();
+    const diagnosis = tryDiagnoseFragment(content);
+    if (diagnosis) return diagnosis;
+  }
+
+  // Check for bare tool-call-like patterns in the text
+  // Match regions that contain "tool": "<name>" (with various quoting styles)
+  const toolPattern = /["']?tool["']?\s*:\s*["'](\w+)["']/g;
+  let toolMatch;
+  while ((toolMatch = toolPattern.exec(text)) !== null) {
+    const toolName = toolMatch[1];
+    if (!KNOWN_TOOL_NAMES.has(toolName)) continue;
+
+    // Extract a reasonable region around this match (find enclosing braces or context)
+    const regionStart = findPrecedingBrace(text, toolMatch.index);
+    const regionEnd = findFollowingBrace(text, toolMatch.index + toolMatch[0].length);
+    const region = text.slice(regionStart, regionEnd + 1);
+
+    // Skip if this region is already valid JSON (handled by earlier phases)
+    try { JSON.parse(region); continue; } catch { /* expected — this is broken JSON */ }
+
+    // Skip if repair succeeds (handled by normal detection pipeline)
+    if (repairToolJson(region)) continue;
+
+    const diagnosis = tryDiagnoseFragment(region);
+    if (diagnosis) return diagnosis;
+  }
+
+  return null;
+}
+
+/**
+ * Try to diagnose a single text fragment as malformed tool JSON.
+ * Returns a diagnosis or null if the fragment isn't recognizable as a tool call.
+ */
+function tryDiagnoseFragment(fragment: string): ToolCallDiagnosis | null {
+  // Skip if it parses cleanly
+  try { JSON.parse(fragment); return null; } catch { /* expected */ }
+
+  // Skip if repair succeeds (the normal pipeline will handle it)
+  if (repairToolJson(fragment)) return null;
+
+  // Extract tool name from the fragment
+  const nameMatch = fragment.match(/["']?tool["']?\s*:\s*["'](\w+)["']/);
+  if (!nameMatch) return null;
+  const toolName = nameMatch[1];
+  if (!KNOWN_TOOL_NAMES.has(toolName)) return null;
+
+  // Get the specific syntax error
+  const syntaxError = diagnoseJsonSyntaxError(fragment);
+  if (!syntaxError) return null;
+
+  const hint = TOOL_ARG_HINTS[toolName];
+  const hintBlock = hint
+    ? `\n\nExpected format:\n\`\`\`json\n${hint}\n\`\`\``
+    : '';
+
+  return {
+    reason: 'malformed_json',
+    toolName,
+    errorMessage: `Your call to "${toolName}" has a JSON syntax error: ${syntaxError.message}${hintBlock}\n\nPlease output a valid JSON block with balanced braces and proper quoting.`,
+  };
+}
+
+/**
+ * Find the position of the nearest `{` before `pos` in text (for region extraction).
+ * Returns `pos` if no preceding brace is found within a reasonable distance.
+ */
+function findPrecedingBrace(text: string, pos: number): number {
+  const searchStart = Math.max(0, pos - 200);
+  for (let i = pos - 1; i >= searchStart; i--) {
+    if (text[i] === '{') return i;
+  }
+  return pos;
+}
+
+/**
+ * Find the position of the nearest balanced `}` after `pos` in text (for region extraction).
+ * Falls back to end-of-line or end-of-text if no closing brace is found.
+ */
+function findFollowingBrace(text: string, pos: number): number {
+  const searchEnd = Math.min(text.length, pos + 2000);
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = pos; i < searchEnd; i++) {
+    const ch = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    if (ch === '}') {
+      if (depth === 0) return i;
+      depth--;
+    }
+  }
+  // No balanced brace found — return end of current line or end of search
+  const newlineIdx = text.indexOf('\n', pos);
+  return newlineIdx !== -1 && newlineIdx < searchEnd ? newlineIdx : searchEnd - 1;
 }
 
 /**

@@ -129,6 +129,100 @@ export function ciStatusBg(status: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
+// JSON syntax error diagnosis — pinpoints *what* is wrong with malformed JSON
+// ---------------------------------------------------------------------------
+
+export interface JsonSyntaxDiagnosis {
+  /** Human-readable description of the syntax error. */
+  message: string;
+  /** Approximate character position (0-based) where the error was detected. */
+  position: number | null;
+}
+
+/**
+ * Diagnose why a JSON string fails to parse. Returns a human-readable
+ * description of the first syntax error found. Falls back to the native
+ * JSON.parse error message if no specific pattern is detected.
+ *
+ * This is NOT a repair function — it only describes the problem.
+ */
+export function diagnoseJsonSyntaxError(text: string): JsonSyntaxDiagnosis | null {
+  // If it actually parses, there's no error to diagnose
+  try { JSON.parse(text); return null; } catch { /* expected */ }
+
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return { message: 'Empty input — expected a JSON object.', position: 0 };
+  }
+
+  // Missing opening brace — starts with "tool" or key-like pattern
+  if (/^["']?tool["']?\s*:/.test(trimmed)) {
+    return {
+      message: 'Missing opening brace `{` — JSON object must start with `{`.',
+      position: 0,
+    };
+  }
+
+  // Starts with something other than { (e.g. a stray character)
+  if (trimmed[0] !== '{' && trimmed[0] !== '[') {
+    return {
+      message: `Unexpected character \`${trimmed[0]}\` at start — JSON object must start with \`{\`.`,
+      position: 0,
+    };
+  }
+
+  // Scan for specific structural errors
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+
+    if (ch === '{' || ch === '[') depth++;
+    if (ch === '}' || ch === ']') depth--;
+
+    if (depth < 0) {
+      return {
+        message: `Extra closing \`${ch}\` at position ${i} — no matching opening bracket.`,
+        position: i,
+      };
+    }
+  }
+
+  // Unterminated string
+  if (inString) {
+    return {
+      message: 'Unterminated string — a `"` was opened but never closed.',
+      position: null,
+    };
+  }
+
+  // Unbalanced braces/brackets
+  if (depth > 0) {
+    return {
+      message: `Unbalanced braces — ${depth} unclosed \`{\` or \`[\`. Add ${depth} closing brace(s).`,
+      position: trimmed.length,
+    };
+  }
+
+  // Fall back to native error message
+  try {
+    JSON.parse(trimmed);
+  } catch (e) {
+    const nativeMsg = e instanceof SyntaxError ? e.message : 'Unknown JSON syntax error';
+    return { message: nativeMsg, position: null };
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // JSON repair — best-effort recovery for common LLM garbling patterns
 // Only runs when JSON.parse fails (fallback, not hot path).
 // ---------------------------------------------------------------------------
@@ -147,7 +241,13 @@ export function ciStatusBg(status: string | null): string {
  * - Auto-close truncated JSON (missing trailing braces/brackets)
  */
 export function repairToolJson(candidate: string): Record<string, unknown> | null {
-  let repaired = candidate;
+  let repaired = candidate.trim();
+
+  // 0. Missing opening brace — model emitted `"tool": "x", "args": {...}}`
+  //    or `tool: "x", args: {...}}` without the leading `{`.
+  if (!repaired.startsWith('{') && /^["']?tool["']?\s*:/.test(repaired)) {
+    repaired = '{' + repaired;
+  }
 
   // 1. Strip trailing commas before } or ]
   repaired = repaired.replace(/,\s*([}\]])/g, '$1');
