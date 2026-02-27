@@ -7,7 +7,7 @@
  * to the correct implementation.
  */
 
-import type { ToolExecutionResult, AcceptanceCriterion } from '@/types';
+import type { ToolExecutionResult, AcceptanceCriterion, StructuredToolError } from '@/types';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, IMPLEMENTED_SANDBOX_TOOLS, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
@@ -92,25 +92,33 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     return { readOnly: [], mutating: allCalls[0] };
   }
 
-  // Multiple calls — split into reads + optional trailing mutation
+  // Multiple calls — split into reads + optional trailing mutation.
+  // Strategy: collect the longest valid prefix of read-only calls,
+  // then accept one trailing mutation. If a mutation appears mid-sequence,
+  // treat it as the boundary — keep the reads before it and the mutation,
+  // but discard anything after.
   const readOnly: AnyToolCall[] = [];
   let mutating: AnyToolCall | null = null;
 
   for (let i = 0; i < allCalls.length; i++) {
     if (isReadOnlyToolCall(allCalls[i])) {
+      if (mutating) {
+        // Read after a mutation — stop here (don't process further calls)
+        break;
+      }
       readOnly.push(allCalls[i]);
-    } else if (i === allCalls.length - 1) {
-      // Only the last call can be a mutation
-      mutating = allCalls[i];
     } else {
-      // Non-read in the middle — bail to single-call behavior for safety
-      return { readOnly: [], mutating: allCalls[0] };
+      if (mutating) {
+        // Second mutation — stop here, keep what we have
+        break;
+      }
+      mutating = allCalls[i];
     }
   }
 
-  // Cap parallel reads
+  // Cap parallel reads — truncate to the limit instead of bailing entirely
   if (readOnly.length > MAX_PARALLEL_TOOL_CALLS) {
-    return { readOnly: [], mutating: allCalls[0] };
+    readOnly.length = MAX_PARALLEL_TOOL_CALLS;
   }
 
   return { readOnly, mutating };
@@ -289,7 +297,16 @@ export async function executeAnyToolCall(
 
     case 'sandbox':
       if (!sandboxId) {
-        return { text: '[Tool Error] No active sandbox. Start a sandbox first.' };
+        const err: StructuredToolError = {
+          type: 'SANDBOX_UNREACHABLE',
+          retryable: true,
+          message: 'No active sandbox session',
+          detail: `Attempted tool: ${toolCall.call.tool}`,
+        };
+        return {
+          text: `[Tool Error] No active sandbox. The sandbox may still be starting — wait a moment and retry. If this persists, the user needs to start a sandbox from the UI.\nerror_type: ${err.type}\nretryable: ${err.retryable}`,
+          structuredError: err,
+        };
       }
       return executeSandboxToolCall(toolCall.call, sandboxId);
 
@@ -388,7 +405,7 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
       return {
         reason: 'validation_failed',
         toolName,
-        errorMessage: `Your call to "${toolName}" has invalid or missing arguments. Check the tool protocol and retry with the correct argument format.`,
+        errorMessage: buildValidationErrorMessage(toolName),
       };
     }
   }
@@ -399,7 +416,7 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
       return {
         reason: 'validation_failed',
         toolName: obj.tool,
-        errorMessage: `Your call to "${obj.tool}" has invalid or missing arguments. Check the tool protocol and retry with the correct argument format.`,
+        errorMessage: buildValidationErrorMessage(obj.tool),
       };
     }
   }
@@ -435,6 +452,50 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
   if (nlIntent) return nlIntent;
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Arg hints for common tools — shown in validation error messages
+// ---------------------------------------------------------------------------
+
+const TOOL_ARG_HINTS: Record<string, string> = {
+  // GitHub tools
+  read_file: '{"tool": "read_file", "args": {"repo": "owner/name", "path": "path/to/file"}}',
+  list_directory: '{"tool": "list_directory", "args": {"repo": "owner/name", "path": "optional/path"}}',
+  search_files: '{"tool": "search_files", "args": {"repo": "owner/name", "query": "search term"}}',
+  grep_file: '{"tool": "grep_file", "args": {"repo": "owner/name", "path": "path/to/file", "pattern": "regex"}}',
+  fetch_pr: '{"tool": "fetch_pr", "args": {"repo": "owner/name", "pr": 123}}',
+  list_prs: '{"tool": "list_prs", "args": {"repo": "owner/name"}}',
+  list_commits: '{"tool": "list_commits", "args": {"repo": "owner/name"}}',
+  list_branches: '{"tool": "list_branches", "args": {"repo": "owner/name"}}',
+  fetch_checks: '{"tool": "fetch_checks", "args": {"repo": "owner/name", "ref": "branch-or-sha"}}',
+  create_branch: '{"tool": "create_branch", "args": {"repo": "owner/name", "branch_name": "feature/x"}}',
+  create_pr: '{"tool": "create_pr", "args": {"repo": "owner/name", "title": "PR title", "body": "description", "head": "feature-branch", "base": "main"}}',
+  // Sandbox tools
+  sandbox_exec: '{"tool": "sandbox_exec", "args": {"command": "your command"}}',
+  sandbox_read_file: '{"tool": "sandbox_read_file", "args": {"path": "/workspace/path/to/file"}}',
+  sandbox_write_file: '{"tool": "sandbox_write_file", "args": {"path": "/workspace/path/to/file", "content": "file content"}}',
+  sandbox_edit_file: '{"tool": "sandbox_edit_file", "args": {"path": "/workspace/path/to/file", "edits": [{"startHash": "abc1234", "endHash": "def5678", "content": "replacement"}]}}',
+  sandbox_list_dir: '{"tool": "sandbox_list_dir", "args": {"path": "/workspace"}}',
+  sandbox_search: '{"tool": "sandbox_search", "args": {"pattern": "search term"}}',
+  sandbox_diff: '{"tool": "sandbox_diff", "args": {}}',
+  sandbox_prepare_commit: '{"tool": "sandbox_prepare_commit", "args": {"message": "commit message"}}',
+  sandbox_push: '{"tool": "sandbox_push", "args": {}}',
+  delegate_coder: '{"tool": "delegate_coder", "args": {"task": "describe the task"}}',
+  web_search: '{"tool": "web_search", "args": {"query": "search query"}}',
+};
+
+/** Build an actionable validation error message, including arg hints when available. */
+function buildValidationErrorMessage(toolName: string): string {
+  const hint = TOOL_ARG_HINTS[toolName];
+  if (hint) {
+    return `Your call to "${toolName}" has invalid or missing arguments. Expected format:\n\n`
+      + '```json\n'
+      + `${hint}\n`
+      + '```\n\n'
+      + 'Check required fields and retry.';
+  }
+  return `Your call to "${toolName}" has invalid or missing arguments. Check the tool protocol and retry with the correct argument format.`;
 }
 
 /**

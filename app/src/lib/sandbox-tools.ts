@@ -110,6 +110,70 @@ function formatSandboxError(error: string, context?: string): string {
   return `[Tool Error] ${error}`;
 }
 
+// --- Exec failure diagnosis ---
+
+/**
+ * Diagnose a sandbox_exec failure from stderr and suggest a corrective action.
+ * Returns a hint string, or null if the failure is not a recognizable precondition issue.
+ */
+function diagnoseExecFailure(stderr: string): string | null {
+  const lower = stderr.toLowerCase();
+
+  // Command/binary not found — suggest install
+  if (lower.includes('command not found') || lower.includes('not found') && lower.includes(': ')) {
+    // Try to extract the missing command name
+    const match = stderr.match(/(?:bash: |sh: |zsh: )?(\S+):\s*(?:command\s+)?not found/i);
+    const missing = match?.[1];
+    if (missing) {
+      // Suggest package manager install based on common tool patterns
+      if (['node', 'npm', 'npx'].includes(missing)) {
+        return `"${missing}" is not installed. Try: apt-get update && apt-get install -y nodejs npm`;
+      }
+      if (['python', 'python3'].includes(missing)) {
+        return `"${missing}" is not installed. Try: apt-get update && apt-get install -y python3`;
+      }
+      if (missing === 'pip' || missing === 'pip3') {
+        return `"${missing}" is not installed. Try: apt-get update && apt-get install -y python3-pip`;
+      }
+      if (missing === 'git') {
+        return `"${missing}" is not installed. Try: apt-get update && apt-get install -y git`;
+      }
+      return `"${missing}" is not available in the sandbox. Try installing it with: apt-get update && apt-get install -y ${missing}`;
+    }
+    return `A required command is not installed. Try installing the missing tool with apt-get, npm, or pip.`;
+  }
+
+  // Module/package not found — suggest install
+  if (lower.includes('cannot find module') || lower.includes('module not found')) {
+    const moduleMatch = stderr.match(/cannot find module ['"]([^'"]+)['"]/i)
+      || stderr.match(/module not found.*['"]([^'"]+)['"]/i);
+    if (moduleMatch?.[1]) {
+      return `Module "${moduleMatch[1]}" is missing. Try: npm install ${moduleMatch[1]}`;
+    }
+    return `A required module is missing. Run npm install to install dependencies.`;
+  }
+  if (lower.includes('no module named')) {
+    const pyMatch = stderr.match(/no module named ['"]?(\S+?)['"]?$/im);
+    if (pyMatch?.[1]) {
+      return `Python module "${pyMatch[1]}" is missing. Try: pip install ${pyMatch[1]}`;
+    }
+    return `A required Python module is missing. Install it with pip.`;
+  }
+
+  // Permission denied
+  if (lower.includes('permission denied') || lower.includes('eacces')) {
+    return `Permission denied. Try prefixing the command with sudo, or check file permissions with ls -la.`;
+  }
+
+  // No such file or directory (not a "command not found" — more like a bad path arg)
+  if ((lower.includes('no such file or directory') || lower.includes('enoent'))
+    && !lower.includes('command not found')) {
+    return `A file or directory in the command path does not exist. Use sandbox_list_dir to verify paths.`;
+  }
+
+  return null;
+}
+
 // --- Structured error classification ---
 
 /**
@@ -513,6 +577,12 @@ export async function executeSandboxToolCall(
         if (result.stdout) lines.push(`\nStdout:\n${result.stdout}`);
         if (result.stderr) lines.push(`\nStderr:\n${result.stderr}`);
         if (result.truncated) lines.push(`\n[Output truncated]`);
+
+        // On non-zero exit, append a corrective hint if stderr matches a known pattern
+        if (result.exitCode !== 0 && result.stderr) {
+          const hint = diagnoseExecFailure(result.stderr);
+          if (hint) lines.push(`\n[Hint] ${hint}`);
+        }
 
         const cardData: SandboxCardData = {
           command: call.args.command,
