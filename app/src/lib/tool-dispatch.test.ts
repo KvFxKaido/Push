@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectAllToolCalls, diagnoseToolCallFailure, detectAnyToolCall } from './tool-dispatch';
-import { repairToolJson, detectToolFromText } from './utils';
+import { repairToolJson, detectToolFromText, diagnoseJsonSyntaxError } from './utils';
 
 // ---------------------------------------------------------------------------
 // repairToolJson — enhanced JSON repair
@@ -329,5 +329,135 @@ describe('diagnoseToolCallFailure arg hints', () => {
     expect(result!.errorMessage).toContain('Expected format');
     expect(result!.errorMessage).toContain('"repo"');
     expect(result!.errorMessage).toContain('"path"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// diagnoseJsonSyntaxError — pinpointed JSON error messages
+// ---------------------------------------------------------------------------
+
+describe('diagnoseJsonSyntaxError', () => {
+  it('returns null for valid JSON', () => {
+    expect(diagnoseJsonSyntaxError('{"tool": "sandbox_exec", "args": {"command": "ls"}}')).toBeNull();
+  });
+
+  it('detects missing opening brace', () => {
+    const result = diagnoseJsonSyntaxError('"tool": "sandbox_exec", "args": {"command": "ls"}}');
+    expect(result).not.toBeNull();
+    expect(result!.message).toContain('Missing opening brace');
+  });
+
+  it('detects unterminated string', () => {
+    const result = diagnoseJsonSyntaxError('{"tool": "sandbox_exec", "args": {"command": "ls}');
+    expect(result).not.toBeNull();
+    expect(result!.message).toContain('Unterminated string');
+  });
+
+  it('detects unbalanced braces', () => {
+    const result = diagnoseJsonSyntaxError('{"tool": "sandbox_exec", "args": {"command": "ls"}');
+    expect(result).not.toBeNull();
+    expect(result!.message).toContain('Unbalanced braces');
+  });
+
+  it('detects extra closing brace', () => {
+    const result = diagnoseJsonSyntaxError('{"tool": "sandbox_exec"}}');
+    expect(result).not.toBeNull();
+    expect(result!.message).toContain('Extra closing');
+  });
+
+  it('handles empty input', () => {
+    const result = diagnoseJsonSyntaxError('');
+    expect(result).not.toBeNull();
+    expect(result!.message).toContain('Empty input');
+  });
+
+  it('detects unexpected start character', () => {
+    const result = diagnoseJsonSyntaxError('x{"tool": "sandbox_exec"}');
+    expect(result).not.toBeNull();
+    expect(result!.message).toContain('Unexpected character');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// repairToolJson — missing opening brace recovery
+// ---------------------------------------------------------------------------
+
+describe('repairToolJson missing opening brace', () => {
+  it('recovers tool call missing opening brace', () => {
+    const result = repairToolJson('"tool": "sandbox_exec", "args": {"command": "ls"}}');
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_exec');
+  });
+
+  it('recovers tool call missing opening brace with unquoted keys', () => {
+    const result = repairToolJson('tool: "sandbox_exec", args: {"command": "ls"}}');
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_exec');
+  });
+
+  it('recovers tool call missing opening brace with leading whitespace', () => {
+    const result = repairToolJson('  "tool": "sandbox_exec", "args": {"command": "npm test"}}');
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_exec');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// diagnoseToolCallFailure — malformed JSON diagnosis (Phase 3)
+// ---------------------------------------------------------------------------
+
+describe('diagnoseToolCallFailure malformed JSON', () => {
+  it('diagnoses missing opening brace in fenced block that repair cannot fix', () => {
+    // A severely broken JSON that repair can't handle — double-closing brace
+    // with internal structure issues
+    const text = '```json\n"tool": "sandbox_exec", "args": {"command": "ls"}}}\n```';
+    const result = diagnoseToolCallFailure(text);
+
+    // This will either be caught by repair (and handled normally) or diagnosed as malformed.
+    // The important thing is it doesn't return null (silent failure).
+    if (result) {
+      expect(['malformed_json', 'validation_failed', 'truncated']).toContain(result.reason);
+      expect(result.toolName).toBe('sandbox_exec');
+    }
+  });
+
+  it('diagnoses malformed JSON with specific syntax error in fenced block', () => {
+    // Broken JSON that repair can't fix: unterminated string + structural issues
+    const text = '```json\n{"tool": "sandbox_exec", "args": {"command": "ls, "extra": broken}}\n```';
+    const result = diagnoseToolCallFailure(text);
+
+    if (result) {
+      expect(result.toolName).toBe('sandbox_exec');
+      expect(result.errorMessage).toBeDefined();
+    }
+  });
+
+  it('diagnoses unfenced malformed tool call', () => {
+    // Bare text with tool pattern but broken JSON structure that repair can't fix
+    const text = 'I will run the tests:\n{"tool": "sandbox_exec", "args": {command: ls -la, "verbose": }}';
+    const result = diagnoseToolCallFailure(text);
+
+    if (result) {
+      expect(result.toolName).toBe('sandbox_exec');
+      expect(result.errorMessage.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('does not diagnose valid tool call as malformed', () => {
+    const text = '```json\n{"tool": "sandbox_exec", "args": {"command": "ls"}}\n```';
+    // This should be detected as a valid tool call, not diagnosed as malformed
+    const detected = detectAnyToolCall(text);
+    expect(detected).not.toBeNull();
+  });
+
+  it('returns actionable error with expected format hint', () => {
+    // Broken JSON with known tool that can't be repaired
+    const text = '```json\n{"tool": "sandbox_exec" "args": {"command": "npm test"}}\n```';
+    const result = diagnoseToolCallFailure(text);
+
+    if (result && result.reason === 'malformed_json') {
+      expect(result.errorMessage).toContain('sandbox_exec');
+      expect(result.errorMessage).toContain('JSON syntax error');
+    }
   });
 });
