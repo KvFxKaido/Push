@@ -131,8 +131,14 @@ describe('getContextBudget', () => {
     assert.equal(budget.maxTokens, 950_000);
   });
 
-  it('returns default budget for Gemini model on non-ollama/non-google provider', () => {
-    const budget = getContextBudget('openrouter', 'gemini-3-flash-preview');
+  it('returns Gemini budget for OpenRouter with Gemini model', () => {
+    const budget = getContextBudget('openrouter', 'google/gemini-3.1-pro-preview');
+    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.maxTokens, 950_000);
+  });
+
+  it('returns default budget for Gemini model on other providers', () => {
+    const budget = getContextBudget('mistral', 'gemini-3-flash-preview');
     assert.equal(budget.targetTokens, 88_000);
   });
 

@@ -102,7 +102,7 @@ export type ContextMode = 'graceful' | 'none';
 // Rolling window config — token-based context management
 const DEFAULT_CONTEXT_MAX_TOKENS = 100_000; // Hard cap
 const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for system prompt + response
-// Gemini models (1M context window) — used for Google provider and Ollama with Gemini models
+// Gemini models (1M context window) — Google, Ollama, and OpenRouter with Gemini models
 const GEMINI_CONTEXT_MAX_TOKENS = 950_000;
 const GEMINI_CONTEXT_TARGET_TOKENS = 900_000;
 
@@ -134,11 +134,11 @@ export function getContextBudget(
     return GEMINI_CONTEXT_BUDGET;
   }
 
-  // Ollama running a Gemini model — same 1M budget
+  // Ollama or OpenRouter running a Gemini model — same 1M budget
   const normalizedModel = normalizeModelName(model);
   if (
-    provider === 'ollama' &&
-    (normalizedModel.includes('gemini'))
+    (provider === 'ollama' || provider === 'openrouter') &&
+    normalizedModel.includes('gemini')
   ) {
     return GEMINI_CONTEXT_BUDGET;
   }
