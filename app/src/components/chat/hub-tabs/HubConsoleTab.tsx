@@ -9,7 +9,7 @@ interface HubConsoleTabProps {
 }
 
 interface ConsoleLogItem {
-  type: 'call' | 'result' | 'status';
+  type: 'call' | 'result' | 'status' | 'malformed';
   content: string;
   timestamp: number;
   source?: AgentStatusSource;
@@ -36,14 +36,23 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
     const items: ConsoleLogItem[] = [];
     messages.forEach((m) => {
       if (m.role === 'assistant') {
-        const toolCall = detectAnyToolCall(m.content);
-        if (toolCall) {
-          const args = JSON.stringify((toolCall.call as { args?: unknown }).args ?? '').slice(0, 280);
+        if (m.isMalformed) {
+          const toolName = m.toolMeta?.toolName || 'unknown';
           items.push({
-            type: 'call',
-            content: `> ${(toolCall.call as { tool?: string }).tool}: ${args}`,
+            type: 'malformed',
+            content: `malformed tool call: ${toolName}`,
             timestamp: m.timestamp,
           });
+        } else {
+          const toolCall = detectAnyToolCall(m.content);
+          if (toolCall) {
+            const args = JSON.stringify((toolCall.call as { args?: unknown }).args ?? '').slice(0, 280);
+            items.push({
+              type: 'call',
+              content: `> ${(toolCall.call as { tool?: string }).tool}: ${args}`,
+              timestamp: m.timestamp,
+            });
+          }
         }
       } else if (m.isToolResult) {
         items.push({ type: 'result', content: m.content, timestamp: m.timestamp });
@@ -70,6 +79,9 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
         if (log.type === 'status' && log.source) {
           const detail = log.detail ? ` — ${log.detail}` : '';
           return `[${date}] [${getSourceLabel(log.source)}] ${log.content}${detail}`;
+        }
+        if (log.type === 'malformed') {
+          return `[${date}] [MALFORMED] ${log.content}`;
         }
         return `[${date}] ${log.type === 'call' ? '' : '  '}${log.content}`;
       })
@@ -136,6 +148,8 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
               className={
                 log.type === 'call'
                   ? 'text-push-fg-secondary'
+                  : log.type === 'malformed'
+                  ? 'text-amber-400'
                   : log.type === 'result'
                   ? 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'
                   : 'ml-2 border-l border-push-edge/70 pl-2 text-[#86c5ff]'
