@@ -259,4 +259,75 @@ describe('detectAllToolCalls', () => {
       expect(detected.mutating.call.tool).toBe('sandbox_exec');
     }
   });
+
+  it('truncates parallel reads to MAX instead of bailing', () => {
+    // 8 read-only calls — should keep first 6, not bail entirely
+    const calls = Array.from({ length: 8 }, (_, i) =>
+      `{"tool":"sandbox_read_file","args":{"path":"/workspace/file${i}.ts"}}`
+    );
+    const text = calls.join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(6); // MAX_PARALLEL_TOOL_CALLS
+    expect(detected.mutating).toBeNull();
+  });
+
+  it('keeps read prefix when mutation appears mid-sequence', () => {
+    // [read, read, mutate, read] — should run first 2 reads + the mutation
+    const text = [
+      '{"tool":"sandbox_read_file","args":{"path":"/workspace/a.ts"}}',
+      '{"tool":"sandbox_read_file","args":{"path":"/workspace/b.ts"}}',
+      '{"tool":"sandbox_exec","args":{"command":"npm test"}}',
+      '{"tool":"sandbox_read_file","args":{"path":"/workspace/c.ts"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(2);
+    expect(detected.mutating).not.toBeNull();
+    if (detected.mutating?.source === 'sandbox') {
+      expect(detected.mutating.call.tool).toBe('sandbox_exec');
+    }
+  });
+
+  it('stops at second mutation, keeping first mutation + preceding reads', () => {
+    // [read, mutate, mutate] — should keep 1 read + first mutation
+    const text = [
+      '{"tool":"sandbox_read_file","args":{"path":"/workspace/a.ts"}}',
+      '{"tool":"sandbox_exec","args":{"command":"npm test"}}',
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/b.ts","content":"x"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(1);
+    expect(detected.mutating).not.toBeNull();
+    if (detected.mutating?.source === 'sandbox') {
+      expect(detected.mutating.call.tool).toBe('sandbox_exec');
+    }
+  });
+});
+
+describe('diagnoseToolCallFailure arg hints', () => {
+  it('includes expected format hint for known tools', () => {
+    // A sandbox_exec call with wrong args structure that fails validation
+    const text = '```json\n{"tool": "sandbox_exec", "args": {}}\n```';
+    const result = diagnoseToolCallFailure(text);
+
+    expect(result).not.toBeNull();
+    expect(result!.reason).toBe('validation_failed');
+    expect(result!.toolName).toBe('sandbox_exec');
+    expect(result!.errorMessage).toContain('Expected format');
+    expect(result!.errorMessage).toContain('"command"');
+  });
+
+  it('includes expected format hint for read_file', () => {
+    const text = '```json\n{"tool": "read_file", "args": {}}\n```';
+    const result = diagnoseToolCallFailure(text);
+
+    expect(result).not.toBeNull();
+    expect(result!.reason).toBe('validation_failed');
+    expect(result!.toolName).toBe('read_file');
+    expect(result!.errorMessage).toContain('Expected format');
+    expect(result!.errorMessage).toContain('"repo"');
+    expect(result!.errorMessage).toContain('"path"');
+  });
 });
