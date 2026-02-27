@@ -57,6 +57,7 @@ interface WorkspaceHubSheetProps {
   ensureSandbox: () => Promise<string | null>;
   repoName?: string;
   protectMainEnabled: boolean;
+  showToolActivity: boolean;
   // Scratchpad
   scratchpadContent: string;
   scratchpadMemories: ScratchpadMemory[];
@@ -74,12 +75,14 @@ interface WorkspaceHubSheetProps {
 // Constants
 // ---------------------------------------------------------------------------
 
-const TABS: Array<{ key: HubTab; label: string; icon: typeof Files }> = [
+const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: typeof Files }> = [
   { key: 'scratchpad', label: 'Pad', icon: StickyNote },
   { key: 'console', label: 'Console', icon: TerminalSquare },
   { key: 'files', label: 'Files', icon: Files },
   { key: 'diff', label: 'Diff', icon: FileDiff },
 ];
+
+const TABS_WITHOUT_CONSOLE = TABS_WITH_CONSOLE.filter((tab) => tab.key !== 'console');
 
 const PHASE_LABELS: Record<CommitPhase, string> = {
   idle: '',
@@ -177,6 +180,7 @@ export function WorkspaceHubSheet({
   ensureSandbox,
   repoName,
   protectMainEnabled,
+  showToolActivity,
   scratchpadContent,
   scratchpadMemories,
   activeMemoryId,
@@ -208,7 +212,8 @@ export function WorkspaceHubSheet({
   const [switchConfirmBranch, setSwitchConfirmBranch] = useState<string | null>(null);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
-  const activeTabIndex = TABS.findIndex((tab) => tab.key === activeTab);
+  const tabs = showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE;
+  const activeTabIndex = tabs.findIndex((tab) => tab.key === activeTab);
   const showCommitBar = activeTab === 'files' || activeTab === 'diff';
 
   const blockedByProtectMain = Boolean(
@@ -451,6 +456,12 @@ export function WorkspaceHubSheet({
     setCommitError(null);
   }, [activeTab]);
 
+  useEffect(() => {
+    if (!showToolActivity && activeTab === 'console') {
+      setActiveTab('files');
+    }
+  }, [showToolActivity, activeTab]);
+
   // Auto-load diff when opening diff tab
   useEffect(() => {
     if (open && activeTab === 'diff' && sandboxReady && !diffLoading && !diffData && !diffError) {
@@ -475,12 +486,14 @@ export function WorkspaceHubSheet({
     const deltaY = touch.clientY - start.y;
     if (Math.abs(deltaX) < 56 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.25) return;
 
-    if (deltaX < 0 && activeTabIndex < TABS.length - 1) {
-      setActiveTab(TABS[activeTabIndex + 1].key);
+    if (activeTabIndex === -1) return;
+
+    if (deltaX < 0 && activeTabIndex < tabs.length - 1) {
+      setActiveTab(tabs[activeTabIndex + 1].key);
       return;
     }
     if (deltaX > 0 && activeTabIndex > 0) {
-      setActiveTab(TABS[activeTabIndex - 1].key);
+      setActiveTab(tabs[activeTabIndex - 1].key);
     }
   };
 
@@ -654,8 +667,8 @@ export function WorkspaceHubSheet({
 
           {/* Tab bar */}
           <div className="border-b border-push-edge px-2 py-2">
-            <div className="grid grid-cols-4 gap-1">
-              {TABS.map((tab) => {
+            <div className={`grid gap-1 ${tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+              {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const active = tab.key === activeTab;
                 return (
@@ -769,7 +782,7 @@ export function WorkspaceHubSheet({
               />
             )}
 
-            {activeTab === 'console' && (
+            {showToolActivity && activeTab === 'console' && (
               <HubConsoleTab messages={messages} agentEvents={agentEvents} />
             )}
 

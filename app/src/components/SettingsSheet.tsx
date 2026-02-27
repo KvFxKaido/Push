@@ -192,6 +192,8 @@ export interface SettingsWorkspaceProps {
   setProtectMainGlobal: (value: boolean) => void;
   protectMainRepoOverride: RepoOverride;
   setProtectMainRepoOverride: (value: RepoOverride) => void;
+  showToolActivity: boolean;
+  setShowToolActivity: (value: boolean) => void;
   activeRepoFullName: string | null;
 }
 
@@ -764,6 +766,45 @@ export function SettingsSheet({
             </div>
             <p className="text-[11px] text-push-fg-secondary">
               Smart prewarms sandbox for likely coding prompts. Always prewarms on every message.
+            </p>
+          </div>
+
+          {/* Show Tool Activity */}
+          <div className="space-y-3 pt-2 border-t border-push-edge">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-push-fg">
+                Show Tool Activity
+              </label>
+              <span className="text-xs text-push-fg-secondary">
+                {workspace.showToolActivity ? 'On' : 'Off'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => workspace.setShowToolActivity(false)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                  !workspace.showToolActivity
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                }`}
+              >
+                Off
+              </button>
+              <button
+                type="button"
+                onClick={() => workspace.setShowToolActivity(true)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                  workspace.showToolActivity
+                    ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
+                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                }`}
+              >
+                On
+              </button>
+            </div>
+            <p className="text-[11px] text-push-fg-secondary">
+              Controls whether the Console tab appears in Workspace Hub. Tool execution is unchanged.
             </p>
           </div>
 

@@ -79,6 +79,7 @@ const SNAPSHOT_IDLE_MS = 5 * 60 * 1000;
 const SNAPSHOT_HARD_CAP_MS = 4 * 60 * 60 * 1000;
 const SNAPSHOT_MIN_GAP_MS = 60 * 1000;
 const SNAPSHOT_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
 
 function formatSnapshotAge(timestamp: number): string {
   const diffMs = Date.now() - timestamp;
@@ -254,6 +255,10 @@ function App() {
   const { setKey: setTavilyKey, clearKey: clearTavilyKey, hasKey: hasTavilyKey } = useTavilyConfig();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('you');
+  const [showToolActivity, setShowToolActivityState] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(TOOL_ACTIVITY_STORAGE_KEY) === '1';
+  });
   const [isDemo, setIsDemo] = useState(false);
   const { profile, updateProfile, clearProfile } = useUserProfile();
   const [displayNameDraft, setDisplayNameDraft] = useState('');
@@ -694,6 +699,16 @@ function App() {
   const updateSandboxStartMode = useCallback((mode: SandboxStartMode) => {
     setSandboxStartMode(mode);
     setSandboxStartModeState(mode);
+  }, []);
+
+  const updateShowToolActivity = useCallback((value: boolean) => {
+    setShowToolActivityState(value);
+    if (typeof window === 'undefined') return;
+    if (value) {
+      window.localStorage.setItem(TOOL_ACTIVITY_STORAGE_KEY, '1');
+    } else {
+      window.localStorage.removeItem(TOOL_ACTIVITY_STORAGE_KEY);
+    }
   }, []);
 
   // Screen state machine
@@ -1526,6 +1541,8 @@ function App() {
         setProtectMainGlobal: protectMain.setGlobalDefault,
         protectMainRepoOverride: protectMain.repoOverride,
         setProtectMainRepoOverride: protectMain.setRepoOverride,
+        showToolActivity,
+        setShowToolActivity: updateShowToolActivity,
         activeRepoFullName: activeRepo?.full_name ?? null,
       }}
       data={{
@@ -2021,6 +2038,7 @@ function App() {
         ensureSandbox={ensureSandbox}
         repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
         protectMainEnabled={protectMain.isProtected}
+        showToolActivity={showToolActivity}
         scratchpadContent={scratchpad.content}
         scratchpadMemories={scratchpad.memories}
         activeMemoryId={scratchpad.activeMemoryId}
