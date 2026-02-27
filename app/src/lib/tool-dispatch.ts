@@ -363,6 +363,20 @@ export const KNOWN_TOOL_NAMES = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
+// Tool source resolution — maps a tool name to its subsystem source
+// ---------------------------------------------------------------------------
+
+export function getToolSource(toolName: string | null): AnyToolCall['source'] {
+  if (!toolName) return 'sandbox';
+  if (GITHUB_TOOL_NAMES.has(toolName)) return 'github';
+  if (IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) return 'sandbox';
+  if (toolName === 'delegate_coder') return 'delegate';
+  if (toolName === 'web_search') return 'web-search';
+  if (['set_scratchpad', 'append_scratchpad', 'read_scratchpad'].includes(toolName)) return 'scratchpad';
+  return 'sandbox'; // Fallback
+}
+
+// ---------------------------------------------------------------------------
 // Diagnosis result type
 // ---------------------------------------------------------------------------
 
@@ -431,16 +445,6 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
   // gets actionable feedback like "missing opening brace" instead of silence.
   const malformedDiagnosis = diagnoseMalformedToolJson(text);
   if (malformedDiagnosis) return malformedDiagnosis;
-
-export function getToolSource(toolName: string | null): AnyToolCall['source'] {
-  if (!toolName) return 'sandbox';
-  if (GITHUB_TOOL_NAMES.has(toolName)) return 'github';
-  if (IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) return 'sandbox';
-  if (toolName === 'delegate_coder') return 'delegate';
-  if (toolName === 'web_search') return 'web-search';
-  if (['set_scratchpad', 'append_scratchpad', 'read_scratchpad'].includes(toolName)) return 'scratchpad';
-  return 'sandbox'; // Fallback
-}
 
   // Phase 3.5: Bare JSON args — telemetry only. Records the metric so we can track
   // how often models emit bare args, but does NOT trigger a retry (too imprecise).
