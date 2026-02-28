@@ -1,12 +1,14 @@
-import { createApiKeyGetter, useApiKeyConfig } from './useApiKeyConfig';
+import { createKeyOnlyProviderConfig } from './useApiKeyConfig';
 
 const STORAGE_KEY = 'tavily_api_key';
 
-export const getTavilyKey = createApiKeyGetter(
-  STORAGE_KEY,
-  import.meta.env.VITE_TAVILY_API_KEY,
-);
+const tavilyConfig = createKeyOnlyProviderConfig({
+  storageKey: STORAGE_KEY,
+  envVar: import.meta.env.VITE_TAVILY_API_KEY,
+});
+
+export const getTavilyKey = tavilyConfig.getKey;
 
 export function useTavilyConfig() {
-  return useApiKeyConfig(STORAGE_KEY, import.meta.env.VITE_TAVILY_API_KEY, getTavilyKey);
+  return tavilyConfig.useConfig();
 }

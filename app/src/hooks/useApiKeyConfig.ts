@@ -93,3 +93,47 @@ export function useApiKeyWithModelConfig(
 
   return { key, setKey, clearKey, hasKey, model, setModel };
 }
+
+interface KeyOnlyProviderConfigOptions {
+  storageKey: string;
+  envVar: string | undefined;
+}
+
+interface KeyOnlyProviderConfig {
+  getKey: () => string | null;
+  useConfig: () => ApiKeyHookResult;
+}
+
+export function createKeyOnlyProviderConfig(
+  options: KeyOnlyProviderConfigOptions,
+): KeyOnlyProviderConfig {
+  const { storageKey, envVar } = options;
+  const getKey = createApiKeyGetter(storageKey, envVar);
+
+  return {
+    getKey,
+    useConfig: () => useApiKeyConfig(storageKey, envVar, getKey),
+  };
+}
+
+interface ModelProviderConfigOptions extends KeyOnlyProviderConfigOptions {
+  modelStorageKey: string;
+  defaultModel: string;
+}
+
+interface ModelProviderConfig extends KeyOnlyProviderConfig {
+  useConfig: () => ApiKeyWithModelHookResult;
+}
+
+export function createModelProviderConfig(
+  options: ModelProviderConfigOptions,
+): ModelProviderConfig {
+  const { storageKey, modelStorageKey, envVar, defaultModel } = options;
+  const getKey = createApiKeyGetter(storageKey, envVar);
+
+  return {
+    getKey,
+    useConfig: () =>
+      useApiKeyWithModelConfig(storageKey, modelStorageKey, envVar, defaultModel, getKey),
+  };
+}
