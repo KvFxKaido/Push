@@ -273,12 +273,62 @@ export function useSandbox(activeRepoFullName?: string | null) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sandboxId]);
 
+  /**
+   * Ping the current sandbox to verify it's still alive.
+   * If alive → restore 'ready' status (clears transient errors).
+   * If dead  → transition to 'error' with an actionable message.
+   * No-op if no sandbox is active.
+   */
+  const refresh = useCallback(async (): Promise<boolean> => {
+    const id = sandboxIdRef.current;
+    if (!id) return false;
+
+    setStatus('creating'); // reuse 'creating' as a "checking" state (shows spinner)
+    setError(null);
+
+    try {
+      const result = await execInSandbox(id, 'true');
+      if (result.exitCode === 0) {
+        setStatus('ready');
+        console.log('[useSandbox] Refresh succeeded — sandbox is alive:', id);
+        return true;
+      }
+      // exitCode -1 or other failure: container is gone
+      const reason = result.error || 'Sandbox is no longer reachable';
+      setStatus('error');
+      setError(reason);
+      clearSession(id);
+      console.log('[useSandbox] Refresh failed — sandbox is dead:', id, reason);
+      return false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus('error');
+      setError(msg);
+      clearSession(id);
+      console.log('[useSandbox] Refresh failed — error:', id, msg);
+      return false;
+    }
+  }, []);
+
+  /**
+   * Transition sandbox to error state from outside (e.g. tool dispatch
+   * detected SANDBOX_UNREACHABLE). Does not ping — just updates UI state
+   * so the user can see the error and act on it.
+   */
+  const markUnreachable = useCallback((reason: string) => {
+    if (statusRef.current === 'error') return; // already in error
+    setStatus('error');
+    setError(reason);
+  }, []);
+
   return {
     sandboxId,
     status,
     error,
     start,
     stop,
+    refresh,
+    markUnreachable,
     rebindSessionRepo,
     createdAt,
   };

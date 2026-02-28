@@ -202,6 +202,9 @@ function App() {
         skipBranchTeardownRef.current = true;
         setCurrentBranch(branch);
       },
+      onSandboxUnreachable: (reason) => {
+        sandbox.markUnreachable(reason);
+      },
     },
     {
       currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
@@ -1890,22 +1893,38 @@ function App() {
       </header>
 
       {/* Sandbox error banner — shown when Modal call fails */}
-      {isSandboxMode && sandbox.status === 'error' && sandbox.error && (
+      {sandbox.status === 'error' && sandbox.error && (
         <div className="mx-4 mt-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in-down">
           <p className="text-xs text-red-400 min-w-0 truncate">{sandbox.error}</p>
           <div className="flex items-center gap-2 shrink-0">
+            {sandbox.sandboxId && (
+              <button
+                onClick={() => void sandbox.refresh()}
+                className="text-xs font-medium text-amber-300 hover:text-amber-200 transition-colors"
+              >
+                Refresh
+              </button>
+            )}
             <button
-              onClick={() => sandbox.start('', 'main')}
+              onClick={() => {
+                if (isSandboxMode) {
+                  void sandbox.start('', 'main');
+                } else if (activeRepo) {
+                  void sandbox.stop().then(() => sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
+                }
+              }}
               className="text-xs font-medium text-red-300 hover:text-red-200 transition-colors"
             >
-              Retry
+              Restart
             </button>
-            <button
-              onClick={handleExitSandboxMode}
-              className="text-xs font-medium text-[#71717a] hover:text-[#a1a1aa] transition-colors"
-            >
-              Exit
-            </button>
+            {isSandboxMode && (
+              <button
+                onClick={handleExitSandboxMode}
+                className="text-xs font-medium text-[#71717a] hover:text-[#a1a1aa] transition-colors"
+              >
+                Exit
+              </button>
+            )}
           </div>
         </div>
       )}
