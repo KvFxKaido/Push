@@ -1056,7 +1056,7 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
 
     // Path filter might be too narrow
     if (path) {
-      hints.push(`Path is scoped to "${path}". Try without a path filter to search the full repo, or use list_directory("${path}") to verify the path exists and is correct.`);
+      hints.push(`Path is scoped to "${path}". Try without a path filter to search the full repo, or use list_directory(repo, "${path}") to verify the path exists and is correct.`);
     }
 
     // Detect naming convention and suggest alternatives

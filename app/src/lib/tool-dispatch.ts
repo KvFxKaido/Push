@@ -511,9 +511,9 @@ const TOOL_ARG_HINTS: Record<string, string> = {
   sandbox_exec: '{"tool": "sandbox_exec", "args": {"command": "your command"}}',
   sandbox_read_file: '{"tool": "sandbox_read_file", "args": {"path": "/workspace/path/to/file"}}',
   sandbox_write_file: '{"tool": "sandbox_write_file", "args": {"path": "/workspace/path/to/file", "content": "file content"}}',
-  sandbox_edit_file: '{"tool": "sandbox_edit_file", "args": {"path": "/workspace/path/to/file", "edits": [{"startHash": "abc1234", "endHash": "def5678", "content": "replacement"}]}}',
+  sandbox_edit_file: '{"tool": "sandbox_edit_file", "args": {"path": "/workspace/path/to/file", "edits": [{"op": "replace_line", "ref": "abc1234", "content": "replacement"}]}}',
   sandbox_list_dir: '{"tool": "sandbox_list_dir", "args": {"path": "/workspace"}}',
-  sandbox_search: '{"tool": "sandbox_search", "args": {"pattern": "search term"}}',
+  sandbox_search: '{"tool": "sandbox_search", "args": {"query": "search term"}}',
   sandbox_diff: '{"tool": "sandbox_diff", "args": {}}',
   sandbox_prepare_commit: '{"tool": "sandbox_prepare_commit", "args": {"message": "commit message"}}',
   sandbox_push: '{"tool": "sandbox_push", "args": {}}',
@@ -571,9 +571,16 @@ function diagnoseMalformedToolJson(text: string): ToolCallDiagnosis | null {
     const toolName = toolMatch[1];
     if (!KNOWN_TOOL_NAMES.has(toolName)) continue;
 
+    // Skip matches inside inline code (backticks) — these are explanatory prose
+    if (isInsideInlineCode(text, toolMatch.index)) continue;
+
     // Extract a reasonable region around this match (find enclosing braces or context)
     const regionStart = findPrecedingBrace(text, toolMatch.index);
     const regionEnd = findFollowingBrace(text, toolMatch.index + toolMatch[0].length);
+
+    // Skip if no preceding '{' was found (match is in plain prose, not a JSON fragment)
+    if (regionStart === toolMatch.index) continue;
+
     const region = text.slice(regionStart, regionEnd + 1);
 
     // Skip if this region is already valid JSON (handled by earlier phases)
@@ -621,6 +628,30 @@ function tryDiagnoseFragment(fragment: string): ToolCallDiagnosis | null {
     errorMessage: `Your call to "${toolName}" has a JSON syntax error: ${syntaxError.message}${hintBlock}\n\nPlease output a valid JSON block with balanced braces and proper quoting.`,
     source: getToolSource(toolName),
   };
+}
+
+/**
+ * Check if position `pos` in `text` is inside an inline code span (single backticks).
+ * Counts unescaped backticks before the position — odd count means inside inline code.
+ * Ignores fenced code blocks (triple backticks) which are handled separately.
+ */
+function isInsideInlineCode(text: string, pos: number): boolean {
+  let backtickCount = 0;
+  for (let i = 0; i < pos; i++) {
+    if (text[i] === '`') {
+      // Skip fenced code blocks (triple backticks)
+      if (text[i + 1] === '`' && text[i + 2] === '`') {
+        const closeIdx = text.indexOf('```', i + 3);
+        if (closeIdx !== -1 && closeIdx < pos) {
+          i = closeIdx + 2; // Skip past closing fence
+          continue;
+        }
+        return false; // Inside a fenced block — handled by the fenced block scanner
+      }
+      backtickCount++;
+    }
+  }
+  return backtickCount % 2 === 1;
 }
 
 /**
