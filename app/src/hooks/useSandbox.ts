@@ -312,10 +312,6 @@ export function useSandbox(activeRepoFullName?: string | null) {
       console.log('[useSandbox] Refresh failed — error:', id, msg);
       return false;
     }
-      clearSession(id);
-      console.log('[useSandbox] Refresh failed — error:', id, msg);
-      return false;
-    }
   }, []);
 
   /**
