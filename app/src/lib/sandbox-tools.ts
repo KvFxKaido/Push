@@ -312,10 +312,6 @@ function formatStructuredError(err: StructuredToolError, baseText: string): stri
   ].join('\n');
 }
 
-function getGitHubAuthToken(): string {
-  return getActiveGitHubToken();
-}
-
 function getGitHubHeaders(token: string): Record<string, string> {
   return {
     'Content-Type': 'application/json',
@@ -349,7 +345,7 @@ async function createGitHubRepo(
   description: string | undefined,
   isPrivate: boolean,
 ): Promise<CreatedRepoResponse> {
-  const token = getGitHubAuthToken();
+  const token = getActiveGitHubToken();
   if (!token) {
     throw new Error('GitHub auth required to promote. Connect a GitHub account in Settings.');
   }
@@ -1880,7 +1876,7 @@ export async function executeSandboxToolCall(
           call.args.private !== undefined ? call.args.private : true,
         );
 
-        const authToken = getGitHubAuthToken();
+        const authToken = getActiveGitHubToken();
         if (!authToken) {
           return { text: '[Tool Error] GitHub auth token missing after repo creation.' };
         }
