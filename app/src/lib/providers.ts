@@ -19,6 +19,7 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   zai:        { chat: providerUrl('/zai/api/coding/paas/v4/chat/completions',   '/api/zai/chat'),        models: providerUrl('/zai/api/coding/paas/v4/models',   '/api/zai/models')        },
   google:     { chat: providerUrl('/google/v1beta/openai/chat/completions',     '/api/google/chat'),     models: providerUrl('/google/v1beta/openai/models',     '/api/google/models')     },
   zen:        { chat: providerUrl('/opencode/zen/v1/chat/completions',          '/api/zen/chat'),        models: providerUrl('/opencode/zen/v1/models',          '/api/zen/models')        },
+  demo:       { chat: '',                                                                                models: ''                                                                        },
 };
 
 // Valid Ollama model names — these must exist on the Ollama server
