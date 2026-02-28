@@ -58,10 +58,6 @@ function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function getCurrentModelForProvider(provider: AIProviderType | ActiveProvider): string | undefined {
-  return getModelNameForProvider(provider);
-}
-
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
   const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
@@ -84,10 +80,6 @@ function generateTitle(messages: ChatMessage[]): string {
   if (!firstUser) return 'New Chat';
   const content = firstUser.content.trim();
   return content.length > 30 ? content.slice(0, 30) + '...' : content;
-}
-
-function getGitHubAuthToken(): string {
-  return getActiveGitHubToken();
 }
 
 function getGitHubAppCommitIdentity(): { name: string; email: string } | undefined {
@@ -880,7 +872,7 @@ export function useChat(
   // Context usage — estimate tokens for the meter
   const contextUsage = useMemo(() => {
     const contextProvider = (conversationProvider as ActiveProvider | undefined) || getActiveProvider();
-    const contextModel = conversationModel || getCurrentModelForProvider(contextProvider);
+    const contextModel = conversationModel || getModelNameForProvider(contextProvider);
     const budget = getContextBudget(contextProvider, contextModel);
     const used = estimateContextTokens(messages);
     const max = budget.maxTokens;
@@ -1182,7 +1174,7 @@ export function useChat(
       const existingConversation = conversations[chatId];
       const lockedProviderForChat = (existingConversation?.provider || getActiveProvider()) as ActiveProvider;
       const existingLockedModel = existingConversation?.model;
-      const resolvedModelForChat = existingLockedModel || getCurrentModelForProvider(lockedProviderForChat);
+      const resolvedModelForChat = existingLockedModel || getModelNameForProvider(lockedProviderForChat);
 
       const shouldPersistProvider = isFirstMessage && !existingConversation?.provider;
       const shouldPersistModel =
@@ -1929,7 +1921,7 @@ export function useChat(
                   if (canRunParallelDelegates) {
                     const sourceRepo = repoRef.current!;
                     const sourceBranch = branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || 'main';
-                    const authToken = getGitHubAuthToken();
+                    const authToken = getActiveGitHubToken();
                     const appCommitIdentity = getGitHubAppCommitIdentity();
 
                     updateAgentStatus(
