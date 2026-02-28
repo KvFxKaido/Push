@@ -23,6 +23,7 @@ import {
   getZaiModelName,
   getGoogleModelName,
   getZenModelName,
+  PROVIDER_URLS,
 } from './providers';
 import type { PreferredProvider } from './providers';
 // ---------------------------------------------------------------------------
@@ -59,37 +60,7 @@ function hasFinishReason(choice: unknown, reasons: string[]): boolean {
 }
 
 
-// Ollama Cloud: OpenAI-compatible endpoint.
-// Dev: Vite proxy avoids CORS. Prod: Cloudflare Worker proxy at /api/ollama/chat.
-const OLLAMA_API_URL = import.meta.env.DEV
-  ? '/ollama/v1/chat/completions'
-  : '/api/ollama/chat';
-
-// Mistral Vibe: OpenAI-compatible endpoint (Devstral models).
-// Dev: Vite proxy avoids CORS. Prod: Cloudflare Worker proxy at /api/mistral/chat.
-const MISTRAL_API_URL = import.meta.env.DEV
-  ? '/mistral/v1/chat/completions'
-  : '/api/mistral/chat';
-
-// Z.AI coding endpoint (OpenAI-compatible).
-const ZAI_API_URL = import.meta.env.DEV
-  ? '/zai/api/coding/paas/v4/chat/completions'
-  : '/api/zai/chat';
-
-// MiniMax OpenAI-compatible endpoint.
-const MINIMAX_API_URL = import.meta.env.DEV
-  ? '/minimax/v1/chat/completions'
-  : '/api/minimax/chat';
-
-// Google Gemini OpenAI-compatible endpoint.
-const GOOGLE_API_URL = import.meta.env.DEV
-  ? '/google/v1beta/openai/chat/completions'
-  : '/api/google/chat';
-
-// OpenCode Zen OpenAI-compatible endpoint.
-const ZEN_API_URL = import.meta.env.DEV
-  ? '/opencode/zen/v1/chat/completions'
-  : '/api/zen/chat';
+// Provider chat URLs are now centralised in PROVIDER_URLS (providers.ts).
 
 /** Reset hook retained for compatibility with providers.ts model setter callback. */
 export function resetMistralAgent(): void {
@@ -1221,7 +1192,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
     getKey: getOllamaKey,
     buildConfig: (apiKey, modelOverride) => ({
       name: 'Ollama Cloud',
-      apiUrl: OLLAMA_API_URL,
+      apiUrl: PROVIDER_URLS.ollama.chat,
       apiKey,
       model: modelOverride || getOllamaModelName(),
       connectTimeoutMs: 30_000,
@@ -1239,7 +1210,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
     getKey: getMistralKey,
     buildConfig: (apiKey, modelOverride) => ({
       name: 'Mistral',
-      apiUrl: MISTRAL_API_URL,
+      apiUrl: PROVIDER_URLS.mistral.chat,
       apiKey,
       model: modelOverride || getMistralModelName(),
       ...STANDARD_TIMEOUTS,
@@ -1253,7 +1224,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
     getKey: getOpenRouterKey,
     buildConfig: (apiKey, modelOverride) => ({
       name: 'OpenRouter',
-      apiUrl: '/api/openrouter/chat',
+      apiUrl: PROVIDER_URLS.openrouter.chat,
       apiKey,
       model: modelOverride || getOpenRouterModelName(),
       ...STANDARD_TIMEOUTS,
@@ -1267,7 +1238,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
     getKey: getMinimaxKey,
     buildConfig: (apiKey, modelOverride) => ({
       name: 'MiniMax',
-      apiUrl: MINIMAX_API_URL,
+      apiUrl: PROVIDER_URLS.minimax.chat,
       apiKey,
       model: modelOverride || getMinimaxModelName(),
       ...STANDARD_TIMEOUTS,
@@ -1281,7 +1252,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
     getKey: getZaiKey,
     buildConfig: (apiKey, modelOverride) => ({
       name: 'Z.AI',
-      apiUrl: ZAI_API_URL,
+      apiUrl: PROVIDER_URLS.zai.chat,
       apiKey,
       model: modelOverride || getZaiModelName(),
       ...STANDARD_TIMEOUTS,
@@ -1295,7 +1266,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
     getKey: getGoogleKey,
     buildConfig: (apiKey, modelOverride) => ({
       name: 'Google',
-      apiUrl: GOOGLE_API_URL,
+      apiUrl: PROVIDER_URLS.google.chat,
       apiKey,
       model: modelOverride || getGoogleModelName(),
       ...STANDARD_TIMEOUTS,
@@ -1309,7 +1280,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
     getKey: getZenKey,
     buildConfig: (apiKey, modelOverride) => ({
       name: 'OpenCode Zen',
-      apiUrl: ZEN_API_URL,
+      apiUrl: PROVIDER_URLS.zen.chat,
       apiKey,
       model: modelOverride || getZenModelName(),
       ...STANDARD_TIMEOUTS,

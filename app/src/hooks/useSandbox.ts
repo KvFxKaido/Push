@@ -16,13 +16,11 @@ import { createSandbox, cleanupSandbox, execInSandbox, setSandboxOwnerToken, get
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { fileLedger } from '@/lib/file-awareness-ledger';
+import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 
 export type SandboxStatus = 'idle' | 'creating' | 'ready' | 'error';
 
-const OAUTH_STORAGE_KEY = 'github_access_token';
-const APP_TOKEN_STORAGE_KEY = 'github_app_token';
 const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 
 const SANDBOX_SESSION_KEY = 'sandbox_session';
 const SANDBOX_MAX_AGE_MS = 25 * 60 * 1000; // 25 min (conservative vs Modal's 30 min)
@@ -36,7 +34,7 @@ interface PersistedSandboxSession {
 }
 
 function getGitHubToken(): string {
-  return safeStorageGet(APP_TOKEN_STORAGE_KEY) || safeStorageGet(OAUTH_STORAGE_KEY) || GITHUB_TOKEN;
+  return getActiveGitHubToken();
 }
 
 function getGitHubAppCommitIdentity(): GitCommitIdentity | undefined {

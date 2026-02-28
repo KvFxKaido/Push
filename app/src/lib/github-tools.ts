@@ -8,11 +8,7 @@
 
 import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData } from '@/types';
 import { asRecord, detectToolFromText } from './utils';
-import { safeStorageGet } from './safe-storage';
-
-const OAUTH_STORAGE_KEY = 'github_access_token';
-const APP_TOKEN_STORAGE_KEY = 'github_app_token';
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
+import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
 
 // --- Tool types ---
 
@@ -83,20 +79,8 @@ const GITHUB_TIMEOUT_MS = 15_000; // 15s timeout for GitHub API calls
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000; // 1s initial delay for exponential backoff
 
-// --- Auth helper (mirrors useGitHub / useRepos pattern) ---
-
-export function getGitHubHeaders(): Record<string, string> {
-  const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
-  const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
-  const authToken = appToken || oauthToken || GITHUB_TOKEN;
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github.v3+json',
-  };
-  if (authToken) {
-    headers['Authorization'] = `token ${authToken}`;
-  }
-  return headers;
-}
+// Re-export for consumers that import from this module (e.g. MergeFlowSheet).
+export { getGitHubHeaders };
 
 // --- Fetch with timeout and retry ---
 

@@ -2,6 +2,25 @@ import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/typ
 import { resetMistralAgent } from './orchestrator';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 
+// ---------------------------------------------------------------------------
+// Provider URL registry — single source of truth for dev/prod endpoints
+// ---------------------------------------------------------------------------
+
+/** Resolve a provider endpoint: dev uses Vite proxy paths, prod uses Worker paths. */
+function providerUrl(devPath: string, prodPath: string): string {
+  return import.meta.env.DEV ? devPath : prodPath;
+}
+
+export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: string }> = {
+  ollama:     { chat: providerUrl('/ollama/v1/chat/completions',                '/api/ollama/chat'),     models: providerUrl('/ollama/v1/models',                '/api/ollama/models')     },
+  mistral:    { chat: providerUrl('/mistral/v1/chat/completions',               '/api/mistral/chat'),    models: providerUrl('/mistral/v1/models',               '/api/mistral/models')    },
+  openrouter: { chat: '/api/openrouter/chat',                                                            models: providerUrl('/openrouter/v1/models',            '/api/openrouter/models') },
+  minimax:    { chat: providerUrl('/minimax/v1/chat/completions',               '/api/minimax/chat'),    models: providerUrl('/minimax/v1/models',               '/api/minimax/models')    },
+  zai:        { chat: providerUrl('/zai/api/coding/paas/v4/chat/completions',   '/api/zai/chat'),        models: providerUrl('/zai/api/coding/paas/v4/models',   '/api/zai/models')        },
+  google:     { chat: providerUrl('/google/v1beta/openai/chat/completions',     '/api/google/chat'),     models: providerUrl('/google/v1beta/openai/models',     '/api/google/models')     },
+  zen:        { chat: providerUrl('/opencode/zen/v1/chat/completions',          '/api/zen/chat'),        models: providerUrl('/opencode/zen/v1/models',          '/api/zen/models')        },
+};
+
 // Valid Ollama model names — these must exist on the Ollama server
 export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 
@@ -68,6 +87,22 @@ export const ZEN_MODELS: string[] = [
   'big-pickle',
 ];
 
+/** Build the standard orchestrator/coder/auditor model triple for a provider. */
+function makeRoleModels(
+  id: string,
+  displayName: string,
+  provider: AIProviderType,
+  context: number,
+): AIModel[] {
+  return (['orchestrator', 'coder', 'auditor'] as const).map((role) => ({
+    id,
+    name: `${displayName} (${role.charAt(0).toUpperCase() + role.slice(1)})`,
+    provider,
+    role,
+    context,
+  }));
+}
+
 export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'ollama',
@@ -75,29 +110,7 @@ export const PROVIDERS: AIProviderConfig[] = [
     description: 'Ollama — run open models locally or on cloud GPUs (OpenAI-compatible)',
     envKey: 'VITE_OLLAMA_API_KEY',
     envUrl: 'http://localhost:11434',
-    models: [
-      {
-        id: OLLAMA_DEFAULT_MODEL,
-        name: 'Ollama (Orchestrator)',
-        provider: 'ollama',
-        role: 'orchestrator',
-        context: 131_072,
-      },
-      {
-        id: OLLAMA_DEFAULT_MODEL,
-        name: 'Ollama (Coder)',
-        provider: 'ollama',
-        role: 'coder',
-        context: 131_072,
-      },
-      {
-        id: OLLAMA_DEFAULT_MODEL,
-        name: 'Ollama (Auditor)',
-        provider: 'ollama',
-        role: 'auditor',
-        context: 131_072,
-      },
-    ],
+    models: makeRoleModels(OLLAMA_DEFAULT_MODEL, 'Ollama', 'ollama', 131_072),
   },
   {
     type: 'mistral',
@@ -105,29 +118,7 @@ export const PROVIDERS: AIProviderConfig[] = [
     description: 'Mistral AI API — Devstral and other models (OpenAI-compatible)',
     envKey: 'VITE_MISTRAL_API_KEY',
     envUrl: 'https://console.mistral.ai',
-    models: [
-      {
-        id: MISTRAL_DEFAULT_MODEL,
-        name: 'Devstral (Orchestrator)',
-        provider: 'mistral',
-        role: 'orchestrator',
-        context: 262_144,
-      },
-      {
-        id: MISTRAL_DEFAULT_MODEL,
-        name: 'Devstral (Coder)',
-        provider: 'mistral',
-        role: 'coder',
-        context: 262_144,
-      },
-      {
-        id: MISTRAL_DEFAULT_MODEL,
-        name: 'Devstral (Auditor)',
-        provider: 'mistral',
-        role: 'auditor',
-        context: 262_144,
-      },
-    ],
+    models: makeRoleModels(MISTRAL_DEFAULT_MODEL, 'Devstral', 'mistral', 262_144),
   },
   {
     type: 'openrouter',
@@ -135,29 +126,7 @@ export const PROVIDERS: AIProviderConfig[] = [
     description: 'OpenRouter — Access 50+ models including Claude, GPT-4, Gemini (OpenAI-compatible)',
     envKey: 'VITE_OPENROUTER_API_KEY',
     envUrl: 'https://openrouter.ai',
-    models: [
-      {
-        id: OPENROUTER_DEFAULT_MODEL,
-        name: 'OpenRouter (Orchestrator)',
-        provider: 'openrouter',
-        role: 'orchestrator',
-        context: 200_000,
-      },
-      {
-        id: OPENROUTER_DEFAULT_MODEL,
-        name: 'OpenRouter (Coder)',
-        provider: 'openrouter',
-        role: 'coder',
-        context: 200_000,
-      },
-      {
-        id: OPENROUTER_DEFAULT_MODEL,
-        name: 'OpenRouter (Auditor)',
-        provider: 'openrouter',
-        role: 'auditor',
-        context: 200_000,
-      },
-    ],
+    models: makeRoleModels(OPENROUTER_DEFAULT_MODEL, 'OpenRouter', 'openrouter', 200_000),
   },
   {
     type: 'minimax',
@@ -165,29 +134,7 @@ export const PROVIDERS: AIProviderConfig[] = [
     description: 'MiniMax OpenAI-compatible API',
     envKey: 'VITE_MINIMAX_API_KEY',
     envUrl: 'https://platform.minimax.io',
-    models: [
-      {
-        id: MINIMAX_DEFAULT_MODEL,
-        name: 'MiniMax (Orchestrator)',
-        provider: 'minimax',
-        role: 'orchestrator',
-        context: 204_800,
-      },
-      {
-        id: MINIMAX_DEFAULT_MODEL,
-        name: 'MiniMax (Coder)',
-        provider: 'minimax',
-        role: 'coder',
-        context: 204_800,
-      },
-      {
-        id: MINIMAX_DEFAULT_MODEL,
-        name: 'MiniMax (Auditor)',
-        provider: 'minimax',
-        role: 'auditor',
-        context: 204_800,
-      },
-    ],
+    models: makeRoleModels(MINIMAX_DEFAULT_MODEL, 'MiniMax', 'minimax', 204_800),
   },
   {
     type: 'zai',
@@ -195,29 +142,7 @@ export const PROVIDERS: AIProviderConfig[] = [
     description: 'Z.AI (GLM) OpenAI-compatible API',
     envKey: 'VITE_ZAI_API_KEY',
     envUrl: 'https://platform.z.ai',
-    models: [
-      {
-        id: ZAI_DEFAULT_MODEL,
-        name: 'Z.AI (Orchestrator)',
-        provider: 'zai',
-        role: 'orchestrator',
-        context: 131_072,
-      },
-      {
-        id: ZAI_DEFAULT_MODEL,
-        name: 'Z.AI (Coder)',
-        provider: 'zai',
-        role: 'coder',
-        context: 131_072,
-      },
-      {
-        id: ZAI_DEFAULT_MODEL,
-        name: 'Z.AI (Auditor)',
-        provider: 'zai',
-        role: 'auditor',
-        context: 131_072,
-      },
-    ],
+    models: makeRoleModels(ZAI_DEFAULT_MODEL, 'Z.AI', 'zai', 131_072),
   },
   {
     type: 'google',
@@ -225,29 +150,7 @@ export const PROVIDERS: AIProviderConfig[] = [
     description: 'Google Gemini (OpenAI-compatible endpoint)',
     envKey: 'VITE_GOOGLE_API_KEY',
     envUrl: 'https://ai.google.dev',
-    models: [
-      {
-        id: GOOGLE_DEFAULT_MODEL,
-        name: 'Google (Orchestrator)',
-        provider: 'google',
-        role: 'orchestrator',
-        context: 1_048_576,
-      },
-      {
-        id: GOOGLE_DEFAULT_MODEL,
-        name: 'Google (Coder)',
-        provider: 'google',
-        role: 'coder',
-        context: 1_048_576,
-      },
-      {
-        id: GOOGLE_DEFAULT_MODEL,
-        name: 'Google (Auditor)',
-        provider: 'google',
-        role: 'auditor',
-        context: 1_048_576,
-      },
-    ],
+    models: makeRoleModels(GOOGLE_DEFAULT_MODEL, 'Google', 'google', 1_048_576),
   },
   {
     type: 'zen',
@@ -255,29 +158,7 @@ export const PROVIDERS: AIProviderConfig[] = [
     description: 'OpenCode Zen routing API (OpenAI-compatible)',
     envKey: 'VITE_ZEN_API_KEY',
     envUrl: 'https://opencode.ai/zen',
-    models: [
-      {
-        id: ZEN_DEFAULT_MODEL,
-        name: 'OpenCode Zen (Orchestrator)',
-        provider: 'zen',
-        role: 'orchestrator',
-        context: 200_000,
-      },
-      {
-        id: ZEN_DEFAULT_MODEL,
-        name: 'OpenCode Zen (Coder)',
-        provider: 'zen',
-        role: 'coder',
-        context: 200_000,
-      },
-      {
-        id: ZEN_DEFAULT_MODEL,
-        name: 'OpenCode Zen (Auditor)',
-        provider: 'zen',
-        role: 'auditor',
-        context: 200_000,
-      },
-    ],
+    models: makeRoleModels(ZEN_DEFAULT_MODEL, 'OpenCode Zen', 'zen', 200_000),
   },
 ];
 
@@ -346,6 +227,11 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   google: getGoogleModelName,
   zen: getZenModelName,
 };
+
+/** Return the current runtime model name for a provider, or undefined if unknown. */
+export function getModelNameForProvider(provider: string): string | undefined {
+  return (MODEL_NAME_GETTERS as Record<string, (() => string) | undefined>)[provider]?.();
+}
 
 export function getModelForRole(
   type: AIProviderType,

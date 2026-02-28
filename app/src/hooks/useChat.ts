@@ -38,26 +38,16 @@ import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import { browserToolEnabled } from '@/lib/feature-flags';
-import {
-  getMistralModelName,
-  getOllamaModelName,
-  getOpenRouterModelName,
-  getMinimaxModelName,
-  getZaiModelName,
-  getGoogleModelName,
-  getZenModelName,
-} from '@/lib/providers';
+import { getModelNameForProvider } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
+import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
 const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
-const OAUTH_STORAGE_KEY = 'github_access_token';
-const APP_TOKEN_STORAGE_KEY = 'github_app_token';
 const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
 const MAX_PARALLEL_DELEGATE_TASKS = 3;
@@ -69,24 +59,7 @@ function createId(): string {
 }
 
 function getCurrentModelForProvider(provider: AIProviderType | ActiveProvider): string | undefined {
-  switch (provider) {
-    case 'ollama':
-      return getOllamaModelName();
-    case 'mistral':
-      return getMistralModelName();
-    case 'openrouter':
-      return getOpenRouterModelName();
-    case 'minimax':
-      return getMinimaxModelName();
-    case 'zai':
-      return getZaiModelName();
-    case 'google':
-      return getGoogleModelName();
-    case 'zen':
-      return getZenModelName();
-    default:
-      return undefined;
-  }
+  return getModelNameForProvider(provider);
 }
 
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
@@ -114,7 +87,7 @@ function generateTitle(messages: ChatMessage[]): string {
 }
 
 function getGitHubAuthToken(): string {
-  return safeStorageGet(APP_TOKEN_STORAGE_KEY) || safeStorageGet(OAUTH_STORAGE_KEY) || GITHUB_TOKEN;
+  return getActiveGitHubToken();
 }
 
 function getGitHubAppCommitIdentity(): { name: string; email: string } | undefined {

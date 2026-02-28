@@ -5,35 +5,7 @@ import { getMinimaxKey } from '@/hooks/useMinimaxConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
-
-const OLLAMA_MODELS_URL = import.meta.env.DEV
-  ? '/ollama/v1/models'
-  : '/api/ollama/models';
-
-const MISTRAL_MODELS_URL = import.meta.env.DEV
-  ? '/mistral/v1/models'
-  : '/api/mistral/models';
-
-const OPENROUTER_MODELS_URL = import.meta.env.DEV
-  ? '/openrouter/v1/models'
-  : '/api/openrouter/models';
-
-const MINIMAX_MODELS_URL = import.meta.env.DEV
-  ? '/minimax/v1/models'
-  : '/api/minimax/models';
-
-const ZAI_MODELS_URL = import.meta.env.DEV
-  ? '/zai/api/coding/paas/v4/models'
-  : '/api/zai/models';
-
-const GOOGLE_MODELS_URL = import.meta.env.DEV
-  ? '/google/v1beta/openai/models'
-  : '/api/google/models';
-
-const ZEN_MODELS_URL = import.meta.env.DEV
-  ? '/opencode/zen/v1/models'
-  : '/api/zen/models';
-
+import { PROVIDER_URLS } from './providers';
 import { asRecord } from './utils';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
@@ -122,29 +94,29 @@ async function fetchProviderModels(url: string, key: string | null, providerName
 }
 
 export async function fetchOllamaModels(): Promise<string[]> {
-  return fetchProviderModels(OLLAMA_MODELS_URL, getOllamaKey(), 'Ollama');
+  return fetchProviderModels(PROVIDER_URLS.ollama.models, getOllamaKey(), 'Ollama');
 }
 
 export async function fetchMistralModels(): Promise<string[]> {
-  return fetchProviderModels(MISTRAL_MODELS_URL, getMistralKey(), 'Mistral');
+  return fetchProviderModels(PROVIDER_URLS.mistral.models, getMistralKey(), 'Mistral');
 }
 
 export async function fetchOpenRouterModels(): Promise<string[]> {
-  return fetchProviderModels(OPENROUTER_MODELS_URL, getOpenRouterKey(), 'OpenRouter');
+  return fetchProviderModels(PROVIDER_URLS.openrouter.models, getOpenRouterKey(), 'OpenRouter');
 }
 
 export async function fetchMinimaxModels(): Promise<string[]> {
-  return fetchProviderModels(MINIMAX_MODELS_URL, getMinimaxKey(), 'MiniMax');
+  return fetchProviderModels(PROVIDER_URLS.minimax.models, getMinimaxKey(), 'MiniMax');
 }
 
 export async function fetchZaiModels(): Promise<string[]> {
-  return fetchProviderModels(ZAI_MODELS_URL, getZaiKey(), 'Z.AI');
+  return fetchProviderModels(PROVIDER_URLS.zai.models, getZaiKey(), 'Z.AI');
 }
 
 export async function fetchGoogleModels(): Promise<string[]> {
-  return fetchProviderModels(GOOGLE_MODELS_URL, getGoogleKey(), 'Google');
+  return fetchProviderModels(PROVIDER_URLS.google.models, getGoogleKey(), 'Google');
 }
 
 export async function fetchZenModels(): Promise<string[]> {
-  return fetchProviderModels(ZEN_MODELS_URL, getZenKey(), 'OpenCode Zen');
+  return fetchProviderModels(PROVIDER_URLS.zen.models, getZenKey(), 'OpenCode Zen');
 }
