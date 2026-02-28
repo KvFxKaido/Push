@@ -1586,6 +1586,8 @@ export function useChat(
 
             // If there's a trailing mutation after the reads, execute it now
             // instead of re-streaming (saves a full LLM round).
+            // Re-check cancellation — user may have aborted while reads were in flight
+            if (detected.mutating && abortRef.current) break;
             if (detected.mutating) {
               const mutCall = detected.mutating;
               console.log(`[Push] Trailing mutation after parallel reads:`, mutCall);

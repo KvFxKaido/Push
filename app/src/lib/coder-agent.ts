@@ -428,6 +428,10 @@ export async function runCoderAgent(
       }
 
       // Execute trailing mutation after reads complete
+      // Re-check cancellation — user may have aborted while reads were in flight
+      if (trailingMutation && signal?.aborted) {
+        throw new DOMException('Coder cancelled by user.', 'AbortError');
+      }
       if (trailingMutation) {
         const mutResult = await executeSandboxToolCall(trailingMutation.call as Parameters<typeof executeSandboxToolCall>[0], sandboxId);
         if (mutResult.card) allCards.push(mutResult.card);
