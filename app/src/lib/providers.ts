@@ -14,7 +14,7 @@ function providerUrl(devPath: string, prodPath: string): string {
 export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: string }> = {
   ollama:     { chat: providerUrl('/ollama/v1/chat/completions',                '/api/ollama/chat'),     models: providerUrl('/ollama/v1/models',                '/api/ollama/models')     },
   mistral:    { chat: providerUrl('/mistral/v1/chat/completions',               '/api/mistral/chat'),    models: providerUrl('/mistral/v1/models',               '/api/mistral/models')    },
-  openrouter: { chat: providerUrl('/openrouter/api/v1/chat/completions',   '/api/openrouter/chat'),   models: providerUrl('/openrouter/v1/models',            '/api/openrouter/models') },
+  openrouter: { chat: providerUrl('/openrouter/api/v1/chat/completions',    '/api/openrouter/chat'), models: providerUrl('/openrouter/v1/models',            '/api/openrouter/models') },
   minimax:    { chat: providerUrl('/minimax/v1/chat/completions',               '/api/minimax/chat'),    models: providerUrl('/minimax/v1/models',               '/api/minimax/models')    },
   zai:        { chat: providerUrl('/zai/api/coding/paas/v4/chat/completions',   '/api/zai/chat'),        models: providerUrl('/zai/api/coding/paas/v4/models',   '/api/zai/models')        },
   google:     { chat: providerUrl('/google/v1beta/openai/chat/completions',     '/api/google/chat'),     models: providerUrl('/google/v1beta/openai/models',     '/api/google/models')     },
