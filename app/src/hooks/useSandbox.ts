@@ -288,6 +288,9 @@ export function useSandbox(activeRepoFullName?: string | null) {
 
     try {
       const result = await execInSandbox(id, 'true');
+      
+      if (sandboxIdRef.current !== id) return false;
+
       if (result.exitCode === 0) {
         setStatus('ready');
         console.log('[useSandbox] Refresh succeeded — sandbox is alive:', id);
@@ -301,9 +304,14 @@ export function useSandbox(activeRepoFullName?: string | null) {
       console.log('[useSandbox] Refresh failed — sandbox is dead:', id, reason);
       return false;
     } catch (err) {
+      if (sandboxIdRef.current !== id) return false;
       const msg = err instanceof Error ? err.message : String(err);
       setStatus('error');
       setError(msg);
+      clearSession(id);
+      console.log('[useSandbox] Refresh failed — error:', id, msg);
+      return false;
+    }
       clearSession(id);
       console.log('[useSandbox] Refresh failed — error:', id, msg);
       return false;
