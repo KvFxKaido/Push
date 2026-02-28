@@ -3,7 +3,6 @@ import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type {
   ChatMessage,
   CIStatus,
-  CIStatusCardData,
   AgentStatus,
   AgentStatusEvent,
   AgentStatusSource,
@@ -610,14 +609,6 @@ export function useChat(
 
   // --- Resumable Sessions: flush checkpoint on visibility change ---
 
-
-  const diagnoseCIFailure = useCallback(async () => {
-    const repo = repoRef.current;
-    const branch = branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch;
-    if (!repo || !ciStatus || ciStatus.overall !== 'failure') return;
-
-    await sendMessage();
-  }, [ciStatus, sendMessage]);
 
   useEffect(() => {
     const repo = repoRef.current;
@@ -2376,6 +2367,15 @@ export function useChat(
 
   // Wire sendMessageRef so resume callback can reach it (defined after sendMessage)
   sendMessageRef.current = sendMessage;
+
+  const diagnoseCIFailure = useCallback(async () => {
+    if (!repoRef.current || !ciStatus || ciStatus.overall !== 'failure') return;
+    const failedChecks = ciStatus.checks
+      .filter((c) => c.conclusion === 'failure')
+      .map((c) => c.name)
+      .join(', ');
+    await sendMessage(`CI is failing on ${ciStatus.ref}. Failed checks: ${failedChecks}. Diagnose and fix the failures.`);
+  }, [ciStatus, sendMessage]);
 
   // --- Card action handler (Phase 4 — commit review + CI) ---
 

@@ -954,6 +954,7 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
   }
 
   const cardData: CIStatusCardData = {
+    type: 'ci-status',
     repo,
     ref: commitRef,
     checks,

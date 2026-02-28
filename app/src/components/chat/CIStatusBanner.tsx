@@ -1,4 +1,3 @@
-import { useState, useMemo } from 'react';
 import { ShieldAlert, ShieldCheck, Loader2, Wrench } from 'lucide-react';
 import type { CIStatus } from '@/types';
 

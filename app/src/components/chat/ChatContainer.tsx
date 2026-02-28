@@ -1,6 +1,6 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { ArrowDown, RotateCcw, X } from 'lucide-react';
-import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, LoopPhase } from '@/types';
+import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, LoopPhase, CIStatus } from '@/types';
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';

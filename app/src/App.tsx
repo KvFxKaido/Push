@@ -176,6 +176,8 @@ function App() {
     interruptedCheckpoint,
     resumeInterruptedRun,
     dismissResume,
+    ciStatus,
+    diagnoseCIFailure,
   } = useChat(
     activeRepo?.full_name ?? null,
     {
@@ -1956,8 +1958,8 @@ function App() {
         interruptedCheckpoint={interruptedCheckpoint}
         onResumeRun={resumeInterruptedRun}
         onDismissResume={dismissResume}
-        ciStatus={chat.ciStatus}
-        onDiagnoseCI={chat.diagnoseCIFailure}
+        ciStatus={ciStatus}
+        onDiagnoseCI={diagnoseCIFailure}
       />
 
       {/* Input */}
