@@ -104,8 +104,10 @@ export type ContextMode = 'graceful' | 'none';
 const DEFAULT_CONTEXT_MAX_TOKENS = 100_000; // Hard cap
 const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for system prompt + response
 // Gemini models (1M context window) — Google, Ollama, OpenRouter, and Zen with Gemini models
-const GEMINI_CONTEXT_MAX_TOKENS = 950_000;
-const GEMINI_CONTEXT_TARGET_TOKENS = 900_000;
+// Keep a ~20% margin below the 1,048,576 API limit because estimateTokens (len/3.5) can
+// undercount on code-dense or CJK-heavy conversations.
+const GEMINI_CONTEXT_MAX_TOKENS = 850_000;
+const GEMINI_CONTEXT_TARGET_TOKENS = 800_000;
 
 export interface ContextBudget {
   maxTokens: number;
