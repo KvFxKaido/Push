@@ -1956,6 +1956,8 @@ function App() {
         interruptedCheckpoint={interruptedCheckpoint}
         onResumeRun={resumeInterruptedRun}
         onDismissResume={dismissResume}
+        ciStatus={chat.ciStatus}
+        onDiagnoseCI={chat.diagnoseCIFailure}
       />
 
       {/* Input */}

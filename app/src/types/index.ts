@@ -428,12 +428,18 @@ export interface CICheck {
   detailsUrl?: string;
 }
 
-export interface CIStatusCardData {
+export type CIOverallStatus = 'pending' | 'success' | 'failure' | 'neutral' | 'no-checks';
+
+export interface CIStatus {
+  overall: CIOverallStatus;
   repo: string;
   ref: string;
-  checks: CICheck[];
-  overall: 'pending' | 'success' | 'failure' | 'neutral' | 'no-checks';
   fetchedAt: string;
+  checks: CICheck[];
+}
+
+export interface CIStatusCardData extends CIStatus {
+  type: 'ci-status';
 }
 
 export type CardAction =
@@ -482,7 +488,7 @@ export interface ActiveRepo {
   full_name: string;
   owner: string;
   default_branch: string;
-  current_branch?: string;  // User-selected branch for context awareness
+  current_branch?: string;
   private: boolean;
 }
 
@@ -622,7 +628,7 @@ export interface AskUserCardData {
   multiSelect?: boolean;
 }
 
-// --- Resumable Sessions (Phase 1) ---
+// --- Resumable Sessions ---
 
 export type LoopPhase = 'streaming_llm' | 'executing_tools' | 'delegating_coder';
 
@@ -630,30 +636,17 @@ export interface RunCheckpoint {
   chatId: string;
   round: number;
   phase: LoopPhase;
-  /** Index into the persisted conversation's message array. */
   baseMessageCount: number;
-  /** Messages added during the current run that aren't yet in the persisted conversation. */
   deltaMessages: Array<{ role: string; content: string }>;
-  /** The accumulated assistant response for the current round (lost on interrupt without this). */
   accumulated: string;
-  /** Thinking content if present. */
   thinkingAccumulated: string;
-  /** Was there a Coder delegation in progress? */
   coderDelegationActive: boolean;
-  /** Last known CODER_STATE (if delegation was active). */
   lastCoderState: string | null;
-  /** Timestamp for staleness detection. */
   savedAt: number;
-  /** Provider locked for this chat. */
   provider: AIProviderType;
-  /** Model locked for this chat. */
   model: string;
-  /** Sandbox session ID — used to validate the checkpoint matches the current sandbox. */
   sandboxSessionId: string;
-  /** Active branch at checkpoint time. */
   activeBranch: string;
-  /** Repo full name at checkpoint time. */
   repoId: string;
-  /** True if user had requested abort before checkpoint was saved. */
   userAborted?: boolean;
 }

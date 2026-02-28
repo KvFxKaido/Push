@@ -73,7 +73,7 @@ export async function runAuditor(
     {
       id: 'audit-request',
       role: 'user',
-      content: `Review this diff for security issues:\n\n\`\`\`diff\n${diff.slice(0, 15_000)}\n\`\`\``,
+          content: `Review this diff for security issues:\n\n\`\`\`diff\n${diff.slice(0, 30_000).replace(/\`/g, '\\`')}\n\`\`\``,
       timestamp: Date.now(),
     },
   ];

@@ -3,6 +3,8 @@ import { ArrowDown, RotateCcw, X } from 'lucide-react';
 import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, LoopPhase } from '@/types';
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
+import { CIStatusBanner } from './CIStatusBanner';
+
 
 // --- Resume Banner (Resumable Sessions Phase 2) ---
 
@@ -79,6 +81,9 @@ interface ChatContainerProps {
   interruptedCheckpoint?: RunCheckpoint | null;
   onResumeRun?: () => void;
   onDismissResume?: () => void;
+  ciStatus?: CIStatus | null;
+  onDiagnoseCI?: () => void;
+
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 150;
@@ -174,7 +179,20 @@ function EmptyState({
   );
 }
 
-export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode, onSuggestion, onCardAction, interruptedCheckpoint, onResumeRun, onDismissResume }: ChatContainerProps) {
+export function ChatContainer({
+  messages,
+  agentStatus,
+  activeRepo,
+  isSandboxMode,
+  onSuggestion,
+  onCardAction,
+  interruptedCheckpoint,
+  onResumeRun,
+  onDismissResume,
+  ciStatus,
+  onDiagnoseCI
+}: ChatContainerProps) {
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -246,6 +264,10 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
         {interruptedCheckpoint && onResumeRun && onDismissResume && (
           <ResumeBanner checkpoint={interruptedCheckpoint} onResume={onResumeRun} onDismiss={onDismissResume} />
         )}
+        {ciStatus && onDiagnoseCI && (
+          <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />
+        )}
+
         <EmptyState activeRepo={activeRepo} isSandboxMode={isSandboxMode} onSuggestion={onSuggestion} />
       </div>
     );
@@ -256,6 +278,10 @@ export function ChatContainer({ messages, agentStatus, activeRepo, isSandboxMode
       {interruptedCheckpoint && onResumeRun && onDismissResume && (
         <ResumeBanner checkpoint={interruptedCheckpoint} onResume={onResumeRun} onDismiss={onDismissResume} />
       )}
+      {ciStatus && onDiagnoseCI && (
+        <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />
+      )}
+
       <div
         ref={containerRef}
         className="flex-1 overflow-y-auto overscroll-contain"

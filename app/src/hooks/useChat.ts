@@ -2,6 +2,8 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type {
   ChatMessage,
+  CIStatus,
+  CIStatusCardData,
   AgentStatus,
   AgentStatusEvent,
   AgentStatusSource,
@@ -550,6 +552,7 @@ export function useChat(
   runtimeHandlers?: ChatRuntimeHandlers,
   branchInfo?: { currentBranch?: string; defaultBranch?: string },
 ) {
+  const [ciStatus, setCiStatus] = useState<CIStatus | null>(null);
   const [conversations, setConversations] = useState<Record<string, Conversation>>(loadConversations);
   const [activeChatId, setActiveChatId] = useState<string>(() => loadActiveChatId(conversations));
   const [isStreaming, setIsStreaming] = useState(false);
@@ -606,6 +609,47 @@ export function useChat(
   }, [activeChatId]);
 
   // --- Resumable Sessions: flush checkpoint on visibility change ---
+
+
+  const diagnoseCIFailure = useCallback(async () => {
+    const repo = repoRef.current;
+    const branch = branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch;
+    if (!repo || !ciStatus || ciStatus.overall !== 'failure') return;
+
+    await sendMessage();
+  }, [ciStatus, sendMessage]);
+
+  useEffect(() => {
+    const repo = repoRef.current;
+    const branch = branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch;
+    if (!repo || !branch) {
+      setCiStatus(null);
+      return;
+    }
+
+    let aborted = false;
+    const poll = async () => {
+      try {
+        const result = await executeToolCall(
+          { tool: 'fetch_checks', args: { repo, ref: branch } },
+          repo
+        );
+        if (!aborted && result.card?.type === 'ci-status') {
+          setCiStatus(result.card.data as CIStatus);
+        }
+      } catch (err) {
+        console.error('[Push] CI poll failed:', err);
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 60_000);
+
+    return () => {
+      aborted = true;
+      clearInterval(interval);
+    };
+  }, [activeChatId, activeRepoFullName, branchInfo?.currentBranch]);
 
   const flushCheckpoint = useCallback(() => {
     const chatId = checkpointChatIdRef.current;
@@ -2734,5 +2778,7 @@ export function useChat(
     interruptedCheckpoint,
     resumeInterruptedRun,
     dismissResume,
+    ciStatus,
+    diagnoseCIFailure,
   };
 }
