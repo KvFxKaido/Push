@@ -41,11 +41,7 @@ import { recordBrowserMetric } from './browser-metrics';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger, extractSignatures } from './file-awareness-ledger';
 import { applyHashlineEdits, calculateLineHash, type HashlineOp } from "./hashline";
-import { safeStorageGet } from './safe-storage';
-
-const OAUTH_STORAGE_KEY = 'github_access_token';
-const APP_TOKEN_STORAGE_KEY = 'github_app_token';
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
+import { getActiveGitHubToken } from './github-auth';
 const sandboxFileVersions = new Map<string, string>();
 
 function fileVersionKey(sandboxId: string, path: string): string {
@@ -317,7 +313,7 @@ function formatStructuredError(err: StructuredToolError, baseText: string): stri
 }
 
 function getGitHubAuthToken(): string {
-  return safeStorageGet(APP_TOKEN_STORAGE_KEY) || safeStorageGet(OAUTH_STORAGE_KEY) || GITHUB_TOKEN;
+  return getActiveGitHubToken();
 }
 
 function getGitHubHeaders(token: string): Record<string, string> {

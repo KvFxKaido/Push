@@ -1,3 +1,4 @@
+import type { ComponentType } from 'react';
 import type { ChatCard, CardAction } from '@/types';
 import { PRCard } from './PRCard';
 import { PRListCard } from './PRListCard';
@@ -30,80 +31,55 @@ interface CardRendererProps {
   onAction?: (action: CardAction) => void;
 }
 
+// ---------------------------------------------------------------------------
+// Component registries — data-only cards vs cards that receive action props
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
+  'pr':                  PRCard,
+  'pr-list':             PRListCard,
+  'commit-list':         CommitListCard,
+  'file':                FileCard,
+  'branch-list':         BranchListCard,
+  'file-list':           FileListCard,
+  'sandbox':             SandboxCard,
+  'diff-preview':        DiffPreviewCard,
+  'audit-verdict':       AuditVerdictCard,
+  'file-search':         FileSearchCard,
+  'commit-files':        CommitFilesCard,
+  'test-results':        TestResultsCard,
+  'type-check':          TypeCheckCard,
+  'browser-screenshot':  BrowserScreenshotCard,
+  'browser-extract':     BrowserExtractCard,
+  'sandbox-download':    SandboxDownloadCard,
+  'workflow-runs':       WorkflowRunsCard,
+  'workflow-logs':       WorkflowLogsCard,
+  'web-search':          WebSearchCard,
+  'coder-progress':      CoderProgressCard,
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ACTION_CARDS: Record<string, ComponentType<{ data: any; messageId: string; cardIndex: number; onAction?: (action: CardAction) => void }>> = {
+  'commit-review': CommitReviewCard,
+  'ci-status':     CIStatusCard,
+  'editor':        EditorCard,
+};
+
+// ---------------------------------------------------------------------------
+
 function renderCard(card: ChatCard, messageId?: string, cardIndex?: number, onAction?: (action: CardAction) => void) {
-  switch (card.type) {
-    case 'pr':
-      return <PRCard data={card.data} />;
-    case 'pr-list':
-      return <PRListCard data={card.data} />;
-    case 'commit-list':
-      return <CommitListCard data={card.data} />;
-    case 'file':
-      return <FileCard data={card.data} />;
-    case 'branch-list':
-      return <BranchListCard data={card.data} />;
-    case 'file-list':
-      return <FileListCard data={card.data} />;
-    case 'sandbox':
-      return <SandboxCard data={card.data} />;
-    case 'sandbox-state':
-      return null;
-    case 'diff-preview':
-      return <DiffPreviewCard data={card.data} />;
-    case 'audit-verdict':
-      return <AuditVerdictCard data={card.data} />;
-    case 'commit-review':
-      return (
-        <CommitReviewCard
-          data={card.data}
-          messageId={messageId || ''}
-          cardIndex={cardIndex ?? 0}
-          onAction={onAction}
-        />
-      );
-    case 'ci-status':
-      return (
-        <CIStatusCard
-          data={card.data}
-          messageId={messageId || ''}
-          cardIndex={cardIndex ?? 0}
-          onAction={onAction}
-        />
-      );
-    case 'editor':
-      return (
-        <EditorCard
-          data={card.data}
-          messageId={messageId}
-          cardIndex={cardIndex}
-          onAction={onAction}
-        />
-      );
-    case 'file-search':
-      return <FileSearchCard data={card.data} />;
-    case 'commit-files':
-      return <CommitFilesCard data={card.data} />;
-    case 'test-results':
-      return <TestResultsCard data={card.data} />;
-    case 'type-check':
-      return <TypeCheckCard data={card.data} />;
-    case 'browser-screenshot':
-      return <BrowserScreenshotCard data={card.data} />;
-    case 'browser-extract':
-      return <BrowserExtractCard data={card.data} />;
-    case 'sandbox-download':
-      return <SandboxDownloadCard data={card.data} />;
-    case 'workflow-runs':
-      return <WorkflowRunsCard data={card.data} />;
-    case 'workflow-logs':
-      return <WorkflowLogsCard data={card.data} />;
-    case 'web-search':
-      return <WebSearchCard data={card.data} />;
-    case 'coder-progress':
-      return <CoderProgressCard data={card.data} />;
-    default:
-      return null;
+  if (card.type === 'sandbox-state') return null;
+
+  const ActionComp = ACTION_CARDS[card.type];
+  if (ActionComp) {
+    return <ActionComp data={card.data} messageId={messageId || ''} cardIndex={cardIndex ?? 0} onAction={onAction} />;
   }
+
+  const DataComp = DATA_ONLY_CARDS[card.type];
+  if (DataComp) return <DataComp data={card.data} />;
+
+  return null;
 }
 
 export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRendererProps) {

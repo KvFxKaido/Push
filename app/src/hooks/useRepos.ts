@@ -1,26 +1,11 @@
 import { useState, useCallback } from 'react';
 import type { RepoWithActivity, RepoSummary, RepoActivity } from '@/types';
 import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
+import { getActiveGitHubToken, getGitHubAuthHeaders, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
-const OAUTH_STORAGE_KEY = 'github_access_token';
-const APP_TOKEN_STORAGE_KEY = 'github_app_token';
 const APP_INSTALLATION_ID_KEY = 'github_app_installation_id';
 const SYNC_STORAGE_KEY = 'repo_last_sync';
 const PUSHED_STORAGE_KEY = 'repo_last_pushed';
-
-function getAuthHeaders(): Record<string, string> {
-  const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
-  const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
-  const authToken = appToken || oauthToken || GITHUB_TOKEN;
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github.v3+json',
-  };
-  if (authToken) {
-    headers['Authorization'] = `token ${authToken}`;
-  }
-  return headers;
-}
 
 function getStoredPushedAt(): Record<string, string> {
   try {
@@ -203,7 +188,7 @@ export function useRepos() {
     setError(null);
 
     try {
-      const headers = getAuthHeaders();
+      const headers = getGitHubAuthHeaders();
       const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
       const hasInstallationId = Boolean(safeStorageGet(APP_INSTALLATION_ID_KEY));
       const isGitHubAppAuth = Boolean(appToken && hasInstallationId);
@@ -303,11 +288,7 @@ export function useRepos() {
       setLastSyncTime(now);
       safeStorageSet(SYNC_STORAGE_KEY, now);
     } catch (err) {
-      const hasAnyToken = Boolean(
-        safeStorageGet(OAUTH_STORAGE_KEY) ||
-        safeStorageGet(APP_TOKEN_STORAGE_KEY) ||
-        GITHUB_TOKEN
-      );
+      const hasAnyToken = Boolean(getActiveGitHubToken());
       if (hasAnyToken) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch repositories from GitHub';
         setError(msg);

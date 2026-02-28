@@ -1,10 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { PRInput, PRData, PRFile } from '@/types';
-import { safeStorageGet } from '@/lib/safe-storage';
-
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
-const OAUTH_STORAGE_KEY = 'github_access_token';
-const APP_TOKEN_STORAGE_KEY = 'github_app_token';
+import { getActiveGitHubToken, getGitHubAuthHeaders } from '@/lib/github-auth';
 
 // Mock PR data for demo when API fails or no token
 const MOCK_PR_DATA: PRData = {
@@ -35,15 +31,7 @@ export function useGitHub() {
     setError(null);
 
     try {
-      const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
-      const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
-      const authToken = appToken || oauthToken || GITHUB_TOKEN;
-      const headers: Record<string, string> = {
-        'Accept': 'application/vnd.github.v3+json',
-      };
-      if (authToken) {
-        headers['Authorization'] = `token ${authToken}`;
-      }
+      const headers = getGitHubAuthHeaders();
 
       // Fetch PR details
       const prResponse = await fetch(
@@ -116,9 +104,7 @@ export function useGitHub() {
         files,
       };
     } catch (err) {
-      const oauthToken = safeStorageGet(OAUTH_STORAGE_KEY) || '';
-      const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY) || '';
-      const hasToken = Boolean(oauthToken || appToken || GITHUB_TOKEN);
+      const hasToken = Boolean(getActiveGitHubToken());
       if (hasToken) {
         // User has a token — surface the real error, don't hide it
         const msg = err instanceof Error ? err.message : 'GitHub API request failed';
