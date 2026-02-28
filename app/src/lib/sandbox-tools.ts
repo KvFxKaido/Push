@@ -276,8 +276,8 @@ export function classifyError(error: string, context?: string): StructuredToolEr
   if (lower.includes('timed out') || lower.includes('timeout') || lower.includes('modal_timeout')) {
     return { type: 'EXEC_TIMEOUT', retryable: true, message: error, detail: context };
   }
-  if (lower.includes('sandbox_unreachable') || lower.includes('modal_network_error') || lower.includes('cannot connect')) {
-    return { type: 'SANDBOX_UNREACHABLE', retryable: true, message: error, detail: context };
+  if (lower.includes('sandbox_unreachable') || lower.includes('modal_network_error') || lower.includes('cannot connect') || lower.includes('modal_error') || lower.includes('sandbox unavailable') || lower.includes('container error') || lower.includes('no longer reachable')) {
+    return { type: 'SANDBOX_UNREACHABLE', retryable: false, message: error, detail: context };
   }
   if (lower.includes('stale') || lower.includes('stale_file') || lower.includes('stale write')) {
     return { type: 'STALE_FILE', retryable: false, message: error, detail: context };
@@ -651,6 +651,29 @@ export async function executeSandboxToolCall(
         const start = Date.now();
         const result = await execInSandbox(sandboxId, call.args.command, normalizeSandboxWorkdir(call.args.workdir));
         const durationMs = Date.now() - start;
+
+        // Exit code -1 means the command was never dispatched — the container
+        // is unreachable (expired, terminated, or unhealthy).
+        if (result.exitCode === -1) {
+          const reason = result.error || 'Sandbox unavailable';
+          const err = classifyError(reason, call.args.command);
+          // Override to SANDBOX_UNREACHABLE since -1 always means the container is gone
+          err.type = 'SANDBOX_UNREACHABLE';
+          err.retryable = false;
+          const cardData: SandboxCardData = {
+            command: call.args.command,
+            stdout: '',
+            stderr: reason,
+            exitCode: -1,
+            truncated: false,
+            durationMs,
+          };
+          return {
+            text: formatStructuredError(err, `[Tool Error — sandbox_exec]\nCommand was not executed. ${reason}\nThe sandbox container is no longer reachable. Please restart the sandbox to continue.`),
+            card: { type: 'sandbox', data: cardData },
+            structuredError: err,
+          };
+        }
 
         const lines: string[] = [
           `[Tool Result — sandbox_exec]`,

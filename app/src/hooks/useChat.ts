@@ -542,6 +542,9 @@ export interface ChatRuntimeHandlers {
   /** Called when a sandbox tool (e.g. sandbox_save_draft) switches branches internally.
    *  The app should update its branch state without tearing down the sandbox. */
   onBranchSwitch?: (branch: string) => void;
+  /** Called when a tool result indicates the sandbox is unreachable.
+   *  Allows the sandbox hook to transition to error state. */
+  onSandboxUnreachable?: (reason: string) => void;
 }
 
 export function useChat(
@@ -1512,6 +1515,14 @@ export function useChat(
 
             if (abortRef.current) break;
 
+            // Notify sandbox hook if any tool indicates the container is unreachable
+            for (const { result } of parallelResults) {
+              if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+                runtimeHandlersRef.current?.onSandboxUnreachable?.(result.structuredError.message);
+                break;
+              }
+            }
+
             const cards = parallelResults
               .map((entry) => entry.result.card)
               .filter((card): card is ChatCard => !!card && card.type !== 'sandbox-state');
@@ -1610,6 +1621,11 @@ export function useChat(
                 lockedProviderForChat,
               );
               const mutDuration = Date.now() - mutStart;
+
+              // Notify sandbox hook if mutation indicates container is unreachable
+              if (mutResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+                runtimeHandlersRef.current?.onSandboxUnreachable?.(mutResult.structuredError.message);
+              }
 
               if (mutResult.card) {
                 setConversations((prev) => {
@@ -2248,6 +2264,11 @@ export function useChat(
           // Sync app branch state when sandbox switches branches (e.g. draft checkout)
           if (toolExecResult.branchSwitch) {
             runtimeHandlersRef.current?.onBranchSwitch?.(toolExecResult.branchSwitch);
+          }
+
+          // Notify sandbox hook if tool indicates the container is unreachable
+          if (toolExecResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+            runtimeHandlersRef.current?.onSandboxUnreachable?.(toolExecResult.structuredError.message);
           }
 
           // Attach card to the assistant message that triggered the tool call

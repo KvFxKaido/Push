@@ -629,15 +629,18 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
         details = 'Modal authentication failed. Check that your Modal tokens are valid and the app is deployed under the correct account.';
       } else if (upstream.status === 500) {
         // Parse 500 error bodies for known patterns to give more specific codes
-        if (lowerBody.includes('not found') || lowerBody.includes('does not exist') || lowerBody.includes('no such')) {
+        if (lowerBody.includes('not found') || lowerBody.includes('does not exist') || lowerBody.includes('no such') || lowerBody.includes('expired')) {
           code = 'MODAL_NOT_FOUND';
           details = 'Sandbox not found or expired. The container may have been terminated.';
-        } else if (lowerBody.includes('terminated') || lowerBody.includes('closed')) {
+        } else if (lowerBody.includes('terminated') || lowerBody.includes('closed') || lowerBody.includes('no longer running')) {
           code = 'MODAL_NOT_FOUND';
           details = 'Sandbox has been terminated. Start a new sandbox session.';
         } else if (lowerBody.includes('timeout') || lowerBody.includes('timed out')) {
           code = 'MODAL_TIMEOUT';
           details = 'Modal operation timed out internally.';
+        } else if (lowerBody.includes('unauthorized') || lowerBody.includes('forbidden')) {
+          code = 'MODAL_AUTH_FAILED';
+          details = 'Sandbox access was denied. The session token may be invalid.';
         } else {
           details = errBody.slice(0, 200) || 'Internal Server Error';
         }
