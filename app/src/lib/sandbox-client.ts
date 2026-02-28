@@ -24,6 +24,8 @@ export interface ExecResult {
   stderr: string;
   exitCode: number;
   truncated: boolean;
+  /** Error message from the sandbox backend (e.g. "Sandbox not found or expired"). Present when exit_code is -1 (command never dispatched). */
+  error?: string;
 }
 
 export interface FileReadResult {
@@ -86,6 +88,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   MODAL_UNAVAILABLE: 'Sandbox is starting up. Try again in a few seconds.',
   MODAL_TIMEOUT: 'Sandbox operation timed out. Try a simpler command.',
   MODAL_NETWORK_ERROR: 'Cannot connect to the sandbox. Check your network or Modal status.',
+  MODAL_ERROR: 'Sandbox container error. The container may be unhealthy — try restarting the sandbox.',
   MODAL_UNKNOWN_ERROR: 'An unexpected sandbox error occurred.',
 };
 
@@ -119,6 +122,7 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
     case 'MODAL_NOT_FOUND': return 'SANDBOX_UNREACHABLE';
     case 'MODAL_AUTH_FAILED': return 'AUTH_FAILURE';
     case 'MODAL_UNAVAILABLE': return 'SANDBOX_UNREACHABLE';
+    case 'MODAL_ERROR': return 'SANDBOX_UNREACHABLE';
     case 'STALE_FILE': return 'STALE_FILE';
     default: return 'UNKNOWN';
   }
@@ -323,7 +327,7 @@ export async function execInSandbox(
   workdir?: string,
 ): Promise<ExecResult> {
   // API returns snake_case, we need camelCase
-  const raw = await sandboxFetch<{ stdout: string; stderr: string; exit_code: number; truncated: boolean }>(
+  const raw = await sandboxFetch<{ stdout: string; stderr: string; exit_code: number; truncated: boolean; error?: string }>(
     'exec',
     withOwnerToken({
       sandbox_id: sandboxId,
@@ -337,6 +341,7 @@ export async function execInSandbox(
     stderr: raw.stderr,
     exitCode: raw.exit_code,
     truncated: raw.truncated,
+    error: raw.error,
   };
 }
 
