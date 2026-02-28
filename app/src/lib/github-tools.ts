@@ -1922,6 +1922,7 @@ Rules:
 - For "deploy" or "run workflow" use trigger_workflow, then suggest get_workflow_runs to check status
 - For "show CI runs" or "what workflows ran" use get_workflow_runs
 - For "why did the build fail" use get_workflow_runs to find the run, then get_workflow_logs for step-level details
+- For "diagnose CI" or "fix CI failures": call get_workflow_runs and get_workflow_logs in parallel to get step-level failure details BEFORE delegating to the Coder. Include the failed step output in the delegation context so the Coder can fix the root cause, not guess.
 - For multiple independent coding tasks in one request, use delegate_coder with "tasks": ["task 1", "task 2", ...]
 - For "create a branch" or "start a feature branch" use create_branch, then suggest creating a PR after work is done
 - For "open a PR" or "submit changes" use find_existing_pr first to check for duplicates, then create_pr
