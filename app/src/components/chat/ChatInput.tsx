@@ -79,7 +79,7 @@ interface ChatInputProps {
 }
 
 const ACCEPTED_FILES = 'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
-const MAX_PAYLOAD = 400 * 1024; // 400KB total
+const MAX_PAYLOAD = 750 * 1024; // 750KB total
 
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',

@@ -30,7 +30,7 @@ interface Env {
   GITHUB_APP_CLIENT_SECRET?: string;
 }
 
-const MAX_BODY_SIZE_BYTES = 512 * 1024; // 512KB default
+const MAX_BODY_SIZE_BYTES = 1024 * 1024; // 1MB default
 const RESTORE_MAX_BODY_SIZE_BYTES = 12 * 1024 * 1024; // 12MB for snapshot restore payloads
 
 export default {

@@ -8,7 +8,7 @@ import type { AttachmentData } from '@/types';
 export { formatSize as formatFileSize } from './diff-utils';
 
 // Size limits
-const MAX_IMAGE_SIZE = 400 * 1024;    // 400KB per image (base64 grows ~33%)
+const MAX_IMAGE_SIZE = 750 * 1024;    // 750KB per image (base64 grows ~33%)
 const MAX_TEXT_SIZE = 50 * 1024;       // 50KB per text file
 
 // Supported types
