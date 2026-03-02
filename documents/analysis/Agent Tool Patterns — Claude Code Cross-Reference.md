@@ -127,8 +127,8 @@ This framing maps cleanly to specific decisions in both systems:
 | Can't delegate | `delegate_coder` | `Task` (typed subagents) | Push: single specialist. CC: multiple agent types |
 | Can't verify work | `acceptanceCriteria[]` | Bash (run tests) | Push: structured. CC: ad-hoc |
 
-**The hashline vs. string-replacement bet is worth noting.** Push's hashline edits use 7-char content hashes to anchor edits, eliminating line-number drift. Claude Code's Edit uses exact string matching — the edit fails if the old string isn't unique or doesn't match. Both solve the same problem (reliable edits despite stale context) but with different failure modes:
-- Hashline: fails on hash collision (rare) or stale content (detectable). Requires the model to compute hashes.
+**The hashline vs. string-replacement bet is worth noting.** Push's hashline edits use content hashes (default 7-char, extendable to 12-char for disambiguation) to anchor edits, eliminating line-number drift. Claude Code's Edit uses exact string matching — the edit fails if the old string isn't unique or doesn't match. Both solve the same problem (reliable edits despite stale context) but with different failure modes:
+- Hashline: fails on hash collision (rare, and recoverable via longer 12-char prefix) or stale content (detectable). Requires the model to compute hashes.
 - String replacement: fails on non-unique matches (common in repetitive code) or whitespace mismatches. Requires the model to reproduce exact content.
 
 Neither is strictly better. Hashline is more robust for large files with repetitive patterns. String replacement is simpler for small, unique edits. If Push ever supports stronger models that can reliably reproduce exact content, string replacement might be worth offering as an alternative for simple cases.
