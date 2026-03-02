@@ -276,8 +276,10 @@ export function classifyError(error: string, context?: string): StructuredToolEr
   if (lower.includes('timed out') || lower.includes('timeout') || lower.includes('modal_timeout')) {
     return { type: 'EXEC_TIMEOUT', retryable: true, message: error, detail: context };
   }
-  if (lower.includes('sandbox_unreachable') || lower.includes('modal_network_error') || lower.includes('cannot connect') || lower.includes('modal_error') || lower.includes('sandbox unavailable') || lower.includes('container error') || lower.includes('no longer reachable')) {
-    return { type: 'SANDBOX_UNREACHABLE', retryable: false, message: error, detail: context };
+  if (lower.includes('sandbox_unreachable') || lower.includes('modal_network_error') || lower.includes('cannot connect') || lower.includes('modal_error') || lower.includes('sandbox unavailable') || lower.includes('container error') || lower.includes('no longer reachable') || lower.includes('internal server error')) {
+    // Transient container health issues are retryable; permanent config issues are not
+    const transient = lower.includes('internal server error') || lower.includes('container error') || lower.includes('modal_network_error') || lower.includes('modal_error');
+    return { type: 'SANDBOX_UNREACHABLE', retryable: transient, message: error, detail: context };
   }
   if (lower.includes('stale') || lower.includes('stale_file') || lower.includes('stale write')) {
     return { type: 'STALE_FILE', retryable: false, message: error, detail: context };
@@ -993,9 +995,23 @@ export async function executeSandboxToolCall(
         }
 
         // 3. Write the edited content directly (instead of delegating to sandbox_write_file)
+        // Retry transient write failures (Modal container health issues) up to 2 extra attempts.
         const beforeVersion = readResult.version || 'unknown';
         const editWriteVersion = expected_version || readResult.version || undefined;
-        const editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
+        let editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
+
+        if (!editWriteResult.ok && editWriteResult.code !== 'STALE_FILE') {
+          const writeErr = classifyError(editWriteResult.error || 'Write failed', path);
+          if (writeErr.retryable || writeErr.type === 'SANDBOX_UNREACHABLE' || writeErr.type === 'EXEC_TIMEOUT') {
+            // Transient failure — retry up to 2 more times with short backoff
+            for (let writeAttempt = 1; writeAttempt <= 2; writeAttempt++) {
+              console.log(`[sandbox_edit_file] Write attempt ${writeAttempt + 1} for ${path} after transient error: ${editWriteResult.error}`);
+              await new Promise(r => setTimeout(r, 1000 * writeAttempt));
+              editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
+              if (editWriteResult.ok) break;
+            }
+          }
+        }
 
         if (!editWriteResult.ok) {
           if (editWriteResult.code === 'STALE_FILE') {
