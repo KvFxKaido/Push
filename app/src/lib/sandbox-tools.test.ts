@@ -1230,3 +1230,162 @@ describe('sandbox_edit_file large file fallback', () => {
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Version precedence tests — stale expected_version should not override fresh data
+// ---------------------------------------------------------------------------
+
+describe('sandbox_edit_file version precedence', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('uses fresh readResult.version instead of stale caller expected_version', async () => {
+    // The fresh read returns version 'v3' (current on-disk version).
+    // The caller passes expected_version 'v1' (stale from a previous read).
+    // The write should use 'v3', not 'v1'.
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'hello world',
+      truncated: false,
+      version: 'v3',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v4', bytes_written: 11 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    const ref = await calculateLineHash('hello world');
+
+    await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path: '/workspace/test.txt',
+          edits: [{ op: 'replace_line', ref, content: 'hello universe' }],
+          expected_version: 'v1',
+        },
+      },
+      'sb-123',
+    );
+
+    // writeToSandbox should be called with 'v3' (fresh), not 'v1' (stale)
+    expect(sandboxClient.writeToSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      '/workspace/test.txt',
+      'hello universe',
+      'v3',
+    );
+  });
+
+  it('falls back gracefully when readResult has no version', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'hello world',
+      truncated: false,
+      version: undefined as unknown as string,
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v1', bytes_written: 14 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    const ref = await calculateLineHash('hello world');
+
+    await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path: '/workspace/test.txt',
+          edits: [{ op: 'replace_line', ref, content: 'hello universe' }],
+        },
+      },
+      'sb-123',
+    );
+
+    // writeToSandbox should be called with undefined (no version available)
+    expect(sandboxClient.writeToSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      '/workspace/test.txt',
+      'hello universe',
+      undefined,
+    );
+  });
+});
+
+describe('sandbox_write_file version precedence', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    mockRecordWriteFileMetric.mockReset();
+    mockRecordReadFileMetric.mockReset();
+  });
+
+  it('prefers cached version over stale caller expected_version', async () => {
+    // Step 1: Read the file to populate the version cache with 'v2'
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'original content',
+      truncated: false,
+      version: 'v2',
+    });
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/app.ts' } },
+      'sb-123',
+    );
+
+    // Step 2: Write with a stale expected_version 'v1'
+    // The cache has 'v2' which should take precedence
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v3', bytes_written: 15 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    await executeSandboxToolCall(
+      {
+        tool: 'sandbox_write_file',
+        args: {
+          path: '/workspace/src/app.ts',
+          content: 'updated content',
+          expected_version: 'v1',
+        },
+      },
+      'sb-123',
+    );
+
+    // writeToSandbox should be called with 'v2' (cache), not 'v1' (stale caller)
+    expect(sandboxClient.writeToSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      '/workspace/src/app.ts',
+      'updated content',
+      'v2',
+    );
+  });
+
+  it('falls back to caller expected_version when cache is empty', async () => {
+    // Auto-expand read returns the file (edit guard will trigger this for unread files).
+    // The auto-expand read purposely returns NO version so the cache stays empty,
+    // forcing the code to fall back to the caller's expected_version.
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'existing content',
+      truncated: false,
+      version: undefined as unknown as string,
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 15 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    await executeSandboxToolCall(
+      {
+        tool: 'sandbox_write_file',
+        args: {
+          path: '/workspace/src/fallback-file.ts',
+          content: 'new file content',
+          expected_version: 'v1',
+        },
+      },
+      'sb-123',
+    );
+
+    // writeToSandbox should use 'v1' (caller) since cache has nothing for this path
+    expect(sandboxClient.writeToSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      '/workspace/src/fallback-file.ts',
+      'new file content',
+      'v1',
+    );
+  });
+});
