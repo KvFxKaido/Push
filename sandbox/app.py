@@ -96,6 +96,143 @@ except Exception as exc:
 print(hashlib.sha256(payload).hexdigest())
 """
 
+# Consolidated write script — does version check + mkdir + write + verify + hash
+# in a single subprocess call instead of 5 separate exec() calls.
+# Accepts a JSON argument: { path, content_b64, expected_version? }
+# Outputs a JSON result: { ok, bytes_written?, new_version?, code?, expected_version?, current_version?, error? }
+WRITE_FILE_SCRIPT = """
+import hashlib, pathlib, base64, json, os, sys
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": f"Invalid JSON argument: {exc}"}))
+    sys.exit(0)
+
+path_str = data.get("path", "")
+content_b64 = data.get("content_b64", "")
+expected_version = data.get("expected_version", "")
+
+if not path_str:
+    print(json.dumps({"ok": False, "error": "Missing path"}))
+    sys.exit(0)
+
+p = pathlib.Path(path_str)
+
+# Step 1: Version check (if expected_version provided)
+if expected_version:
+    if p.exists() and p.is_file():
+        try:
+            current = hashlib.sha256(p.read_bytes()).hexdigest()
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": f"Version check failed: {exc}"}))
+            sys.exit(0)
+        if current != expected_version:
+            print(json.dumps({
+                "ok": False,
+                "code": "STALE_FILE",
+                "error": "Stale file version. Re-read the file before writing.",
+                "expected_version": expected_version,
+                "current_version": current,
+            }))
+            sys.exit(0)
+
+# Step 2: Create parent directory
+try:
+    parent = os.path.dirname(path_str)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": f"Failed to create directory: {exc}"}))
+    sys.exit(0)
+
+# Step 3: Write content
+try:
+    content = base64.b64decode(content_b64)
+    p.write_bytes(content)
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": f"Write failed: {exc}"}))
+    sys.exit(0)
+
+# Step 4+5: Verify size + compute new version
+try:
+    actual_size = p.stat().st_size
+    new_version = hashlib.sha256(p.read_bytes()).hexdigest()
+    print(json.dumps({"ok": True, "bytes_written": actual_size, "new_version": new_version}))
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": f"Verification failed: {exc}"}))
+"""
+
+# Batch write script — writes multiple files in a single subprocess call.
+# Accepts a JSON argument: { files: [{ path, content_b64, expected_version? }] }
+# Outputs a JSON result: { results: [{ ok, path, bytes_written?, new_version?, ... }] }
+BATCH_WRITE_SCRIPT = """
+import hashlib, pathlib, base64, json, os, sys
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception as exc:
+    print(json.dumps({"results": [{"ok": False, "error": f"Invalid JSON argument: {exc}"}]}))
+    sys.exit(0)
+
+files = data.get("files", [])
+results = []
+
+for f in files:
+    path_str = f.get("path", "")
+    content_b64 = f.get("content_b64", "")
+    expected_version = f.get("expected_version", "")
+
+    if not path_str:
+        results.append({"ok": False, "path": path_str, "error": "Missing path"})
+        continue
+
+    p = pathlib.Path(path_str)
+
+    # Version check
+    if expected_version:
+        if p.exists() and p.is_file():
+            try:
+                current = hashlib.sha256(p.read_bytes()).hexdigest()
+            except Exception as exc:
+                results.append({"ok": False, "path": path_str, "error": f"Version check failed: {exc}"})
+                continue
+            if current != expected_version:
+                results.append({
+                    "ok": False, "path": path_str, "code": "STALE_FILE",
+                    "error": "Stale file version.",
+                    "expected_version": expected_version, "current_version": current,
+                })
+                continue
+
+    # Create parent directory
+    try:
+        parent = os.path.dirname(path_str)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+    except Exception as exc:
+        results.append({"ok": False, "path": path_str, "error": f"Failed to create directory: {exc}"})
+        continue
+
+    # Write content
+    try:
+        content = base64.b64decode(content_b64)
+        p.write_bytes(content)
+    except Exception as exc:
+        results.append({"ok": False, "path": path_str, "error": f"Write failed: {exc}"})
+        continue
+
+    # Verify + new version
+    try:
+        actual_size = p.stat().st_size
+        new_version = hashlib.sha256(p.read_bytes()).hexdigest()
+        results.append({"ok": True, "path": path_str, "bytes_written": actual_size, "new_version": new_version})
+    except Exception as exc:
+        results.append({"ok": False, "path": path_str, "error": f"Verification failed: {exc}"})
+
+print(json.dumps({"results": results}))
+"""
+
 
 def _fetch_github_user(token: str) -> tuple[str, str]:
     """Fetch name and email from GitHub API. Returns (name, email) or defaults."""
@@ -397,7 +534,7 @@ def file_ops(data: dict):
 
     if not sandbox_id:
         return {"error": "Missing sandbox_id"}
-    if action not in ("read", "write", "list", "delete", "hydrate"):
+    if action not in ("read", "write", "list", "delete", "hydrate", "batch_write"):
         return {"error": f"Unknown file operation: {action}"}
 
     sb, sandbox_error = _load_sandbox(str(sandbox_id))
@@ -476,53 +613,70 @@ def file_ops(data: dict):
         if not path:
             return {"ok": False, "error": "Missing sandbox_id or path"}
 
-        current_version = None
-        if expected_version:
-            current_version, version_error = _get_file_version(sb, path)
-            if version_error:
-                return {"ok": False, "error": version_error}
-            if current_version != expected_version:
-                return {
-                    "ok": False,
-                    "error": "Stale file version. Re-read the file before writing.",
-                    "code": "STALE_FILE",
-                    "expected_version": expected_version,
-                    "current_version": current_version,
-                }
-
-        safe_path = path.replace("'", "'\\''")
-
-        p = sb.exec("bash", "-c", f"mkdir -p \"$(dirname '{safe_path}')\"")
-        p.wait()
-        if p.returncode != 0:
-            stderr = p.stderr.read()
-            return {"ok": False, "error": f"Failed to create directory: {stderr}"}
-
+        # Consolidated write: version check + mkdir + write + verify + hash
+        # in a single subprocess call (was 5 separate exec calls).
         encoded = base64.b64encode(content.encode()).decode()
-        p = sb.exec(
-            "bash",
-            "-c",
-            f"printf '%s' '{encoded}' | base64 -d > '{safe_path}'",
-        )
+        write_payload = json.dumps({
+            "path": path,
+            "content_b64": encoded,
+            "expected_version": expected_version,
+        })
+        p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT, write_payload)
         p.wait()
         if p.returncode != 0:
             stderr = p.stderr.read()
             return {"ok": False, "error": f"Write failed: {stderr}"}
 
-        p = sb.exec("bash", "-c", f"wc -c < '{safe_path}'")
+        stdout = p.stdout.read().strip()
+        if not stdout:
+            return {"ok": False, "error": "Write script produced no output"}
+
+        try:
+            result = json.loads(stdout)
+        except Exception:
+            return {"ok": False, "error": f"Write script produced invalid JSON: {stdout[:200]}"}
+
+        return result
+
+    if action == "batch_write":
+        files = data.get("files", [])
+        if not isinstance(files, list) or len(files) == 0:
+            return {"ok": False, "error": "Missing or empty files array", "results": []}
+        if len(files) > 20:
+            return {"ok": False, "error": "batch_write limited to 20 files per request", "results": []}
+
+        # Use the BATCH_WRITE_SCRIPT to process all files in a single subprocess.
+        batch_entries = []
+        for entry in files:
+            file_path = entry.get("path", "")
+            file_content = str(entry.get("content", ""))
+            expected_ver_raw = entry.get("expected_version")
+            expected_ver = expected_ver_raw.strip() if isinstance(expected_ver_raw, str) else ""
+            batch_entries.append({
+                "path": file_path,
+                "content_b64": base64.b64encode(file_content.encode()).decode(),
+                "expected_version": expected_ver,
+            })
+
+        batch_payload = json.dumps({"files": batch_entries})
+        p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT, batch_payload)
         p.wait()
         if p.returncode != 0:
-            return {"ok": False, "error": "Verification failed — file may not have been written"}
+            stderr = p.stderr.read()
+            return {"ok": False, "error": f"Batch write failed: {stderr}", "results": []}
 
-        written_bytes = p.stdout.read().strip()
-        new_version, version_error = _get_file_version(sb, path)
-        if version_error:
-            return {"ok": False, "error": version_error}
-        return {
-            "ok": True,
-            "bytes_written": int(written_bytes) if written_bytes.isdigit() else 0,
-            "new_version": new_version,
-        }
+        stdout = p.stdout.read().strip()
+        if not stdout:
+            return {"ok": False, "error": "Batch write script produced no output", "results": []}
+
+        try:
+            batch_result = json.loads(stdout)
+        except Exception:
+            return {"ok": False, "error": f"Batch write script produced invalid JSON: {stdout[:200]}", "results": []}
+
+        results = batch_result.get("results", [])
+        all_ok = all(r.get("ok", False) for r in results)
+        return {"ok": all_ok, "results": results}
 
     if action == "hydrate":
         archive_base64 = str(data.get("archive_base64", "")).strip()

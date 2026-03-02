@@ -553,7 +553,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   }
 
   // Read and forward body
-  const maxBodyBytes = route === 'restore' ? RESTORE_MAX_BODY_SIZE_BYTES : MAX_BODY_SIZE_BYTES;
+  const maxBodyBytes = (route === 'restore' || route === 'batch-write') ? RESTORE_MAX_BODY_SIZE_BYTES : MAX_BODY_SIZE_BYTES;
   const bodyResult = await readBodyText(request, maxBodyBytes);
   if (!bodyResult.ok) {
     return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
@@ -564,6 +564,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   if (
     route === 'read'
     || route === 'write'
+    || route === 'batch-write'
     || route === 'list'
     || route === 'delete'
     || route === 'restore'
@@ -575,6 +576,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
 
       if (route === 'read') payload.action = 'read';
       if (route === 'write') payload.action = 'write';
+      if (route === 'batch-write') payload.action = 'batch_write';
       if (route === 'list') payload.action = 'list';
       if (route === 'delete') payload.action = 'delete';
       if (route === 'restore') payload.action = 'hydrate';

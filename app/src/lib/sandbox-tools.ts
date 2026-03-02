@@ -27,12 +27,14 @@ import {
   execInSandbox,
   readFromSandbox,
   writeToSandbox,
+  batchWriteToSandbox,
   getSandboxDiff,
   listDirectory,
   browserScreenshotInSandbox,
   browserExtractInSandbox,
   downloadFromSandbox,
   type FileReadResult,
+  type BatchWriteEntry,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { parseDiffStats } from './diff-utils';
@@ -1189,13 +1191,8 @@ export async function executeSandboxToolCall(
             sandboxFileVersions.set(cacheKey, result.new_version);
           }
 
-          // Post-write verification: check that git sees the change
-          const verifyResult = await execInSandbox(
-            sandboxId,
-            `cd /workspace && git status --porcelain -- '${call.args.path.replace(/'/g, "'\\''")}'`,
-          );
-          const gitSees = verifyResult.stdout.trim();
-
+          // Build result message — no extra HTTP round-trip for git verification.
+          // The write result already provides bytes_written and new_version.
           const lines: string[] = [
             `[Tool Result — sandbox_write_file]`,
             `Wrote ${call.args.path} (${result.bytes_written ?? call.args.content.length} bytes)`,
@@ -1204,8 +1201,10 @@ export async function executeSandboxToolCall(
             lines.push(`New version: ${result.new_version}`);
           }
 
-          if (!gitSees && call.args.path.startsWith('/workspace/')) {
-            lines.push(`⚠ Warning: git reports no changes for this file. The content may be identical to the original.`);
+          // Detect identical content by comparing version hashes (local check, no HTTP call)
+          const previousVersion = sandboxFileVersions.get(cacheKey);
+          if (previousVersion && result.new_version === previousVersion) {
+            lines.push(`⚠ Note: Content is identical to the previous version — no effective change.`);
           } else if (!call.args.path.startsWith('/workspace')) {
             lines.push(`⚠ Note: File is outside /workspace — git will not track this file.`);
           }
@@ -2205,30 +2204,62 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
           return { text: lines.join('\n') };
         }
 
-        // Phase 2: Write all files sequentially
+        // Phase 2: Batch write all files in a single HTTP request
         const writeResults: string[] = [];
         const writeFailures: string[] = [];
 
-        for (const r of editResults) {
-          try {
-            const writeResult = await writeToSandbox(sandboxId, r.path, r.content, r.version);
-            if (!writeResult.ok) {
-              if (writeResult.code === 'STALE_FILE') {
-                writeFailures.push(`${r.path}: stale write rejected (version changed during patchset)`);
-              } else {
-                writeFailures.push(`${r.path}: ${writeResult.error || 'write failed'}`);
-              }
-            } else {
+        // Build index for lookup by path
+        const editResultsByPath = new Map(editResults.map(r => [r.path, r]));
+
+        try {
+          const batchEntries: BatchWriteEntry[] = editResults.map(r => ({
+            path: r.path,
+            content: r.content,
+            expected_version: r.version,
+          }));
+          const batchResult = await batchWriteToSandbox(sandboxId, batchEntries);
+
+          for (const entry of batchResult.results) {
+            const editInfo = editResultsByPath.get(entry.path);
+            if (entry.ok) {
               // Update version cache
-              const cacheKey = fileVersionKey(sandboxId, r.path);
-              if (typeof writeResult.new_version === 'string' && writeResult.new_version) {
-                sandboxFileVersions.set(cacheKey, writeResult.new_version);
+              const cacheKey = fileVersionKey(sandboxId, entry.path);
+              if (typeof entry.new_version === 'string' && entry.new_version) {
+                sandboxFileVersions.set(cacheKey, entry.new_version);
               }
-              fileLedger.recordCreation(r.path);
-              writeResults.push(`${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`);
+              fileLedger.recordCreation(entry.path);
+              writeResults.push(`${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`);
+            } else {
+              if (entry.code === 'STALE_FILE') {
+                writeFailures.push(`${entry.path}: stale write rejected (version changed during patchset)`);
+              } else {
+                writeFailures.push(`${entry.path}: ${entry.error || 'write failed'}`);
+              }
             }
-          } catch (e) {
-            writeFailures.push(`${r.path}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        } catch (batchErr) {
+          // Fallback to sequential writes if batch endpoint is unavailable
+          console.warn('[sandbox-tools] batch write failed, falling back to sequential writes:', batchErr);
+          for (const r of editResults) {
+            try {
+              const writeResult = await writeToSandbox(sandboxId, r.path, r.content, r.version);
+              if (!writeResult.ok) {
+                if (writeResult.code === 'STALE_FILE') {
+                  writeFailures.push(`${r.path}: stale write rejected (version changed during patchset)`);
+                } else {
+                  writeFailures.push(`${r.path}: ${writeResult.error || 'write failed'}`);
+                }
+              } else {
+                const cacheKey = fileVersionKey(sandboxId, r.path);
+                if (typeof writeResult.new_version === 'string' && writeResult.new_version) {
+                  sandboxFileVersions.set(cacheKey, writeResult.new_version);
+                }
+                fileLedger.recordCreation(r.path);
+                writeResults.push(`${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`);
+              }
+            } catch (e) {
+              writeFailures.push(`${r.path}: ${e instanceof Error ? e.message : String(e)}`);
+            }
           }
         }
 

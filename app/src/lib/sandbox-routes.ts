@@ -8,6 +8,7 @@ export const SANDBOX_ROUTES: Record<string, string> = {
   list: 'file-ops',
   delete: 'file-ops',
   restore: 'file-ops',
+  'batch-write': 'file-ops',
   'browser-screenshot': 'browser-screenshot',
   'browser-extract': 'browser-extract',
   download: 'create-archive',

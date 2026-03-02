@@ -386,6 +386,44 @@ export async function writeToSandbox(
   });
 }
 
+// --- Batch write ---
+
+export interface BatchWriteEntry {
+  path: string;
+  content: string;
+  expected_version?: string;
+}
+
+export interface BatchWriteResultEntry {
+  path: string;
+  ok: boolean;
+  error?: string;
+  code?: string;
+  bytes_written?: number;
+  new_version?: string | null;
+  expected_version?: string;
+  current_version?: string | null;
+}
+
+export interface BatchWriteResult {
+  ok: boolean;
+  results: BatchWriteResultEntry[];
+  error?: string;
+}
+
+const BATCH_WRITE_TIMEOUT_MS = 60_000; // 60s for batch operations
+
+export async function batchWriteToSandbox(
+  sandboxId: string,
+  files: BatchWriteEntry[],
+): Promise<BatchWriteResult> {
+  return sandboxFetch<BatchWriteResult>('batch-write', {
+    ...withOwnerToken({}, sandboxId),
+    sandbox_id: sandboxId,
+    files,
+  }, BATCH_WRITE_TIMEOUT_MS);
+}
+
 export async function getSandboxDiff(
   sandboxId: string,
 ): Promise<DiffResult> {

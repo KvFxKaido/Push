@@ -44,6 +44,7 @@ describe('SANDBOX_ROUTES — completeness', () => {
     'list',
     'delete',
     'restore',
+    'batch-write',
     'browser-screenshot',
     'browser-extract',
     'download',
