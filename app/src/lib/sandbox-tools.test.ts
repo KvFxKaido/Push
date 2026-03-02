@@ -39,6 +39,7 @@ vi.mock('./sandbox-client', () => ({
   execInSandbox: vi.fn(),
   readFromSandbox: vi.fn(),
   writeToSandbox: vi.fn(),
+  batchWriteToSandbox: vi.fn(),
   getSandboxDiff: vi.fn(),
   listDirectory: vi.fn(),
   downloadFromSandbox: vi.fn(),
