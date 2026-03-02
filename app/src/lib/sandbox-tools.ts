@@ -943,7 +943,7 @@ export async function executeSandboxToolCall(
       }
 
       case "sandbox_edit_file": {
-        const { path, edits, expected_version } = call.args;
+        const { path, edits } = call.args;
 
         // 1. Read the current file content
         let readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
@@ -997,7 +997,10 @@ export async function executeSandboxToolCall(
         // 3. Write the edited content directly (instead of delegating to sandbox_write_file)
         // Transient failures (5xx, timeout, network) are retried by sandbox-client withRetry().
         const beforeVersion = readResult.version || 'unknown';
-        const editWriteVersion = expected_version || readResult.version || undefined;
+        // Always prefer the version from the fresh read we just performed (line 949).
+        // A caller-provided expected_version may be stale from a previous read, and
+        // using it here would cause a spurious STALE_FILE rejection on the server.
+        const editWriteVersion = readResult.version || undefined;
         const editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
 
         if (!editWriteResult.ok) {
@@ -1136,7 +1139,9 @@ export async function executeSandboxToolCall(
         }
 
         // After auto-expand, the version cache may have been updated — refresh.
-        const freshVersion = call.args.expected_version || sandboxFileVersions.get(cacheKey);
+        // Prefer the cache (most recently observed version) over the caller's
+        // expected_version, which may be stale from an earlier read.
+        const freshVersion = sandboxFileVersions.get(cacheKey) || call.args.expected_version;
 
         // Stale warning (soft — doesn't block, just informs)
         const staleWarning = fileLedger.getStaleWarning(call.args.path);
