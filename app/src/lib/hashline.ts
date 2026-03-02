@@ -48,20 +48,29 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
       // Try to disambiguate with longer hashes (up to 12 chars)
       if (edit.ref.length < 12) {
         const longerHashes = await Promise.all(matches.map(i => calculateLineHash(resultLines[i], 12)));
-        // Check if the ref uniquely matches exactly one longer hash
-        const exactLonger = matches.filter((_idx, j) => longerHashes[j].startsWith(edit.ref));
-        if (exactLonger.length === 1) {
-          // Resolved via longer prefix match — treat as unique
-          matches.splice(0, matches.length, exactLonger[0]);
+        // Group by distinct longer hash to find unique prefixes
+        const distinctGroups = new Map<string, number[]>();
+        for (let k = 0; k < matches.length; k++) {
+          const lh = longerHashes[k];
+          const group = distinctGroups.get(lh) ?? [];
+          group.push(matches[k]);
+          distinctGroups.set(lh, group);
+        }
+        // Find groups whose longer hash still starts with the provided ref
+        const candidateGroups = [...distinctGroups.entries()].filter(([lh]) => lh.startsWith(edit.ref));
+        if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
+          // Exactly one line after disambiguation — use it
+          matches.splice(0, matches.length, candidateGroups[0][1][0]);
         } else {
           // Still ambiguous — provide diagnostic context with line numbers and longer hashes
           const MAX_DIAGNOSTIC_LINES = 5;
-          const shown = matches.slice(0, MAX_DIAGNOSTIC_LINES);
-          const diagnostics = shown.map((idx) => {
+          const diagnostics: string[] = [];
+          for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
+            const idx = matches[k];
             const snippet = resultLines[idx].trim().slice(0, 60);
-            const longerRef = longerHashes[matches.indexOf(idx)];
-            return `  L${idx + 1}: ${longerRef} "${snippet}${resultLines[idx].trim().length > 60 ? '…' : ''}"`;
-          });
+            const longerRef = longerHashes[k];
+            diagnostics.push(`  L${idx + 1}: ${longerRef} "${snippet}${resultLines[idx].trim().length > 60 ? '…' : ''}"`);
+          }
           if (matches.length > MAX_DIAGNOSTIC_LINES) {
             diagnostics.push(`  ... and ${matches.length - MAX_DIAGNOSTIC_LINES} more`);
           }

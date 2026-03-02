@@ -995,23 +995,10 @@ export async function executeSandboxToolCall(
         }
 
         // 3. Write the edited content directly (instead of delegating to sandbox_write_file)
-        // Retry transient write failures (Modal container health issues) up to 2 extra attempts.
+        // Transient failures (5xx, timeout, network) are retried by sandbox-client withRetry().
         const beforeVersion = readResult.version || 'unknown';
         const editWriteVersion = expected_version || readResult.version || undefined;
-        let editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
-
-        if (!editWriteResult.ok && editWriteResult.code !== 'STALE_FILE') {
-          const writeErr = classifyError(editWriteResult.error || 'Write failed', path);
-          if (writeErr.retryable || writeErr.type === 'SANDBOX_UNREACHABLE' || writeErr.type === 'EXEC_TIMEOUT') {
-            // Transient failure — retry up to 2 more times with short backoff
-            for (let writeAttempt = 1; writeAttempt <= 2; writeAttempt++) {
-              console.log(`[sandbox_edit_file] Write attempt ${writeAttempt + 1} for ${path} after transient error: ${editWriteResult.error}`);
-              await new Promise(r => setTimeout(r, 1000 * writeAttempt));
-              editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
-              if (editWriteResult.ok) break;
-            }
-          }
-        }
+        const editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
 
         if (!editWriteResult.ok) {
           if (editWriteResult.code === 'STALE_FILE') {
