@@ -815,7 +815,6 @@ export async function runCoderAgent(
       // --- Guardrail: Hard Failure Threshold ---
       if (entry.count >= MAX_CONSECUTIVE_MUTATION_FAILURES) {
         onStatus('Coder stopped', `${entry.tool} failed ${entry.count}x on ${entry.file || 'unknown'}`);
-        const sandboxState = await fetchSandboxStateSummary(sandboxId);
         messages.push({
           id: `coder-hard-failure-${round}`,
           role: 'user',
