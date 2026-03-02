@@ -63,7 +63,7 @@ The app is free. AI usage depends on the provider and plan you choose.
 Push prioritizes harness reliability over raw model capability. Core shipped capabilities include:
 
 - **Range-aware file reads** — `sandbox_read_file` supports `start_line`/`end_line` with line-numbered output for precise context
-- **Hashline edits** — `sandbox_edit_file` uses 7-char content hashes as line references, eliminating line-number drift
+- **Hashline edits** — `sandbox_edit_file` uses content hashes (default 7-char, up to 12-char for disambiguation) as line references, eliminating line-number drift
 - **Garbled tool-call recovery** — three-phase diagnosis, JSON repair, and truncation detection so models self-correct in one retry
 - **Pre-commit audit gate** — Auditor agent enforces SAFE/UNSAFE verdict before any commit lands
 - **Execution provenance** — tool-result metadata tracks every sandbox operation for traceability

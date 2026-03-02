@@ -63,7 +63,7 @@ The Orchestrator can delegate complex coding tasks to the Coder sub-agent via `d
 ### Harness Focus
 
 Current harness priorities are tracked in `documents/plans/Harness Reliability Plan.md`:
-- edit reliability — **`sandbox_edit_file` + hashline protocol are shipped and active**; edits reference 7-char content hashes (`HashlineOp[]`) via `lib/hashline.ts`, eliminating line-number drift; `lib/file-awareness-ledger.ts` tracks per-file read coverage for edit safety
+- edit reliability — **`sandbox_edit_file` + hashline protocol are shipped and active**; edits reference content hashes (default 7-char, extendable to 12-char for disambiguation) as `HashlineOp[]` via `lib/hashline.ts`, eliminating line-number drift; `lib/file-awareness-ledger.ts` tracks per-file read coverage for edit safety
 - read/context efficiency — Track B shipped: `sandbox_read_file` line ranges, numbered range output, out-of-bounds empty-range warning
 - tool-loop robustness — `lib/tool-call-metrics.ts` captures malformed tool-call reasons by provider
 - server-side background execution design is deferred; resumable sessions are the active interruption-recovery path
