@@ -34,8 +34,9 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
   const errors: string[] = [];
 
   for (const edit of edits) {
-    // Re-calculate hashes since the file might have changed from previous edit
-    const currentHashes = await Promise.all(resultLines.map(calculateLineHash));
+    // Re-calculate hashes at least as long as the ref so longer refs (8–12 chars) can match
+    const hashLen = Math.min(Math.max(edit.ref.length, 7), 12);
+    const currentHashes = await Promise.all(resultLines.map(l => calculateLineHash(l, hashLen)));
     const matches = currentHashes.map((h, i) => h.startsWith(edit.ref) ? i : -1).filter(i => i !== -1);
 
     if (matches.length === 0) {
