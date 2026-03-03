@@ -1187,6 +1187,7 @@ export async function executeSandboxToolCall(
             return { text: formatStructuredError(writeErr, formatSandboxError(detail, call.args.path)), structuredError: writeErr };
           }
 
+          const previousVersion = sandboxFileVersions.get(cacheKey);
           if (typeof result.new_version === 'string' && result.new_version) {
             sandboxFileVersions.set(cacheKey, result.new_version);
           }
@@ -1202,7 +1203,6 @@ export async function executeSandboxToolCall(
           }
 
           // Detect identical content by comparing version hashes (local check, no HTTP call)
-          const previousVersion = sandboxFileVersions.get(cacheKey);
           if (previousVersion && result.new_version === previousVersion) {
             lines.push(`⚠ Note: Content is identical to the previous version — no effective change.`);
           } else if (!call.args.path.startsWith('/workspace')) {

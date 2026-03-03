@@ -1357,6 +1357,30 @@ describe('sandbox_write_file version precedence', () => {
     );
   });
 
+  it('does not report identical-content warning when version actually changes', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'original content',
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 15 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_write_file',
+        args: {
+          path: '/workspace/src/app.ts',
+          content: 'updated content',
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Wrote /workspace/src/app.ts');
+    expect(result.text).not.toContain('Content is identical to the previous version');
+  });
+
   it('falls back to caller expected_version when cache is empty', async () => {
     // Auto-expand read returns the file (edit guard will trigger this for unread files).
     // The auto-expand read purposely returns NO version so the cache stays empty,
