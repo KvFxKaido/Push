@@ -263,6 +263,7 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
   }
 
   const totalTokens = estimateContextTokens(messages);
+  const adaptiveRecentBoundary = totalTokens > budget.targetTokens * 0.8 ? 6 : 14;
 
   // Under target — keep everything
   if (totalTokens <= budget.targetTokens) {
@@ -274,7 +275,7 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
 
   // Phase 1: Summarize old verbose content (walk from oldest to newest, skip recent 14)
   const result = [...messages];
-  const recentBoundary = Math.max(0, result.length - 14);
+  const recentBoundary = Math.max(0, result.length - adaptiveRecentBoundary);
   let currentTokens = totalTokens;
 
   for (let i = 0; i < recentBoundary && currentTokens > budget.targetTokens; i++) {
@@ -292,7 +293,7 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
   }
 
   // Phase 2: Remove oldest non-pinned messages with a digest fallback.
-  const tailStart = Math.max(0, result.length - 14);
+  const tailStart = Math.max(0, result.length - adaptiveRecentBoundary);
   const protectedIdx = new Set<number>();
   if (firstUserIdx >= 0) protectedIdx.add(firstUserIdx);
   for (let i = tailStart; i < result.length; i++) protectedIdx.add(i);
@@ -1180,7 +1181,7 @@ function buildErrorMessages(name: string, connectHint = 'server may be down.'): 
 }
 
 /** Standard timeout config used by most providers. */
-const STANDARD_TIMEOUTS = { connectTimeoutMs: 30_000, idleTimeoutMs: 60_000, stallTimeoutMs: 30_000, totalTimeoutMs: 180_000 } as const;
+const STANDARD_TIMEOUTS = { connectTimeoutMs: 30_000, idleTimeoutMs: 60_000, stallTimeoutMs: 60_000, totalTimeoutMs: 180_000 } as const;
 
 interface ProviderStreamEntry {
   getKey: () => string | null;
@@ -1197,7 +1198,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       model: modelOverride || getOllamaModelName(),
       connectTimeoutMs: 30_000,
       idleTimeoutMs: 45_000,
-      stallTimeoutMs: 30_000,
+      stallTimeoutMs: 60_000,
       totalTimeoutMs: 180_000,
       errorMessages: buildErrorMessages('Ollama Cloud', 'server may be cold-starting.'),
       parseError: (p, f) => parseProviderError(p, f),
