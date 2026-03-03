@@ -83,16 +83,22 @@ const GEMINI_CONTEXT_TARGET_TOKENS = 800_000;
 export interface ContextBudget {
   maxTokens: number;
   targetTokens: number;
+  /** Threshold at which old tool results get summarized. Decoupled from
+   *  targetTokens so large-context models (Gemini) still get lean working
+   *  context without premature message dropping. */
+  summarizeTokens: number;
 }
 
 const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   maxTokens: DEFAULT_CONTEXT_MAX_TOKENS,
   targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
+  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // same as target for non-Gemini
 };
 
 const GEMINI_CONTEXT_BUDGET: ContextBudget = {
   maxTokens: GEMINI_CONTEXT_MAX_TOKENS,
   targetTokens: GEMINI_CONTEXT_TARGET_TOKENS,
+  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // summarize early like other providers
 };
 
 function normalizeModelName(model?: string): string {
@@ -143,12 +149,49 @@ export function setContextMode(mode: ContextMode): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Estimate token count from text. ~4 chars per token for English/code.
- * This is intentionally conservative (slightly over-estimates) so we
- * don't accidentally blow past the real limit.
+ * Estimate token count from text using content-aware heuristics.
+ *
+ * Different content types tokenize at different rates:
+ * - Dense code (brackets, operators, short names): ~3.0 chars/token
+ * - Mixed code/prose (tool results, diffs): ~3.5 chars/token
+ * - English prose: ~4.0 chars/token
+ * - CJK / non-ASCII text: ~1.5 chars/token (each char is typically its own token)
+ *
+ * We sample the text to pick an appropriate ratio instead of using a single
+ * fixed divisor.  Still conservative (slightly over-estimates) to avoid
+ * blowing past real limits.
  */
 function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3.5);
+  if (!text) return 0;
+  const len = text.length;
+
+  // For short text, the overhead of sampling isn't worth it
+  if (len < 200) return Math.ceil(len / 3.2);
+
+  // Sample up to 500 chars from the middle of the text to classify content
+  const sampleStart = Math.max(0, Math.floor(len / 2) - 250);
+  const sample = text.slice(sampleStart, sampleStart + 500);
+
+  // Count content signals
+  const nonAsciiCount = (sample.match(/[^\u0020-\u007E\n\r\t]/g) || []).length;
+  const codeSymbolCount = (sample.match(/[{}()[\];=<>|&!+\-*/^~@#$%]/g) || []).length;
+  const sampleLen = sample.length;
+
+  // High non-ASCII ratio → CJK/emoji-heavy, each char ≈ 1 token
+  if (nonAsciiCount / sampleLen > 0.3) {
+    // Blend: non-ASCII chars at 1.5, ASCII chars at 3.5
+    const nonAsciiRatio = nonAsciiCount / sampleLen;
+    const blendedRate = nonAsciiRatio * 1.5 + (1 - nonAsciiRatio) * 3.5;
+    return Math.ceil(len / blendedRate);
+  }
+
+  // High code-symbol density → dense code, tighter tokenization
+  if (codeSymbolCount / sampleLen > 0.12) {
+    return Math.ceil(len / 3.0);
+  }
+
+  // Default: mixed content
+  return Math.ceil(len / 3.5);
 }
 
 function estimateMessageTokens(msg: ChatMessage): number {
@@ -263,22 +306,27 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
   }
 
   const totalTokens = estimateContextTokens(messages);
-  const adaptiveRecentBoundary = totalTokens > budget.targetTokens * 0.8 ? 6 : 14;
 
-  // Under target — keep everything
-  if (totalTokens <= budget.targetTokens) {
+  // Use the lower summarizeTokens threshold to decide when to compress old
+  // tool results.  This keeps working context lean even for large-context
+  // models (e.g. Gemini 1M) where targetTokens is much higher.
+  const summarizeThreshold = budget.summarizeTokens;
+  const adaptiveRecentBoundary = totalTokens > summarizeThreshold * 0.8 ? 6 : 14;
+
+  // Under summarize threshold — keep everything as-is
+  if (totalTokens <= summarizeThreshold) {
     return messages;
   }
 
   // Find first user message index (to pin it)
   const firstUserIdx = messages.findIndex(m => m.role === 'user' && !m.isToolResult);
 
-  // Phase 1: Summarize old verbose content (walk from oldest to newest, skip recent 14)
+  // Phase 1: Summarize old verbose content (walk from oldest to newest, skip recent tail)
   const result = [...messages];
   const recentBoundary = Math.max(0, result.length - adaptiveRecentBoundary);
   let currentTokens = totalTokens;
 
-  for (let i = 0; i < recentBoundary && currentTokens > budget.targetTokens; i++) {
+  for (let i = 0; i < recentBoundary && currentTokens > summarizeThreshold; i++) {
     const msg = result[i];
     const before = estimateMessageTokens(msg);
     const summarized = msg.isToolResult ? summarizeToolResult(msg) : summarizeVerboseMessage(msg);
@@ -287,12 +335,19 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
     currentTokens -= (before - after);
   }
 
-  if (currentTokens <= budget.targetTokens) {
+  if (currentTokens <= summarizeThreshold) {
     console.log(`[Push] Context managed via summarization: ${totalTokens} → ${currentTokens} tokens`);
     return result;
   }
 
   // Phase 2: Remove oldest non-pinned messages with a digest fallback.
+  // Only drop messages when over the (potentially much higher) targetTokens —
+  // for Gemini this means we summarize at 88K but only drop at 800K.
+  if (currentTokens <= budget.targetTokens) {
+    console.log(`[Push] Context managed via summarization (under drop threshold): ${totalTokens} → ${currentTokens} tokens`);
+    return result;
+  }
+
   const tailStart = Math.max(0, result.length - adaptiveRecentBoundary);
   const protectedIdx = new Set<number>();
   if (firstUserIdx >= 0) protectedIdx.add(firstUserIdx);
@@ -555,8 +610,12 @@ function toLLMMessages(
     systemContent += '\n' + ASK_USER_TOOL_PROTOCOL;
   }
 
+  // Prompt caching: wrap the system message as a content-array with cache_control
+  // for providers that support it (OpenRouter/Anthropic, Mistral). Other providers
+  // (Ollama, Google, Z.AI, MiniMax, Zen) harmlessly ignore the extra field.
+  const cacheable = providerType === 'openrouter' || providerType === 'mistral';
   const llmMessages: LLMMessage[] = [
-    providerType === "openrouter" 
+    cacheable
       ? { role: "system", content: [{ type: "text", text: systemContent, cache_control: { type: "ephemeral" } }] as LLMMessageContent[] }
       : { role: "system", content: systemContent },
   ];
@@ -610,8 +669,9 @@ function toLLMMessages(
     }
   }
 
-  // Prompt Caching for OpenRouter: cache the entire prefix up to the last user message
-  if (providerType === "openrouter" && llmMessages.length > 0) {
+  // Prompt Caching: cache the entire prefix up to the last user message.
+  // Active for providers that support cache_control (OpenRouter, Mistral).
+  if (cacheable && llmMessages.length > 0) {
     for (let i = llmMessages.length - 1; i >= 0; i--) {
       if (llmMessages[i].role === "user") {
         const lastMsg = llmMessages[i];
