@@ -5,6 +5,8 @@ import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-t
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { recordContextMetric } from './context-metrics';
+import type { SummarizationCause } from './context-metrics';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -292,6 +294,24 @@ function buildContextDigest(removed: ChatMessage[]): string {
 }
 
 /**
+ * Classify what caused summarization pressure: tool output, long messages, or a mix.
+ */
+function classifySummarizationCause(messages: ChatMessage[], recentBoundary: number): SummarizationCause {
+  let toolResults = 0;
+  let longMessages = 0;
+
+  for (let i = 0; i < recentBoundary && i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.isToolResult && msg.content.length > 1200) toolResults++;
+    else if (!msg.isToolResult && msg.content.length > 1200) longMessages++;
+  }
+
+  if (toolResults > 0 && longMessages === 0) return 'tool_output';
+  if (longMessages > 0 && toolResults === 0) return 'long_message';
+  return 'mixed';
+}
+
+/**
  * Manage context window: summarize old messages instead of dropping them.
  *
  * Strategy:
@@ -300,7 +320,7 @@ function buildContextDigest(removed: ChatMessage[]): string {
  * 3. Summarize old tool results (biggest token consumers)
  * 4. If still over budget, start dropping oldest summarized pairs
  */
-function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_CONTEXT_BUDGET): ChatMessage[] {
+function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_CONTEXT_BUDGET, provider?: string): ChatMessage[] {
   if (getContextMode() === 'none') {
     return messages;
   }
@@ -336,6 +356,8 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
   }
 
   if (currentTokens <= summarizeThreshold) {
+    const cause = classifySummarizationCause(messages, recentBoundary);
+    recordContextMetric({ phase: 'summarization', beforeTokens: totalTokens, afterTokens: currentTokens, provider, cause });
     console.log(`[Push] Context managed via summarization: ${totalTokens} → ${currentTokens} tokens`);
     return result;
   }
@@ -344,6 +366,8 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
   // Only drop messages when over the (potentially much higher) targetTokens —
   // for Gemini this means we summarize at 88K but only drop at 800K.
   if (currentTokens <= budget.targetTokens) {
+    const cause = classifySummarizationCause(messages, recentBoundary);
+    recordContextMetric({ phase: 'summarization', beforeTokens: totalTokens, afterTokens: currentTokens, provider, cause });
     console.log(`[Push] Context managed via summarization (under drop threshold): ${totalTokens} → ${currentTokens} tokens`);
     return result;
   }
@@ -416,11 +440,15 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
     while (estimateContextTokens(hardResult) > budget.maxTokens && hardResult.length > 16) {
       hardResult.splice(1, 1);
     }
-    console.log(`[Push] Context managed (hard fallback): ${totalTokens} → ${estimateContextTokens(hardResult)} tokens`);
+    const hardAfter = estimateContextTokens(hardResult);
+    recordContextMetric({ phase: 'hard_trim', beforeTokens: totalTokens, afterTokens: hardAfter, provider, messagesDropped: messages.length - hardResult.length });
+    console.log(`[Push] Context managed (hard fallback): ${totalTokens} → ${hardAfter} tokens`);
     return hardResult;
   }
 
-  console.log(`[Push] Context managed with digest: ${totalTokens} → ${estimateContextTokens(kept)} tokens (${messages.length} → ${kept.length} messages)`);
+  const keptTokens = estimateContextTokens(kept);
+  recordContextMetric({ phase: 'digest_drop', beforeTokens: totalTokens, afterTokens: keptTokens, provider, messagesDropped: toRemove.size });
+  console.log(`[Push] Context managed with digest: ${totalTokens} → ${keptTokens} tokens (${messages.length} → ${kept.length} messages)`);
   return kept;
 }
 
@@ -622,7 +650,7 @@ function toLLMMessages(
 
   // Smart context management — summarize old messages instead of dropping
   const contextBudget = getContextBudget(providerType, providerModel);
-  const windowedMessages = manageContext(messages, contextBudget);
+  const windowedMessages = manageContext(messages, contextBudget, providerType);
 
   for (const msg of windowedMessages) {
     // Check for attachments (multimodal message)

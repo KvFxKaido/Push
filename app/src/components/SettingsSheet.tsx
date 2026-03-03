@@ -1,5 +1,6 @@
 import { Trash2, GitBranch, RefreshCw, Loader2, User, FolderCog, Cpu } from 'lucide-react';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
+import { getContextMetrics } from '@/lib/context-metrics';
 import {
   Sheet,
   SheetContent,
@@ -395,6 +396,7 @@ export function SettingsSheet({
   data,
 }: SettingsSheetProps) {
   const tcMetrics = getMalformedToolCallMetrics();
+  const ctxMetrics = getContextMetrics();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -1370,6 +1372,60 @@ export function SettingsSheet({
                     ))}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* Context Diagnostics */}
+          <div className="space-y-3 pt-2 border-t border-push-edge">
+            <label className="text-sm font-medium text-push-fg">
+              Context Diagnostics
+            </label>
+            {ctxMetrics.totalEvents === 0 ? (
+              <p className="text-xs text-push-fg-dim">No context compression events this session.</p>
+            ) : (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                  <span className="text-xs text-push-fg-secondary">Events</span>
+                  <span className="text-xs text-push-fg-dim text-right">{ctxMetrics.totalEvents}</span>
+                  <span className="text-xs text-push-fg-secondary">Tokens saved</span>
+                  <span className="text-xs text-push-fg-dim text-right">{ctxMetrics.totalTokensSaved.toLocaleString()}</span>
+                  <span className="text-xs text-push-fg-secondary">Largest reduction</span>
+                  <span className="text-xs text-push-fg-dim text-right">{ctxMetrics.largestReduction.toLocaleString()}</span>
+                  <span className="text-xs text-push-fg-secondary">Max context seen</span>
+                  <span className="text-xs text-push-fg-dim text-right">{ctxMetrics.maxContextSeen.toLocaleString()}</span>
+                </div>
+                {/* Phase breakdown */}
+                <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
+                  {([
+                    ['Summarization', ctxMetrics.summarization] as const,
+                    ['Digest + drop', ctxMetrics.digestDrop] as const,
+                    ['Hard trim', ctxMetrics.hardTrim] as const,
+                  ]).filter(([, p]) => p.count > 0).map(([label, p]) => (
+                    <div key={label} className="flex items-center justify-between">
+                      <span className="text-[11px] text-push-fg-dim">{label}</span>
+                      <span className="text-[11px] text-push-fg-dim">
+                        {p.count}× · {(p.totalBefore - p.totalAfter).toLocaleString()} saved
+                        {p.messagesDropped > 0 ? ` · ${p.messagesDropped} msgs dropped` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {/* Provider breakdown */}
+                {Object.keys(ctxMetrics.byProvider).length > 0 && (
+                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
+                    {Object.entries(ctxMetrics.byProvider).map(([prov, pm]) => (
+                      <div key={prov} className="flex items-center justify-between">
+                        <span className="text-[11px] text-push-fg-dim">
+                          {PROVIDER_LABELS[prov as AIProviderType] ?? prov}
+                        </span>
+                        <span className="text-[11px] text-push-fg-dim">
+                          {pm.count}× · {(pm.totalBefore - pm.totalAfter).toLocaleString()} saved
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
