@@ -174,7 +174,7 @@ function estimateTokens(text: string): number {
 
   // Count content signals
   const nonAsciiCount = (sample.match(/[^\u0020-\u007E\n\r\t]/g) || []).length;
-  const codeSymbolCount = (sample.match(/[{}()\[\];=<>|&!+\-*/^~@#$%]/g) || []).length;
+  const codeSymbolCount = (sample.match(/[{}()[\];=<>|&!+\-*/^~@#$%]/g) || []).length;
   const sampleLen = sample.length;
 
   // High non-ASCII ratio → CJK/emoji-heavy, each char ≈ 1 token
