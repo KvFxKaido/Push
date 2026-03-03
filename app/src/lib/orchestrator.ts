@@ -355,20 +355,13 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
     currentTokens -= (before - after);
   }
 
-  if (currentTokens <= summarizeThreshold) {
-    const cause = classifySummarizationCause(messages, recentBoundary);
-    recordContextMetric({ phase: 'summarization', beforeTokens: totalTokens, afterTokens: currentTokens, provider, cause });
-    console.log(`[Push] Context managed via summarization: ${totalTokens} → ${currentTokens} tokens`);
-    return result;
-  }
-
   // Phase 2: Remove oldest non-pinned messages with a digest fallback.
   // Only drop messages when over the (potentially much higher) targetTokens —
   // for Gemini this means we summarize at 88K but only drop at 800K.
   if (currentTokens <= budget.targetTokens) {
     const cause = classifySummarizationCause(messages, recentBoundary);
     recordContextMetric({ phase: 'summarization', beforeTokens: totalTokens, afterTokens: currentTokens, provider, cause });
-    console.log(`[Push] Context managed via summarization (under drop threshold): ${totalTokens} → ${currentTokens} tokens`);
+    console.log(`[Push] Context managed via summarization: ${totalTokens} → ${currentTokens} tokens`);
     return result;
   }
 

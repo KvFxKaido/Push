@@ -1411,6 +1411,22 @@ export function SettingsSheet({
                     </div>
                   ))}
                 </div>
+                {/* Summarization causes */}
+                {Object.values(ctxMetrics.summarizationCauses).some(c => c > 0) && (
+                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
+                    <span className="text-[11px] text-push-fg-secondary font-medium">Summarization causes</span>
+                    {([
+                      ['Tool output', ctxMetrics.summarizationCauses.tool_output] as const,
+                      ['Long message', ctxMetrics.summarizationCauses.long_message] as const,
+                      ['Mixed', ctxMetrics.summarizationCauses.mixed] as const,
+                    ]).filter(([, c]) => c > 0).map(([label, count]) => (
+                      <div key={label} className="flex items-center justify-between">
+                        <span className="text-[11px] text-push-fg-dim">{label}</span>
+                        <span className="text-[11px] text-push-fg-dim">{count}×</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {/* Provider breakdown */}
                 {Object.keys(ctxMetrics.byProvider).length > 0 && (
                   <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
