@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
@@ -7,147 +6,41 @@ import { useGitHubAuth } from '@/hooks/useGitHubAuth';
 import { useGitHubAppAuth } from '@/hooks/useGitHubAppAuth';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
-import { useOllamaConfig } from '@/hooks/useOllamaConfig';
-import { useMistralConfig } from '@/hooks/useMistralConfig';
-import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
-import { useMinimaxConfig } from '@/hooks/useMinimaxConfig';
-import { useZaiConfig } from '@/hooks/useZaiConfig';
-import { useGoogleConfig } from '@/hooks/useGoogleConfig';
-import { useZenConfig } from '@/hooks/useZenConfig';
-import { useTavilyConfig } from '@/hooks/useTavilyConfig';
-import {
-  getPreferredProvider,
-  setPreferredProvider,
-  clearPreferredProvider,
-  OPENROUTER_MODELS,
-  MINIMAX_MODELS,
-  ZAI_MODELS,
-  GOOGLE_MODELS,
-  ZEN_MODELS,
-  type PreferredProvider,
-} from '@/lib/providers';
-import { getActiveProvider, getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
-import {
-  fetchOllamaModels,
-  fetchMistralModels,
-  fetchOpenRouterModels,
-  fetchZaiModels,
-  fetchGoogleModels,
-  fetchZenModels,
-} from '@/lib/model-catalog';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { useProtectMain } from '@/hooks/useProtectMain';
-import { buildWorkspaceContext, sanitizeProjectInstructions } from '@/lib/workspace-context';
-import { readFromSandbox, execInSandbox, downloadFromSandbox, writeToSandbox } from '@/lib/sandbox-client';
-import { fetchProjectInstructions, fetchRepoBranches, executeDeleteBranch } from '@/lib/github-tools';
-import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
+import { useModelCatalog } from '@/hooks/useModelCatalog';
+import { useSnapshotManager } from '@/hooks/useSnapshotManager';
+import { useBranchManager } from '@/hooks/useBranchManager';
+import { useProjectInstructions } from '@/hooks/useProjectInstructions';
 import {
-  createSnapshot,
-  saveSnapshotToIndexedDB,
-  getLatestSnapshotBlob,
-  getLatestSnapshotMeta,
-  hydrateSnapshot,
-  type SnapshotMeta,
-  type HydrateProgress,
-} from '@/lib/snapshot-manager';
-import { ChatContainer } from '@/components/chat/ChatContainer';
-import { ChatInput } from '@/components/chat/ChatInput';
-import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
-import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
-import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
+  setPreferredProvider,
+  type PreferredProvider,
+} from '@/lib/providers';
+import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
+import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
+import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
+import { SettingsSheet } from '@/components/SettingsSheet';
 import { OnboardingScreen } from '@/sections/OnboardingScreen';
 import { HomeScreen } from '@/sections/HomeScreen';
 import { FileBrowser } from '@/sections/FileBrowser';
+import { ChatScreen } from '@/sections/ChatScreen';
 import type { AppScreen, RepoWithActivity, SandboxStateCardData } from '@/types';
-import { SettingsSheet } from '@/components/SettingsSheet';
-import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
-import { MergeFlowSheet } from '@/components/chat/MergeFlowSheet';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import './App.css';
 
-const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
-const SNAPSHOT_IDLE_MS = 5 * 60 * 1000;
-const SNAPSHOT_HARD_CAP_MS = 4 * 60 * 60 * 1000;
-const SNAPSHOT_MIN_GAP_MS = 60 * 1000;
-const SNAPSHOT_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
 
-function formatSnapshotAge(timestamp: number): string {
-  const diffMs = Date.now() - timestamp;
-  if (diffMs < 60_000) return 'just now';
-  const minutes = Math.floor(diffMs / 60_000);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function snapshotStagePercent(stage: HydrateProgress['stage']): number {
-  switch (stage) {
-    case 'uploading': return 20;
-    case 'restoring': return 60;
-    case 'validating': return 85;
-    case 'done': return 100;
-    default: return 0;
-  }
-}
-
-function includeSelectedModel(models: string[], selectedModel: string | null | undefined): string[] {
-  if (!selectedModel) return [...models];
-  const available = new Set(models);
-  if (available.has(selectedModel)) return [...models];
-  return [selectedModel, ...models];
-}
-
-const AGENTS_MD_TEMPLATE = `# AGENTS.md
-
-## Project Overview
-- What this project does:
-- Primary users:
-- Current priorities:
-
-## Tech Stack
-- Runtime/frameworks:
-- Build/test tools:
-- Deployment target:
-
-## Architecture Notes
-- Key directories:
-- Important services/modules:
-- Data flow summary:
-
-## Coding Conventions
-- Style/linting rules:
-- Type/validation expectations:
-- Error handling patterns:
-
-## Testing
-- Run unit tests:
-- Run integration/e2e tests:
-- Definition of done:
-
-## Agent Guidance
-- Preferred workflow for edits:
-- Files/components to read first:
-- Things to avoid:
-`;
-
 function App() {
+  // --- Core state ---
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
   const scratchpad = useScratchpad(activeRepo?.full_name ?? null);
   const [isWorkspaceHubOpen, setIsWorkspaceHubOpen] = useState(false);
   const [isSandboxMode, setIsSandboxMode] = useState(false);
   const sandbox = useSandbox(isSandboxMode ? '' : (activeRepo?.full_name ?? null));
+
+  // --- Chat ---
+  const skipBranchTeardownRef = useRef(false);
   const {
     messages,
     sendMessage,
@@ -197,8 +90,6 @@ function App() {
         toast.success(`Promoted to GitHub: ${repo.full_name}`);
       },
       onBranchSwitch: (branch) => {
-        // Sandbox already switched to this branch internally (e.g. draft checkout).
-        // Suppress the next teardown so we just sync state without destroying the sandbox.
         skipBranchTeardownRef.current = true;
         setCurrentBranch(branch);
       },
@@ -212,15 +103,13 @@ function App() {
     },
   );
 
-  // Protect Main — blocks commits/pushes to the default branch
+  // --- Protect Main ---
   const protectMain = useProtectMain(activeRepo?.full_name ?? undefined);
-
-  // Sync protect-main state to useChat (ref-based, non-reactive)
   useEffect(() => {
     setIsMainProtected(protectMain.isProtected);
   }, [protectMain.isProtected, setIsMainProtected]);
 
-  // PAT-based auth (fallback)
+  // --- Auth ---
   const {
     token: patToken,
     setTokenManually,
@@ -230,7 +119,6 @@ function App() {
     validatedUser: patUser,
   } = useGitHubAuth();
 
-  // GitHub App auth (primary)
   const {
     token: appToken,
     installationId,
@@ -244,20 +132,34 @@ function App() {
     isAppAuth,
   } = useGitHubAppAuth();
 
-  // Prefer GitHub App token over PAT
   const token = appToken || patToken;
   const authLoading = appLoading || patLoading;
   const authError = appError || patError;
   const validatedUser = appUser || patUser;
   const { repos, loading: reposLoading, error: reposError, sync: syncRepos } = useRepos();
-  const { setKey: setOllamaKey, clearKey: clearOllamaKey, hasKey: hasOllamaKey, model: ollamaModel, setModel: setOllamaModel } = useOllamaConfig();
-  const { setKey: setMistralKey, clearKey: clearMistralKey, hasKey: hasMistralKey, model: mistralModel, setModel: setMistralModel } = useMistralConfig();
-  const { setKey: setOpenRouterKey, clearKey: clearOpenRouterKey, hasKey: hasOpenRouterKey, model: openRouterModel, setModel: setOpenRouterModel } = useOpenRouterConfig();
-  const { setKey: setMinimaxKey, clearKey: clearMinimaxKey, hasKey: hasMinimaxKey, model: minimaxModel, setModel: setMinimaxModel } = useMinimaxConfig();
-  const { setKey: setZaiKey, clearKey: clearZaiKey, hasKey: hasZaiKey, model: zaiModel, setModel: setZaiModel } = useZaiConfig();
-  const { setKey: setGoogleKey, clearKey: clearGoogleKey, hasKey: hasGoogleKey, model: googleModel, setModel: setGoogleModel } = useGoogleConfig();
-  const { setKey: setZenKey, clearKey: clearZenKey, hasKey: hasZenKey, model: zenModel, setModel: setZenModel } = useZenConfig();
-  const { setKey: setTavilyKey, clearKey: clearTavilyKey, hasKey: hasTavilyKey } = useTavilyConfig();
+
+  // --- Extracted hooks ---
+  const catalog = useModelCatalog();
+  const snapshots = useSnapshotManager(isSandboxMode, sandbox, activeRepo, isStreaming);
+  const branches = useBranchManager(activeRepo, isSandboxMode);
+  const [showFileBrowser, setShowFileBrowser] = useState(false);
+
+  const instructions = useProjectInstructions(
+    activeRepo,
+    repos,
+    isSandboxMode,
+    sandbox,
+    {
+      setAgentsMd,
+      setWorkspaceContext,
+      sendMessage,
+      isStreaming,
+    },
+    setShowFileBrowser,
+    snapshots.markSnapshotActivity,
+  );
+
+  // --- Settings UI ---
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('you');
   const [showToolActivity, setShowToolActivityState] = useState<boolean>(() => {
@@ -268,419 +170,23 @@ function App() {
   const { profile, updateProfile, clearProfile } = useUserProfile();
   const [displayNameDraft, setDisplayNameDraft] = useState('');
   const [bioDraft, setBioDraft] = useState('');
-  const [ollamaKeyInput, setOllamaKeyInput] = useState('');
-  const [mistralKeyInput, setMistralKeyInput] = useState('');
-  const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
-  const [minimaxKeyInput, setMinimaxKeyInput] = useState('');
-  const [zaiKeyInput, setZaiKeyInput] = useState('');
-  const [googleKeyInput, setGoogleKeyInput] = useState('');
-  const [zenKeyInput, setZenKeyInput] = useState('');
-  const [tavilyKeyInput, setTavilyKeyInput] = useState('');
-  const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  const [mistralModels, setMistralModels] = useState<string[]>([]);
-  const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
-  const minimaxModels = MINIMAX_MODELS;
-  const [zaiModels, setZaiModels] = useState<string[]>([]);
-  const [googleModels, setGoogleModels] = useState<string[]>([]);
-  const [zenModels, setZenModels] = useState<string[]>([]);
-  const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
-  const [mistralModelsLoading, setMistralModelsLoading] = useState(false);
-  const [openRouterModelsLoading, setOpenRouterModelsLoading] = useState(false);
-  const minimaxModelsLoading = false;
-  const [zaiModelsLoading, setZaiModelsLoading] = useState(false);
-  const [googleModelsLoading, setGoogleModelsLoading] = useState(false);
-  const [zenModelsLoading, setZenModelsLoading] = useState(false);
-  const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
-  const [mistralModelsError, setMistralModelsError] = useState<string | null>(null);
-  const [openRouterModelsError, setOpenRouterModelsError] = useState<string | null>(null);
-  const minimaxModelsError = null;
-  const [zaiModelsError, setZaiModelsError] = useState<string | null>(null);
-  const [googleModelsError, setGoogleModelsError] = useState<string | null>(null);
-  const [zenModelsError, setZenModelsError] = useState<string | null>(null);
-  const [ollamaModelsUpdatedAt, setOllamaModelsUpdatedAt] = useState<number | null>(null);
-  const [mistralModelsUpdatedAt, setMistralModelsUpdatedAt] = useState<number | null>(null);
-  const [openRouterModelsUpdatedAt, setOpenRouterModelsUpdatedAt] = useState<number | null>(null);
-  const minimaxModelsUpdatedAt = null;
-  const [zaiModelsUpdatedAt, setZaiModelsUpdatedAt] = useState<number | null>(null);
-  const [googleModelsUpdatedAt, setGoogleModelsUpdatedAt] = useState<number | null>(null);
-  const [zenModelsUpdatedAt, setZenModelsUpdatedAt] = useState<number | null>(null);
-
-  // Derive display label from actual active provider
-  const activeProviderLabel = getActiveProvider();
-  // Keep Zen first so backend pickers surface the recommended default.
-  const availableProviders = ([
-    ['zen', 'OpenCode Zen', hasZenKey],
-    ['minimax', 'MiniMax', hasMinimaxKey],
-    ['ollama', 'Ollama', hasOllamaKey],
-    ['mistral', 'Mistral', hasMistralKey],
-    ['openrouter', 'OpenRouter', hasOpenRouterKey],
-    ['zai', 'Z.AI', hasZaiKey],
-    ['google', 'Google', hasGoogleKey],
-  ] as const).filter(([, , has]) => has);
-  
-  const [showFileBrowser, setShowFileBrowser] = useState(false);
-  const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
-  const [creatingAgentsMdWithAI, setCreatingAgentsMdWithAI] = useState(false);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
+  const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
+  const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() => getSandboxStartMode());
+  const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
 
-  // Branch lifecycle controls (sheets wired in Tasks 5 & 6)
-  const [showBranchCreate, setShowBranchCreate] = useState(false);
-  const [showMergeFlow, setShowMergeFlow] = useState(false);
-  const [repoBranches, setRepoBranches] = useState<{ name: string; isDefault: boolean; isProtected: boolean }[]>([]);
-  const [repoBranchesLoading, setRepoBranchesLoading] = useState(false);
-  const [repoBranchesError, setRepoBranchesError] = useState<string | null>(null);
-  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const [pendingDeleteBranch, setPendingDeleteBranch] = useState<string | null>(null);
-  const [deletingBranch, setDeletingBranch] = useState<string | null>(null);
-  const branchFetchSeqRef = useRef(0);
-
-  // Derived branch values
-  const activeRepoFullName = activeRepo?.full_name || null;
-  const currentBranch = activeRepo?.current_branch || activeRepo?.default_branch || 'main';
-  const isOnMain = currentBranch === (activeRepo?.default_branch || 'main');
-  const displayBranches = useMemo(() => {
-    if (!activeRepo) return repoBranches;
-    if (!currentBranch) return repoBranches;
-    if (repoBranches.some((b) => b.name === currentBranch)) return repoBranches;
-    return [
-      {
-        name: currentBranch,
-        isDefault: currentBranch === activeRepo.default_branch,
-        isProtected: false,
-      },
-      ...repoBranches,
-    ];
-  }, [activeRepo, currentBranch, repoBranches]);
-
-  // Sandbox state for settings display
+  // --- Sandbox state for settings display ---
   const [sandboxState, setSandboxState] = useState<SandboxStateCardData | null>(null);
   const [sandboxStateLoading, setSandboxStateLoading] = useState(false);
   const sandboxStateFetchedFor = useRef<string | null>(null);
-  const [latestSnapshot, setLatestSnapshot] = useState<SnapshotMeta | null>(null);
-  const [snapshotSaving, setSnapshotSaving] = useState(false);
-  const [snapshotRestoring, setSnapshotRestoring] = useState(false);
-  const [snapshotRestoreProgress, setSnapshotRestoreProgress] = useState<HydrateProgress | null>(null);
-  const snapshotLastActivityRef = useRef<number>(Date.now());
-  const snapshotLastSavedAtRef = useRef<number>(0);
-  const snapshotSessionStartedAtRef = useRef<number>(Date.now());
-  const snapshotHardCapNotifiedRef = useRef(false);
-  const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() => getSandboxStartMode());
-  const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
-  const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
-  const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
-  const isMistralModelLocked = isModelLocked && lockedProvider === 'mistral';
-  const isMinimaxModelLocked = isModelLocked && lockedProvider === 'minimax';
-  const isZaiModelLocked = isModelLocked && lockedProvider === 'zai';
-  const isGoogleModelLocked = isModelLocked && lockedProvider === 'google';
-  const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
-  const refreshModels = useCallback(async (params: {
-    hasKey: boolean;
-    isLoading: boolean;
-    setLoading: (value: boolean) => void;
-    setError: (value: string | null) => void;
-    setModels: (models: string[]) => void;
-    setUpdatedAt: (value: number) => void;
-    fetchModels: () => Promise<string[]>;
-    emptyMessage: string;
-    failureMessage: string;
-  }) => {
-    if (!params.hasKey || params.isLoading) return;
-    params.setLoading(true);
-    params.setError(null);
-    try {
-      const models = await params.fetchModels();
-      params.setModels(models);
-      params.setUpdatedAt(Date.now());
-      if (models.length === 0) params.setError(params.emptyMessage);
-    } catch (err) {
-      params.setError(err instanceof Error ? err.message : params.failureMessage);
-    } finally {
-      params.setLoading(false);
-    }
-  }, []);
+  const [sandboxDownloading, setSandboxDownloading] = useState(false);
 
-  const refreshOllamaModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: hasOllamaKey,
-      isLoading: ollamaModelsLoading,
-      setLoading: setOllamaModelsLoading,
-      setError: setOllamaModelsError,
-      setModels: setOllamaModels,
-      setUpdatedAt: setOllamaModelsUpdatedAt,
-      fetchModels: fetchOllamaModels,
-      emptyMessage: 'No models returned by Ollama.',
-      failureMessage: 'Failed to load Ollama models.',
-    });
-  }, [hasOllamaKey, ollamaModelsLoading, refreshModels]);
+  // --- Profile sync ---
+  useEffect(() => { setDisplayNameDraft(profile.displayName); }, [profile.displayName]);
+  useEffect(() => { setBioDraft(profile.bio); }, [profile.bio]);
 
-  const refreshMistralModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: hasMistralKey,
-      isLoading: mistralModelsLoading,
-      setLoading: setMistralModelsLoading,
-      setError: setMistralModelsError,
-      setModels: setMistralModels,
-      setUpdatedAt: setMistralModelsUpdatedAt,
-      fetchModels: fetchMistralModels,
-      emptyMessage: 'No models returned by Mistral.',
-      failureMessage: 'Failed to load Mistral models.',
-    });
-  }, [hasMistralKey, mistralModelsLoading, refreshModels]);
-
-  const refreshOpenRouterModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: hasOpenRouterKey,
-      isLoading: openRouterModelsLoading,
-      setLoading: setOpenRouterModelsLoading,
-      setError: setOpenRouterModelsError,
-      setModels: setOpenRouterModels,
-      setUpdatedAt: setOpenRouterModelsUpdatedAt,
-      fetchModels: fetchOpenRouterModels,
-      emptyMessage: 'No models returned by OpenRouter.',
-      failureMessage: 'Failed to load OpenRouter models.',
-    });
-  }, [hasOpenRouterKey, openRouterModelsLoading, refreshModels]);
-
-  const refreshMinimaxModels = useCallback(() => {
-    // MiniMax uses a fixed curated list for now; live /models is flaky on some accounts/plans.
-  }, []);
-
-  const refreshZaiModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: hasZaiKey,
-      isLoading: zaiModelsLoading,
-      setLoading: setZaiModelsLoading,
-      setError: setZaiModelsError,
-      setModels: setZaiModels,
-      setUpdatedAt: setZaiModelsUpdatedAt,
-      fetchModels: fetchZaiModels,
-      emptyMessage: 'No models returned by Z.AI.',
-      failureMessage: 'Failed to load Z.AI models.',
-    });
-  }, [hasZaiKey, zaiModelsLoading, refreshModels]);
-
-  const refreshGoogleModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: hasGoogleKey,
-      isLoading: googleModelsLoading,
-      setLoading: setGoogleModelsLoading,
-      setError: setGoogleModelsError,
-      setModels: setGoogleModels,
-      setUpdatedAt: setGoogleModelsUpdatedAt,
-      fetchModels: fetchGoogleModels,
-      emptyMessage: 'No models returned by Google.',
-      failureMessage: 'Failed to load Google models.',
-    });
-  }, [hasGoogleKey, googleModelsLoading, refreshModels]);
-
-  const refreshZenModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: hasZenKey,
-      isLoading: zenModelsLoading,
-      setLoading: setZenModelsLoading,
-      setError: setZenModelsError,
-      setModels: setZenModels,
-      setUpdatedAt: setZenModelsUpdatedAt,
-      fetchModels: fetchZenModels,
-      emptyMessage: 'No models returned by OpenCode Zen.',
-      failureMessage: 'Failed to load OpenCode Zen models.',
-    });
-  }, [hasZenKey, zenModelsLoading, refreshModels]);
-
-  const loadRepoBranches = useCallback(async (repoFullName: string) => {
-    const seq = ++branchFetchSeqRef.current;
-    setRepoBranchesLoading(true);
-    setRepoBranchesError(null);
-    try {
-      const { branches } = await fetchRepoBranches(repoFullName, 500);
-      if (seq !== branchFetchSeqRef.current) return;
-      setRepoBranches(branches);
-    } catch (err) {
-      if (seq !== branchFetchSeqRef.current) return;
-      setRepoBranches([]);
-      setRepoBranchesError(err instanceof Error ? err.message : 'Failed to load branches');
-    } finally {
-      if (seq === branchFetchSeqRef.current) {
-        setRepoBranchesLoading(false);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!activeRepoFullName || isSandboxMode) {
-      branchFetchSeqRef.current++;
-      setRepoBranches([]);
-      setRepoBranchesError(null);
-      setRepoBranchesLoading(false);
-      setBranchMenuOpen(false);
-      setPendingDeleteBranch(null);
-      setDeletingBranch(null);
-      return;
-    }
-    setPendingDeleteBranch(null);
-    setDeletingBranch(null);
-    void loadRepoBranches(activeRepoFullName);
-  }, [activeRepoFullName, isSandboxMode, loadRepoBranches]);
-
-  const handleDeleteBranch = useCallback(async (branchName: string): Promise<boolean> => {
-    if (!activeRepo || isSandboxMode) return false;
-    const normalized = branchName.trim();
-    if (!normalized) return false;
-
-    const branchMeta = displayBranches.find((b) => b.name === normalized);
-    const isDefaultBranch = normalized === activeRepo.default_branch || Boolean(branchMeta?.isDefault);
-    const isProtectedBranch = Boolean(branchMeta?.isProtected);
-    const isCurrentBranch = normalized === currentBranch;
-
-    if (isCurrentBranch) {
-      toast.error(`Cannot delete current branch "${normalized}"`);
-      return false;
-    }
-    if (isDefaultBranch) {
-      toast.error(`Cannot delete default branch "${normalized}"`);
-      return false;
-    }
-    if (isProtectedBranch) {
-      toast.error(`Cannot delete protected branch "${normalized}"`);
-      return false;
-    }
-
-    setDeletingBranch(normalized);
-    try {
-      await executeDeleteBranch(activeRepo.full_name, normalized);
-      toast.success(`Deleted branch "${normalized}"`);
-      setPendingDeleteBranch(null);
-      await loadRepoBranches(activeRepo.full_name);
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message.replace(/^\[Tool Error\]\s*/, '') : 'Failed to delete branch';
-      toast.error(message);
-      return false;
-    } finally {
-      setDeletingBranch((prev) => (prev === normalized ? null : prev));
-    }
-  }, [activeRepo, currentBranch, displayBranches, isSandboxMode, loadRepoBranches]);
-
-  useEffect(() => {
-    if (hasOllamaKey && ollamaModels.length === 0 && !ollamaModelsLoading) {
-      refreshOllamaModels();
-    }
-  }, [hasOllamaKey, ollamaModels.length, ollamaModelsLoading, refreshOllamaModels]);
-
-  useEffect(() => {
-    if (hasMistralKey && mistralModels.length === 0 && !mistralModelsLoading) {
-      refreshMistralModels();
-    }
-  }, [hasMistralKey, mistralModels.length, mistralModelsLoading, refreshMistralModels]);
-
-  useEffect(() => {
-    if (hasZaiKey && zaiModels.length === 0 && !zaiModelsLoading) {
-      refreshZaiModels();
-    }
-  }, [hasZaiKey, zaiModels.length, zaiModelsLoading, refreshZaiModels]);
-
-  useEffect(() => {
-    if (hasGoogleKey && googleModels.length === 0 && !googleModelsLoading) {
-      refreshGoogleModels();
-    }
-  }, [hasGoogleKey, googleModels.length, googleModelsLoading, refreshGoogleModels]);
-
-  useEffect(() => {
-    if (hasZenKey && zenModels.length === 0 && !zenModelsLoading) {
-      refreshZenModels();
-    }
-  }, [hasZenKey, zenModels.length, zenModelsLoading, refreshZenModels]);
-
-  // OpenRouter: Don't auto-fetch models (large list can cause UI freeze)
-  // Users can manually refresh via the refresh button if needed
-  // useEffect(() => {
-  //   if (hasOpenRouterKey && openRouterModels.length === 0 && !openRouterModelsLoading) {
-  //     refreshOpenRouterModels();
-  //   }
-  // }, [hasOpenRouterKey, openRouterModels.length, openRouterModelsLoading, refreshOpenRouterModels]);
-
-  useEffect(() => {
-    if (!hasOllamaKey) {
-      setOllamaModels([]);
-      setOllamaModelsError(null);
-      setOllamaModelsUpdatedAt(null);
-    }
-  }, [hasOllamaKey]);
-
-  useEffect(() => {
-    if (!hasMistralKey) {
-      setMistralModels([]);
-      setMistralModelsError(null);
-      setMistralModelsUpdatedAt(null);
-    }
-  }, [hasMistralKey]);
-
-  useEffect(() => {
-    if (!hasOpenRouterKey) {
-      setOpenRouterModels([]);
-      setOpenRouterModelsError(null);
-      setOpenRouterModelsUpdatedAt(null);
-    }
-  }, [hasOpenRouterKey]);
-
-  useEffect(() => {
-    if (!hasZaiKey) {
-      setZaiModels([]);
-      setZaiModelsError(null);
-      setZaiModelsUpdatedAt(null);
-    }
-  }, [hasZaiKey]);
-
-  useEffect(() => {
-    if (!hasGoogleKey) {
-      setGoogleModels([]);
-      setGoogleModelsError(null);
-      setGoogleModelsUpdatedAt(null);
-    }
-  }, [hasGoogleKey]);
-
-  useEffect(() => {
-    if (!hasZenKey) {
-      setZenModels([]);
-      setZenModelsError(null);
-      setZenModelsUpdatedAt(null);
-    }
-  }, [hasZenKey]);
-
-  useEffect(() => {
-    setDisplayNameDraft(profile.displayName);
-  }, [profile.displayName]);
-
-  useEffect(() => {
-    setBioDraft(profile.bio);
-  }, [profile.bio]);
-
-  const ollamaModelOptions = useMemo(() => {
-    return includeSelectedModel(ollamaModels, ollamaModel);
-  }, [ollamaModels, ollamaModel]);
-
-  const mistralModelOptions = useMemo(() => {
-    return includeSelectedModel(mistralModels, mistralModel);
-  }, [mistralModels, mistralModel]);
-
-  const zaiModelOptions = useMemo(() => {
-    return includeSelectedModel(zaiModels, zaiModel);
-  }, [zaiModels, zaiModel]);
-
-  const minimaxModelOptions = useMemo(() => {
-    return includeSelectedModel(MINIMAX_MODELS, minimaxModel);
-  }, [minimaxModel]);
-
-  const googleModelOptions = useMemo(() => {
-    return includeSelectedModel(googleModels, googleModel);
-  }, [googleModels, googleModel]);
-
-  const zenModelOptions = useMemo(() => {
-    return includeSelectedModel(zenModels, zenModel);
-  }, [zenModels, zenModel]);
-
+  // --- Utility callbacks ---
   const copyAllowlistCommand = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(allowlistSecretCmd);
@@ -716,7 +222,7 @@ function App() {
     }
   }, []);
 
-  // Screen state machine
+  // --- Screen state machine ---
   const screen: AppScreen = useMemo(() => {
     if (isSandboxMode) return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
     if (isDemo) return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
@@ -726,7 +232,7 @@ function App() {
     return 'chat';
   }, [token, activeRepo, isDemo, isSandboxMode, showFileBrowser, sandbox.sandboxId]);
 
-  // On PAT connect success: auto-sync repos
+  // --- Auth & repo handlers ---
   const handleConnect = useCallback(
     async (pat: string): Promise<boolean> => {
       const success = await setTokenManually(pat);
@@ -736,8 +242,6 @@ function App() {
     [setTokenManually, syncRepos],
   );
 
-  // Sandbox mode — ephemeral workspace, no GitHub auth required.
-  // Must create a fresh chat to break any provider lock from the previous conversation.
   const handleSandboxMode = useCallback(() => {
     if (isStreaming) abortStream();
     clearActiveRepo();
@@ -752,233 +256,11 @@ function App() {
     createNewChat();
   }, [isStreaming, abortStream, sandbox, createNewChat]);
 
-  // Restart sandbox (for expiry recovery)
   const handleSandboxRestart = useCallback(async () => {
     await sandbox.stop();
     sandbox.start('', 'main');
   }, [sandbox]);
 
-  // Sandbox download handler (for header button + expiry banner)
-  const [sandboxDownloading, setSandboxDownloading] = useState(false);
-  const markSnapshotActivity = useCallback(() => {
-    snapshotLastActivityRef.current = Date.now();
-  }, []);
-
-  const refreshLatestSnapshot = useCallback(async () => {
-    try {
-      const meta = await getLatestSnapshotMeta();
-      setLatestSnapshot(meta);
-    } catch {
-      setLatestSnapshot(null);
-    }
-  }, []);
-
-  const captureSnapshot = useCallback(async (reason: 'manual' | 'interval' | 'idle') => {
-    if (!sandbox.sandboxId || sandbox.status !== 'ready') return false;
-    const now = Date.now();
-    if (reason !== 'manual' && (now - snapshotLastSavedAtRef.current) < SNAPSHOT_MIN_GAP_MS) {
-      return false;
-    }
-
-    setSnapshotSaving(true);
-    try {
-      const blob = await createSnapshot('/workspace', sandbox.sandboxId);
-      const label = `workspace-${new Date().toISOString()}`;
-      await saveSnapshotToIndexedDB(label, blob);
-      snapshotLastSavedAtRef.current = Date.now();
-      await refreshLatestSnapshot();
-      if (reason === 'manual') {
-        toast.success('Snapshot saved');
-      }
-      return true;
-    } catch (err) {
-      if (reason === 'manual') {
-        const message = err instanceof Error ? err.message : 'Snapshot save failed';
-        toast.error(message);
-      }
-      return false;
-    } finally {
-      setSnapshotSaving(false);
-    }
-  }, [sandbox.sandboxId, sandbox.status, refreshLatestSnapshot]);
-
-  const handleRestoreFromSnapshot = useCallback(async () => {
-    if (snapshotRestoring) return;
-    const blob = await getLatestSnapshotBlob();
-    if (!blob) {
-      toast.error('No snapshot found');
-      return;
-    }
-
-    let targetSandboxId = sandbox.sandboxId;
-    if (!targetSandboxId) {
-      targetSandboxId = isSandboxMode
-        ? await sandbox.start('', 'main')
-        : (activeRepo ? await sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch) : null);
-    }
-    if (!targetSandboxId) {
-      toast.error('Sandbox is not ready');
-      return;
-    }
-
-    const shouldProceed = !sandbox.sandboxId || window.confirm('Restore will overwrite files in /workspace. Continue?');
-    if (!shouldProceed) return;
-
-    setSnapshotRestoring(true);
-    setSnapshotRestoreProgress({ stage: 'uploading', message: 'Uploading snapshot...' });
-    try {
-      const result = await hydrateSnapshot(blob, '/workspace', targetSandboxId, setSnapshotRestoreProgress);
-      if (!result.ok) {
-        toast.error(result.error || 'Restore failed');
-        return;
-      }
-      markSnapshotActivity();
-      toast.success(`Snapshot restored (${result.restoredFiles ?? 0} files)`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Restore failed';
-      toast.error(message);
-    } finally {
-      setSnapshotRestoring(false);
-      setSnapshotRestoreProgress(null);
-    }
-  }, [snapshotRestoring, sandbox, isSandboxMode, activeRepo, markSnapshotActivity]);
-
-  const refreshAgentsMdFromSandbox = useCallback(async (sandboxId: string): Promise<string | null> => {
-    try {
-      const result = await readFromSandbox(sandboxId, '/workspace/AGENTS.md');
-      const content = result.content || '';
-      if (!content.trim()) return null;
-      setAgentsMdContent(content);
-      setAgentsMd(content);
-      return content;
-    } catch {
-      return null;
-    }
-  }, [setAgentsMd]);
-
-  const autoCommitAgentsMdInSandbox = useCallback(async (sandboxId: string): Promise<{ ok: boolean; message: string }> => {
-    const commitResult = await execInSandbox(
-      sandboxId,
-      `cd /workspace && if [ ! -d .git ]; then git init >/dev/null 2>&1; fi && git add AGENTS.md && if git diff --cached --quiet; then echo "__PUSH_NO_CHANGES__"; else git commit -m "Add project instructions"; fi`,
-    );
-
-    if (commitResult.exitCode !== 0) {
-      const detail = commitResult.stderr || commitResult.stdout || 'unknown git error';
-      return { ok: false, message: `AGENTS.md created, but commit failed: ${detail}` };
-    }
-
-    if ((commitResult.stdout || '').includes('__PUSH_NO_CHANGES__')) {
-      return { ok: true, message: 'AGENTS.md already up to date in git.' };
-    }
-
-    return { ok: true, message: 'AGENTS.md created and committed.' };
-  }, []);
-
-  const handleCreateAgentsMd = useCallback(async () => {
-    if (!activeRepo || creatingAgentsMd) return;
-    setCreatingAgentsMd(true);
-    try {
-      let id = sandbox.sandboxId;
-      if (!id) {
-        id = await sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
-      }
-      if (!id) {
-        toast.error('Sandbox is not ready yet. Try again in a moment.');
-        return;
-      }
-
-      const writeResult = await writeToSandbox(id, '/workspace/AGENTS.md', AGENTS_MD_TEMPLATE);
-      if (!writeResult.ok) {
-        toast.error(writeResult.error || 'Failed to create AGENTS.md');
-        return;
-      }
-
-      const refreshed = await refreshAgentsMdFromSandbox(id);
-      if (!refreshed) {
-        toast.error('AGENTS.md was written but could not be re-read.');
-        return;
-      }
-
-      const commitStatus = await autoCommitAgentsMdInSandbox(id);
-      if (commitStatus.ok) {
-        toast.success(commitStatus.message);
-      } else {
-        toast.warning(commitStatus.message);
-      }
-      setShowFileBrowser(true);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create AGENTS.md';
-      toast.error(message);
-    } finally {
-      setCreatingAgentsMd(false);
-    }
-  }, [activeRepo, creatingAgentsMd, sandbox, refreshAgentsMdFromSandbox, autoCommitAgentsMdInSandbox]);
-
-  const handleCreateAgentsMdWithAI = useCallback(async () => {
-    if (!activeRepo || creatingAgentsMdWithAI || isStreaming) return;
-    setCreatingAgentsMdWithAI(true);
-    markSnapshotActivity();
-    try {
-      const prompt = [
-        `Create an AGENTS.md file for this repository (${activeRepo.full_name}).`,
-        'Use sandbox tools to inspect the repo quickly (README, package.json/pyproject, key folders), then write /workspace/AGENTS.md.',
-        'Keep it concise and practical, with sections for: Project Overview, Tech Stack, Architecture Notes, Coding Conventions, Testing, Agent Guidance.',
-        'If AGENTS.md already exists, overwrite it with an improved version.',
-        'After writing the file, commit it with message "Add project instructions".',
-        'If there are no staged changes, state that clearly.',
-        'After commit, summarize what you included in 5 bullets.',
-      ].join('\n');
-
-      await sendMessage(prompt);
-      const id = sandbox.sandboxId;
-      if (!id) {
-        toast.warning('AGENTS.md draft may be ready, but sandbox session is unavailable to refresh context.');
-        return;
-      }
-
-      const refreshed = await refreshAgentsMdFromSandbox(id);
-      if (!refreshed) {
-        toast.warning('AGENTS.md was not detected after AI run. You can retry or use Create Template.');
-        return;
-      }
-
-      const commitStatus = await autoCommitAgentsMdInSandbox(id);
-      if (commitStatus.ok) {
-        toast.success(commitStatus.message);
-      } else {
-        toast.warning(commitStatus.message);
-      }
-      setShowFileBrowser(true);
-    } finally {
-      setCreatingAgentsMdWithAI(false);
-    }
-  }, [activeRepo, creatingAgentsMdWithAI, isStreaming, markSnapshotActivity, sendMessage, sandbox.sandboxId, refreshAgentsMdFromSandbox, autoCommitAgentsMdInSandbox]);
-
-  const handleSandboxDownload = useCallback(async () => {
-    if (!sandbox.sandboxId || sandboxDownloading) return;
-    setSandboxDownloading(true);
-    try {
-      const result = await downloadFromSandbox(sandbox.sandboxId);
-      if (result.ok && result.archiveBase64) {
-        const raw = atob(result.archiveBase64);
-        const bytes = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-        const blob = new Blob([bytes], { type: 'application/gzip' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `workspace-${Date.now()}.tar.gz`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    } catch {
-      // Best effort
-    } finally {
-      setSandboxDownloading(false);
-    }
-  }, [sandbox.sandboxId, sandboxDownloading]);
-
-  // Repo selection from picker
   const handleSelectRepo = useCallback(
     (repo: RepoWithActivity, branch?: string) => {
       setActiveRepo({
@@ -1018,7 +300,6 @@ function App() {
     const repo = repos.find((r) => r.full_name === conv.repoFullName);
     if (!repo) return;
     handleSelectRepo(repo);
-    // Restore the branch context from the conversation so the chat filter includes it
     if (conv.branch) {
       setCurrentBranch(conv.branch);
     }
@@ -1027,6 +308,7 @@ function App() {
     });
   }, [conversations, repos, handleSelectRepo, switchChat, setCurrentBranch]);
 
+  // --- Settings & provider selection ---
   const handleOpenSettingsFromDrawer = useCallback((tab: 'you' | 'workspace' | 'ai') => {
     setSettingsTab(tab);
     setSettingsOpen(true);
@@ -1042,45 +324,44 @@ function App() {
   const handleSelectBackend = useCallback((provider: PreferredProvider) => {
     ensureUnlockedChatForProviderChange();
     setPreferredProvider(provider);
-    setActiveBackend(provider);
-  }, [ensureUnlockedChatForProviderChange]);
+    catalog.setActiveBackend(provider);
+  }, [ensureUnlockedChatForProviderChange, catalog]);
 
   const handleSelectOllamaModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    setOllamaModel(model);
-  }, [ensureUnlockedChatForProviderChange, setOllamaModel]);
+    catalog.ollama.setModel(model);
+  }, [ensureUnlockedChatForProviderChange, catalog.ollama]);
 
   const handleSelectMistralModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    setMistralModel(model);
-  }, [ensureUnlockedChatForProviderChange, setMistralModel]);
+    catalog.mistral.setModel(model);
+  }, [ensureUnlockedChatForProviderChange, catalog.mistral]);
 
   const handleSelectOpenRouterModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    setOpenRouterModel(model);
-  }, [ensureUnlockedChatForProviderChange, setOpenRouterModel]);
+    catalog.openRouter.setModel(model);
+  }, [ensureUnlockedChatForProviderChange, catalog.openRouter]);
 
   const handleSelectMinimaxModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    setMinimaxModel(model);
-  }, [ensureUnlockedChatForProviderChange, setMinimaxModel]);
+    catalog.minimax.setModel(model);
+  }, [ensureUnlockedChatForProviderChange, catalog.minimax]);
 
   const handleSelectZaiModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    setZaiModel(model);
-  }, [ensureUnlockedChatForProviderChange, setZaiModel]);
+    catalog.zai.setModel(model);
+  }, [ensureUnlockedChatForProviderChange, catalog.zai]);
 
   const handleSelectGoogleModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    setGoogleModel(model);
-  }, [ensureUnlockedChatForProviderChange, setGoogleModel]);
+    catalog.google.setModel(model);
+  }, [ensureUnlockedChatForProviderChange, catalog.google]);
 
   const handleSelectZenModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    setZenModel(model);
-  }, [ensureUnlockedChatForProviderChange, setZenModel]);
+    catalog.zen.setModel(model);
+  }, [ensureUnlockedChatForProviderChange, catalog.zen]);
 
-  // Disconnect: clear everything (both auth methods)
   const handleDisconnect = useCallback(() => {
     appDisconnect();
     patLogout();
@@ -1090,81 +371,11 @@ function App() {
     setIsSandboxMode(false);
   }, [appDisconnect, patLogout, clearActiveRepo, deleteAllChats]);
 
-  // --- Project instructions: two-phase loading ---
-  // Phase A: Fetch via GitHub API immediately when activeRepo changes (no sandbox needed)
-  // Phase B: Upgrade from sandbox filesystem when sandbox becomes ready (may have local edits)
-
-  const [agentsMdContent, setAgentsMdContent] = useState<string | null>(null);
-  const [projectInstructionsChecked, setProjectInstructionsChecked] = useState(false);
-
-  // Phase A — GitHub API fetch (immediate)
-  useEffect(() => {
-    if (!activeRepo) {
-      setAgentsMdContent(null);
-      setAgentsMd(null);
-      setProjectInstructionsChecked(false);
-      return;
-    }
-    setProjectInstructionsChecked(false);
-    let cancelled = false;
-    fetchProjectInstructions(activeRepo.full_name)
-      .then((result) => {
-        if (cancelled) return;
-        setAgentsMdContent(result?.content ?? null);
-        setAgentsMd(result?.content ?? null);
-        setProjectInstructionsChecked(true);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setAgentsMdContent(null);
-        setAgentsMd(null);
-        setProjectInstructionsChecked(true);
-      });
-    return () => { cancelled = true; };
-  }, [activeRepo, setAgentsMd]);
-
-  // Phase B — Sandbox upgrade (overrides Phase A when sandbox is ready)
-  useEffect(() => {
-    if (sandbox.status !== 'ready' || !sandbox.sandboxId) return;
-    let cancelled = false;
-    readFromSandbox(sandbox.sandboxId, '/workspace/AGENTS.md')
-      .then((result) => {
-        if (cancelled) return;
-        setAgentsMdContent(result.content);
-        setAgentsMd(result.content);
-      })
-      .catch(() => {
-        // Sandbox read failed — keep Phase A content, don't clear
-      });
-    return () => { cancelled = true; };
-  }, [sandbox.status, sandbox.sandboxId, setAgentsMd]);
-
-  // Build workspace context when repos, active repo, or project instructions change.
-  // In sandbox mode, workspace context is null — the Orchestrator gets a sandbox-only
-  // preamble instead (see toLLMMessages in orchestrator.ts).
-  useEffect(() => {
-    if (isSandboxMode) {
-      setWorkspaceContext(null);
-      return;
-    }
-    if (repos.length > 0) {
-      let ctx = buildWorkspaceContext(repos, activeRepo);
-      if (agentsMdContent) {
-        const safe = sanitizeProjectInstructions(agentsMdContent);
-        ctx += '\n\n[PROJECT INSTRUCTIONS]\n' + safe + '\n[/PROJECT INSTRUCTIONS]';
-      }
-      setWorkspaceContext(ctx);
-    } else {
-      setWorkspaceContext(null);
-    }
-  }, [repos, activeRepo, agentsMdContent, isSandboxMode, setWorkspaceContext]);
-
-  // Sync sandbox ID to useChat
+  // --- Sandbox lifecycle ---
   useEffect(() => {
     setSandboxId(sandbox.sandboxId);
   }, [sandbox.sandboxId, setSandboxId]);
 
-  // Fetch sandbox git state (for settings display)
   const fetchSandboxState = useCallback(async (id: string) => {
     setSandboxStateLoading(true);
     try {
@@ -1197,13 +408,12 @@ function App() {
         fetchedAt: new Date().toISOString(),
       });
     } catch {
-      // Best-effort — sandbox state is informational
+      // Best-effort
     } finally {
       setSandboxStateLoading(false);
     }
   }, []);
 
-  // Auto-fetch sandbox state when sandbox becomes ready
   useEffect(() => {
     if (sandbox.status !== 'ready' || !sandbox.sandboxId) {
       if (sandbox.status === 'idle') {
@@ -1217,7 +427,6 @@ function App() {
     fetchSandboxState(sandbox.sandboxId);
   }, [sandbox.status, sandbox.sandboxId, fetchSandboxState]);
 
-  // Lazy sandbox auto-spin: creates sandbox on demand (called by useChat when sandbox tools are detected)
   const ensureSandbox = useCallback(async (): Promise<string | null> => {
     if (sandbox.sandboxId) return sandbox.sandboxId;
     if (isSandboxMode) return sandbox.start('', 'main');
@@ -1229,25 +438,17 @@ function App() {
     setEnsureSandbox(ensureSandbox);
   }, [ensureSandbox, setEnsureSandbox]);
 
-  // Branch switching: tear down sandbox when current_branch changes so it recreates on the new branch.
-  // Uses a ref to track previous branch and skip the initial mount.
-  // skipBranchTeardownRef suppresses teardown when the sandbox itself switched branches (e.g. draft checkout).
+  // Branch switching: tear down sandbox when branch changes
   const prevBranchRef = useRef<string | undefined>(activeRepo?.current_branch);
-  const skipBranchTeardownRef = useRef(false);
   useEffect(() => {
     const currentBranchValue = activeRepo?.current_branch;
     const prevBranch = prevBranchRef.current;
     prevBranchRef.current = currentBranchValue;
 
-    // Skip when there's no meaningful change
     if (prevBranch === currentBranchValue) return;
-    // Don't tear down in sandbox mode (no repo-based sandbox)
     if (isSandboxMode) return;
-    // Only tear down if there was a previous branch (not initial repo selection)
     if (prevBranch === undefined) return;
 
-    // When the sandbox already switched branches (e.g. sandbox_save_draft created a draft branch),
-    // skip teardown — the sandbox is already on the correct branch.
     if (skipBranchTeardownRef.current) {
       console.log(`[App] Branch changed: ${prevBranch} → ${currentBranchValue} (sandbox-initiated, skipping teardown)`);
       skipBranchTeardownRef.current = false;
@@ -1266,65 +467,7 @@ function App() {
     }
   }, [isSandboxMode, sandboxStatus, currentSandboxId, startSandbox]);
 
-  // Load latest local snapshot metadata when sandbox mode is active.
-  useEffect(() => {
-    if (!isSandboxMode) return;
-    refreshLatestSnapshot();
-  }, [isSandboxMode, refreshLatestSnapshot]);
-
-  // Snapshot activity heartbeat sources: user input + chat agent activity.
-  useEffect(() => {
-    if (!isSandboxMode) return;
-    const mark = () => markSnapshotActivity();
-    window.addEventListener('keydown', mark);
-    window.addEventListener('pointerdown', mark);
-    return () => {
-      window.removeEventListener('keydown', mark);
-      window.removeEventListener('pointerdown', mark);
-    };
-  }, [isSandboxMode, markSnapshotActivity]);
-
-  useEffect(() => {
-    if (isStreaming) {
-      markSnapshotActivity();
-    }
-  }, [isStreaming, markSnapshotActivity]);
-
-  useEffect(() => {
-    if (!sandbox.sandboxId) return;
-    snapshotSessionStartedAtRef.current = Date.now();
-    snapshotHardCapNotifiedRef.current = false;
-  }, [sandbox.sandboxId]);
-
-  // Auto-save every 5 minutes and on idle heartbeat, with a 4-hour hard cap.
-  useEffect(() => {
-    if (!isSandboxMode || sandbox.status !== 'ready' || !sandbox.sandboxId) return;
-    const timer = window.setInterval(async () => {
-      const now = Date.now();
-      const age = now - snapshotSessionStartedAtRef.current;
-      if (age > SNAPSHOT_HARD_CAP_MS) {
-        if (!snapshotHardCapNotifiedRef.current) {
-          snapshotHardCapNotifiedRef.current = true;
-          toast.message('Snapshot autosave paused after 4 hours');
-        }
-        return;
-      }
-
-      const lastSavedAgo = now - snapshotLastSavedAtRef.current;
-      const idleFor = now - snapshotLastActivityRef.current;
-      if (lastSavedAgo >= SNAPSHOT_INTERVAL_MS) {
-        await captureSnapshot('interval');
-        return;
-      }
-      if (idleFor >= SNAPSHOT_IDLE_MS) {
-        await captureSnapshot('idle');
-      }
-    }, 15_000);
-
-    return () => window.clearInterval(timer);
-  }, [isSandboxMode, sandbox.status, sandbox.sandboxId, captureSnapshot]);
-
-  // Sync repos on mount (for returning users who already have a token)
+  // --- Global effects ---
   useEffect(() => {
     if (token) syncRepos();
   }, [token, syncRepos]);
@@ -1335,22 +478,11 @@ function App() {
     }
   }, [validatedUser?.login, profile.githubLogin, updateProfile]);
 
-  // Wrap createNewChat to also re-sync repos
   const handleCreateNewChat = useCallback(() => {
     const id = createNewChat();
     switchChat(id);
     syncRepos();
   }, [createNewChat, switchChat, syncRepos]);
-
-  const sendMessageWithSnapshotHeartbeat = useCallback((message: string, attachments?: Parameters<typeof sendMessage>[1]) => {
-    markSnapshotActivity();
-    return sendMessage(message, attachments);
-  }, [markSnapshotActivity, sendMessage]);
-
-  const handleCardActionWithSnapshotHeartbeat = useCallback((action: Parameters<typeof handleCardAction>[0]) => {
-    markSnapshotActivity();
-    return handleCardAction(action);
-  }, [markSnapshotActivity, handleCardAction]);
 
   const handleDisplayNameBlur = useCallback(() => {
     const nextDisplayName = displayNameDraft.trim();
@@ -1372,7 +504,7 @@ function App() {
     }
   }, [bioDraft, profile.bio, updateProfile]);
 
-  // Unregister service workers on tunnel domains to prevent stale caching
+  // Unregister service workers on tunnel domains
   useEffect(() => {
     if (window.location.hostname.includes('trycloudflare.com')) {
       navigator.serviceWorker?.getRegistrations().then((regs) =>
@@ -1381,8 +513,32 @@ function App() {
     }
   }, []);
 
-  // ----- Shared overlays -----
+  // Sandbox download handler
+  const handleSandboxDownload = useCallback(async () => {
+    if (!sandbox.sandboxId || sandboxDownloading) return;
+    setSandboxDownloading(true);
+    try {
+      const result = await downloadFromSandbox(sandbox.sandboxId);
+      if (result.ok && result.archiveBase64) {
+        const raw = atob(result.archiveBase64);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        const blob = new Blob([bytes], { type: 'application/gzip' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `workspace-${Date.now()}.tar.gz`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      // Best effort
+    } finally {
+      setSandboxDownloading(false);
+    }
+  }, [sandbox.sandboxId, sandboxDownloading]);
 
+  // ----- Settings sheet (shared across screens) -----
   const isConnected = Boolean(token) || isDemo || isSandboxMode;
 
   const settingsSheet = (
@@ -1425,111 +581,111 @@ function App() {
         validatedUser,
       }}
       ai={{
-        activeProviderLabel,
-        activeBackend,
-        setActiveBackend,
+        activeProviderLabel: catalog.activeProviderLabel,
+        activeBackend: catalog.activeBackend,
+        setActiveBackend: catalog.setActiveBackend,
         isProviderLocked,
         lockedProvider,
         lockedModel,
-        availableProviders,
-        setPreferredProvider,
-        clearPreferredProvider,
-        hasOllamaKey,
-        ollamaModel,
-        setOllamaModel,
-        ollamaModelOptions,
-        ollamaModelsLoading,
-        ollamaModelsError,
-        ollamaModelsUpdatedAt,
-        isOllamaModelLocked,
-        refreshOllamaModels,
-        ollamaKeyInput,
-        setOllamaKeyInput,
-        setOllamaKey,
-        clearOllamaKey,
-        hasMistralKey,
-        mistralModel,
-        setMistralModel,
-        mistralModelOptions,
-        mistralModelsLoading,
-        mistralModelsError,
-        mistralModelsUpdatedAt,
-        isMistralModelLocked,
-        refreshMistralModels,
-        mistralKeyInput,
-        setMistralKeyInput,
-        setMistralKey,
-        clearMistralKey,
-        hasOpenRouterKey,
-        openRouterModel,
-        setOpenRouterModel,
-        openRouterModelOptions: openRouterModels.length > 0 ? openRouterModels : OPENROUTER_MODELS,
-        openRouterModelsLoading,
-        openRouterModelsError,
-        openRouterModelsUpdatedAt,
+        availableProviders: catalog.availableProviders,
+        setPreferredProvider: catalog.setPreferredProvider,
+        clearPreferredProvider: catalog.clearPreferredProvider,
+        hasOllamaKey: catalog.ollama.hasKey,
+        ollamaModel: catalog.ollama.model,
+        setOllamaModel: catalog.ollama.setModel,
+        ollamaModelOptions: catalog.ollamaModelOptions,
+        ollamaModelsLoading: catalog.ollamaModels.loading,
+        ollamaModelsError: catalog.ollamaModels.error,
+        ollamaModelsUpdatedAt: catalog.ollamaModels.updatedAt,
+        isOllamaModelLocked: isModelLocked && lockedProvider === 'ollama',
+        refreshOllamaModels: catalog.refreshOllamaModels,
+        ollamaKeyInput: '',
+        setOllamaKeyInput: () => {},
+        setOllamaKey: catalog.ollama.setKey,
+        clearOllamaKey: catalog.ollama.clearKey,
+        hasMistralKey: catalog.mistral.hasKey,
+        mistralModel: catalog.mistral.model,
+        setMistralModel: catalog.mistral.setModel,
+        mistralModelOptions: catalog.mistralModelOptions,
+        mistralModelsLoading: catalog.mistralModels.loading,
+        mistralModelsError: catalog.mistralModels.error,
+        mistralModelsUpdatedAt: catalog.mistralModels.updatedAt,
+        isMistralModelLocked: isModelLocked && lockedProvider === 'mistral',
+        refreshMistralModels: catalog.refreshMistralModels,
+        mistralKeyInput: '',
+        setMistralKeyInput: () => {},
+        setMistralKey: catalog.mistral.setKey,
+        clearMistralKey: catalog.mistral.clearKey,
+        hasOpenRouterKey: catalog.openRouter.hasKey,
+        openRouterModel: catalog.openRouter.model,
+        setOpenRouterModel: catalog.openRouter.setModel,
+        openRouterModelOptions: catalog.openRouterModelOptions,
+        openRouterModelsLoading: catalog.openRouterModels.loading,
+        openRouterModelsError: catalog.openRouterModels.error,
+        openRouterModelsUpdatedAt: catalog.openRouterModels.updatedAt,
         isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
-        refreshOpenRouterModels,
-        openRouterKeyInput,
-        setOpenRouterKeyInput,
-        setOpenRouterKey,
-        clearOpenRouterKey,
-        hasMinimaxKey,
-        minimaxModel,
-        setMinimaxModel,
-        minimaxModelOptions: minimaxModels.length > 0 ? minimaxModelOptions : MINIMAX_MODELS,
-        minimaxModelsLoading,
-        minimaxModelsError,
-        minimaxModelsUpdatedAt,
-        isMinimaxModelLocked,
-        refreshMinimaxModels,
-        minimaxKeyInput,
-        setMinimaxKeyInput,
-        setMinimaxKey,
-        clearMinimaxKey,
-        hasZaiKey,
-        zaiModel,
-        setZaiModel,
-        zaiModelOptions: zaiModels.length > 0 ? zaiModelOptions : ZAI_MODELS,
-        zaiModelsLoading,
-        zaiModelsError,
-        zaiModelsUpdatedAt,
-        isZaiModelLocked,
-        refreshZaiModels,
-        zaiKeyInput,
-        setZaiKeyInput,
-        setZaiKey,
-        clearZaiKey,
-        hasGoogleKey,
-        googleModel,
-        setGoogleModel,
-        googleModelOptions: googleModels.length > 0 ? googleModelOptions : GOOGLE_MODELS,
-        googleModelsLoading,
-        googleModelsError,
-        googleModelsUpdatedAt,
-        isGoogleModelLocked,
-        refreshGoogleModels,
-        googleKeyInput,
-        setGoogleKeyInput,
-        setGoogleKey,
-        clearGoogleKey,
-        hasZenKey,
-        zenModel,
-        setZenModel,
-        zenModelOptions: zenModels.length > 0 ? zenModelOptions : ZEN_MODELS,
-        zenModelsLoading,
-        zenModelsError,
-        zenModelsUpdatedAt,
-        isZenModelLocked,
-        refreshZenModels,
-        zenKeyInput,
-        setZenKeyInput,
-        setZenKey,
-        clearZenKey,
-        hasTavilyKey,
-        tavilyKeyInput,
-        setTavilyKeyInput,
-        setTavilyKey,
-        clearTavilyKey,
+        refreshOpenRouterModels: catalog.refreshOpenRouterModels,
+        openRouterKeyInput: '',
+        setOpenRouterKeyInput: () => {},
+        setOpenRouterKey: catalog.openRouter.setKey,
+        clearOpenRouterKey: catalog.openRouter.clearKey,
+        hasMinimaxKey: catalog.minimax.hasKey,
+        minimaxModel: catalog.minimax.model,
+        setMinimaxModel: catalog.minimax.setModel,
+        minimaxModelOptions: catalog.minimaxModelOptions,
+        minimaxModelsLoading: catalog.minimaxModels.loading,
+        minimaxModelsError: catalog.minimaxModels.error,
+        minimaxModelsUpdatedAt: catalog.minimaxModels.updatedAt,
+        isMinimaxModelLocked: isModelLocked && lockedProvider === 'minimax',
+        refreshMinimaxModels: catalog.refreshMinimaxModels,
+        minimaxKeyInput: '',
+        setMinimaxKeyInput: () => {},
+        setMinimaxKey: catalog.minimax.setKey,
+        clearMinimaxKey: catalog.minimax.clearKey,
+        hasZaiKey: catalog.zai.hasKey,
+        zaiModel: catalog.zai.model,
+        setZaiModel: catalog.zai.setModel,
+        zaiModelOptions: catalog.zaiModelOptions,
+        zaiModelsLoading: catalog.zaiModels.loading,
+        zaiModelsError: catalog.zaiModels.error,
+        zaiModelsUpdatedAt: catalog.zaiModels.updatedAt,
+        isZaiModelLocked: isModelLocked && lockedProvider === 'zai',
+        refreshZaiModels: catalog.refreshZaiModels,
+        zaiKeyInput: '',
+        setZaiKeyInput: () => {},
+        setZaiKey: catalog.zai.setKey,
+        clearZaiKey: catalog.zai.clearKey,
+        hasGoogleKey: catalog.google.hasKey,
+        googleModel: catalog.google.model,
+        setGoogleModel: catalog.google.setModel,
+        googleModelOptions: catalog.googleModelOptions,
+        googleModelsLoading: catalog.googleModels.loading,
+        googleModelsError: catalog.googleModels.error,
+        googleModelsUpdatedAt: catalog.googleModels.updatedAt,
+        isGoogleModelLocked: isModelLocked && lockedProvider === 'google',
+        refreshGoogleModels: catalog.refreshGoogleModels,
+        googleKeyInput: '',
+        setGoogleKeyInput: () => {},
+        setGoogleKey: catalog.google.setKey,
+        clearGoogleKey: catalog.google.clearKey,
+        hasZenKey: catalog.zen.hasKey,
+        zenModel: catalog.zen.model,
+        setZenModel: catalog.zen.setModel,
+        zenModelOptions: catalog.zenModelOptions,
+        zenModelsLoading: catalog.zenModels.loading,
+        zenModelsError: catalog.zenModels.error,
+        zenModelsUpdatedAt: catalog.zenModels.updatedAt,
+        isZenModelLocked: isModelLocked && lockedProvider === 'zen',
+        refreshZenModels: catalog.refreshZenModels,
+        zenKeyInput: '',
+        setZenKeyInput: () => {},
+        setZenKey: catalog.zen.setKey,
+        clearZenKey: catalog.zen.clearKey,
+        hasTavilyKey: catalog.tavily.hasKey,
+        tavilyKeyInput: '',
+        setTavilyKeyInput: () => {},
+        setTavilyKey: catalog.tavily.setKey,
+        clearTavilyKey: catalog.tavily.clearKey,
       }}
       workspace={{
         contextMode,
@@ -1600,8 +756,6 @@ function App() {
     );
   }
 
-  // ----- File browser screen -----
-
   if (screen === 'file-browser' && sandbox.sandboxId) {
     return (
       <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
@@ -1616,502 +770,104 @@ function App() {
   }
 
   // ----- Chat screen -----
-
-  const snapshotAgeLabel = latestSnapshot ? formatSnapshotAge(latestSnapshot.createdAt) : null;
-  const snapshotIsStale = latestSnapshot ? (Date.now() - latestSnapshot.createdAt) > SNAPSHOT_STALE_MS : false;
-
   return (
-    <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
-      {/* Top bar */}
-      <header className="relative z-10 flex items-center justify-between px-3 pt-3 pb-2">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <div className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-full border border-[#1b2230] bg-push-grad-input py-1.5 pl-1.5 pr-3 shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-            <RepoChatDrawer
-              repos={repos}
-              activeRepo={activeRepo}
-              conversations={conversations}
-              activeChatId={activeChatId}
-              onSelectRepo={handleSelectRepoFromDrawer}
-              onSwitchChat={switchChat}
-              onNewChat={handleCreateNewChat}
-              onDeleteChat={deleteChat}
-              onRenameChat={renameChat}
-              onOpenSettings={handleOpenSettingsFromDrawer}
-              onBrowseRepos={handleBrowseRepos}
-              onSandboxMode={isSandboxMode ? undefined : handleSandboxMode}
-              isSandboxMode={isSandboxMode}
-              onExitSandboxMode={handleExitSandboxMode}
-              currentBranch={activeRepo?.current_branch || activeRepo?.default_branch}
-              defaultBranch={activeRepo?.default_branch}
-              setCurrentBranch={setCurrentBranch}
-              availableBranches={displayBranches}
-              branchesLoading={repoBranchesLoading}
-              branchesError={repoBranchesError}
-              onRefreshBranches={
-                activeRepo
-                  ? () => {
-                      void loadRepoBranches(activeRepo.full_name);
-                    }
-                  : undefined
-              }
-              onDeleteBranch={handleDeleteBranch}
-            />
-            <div className="min-w-0">
-              <p className="truncate text-xs font-semibold text-[#f5f7ff]">
-                {isSandboxMode ? 'Sandbox' : activeRepo?.name || 'Push'}
-              </p>
-            </div>
-          </div>
-          {isSandboxMode && (
-              <>
-                <span className="text-[10px] text-push-fg-dim">ephemeral</span>
-                {latestSnapshot && (
-                  <span
-                    className={`text-[10px] ${snapshotIsStale ? 'text-amber-400' : 'text-[#5f6b80]'}`}
-                    title={`Latest snapshot: ${new Date(latestSnapshot.createdAt).toLocaleString()}`}
-                  >
-                    {snapshotIsStale ? `snapshot stale (${snapshotAgeLabel})` : `snapshot ${snapshotAgeLabel}`}
-                  </span>
-                )}
-                {sandbox.status === 'ready' && (
-                  <button
-                    onClick={() => captureSnapshot('manual')}
-                    disabled={snapshotSaving || snapshotRestoring}
-                    className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-push-fg-dim transition-colors hover:bg-[#0d1119] hover:text-emerald-400 active:scale-95 disabled:opacity-50"
-                    title="Save Snapshot Now"
-                    aria-label="Save Snapshot Now"
-                  >
-                    {snapshotSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                    Save
-                  </button>
-                )}
-                {latestSnapshot && (
-                  <button
-                    onClick={handleRestoreFromSnapshot}
-                    disabled={snapshotSaving || snapshotRestoring || sandbox.status === 'creating'}
-                    className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-push-fg-dim transition-colors hover:bg-[#0d1119] hover:text-emerald-400 active:scale-95 disabled:opacity-50"
-                    title="Restore from Last Snapshot"
-                    aria-label="Restore from Last Snapshot"
-                  >
-                    {snapshotRestoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                    Restore
-                  </button>
-                )}
-                {sandbox.status === 'ready' && (
-                  <button
-                    onClick={handleSandboxDownload}
-                    disabled={sandboxDownloading}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg text-push-fg-dim transition-colors hover:bg-[#0d1119] hover:text-emerald-400 active:scale-95 disabled:opacity-50"
-                    title="Download workspace"
-                    aria-label="Download workspace"
-                  >
-                    {sandboxDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                  </button>
-                )}
-                {snapshotRestoring && snapshotRestoreProgress && (
-                  <div className="flex min-w-[120px] flex-col gap-1">
-                    <span className="text-[10px] text-push-fg-muted">{snapshotRestoreProgress.message}</span>
-                    <div className="h-1 w-full overflow-hidden rounded bg-[#1a2130]">
-                      <div
-                        className="h-full bg-emerald-500 transition-all duration-300"
-                        style={{ width: `${snapshotStagePercent(snapshotRestoreProgress.stage)}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-        </div>
-        {/* Centered branch selector for chat mode */}
-        {activeRepo && !isSandboxMode && (
-          <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
-            <DropdownMenu
-              open={branchMenuOpen}
-              onOpenChange={(open) => {
-                setBranchMenuOpen(open);
-                if (!open) {
-                  setPendingDeleteBranch(null);
-                }
-                if (open && !repoBranchesLoading && displayBranches.length === 0) {
-                  void loadRepoBranches(activeRepo.full_name);
-                }
-              }}
-            >
-              <DropdownMenuTrigger className="pointer-events-auto flex items-center gap-1 rounded-full border border-[#1b2230] bg-push-grad-input px-2 py-1 shadow-[0_10px_28px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.25)] backdrop-blur-xl transition-all hover:border-[#31425a] hover:brightness-110">
-                <GitBranch className="h-3 w-3 text-[#5f6b80]" />
-                <span className="max-w-[100px] truncate text-[10px] font-medium text-[#8b96aa]">
-                  {currentBranch}
-                </span>
-                <ChevronDown className={`h-3 w-3 text-[#5f6b80] transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="center"
-                sideOffset={8}
-                className="w-[240px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
-              >
-                {isOnMain ? (
-                  <DropdownMenuItem
-                    onSelect={() => setShowBranchCreate(true)}
-                    className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-secondary hover:bg-[#0d1119]"
-                  >
-                    <GitBranch className="h-3.5 w-3.5" />
-                    Create branch
-                  </DropdownMenuItem>
-                ) : (
-                  <DropdownMenuItem
-                    onSelect={() => setShowMergeFlow(true)}
-                    className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-emerald-300 hover:bg-[#0d1119]"
-                  >
-                    <GitMerge className="h-3.5 w-3.5" />
-                    Merge into {activeRepo.default_branch}
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator className="bg-push-edge" />
-                <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
-                  Switch Branch
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator className="bg-push-edge" />
-
-                {repoBranchesLoading && (
-                  <DropdownMenuItem disabled className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Loading branches...
-                  </DropdownMenuItem>
-                )}
-
-                {!repoBranchesLoading && repoBranchesError && (
-                  <>
-                    <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400">
-                      Failed to load branches
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={(e) => {
-                        e.preventDefault();
-                        void loadRepoBranches(activeRepo.full_name);
-                      }}
-                      className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-[#0d1119]"
-                    >
-                      Retry
-                    </DropdownMenuItem>
-                  </>
-                )}
-
-                {!repoBranchesLoading && !repoBranchesError && displayBranches.length === 0 && (
-                  <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
-                    No branches found
-                  </DropdownMenuItem>
-                )}
-
-                {!repoBranchesLoading && !repoBranchesError && displayBranches.map((branch) => {
-                  const isActiveBranch = branch.name === currentBranch;
-                  const canDeleteBranch = !isActiveBranch && !branch.isDefault && !branch.isProtected;
-                  const isDeletePending = pendingDeleteBranch === branch.name;
-                  const isDeletingThisBranch = deletingBranch === branch.name;
-                  return (
-                    <div key={branch.name}>
-                      <DropdownMenuItem
-                        onSelect={(e) => {
-                          if (isActiveBranch) {
-                            e.preventDefault();
-                            return;
-                          }
-                          setPendingDeleteBranch(null);
-                          setCurrentBranch(branch.name);
-                        }}
-                        className={`mx-1 flex items-center gap-2 rounded-lg px-3 py-2 ${
-                          isActiveBranch ? 'bg-[#101621]' : 'hover:bg-[#0d1119]'
-                        }`}
-                      >
-                        <span className={`min-w-0 flex-1 truncate text-xs ${isActiveBranch ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
-                          {branch.name}
-                        </span>
-                        {branch.isDefault && (
-                          <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[10px] text-[#58a6ff]">
-                            default
-                          </span>
-                        )}
-                        {branch.isProtected && (
-                          <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-[10px] text-[#fca5a5]">
-                            protected
-                          </span>
-                        )}
-                        {isActiveBranch && <Check className="h-3.5 w-3.5 text-push-link" />}
-                      </DropdownMenuItem>
-                      {canDeleteBranch && (
-                        <DropdownMenuItem
-                          onSelect={(e) => {
-                            e.preventDefault();
-                            if (isDeletingThisBranch || deletingBranch) return;
-                            if (!isDeletePending) {
-                              setPendingDeleteBranch(branch.name);
-                              return;
-                            }
-                            void handleDeleteBranch(branch.name);
-                          }}
-                          className={`mx-1 mb-1 flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] ${
-                            isDeletePending
-                              ? 'bg-red-950/30 text-red-300 hover:bg-red-950/40'
-                              : 'text-push-fg-dim hover:bg-[#0d1119] hover:text-red-300'
-                          }`}
-                        >
-                          {isDeletingThisBranch ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                          {isDeletingThisBranch
-                            ? `Deleting ${branch.name}...`
-                            : isDeletePending
-                            ? `Confirm delete ${branch.name}`
-                            : `Delete ${branch.name}`}
-                        </DropdownMenuItem>
-                      )}
-                    </div>
-                  );
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        )}
-        <div className="flex items-center gap-2">
-          {(activeRepo || isSandboxMode) && (
-            <button
-              onClick={() => setIsWorkspaceHubOpen(true)}
-              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-[#1b2230] bg-push-grad-input text-[#8891a1] shadow-[0_10px_26px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] hover:brightness-110 spring-press"
-              aria-label="Open workspace hub"
-              title="Workspace"
-            >
-              <PanelRight className="h-4 w-4" />
-              {(scratchpad.hasContent || agentStatus.active) && (
-                <span
-                  className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-push-sky ${
-                    agentStatus.active ? 'animate-pulse shadow-[0_0_6px_rgba(56,189,248,0.5)]' : ''
-                  }`}
-                />
-              )}
-            </button>
-          )}
-        </div>
-        <div className="pointer-events-none absolute inset-x-0 top-full h-8 bg-gradient-to-b from-black to-transparent" />
-      </header>
-
-      {/* Sandbox error banner — shown when Modal call fails */}
-      {sandbox.status === 'error' && sandbox.error && (
-        <div className="mx-4 mt-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in-down">
-          <p className="text-xs text-red-400 min-w-0 truncate">{sandbox.error}</p>
-          <div className="flex items-center gap-2 shrink-0">
-            {sandbox.sandboxId && (
-              <button
-                onClick={() => void sandbox.refresh()}
-                className="text-xs font-medium text-amber-300 hover:text-amber-200 transition-colors"
-              >
-                Refresh
-              </button>
-            )}
-            <button
-              onClick={() => {
-                if (isSandboxMode) {
-                  void sandbox.start('', 'main');
-                } else if (activeRepo) {
-                  void sandbox.stop().then(() => sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
-                }
-              }}
-              className="text-xs font-medium text-red-300 hover:text-red-200 transition-colors"
-            >
-              Restart
-            </button>
-            {isSandboxMode && (
-              <button
-                onClick={handleExitSandboxMode}
-                className="text-xs font-medium text-[#71717a] hover:text-[#a1a1aa] transition-colors"
-              >
-                Exit
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Sandbox expiry warning */}
-      {isSandboxMode && (
-        <SandboxExpiryBanner
-          createdAt={sandbox.createdAt}
-          sandboxId={sandbox.sandboxId}
-          sandboxStatus={sandbox.status}
-          onRestart={handleSandboxRestart}
-        />
-      )}
-
-      {!isSandboxMode && activeRepo && projectInstructionsChecked && !agentsMdContent && (
-        <div className="mx-4 mt-3 rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-3.5 shadow-push-card animate-fade-in-down">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-[#e4e4e7]">No AGENTS.md found</p>
-              <p className="text-[11px] text-push-fg-muted">Add project instructions so the agent understands your repo conventions.</p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                onClick={handleCreateAgentsMdWithAI}
-                disabled={creatingAgentsMdWithAI || isStreaming}
-                className="rounded-lg border border-emerald-600/35 bg-emerald-900/20 px-3 py-1.5 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-900/30 disabled:opacity-50"
-              >
-                {creatingAgentsMdWithAI ? 'Drafting...' : 'Create with AI'}
-              </button>
-              <button
-                onClick={handleCreateAgentsMd}
-                disabled={creatingAgentsMd || creatingAgentsMdWithAI}
-                className="rounded-lg border border-[#243148] bg-[#0b1220] px-3 py-1.5 text-xs font-medium text-[#8ad4ff] transition-colors hover:bg-[#0d1526] disabled:opacity-50"
-              >
-                {creatingAgentsMd ? 'Creating...' : 'Create Template'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Chat */}
-      <ChatContainer
-        messages={messages}
-        agentStatus={agentStatus}
-        activeRepo={activeRepo}
-        isSandboxMode={isSandboxMode}
-        onSuggestion={sendMessageWithSnapshotHeartbeat}
-        onCardAction={handleCardActionWithSnapshotHeartbeat}
-        interruptedCheckpoint={interruptedCheckpoint}
-        onResumeRun={resumeInterruptedRun}
-        onDismissResume={dismissResume}
-        ciStatus={ciStatus}
-        onDiagnoseCI={diagnoseCIFailure}
-      />
-
-      {/* Input */}
-      <ChatInput
-        onSend={sendMessageWithSnapshotHeartbeat}
-        onStop={abortStream}
-        isStreaming={isStreaming}
-        repoName={activeRepo?.name}
-        contextUsage={contextUsage}
-        providerControls={{
-          activeProvider: activeProviderLabel,
-          activeBackend,
-          availableProviders,
-          isProviderLocked,
-          lockedProvider,
-          lockedModel,
-          onSelectBackend: handleSelectBackend,
-          ollamaModel,
-          ollamaModelOptions,
-          ollamaModelsLoading,
-          ollamaModelsError,
-          ollamaModelsUpdatedAt,
-          isOllamaModelLocked,
-          refreshOllamaModels,
-          onSelectOllamaModel: handleSelectOllamaModelFromChat,
-          mistralModel,
-          mistralModelOptions,
-          mistralModelsLoading,
-          mistralModelsError,
-          mistralModelsUpdatedAt,
-          isMistralModelLocked,
-          refreshMistralModels,
-          onSelectMistralModel: handleSelectMistralModelFromChat,
-          openRouterModel,
-          openRouterModelOptions: openRouterModels.length > 0 ? openRouterModels : OPENROUTER_MODELS,
-          isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
-          onSelectOpenRouterModel: handleSelectOpenRouterModelFromChat,
-          minimaxModel,
-          minimaxModelOptions: minimaxModels.length > 0 ? minimaxModelOptions : MINIMAX_MODELS,
-          minimaxModelsLoading,
-          minimaxModelsError,
-          minimaxModelsUpdatedAt,
-          isMinimaxModelLocked,
-          refreshMinimaxModels,
-          onSelectMinimaxModel: handleSelectMinimaxModelFromChat,
-          zaiModel,
-          zaiModelOptions: zaiModels.length > 0 ? zaiModelOptions : ZAI_MODELS,
-          zaiModelsLoading,
-          zaiModelsError,
-          zaiModelsUpdatedAt,
-          isZaiModelLocked,
-          refreshZaiModels,
-          onSelectZaiModel: handleSelectZaiModelFromChat,
-          googleModel,
-          googleModelOptions: googleModels.length > 0 ? googleModelOptions : GOOGLE_MODELS,
-          googleModelsLoading,
-          googleModelsError,
-          googleModelsUpdatedAt,
-          isGoogleModelLocked,
-          refreshGoogleModels,
-          onSelectGoogleModel: handleSelectGoogleModelFromChat,
-          zenModel,
-          zenModelOptions: zenModels.length > 0 ? zenModelOptions : ZEN_MODELS,
-          zenModelsLoading,
-          zenModelsError,
-          zenModelsUpdatedAt,
-          isZenModelLocked,
-          refreshZenModels,
-          onSelectZenModel: handleSelectZenModelFromChat,
-        }}
-      />
-
-      <WorkspaceHubSheet
-        open={isWorkspaceHubOpen}
-        onOpenChange={setIsWorkspaceHubOpen}
-        messages={messages}
-        agentEvents={agentEvents}
-        sandboxId={sandbox.sandboxId}
-        sandboxStatus={sandbox.status}
-        ensureSandbox={ensureSandbox}
-        repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
-        protectMainEnabled={protectMain.isProtected}
-        showToolActivity={showToolActivity}
-        scratchpadContent={scratchpad.content}
-        scratchpadMemories={scratchpad.memories}
-        activeMemoryId={scratchpad.activeMemoryId}
-        onScratchpadContentChange={scratchpad.setContent}
-        onScratchpadClear={scratchpad.clear}
-        onScratchpadSaveMemory={scratchpad.saveMemory}
-        onScratchpadLoadMemory={scratchpad.loadMemory}
-        onScratchpadDeleteMemory={scratchpad.deleteMemory}
-        branchProps={{
-          currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
-          defaultBranch: activeRepo?.default_branch,
-          availableBranches: displayBranches,
-          branchesLoading: repoBranchesLoading,
-          onSwitchBranch: setCurrentBranch,
-          onRefreshBranches: activeRepo
-            ? () => { void loadRepoBranches(activeRepo.full_name); }
-            : () => {},
-          onShowBranchCreate: () => setShowBranchCreate(true),
-          onShowMergeFlow: () => setShowMergeFlow(true),
-          onDeleteBranch: handleDeleteBranch,
-        }}
-      />
-
-      {/* Toast notifications */}
-      <Toaster position="bottom-center" />
-
-      {/* Settings Sheet */}
-      {settingsSheet}
-
-      {/* Branch creation sheet */}
-      {activeRepo && (
-        <BranchCreateSheet
-          open={showBranchCreate}
-          onOpenChange={setShowBranchCreate}
-          activeRepo={activeRepo}
-          setCurrentBranch={setCurrentBranch}
-        />
-      )}
-
-      {/* Merge flow sheet */}
-      {activeRepo && (
-        <MergeFlowSheet
-          open={showMergeFlow}
-          onOpenChange={setShowMergeFlow}
-          activeRepo={activeRepo}
-          sandboxId={sandbox.sandboxId}
-          setCurrentBranch={setCurrentBranch}
-        />
-      )}
-    </div>
+    <ChatScreen
+      activeRepo={activeRepo}
+      isSandboxMode={isSandboxMode}
+      sandbox={sandbox}
+      messages={messages}
+      sendMessage={sendMessage}
+      agentStatus={agentStatus}
+      agentEvents={agentEvents}
+      isStreaming={isStreaming}
+      lockedProvider={lockedProvider}
+      isProviderLocked={isProviderLocked}
+      lockedModel={lockedModel}
+      isModelLocked={isModelLocked}
+      conversations={conversations}
+      activeChatId={activeChatId}
+      switchChat={switchChat}
+      renameChat={renameChat}
+      deleteChat={deleteChat}
+      deleteAllChats={deleteAllChats}
+      handleCardAction={handleCardAction}
+      contextUsage={contextUsage}
+      abortStream={abortStream}
+      interruptedCheckpoint={interruptedCheckpoint}
+      resumeInterruptedRun={resumeInterruptedRun}
+      dismissResume={dismissResume}
+      ciStatus={ciStatus}
+      diagnoseCIFailure={diagnoseCIFailure}
+      repos={repos}
+      branches={branches}
+      catalog={catalog}
+      snapshots={snapshots}
+      instructions={instructions}
+      scratchpad={scratchpad}
+      protectMain={protectMain}
+      profile={profile}
+      updateProfile={updateProfile}
+      clearProfile={clearProfile}
+      token={token}
+      patToken={patToken}
+      isAppAuth={isAppAuth}
+      installationId={installationId}
+      validatedUser={validatedUser}
+      appLoading={appLoading}
+      appError={appError}
+      connectApp={connectApp}
+      installApp={installApp}
+      isDemo={isDemo}
+      isWorkspaceHubOpen={isWorkspaceHubOpen}
+      setIsWorkspaceHubOpen={setIsWorkspaceHubOpen}
+      showToolActivity={showToolActivity}
+      setShowFileBrowser={setShowFileBrowser}
+      handleSandboxMode={isSandboxMode ? undefined : handleSandboxMode}
+      handleExitSandboxMode={handleExitSandboxMode}
+      handleCreateNewChat={handleCreateNewChat}
+      settingsOpen={settingsOpen}
+      setSettingsOpen={setSettingsOpen}
+      settingsTab={settingsTab}
+      setSettingsTab={setSettingsTab}
+      handleOpenSettingsFromDrawer={handleOpenSettingsFromDrawer}
+      handleDisconnect={handleDisconnect}
+      handleSandboxRestart={handleSandboxRestart}
+      handleSandboxDownload={handleSandboxDownload}
+      sandboxDownloading={sandboxDownloading}
+      handleSelectBackend={handleSelectBackend}
+      handleSelectOllamaModelFromChat={handleSelectOllamaModelFromChat}
+      handleSelectMistralModelFromChat={handleSelectMistralModelFromChat}
+      handleSelectOpenRouterModelFromChat={handleSelectOpenRouterModelFromChat}
+      handleSelectMinimaxModelFromChat={handleSelectMinimaxModelFromChat}
+      handleSelectZaiModelFromChat={handleSelectZaiModelFromChat}
+      handleSelectGoogleModelFromChat={handleSelectGoogleModelFromChat}
+      handleSelectZenModelFromChat={handleSelectZenModelFromChat}
+      handleSelectRepoFromDrawer={handleSelectRepoFromDrawer}
+      handleBrowseRepos={handleBrowseRepos}
+      setCurrentBranch={setCurrentBranch}
+      sandboxState={sandboxState}
+      sandboxStateLoading={sandboxStateLoading}
+      fetchSandboxState={fetchSandboxState}
+      contextMode={contextMode}
+      updateContextMode={updateContextMode}
+      sandboxStartMode={sandboxStartMode}
+      updateSandboxStartMode={updateSandboxStartMode}
+      updateShowToolActivity={updateShowToolActivity}
+      showInstallIdInput={showInstallIdInput}
+      setShowInstallIdInput={setShowInstallIdInput}
+      installIdInput={installIdInput}
+      setInstallIdInput={setInstallIdInput}
+      setInstallationIdManually={setInstallationIdManually}
+      allowlistSecretCmd={allowlistSecretCmd}
+      copyAllowlistCommand={copyAllowlistCommand}
+      displayNameDraft={displayNameDraft}
+      setDisplayNameDraft={setDisplayNameDraft}
+      handleDisplayNameBlur={handleDisplayNameBlur}
+      bioDraft={bioDraft}
+      setBioDraft={setBioDraft}
+      handleBioBlur={handleBioBlur}
+      ensureSandbox={ensureSandbox}
+    />
   );
 }
 
