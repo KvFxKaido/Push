@@ -216,8 +216,8 @@ function formatCoderStateDiff(
   current: CoderWorkingMemory,
   previous: CoderWorkingMemory | null,
 ): string {
-  // First injection or empty previous — emit full state
-  if (!previous || !previous.plan) {
+  // First injection — emit full state
+  if (!previous) {
     return formatCoderState(current);
   }
 
@@ -241,6 +241,9 @@ function formatCoderStateDiff(
   }
   if (arraysChanged(current.filesTouched, previous.filesTouched)) {
     diffs.push(`Files touched: ${current.filesTouched?.join(', ') || '(none)'}`);
+  }
+  if (arraysChanged(current.assumptions, previous.assumptions)) {
+    diffs.push(`Assumptions: ${current.assumptions?.join('; ') || '(none)'}`);
   }
   if (arraysChanged(current.errorsEncountered, previous.errorsEncountered)) {
     diffs.push(`Errors: ${current.errorsEncountered?.join('; ') || '(none)'}`);
