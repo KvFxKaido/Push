@@ -39,6 +39,7 @@ import type {
   GitHubUser,
   UserProfile,
   SandboxStateCardData,
+  AttachmentData,
 } from '@/types';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
@@ -64,7 +65,7 @@ interface ChatScreenProps {
 
   // Chat
   messages: ChatMessage[];
-  sendMessage: (message: string, attachments?: { images?: string[] }) => void;
+  sendMessage: (message: string, attachments?: AttachmentData[]) => void;
   agentStatus: AgentStatus;
   agentEvents: AgentStatusEvent[];
   isStreaming: boolean;
@@ -341,7 +342,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const { markSnapshotActivity } = snapshots;
 
   // Snapshot heartbeat wrappers
-  const sendMessageWithSnapshotHeartbeat = useCallback((message: string, attachments?: { images?: string[] }) => {
+  const sendMessageWithSnapshotHeartbeat = useCallback((message: string, attachments?: AttachmentData[]) => {
     markSnapshotActivity();
     return sendMessage(message, attachments);
   }, [markSnapshotActivity, sendMessage]);

@@ -4,6 +4,7 @@ import { readFromSandbox, execInSandbox, writeToSandbox } from '@/lib/sandbox-cl
 import { fetchProjectInstructions } from '@/lib/github-tools';
 import { buildWorkspaceContext, sanitizeProjectInstructions } from '@/lib/workspace-context';
 import type { ActiveRepo, RepoWithActivity } from '@/types';
+import type { SandboxStatus } from '@/hooks/useSandbox';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -65,7 +66,7 @@ export function useProjectInstructions(
   isSandboxMode: boolean,
   sandbox: {
     sandboxId: string | null;
-    status: string;
+    status: SandboxStatus;
     start: (repo: string, branch: string) => Promise<string | null>;
   },
   setAgentsMd: (content: string | null) => void,

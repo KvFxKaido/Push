@@ -10,6 +10,7 @@ import {
   type HydrateProgress,
 } from '@/lib/snapshot-manager';
 import type { ActiveRepo } from '@/types';
+import type { SandboxStatus } from '@/hooks/useSandbox';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -73,7 +74,7 @@ export function useSnapshotManager(
   isSandboxMode: boolean,
   sandbox: {
     sandboxId: string | null;
-    status: string;
+    status: SandboxStatus;
     start: (repo: string, branch: string) => Promise<string | null>;
   },
   activeRepo: ActiveRepo | null,
