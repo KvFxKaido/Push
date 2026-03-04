@@ -288,18 +288,28 @@ def _wait_with_timeout(p, timeout_seconds: int = 55) -> bool:
 
     Default is 55s — under the Worker's 60s timeout so the client gets a proper
     error response instead of a connection drop.
+
+    If p.wait() raises (gRPC disconnect, Modal timeout, etc.), the exception is
+    captured and re-raised in the calling thread so callers don't mistake a crash
+    for a successful completion.
     """
     done = threading.Event()
+    exc_holder: list[BaseException] = []
 
     def wait_thread():
         try:
             p.wait()
+        except BaseException as exc:
+            exc_holder.append(exc)
         finally:
             done.set()
 
     t = threading.Thread(target=wait_thread, daemon=True)
     t.start()
-    return done.wait(timeout=timeout_seconds)
+    completed = done.wait(timeout=timeout_seconds)
+    if exc_holder:
+        raise exc_holder[0]
+    return completed
 
 
 def _fetch_github_user(token: str) -> tuple[str, str]:
