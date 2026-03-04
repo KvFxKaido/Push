@@ -1009,13 +1009,21 @@ export async function runCoderAgent(
         };
 
         // Safety: if the first kept-tail message is also user (e.g. a tool
-        // result), merge it into messages[0] too so alternation holds.
+        // result), restore alternation.  Tool results are dropped (their tool
+        // names are already captured in the summary above); non-tool user
+        // messages are merged into messages[0].  Merging large tool payloads
+        // into messages[0] would cause it to grow unboundedly across trims
+        // since messages[0] is never itself dropped.
         while (messages.length > 1 && messages[1].role === 'user') {
-          messages[0] = {
-            ...messages[0],
-            content: messages[0].content + '\n\n' + messages[1].content,
-          };
-          messages.splice(1, 1);
+          if (messages[1].isToolResult) {
+            messages.splice(1, 1);
+          } else {
+            messages[0] = {
+              ...messages[0],
+              content: messages[0].content + '\n\n' + messages[1].content,
+            };
+            messages.splice(1, 1);
+          }
         }
 
         // Reset diff baseline — after trimming, the model has lost earlier

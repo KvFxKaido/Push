@@ -77,7 +77,13 @@ function renderCard(card: ChatCard, messageId?: string, cardIndex?: number, onAc
   const DataComp = DATA_ONLY_CARDS[card.type];
   if (DataComp) return <DataComp data={card.data} />;
 
-  return null;
+  // Unknown card type — show a tombstone so older persisted chats degrade
+  // visibly rather than silently losing content.
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-xs text-zinc-500">
+      [{card.type}] — card type no longer supported
+    </div>
+  );
 }
 
 export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRendererProps) {
