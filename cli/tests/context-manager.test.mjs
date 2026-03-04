@@ -265,9 +265,11 @@ describe('trimContext — Phase 1 (summarize)', () => {
 // ─── trimContext: Phase 2 — pair removal + digest ────────────────
 
 describe('trimContext — Phase 2 (remove pairs + digest)', () => {
+  // Use 45000 chars per result so the 14-message protected tail alone exceeds
+  // the 88K target, guaranteeing Phase 2 triggers after aggressive Phase 1 pruning.
   it('removes assistant+toolresult pairs and inserts context digest', () => {
     // Build a large context that Phase 1 alone cannot fix
-    const msgs = buildOverBudgetMessages(88_000, 30, 20000);
+    const msgs = buildOverBudgetMessages(88_000, 15, 45000);
     const before = estimateContextTokens(msgs);
     assert.ok(before > 100_000, `should be well over budget, got ${before}`);
 
@@ -283,13 +285,13 @@ describe('trimContext — Phase 2 (remove pairs + digest)', () => {
   });
 
   it('preserves the system prompt at index 0', () => {
-    const msgs = buildOverBudgetMessages(88_000, 30, 20000);
+    const msgs = buildOverBudgetMessages(88_000, 15, 45000);
     const result = trimContext(msgs, 'ollama', 'test');
     assert.equal(result.messages[0].role, 'system');
   });
 
   it('preserves the first real user message', () => {
-    const msgs = buildOverBudgetMessages(88_000, 30, 20000);
+    const msgs = buildOverBudgetMessages(88_000, 15, 45000);
     const firstUserContent = msgs[1].content; // 'Please fix the bug.'
     const result = trimContext(msgs, 'ollama', 'test');
 
@@ -298,7 +300,7 @@ describe('trimContext — Phase 2 (remove pairs + digest)', () => {
   });
 
   it('preserves recent tail messages', () => {
-    const msgs = buildOverBudgetMessages(88_000, 30, 20000);
+    const msgs = buildOverBudgetMessages(88_000, 15, 45000);
     const lastMsg = msgs[msgs.length - 1];
     const result = trimContext(msgs, 'ollama', 'test');
 
