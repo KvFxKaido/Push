@@ -16,7 +16,7 @@ import { createSandbox, cleanupSandbox, execInSandbox, setSandboxOwnerToken, get
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { fileLedger } from '@/lib/file-awareness-ledger';
-import { clearFileVersionCache } from '@/lib/sandbox-tools';
+import { clearFileVersionCache } from '@/lib/sandbox-file-version-cache';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 
 export type SandboxStatus = 'idle' | 'creating' | 'ready' | 'error';

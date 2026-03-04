@@ -153,19 +153,19 @@ try:
     content = base64.b64decode(content_b64)
     import tempfile
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path_str))
-    fd_closed = False
     try:
-        os.write(fd, content)
-        os.fsync(fd)
-        os.close(fd)
-        fd_closed = True
+        with os.fdopen(fd, 'wb') as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        # Preserve permissions of the original file if it exists
+        try:
+            mode = os.stat(path_str).st_mode
+            os.chmod(tmp_path, mode)
+        except FileNotFoundError:
+            pass
         os.rename(tmp_path, path_str)
     except Exception:
-        if not fd_closed:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -248,19 +248,19 @@ for f in files:
         content = base64.b64decode(content_b64)
         import tempfile
         fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path_str))
-        fd_closed = False
         try:
-            os.write(fd, content)
-            os.fsync(fd)
-            os.close(fd)
-            fd_closed = True
+            with os.fdopen(fd, 'wb') as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            # Preserve permissions of the original file if it exists
+            try:
+                mode = os.stat(path_str).st_mode
+                os.chmod(tmp_path, mode)
+            except FileNotFoundError:
+                pass
             os.rename(tmp_path, path_str)
         except Exception:
-            if not fd_closed:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
             try:
                 os.unlink(tmp_path)
             except OSError:

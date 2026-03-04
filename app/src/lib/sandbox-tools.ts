@@ -37,29 +37,16 @@ import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger, extractSignatures } from './file-awareness-ledger';
 import { applyHashlineEdits, calculateLineHash, type HashlineOp } from "./hashline";
 import { getActiveGitHubToken } from './github-auth';
-const sandboxFileVersions = new Map<string, string>();
+import {
+  fileVersionKey,
+  getByKey as versionCacheGet,
+  setByKey as versionCacheSet,
+  deleteByKey as versionCacheDelete,
+  deleteFileVersion as versionCacheDeletePath,
+} from './sandbox-file-version-cache';
 
-function fileVersionKey(sandboxId: string, path: string): string {
-  return `${sandboxId}:${path}`;
-}
-
-/**
- * Clear all cached file versions for a given sandbox.
- * Call this when a sandbox is torn down or on branch switch
- * to prevent stale version entries from leaking across sessions.
- */
-export function clearFileVersionCache(sandboxId?: string): void {
-  if (!sandboxId) {
-    sandboxFileVersions.clear();
-    return;
-  }
-  const prefix = `${sandboxId}:`;
-  for (const key of [...sandboxFileVersions.keys()]) {
-    if (key.startsWith(prefix)) {
-      sandboxFileVersions.delete(key);
-    }
-  }
-}
+// Re-export so existing consumers don't break
+export { clearFileVersionCache } from './sandbox-file-version-cache';
 
 
 function normalizeSandboxPath(path: string): string {
@@ -787,7 +774,7 @@ export async function executeSandboxToolCall(
 
         // Handle directory or read errors (e.g. "cat: /path: Is a directory")
         if (result.error) {
-          sandboxFileVersions.delete(cacheKey);
+          versionCacheDelete(cacheKey);
           recordReadFileMetric({
             outcome: 'error',
             payloadChars: 0,
@@ -799,9 +786,9 @@ export async function executeSandboxToolCall(
         }
 
         if (typeof result.version === 'string' && result.version) {
-          sandboxFileVersions.set(cacheKey, result.version);
+          versionCacheSet(cacheKey, result.version);
         } else {
-          sandboxFileVersions.delete(cacheKey);
+          versionCacheDelete(cacheKey);
         }
 
         const rangeStart = typeof result.start_line === 'number'
@@ -1091,7 +1078,7 @@ export async function executeSandboxToolCall(
         // Update version cache
         const editCacheKey = fileVersionKey(sandboxId, path);
         if (typeof editWriteResult.new_version === 'string' && editWriteResult.new_version) {
-          sandboxFileVersions.set(editCacheKey, editWriteResult.new_version);
+          versionCacheSet(editCacheKey, editWriteResult.new_version);
         }
         fileLedger.recordCreation(path);
 
@@ -1149,7 +1136,7 @@ export async function executeSandboxToolCall(
               });
               // Update version cache
               if (typeof autoReadVersion === 'string' && autoReadVersion) {
-                sandboxFileVersions.set(cacheKey, autoReadVersion);
+                versionCacheSet(cacheKey, autoReadVersion);
               }
               fileLedger.recordAutoExpandSuccess();
               console.debug(`[edit-guard] Auto-expanded "${call.args.path}" (${autoLineCount} lines) — proceeding with write.`);
@@ -1217,7 +1204,7 @@ export async function executeSandboxToolCall(
         // After auto-expand, the version cache may have been updated — refresh.
         // Prefer the cache (most recently observed version) over the caller's
         // expected_version, which may be stale from an earlier read.
-        const freshVersion = sandboxFileVersions.get(cacheKey) || call.args.expected_version;
+        const freshVersion = versionCacheGet(cacheKey) || call.args.expected_version;
 
         // Stale warning (soft — doesn't block, just informs)
         const staleWarning = fileLedger.getStaleWarning(call.args.path);
@@ -1228,7 +1215,7 @@ export async function executeSandboxToolCall(
           if (!result.ok) {
             if (result.code === 'STALE_FILE') {
               if (typeof result.current_version === 'string' && result.current_version) {
-                sandboxFileVersions.set(cacheKey, result.current_version);
+                versionCacheSet(cacheKey, result.current_version);
               }
               recordWriteFileMetric({
                 durationMs: Date.now() - writeStart,
@@ -1261,9 +1248,9 @@ export async function executeSandboxToolCall(
             return { text: formatStructuredError(writeErr, formatSandboxError(detail, call.args.path)), structuredError: writeErr };
           }
 
-          const previousVersion = sandboxFileVersions.get(cacheKey);
+          const previousVersion = versionCacheGet(cacheKey);
           if (typeof result.new_version === 'string' && result.new_version) {
-            sandboxFileVersions.set(cacheKey, result.new_version);
+            versionCacheSet(cacheKey, result.new_version);
           }
 
           // Build result message — no extra HTTP round-trip for git verification.
@@ -2143,7 +2130,7 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
               // Update version cache
               const cacheKey = fileVersionKey(sandboxId, entry.path);
               if (typeof entry.new_version === 'string' && entry.new_version) {
-                sandboxFileVersions.set(cacheKey, entry.new_version);
+                versionCacheSet(cacheKey, entry.new_version);
               }
               fileLedger.recordCreation(entry.path);
               writeResults.push(`${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`);
@@ -2161,7 +2148,7 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
           // partially succeed, leaving the cache inconsistent with sandbox truth.
           console.warn('[sandbox-tools] batch write failed, falling back to sequential writes:', batchErr);
           for (const r of editResults) {
-            sandboxFileVersions.delete(fileVersionKey(sandboxId, r.path));
+            versionCacheDeletePath(sandboxId, r.path);
           }
           for (const r of editResults) {
             try {
@@ -2175,7 +2162,7 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
               } else {
                 const cacheKey = fileVersionKey(sandboxId, r.path);
                 if (typeof writeResult.new_version === 'string' && writeResult.new_version) {
-                  sandboxFileVersions.set(cacheKey, writeResult.new_version);
+                  versionCacheSet(cacheKey, writeResult.new_version);
                 }
                 fileLedger.recordCreation(r.path);
                 writeResults.push(`${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`);
