@@ -10,7 +10,7 @@ import {
   ZEN_MODELS,
   type PreferredProvider,
 } from '@/lib/providers';
-import { getActiveProvider } from '@/lib/orchestrator';
+import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import {
   fetchOllamaModels,
   fetchMistralModels,
@@ -39,21 +39,39 @@ interface ProviderModelState {
   updatedAt: number | null;
 }
 
+interface ProviderKeyConfig {
+  setKey: (k: string) => void;
+  clearKey: () => void;
+  hasKey: boolean;
+  model: string | null;
+  setModel: (m: string) => void;
+  keyInput: string;
+  setKeyInput: (v: string) => void;
+}
+
+interface TavilyKeyConfig {
+  setKey: (k: string) => void;
+  clearKey: () => void;
+  hasKey: boolean;
+  keyInput: string;
+  setKeyInput: (v: string) => void;
+}
+
 export interface ModelCatalog {
-  // Provider configs (key management)
-  ollama: { setKey: (k: string) => void; clearKey: () => void; hasKey: boolean; model: string | null; setModel: (m: string) => void };
-  mistral: { setKey: (k: string) => void; clearKey: () => void; hasKey: boolean; model: string | null; setModel: (m: string) => void };
-  openRouter: { setKey: (k: string) => void; clearKey: () => void; hasKey: boolean; model: string | null; setModel: (m: string) => void };
-  minimax: { setKey: (k: string) => void; clearKey: () => void; hasKey: boolean; model: string | null; setModel: (m: string) => void };
-  zai: { setKey: (k: string) => void; clearKey: () => void; hasKey: boolean; model: string | null; setModel: (m: string) => void };
-  google: { setKey: (k: string) => void; clearKey: () => void; hasKey: boolean; model: string | null; setModel: (m: string) => void };
-  zen: { setKey: (k: string) => void; clearKey: () => void; hasKey: boolean; model: string | null; setModel: (m: string) => void };
-  tavily: { setKey: (k: string) => void; clearKey: () => void; hasKey: boolean };
+  // Provider configs (key management + key input state)
+  ollama: ProviderKeyConfig;
+  mistral: ProviderKeyConfig;
+  openRouter: ProviderKeyConfig;
+  minimax: ProviderKeyConfig;
+  zai: ProviderKeyConfig;
+  google: ProviderKeyConfig;
+  zen: ProviderKeyConfig;
+  tavily: TavilyKeyConfig;
 
   // Active backend
   activeBackend: PreferredProvider | null;
   setActiveBackend: (p: PreferredProvider | null) => void;
-  activeProviderLabel: string;
+  activeProviderLabel: ActiveProvider;
   availableProviders: readonly (readonly [string, string, boolean])[];
   setPreferredProvider: typeof setPreferredProvider;
   clearPreferredProvider: typeof clearPreferredProvider;
@@ -111,6 +129,16 @@ export function useModelCatalog(): ModelCatalog {
   const googleCfg = useGoogleConfig();
   const zenCfg = useZenConfig();
   const tavilyCfg = useTavilyConfig();
+
+  // Key input state (controlled text fields for Settings UI)
+  const [ollamaKeyInput, setOllamaKeyInput] = useState('');
+  const [mistralKeyInput, setMistralKeyInput] = useState('');
+  const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
+  const [minimaxKeyInput, setMinimaxKeyInput] = useState('');
+  const [zaiKeyInput, setZaiKeyInput] = useState('');
+  const [googleKeyInput, setGoogleKeyInput] = useState('');
+  const [zenKeyInput, setZenKeyInput] = useState('');
+  const [tavilyKeyInput, setTavilyKeyInput] = useState('');
 
   // Active backend state
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
@@ -280,14 +308,14 @@ export function useModelCatalog(): ModelCatalog {
   const zenModelOptions = useMemo(() => includeSelectedModel(zenModelList, zenCfg.model), [zenModelList, zenCfg.model]);
 
   return {
-    ollama: { setKey: ollamaCfg.setKey, clearKey: ollamaCfg.clearKey, hasKey: ollamaCfg.hasKey, model: ollamaCfg.model, setModel: ollamaCfg.setModel },
-    mistral: { setKey: mistralCfg.setKey, clearKey: mistralCfg.clearKey, hasKey: mistralCfg.hasKey, model: mistralCfg.model, setModel: mistralCfg.setModel },
-    openRouter: { setKey: openRouterCfg.setKey, clearKey: openRouterCfg.clearKey, hasKey: openRouterCfg.hasKey, model: openRouterCfg.model, setModel: openRouterCfg.setModel },
-    minimax: { setKey: minimaxCfg.setKey, clearKey: minimaxCfg.clearKey, hasKey: minimaxCfg.hasKey, model: minimaxCfg.model, setModel: minimaxCfg.setModel },
-    zai: { setKey: zaiCfg.setKey, clearKey: zaiCfg.clearKey, hasKey: zaiCfg.hasKey, model: zaiCfg.model, setModel: zaiCfg.setModel },
-    google: { setKey: googleCfg.setKey, clearKey: googleCfg.clearKey, hasKey: googleCfg.hasKey, model: googleCfg.model, setModel: googleCfg.setModel },
-    zen: { setKey: zenCfg.setKey, clearKey: zenCfg.clearKey, hasKey: zenCfg.hasKey, model: zenCfg.model, setModel: zenCfg.setModel },
-    tavily: { setKey: tavilyCfg.setKey, clearKey: tavilyCfg.clearKey, hasKey: tavilyCfg.hasKey },
+    ollama: { setKey: ollamaCfg.setKey, clearKey: ollamaCfg.clearKey, hasKey: ollamaCfg.hasKey, model: ollamaCfg.model, setModel: ollamaCfg.setModel, keyInput: ollamaKeyInput, setKeyInput: setOllamaKeyInput },
+    mistral: { setKey: mistralCfg.setKey, clearKey: mistralCfg.clearKey, hasKey: mistralCfg.hasKey, model: mistralCfg.model, setModel: mistralCfg.setModel, keyInput: mistralKeyInput, setKeyInput: setMistralKeyInput },
+    openRouter: { setKey: openRouterCfg.setKey, clearKey: openRouterCfg.clearKey, hasKey: openRouterCfg.hasKey, model: openRouterCfg.model, setModel: openRouterCfg.setModel, keyInput: openRouterKeyInput, setKeyInput: setOpenRouterKeyInput },
+    minimax: { setKey: minimaxCfg.setKey, clearKey: minimaxCfg.clearKey, hasKey: minimaxCfg.hasKey, model: minimaxCfg.model, setModel: minimaxCfg.setModel, keyInput: minimaxKeyInput, setKeyInput: setMinimaxKeyInput },
+    zai: { setKey: zaiCfg.setKey, clearKey: zaiCfg.clearKey, hasKey: zaiCfg.hasKey, model: zaiCfg.model, setModel: zaiCfg.setModel, keyInput: zaiKeyInput, setKeyInput: setZaiKeyInput },
+    google: { setKey: googleCfg.setKey, clearKey: googleCfg.clearKey, hasKey: googleCfg.hasKey, model: googleCfg.model, setModel: googleCfg.setModel, keyInput: googleKeyInput, setKeyInput: setGoogleKeyInput },
+    zen: { setKey: zenCfg.setKey, clearKey: zenCfg.clearKey, hasKey: zenCfg.hasKey, model: zenCfg.model, setModel: zenCfg.setModel, keyInput: zenKeyInput, setKeyInput: setZenKeyInput },
+    tavily: { setKey: tavilyCfg.setKey, clearKey: tavilyCfg.clearKey, hasKey: tavilyCfg.hasKey, keyInput: tavilyKeyInput, setKeyInput: setTavilyKeyInput },
 
     activeBackend,
     setActiveBackend,
