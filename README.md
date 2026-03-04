@@ -218,9 +218,9 @@ Push/
 │   │   │   ├── cards/          # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
 │   │   │   ├── filebrowser/    # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/             # shadcn/ui component library
-│   │   ├── hooks/              # useChat, useSandbox, useScratchpad, useUserProfile, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useTavilyConfig, useUsageTracking
+│   │   ├── hooks/              # useChat, useSandbox, useScratchpad, useUserProfile, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useModelCatalog, useSnapshotManager, useBranchManager, useProjectInstructions, useTavilyConfig, useUsageTracking
 │   │   ├── lib/                # Agent logic, tool protocols, git operations, web search, model catalog, prompts
-│   │   ├── sections/           # OnboardingScreen, RepoPicker, FileBrowser, HomeScreen
+│   │   ├── sections/           # OnboardingScreen, RepoPicker, FileBrowser, HomeScreen, ChatScreen
 │   │   └── types/              # TypeScript definitions
 │   └── package.json
 └── README.md
