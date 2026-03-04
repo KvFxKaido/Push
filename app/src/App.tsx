@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
@@ -21,13 +21,16 @@ import {
 import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
-import { SettingsSheet } from '@/components/SettingsSheet';
-import { OnboardingScreen } from '@/sections/OnboardingScreen';
-import { HomeScreen } from '@/sections/HomeScreen';
-import { FileBrowser } from '@/sections/FileBrowser';
-import { ChatScreen } from '@/sections/ChatScreen';
+import { LazySettingsSheet } from '@/components/LazySettingsSheet';
 import type { AppScreen, RepoWithActivity, SandboxStateCardData } from '@/types';
 import './App.css';
+
+// --- Lazy-loaded screen & settings components (code-split) ---
+const SettingsSheet = LazySettingsSheet;
+const OnboardingScreen = lazy(() => import('@/sections/OnboardingScreen').then(m => ({ default: m.OnboardingScreen })));
+const HomeScreen = lazy(() => import('@/sections/HomeScreen').then(m => ({ default: m.HomeScreen })));
+const FileBrowser = lazy(() => import('@/sections/FileBrowser').then(m => ({ default: m.FileBrowser })));
+const ChatScreen = lazy(() => import('@/sections/ChatScreen').then(m => ({ default: m.ChatScreen })));
 
 const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
 
@@ -550,6 +553,7 @@ function App() {
   const isConnected = Boolean(token) || isDemo || isSandboxMode;
 
   const settingsSheet = (
+    <Suspense fallback={null}>
     <SettingsSheet
       open={settingsOpen}
       onOpenChange={setSettingsOpen}
@@ -719,46 +723,53 @@ function App() {
         deleteAllChats,
       }}
     />
+    </Suspense>
   );
 
   // ----- Screen routing -----
 
+  const suspenseFallback = <div className="h-dvh bg-[#000]" />;
+
   if (screen === 'onboarding') {
     return (
-      <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
-        <OnboardingScreen
-          onConnect={handleConnect}
-          onConnectOAuth={connectApp}
-          onSandboxMode={handleSandboxMode}
-          onInstallApp={installApp}
-          onConnectInstallationId={setInstallationIdManually}
-          loading={authLoading}
-          error={authError}
-          validatedUser={validatedUser}
-          isAppAuth={isAppAuth}
-        />
-      </div>
+      <Suspense fallback={suspenseFallback}>
+        <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+          <OnboardingScreen
+            onConnect={handleConnect}
+            onConnectOAuth={connectApp}
+            onSandboxMode={handleSandboxMode}
+            onInstallApp={installApp}
+            onConnectInstallationId={setInstallationIdManually}
+            loading={authLoading}
+            error={authError}
+            validatedUser={validatedUser}
+            isAppAuth={isAppAuth}
+          />
+        </div>
+      </Suspense>
     );
   }
 
   if (screen === 'home') {
     return (
       <>
-        <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
-          <HomeScreen
-            repos={repos}
-            loading={reposLoading}
-            error={reposError}
-            conversations={conversations}
-            activeRepo={activeRepo}
-            onSelectRepo={handleSelectRepo}
-            onResumeConversation={handleResumeConversationFromHome}
-            onOpenSettings={handleOpenSettingsFromDrawer}
-            onDisconnect={handleDisconnect}
-            onSandboxMode={handleSandboxMode}
-            user={validatedUser}
-          />
-        </div>
+        <Suspense fallback={suspenseFallback}>
+          <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+            <HomeScreen
+              repos={repos}
+              loading={reposLoading}
+              error={reposError}
+              conversations={conversations}
+              activeRepo={activeRepo}
+              onSelectRepo={handleSelectRepo}
+              onResumeConversation={handleResumeConversationFromHome}
+              onOpenSettings={handleOpenSettingsFromDrawer}
+              onDisconnect={handleDisconnect}
+              onSandboxMode={handleSandboxMode}
+              user={validatedUser}
+            />
+          </div>
+        </Suspense>
         {settingsSheet}
       </>
     );
@@ -766,19 +777,22 @@ function App() {
 
   if (screen === 'file-browser' && sandbox.sandboxId) {
     return (
-      <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
-        <FileBrowser
-          sandboxId={sandbox.sandboxId}
-          repoName={activeRepo?.name || 'Sandbox'}
-          onBack={() => setShowFileBrowser(false)}
-        />
-        <Toaster position="bottom-center" />
-      </div>
+      <Suspense fallback={suspenseFallback}>
+        <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+          <FileBrowser
+            sandboxId={sandbox.sandboxId}
+            repoName={activeRepo?.name || 'Sandbox'}
+            onBack={() => setShowFileBrowser(false)}
+          />
+          <Toaster position="bottom-center" />
+        </div>
+      </Suspense>
     );
   }
 
   // ----- Chat screen -----
   return (
+    <Suspense fallback={suspenseFallback}>
     <ChatScreen
       activeRepo={activeRepo}
       isSandboxMode={isSandboxMode}
@@ -876,6 +890,7 @@ function App() {
       handleBioBlur={handleBioBlur}
       ensureSandbox={ensureSandbox}
     />
+    </Suspense>
   );
 }
 

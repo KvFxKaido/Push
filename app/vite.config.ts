@@ -113,9 +113,6 @@ export default defineConfig({
           if (id.includes('node_modules/lucide-react')) {
             return 'vendor-icons';
           }
-          if (id.includes('node_modules/recharts')) {
-            return 'vendor-charts';
-          }
           if (id.includes('node_modules/date-fns')) {
             return 'vendor-date';
           }

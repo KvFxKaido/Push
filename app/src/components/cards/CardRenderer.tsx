@@ -1,28 +1,30 @@
-import type { ComponentType } from 'react';
+import { lazy, Suspense, type ComponentType } from 'react';
 import type { ChatCard, CardAction } from '@/types';
-import { PRCard } from './PRCard';
-import { PRListCard } from './PRListCard';
-import { CommitListCard } from './CommitListCard';
-import { FileCard } from './FileCard';
-import { BranchListCard } from './BranchListCard';
-import { FileListCard } from './FileListCard';
-import { SandboxCard } from './SandboxCard';
-import { DiffPreviewCard } from './DiffPreviewCard';
-import { AuditVerdictCard } from './AuditVerdictCard';
-import { CommitReviewCard } from './CommitReviewCard';
-import { CIStatusCard } from './CIStatusCard';
-import { EditorCard } from './EditorCard';
-import { FileSearchCard } from './FileSearchCard';
-import { CommitFilesCard } from './CommitFilesCard';
-import { TestResultsCard } from './TestResultsCard';
-import { TypeCheckCard } from './TypeCheckCard';
-import { BrowserScreenshotCard } from './BrowserScreenshotCard';
-import { BrowserExtractCard } from './BrowserExtractCard';
-import { SandboxDownloadCard } from './SandboxDownloadCard';
-import { WorkflowRunsCard } from './WorkflowRunsCard';
-import { WorkflowLogsCard } from './WorkflowLogsCard';
-import { WebSearchCard } from './WebSearchCard';
-import { CoderProgressCard } from './CoderProgressCard';
+
+// --- Lazy-loaded card components (code-split) ---
+const PRCard = lazy(() => import('./PRCard').then(m => ({ default: m.PRCard })));
+const PRListCard = lazy(() => import('./PRListCard').then(m => ({ default: m.PRListCard })));
+const CommitListCard = lazy(() => import('./CommitListCard').then(m => ({ default: m.CommitListCard })));
+const FileCard = lazy(() => import('./FileCard').then(m => ({ default: m.FileCard })));
+const BranchListCard = lazy(() => import('./BranchListCard').then(m => ({ default: m.BranchListCard })));
+const FileListCard = lazy(() => import('./FileListCard').then(m => ({ default: m.FileListCard })));
+const SandboxCard = lazy(() => import('./SandboxCard').then(m => ({ default: m.SandboxCard })));
+const DiffPreviewCard = lazy(() => import('./DiffPreviewCard').then(m => ({ default: m.DiffPreviewCard })));
+const AuditVerdictCard = lazy(() => import('./AuditVerdictCard').then(m => ({ default: m.AuditVerdictCard })));
+const CommitReviewCard = lazy(() => import('./CommitReviewCard').then(m => ({ default: m.CommitReviewCard })));
+const CIStatusCard = lazy(() => import('./CIStatusCard').then(m => ({ default: m.CIStatusCard })));
+const EditorCard = lazy(() => import('./EditorCard').then(m => ({ default: m.EditorCard })));
+const FileSearchCard = lazy(() => import('./FileSearchCard').then(m => ({ default: m.FileSearchCard })));
+const CommitFilesCard = lazy(() => import('./CommitFilesCard').then(m => ({ default: m.CommitFilesCard })));
+const TestResultsCard = lazy(() => import('./TestResultsCard').then(m => ({ default: m.TestResultsCard })));
+const TypeCheckCard = lazy(() => import('./TypeCheckCard').then(m => ({ default: m.TypeCheckCard })));
+const BrowserScreenshotCard = lazy(() => import('./BrowserScreenshotCard').then(m => ({ default: m.BrowserScreenshotCard })));
+const BrowserExtractCard = lazy(() => import('./BrowserExtractCard').then(m => ({ default: m.BrowserExtractCard })));
+const SandboxDownloadCard = lazy(() => import('./SandboxDownloadCard').then(m => ({ default: m.SandboxDownloadCard })));
+const WorkflowRunsCard = lazy(() => import('./WorkflowRunsCard').then(m => ({ default: m.WorkflowRunsCard })));
+const WorkflowLogsCard = lazy(() => import('./WorkflowLogsCard').then(m => ({ default: m.WorkflowLogsCard })));
+const WebSearchCard = lazy(() => import('./WebSearchCard').then(m => ({ default: m.WebSearchCard })));
+const CoderProgressCard = lazy(() => import('./CoderProgressCard').then(m => ({ default: m.CoderProgressCard })));
 
 interface CardRendererProps {
   card: ChatCard;
@@ -85,5 +87,9 @@ function renderCard(card: ChatCard, messageId?: string, cardIndex?: number, onAc
 export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRendererProps) {
   const inner = renderCard(card, messageId, cardIndex, onAction);
   if (!inner) return null;
-  return <div className="animate-card-expand">{inner}</div>;
+  return (
+    <Suspense fallback={<div className="h-16 animate-pulse rounded-lg bg-zinc-900/50" />}>
+      <div className="animate-card-expand">{inner}</div>
+    </Suspense>
+  );
 }

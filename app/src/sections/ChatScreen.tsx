@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, Suspense } from 'react';
 import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
 import { ChatContainer } from '@/components/chat/ChatContainer';
@@ -6,9 +6,9 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
 import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
-import { SettingsSheet } from '@/components/SettingsSheet';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import { MergeFlowSheet } from '@/components/chat/MergeFlowSheet';
+import { LazySettingsSheet as SettingsSheet } from '@/components/LazySettingsSheet';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -366,8 +366,9 @@ export function ChatScreen(props: ChatScreenProps) {
   const isGoogleModelLocked = isModelLocked && lockedProvider === 'google';
   const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
 
-  // Settings sheet
+  // Settings sheet (lazy-loaded)
   const settingsSheet = (
+    <Suspense fallback={null}>
     <SettingsSheet
       open={settingsOpen}
       onOpenChange={setSettingsOpen}
@@ -537,6 +538,7 @@ export function ChatScreen(props: ChatScreenProps) {
         deleteAllChats,
       }}
     />
+    </Suspense>
   );
 
   return (
