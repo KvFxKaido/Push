@@ -1165,6 +1165,35 @@ describe('sandbox path normalization', () => {
     expect(result!.args.edits[0].path).toBe('/workspace/app/worker.ts');
   });
 
+  it('filters invalid entries from sandbox_apply_patchset edits', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_apply_patchset',
+      args: {
+        edits: [
+          { path: 'app/worker.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'new' }] },
+          { path: 123, ops: [] }, // invalid: path is not a string
+          { path: 'app/lib.ts' }, // invalid: missing ops
+          'not-an-object',        // invalid: not an object
+        ],
+      },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.args.edits).toHaveLength(1);
+    expect(result!.args.edits[0].path).toBe('/workspace/app/worker.ts');
+  });
+
+  it('returns null for sandbox_apply_patchset with all invalid edits', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_apply_patchset',
+      args: {
+        edits: [
+          { path: 123, ops: [] },
+        ],
+      },
+    });
+    expect(result).toBeNull();
+  });
+
   it('normalizes relative path in sandbox_read_symbols', () => {
     const result = validateSandboxToolCall({
       tool: 'sandbox_read_symbols',

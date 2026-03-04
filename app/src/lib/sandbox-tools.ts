@@ -514,14 +514,21 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
     return { tool: 'sandbox_read_symbols', args: { path: normalizeSandboxPath(args.path) } };
   }
   if (tool === 'sandbox_apply_patchset' && Array.isArray(args.edits)) {
+    const validEdits = (args.edits as unknown[])
+      .filter((edit): edit is { path: string; ops: HashlineOp[] } => {
+        const rec = asRecord(edit);
+        return rec !== null && typeof rec.path === 'string' && Array.isArray(rec.ops);
+      })
+      .map(edit => ({
+        ...edit,
+        path: normalizeSandboxPath(edit.path),
+      }));
+    if (validEdits.length === 0) return null;
     return {
       tool: 'sandbox_apply_patchset',
       args: {
         dryRun: typeof args.dryRun === 'boolean' ? args.dryRun : (args.dry_run === true ? true : undefined),
-        edits: (args.edits as Array<{ path: string; ops: HashlineOp[] }>).map(edit => ({
-          ...edit,
-          path: typeof edit.path === 'string' ? normalizeSandboxPath(edit.path) : edit.path,
-        })),
+        edits: validEdits,
       },
     };
   }
