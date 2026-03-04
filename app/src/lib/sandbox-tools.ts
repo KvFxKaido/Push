@@ -43,6 +43,7 @@ import {
   setByKey as versionCacheSet,
   deleteByKey as versionCacheDelete,
   deleteFileVersion as versionCacheDeletePath,
+  clearFileVersionCache,
 } from './sandbox-file-version-cache';
 
 // Re-export so existing consumers don't break
@@ -761,6 +762,13 @@ export async function executeSandboxToolCall(
           if (hint) lines.push(`\n[Hint] ${hint}`);
         }
 
+        // Invalidate version cache after exec — commands like `npm install`,
+        // `git checkout`, `sed -i`, etc. can modify files without going through
+        // the write path, leaving the cache stale and causing spurious STALE_FILE
+        // rejections on subsequent writes.
+        // (exitCode === -1 already returned early above, so no guard needed here.)
+        clearFileVersionCache(sandboxId);
+
         const cardData: SandboxCardData = {
           command: call.args.command,
           stdout: result.stdout,
@@ -1066,7 +1074,7 @@ export async function executeSandboxToolCall(
         // 3. Write the edited content directly (instead of delegating to sandbox_write_file)
         // Transient failures (5xx, timeout, network) are retried by sandbox-client withRetry().
         const beforeVersion = readResult.version || 'unknown';
-        // Always prefer the version from the fresh read we just performed (line 949).
+        // Always prefer the version from the fresh read we just performed.
         // A caller-provided expected_version may be stale from a previous read, and
         // using it here would cause a spurious STALE_FILE rejection on the server.
         const editWriteVersion = readResult.version || undefined;
@@ -1470,6 +1478,8 @@ export async function executeSandboxToolCall(
 
         const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`);
         const durationMs = Date.now() - start;
+        // Tests can generate artifacts, coverage files, snapshots, etc.
+        clearFileVersionCache(sandboxId);
 
         // Parse test results from output
         const output = result.stdout + '\n' + result.stderr;
@@ -1562,6 +1572,8 @@ export async function executeSandboxToolCall(
             if (installResult.exitCode !== 0) {
               return { text: `[Tool Result — sandbox_check_types]\nFailed to install dependencies:\n${installResult.stderr}` };
             }
+            // npm install modifies node_modules, package-lock.json, etc.
+            clearFileVersionCache(sandboxId);
           }
 
           // Check if tsc is available and run type check
@@ -1769,6 +1781,8 @@ export async function executeSandboxToolCall(
         if (commitResult.exitCode !== 0) {
           return { text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.stderr}` };
         }
+        // git add + commit changes file hashes tracked by git
+        clearFileVersionCache(sandboxId);
 
         // Step 6: Push to remote
         const pushResult = await execInSandbox(
