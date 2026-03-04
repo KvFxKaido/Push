@@ -473,8 +473,12 @@ describe('sandbox path normalization', () => {
       },
     });
     expect(result).not.toBeNull();
-    expect(result!.args.edits[0].path).toBe('/workspace/app/worker.ts');
-    expect(result!.args.edits[1].path).toBe('/workspace/app/src/lib/providers.ts');
+    expect(result?.tool).toBe('sandbox_apply_patchset');
+    if (!result || result.tool !== 'sandbox_apply_patchset') {
+      throw new Error('Expected sandbox_apply_patchset tool result');
+    }
+    expect(result.args.edits[0].path).toBe('/workspace/app/worker.ts');
+    expect(result.args.edits[1].path).toBe('/workspace/app/src/lib/providers.ts');
   });
 
   it('preserves absolute paths in sandbox_apply_patchset edits', () => {
@@ -487,7 +491,11 @@ describe('sandbox path normalization', () => {
       },
     });
     expect(result).not.toBeNull();
-    expect(result!.args.edits[0].path).toBe('/workspace/app/worker.ts');
+    expect(result?.tool).toBe('sandbox_apply_patchset');
+    if (!result || result.tool !== 'sandbox_apply_patchset') {
+      throw new Error('Expected sandbox_apply_patchset tool result');
+    }
+    expect(result.args.edits[0].path).toBe('/workspace/app/worker.ts');
   });
 
   it('filters invalid entries from sandbox_apply_patchset edits', () => {
@@ -503,8 +511,12 @@ describe('sandbox path normalization', () => {
       },
     });
     expect(result).not.toBeNull();
-    expect(result!.args.edits).toHaveLength(1);
-    expect(result!.args.edits[0].path).toBe('/workspace/app/worker.ts');
+    expect(result?.tool).toBe('sandbox_apply_patchset');
+    if (!result || result.tool !== 'sandbox_apply_patchset') {
+      throw new Error('Expected sandbox_apply_patchset tool result');
+    }
+    expect(result.args.edits).toHaveLength(1);
+    expect(result.args.edits[0].path).toBe('/workspace/app/worker.ts');
   });
 
   it('returns null for sandbox_apply_patchset with all invalid edits', () => {
@@ -525,7 +537,11 @@ describe('sandbox path normalization', () => {
       args: { path: 'app/src/lib/utils.ts' },
     });
     expect(result).not.toBeNull();
-    expect(result!.args.path).toBe('/workspace/app/src/lib/utils.ts');
+    expect(result?.tool).toBe('sandbox_read_symbols');
+    if (!result || result.tool !== 'sandbox_read_symbols') {
+      throw new Error('Expected sandbox_read_symbols tool result');
+    }
+    expect(result.args.path).toBe('/workspace/app/src/lib/utils.ts');
   });
 
   it('normalizes workspace-prefixed exec workdir', async () => {

@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { PreferredProvider } from '@/lib/providers';
+import type { SandboxStatus } from '@/hooks/useSandbox';
 import { formatSnapshotAge, isSnapshotStale, snapshotStagePercent } from '@/hooks/useSnapshotManager';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import type { SnapshotManager } from '@/hooks/useSnapshotManager';
@@ -55,12 +56,12 @@ interface ChatScreenProps {
   isSandboxMode: boolean;
   sandbox: {
     sandboxId: string | null;
-    status: string;
+    status: SandboxStatus;
     error: string | null;
     createdAt: number | null;
-    start: (repo: string, branch: string) => Promise<string | null>;
+    start: (repo: string, branch?: string) => Promise<string | null>;
     stop: () => Promise<void>;
-    refresh: () => Promise<void>;
+    refresh: () => Promise<boolean>;
     markUnreachable: (reason: string) => void;
   };
 
@@ -202,7 +203,7 @@ interface ChatScreenProps {
   setShowInstallIdInput: (v: boolean) => void;
   installIdInput: string;
   setInstallIdInput: (v: string) => void;
-  setInstallationIdManually: (id: string) => void;
+  setInstallationIdManually: (id: string) => Promise<boolean>;
   allowlistSecretCmd: string;
   copyAllowlistCommand: () => void;
 
@@ -569,7 +570,7 @@ export function ChatScreen(props: ChatScreenProps) {
               repos={repos}
               activeRepo={activeRepo}
               conversations={conversations}
-              activeChatId={activeChatId}
+              activeChatId={activeChatId ?? ''}
               onSelectRepo={handleSelectRepoFromDrawer}
               onSwitchChat={switchChat}
               onNewChat={handleCreateNewChat}
@@ -1012,7 +1013,10 @@ export function ChatScreen(props: ChatScreenProps) {
         onScratchpadContentChange={scratchpad.setContent}
         onScratchpadClear={scratchpad.clear}
         onScratchpadSaveMemory={scratchpad.saveMemory}
-        onScratchpadLoadMemory={scratchpad.loadMemory}
+        onScratchpadLoadMemory={(id) => {
+          if (!id) return;
+          scratchpad.loadMemory(id);
+        }}
         onScratchpadDeleteMemory={scratchpad.deleteMemory}
         branchProps={{
           currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,

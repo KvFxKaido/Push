@@ -46,7 +46,7 @@ interface ProviderKeyConfig {
   setKey: (k: string) => void;
   clearKey: () => void;
   hasKey: boolean;
-  model: string | null;
+  model: string;
   setModel: (m: string) => void;
   keyInput: string;
   setKeyInput: (v: string) => void;
@@ -76,7 +76,7 @@ export interface ModelCatalog {
   activeBackend: PreferredProvider | null;
   setActiveBackend: (p: PreferredProvider | null) => void;
   activeProviderLabel: ActiveProvider;
-  availableProviders: readonly (readonly [string, string, boolean])[];
+  availableProviders: readonly (readonly [PreferredProvider, string, boolean])[];
   setPreferredProvider: typeof setPreferredProvider;
   clearPreferredProvider: typeof clearPreferredProvider;
 
