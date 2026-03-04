@@ -317,7 +317,7 @@ Rules:
     CHECKPOINT_ANSWER_TIMEOUT_MS,
     'Checkpoint response timed out',
     (onToken, onDone, onError) => {
-      streamFn(
+      return streamFn(
         messages,
         onToken,
         onDone,
@@ -498,7 +498,7 @@ export async function runCoderAgent(
       CODER_ROUND_TIMEOUT_MS,
       `Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
       (onToken, onDone, onError) => {
-        streamFn(
+        return streamFn(
           messages,
           onToken,
           onDone,
@@ -994,7 +994,7 @@ export async function runCoderAgent(
           droppedToolNames.length > 0
             ? `Tools executed in trimmed context: ${[...new Set(droppedToolNames)].join(', ')}`
             : '',
-          `Remaining context starts at round ${round + 1}. Re-read any files you need before making further edits.`,
+          `Current round: ${round + 1}. Re-read any files you need before making further edits.`,
           stateBlock,
         ].filter(Boolean).join('\n');
 
