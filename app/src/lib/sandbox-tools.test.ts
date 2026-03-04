@@ -46,7 +46,6 @@ vi.mock('./tool-dispatch', async () => {
 
 import {
   validateSandboxToolCall,
-  detectSandboxToolCall,
   executeSandboxToolCall,
 } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
