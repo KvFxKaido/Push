@@ -136,6 +136,61 @@ function estimateMessagesSize(messages: ChatMessage[]): number {
   return messages.reduce((sum, m) => sum + m.content.length, 0);
 }
 
+/**
+ * Restore role alternation after context trimming without appending large
+ * payloads into the seed task message (messages[0]).
+ *
+ * Rules:
+ * - Consecutive user tool-results are dropped (already summarized elsewhere)
+ * - A non-tool user message immediately after messages[0] gets an assistant
+ *   bridge inserted so the message stays intact without growing messages[0]
+ * - Remaining consecutive non-tool user messages are merged into the previous
+ *   non-seed user message
+ */
+export function normalizeTrimmedRoleAlternation(
+  messages: ChatMessage[],
+  round: number,
+  now: () => number = Date.now,
+): void {
+  let bridgeCount = 0;
+
+  for (let i = 1; i < messages.length;) {
+    const prev = messages[i - 1];
+    const curr = messages[i];
+
+    if (prev.role !== 'user' || curr.role !== 'user') {
+      i++;
+      continue;
+    }
+
+    // Tool results are safe to drop here — we already keep a trim summary.
+    if (curr.isToolResult) {
+      messages.splice(i, 1);
+      continue;
+    }
+
+    // Never merge into the immortal seed task message.
+    if (i - 1 === 0) {
+      messages.splice(i, 0, {
+        id: `coder-context-bridge-${round}-${bridgeCount++}`,
+        role: 'assistant',
+        content: '[Context bridge]\nUse the next user message as the latest guidance.',
+        timestamp: now(),
+      });
+      i += 2;
+      continue;
+    }
+
+    // Keep alternation by folding additional non-tool user context into the
+    // previous non-seed user message.
+    messages[i - 1] = {
+      ...prev,
+      content: `${prev.content}\n\n${curr.content}`,
+    };
+    messages.splice(i, 1);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Interactive Checkpoint support
 // ---------------------------------------------------------------------------
@@ -1008,23 +1063,8 @@ export async function runCoderAgent(
           content: messages[0].content + '\n\n' + summaryContent,
         };
 
-        // Safety: if the first kept-tail message is also user (e.g. a tool
-        // result), restore alternation.  Tool results are dropped (their tool
-        // names are already captured in the summary above); non-tool user
-        // messages are merged into messages[0].  Merging large tool payloads
-        // into messages[0] would cause it to grow unboundedly across trims
-        // since messages[0] is never itself dropped.
-        while (messages.length > 1 && messages[1].role === 'user') {
-          if (messages[1].isToolResult) {
-            messages.splice(1, 1);
-          } else {
-            messages[0] = {
-              ...messages[0],
-              content: messages[0].content + '\n\n' + messages[1].content,
-            };
-            messages.splice(1, 1);
-          }
-        }
+        // Restore role alternation without growing the seed task message.
+        normalizeTrimmedRoleAlternation(messages, round);
 
         // Reset diff baseline — after trimming, the model has lost earlier
         // state injections so the next one must be a full dump.
