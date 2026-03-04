@@ -117,6 +117,14 @@ if not path_str:
     print(json.dumps({"ok": False, "error": "Missing path"}))
     sys.exit(0)
 
+# Normalize relative paths to /workspace and block traversal
+if not os.path.isabs(path_str):
+    path_str = os.path.join("/workspace", path_str)
+path_str = os.path.normpath(path_str)
+if not path_str.startswith("/workspace/") and path_str != "/workspace":
+    print(json.dumps({"ok": False, "error": f"Path outside /workspace is not allowed: {path_str}"}))
+    sys.exit(0)
+
 p = pathlib.Path(path_str)
 
 # Step 1: Version check (if expected_version provided)
@@ -185,6 +193,14 @@ for f in files:
 
     if not path_str:
         results.append({"ok": False, "path": path_str, "error": "Missing path"})
+        continue
+
+    # Normalize relative paths to /workspace and block traversal
+    if not os.path.isabs(path_str):
+        path_str = os.path.join("/workspace", path_str)
+    path_str = os.path.normpath(path_str)
+    if not path_str.startswith("/workspace/") and path_str != "/workspace":
+        results.append({"ok": False, "path": path_str, "error": f"Path outside /workspace is not allowed: {path_str}"})
         continue
 
     p = pathlib.Path(path_str)
@@ -531,6 +547,21 @@ def file_ops(data: dict):
     owner_token = data.get("owner_token", "")
     action = data.get("action", "")
     path = data.get("path", "")
+
+    # Normalize relative paths to /workspace (mirrors frontend normalizeSandboxPath)
+    if path:
+        trimmed = path.strip()
+        if trimmed in ("/workspace", "workspace"):
+            path = "/workspace"
+        elif trimmed.startswith("/workspace/"):
+            path = trimmed
+        elif trimmed.startswith("workspace/"):
+            path = "/" + trimmed
+        elif not os.path.isabs(trimmed):
+            path = "/workspace/" + trimmed
+        else:
+            path = trimmed
+        path = os.path.normpath(path)
 
     if not sandbox_id:
         return {"error": "Missing sandbox_id"}
