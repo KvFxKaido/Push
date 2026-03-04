@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import demoIcon from '@/assets/icons/push-pack-v1/push-orbit.svg';
 import { cn } from '@/lib/utils';
 import type { AIProviderType } from '@/types';
@@ -48,11 +48,9 @@ interface ProviderIconProps {
 }
 
 export function ProviderIcon({ provider, size = 14, className }: ProviderIconProps) {
-  const [hasError, setHasError] = useState(false);
-
-  useEffect(() => {
-    setHasError(false);
-  }, [provider]);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const src = MODELS_DEV_LOGOS[provider];
+  const hasError = failedSrc === src;
 
   const style = { width: size, height: size };
 
@@ -73,12 +71,12 @@ export function ProviderIcon({ provider, size = 14, className }: ProviderIconPro
 
   return (
     <img
-      src={MODELS_DEV_LOGOS[provider]}
+      src={src}
       alt={PROVIDER_ALT[provider]}
       className={cn('inline-block rounded-[4px] bg-white/90 object-contain p-px', className)}
       style={style}
       loading="lazy"
-      onError={() => setHasError(true)}
+      onError={() => setFailedSrc(src)}
     />
   );
 }
