@@ -1078,21 +1078,8 @@ export async function executeSandboxToolCall(
         // Always prefer the version from the fresh read we just performed.
         // A caller-provided expected_version may be stale from a previous read, and
         // using it here would cause a spurious STALE_FILE rejection on the server.
-        let editWriteVersion = readResult.version || undefined;
-        let editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
-
-        // Auto-retry once on STALE_FILE: the file changed between our read and
-        // write (e.g. a concurrent sandbox_exec modified it). Re-read the fresh
-        // version and retry the write — the content is already computed and the
-        // new version hash is all we need to update.
-        if (!editWriteResult.ok && editWriteResult.code === 'STALE_FILE') {
-          console.debug(`[sandbox-tools] sandbox_edit_file STALE_FILE on ${path}, auto-retrying with fresh version`);
-          const freshRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
-          if (!freshRead.error && freshRead.version) {
-            editWriteVersion = freshRead.version;
-            editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
-          }
-        }
+        const editWriteVersion = readResult.version || undefined;
+        const editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
 
         if (!editWriteResult.ok) {
           if (editWriteResult.code === 'STALE_FILE') {
@@ -1238,17 +1225,7 @@ export async function executeSandboxToolCall(
         const staleWarning = fileLedger.getStaleWarning(call.args.path);
 
         try {
-          let result = await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion);
-
-          // Auto-retry once on STALE_FILE: the version cache drifted from
-          // sandbox truth (e.g. a sandbox_exec modified the file). The server
-          // returns the current_version — retry with it immediately instead of
-          // wasting a tool round forcing the model to re-read.
-          if (!result.ok && result.code === 'STALE_FILE' && typeof result.current_version === 'string' && result.current_version) {
-            console.debug(`[sandbox-tools] sandbox_write_file STALE_FILE on ${call.args.path}, auto-retrying with current_version`);
-            versionCacheSet(cacheKey, result.current_version);
-            result = await writeToSandbox(sandboxId, call.args.path, call.args.content, result.current_version);
-          }
+          const result = await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion);
 
           if (!result.ok) {
             if (result.code === 'STALE_FILE') {
