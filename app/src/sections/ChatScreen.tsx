@@ -1,4 +1,4 @@
-import { useCallback, lazy, Suspense } from 'react';
+import { useCallback, Suspense } from 'react';
 import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
 import { ChatContainer } from '@/components/chat/ChatContainer';
@@ -8,6 +8,7 @@ import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import { MergeFlowSheet } from '@/components/chat/MergeFlowSheet';
+import { LazySettingsSheet as SettingsSheet } from '@/components/LazySettingsSheet';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,8 +43,6 @@ import type {
 } from '@/types';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
-
-const SettingsSheet = lazy(() => import('@/components/SettingsSheet').then(m => ({ default: m.SettingsSheet })));
 
 // ---------------------------------------------------------------------------
 // Props

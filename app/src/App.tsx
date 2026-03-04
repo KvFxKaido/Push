@@ -21,11 +21,12 @@ import {
 import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
+import { LazySettingsSheet } from '@/components/LazySettingsSheet';
 import type { AppScreen, RepoWithActivity, SandboxStateCardData } from '@/types';
 import './App.css';
 
 // --- Lazy-loaded screen & settings components (code-split) ---
-const SettingsSheet = lazy(() => import('@/components/SettingsSheet').then(m => ({ default: m.SettingsSheet })));
+const SettingsSheet = LazySettingsSheet;
 const OnboardingScreen = lazy(() => import('@/sections/OnboardingScreen').then(m => ({ default: m.OnboardingScreen })));
 const HomeScreen = lazy(() => import('@/sections/HomeScreen').then(m => ({ default: m.HomeScreen })));
 const FileBrowser = lazy(() => import('@/sections/FileBrowser').then(m => ({ default: m.FileBrowser })));
@@ -552,6 +553,7 @@ function App() {
   const isConnected = Boolean(token) || isDemo || isSandboxMode;
 
   const settingsSheet = (
+    <Suspense fallback={null}>
     <SettingsSheet
       open={settingsOpen}
       onOpenChange={setSettingsOpen}
@@ -721,6 +723,7 @@ function App() {
         deleteAllChats,
       }}
     />
+    </Suspense>
   );
 
   // ----- Screen routing -----
@@ -749,24 +752,26 @@ function App() {
 
   if (screen === 'home') {
     return (
-      <Suspense fallback={suspenseFallback}>
-        <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
-          <HomeScreen
-            repos={repos}
-            loading={reposLoading}
-            error={reposError}
-            conversations={conversations}
-            activeRepo={activeRepo}
-            onSelectRepo={handleSelectRepo}
-            onResumeConversation={handleResumeConversationFromHome}
-            onOpenSettings={handleOpenSettingsFromDrawer}
-            onDisconnect={handleDisconnect}
-            onSandboxMode={handleSandboxMode}
-            user={validatedUser}
-          />
-        </div>
+      <>
+        <Suspense fallback={suspenseFallback}>
+          <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+            <HomeScreen
+              repos={repos}
+              loading={reposLoading}
+              error={reposError}
+              conversations={conversations}
+              activeRepo={activeRepo}
+              onSelectRepo={handleSelectRepo}
+              onResumeConversation={handleResumeConversationFromHome}
+              onOpenSettings={handleOpenSettingsFromDrawer}
+              onDisconnect={handleDisconnect}
+              onSandboxMode={handleSandboxMode}
+              user={validatedUser}
+            />
+          </div>
+        </Suspense>
         {settingsSheet}
-      </Suspense>
+      </>
     );
   }
 
