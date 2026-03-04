@@ -18,6 +18,7 @@ import type {
   BrowserExtractResult,
   BatchWriteResult,
   BatchWriteResultEntry,
+  WriteResult,
 } from './sandbox-client';
 
 // Mock global fetch
@@ -363,6 +364,65 @@ describe('batchWriteToSandbox', () => {
     const { batchWriteToSandbox } = await import('./sandbox-client');
     await expect(
       batchWriteToSandbox('sb-123', [{ path: '/workspace/a.txt', content: 'hello' }]),
+    ).rejects.toThrow(/access token missing/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. writeToSandbox client function
+// ---------------------------------------------------------------------------
+
+describe('writeToSandbox', () => {
+  it('sends POST to /api/sandbox/write with correct body', async () => {
+    const mockResponse: WriteResult = {
+      ok: true,
+      bytes_written: 12,
+      new_version: 'sha256abc',
+    };
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockResponse),
+    });
+
+    const { writeToSandbox } = await import('./sandbox-client');
+    const result = await writeToSandbox('sb-123', '/workspace/test.txt', 'hello world!', 'v1');
+
+    expect(mockFetch).toHaveBeenCalled();
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/sandbox/write');
+    expect(options.method).toBe('POST');
+
+    const body = JSON.parse(options.body);
+    expect(body.sandbox_id).toBe('sb-123');
+    expect(body.owner_token).toBe('test-owner-token');
+    expect(body.path).toBe('/workspace/test.txt');
+    expect(body.content).toBe('hello world!');
+    expect(body.expected_version).toBe('v1');
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes_written).toBe(12);
+  });
+
+  it('passes an AbortSignal to fetch for timeout control', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, bytes_written: 5 }),
+    });
+
+    const { writeToSandbox } = await import('./sandbox-client');
+    await writeToSandbox('sb-123', '/workspace/big.ts', 'x'.repeat(1000));
+
+    const options = mockFetch.mock.calls[0][1];
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('throws when owner token is not set', async () => {
+    setSandboxOwnerToken(null);
+
+    const { writeToSandbox } = await import('./sandbox-client');
+    await expect(
+      writeToSandbox('sb-123', '/workspace/test.txt', 'hello'),
     ).rejects.toThrow(/access token missing/i);
   });
 });

@@ -8,6 +8,7 @@ import {
   ZAI_MODELS,
   GOOGLE_MODELS,
   ZEN_MODELS,
+  NVIDIA_MODELS,
   type PreferredProvider,
 } from '@/lib/providers';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
@@ -18,6 +19,7 @@ import {
   fetchZaiModels,
   fetchGoogleModels,
   fetchZenModels,
+  fetchNvidiaModels,
 } from '@/lib/model-catalog';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useMistralConfig } from '@/hooks/useMistralConfig';
@@ -26,6 +28,7 @@ import { useMinimaxConfig } from '@/hooks/useMinimaxConfig';
 import { useZaiConfig } from '@/hooks/useZaiConfig';
 import { useGoogleConfig } from '@/hooks/useGoogleConfig';
 import { useZenConfig } from '@/hooks/useZenConfig';
+import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 
 // ---------------------------------------------------------------------------
@@ -66,6 +69,7 @@ export interface ModelCatalog {
   zai: ProviderKeyConfig;
   google: ProviderKeyConfig;
   zen: ProviderKeyConfig;
+  nvidia: ProviderKeyConfig;
   tavily: TavilyKeyConfig;
 
   // Active backend
@@ -84,6 +88,7 @@ export interface ModelCatalog {
   zaiModels: ProviderModelState;
   googleModels: ProviderModelState;
   zenModels: ProviderModelState;
+  nvidiaModels: ProviderModelState;
 
   // Model option lists (includes selected even if not in fetched list)
   ollamaModelOptions: string[];
@@ -93,6 +98,7 @@ export interface ModelCatalog {
   zaiModelOptions: string[];
   googleModelOptions: string[];
   zenModelOptions: string[];
+  nvidiaModelOptions: string[];
 
   // Refresh callbacks
   refreshOllamaModels: () => Promise<void>;
@@ -102,6 +108,7 @@ export interface ModelCatalog {
   refreshZaiModels: () => Promise<void>;
   refreshGoogleModels: () => Promise<void>;
   refreshZenModels: () => Promise<void>;
+  refreshNvidiaModels: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +135,7 @@ export function useModelCatalog(): ModelCatalog {
   const zaiCfg = useZaiConfig();
   const googleCfg = useGoogleConfig();
   const zenCfg = useZenConfig();
+  const nvidiaCfg = useNvidiaConfig();
   const tavilyCfg = useTavilyConfig();
 
   // Key input state (controlled text fields for Settings UI)
@@ -138,6 +146,7 @@ export function useModelCatalog(): ModelCatalog {
   const [zaiKeyInput, setZaiKeyInput] = useState('');
   const [googleKeyInput, setGoogleKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
+  const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
 
   // Active backend state
@@ -153,6 +162,7 @@ export function useModelCatalog(): ModelCatalog {
     ['openrouter', 'OpenRouter', openRouterCfg.hasKey],
     ['zai', 'Z.AI', zaiCfg.hasKey],
     ['google', 'Google', googleCfg.hasKey],
+    ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
   ] as const).filter(([, , has]) => has);
 
   // ----- Per-provider model lists -----
@@ -164,6 +174,7 @@ export function useModelCatalog(): ModelCatalog {
   const [zaiModelList, setZaiModelList] = useState<string[]>([]);
   const [googleModelList, setGoogleModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
+  const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
 
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [mistralLoading, setMistralLoading] = useState(false);
@@ -171,6 +182,7 @@ export function useModelCatalog(): ModelCatalog {
   const [zaiLoading, setZaiLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
+  const [nvidiaLoading, setNvidiaLoading] = useState(false);
 
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [mistralError, setMistralError] = useState<string | null>(null);
@@ -178,6 +190,7 @@ export function useModelCatalog(): ModelCatalog {
   const [zaiError, setZaiError] = useState<string | null>(null);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
+  const [nvidiaError, setNvidiaError] = useState<string | null>(null);
 
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [mistralUpdatedAt, setMistralUpdatedAt] = useState<number | null>(null);
@@ -185,6 +198,7 @@ export function useModelCatalog(): ModelCatalog {
   const [zaiUpdatedAt, setZaiUpdatedAt] = useState<number | null>(null);
   const [googleUpdatedAt, setGoogleUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
+  const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
 
   // Generic refresh helper
   const refreshModels = useCallback(async (params: {
@@ -284,12 +298,24 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [zenCfg.hasKey, zenLoading, refreshModels]);
 
+  const refreshNvidiaModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: nvidiaCfg.hasKey, isLoading: nvidiaLoading,
+      setLoading: setNvidiaLoading, setError: setNvidiaError,
+      setModels: setNvidiaModelList, setUpdatedAt: setNvidiaUpdatedAt,
+      fetchModels: fetchNvidiaModels,
+      emptyMessage: 'No models returned by Nvidia NIM.',
+      failureMessage: 'Failed to load Nvidia NIM models.',
+    });
+  }, [nvidiaCfg.hasKey, nvidiaLoading, refreshModels]);
+
   // Auto-fetch models when key becomes available
   useEffect(() => { if (ollamaCfg.hasKey && ollamaModelList.length === 0 && !ollamaLoading) refreshOllamaModels(); }, [ollamaCfg.hasKey, ollamaModelList.length, ollamaLoading, refreshOllamaModels]);
   useEffect(() => { if (mistralCfg.hasKey && mistralModelList.length === 0 && !mistralLoading) refreshMistralModels(); }, [mistralCfg.hasKey, mistralModelList.length, mistralLoading, refreshMistralModels]);
   useEffect(() => { if (zaiCfg.hasKey && zaiModelList.length === 0 && !zaiLoading) refreshZaiModels(); }, [zaiCfg.hasKey, zaiModelList.length, zaiLoading, refreshZaiModels]);
   useEffect(() => { if (googleCfg.hasKey && googleModelList.length === 0 && !googleLoading) refreshGoogleModels(); }, [googleCfg.hasKey, googleModelList.length, googleLoading, refreshGoogleModels]);
   useEffect(() => { if (zenCfg.hasKey && zenModelList.length === 0 && !zenLoading) refreshZenModels(); }, [zenCfg.hasKey, zenModelList.length, zenLoading, refreshZenModels]);
+  useEffect(() => { if (nvidiaCfg.hasKey && nvidiaModelList.length === 0 && !nvidiaLoading) refreshNvidiaModels(); }, [nvidiaCfg.hasKey, nvidiaModelList.length, nvidiaLoading, refreshNvidiaModels]);
 
   // Clear models when key is removed
   useEffect(() => { if (!ollamaCfg.hasKey) { setOllamaModelList([]); setOllamaError(null); setOllamaUpdatedAt(null); } }, [ollamaCfg.hasKey]);
@@ -298,6 +324,7 @@ export function useModelCatalog(): ModelCatalog {
   useEffect(() => { if (!zaiCfg.hasKey) { setZaiModelList([]); setZaiError(null); setZaiUpdatedAt(null); } }, [zaiCfg.hasKey]);
   useEffect(() => { if (!googleCfg.hasKey) { setGoogleModelList([]); setGoogleError(null); setGoogleUpdatedAt(null); } }, [googleCfg.hasKey]);
   useEffect(() => { if (!zenCfg.hasKey) { setZenModelList([]); setZenError(null); setZenUpdatedAt(null); } }, [zenCfg.hasKey]);
+  useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
 
   // Model option lists (ensure selected model is always included)
   const ollamaModelOptions = useMemo(() => includeSelectedModel(ollamaModelList, ollamaCfg.model), [ollamaModelList, ollamaCfg.model]);
@@ -306,6 +333,7 @@ export function useModelCatalog(): ModelCatalog {
   const minimaxModelOptions = useMemo(() => includeSelectedModel(MINIMAX_MODELS, minimaxCfg.model), [minimaxCfg.model]);
   const googleModelOptions = useMemo(() => includeSelectedModel(googleModelList, googleCfg.model), [googleModelList, googleCfg.model]);
   const zenModelOptions = useMemo(() => includeSelectedModel(zenModelList, zenCfg.model), [zenModelList, zenCfg.model]);
+  const nvidiaModelOptions = useMemo(() => includeSelectedModel(nvidiaModelList, nvidiaCfg.model), [nvidiaModelList, nvidiaCfg.model]);
 
   return {
     ollama: { setKey: ollamaCfg.setKey, clearKey: ollamaCfg.clearKey, hasKey: ollamaCfg.hasKey, model: ollamaCfg.model, setModel: ollamaCfg.setModel, keyInput: ollamaKeyInput, setKeyInput: setOllamaKeyInput },
@@ -315,6 +343,7 @@ export function useModelCatalog(): ModelCatalog {
     zai: { setKey: zaiCfg.setKey, clearKey: zaiCfg.clearKey, hasKey: zaiCfg.hasKey, model: zaiCfg.model, setModel: zaiCfg.setModel, keyInput: zaiKeyInput, setKeyInput: setZaiKeyInput },
     google: { setKey: googleCfg.setKey, clearKey: googleCfg.clearKey, hasKey: googleCfg.hasKey, model: googleCfg.model, setModel: googleCfg.setModel, keyInput: googleKeyInput, setKeyInput: setGoogleKeyInput },
     zen: { setKey: zenCfg.setKey, clearKey: zenCfg.clearKey, hasKey: zenCfg.hasKey, model: zenCfg.model, setModel: zenCfg.setModel, keyInput: zenKeyInput, setKeyInput: setZenKeyInput },
+    nvidia: { setKey: nvidiaCfg.setKey, clearKey: nvidiaCfg.clearKey, hasKey: nvidiaCfg.hasKey, model: nvidiaCfg.model, setModel: nvidiaCfg.setModel, keyInput: nvidiaKeyInput, setKeyInput: setNvidiaKeyInput },
     tavily: { setKey: tavilyCfg.setKey, clearKey: tavilyCfg.clearKey, hasKey: tavilyCfg.hasKey, keyInput: tavilyKeyInput, setKeyInput: setTavilyKeyInput },
 
     activeBackend,
@@ -331,6 +360,7 @@ export function useModelCatalog(): ModelCatalog {
     zaiModels: { models: zaiModelList, loading: zaiLoading, error: zaiError, updatedAt: zaiUpdatedAt },
     googleModels: { models: googleModelList, loading: googleLoading, error: googleError, updatedAt: googleUpdatedAt },
     zenModels: { models: zenModelList, loading: zenLoading, error: zenError, updatedAt: zenUpdatedAt },
+    nvidiaModels: { models: nvidiaModelList, loading: nvidiaLoading, error: nvidiaError, updatedAt: nvidiaUpdatedAt },
 
     ollamaModelOptions,
     mistralModelOptions,
@@ -339,6 +369,7 @@ export function useModelCatalog(): ModelCatalog {
     zaiModelOptions: zaiModelList.length > 0 ? zaiModelOptions : ZAI_MODELS,
     googleModelOptions: googleModelList.length > 0 ? googleModelOptions : GOOGLE_MODELS,
     zenModelOptions: zenModelList.length > 0 ? zenModelOptions : ZEN_MODELS,
+    nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
 
     refreshOllamaModels,
     refreshMistralModels,
@@ -347,5 +378,6 @@ export function useModelCatalog(): ModelCatalog {
     refreshZaiModels,
     refreshGoogleModels,
     refreshZenModels,
+    refreshNvidiaModels,
   };
 }

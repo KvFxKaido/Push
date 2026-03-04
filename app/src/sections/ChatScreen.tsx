@@ -179,6 +179,7 @@ interface ChatScreenProps {
   handleSelectZaiModelFromChat: (model: string) => void;
   handleSelectGoogleModelFromChat: (model: string) => void;
   handleSelectZenModelFromChat: (model: string) => void;
+  handleSelectNvidiaModelFromChat: (model: string) => void;
 
   // Repo selection
   handleSelectRepoFromDrawer: (repo: RepoWithActivity) => void;
@@ -290,6 +291,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSelectZaiModelFromChat,
     handleSelectGoogleModelFromChat,
     handleSelectZenModelFromChat,
+    handleSelectNvidiaModelFromChat,
     handleSelectRepoFromDrawer,
     handleBrowseRepos,
     setCurrentBranch,
@@ -365,6 +367,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const isZaiModelLocked = isModelLocked && lockedProvider === 'zai';
   const isGoogleModelLocked = isModelLocked && lockedProvider === 'google';
   const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
+  const isNvidiaModelLocked = isModelLocked && lockedProvider === 'nvidia';
 
   // Settings sheet (lazy-loaded)
   const settingsSheet = (
@@ -508,6 +511,19 @@ export function ChatScreen(props: ChatScreenProps) {
         setZenKeyInput: catalog.zen.setKeyInput,
         setZenKey: catalog.zen.setKey,
         clearZenKey: catalog.zen.clearKey,
+        hasNvidiaKey: catalog.nvidia.hasKey,
+        nvidiaModel: catalog.nvidia.model,
+        setNvidiaModel: catalog.nvidia.setModel,
+        nvidiaModelOptions: catalog.nvidiaModelOptions,
+        nvidiaModelsLoading: catalog.nvidiaModels.loading,
+        nvidiaModelsError: catalog.nvidiaModels.error,
+        nvidiaModelsUpdatedAt: catalog.nvidiaModels.updatedAt,
+        isNvidiaModelLocked,
+        refreshNvidiaModels: catalog.refreshNvidiaModels,
+        nvidiaKeyInput: catalog.nvidia.keyInput,
+        setNvidiaKeyInput: catalog.nvidia.setKeyInput,
+        setNvidiaKey: catalog.nvidia.setKey,
+        clearNvidiaKey: catalog.nvidia.clearKey,
         hasTavilyKey: catalog.tavily.hasKey,
         tavilyKeyInput: catalog.tavily.keyInput,
         setTavilyKeyInput: catalog.tavily.setKeyInput,
@@ -967,6 +983,14 @@ export function ChatScreen(props: ChatScreenProps) {
           isZenModelLocked,
           refreshZenModels: catalog.refreshZenModels,
           onSelectZenModel: handleSelectZenModelFromChat,
+          nvidiaModel: catalog.nvidia.model,
+          nvidiaModelOptions: catalog.nvidiaModelOptions,
+          nvidiaModelsLoading: catalog.nvidiaModels.loading,
+          nvidiaModelsError: catalog.nvidiaModels.error,
+          nvidiaModelsUpdatedAt: catalog.nvidiaModels.updatedAt,
+          isNvidiaModelLocked,
+          refreshNvidiaModels: catalog.refreshNvidiaModels,
+          onSelectNvidiaModel: handleSelectNvidiaModelFromChat,
         }}
       />
 

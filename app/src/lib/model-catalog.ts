@@ -5,6 +5,7 @@ import { getMinimaxKey } from '@/hooks/useMinimaxConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
+import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { PROVIDER_URLS } from './providers';
 import { asRecord } from './utils';
 
@@ -119,4 +120,8 @@ export async function fetchGoogleModels(): Promise<string[]> {
 
 export async function fetchZenModels(): Promise<string[]> {
   return fetchProviderModels(PROVIDER_URLS.zen.models, getZenKey(), 'OpenCode Zen');
+}
+
+export async function fetchNvidiaModels(): Promise<string[]> {
+  return fetchProviderModels(PROVIDER_URLS.nvidia.models, getNvidiaKey(), 'Nvidia NIM');
 }

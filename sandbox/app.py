@@ -98,15 +98,15 @@ print(hashlib.sha256(payload).hexdigest())
 
 # Consolidated write script — does version check + mkdir + write + verify + hash
 # in a single subprocess call instead of 5 separate exec() calls.
-# Accepts a JSON argument: { path, content_b64, expected_version? }
+# Accepts JSON via stdin: { path, content_b64, expected_version? }
 # Outputs a JSON result: { ok, bytes_written?, new_version?, code?, expected_version?, current_version?, error? }
 WRITE_FILE_SCRIPT = """
 import hashlib, pathlib, base64, json, os, sys
 
 try:
-    data = json.loads(sys.argv[1])
+    data = json.loads(sys.stdin.read())
 except Exception as exc:
-    print(json.dumps({"ok": False, "error": f"Invalid JSON argument: {exc}"}))
+    print(json.dumps({"ok": False, "error": f"Invalid JSON input: {exc}"}))
     sys.exit(0)
 
 path_str = data.get("path", "")
@@ -172,15 +172,15 @@ except Exception as exc:
 """
 
 # Batch write script — writes multiple files in a single subprocess call.
-# Accepts a JSON argument: { files: [{ path, content_b64, expected_version? }] }
+# Accepts JSON via stdin: { files: [{ path, content_b64, expected_version? }] }
 # Outputs a JSON result: { results: [{ ok, path, bytes_written?, new_version?, ... }] }
 BATCH_WRITE_SCRIPT = """
 import hashlib, pathlib, base64, json, os, sys
 
 try:
-    data = json.loads(sys.argv[1])
+    data = json.loads(sys.stdin.read())
 except Exception as exc:
-    print(json.dumps({"results": [{"ok": False, "error": f"Invalid JSON argument: {exc}"}]}))
+    print(json.dumps({"results": [{"ok": False, "error": f"Invalid JSON input: {exc}"}]}))
     sys.exit(0)
 
 files = data.get("files", [])
@@ -653,7 +653,9 @@ def file_ops(data: dict):
             "content_b64": encoded,
             "expected_version": expected_version,
         })
-        p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT, write_payload)
+        p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT)
+        p.stdin.write(write_payload)
+        p.stdin.write_eof()
         p.wait()
         if p.returncode != 0:
             stderr = p.stderr.read()
@@ -691,7 +693,9 @@ def file_ops(data: dict):
             })
 
         batch_payload = json.dumps({"files": batch_entries})
-        p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT, batch_payload)
+        p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT)
+        p.stdin.write(batch_payload)
+        p.stdin.write_eof()
         p.wait()
         if p.returncode != 0:
             stderr = p.stderr.read()

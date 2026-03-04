@@ -75,6 +75,14 @@ interface ChatInputProps {
     isZenModelLocked: boolean;
     refreshZenModels: () => void;
     onSelectZenModel: (model: string) => void;
+    nvidiaModel: string;
+    nvidiaModelOptions: string[];
+    nvidiaModelsLoading: boolean;
+    nvidiaModelsError: string | null;
+    nvidiaModelsUpdatedAt: number | null;
+    isNvidiaModelLocked: boolean;
+    refreshNvidiaModels: () => void;
+    onSelectNvidiaModel: (model: string) => void;
   };
 }
 
@@ -89,6 +97,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   zai: 'Z.AI',
   google: 'Google',
   zen: 'OpenCode Zen',
+  nvidia: 'Nvidia NIM',
   demo: 'Demo',
 };
 
@@ -100,6 +109,7 @@ const PROVIDER_ICONS: Record<AIProviderType, string> = {
   zai: '🟦',
   google: '🔎',
   zen: '🧘',
+  nvidia: '🟢',
   demo: '⚡',
 };
 
@@ -276,6 +286,7 @@ export function ChatInput({
     if (selectedProvider === 'zai') return providerControls.zaiModel;
     if (selectedProvider === 'google') return providerControls.googleModel;
     if (selectedProvider === 'zen') return providerControls.zenModel;
+    if (selectedProvider === 'nvidia') return providerControls.nvidiaModel;
     return 'demo';
   })();
 
@@ -297,6 +308,7 @@ export function ChatInput({
     if (selectedProvider === 'zai') return providerControls.zaiModelsLoading;
     if (selectedProvider === 'google') return providerControls.googleModelsLoading;
     if (selectedProvider === 'zen') return providerControls.zenModelsLoading;
+    if (selectedProvider === 'nvidia') return providerControls.nvidiaModelsLoading;
     return false;
   })();
 
@@ -308,10 +320,11 @@ export function ChatInput({
     if (selectedProvider === 'zai') return formatTimeAgo(providerControls.zaiModelsUpdatedAt);
     if (selectedProvider === 'google') return formatTimeAgo(providerControls.googleModelsUpdatedAt);
     if (selectedProvider === 'zen') return formatTimeAgo(providerControls.zenModelsUpdatedAt);
+    if (selectedProvider === 'nvidia') return formatTimeAgo(providerControls.nvidiaModelsUpdatedAt);
     return null;
   })();
 
-  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'zai' || selectedProvider === 'google' || selectedProvider === 'zen';
+  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'zai' || selectedProvider === 'google' || selectedProvider === 'zen' || selectedProvider === 'nvidia';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
@@ -319,6 +332,7 @@ export function ChatInput({
     if (selectedProvider === 'zai') providerControls.refreshZaiModels();
     if (selectedProvider === 'google') providerControls.refreshGoogleModels();
     if (selectedProvider === 'zen') providerControls.refreshZenModels();
+    if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
   };
 
   return (
@@ -678,6 +692,41 @@ export function ChatInput({
                             <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isZenModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'nvidia' && (
+                        <>
+                          <select
+                            value={providerControls.nvidiaModel}
+                            disabled={!canChangeModel || providerControls.nvidiaModelsLoading || providerControls.nvidiaModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectNvidiaModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {(providerControls.nvidiaModelOptions.length > 0
+                              ? providerControls.nvidiaModelOptions
+                              : [providerControls.nvidiaModel]
+                            ).map((model) => (
+                              <option key={model || '__default'} value={model}>
+                                {model || '(default)'}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.nvidiaModelsLoading && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Loading Nvidia NIM models...</p>
+                          )}
+                          {!providerControls.nvidiaModelsLoading && providerControls.nvidiaModelOptions.length === 0 && !providerControls.nvidiaModelsError && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
+                          )}
+                          {providerControls.nvidiaModelsError && (
+                            <p className="px-1 text-[10px] text-amber-400">{providerControls.nvidiaModelsError}</p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                          )}
+                          {providerControls.isNvidiaModelLocked && (
                             <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

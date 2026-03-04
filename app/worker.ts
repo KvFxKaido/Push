@@ -15,6 +15,7 @@ interface Env {
   ZAI_API_KEY?: string;
   GOOGLE_API_KEY?: string;
   ZEN_API_KEY?: string;
+  NVIDIA_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   BROWSERBASE_API_KEY?: string;
   BROWSERBASE_PROJECT_ID?: string;
@@ -120,6 +121,16 @@ export default {
     // API route: model catalog proxy to OpenCode Zen
     if (url.pathname === '/api/zen/models' && request.method === 'GET') {
       return handleZenModels(request, env);
+    }
+
+    // API route: streaming proxy to Nvidia NIM (SSE, OpenAI-compatible)
+    if (url.pathname === '/api/nvidia/chat' && request.method === 'POST') {
+      return handleNvidiaChat(request, env);
+    }
+
+    // API route: model catalog proxy to Nvidia NIM
+    if (url.pathname === '/api/nvidia/models' && request.method === 'GET') {
+      return handleNvidiaModels(request, env);
     }
 
     // API route: Ollama web search proxy
@@ -722,6 +733,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   const zaiConfigured = Boolean(env.ZAI_API_KEY);
   const googleConfigured = Boolean(env.GOOGLE_API_KEY);
   const zenConfigured = Boolean(env.ZEN_API_KEY);
+  const nvidiaConfigured = Boolean(env.NVIDIA_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -737,7 +749,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     }
   }
 
-  const hasAnyLlm = ollamaConfigured || mistralConfigured || openRouterConfigured || minimaxConfigured || zaiConfigured || googleConfigured || zenConfigured;
+  const hasAnyLlm = ollamaConfigured || mistralConfigured || openRouterConfigured || minimaxConfigured || zaiConfigured || googleConfigured || zenConfigured || nvidiaConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -754,6 +766,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       zai: { status: zaiConfigured ? 'ok' : 'unconfigured', configured: zaiConfigured },
       google: { status: googleConfigured ? 'ok' : 'unconfigured', configured: googleConfigured },
       zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
+      nvidia: { status: nvidiaConfigured ? 'ok' : 'unconfigured', configured: nvidiaConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
       github_app_oauth: { status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET) },
@@ -916,6 +929,27 @@ const handleZenModels = createJsonProxyHandler({
   buildAuth: standardAuth('ZEN_API_KEY'),
   keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen model list timed out after 30 seconds',
+});
+
+// --- Nvidia NIM (OpenAI-compatible endpoint) ---
+
+const handleNvidiaChat = createStreamProxyHandler({
+  name: 'Nvidia NIM API', logTag: 'api/nvidia/chat',
+  upstreamUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
+  timeoutMs: 120_000,
+  buildAuth: standardAuth('NVIDIA_API_KEY'),
+  keyMissingError: 'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
+  timeoutError: 'Nvidia NIM request timed out after 120 seconds',
+});
+
+const handleNvidiaModels = createJsonProxyHandler({
+  name: 'Nvidia NIM API', logTag: 'api/nvidia/models',
+  upstreamUrl: 'https://integrate.api.nvidia.com/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('NVIDIA_API_KEY'),
+  keyMissingError: 'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
+  timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
 });
 
 // --- Ollama Web Search proxy ---
