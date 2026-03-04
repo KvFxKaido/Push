@@ -537,7 +537,7 @@ export function streamWithTimeout(
     onToken: (token: string) => void,
     onDone: () => void,
     onError: (err: Error) => void,
-  ) => void,
+  ) => void | Promise<void>,
 ): { promise: Promise<Error | null>; getAccumulated: () => string } {
   let accumulated = '';
   const promise = new Promise<Error | null>((resolve) => {
@@ -551,7 +551,10 @@ export function streamWithTimeout(
     // Activity-based timeout: resets on every token so actively-streaming
     // responses aren't killed. Only fires after `timeoutMs` of silence.
     let timer = setTimeout(() => settle(new Error(timeoutMessage)), timeoutMs);
-    run(
+    // Catch unhandled rejections from async run callbacks (e.g. if streamFn
+    // rejects its promise without calling onDone/onError). Without this,
+    // the promise would only settle after the timeout fires — up to 60s delay.
+    const maybePromise = run(
       (token) => {
         accumulated += token;
         clearTimeout(timer);
@@ -560,6 +563,11 @@ export function streamWithTimeout(
       () => settle(null),
       (error) => settle(error),
     );
+    if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
+      (maybePromise as Promise<void>).catch((err) => {
+        settle(err instanceof Error ? err : new Error(String(err)));
+      });
+    }
   });
   return { promise, getAccumulated: () => accumulated };
 }

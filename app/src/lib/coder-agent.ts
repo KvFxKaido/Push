@@ -667,9 +667,7 @@ export async function runCoderAgent(
 
       // Notify caller of latest working memory state (for checkpoint capture)
       if (onWorkingMemoryUpdate) {
-      if (onWorkingMemoryUpdate) {
         onWorkingMemoryUpdate(workingMemory);
-      }
       }
 
       // If only a state update was emitted (no sandbox tool AND no checkpoint), inject ack and continue
@@ -965,35 +963,60 @@ export async function runCoderAgent(
     }
 
     // Safety check: if context is getting too large, summarize and trim oldest messages.
-    // Preserves the initial task + recent context, inserts a summary of dropped messages.
+    // CRITICAL: Always preserve the original task (messages[0]) and working memory so
+    // the model never loses its purpose — dropping the task caused aimless tool loops.
     const totalSize = estimateMessagesSize(messages);
     if (totalSize > MAX_TOTAL_CONTEXT_SIZE) {
-      const keepCount = Math.min(9, messages.length);
-      const dropCount = messages.length - keepCount;
-      if (dropCount > 0) {
+      // Keep: task message (index 0) + last (keepCount - 1) messages
+      const keepTail = Math.min(8, messages.length - 1);
+      const dropStart = 1; // never drop index 0 (the task)
+      const dropEnd = messages.length - keepTail; // exclusive
+
+      if (dropEnd > dropStart) {
+        const dropCount = dropEnd - dropStart;
+
         // Build a brief summary of what was dropped so the model doesn't lose context
         const droppedToolNames: string[] = [];
-        for (let di = 0; di < dropCount; di++) {
+        for (let di = dropStart; di < dropEnd; di++) {
           const m = messages[di];
           if (m.isToolResult) {
             const toolMatch = m.content.match(/\[Tool Result — (\S+)\]/);
             if (toolMatch) droppedToolNames.push(toolMatch[1]);
           }
         }
+
+        // Include working memory so the model retains plan/state across trimming
+        const hasState = workingMemory.plan || workingMemory.openTasks?.length;
+        const stateBlock = hasState ? `\n${formatCoderState(workingMemory)}` : '';
+
         const summaryContent = [
           `[Context trimmed — ${dropCount} earlier messages removed to stay within context budget]`,
           droppedToolNames.length > 0
             ? `Tools executed in trimmed context: ${[...new Set(droppedToolNames)].join(', ')}`
             : '',
           `Remaining context starts at round ${round + 1}. Re-read any files you need before making further edits.`,
+          stateBlock,
         ].filter(Boolean).join('\n');
 
-        messages.splice(0, dropCount, {
+        // Replace dropped range (between task and kept tail) with a single summary
+        messages.splice(dropStart, dropCount, {
           id: `coder-context-summary-${round}`,
           role: 'user',
           content: summaryContent,
           timestamp: Date.now(),
+          isToolResult: true,
         });
+
+        // Fix role alternation: if messages[1] (summary, user) is followed by another
+        // user message, merge them to avoid consecutive same-role errors from providers.
+        if (messages.length > 2 && messages[1].role === 'user' && messages[2].role === 'user') {
+          messages[1] = {
+            ...messages[1],
+            content: messages[1].content + '\n\n' + messages[2].content,
+          };
+          messages.splice(2, 1);
+        }
+
         // Reset diff baseline — after trimming, the model has lost earlier
         // state injections so the next one must be a full dump.
         lastInjectedState = null;
