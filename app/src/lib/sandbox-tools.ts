@@ -43,6 +43,7 @@ import {
   setByKey as versionCacheSet,
   deleteByKey as versionCacheDelete,
   deleteFileVersion as versionCacheDeletePath,
+  clearFileVersionCache,
 } from './sandbox-file-version-cache';
 
 // Re-export so existing consumers don't break
@@ -761,6 +762,14 @@ export async function executeSandboxToolCall(
           if (hint) lines.push(`\n[Hint] ${hint}`);
         }
 
+        // Invalidate version cache after exec — commands like `npm install`,
+        // `git checkout`, `sed -i`, etc. can modify files without going through
+        // the write path, leaving the cache stale and causing spurious STALE_FILE
+        // rejections on subsequent writes.
+        if (result.exitCode !== -1) {
+          clearFileVersionCache(sandboxId);
+        }
+
         const cardData: SandboxCardData = {
           command: call.args.command,
           stdout: result.stdout,
@@ -1066,11 +1075,24 @@ export async function executeSandboxToolCall(
         // 3. Write the edited content directly (instead of delegating to sandbox_write_file)
         // Transient failures (5xx, timeout, network) are retried by sandbox-client withRetry().
         const beforeVersion = readResult.version || 'unknown';
-        // Always prefer the version from the fresh read we just performed (line 949).
+        // Always prefer the version from the fresh read we just performed.
         // A caller-provided expected_version may be stale from a previous read, and
         // using it here would cause a spurious STALE_FILE rejection on the server.
-        const editWriteVersion = readResult.version || undefined;
-        const editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
+        let editWriteVersion = readResult.version || undefined;
+        let editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
+
+        // Auto-retry once on STALE_FILE: the file changed between our read and
+        // write (e.g. a concurrent sandbox_exec modified it). Re-read the fresh
+        // version and retry the write — the content is already computed and the
+        // new version hash is all we need to update.
+        if (!editWriteResult.ok && editWriteResult.code === 'STALE_FILE') {
+          console.debug(`[sandbox-tools] sandbox_edit_file STALE_FILE on ${path}, auto-retrying with fresh version`);
+          const freshRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+          if (!freshRead.error && freshRead.version) {
+            editWriteVersion = freshRead.version;
+            editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
+          }
+        }
 
         if (!editWriteResult.ok) {
           if (editWriteResult.code === 'STALE_FILE') {
@@ -1216,7 +1238,17 @@ export async function executeSandboxToolCall(
         const staleWarning = fileLedger.getStaleWarning(call.args.path);
 
         try {
-          const result = await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion);
+          let result = await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion);
+
+          // Auto-retry once on STALE_FILE: the version cache drifted from
+          // sandbox truth (e.g. a sandbox_exec modified the file). The server
+          // returns the current_version — retry with it immediately instead of
+          // wasting a tool round forcing the model to re-read.
+          if (!result.ok && result.code === 'STALE_FILE' && typeof result.current_version === 'string' && result.current_version) {
+            console.debug(`[sandbox-tools] sandbox_write_file STALE_FILE on ${call.args.path}, auto-retrying with current_version`);
+            versionCacheSet(cacheKey, result.current_version);
+            result = await writeToSandbox(sandboxId, call.args.path, call.args.content, result.current_version);
+          }
 
           if (!result.ok) {
             if (result.code === 'STALE_FILE') {
