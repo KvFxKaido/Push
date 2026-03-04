@@ -265,7 +265,7 @@ describe('trimContext — Phase 1 (summarize)', () => {
 // ─── trimContext: Phase 2 — pair removal + digest ────────────────
 
 describe('trimContext — Phase 2 (remove pairs + digest)', () => {
-  // Use 50000 chars per result so the 14-message protected tail alone exceeds
+  // Use 45000 chars per result so the 14-message protected tail alone exceeds
   // the 88K target, guaranteeing Phase 2 triggers after aggressive Phase 1 pruning.
   it('removes assistant+toolresult pairs and inserts context digest', () => {
     // Build a large context that Phase 1 alone cannot fix

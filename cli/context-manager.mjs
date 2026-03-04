@@ -116,7 +116,7 @@ function summarizeVerboseMessage(msg) {
   if (content.length < 800) return msg;
 
   const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
-  const preview = lines.slice(0, 4).map(l => (l.length > 180 ? l.slice(0, 180) + '...' : l));
+  const preview = lines.slice(0, 2).map(l => (l.length > 180 ? l.slice(0, 180) + '...' : l));
   const summary = [...preview, '[...summarized]'].join('\n');
   return { ...msg, content: summary };
 }

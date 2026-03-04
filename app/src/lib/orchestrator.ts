@@ -255,7 +255,7 @@ function summarizeVerboseMessage(msg: ChatMessage): ChatMessage {
   if (msg.content.length < 800) return msg;
 
   const lines = msg.content.split('\n').map((l) => l.trim()).filter(Boolean);
-  const preview = lines.slice(0, 4).map((l) => (l.length > 180 ? l.slice(0, 180) + '...' : l));
+  const preview = lines.slice(0, 2).map((l) => (l.length > 180 ? l.slice(0, 180) + '...' : l));
   const summary = [...preview, '[...summarized]'].join('\n');
   return { ...msg, content: summary };
 }
