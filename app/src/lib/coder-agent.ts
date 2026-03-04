@@ -998,23 +998,24 @@ export async function runCoderAgent(
           stateBlock,
         ].filter(Boolean).join('\n');
 
-        // Replace dropped range (between task and kept tail) with a single summary
-        messages.splice(dropStart, dropCount, {
-          id: `coder-context-summary-${round}`,
-          role: 'user',
-          content: summaryContent,
-          timestamp: Date.now(),
-          isToolResult: true,
-        });
+        // Merge summary into the task message (messages[0]) instead of inserting
+        // a separate user message.  messages[0] is always role:'user', and a
+        // standalone summary would create consecutive same-role user messages
+        // (task, summary) that some providers reject (e.g. Google Gemini).
+        messages.splice(dropStart, dropCount); // remove dropped range
+        messages[0] = {
+          ...messages[0],
+          content: messages[0].content + '\n\n' + summaryContent,
+        };
 
-        // Fix role alternation: if messages[1] (summary, user) is followed by another
-        // user message, merge them to avoid consecutive same-role errors from providers.
-        if (messages.length > 2 && messages[1].role === 'user' && messages[2].role === 'user') {
-          messages[1] = {
-            ...messages[1],
-            content: messages[1].content + '\n\n' + messages[2].content,
+        // Safety: if the first kept-tail message is also user (e.g. a tool
+        // result), merge it into messages[0] too so alternation holds.
+        while (messages.length > 1 && messages[1].role === 'user') {
+          messages[0] = {
+            ...messages[0],
+            content: messages[0].content + '\n\n' + messages[1].content,
           };
-          messages.splice(2, 1);
+          messages.splice(1, 1);
         }
 
         // Reset diff baseline — after trimming, the model has lost earlier
