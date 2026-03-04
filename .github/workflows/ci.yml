@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'app/**'
+      - 'sandbox/**'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'app/**'
+      - 'sandbox/**'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -46,3 +48,37 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  modal:
+    name: Deploy Modal Sandbox
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Modal CLI
+        run: pip install modal
+
+      - name: Deploy to Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "::warning::Modal credentials not configured — skipping sandbox deploy."
+            echo "To fix: add MODAL_TOKEN_ID and MODAL_TOKEN_SECRET to GitHub Secrets."
+            exit 0
+          fi
+          cd sandbox
+          echo "Deploying Modal sandbox app..."
+          if modal deploy app.py 2>&1 | tee deploy.log; then
+            echo "Modal deployment successful"
+          else
+            echo "::error::Modal deployment failed. Check logs above."
+            exit 1
+          fi
