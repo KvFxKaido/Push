@@ -25,7 +25,21 @@ export async function calculateLineHash(line: string, length: number = 7): Promi
 }
 
 /**
+ * Compute 12-char hashes for all lines in one batch.
+ * We always store 12-char hashes so that any ref length (7-12) can match
+ * via a prefix check without re-hashing.
+ */
+async function batchHashLines(lines: string[]): Promise<string[]> {
+  return Promise.all(lines.map(l => calculateLineHash(l, 12)));
+}
+
+/**
  * Apply a set of hashline edits to file content.
+ *
+ * Uses a hash cache to avoid recomputing all line hashes for every edit.
+ * Hashes are computed once upfront (O(n)) and surgically updated after
+ * each edit (O(1) per replace/delete, O(1) per insert). Total cost is
+ * O(n + m) instead of O(n × m) where n = lines, m = edits.
  */
 export async function applyHashlineEdits(originalContent: string, edits: HashlineOp[]): Promise<HashlineEditResult> {
   const resultLines = originalContent.split('\n');
@@ -33,11 +47,14 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
   let failedCount = 0;
   const errors: string[] = [];
 
+  // Compute all 12-char hashes once upfront
+  const hashCache = await batchHashLines(resultLines);
+
   for (const edit of edits) {
-    // Re-calculate hashes at least as long as the ref so longer refs (8–12 chars) can match
-    const hashLen = Math.min(Math.max(edit.ref.length, 7), 12);
-    const currentHashes = await Promise.all(resultLines.map(l => calculateLineHash(l, hashLen)));
-    const matches = currentHashes.map((h, i) => h.startsWith(edit.ref) ? i : -1).filter(i => i !== -1);
+    // Match using prefix: the cache stores 12-char hashes, ref is 7-12 chars
+    const matches = hashCache
+      .map((h, i) => h.startsWith(edit.ref) ? i : -1)
+      .filter(i => i !== -1);
 
     if (matches.length === 0) {
       failedCount++;
@@ -46,30 +63,25 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
     }
 
     if (matches.length > 1) {
-      // Try to disambiguate with longer hashes (up to 12 chars)
+      // Try to disambiguate — cache already has 12-char hashes
       if (edit.ref.length < 12) {
-        const longerHashes = await Promise.all(matches.map(i => calculateLineHash(resultLines[i], 12)));
-        // Group by distinct longer hash to find unique prefixes
         const distinctGroups = new Map<string, number[]>();
-        for (let k = 0; k < matches.length; k++) {
-          const lh = longerHashes[k];
+        for (const idx of matches) {
+          const lh = hashCache[idx];
           const group = distinctGroups.get(lh) ?? [];
-          group.push(matches[k]);
+          group.push(idx);
           distinctGroups.set(lh, group);
         }
-        // Find groups whose longer hash still starts with the provided ref
         const candidateGroups = [...distinctGroups.entries()].filter(([lh]) => lh.startsWith(edit.ref));
         if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
-          // Exactly one line after disambiguation — use it
           matches.splice(0, matches.length, candidateGroups[0][1][0]);
         } else {
-          // Still ambiguous — provide diagnostic context with line numbers and longer hashes
           const MAX_DIAGNOSTIC_LINES = 5;
           const diagnostics: string[] = [];
           for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
             const idx = matches[k];
             const snippet = resultLines[idx].trim().slice(0, 60);
-            const longerRef = longerHashes[k];
+            const longerRef = hashCache[idx];
             diagnostics.push(`  L${idx + 1}: ${longerRef} "${snippet}${resultLines[idx].trim().length > 60 ? '…' : ''}"`);
           }
           if (matches.length > MAX_DIAGNOSTIC_LINES) {
@@ -93,18 +105,24 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
     switch (edit.op) {
       case 'replace_line':
         resultLines[targetIndex] = edit.content;
+        // Update only the replaced line's hash
+        hashCache[targetIndex] = await calculateLineHash(edit.content, 12);
         appliedCount++;
         break;
       case 'insert_after':
         resultLines.splice(targetIndex + 1, 0, edit.content);
+        // Insert the new line's hash at the corresponding position
+        hashCache.splice(targetIndex + 1, 0, await calculateLineHash(edit.content, 12));
         appliedCount++;
         break;
       case 'insert_before':
         resultLines.splice(targetIndex, 0, edit.content);
+        hashCache.splice(targetIndex, 0, await calculateLineHash(edit.content, 12));
         appliedCount++;
         break;
       case 'delete_line':
         resultLines.splice(targetIndex, 1);
+        hashCache.splice(targetIndex, 1);
         appliedCount++;
         break;
     }

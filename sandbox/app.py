@@ -599,7 +599,8 @@ def file_ops(data: dict):
         if version_error:
             return {"error": version_error, "content": ""}
 
-        result = {"content": content[:50_000], "truncated": len(content) > 50_000, "version": version}
+        max_read_chars = 200_000  # 200KB — fits files up to ~3000 lines without chunking
+        result = {"content": content[:max_read_chars], "truncated": len(content) > max_read_chars, "version": version}
         if use_range:
             result["start_line"] = start_line
             if end_line is not None:
