@@ -33,13 +33,15 @@ Schema:
 
 Review criteria:
 - Hardcoded secrets, tokens, passwords, API keys → UNSAFE (high)
-- Suspicious network calls to unknown endpoints → UNSAFE (high)
+- Network calls to novel external endpoints → UNSAFE (high). To assess novelty: if the domain appears in unchanged context lines within the diff, it is an existing pattern (lower risk). If it appears only in added lines with no prior context anywhere in the diff, treat it as novel (higher risk).
 - Disabled security features (CORS, auth checks) → UNSAFE (high)
 - SQL injection, XSS, command injection vectors → UNSAFE (high)
 - Overly broad file permissions → UNSAFE (medium)
 - Missing input validation on user-facing code → UNSAFE (medium)
 - Dead code or debug artifacts (console.log) → SAFE but note as low risk
 - Normal code changes with no security implications → SAFE
+
+Context limitation: You only see the diff, not the full codebase. Where your assessment depends on broader context you cannot see, note the uncertainty explicitly in the risk description rather than defaulting to UNSAFE.
 
 Be strict. When in doubt, lean toward UNSAFE. False positives are acceptable; false negatives are not.`;
 

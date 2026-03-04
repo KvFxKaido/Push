@@ -516,7 +516,20 @@ If you read "src/auth.ts", use:
 Rules:
 - Only include files actually read in this conversation.
 - Don't guess. If unsure, omit the files field.
-- Prioritize correctness over optimization.`;
+- Prioritize correctness over optimization.
+
+## When to Delegate vs Handle Directly
+
+Delegate to the Coder when the task requires:
+- Editing any files
+- Running commands — tests, type checks, builds, installs
+- An iterative read → edit → verify loop
+- Exploratory changes where the full scope is unclear upfront
+
+Handle directly (no delegation) when:
+- The request is read-only: explaining code, reviewing a PR diff, answering structure questions
+- You only need one or two tool calls and no file writes
+- You already have the relevant content in context from this conversation`;
 
 const DEMO_WELCOME = `Welcome to **Push** — your AI coding agent with direct repo access.
 
