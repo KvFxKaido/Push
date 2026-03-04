@@ -17,6 +17,7 @@ import os
 import urllib.request
 import urllib.parse
 import urllib.error
+import threading
 app = modal.App("push-sandbox")
 
 # Image for sandbox containers (cloned repos run here)
@@ -282,6 +283,25 @@ print(json.dumps({"results": results}))
 """
 
 
+def _wait_with_timeout(p, timeout_seconds: int = 55) -> bool:
+    """Wait for a Modal subprocess with a timeout. Returns True if completed, False if timed out.
+
+    Default is 55s — under the Worker's 60s timeout so the client gets a proper
+    error response instead of a connection drop.
+    """
+    done = threading.Event()
+
+    def wait_thread():
+        try:
+            p.wait()
+        finally:
+            done.set()
+
+    t = threading.Thread(target=wait_thread, daemon=True)
+    t.start()
+    return done.wait(timeout=timeout_seconds)
+
+
 def _fetch_github_user(token: str) -> tuple[str, str]:
     """Fetch name and email from GitHub API. Returns (name, email) or defaults."""
     try:
@@ -331,7 +351,8 @@ def _issue_owner_token(sb: modal.Sandbox) -> str | None:
         ),
         token,
     )
-    p.wait()
+    if not _wait_with_timeout(p, timeout_seconds=10):
+        return None
     if p.returncode != 0:
         return None
     return token
@@ -350,7 +371,8 @@ def _validate_owner_token(sb: modal.Sandbox, provided_token: str) -> bool:
                 "print(p.read_text(encoding='utf-8') if p.exists() else '')"
             ),
         )
-        p.wait()
+        if not _wait_with_timeout(p, timeout_seconds=10):
+            return False
         if p.returncode != 0:
             return False
         expected = p.stdout.read().strip()
@@ -381,7 +403,8 @@ def _load_sandbox(sandbox_id: str) -> tuple[modal.Sandbox | None, str | None]:
 
 def _get_file_version(sb: modal.Sandbox, path: str) -> tuple[str | None, str | None]:
     p = sb.exec("python3", "-c", FILE_VERSION_SCRIPT, path)
-    p.wait()
+    if not _wait_with_timeout(p, timeout_seconds=15):
+        return None, "Version check timed out"
     if p.returncode != 0:
         stderr = p.stderr.read().strip()
         return None, f"Version check failed: {stderr or 'unknown error'}"
@@ -481,7 +504,16 @@ def exec_command(data: dict):
             "error": "Unauthorized sandbox access",
         }
     p = sb.exec("bash", "-c", f"cd {workdir} && {command}")
-    p.wait()
+    completed = _wait_with_timeout(p, timeout_seconds=110)
+
+    if not completed:
+        return {
+            "stdout": "",
+            "stderr": "Command timed out after 110 seconds. The operation may still be running in the sandbox.",
+            "exit_code": -1,
+            "truncated": False,
+            "error": "Command execution timed out",
+        }
 
     stdout = p.stdout.read()
     stderr = p.stderr.read()
@@ -574,7 +606,8 @@ def file_ops(data: dict):
         else:
             p = sb.exec("cat", path)
 
-        p.wait()
+        if not _wait_with_timeout(p, timeout_seconds=25):
+            return {"error": "File read timed out", "content": ""}
         if p.returncode != 0:
             stderr = p.stderr.read()
             return {"error": f"Read failed: {stderr}", "content": ""}
@@ -611,7 +644,8 @@ def file_ops(data: dict):
         p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT)
         p.stdin.write(write_payload)
         p.stdin.write_eof()
-        p.wait()
+        if not _wait_with_timeout(p, timeout_seconds=55):
+            return {"ok": False, "error": "Write timed out after 55 seconds. The sandbox may be under heavy load."}
         if p.returncode != 0:
             stderr = p.stderr.read()
             return {"ok": False, "error": f"Write failed: {stderr}"}
@@ -651,7 +685,8 @@ def file_ops(data: dict):
         p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT)
         p.stdin.write(batch_payload)
         p.stdin.write_eof()
-        p.wait()
+        if not _wait_with_timeout(p, timeout_seconds=55):
+            return {"ok": False, "error": "Batch write timed out after 55 seconds.", "results": []}
         if p.returncode != 0:
             stderr = p.stderr.read()
             return {"ok": False, "error": f"Batch write failed: {stderr}", "results": []}
