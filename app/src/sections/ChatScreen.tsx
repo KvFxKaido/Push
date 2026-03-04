@@ -336,16 +336,19 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const isConnected = Boolean(token) || isDemo || isSandboxMode;
 
+  // Destructure stable function refs to avoid depending on the whole object
+  const { markSnapshotActivity } = snapshots;
+
   // Snapshot heartbeat wrappers
   const sendMessageWithSnapshotHeartbeat = useCallback((message: string, attachments?: { images?: string[] }) => {
-    snapshots.markSnapshotActivity();
+    markSnapshotActivity();
     return sendMessage(message, attachments);
-  }, [snapshots, sendMessage]);
+  }, [markSnapshotActivity, sendMessage]);
 
   const handleCardActionWithSnapshotHeartbeat = useCallback((action: CardAction) => {
-    snapshots.markSnapshotActivity();
+    markSnapshotActivity();
     return handleCardAction(action);
-  }, [snapshots, handleCardAction]);
+  }, [markSnapshotActivity, handleCardAction]);
 
   // Snapshot display values
   const snapshotAgeLabel = snapshots.latestSnapshot ? formatSnapshotAge(snapshots.latestSnapshot.createdAt) : null;

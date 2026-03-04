@@ -149,12 +149,10 @@ function App() {
     repos,
     isSandboxMode,
     sandbox,
-    {
-      setAgentsMd,
-      setWorkspaceContext,
-      sendMessage,
-      isStreaming,
-    },
+    setAgentsMd,
+    setWorkspaceContext,
+    sendMessage,
+    isStreaming,
     setShowFileBrowser,
     snapshots.markSnapshotActivity,
   );
@@ -321,46 +319,56 @@ function App() {
     }
   }, [isProviderLocked, isModelLocked, createNewChat, switchChat]);
 
+  // Destructure stable setter refs from catalog to avoid depending on the whole object
+  const { setActiveBackend: setCatalogBackend } = catalog;
+  const setOllamaModel = catalog.ollama.setModel;
+  const setMistralModel = catalog.mistral.setModel;
+  const setOpenRouterModel = catalog.openRouter.setModel;
+  const setMinimaxModel = catalog.minimax.setModel;
+  const setZaiModel = catalog.zai.setModel;
+  const setGoogleModel = catalog.google.setModel;
+  const setZenModel = catalog.zen.setModel;
+
   const handleSelectBackend = useCallback((provider: PreferredProvider) => {
     ensureUnlockedChatForProviderChange();
     setPreferredProvider(provider);
-    catalog.setActiveBackend(provider);
-  }, [ensureUnlockedChatForProviderChange, catalog]);
+    setCatalogBackend(provider);
+  }, [ensureUnlockedChatForProviderChange, setCatalogBackend]);
 
   const handleSelectOllamaModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    catalog.ollama.setModel(model);
-  }, [ensureUnlockedChatForProviderChange, catalog.ollama]);
+    setOllamaModel(model);
+  }, [ensureUnlockedChatForProviderChange, setOllamaModel]);
 
   const handleSelectMistralModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    catalog.mistral.setModel(model);
-  }, [ensureUnlockedChatForProviderChange, catalog.mistral]);
+    setMistralModel(model);
+  }, [ensureUnlockedChatForProviderChange, setMistralModel]);
 
   const handleSelectOpenRouterModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    catalog.openRouter.setModel(model);
-  }, [ensureUnlockedChatForProviderChange, catalog.openRouter]);
+    setOpenRouterModel(model);
+  }, [ensureUnlockedChatForProviderChange, setOpenRouterModel]);
 
   const handleSelectMinimaxModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    catalog.minimax.setModel(model);
-  }, [ensureUnlockedChatForProviderChange, catalog.minimax]);
+    setMinimaxModel(model);
+  }, [ensureUnlockedChatForProviderChange, setMinimaxModel]);
 
   const handleSelectZaiModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    catalog.zai.setModel(model);
-  }, [ensureUnlockedChatForProviderChange, catalog.zai]);
+    setZaiModel(model);
+  }, [ensureUnlockedChatForProviderChange, setZaiModel]);
 
   const handleSelectGoogleModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    catalog.google.setModel(model);
-  }, [ensureUnlockedChatForProviderChange, catalog.google]);
+    setGoogleModel(model);
+  }, [ensureUnlockedChatForProviderChange, setGoogleModel]);
 
   const handleSelectZenModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
-    catalog.zen.setModel(model);
-  }, [ensureUnlockedChatForProviderChange, catalog.zen]);
+    setZenModel(model);
+  }, [ensureUnlockedChatForProviderChange, setZenModel]);
 
   const handleDisconnect = useCallback(() => {
     appDisconnect();

@@ -68,12 +68,10 @@ export function useProjectInstructions(
     status: string;
     start: (repo: string, branch: string) => Promise<string | null>;
   },
-  chatCallbacks: {
-    setAgentsMd: (content: string | null) => void;
-    setWorkspaceContext: (ctx: string | null) => void;
-    sendMessage: (message: string) => void;
-    isStreaming: boolean;
-  },
+  setAgentsMd: (content: string | null) => void,
+  setWorkspaceContext: (ctx: string | null) => void,
+  sendMessage: (message: string) => void,
+  isStreaming: boolean,
   setShowFileBrowser: (show: boolean) => void,
   markSnapshotActivity: () => void,
 ): ProjectInstructionsManager {
@@ -89,12 +87,12 @@ export function useProjectInstructions(
       const content = result.content || '';
       if (!content.trim()) return null;
       setAgentsMdContent(content);
-      chatCallbacks.setAgentsMd(content);
+      setAgentsMd(content);
       return content;
     } catch {
       return null;
     }
-  }, [chatCallbacks]);
+  }, [setAgentsMd]);
 
   const autoCommitAgentsMdInSandbox = useCallback(async (sandboxId: string): Promise<{ ok: boolean; message: string }> => {
     const commitResult = await execInSandbox(
@@ -118,7 +116,7 @@ export function useProjectInstructions(
   useEffect(() => {
     if (!activeRepo) {
       setAgentsMdContent(null);
-      chatCallbacks.setAgentsMd(null);
+      setAgentsMd(null);
       setProjectInstructionsChecked(false);
       return;
     }
@@ -128,17 +126,17 @@ export function useProjectInstructions(
       .then((result) => {
         if (cancelled) return;
         setAgentsMdContent(result?.content ?? null);
-        chatCallbacks.setAgentsMd(result?.content ?? null);
+        setAgentsMd(result?.content ?? null);
         setProjectInstructionsChecked(true);
       })
       .catch(() => {
         if (cancelled) return;
         setAgentsMdContent(null);
-        chatCallbacks.setAgentsMd(null);
+        setAgentsMd(null);
         setProjectInstructionsChecked(true);
       });
     return () => { cancelled = true; };
-  }, [activeRepo, chatCallbacks]);
+  }, [activeRepo, setAgentsMd]);
 
   // Phase B — Sandbox upgrade (overrides Phase A when sandbox is ready)
   useEffect(() => {
@@ -148,18 +146,18 @@ export function useProjectInstructions(
       .then((result) => {
         if (cancelled) return;
         setAgentsMdContent(result.content);
-        chatCallbacks.setAgentsMd(result.content);
+        setAgentsMd(result.content);
       })
       .catch(() => {
         // Sandbox read failed — keep Phase A content
       });
     return () => { cancelled = true; };
-  }, [sandbox.status, sandbox.sandboxId, chatCallbacks]);
+  }, [sandbox.status, sandbox.sandboxId, setAgentsMd]);
 
   // Build workspace context
   useEffect(() => {
     if (isSandboxMode) {
-      chatCallbacks.setWorkspaceContext(null);
+      setWorkspaceContext(null);
       return;
     }
     if (repos.length > 0) {
@@ -168,11 +166,11 @@ export function useProjectInstructions(
         const safe = sanitizeProjectInstructions(agentsMdContent);
         ctx += '\n\n[PROJECT INSTRUCTIONS]\n' + safe + '\n[/PROJECT INSTRUCTIONS]';
       }
-      chatCallbacks.setWorkspaceContext(ctx);
+      setWorkspaceContext(ctx);
     } else {
-      chatCallbacks.setWorkspaceContext(null);
+      setWorkspaceContext(null);
     }
-  }, [repos, activeRepo, agentsMdContent, isSandboxMode, chatCallbacks]);
+  }, [repos, activeRepo, agentsMdContent, isSandboxMode, setWorkspaceContext]);
 
   // Create template AGENTS.md
   const handleCreateAgentsMd = useCallback(async () => {
@@ -217,7 +215,7 @@ export function useProjectInstructions(
 
   // Create AGENTS.md with AI
   const handleCreateAgentsMdWithAI = useCallback(async () => {
-    if (!activeRepo || creatingAgentsMdWithAI || chatCallbacks.isStreaming) return;
+    if (!activeRepo || creatingAgentsMdWithAI || isStreaming) return;
     setCreatingAgentsMdWithAI(true);
     markSnapshotActivity();
     try {
@@ -231,7 +229,7 @@ export function useProjectInstructions(
         'After commit, summarize what you included in 5 bullets.',
       ].join('\n');
 
-      await chatCallbacks.sendMessage(prompt);
+      await sendMessage(prompt);
       const id = sandbox.sandboxId;
       if (!id) {
         toast.warning('AGENTS.md draft may be ready, but sandbox session is unavailable to refresh context.');
@@ -254,7 +252,7 @@ export function useProjectInstructions(
     } finally {
       setCreatingAgentsMdWithAI(false);
     }
-  }, [activeRepo, creatingAgentsMdWithAI, chatCallbacks, markSnapshotActivity, sandbox.sandboxId, refreshAgentsMdFromSandbox, autoCommitAgentsMdInSandbox, setShowFileBrowser]);
+  }, [activeRepo, creatingAgentsMdWithAI, isStreaming, markSnapshotActivity, sendMessage, sandbox.sandboxId, refreshAgentsMdFromSandbox, autoCommitAgentsMdInSandbox, setShowFileBrowser]);
 
   return {
     agentsMdContent,
