@@ -67,20 +67,26 @@ function normalizeSandboxWorkdir(workdir?: string): string | undefined {
 // --- Enhanced error messages ---
 
 function formatSandboxError(error: string, context?: string): string {
+  const lowerError = error.toLowerCase();
+  const lowerContext = context?.toLowerCase() ?? '';
+  const isEnoent = lowerError.includes('enoent') || error.includes('ENOENT');
+  const looksLikeCommandEnoent = isEnoent
+    && (lowerError.includes('spawn ') || lowerContext.startsWith('sandbox_exec'));
+
   // Common error patterns with suggestions
-  if (error.toLowerCase().includes('permission denied') || error.includes('EACCES')) {
+  if (lowerError.includes('permission denied') || error.includes('EACCES')) {
     return `[Tool Error] Permission denied${context ? ` for ${context}` : ''}. The file or directory may be protected. Try a different path or use sudo if appropriate.`;
   }
-  if (error.toLowerCase().includes('no such file') || error.includes('ENOENT')) {
-    return `[Tool Error] File not found${context ? `: ${context}` : ''}. Use sandbox_list_dir to see available files, or check the path.`;
-  }
-  if (error.toLowerCase().includes('is a directory')) {
-    return `[Tool Error] ${context || 'Path'} is a directory, not a file. Use sandbox_list_dir to browse directories, then sandbox_read_file on a specific file.`;
-  }
-  if (error.toLowerCase().includes('command not found') || error.includes('ENOENT')) {
+  if (lowerError.includes('command not found') || looksLikeCommandEnoent) {
     return `[Tool Error] Command not found${context ? `: ${context}` : ''}. The tool may not be installed in the sandbox. Try installing it first, or use a different command.`;
   }
-  if (error.toLowerCase().includes('connection refused') || error.includes('ECONNREFUSED')) {
+  if (lowerError.includes('no such file') || isEnoent) {
+    return `[Tool Error] File not found${context ? `: ${context}` : ''}. Use sandbox_list_dir to see available files, or check the path.`;
+  }
+  if (lowerError.includes('is a directory')) {
+    return `[Tool Error] ${context || 'Path'} is a directory, not a file. Use sandbox_list_dir to browse directories, then sandbox_read_file on a specific file.`;
+  }
+  if (lowerError.includes('connection refused') || error.includes('ECONNREFUSED')) {
     return `[Tool Error] Connection refused${context ? ` for ${context}` : ''}. The service may not be running or the port may be incorrect.`;
   }
   return `[Tool Error] ${error}`;

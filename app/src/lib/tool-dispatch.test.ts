@@ -209,6 +209,24 @@ describe('detectAllToolCalls', () => {
     expect(detected.mutating).toBeNull();
   });
 
+  it('treats sandbox_read_symbols as read-only when a mutating call follows', () => {
+    const text = [
+      '{"tool":"sandbox_read_symbols","args":{"path":"/workspace/app/src/lib/tool-dispatch.ts"}}',
+      '{"tool":"sandbox_exec","args":{"command":"echo hi"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(1);
+    expect(detected.readOnly[0].source).toBe('sandbox');
+    if (detected.readOnly[0].source === 'sandbox') {
+      expect(detected.readOnly[0].call.tool).toBe('sandbox_read_symbols');
+    }
+    expect(detected.mutating?.source).toBe('sandbox');
+    if (detected.mutating?.source === 'sandbox') {
+      expect(detected.mutating.call.tool).toBe('sandbox_exec');
+    }
+  });
+
   it('keeps trailing mutating call when there is exactly one read call', () => {
     const text = [
       '{"tool":"search_files","args":{"repo":"KvFxKaido/Push","query":"runConfigInit"}}',

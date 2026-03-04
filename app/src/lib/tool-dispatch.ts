@@ -31,7 +31,7 @@ export const PARALLEL_READ_ONLY_GITHUB_TOOLS = new Set([
 ]);
 
 export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set([
-  'sandbox_read_file', 'sandbox_search', 'sandbox_list_dir', 'sandbox_diff',
+  'sandbox_read_file', 'sandbox_search', 'sandbox_list_dir', 'sandbox_diff', 'sandbox_read_symbols',
 ]);
 
 export const MAX_PARALLEL_TOOL_CALLS = 6;
@@ -351,6 +351,17 @@ export async function executeAnyToolCall(
 export function detectUnimplementedToolCall(text: string): string | null {
   return getUnrecognizedSandboxToolName(text);
 }
+
+const SANDBOX_COMPAT_ALIASES = new Set([
+  'read_sandbox_file',
+  'search_sandbox',
+  'list_sandbox_dir',
+  'sandbox_commit',
+]);
+
+export const CANONICAL_SANDBOX_TOOL_NAMES = Array.from(IMPLEMENTED_SANDBOX_TOOLS)
+  .filter((toolName) => !SANDBOX_COMPAT_ALIASES.has(toolName))
+  .sort();
 
 // ---------------------------------------------------------------------------
 // Known tool names — union of all tool subsystems
