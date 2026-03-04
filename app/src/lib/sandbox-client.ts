@@ -191,10 +191,11 @@ async function withRetry<T>(
   operation: () => Promise<T>,
   endpoint: string,
   onRetries?: (retries: number) => void,
+  maxRetries: number = MAX_RETRIES,
 ): Promise<T> {
   let lastError: Error | null = null;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const result = await operation();
       onRetries?.(attempt); // attempt 0 = first try succeeded, 1 = 1 retry, etc.
@@ -217,7 +218,7 @@ async function withRetry<T>(
       }
 
       // Don't retry after the last attempt
-      if (attempt === MAX_RETRIES) {
+      if (attempt === maxRetries) {
         break;
       }
 
@@ -228,8 +229,8 @@ async function withRetry<T>(
     }
   }
 
-  onRetries?.(MAX_RETRIES);
-  throw new Error(`Sandbox ${endpoint} failed after ${MAX_RETRIES + 1} attempts: ${lastError?.message}`);
+  onRetries?.(maxRetries);
+  throw new Error(`Sandbox ${endpoint} failed after ${maxRetries + 1} attempts: ${lastError?.message}`);
 }
 
 async function sandboxFetch<T>(
@@ -237,6 +238,7 @@ async function sandboxFetch<T>(
   body: Record<string, unknown>,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
   onRetries?: (retries: number) => void,
+  maxRetries: number = MAX_RETRIES,
 ): Promise<T> {
   return withRetry(async () => {
     const controller = new AbortController();
@@ -267,7 +269,7 @@ async function sandboxFetch<T>(
     } finally {
       clearTimeout(timer);
     }
-  }, endpoint, onRetries);
+  }, endpoint, onRetries, maxRetries);
 }
 
 // --- Public API ---
@@ -349,6 +351,9 @@ export interface WriteResult {
 
 const WRITE_TIMEOUT_MS = 60_000; // 60s for write operations (large files can be slow)
 
+const WRITE_MAX_RETRIES = 1; // Writes retry once — not 4x. A timed-out write may have succeeded
+                              // server-side; burning 5 × 60s on retries creates 5-min hangs.
+
 export async function writeToSandbox(
   sandboxId: string,
   path: string,
@@ -361,7 +366,7 @@ export async function writeToSandbox(
     path,
     content,
     expected_version: expectedVersion,
-  }, WRITE_TIMEOUT_MS);
+  }, WRITE_TIMEOUT_MS, undefined, WRITE_MAX_RETRIES);
 }
 
 // --- Batch write ---
@@ -399,7 +404,7 @@ export async function batchWriteToSandbox(
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     files,
-  }, BATCH_WRITE_TIMEOUT_MS);
+  }, BATCH_WRITE_TIMEOUT_MS, undefined, WRITE_MAX_RETRIES);
 }
 
 export async function getSandboxDiff(
