@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
-  Box,
   GitBranch,
   GitCommit,
   GitPullRequest,
@@ -9,10 +8,10 @@ import {
   LogOut,
   Settings,
   Search,
-  Sparkles,
   Loader2,
   UserRound,
 } from 'lucide-react';
+import { PushOrbitIcon, SandboxCubeIcon } from '@/components/icons/push-custom-icons';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -465,7 +464,7 @@ export function HomeScreen({
               className="flex w-full items-start gap-3 rounded-xl border border-[#31507d] bg-[linear-gradient(180deg,#0b1423_0%,#08101d_100%)] p-3.5 text-left shadow-push-card card-hover spring-press hover:border-[#3f659c] hover:shadow-push-card-hover"
             >
               <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#163055]">
-                <Sparkles className="h-4 w-4 text-[#8ad4ff]" />
+                <PushOrbitIcon className="h-4 w-4 text-[#8ad4ff]" />
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-medium text-[#d7ecff]">Resume latest chat</p>
@@ -493,7 +492,7 @@ export function HomeScreen({
               onClick={onSandboxMode}
               className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-[linear-gradient(180deg,rgba(9,25,18,0.95)_0%,rgba(4,10,7,0.98)_100%)] px-3 py-2.5 text-sm font-medium text-emerald-300 shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] spring-press transition-all duration-200 hover:border-emerald-500/45 hover:brightness-110"
             >
-              <Box className="h-4 w-4" />
+              <SandboxCubeIcon className="h-4 w-4" />
               New Sandbox
             </button>
             <button

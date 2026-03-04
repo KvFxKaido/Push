@@ -1,5 +1,6 @@
 import { useCallback, Suspense } from 'react';
 import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight } from 'lucide-react';
+import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import { Toaster } from '@/components/ui/sonner';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
@@ -674,7 +675,7 @@ export function ChatScreen(props: ChatScreenProps) {
               }}
             >
               <DropdownMenuTrigger className="pointer-events-auto flex items-center gap-1 rounded-full border border-[#1b2230] bg-push-grad-input px-2 py-1 shadow-[0_10px_28px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.25)] backdrop-blur-xl transition-all hover:border-[#31425a] hover:brightness-110">
-                <GitBranch className="h-3 w-3 text-[#5f6b80]" />
+                <BranchWaveIcon className="h-3 w-3 text-[#5f6b80]" />
                 <span className="max-w-[100px] truncate text-[10px] font-medium text-[#8b96aa]">
                   {currentBranch}
                 </span>

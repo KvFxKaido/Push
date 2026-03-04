@@ -1,0 +1,5 @@
+push-orbit | concentric orbit rings with a forward motion arrow, symbolizing agent orchestration and momentum
+branch-wave | abstract git branch line with two smooth diverging nodes and one merged return path
+sandbox-cube | open wireframe cube with a subtle sparkle star to imply safe experimental workspace
+merge-shield | minimal shield shape containing clean merge arrows joining into one path
+live-pipeline | vertical pipeline of connected stages with a pulse indicator dot showing live execution
