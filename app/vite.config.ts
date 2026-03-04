@@ -167,6 +167,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/opencode/, ''),
       },
+      '/nvidia': {
+        target: 'https://integrate.api.nvidia.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/nvidia/, ''),
+      },
       '/api': {
         target: API_PROXY_TARGET,
         changeOrigin: true,

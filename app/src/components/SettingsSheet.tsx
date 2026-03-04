@@ -22,6 +22,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   zai: 'Z.AI',
   google: 'Google',
   zen: 'OpenCode Zen',
+  nvidia: 'Nvidia NIM',
   demo: 'Demo',
 };
 
@@ -169,6 +170,20 @@ export interface SettingsAIProps {
   setZenKeyInput: (v: string) => void;
   setZenKey: (v: string) => void;
   clearZenKey: () => void;
+  // Nvidia NIM
+  hasNvidiaKey: boolean;
+  nvidiaModel: string;
+  setNvidiaModel: (v: string) => void;
+  nvidiaModelOptions: string[];
+  nvidiaModelsLoading: boolean;
+  nvidiaModelsError: string | null;
+  nvidiaModelsUpdatedAt: number | null;
+  isNvidiaModelLocked: boolean;
+  refreshNvidiaModels: () => void;
+  nvidiaKeyInput: string;
+  setNvidiaKeyInput: (v: string) => void;
+  setNvidiaKey: (v: string) => void;
+  clearNvidiaKey: () => void;
   // Tavily
   hasTavilyKey: boolean;
   tavilyKeyInput: string;
@@ -1264,6 +1279,39 @@ export function SettingsSheet({
                 loading: ai.googleModelsLoading,
                 error: ai.googleModelsError,
                 updatedAt: ai.googleModelsUpdatedAt,
+              }}
+            />
+          </div>
+
+          {/* Nvidia NIM */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-push-fg-secondary">Nvidia NIM</label>
+            <ProviderKeySection
+              label="Nvidia NIM"
+              hasKey={ai.hasNvidiaKey}
+              keyInput={ai.nvidiaKeyInput}
+              setKeyInput={ai.setNvidiaKeyInput}
+              saveKey={() => ai.setNvidiaKey(ai.nvidiaKeyInput.trim())}
+              clearKey={ai.clearNvidiaKey}
+              activeBackend={ai.activeBackend}
+              backendId="nvidia"
+              clearPreferredProvider={ai.clearPreferredProvider}
+              setActiveBackend={ai.setActiveBackend}
+              placeholder="Nvidia API key"
+              saveLabel="Save Nvidia key"
+              hint="Nvidia NIM API key (OpenAI-compatible endpoint)."
+              model={{
+                value: ai.nvidiaModel,
+                set: ai.setNvidiaModel,
+                options: ai.nvidiaModelOptions,
+                isLocked: ai.isNvidiaModelLocked,
+                lockedModel: ai.lockedModel,
+              }}
+              refresh={{
+                trigger: ai.refreshNvidiaModels,
+                loading: ai.nvidiaModelsLoading,
+                error: ai.nvidiaModelsError,
+                updatedAt: ai.nvidiaModelsUpdatedAt,
               }}
             />
           </div>

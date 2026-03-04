@@ -827,7 +827,7 @@ async function initSession(sessionId, provider, model, cwd) {
 
 function parseProvider(raw) {
   const provider = (raw || process.env.PUSH_PROVIDER || 'ollama').toLowerCase();
-  if (provider === 'ollama' || provider === 'mistral' || provider === 'openrouter' || provider === 'zai' || provider === 'google' || provider === 'minimax' || provider === 'zen') return provider;
+  if (provider === 'ollama' || provider === 'mistral' || provider === 'openrouter' || provider === 'zai' || provider === 'google' || provider === 'minimax' || provider === 'zen' || provider === 'nvidia') return provider;
   throw new Error(`Unsupported provider: ${raw}`);
 }
 
@@ -861,6 +861,7 @@ function sanitizeConfig(config) {
     google: config.google ? redactProvider(config.google) : {},
     minimax: config.minimax ? redactProvider(config.minimax) : {},
     zen: config.zen ? redactProvider(config.zen) : {},
+    nvidia: config.nvidia ? redactProvider(config.nvidia) : {},
   };
 }
 

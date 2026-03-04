@@ -331,6 +331,7 @@ function App() {
   const setZaiModel = catalog.zai.setModel;
   const setGoogleModel = catalog.google.setModel;
   const setZenModel = catalog.zen.setModel;
+  const setNvidiaModel = catalog.nvidia.setModel;
 
   const handleSelectBackend = useCallback((provider: PreferredProvider) => {
     ensureUnlockedChatForProviderChange();
@@ -372,6 +373,11 @@ function App() {
     ensureUnlockedChatForProviderChange();
     setZenModel(model);
   }, [ensureUnlockedChatForProviderChange, setZenModel]);
+
+  const handleSelectNvidiaModelFromChat = useCallback((model: string) => {
+    ensureUnlockedChatForProviderChange();
+    setNvidiaModel(model);
+  }, [ensureUnlockedChatForProviderChange, setNvidiaModel]);
 
   const handleDisconnect = useCallback(() => {
     appDisconnect();
@@ -864,6 +870,7 @@ function App() {
       handleSelectZaiModelFromChat={handleSelectZaiModelFromChat}
       handleSelectGoogleModelFromChat={handleSelectGoogleModelFromChat}
       handleSelectZenModelFromChat={handleSelectZenModelFromChat}
+      handleSelectNvidiaModelFromChat={handleSelectNvidiaModelFromChat}
       handleSelectRepoFromDrawer={handleSelectRepoFromDrawer}
       handleBrowseRepos={handleBrowseRepos}
       setCurrentBranch={setCurrentBranch}

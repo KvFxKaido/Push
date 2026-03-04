@@ -19,6 +19,7 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   zai:        { chat: providerUrl('/zai/api/coding/paas/v4/chat/completions',   '/api/zai/chat'),        models: providerUrl('/zai/api/coding/paas/v4/models',   '/api/zai/models')        },
   google:     { chat: providerUrl('/google/v1beta/openai/chat/completions',     '/api/google/chat'),     models: providerUrl('/google/v1beta/openai/models',     '/api/google/models')     },
   zen:        { chat: providerUrl('/opencode/zen/v1/chat/completions',          '/api/zen/chat'),        models: providerUrl('/opencode/zen/v1/models',          '/api/zen/models')        },
+  nvidia:     { chat: providerUrl('/nvidia/v1/chat/completions',                '/api/nvidia/chat'),     models: providerUrl('/nvidia/v1/models',                '/api/nvidia/models')     },
   demo:       { chat: '',                                                                                models: ''                                                                        },
 };
 
@@ -37,6 +38,8 @@ export const ZAI_DEFAULT_MODEL = 'glm-4.5';
 export const GOOGLE_DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 // OpenCode Zen (OpenAI-compatible) default model
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
+// Nvidia NIM (OpenAI-compatible) default model
+export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
 
 export const OPENROUTER_MODELS: string[] = [
   // Claude 4 series
@@ -86,6 +89,15 @@ export const ZEN_MODELS: string[] = [
   'kimi-k2.5-free',
   'minimax-m2.5-free',
   'big-pickle',
+];
+
+export const NVIDIA_MODELS: string[] = [
+  'nvidia/llama-3.1-nemotron-70b-instruct',
+  'meta/llama-3.3-70b-instruct',
+  'meta/llama-3.1-405b-instruct',
+  'deepseek-ai/deepseek-r1',
+  'qwen/qwen2.5-coder-32b-instruct',
+  'mistralai/mistral-large-2-instruct',
 ];
 
 /** Build the standard orchestrator/coder/auditor model triple for a provider. */
@@ -161,6 +173,14 @@ export const PROVIDERS: AIProviderConfig[] = [
     envUrl: 'https://opencode.ai/zen',
     models: makeRoleModels(ZEN_DEFAULT_MODEL, 'OpenCode Zen', 'zen', 200_000),
   },
+  {
+    type: 'nvidia',
+    name: 'Nvidia NIM',
+    description: 'Nvidia NIM inference microservices (OpenAI-compatible)',
+    envKey: 'VITE_NVIDIA_API_KEY',
+    envUrl: 'https://build.nvidia.com',
+    models: makeRoleModels(NVIDIA_DEFAULT_MODEL, 'Nvidia NIM', 'nvidia', 131_072),
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -218,6 +238,10 @@ const zenModel = createModelNameStorage('zen_model', ZEN_DEFAULT_MODEL);
 export const getZenModelName = zenModel.get;
 export const setZenModelName = zenModel.set;
 
+const nvidiaModel = createModelNameStorage('nvidia_model', NVIDIA_DEFAULT_MODEL);
+export const getNvidiaModelName = nvidiaModel.get;
+export const setNvidiaModelName = nvidiaModel.set;
+
 /** Runtime model-name getters for providers where the user can override the default. */
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
@@ -227,6 +251,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   zai: getZaiModelName,
   google: getGoogleModelName,
   zen: getZenModelName,
+  nvidia: getNvidiaModelName,
 };
 
 /** Return the current runtime model name for a provider, or undefined if unknown. */
@@ -252,11 +277,11 @@ export function getModelForRole(
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen';
+export type PreferredProvider = 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'nvidia';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (stored === 'ollama' || stored === 'mistral' || stored === 'openrouter' || stored === 'minimax' || stored === 'zai' || stored === 'google' || stored === 'zen') return stored;
+  if (stored === 'ollama' || stored === 'mistral' || stored === 'openrouter' || stored === 'minimax' || stored === 'zai' || stored === 'google' || stored === 'zen' || stored === 'nvidia') return stored;
   return null;
 }
 

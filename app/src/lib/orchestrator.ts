@@ -14,6 +14,7 @@ import { getMinimaxKey } from '@/hooks/useMinimaxConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
+import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
 import {
@@ -25,6 +26,7 @@ import {
   getZaiModelName,
   getGoogleModelName,
   getZenModelName,
+  getNvidiaModelName,
   PROVIDER_URLS,
 } from './providers';
 import type { PreferredProvider } from './providers';
@@ -1372,6 +1374,20 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       providerType: 'zen',
     }),
   },
+  nvidia: {
+    getKey: getNvidiaKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'Nvidia NIM',
+      apiUrl: PROVIDER_URLS.nvidia.chat,
+      apiKey,
+      model: modelOverride || getNvidiaModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('Nvidia NIM'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+      providerType: 'nvidia',
+    }),
+  },
 };
 
 /** Core streaming function — looks up provider config and delegates to streamSSEChat. */
@@ -1432,12 +1448,13 @@ export const streamMinimaxChat: StreamChatFn = (...args) => streamProviderChat('
 export const streamZaiChat: StreamChatFn = (...args) => streamProviderChat('zai', ...args);
 export const streamGoogleChat: StreamChatFn = (...args) => streamProviderChat('google', ...args);
 export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
+export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
 
 // ---------------------------------------------------------------------------
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'demo';
+export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'nvidia' | 'demo';
 
 /** Key getter for each configurable provider. */
 const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
@@ -1448,13 +1465,14 @@ const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
   zai:         getZaiKey,
   google:      getGoogleKey,
   zen:         getZenKey,
+  nvidia:      getNvidiaKey,
 };
 
 /**
  * Fallback order when no preference is set (or the preferred key is gone).
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'zen', 'minimax', 'ollama', 'mistral', 'openrouter', 'zai', 'google',
+  'zen', 'minimax', 'ollama', 'mistral', 'openrouter', 'zai', 'google', 'nvidia',
 ];
 
 /**
@@ -1490,6 +1508,7 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'zai': return { providerType: 'zai' as const, streamFn: streamZaiChat };
     case 'google': return { providerType: 'google' as const, streamFn: streamGoogleChat };
     case 'zen': return { providerType: 'zen' as const, streamFn: streamZenChat };
+    case 'nvidia': return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
     default:        return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
   }
 }
@@ -1552,6 +1571,10 @@ export async function streamChat(
 
   if (provider === 'zen') {
     return streamZenChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'nvidia') {
+    return streamNvidiaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
