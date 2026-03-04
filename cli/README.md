@@ -30,7 +30,7 @@ This walks you through provider, model, API key, and sandbox settings using numb
 ./push --session sess_abc123   # resume a previous session
 ```
 
-Starts a REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (rm -rf, sudo, force-push, etc.) prompt for approval before running.
+Starts a REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (rm -rf, sudo, force-push, etc.) prompt for approval before running, with one-shot, session-trust, and saved-prefix trust options.
 
 If `PUSH_TUI_ENABLED=1`, bare `./push` launches the full-screen TUI by default. Use `./push tui` explicitly to force TUI mode, or unset the flag to use the classic REPL as default.
 
@@ -182,6 +182,11 @@ Available tools:
 | `git_status` | read | Workspace git status (branch, dirty files) |
 | `git_diff` | read | Show git diff (optionally for a specific file, staged) |
 | `exec` | mutate | Run a shell command |
+| `exec_start` | mutate | Start a long-running command session |
+| `exec_poll` | read | Read incremental output from a command session |
+| `exec_write` | mutate | Send stdin to a running command session |
+| `exec_stop` | mutate | Stop a command session and release it |
+| `exec_list_sessions` | read | List active/finished command sessions |
 | `write_file` | mutate | Write entire file (auto-backed up) |
 | `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
 | `git_commit` | mutate | Stage and commit files |
@@ -236,14 +241,14 @@ Before any `write_file` or `edit_file` mutation, the original file is copied to 
 ## Safety
 
 - **Workspace jail:** All file paths are resolved and checked — no escaping the workspace root.
-- **High-risk detection:** Commands matching patterns like `rm -rf`, `sudo`, `git push --force`, `drop table`, `curl | sh`, etc. are flagged. In interactive mode, you're prompted. In headless mode, they're blocked.
+- **High-risk detection:** Commands matching patterns like `rm -rf`, `sudo`, `git push --force`, `drop table`, `curl | sh`, etc. are flagged. In interactive mode, you can approve once, trust for session, or save a reusable prefix. In headless mode, high-risk commands are blocked unless they match an explicit trusted prefix pattern.
 - **Tool loop detection:** If the same tool call sequence repeats 3 times, the run is stopped.
 - **Max rounds:** Default 8, configurable via `--max-rounds` (max 30). Prevents runaway loops.
 - **Output truncation:** Tool output is capped at 24KB to avoid context blowout.
 
 ## Docker sandbox
 
-With `--sandbox` (or `PUSH_LOCAL_SANDBOX=true`), `exec` commands run inside a Docker container instead of directly on your machine:
+With `--sandbox` (or `PUSH_LOCAL_SANDBOX=true`), `exec` and `exec_start` commands run inside a Docker container instead of directly on your machine:
 
 ```bash
 docker run --rm -v $WORKSPACE:/workspace -w /workspace push-sandbox bash -lc "$COMMAND"

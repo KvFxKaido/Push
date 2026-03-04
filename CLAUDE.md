@@ -104,7 +104,7 @@ cli/                 # Push CLI — local coding agent
   tool-call-metrics.mjs # Malformed tool-call observability
   pushd.mjs          # Daemon skeleton (Unix socket, NDJSON IPC)
   AGENT-WISHLIST.md  # Agent experience wishlist (shipped — 10 items)
-  tests/             # node:test suite (104 tests)
+  tests/             # node:test suite
 sandbox/app.py       # Modal Python App — sandbox web endpoints (file ops, exec/git, archive download)
 sandbox/requirements.txt
 scripts/             # One-off scripts (provider compliance, etc.)

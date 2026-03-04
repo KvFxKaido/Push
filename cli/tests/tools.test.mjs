@@ -11,6 +11,7 @@ import {
   isHighRiskCommand,
   matchingRiskPatternIndex,
   isSafeCommand,
+  suggestApprovalPrefix,
   truncateText,
 } from '../tools.mjs';
 
@@ -444,6 +445,23 @@ describe('matchingRiskPatternIndex', () => {
   });
 });
 
+// ─── suggestApprovalPrefix ──────────────────────────────────────
+
+describe('suggestApprovalPrefix', () => {
+  it('returns conservative git prefixes', () => {
+    assert.equal(suggestApprovalPrefix('git push origin main --force'), 'git push origin');
+    assert.equal(suggestApprovalPrefix('git status'), 'git status');
+  });
+
+  it('handles sudo commands by including command + subcommand', () => {
+    assert.equal(suggestApprovalPrefix('sudo apt install ripgrep'), 'sudo apt install');
+  });
+
+  it('ignores chained suffixes after shell operators', () => {
+    assert.equal(suggestApprovalPrefix('npm run test && rm -rf /'), 'npm run');
+  });
+});
+
 // ─── isSafeCommand ──────────────────────────────────────────────
 
 describe('isSafeCommand', () => {
@@ -551,18 +569,129 @@ describe('safe command exec bypass', () => {
   it('user safeExecPatterns bypass approval', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-safe-'));
     try {
+      const target = path.join(root, 'chmod-target.txt');
+      await fs.writeFile(target, 'ok', 'utf8');
       const result = await executeToolCall(
-        { tool: 'exec', args: { command: 'sudo echo safe-pattern-test' } },
+        { tool: 'exec', args: { command: 'chmod 777 chmod-target.txt' } },
         root,
         {
           approvalFn: async () => { throw new Error('should not be called'); },
           allowExec: true,
-          safeExecPatterns: ['sudo echo'],
+          safeExecPatterns: ['chmod 777'],
         },
       );
-      // sudo echo matches user prefix — should not prompt
+      // chmod 777 matches user-defined prefix — should not prompt
       assert.equal(result.ok, true);
-      assert.ok(result.text.includes('safe-pattern-test'));
+      const stat = await fs.stat(target);
+      assert.equal((stat.mode & 0o777), 0o777);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── exec session tools ─────────────────────────────────────────
+
+describe('exec session tools', () => {
+  it('starts, polls, and stops a command session', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-session-'));
+    try {
+      const start = await executeToolCall(
+        {
+          tool: 'exec_start',
+          args: {
+            command: 'for i in 1 2 3; do echo "tick-$i"; sleep 0.05; done',
+            timeout_ms: 10_000,
+          },
+        },
+        root,
+        { allowExec: true },
+      );
+
+      assert.equal(start.ok, true);
+      const sessionId = start.meta?.session_id;
+      assert.ok(sessionId, 'exec_start should return a session_id');
+
+      let fromSeq = 0;
+      let combinedOutput = '';
+      let running = true;
+      for (let i = 0; i < 30 && running; i++) {
+        const poll = await executeToolCall(
+          { tool: 'exec_poll', args: { session_id: sessionId, from_seq: fromSeq, max_chars: 4096 } },
+          root,
+        );
+        assert.equal(poll.ok, true);
+        fromSeq = poll.meta.next_seq;
+        running = Boolean(poll.meta.running);
+        combinedOutput += poll.text;
+        if (running) {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+      }
+
+      assert.ok(combinedOutput.includes('tick-1'));
+      assert.ok(combinedOutput.includes('tick-2'));
+      assert.ok(combinedOutput.includes('tick-3'));
+
+      const stop = await executeToolCall(
+        { tool: 'exec_stop', args: { session_id: sessionId } },
+        root,
+      );
+      assert.equal(stop.ok, true);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('can write stdin to a running session', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-session-'));
+    try {
+      const start = await executeToolCall(
+        { tool: 'exec_start', args: { command: 'read line; echo "ECHO:$line"', timeout_ms: 10_000 } },
+        root,
+        { allowExec: true },
+      );
+      assert.equal(start.ok, true);
+      const sessionId = start.meta.session_id;
+
+      const write = await executeToolCall(
+        { tool: 'exec_write', args: { session_id: sessionId, input: 'hello-session', append_newline: true } },
+        root,
+      );
+      assert.equal(write.ok, true);
+
+      let fromSeq = 0;
+      let seenEcho = false;
+      for (let i = 0; i < 25 && !seenEcho; i++) {
+        const poll = await executeToolCall(
+          { tool: 'exec_poll', args: { session_id: sessionId, from_seq: fromSeq, max_chars: 4096 } },
+          root,
+        );
+        assert.equal(poll.ok, true);
+        fromSeq = poll.meta.next_seq;
+        if (poll.text.includes('ECHO:hello-session')) {
+          seenEcho = true;
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+      }
+
+      assert.equal(seenEcho, true);
+      await executeToolCall({ tool: 'exec_stop', args: { session_id: sessionId } }, root);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks exec_start in headless mode without allowExec', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-session-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec_start', args: { command: 'echo blocked' } },
+        root,
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.structuredError?.code, 'EXEC_DISABLED');
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

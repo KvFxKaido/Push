@@ -27,7 +27,7 @@ import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, 
 import { buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.mjs';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
-import { matchingRiskPatternIndex } from './tools.mjs';
+import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.mjs';
 import { createTabCompleter } from './tui-completer.mjs';
 import { appendUserMessageWithFileReferences } from './file-references.mjs';
 import { compactContext } from './context-manager.mjs';
@@ -826,10 +826,16 @@ function renderApprovalModal(buf, theme, rows, cols, approval) {
     lines.push(`    ${theme.style('fg.primary', sl)}`);
   }
 
+  if (approval.suggestedPrefix) {
+    lines.push('');
+    lines.push(`  ${theme.style('fg.secondary', 'prefix:')} ${theme.style('fg.primary', approval.suggestedPrefix)}`);
+  }
+
   lines.push('');
   lines.push(
     `  ${theme.style('accent.link', 'Ctrl+Y / y')} approve  ` +
     `${theme.style('accent.link', 'a')} always  ` +
+    `${theme.style('accent.link', 'p')} save-prefix  ` +
     `${theme.style('accent.link', 'Ctrl+N / n')} deny  ` +
     `${theme.style('accent.link', 'Esc')} close`
   );
@@ -1371,7 +1377,10 @@ export async function runTUI(options = {}) {
 
   const config = await loadConfig();
   applyConfigToEnv(config);
-  const safeExecPatterns = Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [];
+  if (!Array.isArray(config.safeExecPatterns)) {
+    config.safeExecPatterns = [];
+  }
+  const safeExecPatterns = config.safeExecPatterns;
 
   const maxRounds = options.maxRounds || DEFAULT_MAX_ROUNDS;
 
@@ -1952,6 +1961,7 @@ export async function runTUI(options = {}) {
   function makeApprovalFn() {
     return (tool, detail) => {
       const patternIndex = matchingRiskPatternIndex(detail);
+      const suggestedPrefix = suggestApprovalPrefix(detail);
 
       // Session trust: auto-approve if this risk pattern was previously trusted
       if (patternIndex >= 0 && trustedPatterns.has(patternIndex)) {
@@ -1962,7 +1972,7 @@ export async function runTUI(options = {}) {
 
       return new Promise((resolve) => {
         tuiState.runState = 'awaiting_approval';
-        tuiState.approval = { kind: tool, summary: detail, patternIndex };
+        tuiState.approval = { kind: tool, summary: detail, patternIndex, suggestedPrefix };
         approvalResolve = resolve;
         tuiState.dirty.add('all');
         scheduler.flush();
@@ -3145,6 +3155,52 @@ export async function runTUI(options = {}) {
     }
   }
 
+  async function persistPrefixApprovalAction() {
+    if (!approvalResolve) return;
+
+    const suggestedPrefix = typeof tuiState.approval?.suggestedPrefix === 'string'
+      ? tuiState.approval.suggestedPrefix
+      : '';
+
+    if (suggestedPrefix) {
+      if (!safeExecPatterns.includes(suggestedPrefix)) {
+        safeExecPatterns.push(suggestedPrefix);
+        config.safeExecPatterns = [...new Set(safeExecPatterns)];
+        try {
+          await saveConfig(config);
+          addTranscriptEntry(tuiState, 'status', `[saved prefix] ${suggestedPrefix}`);
+        } catch (err) {
+          addTranscriptEntry(tuiState, 'warning', `Failed to persist trusted prefix: ${err.message || String(err)}`);
+        }
+      } else {
+        addTranscriptEntry(tuiState, 'status', `[prefix already trusted] ${suggestedPrefix}`);
+      }
+    } else {
+      addTranscriptEntry(tuiState, 'status', 'No prefix suggestion available; approved once.');
+    }
+
+    if (tuiState.approval) {
+      pushTranscriptEntry(
+        tuiState,
+        {
+          role: 'verdict',
+          verdict: 'APPROVED',
+          kind: tuiState.approval.kind,
+          summary: tuiState.approval.summary,
+          trustedPrefix: suggestedPrefix || null,
+          timestamp: Date.now(),
+        },
+      );
+    }
+
+    approvalResolve(true);
+    approvalResolve = null;
+    tuiState.approval = null;
+    tuiState.runState = 'running';
+    tuiState.dirty.add('all');
+    scheduler.schedule();
+  }
+
   function denyAction() {
     if (approvalResolve) {
       if (tuiState.approval) {
@@ -3167,6 +3223,10 @@ export async function runTUI(options = {}) {
     }
     if (key.name === 'a' && !key.ctrl && !key.meta) {
       alwaysApproveAction();
+      return;
+    }
+    if (key.name === 'p' && !key.ctrl && !key.meta) {
+      runAsync(() => persistPrefixApprovalAction(), 'failed to persist trusted prefix');
       return;
     }
     if (key.name === 'n' && !key.ctrl && !key.meta) {

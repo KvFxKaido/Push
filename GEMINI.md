@@ -61,7 +61,7 @@ Current roadmap focus is improving terminal ergonomics around the transcript-fir
 ```
 
 ### Modes
-*   **Interactive:** REPL with streaming responses, tool execution, and Ctrl+C per-prompt cancellation. High-risk commands prompt for approval.
+*   **Interactive:** REPL with streaming responses, tool execution, and Ctrl+C per-prompt cancellation. High-risk commands prompt for approval, with one-shot, session-trust, and saved-prefix trust options.
 *   **Headless:** Single task, exits when done. `--accept <cmd>` runs post-task acceptance checks. `--json` for structured output. Exit code 130 on SIGINT.
 
 ### Tools
@@ -75,6 +75,11 @@ Current roadmap focus is improving terminal ergonomics around the transcript-fir
 | `git_status` | read | Workspace git status (branch, dirty files) |
 | `git_diff` | read | Show git diff (file-scoped, staged) |
 | `exec` | mutate | Run a shell command |
+| `exec_start` | mutate | Start a long-running command session |
+| `exec_poll` | read | Read incremental output from a command session |
+| `exec_write` | mutate | Send stdin input to a running command session |
+| `exec_stop` | mutate | Stop a command session |
+| `exec_list_sessions` | read | List command sessions and status |
 | `write_file` | mutate | Write entire file (auto-backed up) |
 | `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
 | `undo_edit` | mutate | Restore a file from the most recent tool-created backup |
@@ -144,7 +149,7 @@ Push/
 │   ├── tool-call-metrics.mjs # Malformed tool-call counters
 │   ├── pushd.mjs             # Daemon skeleton (Unix socket, NDJSON IPC)
 │   ├── AGENT-WISHLIST.md     # Agent experience wishlist (shipped)
-│   └── tests/                # node:test suite (104 tests)
+│   └── tests/                # node:test suite
 ├── sandbox/
 │   ├── app.py             # Modal Python App (Sandbox Endpoints)
 │   └── requirements.txt   # Python dependencies

@@ -1,13 +1,22 @@
 import { promisify } from 'node:util';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.mjs';
 import { runDiagnostics } from './diagnostics.mjs';
 
 const execFileAsync = promisify(execFile);
 
 export const MAX_TOOL_OUTPUT_CHARS = 24_000;
+const DEFAULT_EXEC_TIMEOUT_MS = 90_000;
+const MAX_EXEC_TIMEOUT_MS = 180_000;
+const DEFAULT_EXEC_SESSION_TIMEOUT_MS = 600_000;
+const MAX_EXEC_SESSION_TIMEOUT_MS = 1_800_000;
+const DEFAULT_EXEC_POLL_MAX_CHARS = 8_000;
+const MAX_EXEC_POLL_MAX_CHARS = 64_000;
+const MAX_EXEC_SESSION_OUTPUT_CHARS = 220_000;
+const MAX_EXEC_SESSION_CHUNKS = 500;
+const MAX_EXEC_SESSIONS = 24;
 const DEFAULT_SEARCH_RESULTS = 120;
 const DEFAULT_WEB_SEARCH_RESULTS = 5;
 const MAX_WEB_SEARCH_RESULTS = 10;
@@ -18,7 +27,12 @@ const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_
 const OLLAMA_API_KEY_ENV_VARS = ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'];
 const WEB_SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
-const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'git_status', 'git_diff', 'lsp_diagnostics']);
+const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'git_status', 'git_diff', 'lsp_diagnostics', 'exec_poll', 'exec_list_sessions']);
+
+const EXEC_SESSIONS = new Map();
+let EXEC_SESSION_COUNTER = 0;
+let cleanupHooksRegistered = false;
+let hasScriptBinaryCache = null;
 
 // Patterns that indicate high-risk shell commands requiring user approval
 const HIGH_RISK_PATTERNS = [
@@ -111,6 +125,418 @@ export function isSafeCommand(command, userPatterns = []) {
   return false;
 }
 
+function splitCommandSegment(command) {
+  // Best-effort extraction of the first shell segment.
+  // This intentionally favors conservative prefixes and avoids deep shell parsing.
+  return String(command || '')
+    .split(/(?:&&|\|\||[|;\n])/)[0]
+    .trim();
+}
+
+function tokenizeCommandSegment(segment) {
+  if (!segment) return [];
+  const tokens = segment.match(/"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|`(?:\\.|[^`])*`|[^\s]+/g) || [];
+  return tokens.map((token) => token.replace(/^['"`]|['"`]$/g, ''));
+}
+
+/**
+ * Suggest a reusable prefix allow-rule for a shell command.
+ * Output is intentionally conservative to avoid broad accidental trust.
+ */
+export function suggestApprovalPrefix(command) {
+  const segment = splitCommandSegment(command);
+  const tokens = tokenizeCommandSegment(segment);
+  if (tokens.length === 0) return '';
+  if (tokens.length === 1) return tokens[0];
+
+  const [first, second, third, fourth] = tokens;
+
+  if ((first === 'sudo' || first === 'doas') && second && third) {
+    return [first, second, third].join(' ');
+  }
+
+  if (first === 'git' && second && third) {
+    const needsTarget = new Set(['push', 'fetch', 'pull', 'checkout', 'restore', 'reset', 'clean']);
+    if (needsTarget.has(second)) return [first, second, third].join(' ');
+    return [first, second].join(' ');
+  }
+
+  if ((first === 'npm' || first === 'pnpm' || first === 'yarn' || first === 'bun') && second) {
+    return [first, second].join(' ');
+  }
+
+  if (first === 'docker' && second && third) {
+    return [first, second, third].join(' ');
+  }
+
+  if (second?.startsWith('-') && third) {
+    return [first, second, third].join(' ');
+  }
+
+  if (second && third && third.startsWith('-') && fourth) {
+    return [first, second, third, fourth].join(' ');
+  }
+
+  return [first, second].join(' ');
+}
+
+function nextExecSessionId() {
+  EXEC_SESSION_COUNTER += 1;
+  return `exec_${Date.now().toString(36)}_${EXEC_SESSION_COUNTER.toString(36)}`;
+}
+
+function clearSessionTimer(session) {
+  if (session?.timer) {
+    clearTimeout(session.timer);
+    session.timer = null;
+  }
+}
+
+function notifySessionExit(session) {
+  if (!session || !Array.isArray(session.exitWaiters)) return;
+  for (const waiter of session.exitWaiters.splice(0)) {
+    try {
+      waiter();
+    } catch {
+      // no-op
+    }
+  }
+}
+
+function markSessionClosed(session, exitCode, signal, { timedOut = false } = {}) {
+  if (!session || session.closed) return;
+  session.closed = true;
+  session.running = false;
+  session.exitCode = typeof exitCode === 'number' ? exitCode : 1;
+  session.exitSignal = signal || null;
+  session.timedOut = Boolean(timedOut || session.timedOut);
+  session.updatedAt = Date.now();
+  clearSessionTimer(session);
+  notifySessionExit(session);
+}
+
+function appendSessionChunk(session, text, source = 'stdout') {
+  if (!session || typeof text !== 'string' || text.length === 0) return;
+  const chunk = {
+    seq: ++session.nextSeq,
+    source,
+    text,
+    ts: Date.now(),
+  };
+  session.chunks.push(chunk);
+  session.totalChars += text.length;
+  session.updatedAt = Date.now();
+
+  while (session.chunks.length > MAX_EXEC_SESSION_CHUNKS || session.totalChars > MAX_EXEC_SESSION_OUTPUT_CHARS) {
+    const removed = session.chunks.shift();
+    if (!removed) break;
+    session.totalChars -= removed.text.length;
+    session.firstAvailableSeq = removed.seq + 1;
+  }
+
+  if (session.chunks.length === 0) {
+    session.firstAvailableSeq = session.nextSeq + 1;
+  } else if (session.firstAvailableSeq < session.chunks[0].seq) {
+    session.firstAvailableSeq = session.chunks[0].seq;
+  }
+}
+
+function collectSessionOutput(session, fromSeq, maxChars) {
+  const selected = session.chunks.filter((chunk) => chunk.seq > fromSeq);
+  let used = 0;
+  let truncated = false;
+  let returnedChunks = 0;
+  const out = [];
+
+  for (const chunk of selected) {
+    if (used >= maxChars) {
+      truncated = true;
+      break;
+    }
+    const remaining = maxChars - used;
+    if (chunk.text.length <= remaining) {
+      out.push(chunk.text);
+      used += chunk.text.length;
+      returnedChunks += 1;
+      continue;
+    }
+    out.push(chunk.text.slice(0, remaining));
+    used += remaining;
+    returnedChunks += 1;
+    truncated = true;
+    break;
+  }
+
+  return {
+    text: out.join(''),
+    returnedChunks,
+    truncated,
+  };
+}
+
+function waitForSessionExit(session, timeoutMs = 2_500) {
+  if (!session || !session.running) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    session.exitWaiters.push(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+function stopSessionProcess(session, signal = 'SIGTERM') {
+  if (!session || !session.child || !session.running) return false;
+  try {
+    return session.child.kill(signal);
+  } catch {
+    return false;
+  }
+}
+
+function removeExecSession(sessionId, { stop = false, signal = 'SIGTERM' } = {}) {
+  const session = EXEC_SESSIONS.get(sessionId);
+  if (!session) return null;
+  if (stop) {
+    stopSessionProcess(session, signal);
+  }
+  clearSessionTimer(session);
+  EXEC_SESSIONS.delete(sessionId);
+  return session;
+}
+
+function cleanupExecSessions() {
+  for (const session of EXEC_SESSIONS.values()) {
+    if (session.running) {
+      stopSessionProcess(session, 'SIGTERM');
+      stopSessionProcess(session, 'SIGKILL');
+    }
+    clearSessionTimer(session);
+  }
+  EXEC_SESSIONS.clear();
+}
+
+function ensureCleanupHooks() {
+  if (cleanupHooksRegistered) return;
+  cleanupHooksRegistered = true;
+  process.once('exit', cleanupExecSessions);
+}
+
+async function hasScriptBinary() {
+  if (hasScriptBinaryCache !== null) return hasScriptBinaryCache;
+  try {
+    await execFileAsync('script', ['-V'], { timeout: 2_000, maxBuffer: 128_000 });
+    hasScriptBinaryCache = true;
+  } catch (err) {
+    // Some script variants return non-zero for -V but still exist.
+    if (err && err.code !== 'ENOENT') {
+      hasScriptBinaryCache = true;
+    } else {
+      hasScriptBinaryCache = false;
+    }
+  }
+  return hasScriptBinaryCache;
+}
+
+function formatSessionStatus(session) {
+  if (!session) return 'unknown';
+  if (session.running) return 'running';
+  if (session.timedOut) return 'timed_out';
+  if (typeof session.exitCode === 'number') return session.exitCode === 0 ? 'completed' : 'failed';
+  return 'stopped';
+}
+
+function normalizeSignal(rawSignal) {
+  const value = typeof rawSignal === 'string' ? rawSignal.trim().toUpperCase() : '';
+  if (!value) return 'SIGTERM';
+  const normalized = value.startsWith('SIG') ? value : `SIG${value}`;
+  if (normalized === 'SIGTERM' || normalized === 'SIGINT' || normalized === 'SIGKILL') return normalized;
+  throw new Error('signal must be SIGTERM, SIGINT, or SIGKILL');
+}
+
+function pruneExecSessions() {
+  if (EXEC_SESSIONS.size <= MAX_EXEC_SESSIONS) return;
+  const sessions = [...EXEC_SESSIONS.values()].sort((a, b) => a.createdAt - b.createdAt);
+  for (const session of sessions) {
+    if (EXEC_SESSIONS.size <= MAX_EXEC_SESSIONS) break;
+    removeExecSession(session.id, { stop: session.running, signal: 'SIGKILL' });
+  }
+}
+
+async function guardExecCommand(command, options = {}, mode = 'exec') {
+  const execMode = options.execMode ?? 'auto';
+  const operationLabel = mode === 'exec_start' ? 'exec_start' : 'exec';
+  const blockedMessage = mode === 'exec_start'
+    ? 'Blocked: exec_start is disabled in headless mode. Use --allow-exec to enable.'
+    : 'Blocked: exec is disabled in headless mode. Use --allow-exec to enable.';
+
+  // In headless mode (no approvalFn), block command execution unless --allow-exec or yolo
+  if (!options.approvalFn && !options.allowExec && execMode !== 'yolo') {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        text: blockedMessage,
+        structuredError: {
+          code: 'EXEC_DISABLED',
+          message: `${operationLabel} blocked in headless mode without --allow-exec`,
+          retryable: false,
+        },
+      },
+    };
+  }
+
+  if (execMode === 'yolo') {
+    return { ok: true };
+  }
+
+  if (execMode === 'strict') {
+    if (!options.approvalFn) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          text: `Blocked: ${operationLabel} requires approval in strict mode.`,
+          structuredError: {
+            code: 'APPROVAL_REQUIRED',
+            message: `${operationLabel} blocked in strict mode without approval function`,
+            retryable: false,
+          },
+        },
+      };
+    }
+    const approved = await options.approvalFn('exec', command);
+    if (!approved) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          text: `Denied by user: "${command}" was not approved for execution.`,
+          structuredError: {
+            code: 'APPROVAL_DENIED',
+            message: 'User denied command in strict mode',
+            retryable: false,
+          },
+        },
+      };
+    }
+    return { ok: true };
+  }
+
+  // auto (default): safe patterns bypass, high-risk commands prompt
+  if (!isSafeCommand(command, options.safeExecPatterns) && isHighRiskCommand(command)) {
+    const { approvalFn } = options;
+    if (!approvalFn) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          text: `Blocked: "${command}" is a high-risk command. Not allowed in headless mode without approval.`,
+          structuredError: {
+            code: 'APPROVAL_REQUIRED',
+            message: 'High-risk command blocked in non-interactive mode',
+            retryable: false,
+          },
+        },
+      };
+    }
+    const approved = await approvalFn('exec', command);
+    if (!approved) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          text: `Denied by user: "${command}" was not approved for execution.`,
+          structuredError: {
+            code: 'APPROVAL_DENIED',
+            message: 'User denied high-risk command',
+            retryable: false,
+          },
+        },
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested = false) {
+  ensureCleanupHooks();
+
+  const isLocalSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true';
+  const canUseScriptTty = ttyRequested && !isLocalSandbox && await hasScriptBinary();
+
+  const bin = isLocalSandbox
+    ? 'docker'
+    : (canUseScriptTty ? 'script' : '/bin/bash');
+
+  const args = isLocalSandbox
+    ? ['run', '--rm', '-i', '-v', `${workspaceRoot}:/workspace`, '-w', '/workspace', 'push-sandbox', 'bash', '-lc', command]
+    : (canUseScriptTty ? ['-q', '-f', '-c', command, '/dev/null'] : ['-lc', command]);
+
+  const child = spawn(bin, args, {
+    cwd: workspaceRoot,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: process.env,
+  });
+
+  const sessionId = nextExecSessionId();
+  const session = {
+    id: sessionId,
+    command,
+    cwd: workspaceRoot,
+    ttyRequested: Boolean(ttyRequested),
+    ttyMode: canUseScriptTty ? 'script' : (ttyRequested ? 'pipe_fallback' : 'pipe'),
+    running: true,
+    closed: false,
+    timedOut: false,
+    exitCode: null,
+    exitSignal: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    nextSeq: 0,
+    firstAvailableSeq: 1,
+    totalChars: 0,
+    chunks: [],
+    child,
+    timer: null,
+    exitWaiters: [],
+  };
+
+  const timeoutTimer = setTimeout(() => {
+    if (!session.running) return;
+    session.timedOut = true;
+    appendSessionChunk(session, `\n[push] session timed out after ${timeoutMs}ms, terminating...\n`, 'meta');
+    stopSessionProcess(session, 'SIGTERM');
+    setTimeout(() => {
+      if (session.running) stopSessionProcess(session, 'SIGKILL');
+    }, 1_500);
+  }, timeoutMs);
+  if (typeof timeoutTimer.unref === 'function') timeoutTimer.unref();
+  session.timer = timeoutTimer;
+
+  child.stdout?.on('data', (chunk) => {
+    appendSessionChunk(session, String(chunk), 'stdout');
+  });
+
+  child.stderr?.on('data', (chunk) => {
+    appendSessionChunk(session, String(chunk), 'stderr');
+  });
+
+  child.on('error', (err) => {
+    appendSessionChunk(session, `[push] failed to start command: ${err.message}\n`, 'stderr');
+    markSessionClosed(session, 1, null, { timedOut: session.timedOut });
+  });
+
+  child.on('close', (code, signal) => {
+    markSessionClosed(session, typeof code === 'number' ? code : 1, signal, { timedOut: session.timedOut });
+  });
+
+  EXEC_SESSIONS.set(sessionId, session);
+  pruneExecSessions();
+  return session;
+}
+
 export function isReadOnlyToolCall(call) {
   return Boolean(call && READ_ONLY_TOOLS.has(call.tool));
 }
@@ -128,6 +554,11 @@ Available tools:
 - search_files(pattern, path?, max_results?) — text search in workspace
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
 - exec(command, timeout_ms?) — run a shell command
+- exec_start(command, timeout_ms?, tty?) — start a long-running command session
+- exec_poll(session_id, from_seq?, max_chars?) — read incremental output from a running command session
+- exec_write(session_id, input, append_newline?) — send stdin to a running command session
+- exec_stop(session_id, signal?) — stop a running command session and release it
+- exec_list_sessions() — list active/finished command sessions
 - write_file(path, content) — write full file content
 - edit_file(path, edits, expected_version?) — surgical hashline edits. edits[] ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content
 - read_symbols(path) — extract function/class/type declarations from a file
@@ -845,80 +1276,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
       case 'exec': {
         const command = asString(call.args.command, 'command');
-        const timeoutMs = clamp(asOptionalNumber(call.args.timeout_ms) ?? 90_000, 1_000, 180_000);
-        const execMode = options.execMode ?? 'auto';
-
-        // In headless mode (no approvalFn), block ALL exec unless --allow-exec or yolo
-        if (!options.approvalFn && !options.allowExec && execMode !== 'yolo') {
-          return {
-            ok: false,
-            text: `Blocked: exec is disabled in headless mode. Use --allow-exec to enable.`,
-            structuredError: {
-              code: 'EXEC_DISABLED',
-              message: 'exec blocked in headless mode without --allow-exec',
-              retryable: false,
-            },
-          };
-        }
-
-        // Tiered approval gate
-        if (execMode === 'yolo') {
-          // No prompts — fall through to execution
-        } else if (execMode === 'strict') {
-          // Prompt for ALL exec, even safe commands
-          if (!options.approvalFn) {
-            return {
-              ok: false,
-              text: `Blocked: exec requires approval in strict mode.`,
-              structuredError: {
-                code: 'APPROVAL_REQUIRED',
-                message: 'exec blocked in strict mode without approval function',
-                retryable: false,
-              },
-            };
-          }
-          const approved = await options.approvalFn('exec', command);
-          if (!approved) {
-            return {
-              ok: false,
-              text: `Denied by user: "${command}" was not approved for execution.`,
-              structuredError: {
-                code: 'APPROVAL_DENIED',
-                message: 'User denied command in strict mode',
-                retryable: false,
-              },
-            };
-          }
-        } else {
-          // auto (default): safe patterns bypass, high-risk commands prompt
-          if (!isSafeCommand(command, options.safeExecPatterns)) {
-            if (isHighRiskCommand(command)) {
-              const { approvalFn } = options;
-              if (!approvalFn) {
-                return {
-                  ok: false,
-                  text: `Blocked: "${command}" is a high-risk command. Not allowed in headless mode without approval.`,
-                  structuredError: {
-                    code: 'APPROVAL_REQUIRED',
-                    message: 'High-risk command blocked in non-interactive mode',
-                    retryable: false,
-                  },
-                };
-              }
-              const approved = await approvalFn('exec', command);
-              if (!approved) {
-                return {
-                  ok: false,
-                  text: `Denied by user: "${command}" was not approved for execution.`,
-                  structuredError: {
-                    code: 'APPROVAL_DENIED',
-                    message: 'User denied high-risk command',
-                    retryable: false,
-                  },
-                };
-              }
-            }
-          }
+        const timeoutMs = clamp(asOptionalNumber(call.args.timeout_ms) ?? DEFAULT_EXEC_TIMEOUT_MS, 1_000, MAX_EXEC_TIMEOUT_MS);
+        const guard = await guardExecCommand(command, options, 'exec');
+        if (!guard.ok) {
+          return guard.result;
         }
 
         try {
@@ -953,6 +1314,193 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             meta: { command, timeout_ms: timeoutMs, exit_code: exitCode, timed_out: Boolean(err.killed) },
           };
         }
+      }
+
+      case 'exec_start': {
+        const command = asString(call.args.command, 'command');
+        const timeoutMs = clamp(
+          asOptionalNumber(call.args.timeout_ms) ?? DEFAULT_EXEC_SESSION_TIMEOUT_MS,
+          1_000,
+          MAX_EXEC_SESSION_TIMEOUT_MS,
+        );
+        const tty = call.args.tty === true;
+        const guard = await guardExecCommand(command, options, 'exec_start');
+        if (!guard.ok) return guard.result;
+
+        const session = await startExecSession(command, workspaceRoot, timeoutMs, tty);
+        const status = formatSessionStatus(session);
+        return {
+          ok: true,
+          text: `Started exec session ${session.id} (${status}). Use exec_poll to read output and exec_write for stdin.`,
+          meta: {
+            session_id: session.id,
+            command,
+            timeout_ms: timeoutMs,
+            tty_requested: tty,
+            tty_mode: session.ttyMode,
+            running: session.running,
+            status,
+          },
+        };
+      }
+
+      case 'exec_poll': {
+        const sessionId = asString(call.args.session_id, 'session_id');
+        const session = EXEC_SESSIONS.get(sessionId);
+        if (!session) {
+          return {
+            ok: false,
+            text: `No exec session found: ${sessionId}`,
+            structuredError: {
+              code: 'NOT_FOUND',
+              message: `Unknown exec session: ${sessionId}`,
+              retryable: false,
+            },
+          };
+        }
+
+        const fromSeqRaw = asOptionalNumber(call.args.from_seq) ?? 0;
+        const fromSeq = Number.isFinite(fromSeqRaw) ? Math.max(0, Math.floor(fromSeqRaw)) : 0;
+        const maxChars = clamp(
+          asOptionalNumber(call.args.max_chars) ?? DEFAULT_EXEC_POLL_MAX_CHARS,
+          256,
+          MAX_EXEC_POLL_MAX_CHARS,
+        );
+        const collected = collectSessionOutput(session, fromSeq, maxChars);
+        const latestSeq = session.nextSeq;
+        const historyTruncated = fromSeq < (session.firstAvailableSeq - 1);
+        const output = collected.text || '<no new output>';
+        const status = formatSessionStatus(session);
+
+        return {
+          ok: true,
+          text: truncateText(
+            `session_id: ${session.id}\nstatus: ${status}\nfrom_seq: ${fromSeq}\nnext_seq: ${latestSeq}\n\noutput:\n${output}`,
+          ),
+          meta: {
+            session_id: session.id,
+            running: session.running,
+            status,
+            exit_code: session.exitCode,
+            signal: session.exitSignal,
+            timed_out: session.timedOut,
+            from_seq: fromSeq,
+            next_seq: latestSeq,
+            first_available_seq: session.firstAvailableSeq,
+            returned_chunks: collected.returnedChunks,
+            history_truncated: historyTruncated,
+            output_truncated: collected.truncated,
+            tty_mode: session.ttyMode,
+          },
+        };
+      }
+
+      case 'exec_write': {
+        const sessionId = asString(call.args.session_id, 'session_id');
+        const session = EXEC_SESSIONS.get(sessionId);
+        if (!session) {
+          return {
+            ok: false,
+            text: `No exec session found: ${sessionId}`,
+            structuredError: {
+              code: 'NOT_FOUND',
+              message: `Unknown exec session: ${sessionId}`,
+              retryable: false,
+            },
+          };
+        }
+        if (!session.running || !session.child?.stdin || session.child.stdin.destroyed) {
+          return {
+            ok: false,
+            text: `Exec session ${sessionId} is not accepting input (status: ${formatSessionStatus(session)}).`,
+            structuredError: {
+              code: 'EXEC_FAILED',
+              message: 'Session is not running',
+              retryable: false,
+            },
+          };
+        }
+
+        const input = asString(call.args.input, 'input');
+        const payload = call.args.append_newline === true ? `${input}\n` : input;
+        await new Promise((resolve, reject) => {
+          session.child.stdin.write(payload, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+
+        return {
+          ok: true,
+          text: `Wrote ${payload.length} bytes to exec session ${sessionId}.`,
+          meta: {
+            session_id: sessionId,
+            bytes: payload.length,
+            append_newline: call.args.append_newline === true,
+          },
+        };
+      }
+
+      case 'exec_stop': {
+        const sessionId = asString(call.args.session_id, 'session_id');
+        const session = EXEC_SESSIONS.get(sessionId);
+        if (!session) {
+          return {
+            ok: false,
+            text: `No exec session found: ${sessionId}`,
+            structuredError: {
+              code: 'NOT_FOUND',
+              message: `Unknown exec session: ${sessionId}`,
+              retryable: false,
+            },
+          };
+        }
+
+        const signalName = normalizeSignal(call.args.signal);
+        if (session.running) {
+          stopSessionProcess(session, signalName);
+          await waitForSessionExit(session, 2_500);
+          if (session.running) {
+            stopSessionProcess(session, 'SIGKILL');
+            await waitForSessionExit(session, 1_500);
+          }
+        }
+
+        removeExecSession(sessionId);
+        const status = formatSessionStatus(session);
+        return {
+          ok: true,
+          text: `Stopped exec session ${sessionId} (${status}).`,
+          meta: {
+            session_id: sessionId,
+            status,
+            running: session.running,
+            exit_code: session.exitCode,
+            signal: session.exitSignal,
+            timed_out: session.timedOut,
+          },
+        };
+      }
+
+      case 'exec_list_sessions': {
+        const sessions = [...EXEC_SESSIONS.values()]
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 200);
+
+        const rows = sessions.map((session) => {
+          const ageSec = Math.max(0, Math.round((Date.now() - session.createdAt) / 1000));
+          return `${session.id} [${formatSessionStatus(session)}] tty=${session.ttyMode} age=${ageSec}s cmd=${session.command}`;
+        });
+
+        const running = sessions.filter((session) => session.running).length;
+        return {
+          ok: true,
+          text: truncateText(rows.length > 0 ? rows.join('\n') : 'No exec sessions.'),
+          meta: {
+            count: sessions.length,
+            running,
+          },
+        };
       }
 
       case 'write_file': {
@@ -1265,7 +1813,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, write_file, edit_file, undo_edit, read_symbols, git_status, git_diff, git_commit, save_memory, lsp_diagnostics`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, git_status, git_diff, git_commit, save_memory, lsp_diagnostics`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,

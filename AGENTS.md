@@ -138,7 +138,7 @@ When the user selects a repo, the app fetches project instruction files via the 
 Local coding agent for the terminal. Same role-based agent architecture as the web app, operating directly on the filesystem instead of through a sandbox.
 
 ### Modes
-*   **Interactive** (`./push`) — REPL with streaming responses, tool execution, and Ctrl+C per-prompt cancellation. High-risk commands prompt for approval.
+*   **Interactive** (`./push`) — REPL with streaming responses, tool execution, and Ctrl+C per-prompt cancellation. High-risk commands prompt for approval, with one-shot, session-trust, and saved-prefix trust options.
 *   **Headless** (`./push run --task "..."`) — Single task, no interaction, exits when done. `--accept <cmd>` for post-task acceptance checks. `--json` for structured output. Exit 130 on SIGINT.
 
 ### Tools
@@ -153,6 +153,11 @@ Local coding agent for the terminal. Same role-based agent architecture as the w
 | `git_status` | read | Workspace git status (branch, dirty files) |
 | `git_diff` | read | Show git diff (file-scoped, staged) |
 | `exec` | mutate | Run a shell command |
+| `exec_start` | mutate | Start a long-running command session |
+| `exec_poll` | read | Read incremental output from a command session |
+| `exec_write` | mutate | Send stdin input to a running command session |
+| `exec_stop` | mutate | Stop a command session |
+| `exec_list_sessions` | read | List command sessions and status |
 | `write_file` | mutate | Write entire file (auto-backed up) |
 | `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
 | `git_commit` | mutate | Stage and commit files (excludes `.push/` internal state) |
@@ -208,7 +213,7 @@ Push/
 │   ├── hashline.mjs          # Hashline protocol (content-hash line refs, multi-line edits)
 │   ├── file-ledger.mjs       # File awareness (per-file read/write status)
 │   ├── pushd.mjs             # Daemon skeleton (Unix socket, NDJSON IPC)
-│   └── tests/                # node:test suite (104 tests)
+│   └── tests/                # node:test suite
 └── sandbox/
     ├── app.py             # Modal Python App — sandbox web endpoints
     └── requirements.txt

@@ -551,6 +551,30 @@ describe('TOOL_PROTOCOL', () => {
   it('includes web_search', () => {
     assert.ok(TOOL_PROTOCOL.includes('web_search'), 'TOOL_PROTOCOL should mention web_search');
   });
+
+  it('includes exec session tools', () => {
+    assert.ok(TOOL_PROTOCOL.includes('exec_start'), 'TOOL_PROTOCOL should mention exec_start');
+    assert.ok(TOOL_PROTOCOL.includes('exec_poll'), 'TOOL_PROTOCOL should mention exec_poll');
+    assert.ok(TOOL_PROTOCOL.includes('exec_write'), 'TOOL_PROTOCOL should mention exec_write');
+    assert.ok(TOOL_PROTOCOL.includes('exec_stop'), 'TOOL_PROTOCOL should mention exec_stop');
+    assert.ok(TOOL_PROTOCOL.includes('exec_list_sessions'), 'TOOL_PROTOCOL should mention exec_list_sessions');
+  });
+});
+
+describe('exec session tool classification', () => {
+  it('marks exec_poll as read-only', () => {
+    assert.equal(isReadOnlyToolCall({ tool: 'exec_poll' }), true);
+  });
+
+  it('marks exec_list_sessions as read-only', () => {
+    assert.equal(isReadOnlyToolCall({ tool: 'exec_list_sessions' }), true);
+  });
+
+  it('marks exec_start/write/stop as mutating', () => {
+    assert.equal(isReadOnlyToolCall({ tool: 'exec_start' }), false);
+    assert.equal(isReadOnlyToolCall({ tool: 'exec_write' }), false);
+    assert.equal(isReadOnlyToolCall({ tool: 'exec_stop' }), false);
+  });
 });
 
 // ─── undo_edit ────────────────────────────────────────────────────

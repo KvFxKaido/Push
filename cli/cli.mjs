@@ -7,7 +7,7 @@ import process from 'node:process';
 import { execFile } from 'node:child_process';
 
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.mjs';
-import { matchingRiskPatternIndex } from './tools.mjs';
+import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.mjs';
 import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.mjs';
 import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions } from './session-store.mjs';
 import { buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
@@ -314,7 +314,7 @@ async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonO
   }
 }
 
-function makeInteractiveApprovalFn(rl) {
+function makeInteractiveApprovalFn(rl, { config, safeExecPatterns }) {
   const trustedPatterns = new Set();
 
   return async (tool, detail) => {
@@ -325,14 +325,38 @@ function makeInteractiveApprovalFn(rl) {
       return true;
     }
 
+    const suggestedPrefix = suggestApprovalPrefix(detail);
     process.stdout.write(`\n${fmt.yellow('[!]')} ${fmt.warn('High-risk operation detected:')}\n    ${tool}: ${detail}\n`);
-    const answer = await rl.question('    Allow? (y/N/a=always) ');
+    if (suggestedPrefix) {
+      process.stdout.write(`    ${fmt.dim(`Suggested reusable prefix: "${suggestedPrefix}"`)}\n`);
+    }
+    const answer = await rl.question('    Allow? (y/N/a=always-session/p=save-prefix) ');
     const choice = answer.trim().toLowerCase();
 
     if (choice === 'a') {
       if (patIdx >= 0) {
         trustedPatterns.add(patIdx);
         process.stdout.write(`    ${fmt.dim('[trusted for session]')}\n`);
+      }
+      return true;
+    }
+
+    if (choice === 'p') {
+      if (!suggestedPrefix) {
+        process.stdout.write(`    ${fmt.dim('[no prefix suggestion available; approved once]')}\n`);
+        return true;
+      }
+      if (!safeExecPatterns.includes(suggestedPrefix)) {
+        safeExecPatterns.push(suggestedPrefix);
+        config.safeExecPatterns = [...new Set(safeExecPatterns)];
+        try {
+          await saveConfig(config);
+          process.stdout.write(`    ${fmt.dim(`[saved prefix] ${suggestedPrefix}`)}\n`);
+        } catch (err) {
+          process.stdout.write(`    ${fmt.warn(`[warn] failed to persist prefix: ${err.message || String(err)}`)}\n`);
+        }
+      } else {
+        process.stdout.write(`    ${fmt.dim('[prefix already trusted]')}\n`);
       }
       return true;
     }
@@ -452,7 +476,10 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds, { alread
   // Mutable context — allows mid-session provider/model switching
   const ctx = { providerConfig, apiKey };
   const config = await loadConfig();
-  const safeExecPatterns = Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [];
+  if (!Array.isArray(config.safeExecPatterns)) {
+    config.safeExecPatterns = [];
+  }
+  const safeExecPatterns = config.safeExecPatterns;
 
   // Lazy session creation: defer disk writes until first user message.
   let sessionPersisted = alreadyPersisted;
@@ -522,7 +549,7 @@ async function runInteractive(state, providerConfig, apiKey, maxRounds, { alread
     completer,
   });
 
-  const approvalFn = makeInteractiveApprovalFn(rl);
+  const approvalFn = makeInteractiveApprovalFn(rl, { config, safeExecPatterns });
   const askUserFn = makeAskUserFn(rl);
   const onEvent = makeCLIEventHandler();
   let runInFlight = false;
