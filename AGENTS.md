@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen (user picks, all roles) |
+| AI | Multi-backend: Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, Nvidia NIM (user picks, all roles) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -33,12 +33,12 @@ The active backend serves all three roles. The user picks a backend in Settings;
 | Role | Responsibility |
 |------|----------------|
 | **Orchestrator** | Conversational lead, interprets intent, delegates to Coder |
-| **Coder** | Autonomous code implementation in sandbox (unbounded rounds, 90s timeout per round) |
+| **Coder** | Autonomous code implementation in sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap) |
 | **Auditor** | Pre-commit risk review — binary SAFE/UNSAFE verdict (fail-safe) |
 
 ### AI Backends
 
-Seven providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, `/api/minimax/chat`, and `/api/zen/chat`.
+Eight providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, `/api/minimax/chat`, `/api/zen/chat`, and `/api/nvidia/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
@@ -49,12 +49,13 @@ Seven providers, all using OpenAI-compatible SSE streaming. Any single API key i
 | **Google Gemini** | gemini-3.1-pro-preview |
 | **MiniMax** | MiniMax-M2.5 |
 | **OpenCode Zen** | big-pickle |
+| **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
 
 **OpenRouter** provides access to 50+ models through a single API. Push includes 12 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, 2 Codex variants (5.3/5.2), Step 3.5 Flash (free), Qwen3 Coder (free), DeepSeek R1 0528 (free), Gemini 3.1 Pro Preview/3 Flash, Grok 4.1, and Kimi K2.5.
 
 ### Tool Protocol
 
-Tools are prompt-engineered — the system prompt defines available tools and JSON format. The agent emits JSON tool blocks, the client executes them, injects results as synthetic messages, and re-calls the LLM. Both the Orchestrator and Coder tool loops are unbounded. The Coder has a 90s per-round timeout and 60KB context cap as safety nets.
+Tools are prompt-engineered — the system prompt defines available tools and JSON format. The agent emits JSON tool blocks, the client executes them, injects results as synthetic messages, and re-calls the LLM. The Orchestrator tool loop is unbounded. The Coder loop is bounded by safety nets: up to 30 rounds, 60s inactivity timeout per round, and ~120k-char context cap.
 
 Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message, splits them into parallel read-only calls and an optional trailing mutation — reads execute via `Promise.all()`, then the mutation runs. Tool results include structured error fields (`error_type`, `retryable`) via `classifyError()`, a `[meta]` envelope with round number, context size, and sandbox dirty state, and malformed-call feedback includes a `[TOOL_CALL_PARSE_ERROR]` header with structured diagnosis.
 
@@ -128,7 +129,7 @@ When the user selects a repo, the app fetches project instruction files via the 
 6. **Sandbox** → Clone repo to container, run commands, edit files
 7. **Coder** → Autonomous coding task execution (uses active backend)
 8. **Branch** → Create branches, switch context (tears down sandbox), commit to active branch
-9. **Auditor** → Every commit gets safety verdict (uses active backend)
+9. **Auditor** → Standard commits (`sandbox_prepare_commit` path) get a safety verdict (uses active backend)
 10. **Merge** → PR creation + Auditor review + GitHub merge (merge commit strategy)
 11. **Cards** → Structured results render as inline cards
 
@@ -170,7 +171,7 @@ Read-only tools run in parallel per turn. Only one mutating tool allowed per tur
 Workspace jail, high-risk command detection, tool loop detection, max rounds cap, output truncation. `.push/` internal state excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Seven providers (Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen), all OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Eight providers (Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, Nvidia NIM), all OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
 
 ## Directory Structure
 
@@ -271,8 +272,9 @@ Push/
 | `hooks/useGoogleConfig.ts` | Google backend configuration and model selection |
 | `hooks/useMinimaxConfig.ts` | MiniMax backend configuration and model selection |
 | `hooks/useZenConfig.ts` | OpenCode Zen backend configuration and model selection |
+| `hooks/useNvidiaConfig.ts` | Nvidia NIM backend configuration and model selection |
 | `hooks/useApiKeyConfig.ts` | Factory for provider API key hooks (shared localStorage getter + env var fallback + React hook) |
-| `hooks/useModelCatalog.ts` | 7-provider model catalog (model lists, refresh, key input state, active backend) |
+| `hooks/useModelCatalog.ts` | 8-provider model catalog (model lists, refresh, key input state, active backend) |
 | `hooks/useSnapshotManager.ts` | Workspace snapshot auto-save/restore, idle detection, 4-hour hard cap |
 | `hooks/useBranchManager.ts` | Branch loading, display, delete with confirmation, menu state |
 | `hooks/useProjectInstructions.ts` | Two-phase AGENTS.md loading, workspace context, template/AI creation |
@@ -309,7 +311,7 @@ Push/
 ## Security Notes
 
 - API keys never exposed to client in production (Worker proxies all AI calls)
-- Auditor gate cannot be bypassed — every commit requires SAFE verdict
+- Auditor gate is fail-safe for standard commits (`sandbox_prepare_commit` path); draft checkpoints via `sandbox_save_draft` are explicitly unaudited
 - Auditor defaults to UNSAFE on any error (fail-safe design)
 - Repo context is hard-locked — Orchestrator only sees selected repo
 - Active branch is the single context for commits, pushes, diffs, and chat — switching branches tears down the sandbox

@@ -11,7 +11,7 @@ Self-hosted only. No managed service.
 Push is a personal chat interface backed by role-based AI agents that read your code, write patches, run checks in a sandbox, and commit/push changes from your phone or terminal.
 
 Try it free with provider free tiers: Google Gemini, OpenCode Zen, Ollama Cloud, or Z.AI.
-Bring your own provider: Mistral, Ollama Cloud, OpenRouter, Z.AI, Google, MiniMax, or OpenCode Zen.
+Bring your own provider: Mistral, Ollama Cloud, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, or Nvidia NIM.
 Switch providers on new chats at any time.
 
 ## What It Does
@@ -51,7 +51,7 @@ The app is free. AI usage depends on the provider and plan you choose.
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Mistral Vibe, Ollama Cloud, OpenRouter, Z.AI, Google, MiniMax, or OpenCode Zen — flexible provider choice |
+| AI | Mistral Vibe, Ollama Cloud, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, or Nvidia NIM — flexible provider choice |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -65,7 +65,7 @@ Push prioritizes harness reliability over raw model capability. Core shipped cap
 - **Range-aware file reads** — `sandbox_read_file` supports `start_line`/`end_line` with line-numbered output for precise context
 - **Hashline edits** — `sandbox_edit_file` uses content hashes (default 7-char, up to 12-char for disambiguation) as line references, eliminating line-number drift
 - **Garbled tool-call recovery** — three-phase diagnosis, JSON repair, and truncation detection so models self-correct in one retry
-- **Pre-commit audit gate** — Auditor agent enforces SAFE/UNSAFE verdict before any commit lands
+- **Pre-commit audit gate** — Auditor agent enforces SAFE/UNSAFE verdict before standard commits (`sandbox_prepare_commit` path); draft checkpoints via `sandbox_save_draft` are explicitly unaudited
 - **Execution provenance** — tool-result metadata tracks every sandbox operation for traceability
 - **Error taxonomy** — structured error types (`FILE_NOT_FOUND`, `EXEC_TIMEOUT`, `STALE_FILE`, etc.) with `retryable` flag so the agent makes intelligent retry decisions
 - **Multi-tool per turn** — parallel read-only tool calls in a single round, with optional trailing mutation
@@ -105,6 +105,7 @@ VITE_ZAI_API_KEY=...                  # Z.AI (GLM)
 VITE_GOOGLE_API_KEY=...               # Google Gemini (OpenAI-compatible endpoint)
 VITE_MINIMAX_API_KEY=...              # MiniMax (OpenAI-compatible endpoint)
 VITE_ZEN_API_KEY=...                  # OpenCode Zen (OpenAI-compatible endpoint)
+VITE_NVIDIA_API_KEY=...               # Nvidia NIM (OpenAI-compatible endpoint)
 VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)
 VITE_GITHUB_TOKEN=...                 # Optional — PAT for GitHub API access
 VITE_GITHUB_CLIENT_ID=...             # Optional — GitHub App OAuth client ID
@@ -168,7 +169,7 @@ Use it for quick experiments, learning the interface, or when you're on a device
 
 ## Deploying Your Instance
 
-For a self-hosted deployment, run the app on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, `/api/minimax/chat`, and `/api/zen/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+For a self-hosted deployment, run the app on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, `/api/minimax/chat`, `/api/zen/chat`, and `/api/nvidia/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 
 ```bash
@@ -181,10 +182,10 @@ npx wrangler deploy     # from repo root
 Role-based agent system. **Models are replaceable; roles are not.**
 
 - **Orchestrator** — conversational lead, tool orchestration, delegates to Coder
-- **Coder** — autonomous code implementation in sandbox (runs until done, with 90s per-round timeout)
+- **Coder** — autonomous code implementation in sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap)
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Seven AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter**, **Z.AI**, **Google Gemini**, **MiniMax**, and **OpenCode Zen**. All use OpenAI-compatible streaming. The active backend serves all three roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+Eight AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter**, **Z.AI**, **Google Gemini**, **MiniMax**, **OpenCode Zen**, and **Nvidia NIM**. All use OpenAI-compatible streaming. The active backend serves all three roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
 
 **OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 12 models covering all major providers.
 
@@ -209,7 +210,7 @@ Push/
 │   ├── app.py             # Modal Python App — sandbox web endpoints
 │   └── requirements.txt
 ├── app/
-│   ├── worker.ts          # Cloudflare Worker — provider proxies (Ollama/Mistral/OpenRouter/Z.AI/Google/MiniMax/Zen) + sandbox proxy
+│   ├── worker.ts          # Cloudflare Worker — provider proxies (Ollama/Mistral/OpenRouter/Z.AI/Google/MiniMax/Zen/Nvidia) + sandbox proxy
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/           # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
