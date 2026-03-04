@@ -601,10 +601,9 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60_000);
-    let upstream: Response;
 
     try {
-      upstream = await fetch(modalUrl, {
+      const upstream = await fetch(modalUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -612,58 +611,58 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
         body: forwardBodyText,
         signal: controller.signal,
       });
+
+      if (!upstream.ok) {
+        const errBody = await upstream.text().catch(() => '');
+        wlog('error', 'modal_error', { route, status: upstream.status, body: errBody.slice(0, 500) });
+
+        // Provide actionable error messages based on status code
+        let code = 'MODAL_ERROR';
+        let details = errBody.slice(0, 200);
+        const lowerBody = errBody.toLowerCase();
+
+        if (upstream.status === 404) {
+          code = 'MODAL_NOT_FOUND';
+          details = `Modal endpoint not found. The app may not be deployed. Run: cd sandbox && modal deploy app.py`;
+        } else if (upstream.status === 401 || upstream.status === 403) {
+          code = 'MODAL_AUTH_FAILED';
+          details = 'Modal authentication failed. Check that your Modal tokens are valid and the app is deployed under the correct account.';
+        } else if (upstream.status === 500) {
+          // Parse 500 error bodies for known patterns to give more specific codes
+          if (lowerBody.includes('not found') || lowerBody.includes('does not exist') || lowerBody.includes('no such') || lowerBody.includes('expired')) {
+            code = 'MODAL_NOT_FOUND';
+            details = 'Sandbox not found or expired. The container may have been terminated.';
+          } else if (lowerBody.includes('terminated') || lowerBody.includes('closed') || lowerBody.includes('no longer running')) {
+            code = 'MODAL_NOT_FOUND';
+            details = 'Sandbox has been terminated. Start a new sandbox session.';
+          } else if (lowerBody.includes('timeout') || lowerBody.includes('timed out')) {
+            code = 'MODAL_TIMEOUT';
+            details = 'Modal operation timed out internally.';
+          } else if (lowerBody.includes('unauthorized') || lowerBody.includes('forbidden')) {
+            code = 'MODAL_AUTH_FAILED';
+            details = 'Sandbox access was denied. The session token may be invalid.';
+          } else {
+            details = errBody.slice(0, 200) || 'Internal Server Error';
+          }
+        } else if (upstream.status === 502 || upstream.status === 503) {
+          code = 'MODAL_UNAVAILABLE';
+          details = 'Modal is temporarily unavailable. The container may be cold-starting. Try again in a few seconds.';
+        } else if (upstream.status === 504) {
+          code = 'MODAL_TIMEOUT';
+          details = 'Modal request timed out. The operation took too long to complete.';
+        }
+
+        return Response.json(
+          { error: `Sandbox error (${upstream.status})`, code, details },
+          { status: upstream.status },
+        );
+      }
+
+      const data: unknown = await upstream.json();
+      return Response.json(data);
     } finally {
       clearTimeout(timeoutId);
     }
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      wlog('error', 'modal_error', { route, status: upstream.status, body: errBody.slice(0, 500) });
-
-      // Provide actionable error messages based on status code
-      let code = 'MODAL_ERROR';
-      let details = errBody.slice(0, 200);
-      const lowerBody = errBody.toLowerCase();
-
-      if (upstream.status === 404) {
-        code = 'MODAL_NOT_FOUND';
-        details = `Modal endpoint not found. The app may not be deployed. Run: cd sandbox && modal deploy app.py`;
-      } else if (upstream.status === 401 || upstream.status === 403) {
-        code = 'MODAL_AUTH_FAILED';
-        details = 'Modal authentication failed. Check that your Modal tokens are valid and the app is deployed under the correct account.';
-      } else if (upstream.status === 500) {
-        // Parse 500 error bodies for known patterns to give more specific codes
-        if (lowerBody.includes('not found') || lowerBody.includes('does not exist') || lowerBody.includes('no such') || lowerBody.includes('expired')) {
-          code = 'MODAL_NOT_FOUND';
-          details = 'Sandbox not found or expired. The container may have been terminated.';
-        } else if (lowerBody.includes('terminated') || lowerBody.includes('closed') || lowerBody.includes('no longer running')) {
-          code = 'MODAL_NOT_FOUND';
-          details = 'Sandbox has been terminated. Start a new sandbox session.';
-        } else if (lowerBody.includes('timeout') || lowerBody.includes('timed out')) {
-          code = 'MODAL_TIMEOUT';
-          details = 'Modal operation timed out internally.';
-        } else if (lowerBody.includes('unauthorized') || lowerBody.includes('forbidden')) {
-          code = 'MODAL_AUTH_FAILED';
-          details = 'Sandbox access was denied. The session token may be invalid.';
-        } else {
-          details = errBody.slice(0, 200) || 'Internal Server Error';
-        }
-      } else if (upstream.status === 502 || upstream.status === 503) {
-        code = 'MODAL_UNAVAILABLE';
-        details = 'Modal is temporarily unavailable. The container may be cold-starting. Try again in a few seconds.';
-      } else if (upstream.status === 504) {
-        code = 'MODAL_TIMEOUT';
-        details = 'Modal request timed out. The operation took too long to complete.';
-      }
-
-      return Response.json(
-        { error: `Sandbox error (${upstream.status})`, code, details },
-        { status: upstream.status },
-      );
-    }
-
-    const data: unknown = await upstream.json();
-    return Response.json(data);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isTimeout = err instanceof Error && err.name === 'AbortError';

@@ -1297,7 +1297,8 @@ export async function executeSandboxToolCall(
             outcome: 'error',
             errorCode: errCode,
           });
-          throw writeErr;
+          const writeError = classifyError(errMsg, call.args.path);
+          return { text: formatStructuredError(writeError, formatSandboxError(errMsg, call.args.path)), structuredError: writeError };
         }
       }
 
