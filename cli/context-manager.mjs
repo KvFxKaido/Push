@@ -103,7 +103,7 @@ function summarizeToolResult(msg) {
     if (statLines.length >= 2) break;
     const trimmed = line.trim();
     if (trimmed && trimmed !== '[/TOOL_RESULT]') {
-      statLines.push(trimmed);
+      statLines.push(trimmed.length > 180 ? trimmed.slice(0, 180) + '...' : trimmed);
     }
   }
 

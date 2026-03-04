@@ -243,7 +243,7 @@ function summarizeToolResult(msg: ChatMessage): ChatMessage {
     if (statLines.length >= 2) break;
     const trimmed = line.trim();
     if (trimmed && !trimmed.startsWith('```')) {
-      statLines.push(trimmed);
+      statLines.push(trimmed.length > 180 ? trimmed.slice(0, 180) + '...' : trimmed);
     }
   }
 
