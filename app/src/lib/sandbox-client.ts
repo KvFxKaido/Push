@@ -371,6 +371,8 @@ export interface WriteResult {
   new_version?: string | null;
 }
 
+const WRITE_TIMEOUT_MS = 60_000; // 60s for write operations (large files can be slow)
+
 export async function writeToSandbox(
   sandboxId: string,
   path: string,
@@ -383,7 +385,7 @@ export async function writeToSandbox(
     path,
     content,
     expected_version: expectedVersion,
-  });
+  }, WRITE_TIMEOUT_MS);
 }
 
 // --- Batch write ---
