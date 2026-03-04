@@ -86,11 +86,11 @@ app/src/
   components/cards/       # Rich inline cards (PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, SandboxDownloadCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, EditorPanel, FileCard, FileListCard, BrowserExtractCard, BrowserScreenshotCard, BranchListCard, CIStatusCard, CommitListCard, CommitFilesCard, PRListCard, TypeCheckCard, WorkflowRunsCard, WorkflowLogsCard, SandboxStateCard, CardRenderer)
   components/filebrowser/ # File browser UI (FileActionsSheet, CommitPushSheet, FileEditor, UploadButton)
   components/ui/          # shadcn/ui component library
-  hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useOllamaConfig, useMistralConfig, useOpenRouterConfig, useZaiConfig, useGoogleConfig, useMinimaxConfig, useZenConfig, useTavilyConfig, useUsageTracking, use-mobile)
+  hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useOllamaConfig, useMistralConfig, useOpenRouterConfig, useZaiConfig, useGoogleConfig, useMinimaxConfig, useZenConfig, useTavilyConfig, useModelCatalog, useSnapshotManager, useBranchManager, useProjectInstructions, useUsageTracking, use-mobile)
   lib/                    # Orchestrator, tool protocol, sandbox client, agent modules, workspace context, web search, model catalog, prompts, feature flags, snapshot manager
-  sections/               # Screen components (OnboardingScreen, RepoPicker, FileBrowser, HomeScreen)
+  sections/               # Screen components (OnboardingScreen, RepoPicker, FileBrowser, HomeScreen, ChatScreen)
   types/                  # TypeScript type definitions
-  App.tsx                 # Root component, screen state machine
+  App.tsx                 # Root component, screen state machine, wires extracted hooks
 app/worker.ts        # Cloudflare Worker — streaming proxy to providers (Ollama/Mistral/OpenRouter/Z.AI/Google/MiniMax/Zen) + sandbox proxy to Modal
 cli/                 # Push CLI — local coding agent
   cli.mjs            # Entrypoint (arg parsing, interactive/headless modes, Ctrl+C abort)
@@ -167,7 +167,12 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `hooks/useApiKeyConfig.ts` — Factory for provider API key hooks (shared skeleton: localStorage getter + env var fallback + React hook)
 - `hooks/useExpandable.ts` — Generic expandable/collapsible UI state hook
 - `hooks/useUsageTracking.ts` — Usage analytics tracking
+- `hooks/useModelCatalog.ts` — 7-provider model catalog management (model lists, refresh, auto-fetch on key availability, key input state for Settings UI, active backend)
+- `hooks/useSnapshotManager.ts` — Workspace snapshot auto-save/restore, idle detection, 4-hour hard cap, heartbeat tracking
+- `hooks/useBranchManager.ts` — Branch loading, display (with current branch injection), delete with confirmation, menu state
+- `hooks/useProjectInstructions.ts` — Two-phase AGENTS.md loading (GitHub API → sandbox filesystem upgrade), workspace context building, template/AI creation
 - `hooks/use-mobile.ts` — Mobile viewport detection
+- `sections/ChatScreen.tsx` — Full chat screen UI (header, branch selector, sandbox controls, settings sheet, workspace hub, chat input)
 - `types/index.ts` — All shared TypeScript types (includes card data types for sandbox, diff preview, audit verdict; agent experience types: `ToolErrorType`, `StructuredToolError`, `ToolResultMeta`, `AcceptanceCriterion`, `CriterionResult`, `CoderWorkingMemory`)
 
 ## Environment

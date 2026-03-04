@@ -190,15 +190,15 @@ Push/
 ├── app/
 │   ├── worker.ts          # Cloudflare Worker — AI proxy + sandbox proxy
 │   ├── src/
-│   │   ├── App.tsx        # Root component, screen state machine
+│   │   ├── App.tsx        # Root component, screen state machine, wires extracted hooks
 │   │   ├── components/
 │   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
 │   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
 │   │   │   ├── filebrowser/  # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/        # shadcn/ui component library
-│   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useTavilyConfig, useUsageTracking, etc.)
+│   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useModelCatalog, useSnapshotManager, useBranchManager, useProjectInstructions, useTavilyConfig, useUsageTracking, etc.)
 │   │   ├── lib/           # Core logic, agent modules, web search, model catalog, prompts, feature flags, snapshot manager
-│   │   ├── sections/      # OnboardingScreen, RepoPicker, FileBrowser, HomeScreen
+│   │   ├── sections/      # OnboardingScreen, RepoPicker, FileBrowser, HomeScreen, ChatScreen
 │   │   ├── types/index.ts # All shared types
 │   │   └── main.tsx       # App entry point
 │   ├── package.json
@@ -281,9 +281,19 @@ Push/
 | `hooks/useMinimaxConfig.ts` | MiniMax backend configuration and model selection |
 | `hooks/useZenConfig.ts` | OpenCode Zen backend configuration and model selection |
 | `hooks/useApiKeyConfig.ts` | Factory for provider API key hooks (shared localStorage getter + env var fallback + React hook) |
+| `hooks/useModelCatalog.ts` | 7-provider model catalog (model lists, refresh, key input state, active backend) |
+| `hooks/useSnapshotManager.ts` | Workspace snapshot auto-save/restore, idle detection, 4-hour hard cap |
+| `hooks/useBranchManager.ts` | Branch loading, display, delete with confirmation, menu state |
+| `hooks/useProjectInstructions.ts` | Two-phase AGENTS.md loading, workspace context, template/AI creation |
 | `hooks/useExpandable.ts` | Generic expandable/collapsible UI state |
 | `hooks/useUsageTracking.ts` | Usage analytics tracking |
 | `hooks/use-mobile.ts` | Mobile viewport detection |
+
+### Sections (sections/)
+
+| File | Purpose |
+|------|---------|
+| `sections/ChatScreen.tsx` | Full chat screen UI (header, branch selector, sandbox controls, settings, workspace hub, chat input) |
 
 ## Coding Conventions
 
