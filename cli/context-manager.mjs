@@ -96,11 +96,11 @@ function isFirstUserMessage(msg) {
 function summarizeToolResult(msg) {
   const lines = toContentString(msg.content).split('\n');
 
-  // Keep [TOOL_RESULT] header + first 4 non-empty content lines
+  // Keep [TOOL_RESULT] header + first 2 non-empty content lines
   const headerLine = lines.find(l => l.includes('[TOOL_RESULT]')) || lines[0] || '';
   const statLines = [];
   for (const line of lines.slice(1)) {
-    if (statLines.length >= 4) break;
+    if (statLines.length >= 2) break;
     const trimmed = line.trim();
     if (trimmed && trimmed !== '[/TOOL_RESULT]') {
       statLines.push(trimmed);
@@ -113,7 +113,7 @@ function summarizeToolResult(msg) {
 
 function summarizeVerboseMessage(msg) {
   const content = toContentString(msg.content);
-  if (content.length < 1200) return msg;
+  if (content.length < 800) return msg;
 
   const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
   const preview = lines.slice(0, 4).map(l => (l.length > 180 ? l.slice(0, 180) + '...' : l));

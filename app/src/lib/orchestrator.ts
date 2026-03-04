@@ -237,10 +237,10 @@ function summarizeToolResult(msg: ChatMessage): ChatMessage {
   // Extract tool header line like "[Tool Result — sandbox_exec]"
   const headerLine = lines.find(l => l.startsWith('[Tool Result')) || lines[0] || '';
 
-  // Keep first 4 non-empty lines after header (usually contain key stats)
+  // Keep first 2 non-empty lines after header (usually contain key stats)
   const statLines: string[] = [];
   for (const line of lines.slice(1)) {
-    if (statLines.length >= 4) break;
+    if (statLines.length >= 2) break;
     const trimmed = line.trim();
     if (trimmed && !trimmed.startsWith('```')) {
       statLines.push(trimmed);
@@ -252,7 +252,7 @@ function summarizeToolResult(msg: ChatMessage): ChatMessage {
 }
 
 function summarizeVerboseMessage(msg: ChatMessage): ChatMessage {
-  if (msg.content.length < 1200) return msg;
+  if (msg.content.length < 800) return msg;
 
   const lines = msg.content.split('\n').map((l) => l.trim()).filter(Boolean);
   const preview = lines.slice(0, 4).map((l) => (l.length > 180 ? l.slice(0, 180) + '...' : l));
@@ -304,8 +304,8 @@ function classifySummarizationCause(messages: ChatMessage[], recentBoundary: num
 
   for (let i = 0; i < recentBoundary && i < messages.length; i++) {
     const msg = messages[i];
-    if (msg.isToolResult && msg.content.length > 1200) toolResults++;
-    else if (!msg.isToolResult && msg.content.length > 1200) longMessages++;
+    if (msg.isToolResult && msg.content.length > 800) toolResults++;
+    else if (!msg.isToolResult && msg.content.length > 800) longMessages++;
   }
 
   if (toolResults > 0 && longMessages === 0) return 'tool_output';
