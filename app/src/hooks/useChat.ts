@@ -476,7 +476,7 @@ function buildMetaLine(
 
 function shouldPrewarmSandbox(text: string, attachments?: AttachmentData[]): boolean {
   const normalized = text.toLowerCase();
-  const intentRegex = /\b(edit|modify|change|refactor|fix|implement|write|create|add|remove|rename|run|test|build|lint|compile|typecheck|type-check|commit|push|patch|bug|failing|error|debug|screenshot|browser|webpage|website|navigate|url)\b/;
+  const intentRegex = /\b(edit|modify|change|refactor|fix|implement|write|create|add|remove|rename|run|test|build|lint|compile|typecheck|type-check|commit|push|patch|bug|failing|error|debug)\b/;
   if (intentRegex.test(normalized)) return true;
 
   const fileHintRegex = /\b([a-z0-9_\-/]+\.(ts|tsx|js|jsx|py|rs|go|java|rb|css|html|json|md|yml|yaml|toml|sh))\b/i;
