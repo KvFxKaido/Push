@@ -82,7 +82,7 @@ export async function runAuditor(
     AUDITOR_TIMEOUT_MS,
     `Auditor timed out after ${AUDITOR_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
     (onToken, onDone, onError) => {
-      streamFn(
+      return streamFn(
         messages,
         onToken,
         onDone,
