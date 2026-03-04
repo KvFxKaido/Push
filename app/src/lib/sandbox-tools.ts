@@ -511,14 +511,17 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
     };
   }
   if (tool === 'sandbox_read_symbols' && typeof args.path === 'string') {
-    return { tool: 'sandbox_read_symbols', args: { path: args.path } };
+    return { tool: 'sandbox_read_symbols', args: { path: normalizeSandboxPath(args.path) } };
   }
   if (tool === 'sandbox_apply_patchset' && Array.isArray(args.edits)) {
     return {
       tool: 'sandbox_apply_patchset',
       args: {
         dryRun: typeof args.dryRun === 'boolean' ? args.dryRun : (args.dry_run === true ? true : undefined),
-        edits: args.edits as Array<{ path: string; ops: HashlineOp[] }>,
+        edits: (args.edits as Array<{ path: string; ops: HashlineOp[] }>).map(edit => ({
+          ...edit,
+          path: typeof edit.path === 'string' ? normalizeSandboxPath(edit.path) : edit.path,
+        })),
       },
     };
   }

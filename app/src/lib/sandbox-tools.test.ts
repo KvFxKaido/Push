@@ -1137,6 +1137,43 @@ describe('sandbox path normalization', () => {
     });
   });
 
+  it('normalizes relative paths in sandbox_apply_patchset edits', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_apply_patchset',
+      args: {
+        edits: [
+          { path: 'app/worker.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'new line' }] },
+          { path: 'app/src/lib/providers.ts', ops: [{ op: 'delete_line', ref: 'def5678' }] },
+        ],
+      },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.args.edits[0].path).toBe('/workspace/app/worker.ts');
+    expect(result!.args.edits[1].path).toBe('/workspace/app/src/lib/providers.ts');
+  });
+
+  it('preserves absolute paths in sandbox_apply_patchset edits', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_apply_patchset',
+      args: {
+        edits: [
+          { path: '/workspace/app/worker.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'new line' }] },
+        ],
+      },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.args.edits[0].path).toBe('/workspace/app/worker.ts');
+  });
+
+  it('normalizes relative path in sandbox_read_symbols', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_read_symbols',
+      args: { path: 'app/src/lib/utils.ts' },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.args.path).toBe('/workspace/app/src/lib/utils.ts');
+  });
+
   it('normalizes workspace-prefixed exec workdir', async () => {
     vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
 

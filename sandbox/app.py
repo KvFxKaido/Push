@@ -117,6 +117,10 @@ if not path_str:
     print(json.dumps({"ok": False, "error": "Missing path"}))
     sys.exit(0)
 
+# Normalize relative paths to /workspace
+if not os.path.isabs(path_str):
+    path_str = os.path.join("/workspace", path_str)
+
 p = pathlib.Path(path_str)
 
 # Step 1: Version check (if expected_version provided)
@@ -186,6 +190,10 @@ for f in files:
     if not path_str:
         results.append({"ok": False, "path": path_str, "error": "Missing path"})
         continue
+
+    # Normalize relative paths to /workspace
+    if not os.path.isabs(path_str):
+        path_str = os.path.join("/workspace", path_str)
 
     p = pathlib.Path(path_str)
 
@@ -531,6 +539,10 @@ def file_ops(data: dict):
     owner_token = data.get("owner_token", "")
     action = data.get("action", "")
     path = data.get("path", "")
+
+    # Normalize relative paths to /workspace
+    if path and not os.path.isabs(path):
+        path = os.path.join("/workspace", path)
 
     if not sandbox_id:
         return {"error": "Missing sandbox_id"}
