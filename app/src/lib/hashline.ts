@@ -38,8 +38,9 @@ async function batchHashLines(lines: string[]): Promise<string[]> {
  *
  * Uses a hash cache to avoid recomputing all line hashes for every edit.
  * Hashes are computed once upfront (O(n)) and surgically updated after
- * each edit (O(1) per replace/delete, O(1) per insert). Total cost is
- * O(n + m) instead of O(n × m) where n = lines, m = edits.
+ * each edit. The per-edit linear scan to find matching hashes is O(n),
+ * so total cost is O(n + n·m) — but this eliminates the dominant cost
+ * of O(n·m) SHA-256 recomputations from the original implementation.
  */
 export async function applyHashlineEdits(originalContent: string, edits: HashlineOp[]): Promise<HashlineEditResult> {
   const resultLines = originalContent.split('\n');

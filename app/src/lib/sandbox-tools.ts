@@ -614,12 +614,13 @@ async function readFullFileByChunks(
     return { content: firstRange.content, version, truncated: false };
   }
 
-  // Phase 2: Use `wc -l` to get total line count so we can issue parallel chunk requests.
+  // Phase 2: Get total line count so we can issue parallel chunk requests.
+  // Use `sed -n '$='` instead of `wc -l` — wc undercounts files missing a trailing newline.
   let totalLines = 0;
   try {
-    const wcResult = await execInSandbox(sandboxId, `wc -l < ${shellEscape(path)}`);
-    if (wcResult.exitCode === 0) {
-      totalLines = parseInt(wcResult.stdout.trim(), 10);
+    const lineCountResult = await execInSandbox(sandboxId, `sed -n '$=' ${shellEscape(path)}`);
+    if (lineCountResult.exitCode === 0 && lineCountResult.stdout.trim()) {
+      totalLines = parseInt(lineCountResult.stdout.trim(), 10);
     }
   } catch { /* fall through to sequential */ }
 
@@ -635,12 +636,21 @@ async function readFullFileByChunks(
       if (remainingChunks.length >= maxChunks - 1) break;
     }
 
-    // Fetch all remaining chunks in parallel
-    const chunkResults = await Promise.all(
-      remainingChunks.map(({ start, end }) =>
-        readFromSandbox(sandboxId, path, start, end) as Promise<FileReadResult & { error?: string }>
-      )
-    );
+    // Fetch remaining chunks in parallel with concurrency limit to avoid
+    // overwhelming the sandbox with too many simultaneous requests.
+    const MAX_CONCURRENT_CHUNKS = 8;
+    const chunkResults: Array<FileReadResult & { error?: string }> = [];
+    for (let i = 0; i < remainingChunks.length; i += MAX_CONCURRENT_CHUNKS) {
+      const batch = remainingChunks.slice(i, i + MAX_CONCURRENT_CHUNKS);
+      const batchResults = await Promise.all(
+        batch.map(({ start, end }) =>
+          readFromSandbox(sandboxId, path, start, end) as Promise<FileReadResult & { error?: string }>
+        )
+      );
+      chunkResults.push(...batchResults);
+      // Stop early if any chunk in this batch was truncated or empty
+      if (batchResults.some(r => r.truncated || !r.content)) break;
+    }
 
     for (const range of chunkResults) {
       if (range.error) throw new Error(range.error);
@@ -679,7 +689,9 @@ async function readFullFileByChunks(
       version = range.version;
     }
     if (!range.content) {
-      lastHadTrailingNewline = false;
+      // Preserve lastHadTrailingNewline from the previous chunk — an empty
+      // response means EOF, so the trailing-newline state of the last real
+      // chunk is what matters.
       break;
     }
 
