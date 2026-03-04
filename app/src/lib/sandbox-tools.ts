@@ -766,9 +766,8 @@ export async function executeSandboxToolCall(
         // `git checkout`, `sed -i`, etc. can modify files without going through
         // the write path, leaving the cache stale and causing spurious STALE_FILE
         // rejections on subsequent writes.
-        if (result.exitCode !== -1) {
-          clearFileVersionCache(sandboxId);
-        }
+        // (exitCode === -1 already returned early above, so no guard needed here.)
+        clearFileVersionCache(sandboxId);
 
         const cardData: SandboxCardData = {
           command: call.args.command,
@@ -1479,6 +1478,8 @@ export async function executeSandboxToolCall(
 
         const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`);
         const durationMs = Date.now() - start;
+        // Tests can generate artifacts, coverage files, snapshots, etc.
+        clearFileVersionCache(sandboxId);
 
         // Parse test results from output
         const output = result.stdout + '\n' + result.stderr;
@@ -1571,6 +1572,8 @@ export async function executeSandboxToolCall(
             if (installResult.exitCode !== 0) {
               return { text: `[Tool Result — sandbox_check_types]\nFailed to install dependencies:\n${installResult.stderr}` };
             }
+            // npm install modifies node_modules, package-lock.json, etc.
+            clearFileVersionCache(sandboxId);
           }
 
           // Check if tsc is available and run type check
@@ -1778,6 +1781,8 @@ export async function executeSandboxToolCall(
         if (commitResult.exitCode !== 0) {
           return { text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.stderr}` };
         }
+        // git add + commit changes file hashes tracked by git
+        clearFileVersionCache(sandboxId);
 
         // Step 6: Push to remote
         const pushResult = await execInSandbox(
