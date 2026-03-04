@@ -7,6 +7,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
+import { ProviderIcon } from '@/components/ui/provider-icon';
 import { Button } from '@/components/ui/button';
 import type { AIProviderType, SandboxStateCardData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
@@ -1010,9 +1011,15 @@ export function SettingsSheet({
                   }`}
                 />
                 <span className="text-xs text-push-fg-secondary">
-                  {ai.activeBackend
-                    ? `${PROVIDER_LABELS[ai.activeBackend]} default`
-                    : `${PROVIDER_LABELS[ai.activeProviderLabel] || 'Offline'} (auto)`}
+                  <span className="inline-flex items-center gap-1.5">
+                    <ProviderIcon
+                      provider={ai.activeBackend ?? ai.activeProviderLabel}
+                      size={12}
+                    />
+                    {ai.activeBackend
+                      ? `${PROVIDER_LABELS[ai.activeBackend]} default`
+                      : `${PROVIDER_LABELS[ai.activeProviderLabel] || 'Offline'} (auto)`}
+                  </span>
                 </span>
               </div>
             </div>
@@ -1020,8 +1027,10 @@ export function SettingsSheet({
             {/* Provider lock warning */}
             {ai.isProviderLocked && ai.lockedProvider && (
               <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                <p className="text-xs text-amber-400">
-                  🔒 Current chat is locked to {PROVIDER_LABELS[ai.lockedProvider]}
+                <p className="inline-flex items-center gap-1.5 text-xs text-amber-400">
+                  <span aria-hidden="true">🔒</span>
+                  <ProviderIcon provider={ai.lockedProvider} size={12} />
+                  Current chat is locked to {PROVIDER_LABELS[ai.lockedProvider]}
                 </p>
                 <p className="text-xs text-push-fg-muted mt-0.5">
                   Defaults below apply to new chats.
@@ -1046,7 +1055,7 @@ export function SettingsSheet({
                     ai.clearPreferredProvider();
                     ai.setActiveBackend(null);
                   }}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
                     ai.activeBackend === null
                       ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
                       : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
@@ -1069,12 +1078,13 @@ export function SettingsSheet({
                           ai.setPreferredProvider(value as PreferredProvider);
                           ai.setActiveBackend(value as PreferredProvider);
                         }}
-                        className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                        className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
                           ai.activeBackend === value
                             ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
                             : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
                         }`}
                       >
+                        <ProviderIcon provider={value as AIProviderType} size={12} />
                         {label}{isRecommended ? ' (Recommended)' : ''}
                       </button>
                     );

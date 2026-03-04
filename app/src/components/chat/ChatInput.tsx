@@ -3,6 +3,7 @@ import { ArrowUp, ChevronsUpDown, Loader2, Lock, Paperclip, RefreshCw, Square } 
 import { AttachmentPreview } from './AttachmentPreview';
 import { ContextMeter } from './ContextMeter';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ProviderIcon } from '@/components/ui/provider-icon';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { processFile, getTotalAttachmentSize } from '@/lib/file-processing';
 import type { StagedAttachment } from '@/lib/file-processing';
@@ -99,18 +100,6 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
   demo: 'Demo',
-};
-
-const PROVIDER_ICONS: Record<AIProviderType, string> = {
-  ollama: '🦙',
-  mistral: '🌪️',
-  openrouter: '🔀',
-  minimax: '🧠',
-  zai: '🟦',
-  google: '🔎',
-  zen: '🧘',
-  nvidia: '🟢',
-  demo: '⚡',
 };
 
 function formatTimeAgo(timestamp: number | null): string | null {
@@ -394,7 +383,7 @@ export function ChatInput({
                         : 'Backend and model'
                     }
                   >
-                    <span className="shrink-0">{PROVIDER_ICONS[selectedProvider]}</span>
+                    <ProviderIcon provider={selectedProvider} size={14} className="shrink-0" />
                     <span className="truncate">
                       {PROVIDER_LABELS[selectedProvider]} · {selectedModel}
                     </span>
@@ -432,7 +421,7 @@ export function ChatInput({
                         >
                           {providerControls.availableProviders.map(([value, label]) => (
                             <option key={value} value={value}>
-                              {PROVIDER_ICONS[value]} {label}{value === 'zen' ? ' (Recommended)' : ''}
+                              {label}{value === 'zen' ? ' (Recommended)' : ''}
                             </option>
                           ))}
                         </select>
