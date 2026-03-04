@@ -35,7 +35,6 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Sandbox:** Persistent Linux environment (via Modal) for cloning repos, running tests, and editing files.
 *   **Sandbox Mode:** Ephemeral workspace (no GitHub repo). Entry via onboarding or repo picker. GitHub tools blocked; 30-min lifetime with expiry warning. Download as tar.gz.
 *   **Web Search Tools:** Mid-conversation web search via Tavily (premium), Ollama native search, or DuckDuckGo fallback. Prompt-engineered JSON format, client-side dispatch.
-*   **Browser Tools (Optional):** Sandbox-backed webpage screenshot + text extraction (server-side browser credentials injected by Worker).
 *   **Coder Delegation:** Orchestrator delegates via `delegate_coder`. Supports `acceptanceCriteria[]` (shell commands run post-task). Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — survives context trimming.
 *   **Harness Priority:** Push still prioritizes harness reliability over model churn, but the major checklist is shipped. `documents/plans/Harness Reliability Plan.md` is now reference/planning history rather than an active checklist in the product docs. **Agent Experience Wishlist shipped** (`documents/analysis/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`.
 *   **User Identity:** Display name, bio, and GitHub login set in Settings. Stored in localStorage via `useUserProfile` hook. Injected into Orchestrator and Coder system prompts via `buildUserIdentityBlock()`.
@@ -107,7 +106,7 @@ Push/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
-│   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
+│   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, and more
 │   │   │   ├── filebrowser/ # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/        # shadcn/ui library
 │   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useTavilyConfig, useUsageTracking, etc.)
@@ -122,9 +121,8 @@ Push/
 │   │   │   ├── web-search-tools.ts # Web search (Tavily, Ollama native, DuckDuckGo)
 │   │   │   ├── model-catalog.ts   # Ollama/Mistral model lists
 │   │   │   ├── prompts.ts         # Prompt building utilities
-│   │   │   ├── feature-flags.ts   # Feature flag system
 │   │   │   ├── snapshot-manager.ts # Workspace snapshot management
-│   │   │   └── ...                # file-processing, file-utils, browser-metrics, codemirror-*, utils
+│   │   │   └── ...                # file-processing, file-utils, codemirror-*, utils
 │   │   ├── sections/      # OnboardingScreen, RepoPicker, FileBrowser, HomeScreen
 │   │   ├── types/         # Shared TypeScript definitions
 │   │   ├── App.tsx        # Main entry & routing
@@ -186,7 +184,7 @@ Push/
 ### Environment
 Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI.
 
-Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZAI_API_KEY` (Z.AI), `VITE_GOOGLE_API_KEY` (Google), `VITE_MINIMAX_API_KEY` (MiniMax), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
+Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZAI_API_KEY` (Z.AI), `VITE_GOOGLE_API_KEY` (Google), `VITE_MINIMAX_API_KEY` (MiniMax), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
 
 ## Coding Conventions
 *   **TypeScript:** Strict mode enabled. Explicit return types required on exported functions.

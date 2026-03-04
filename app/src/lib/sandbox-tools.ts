@@ -18,9 +18,6 @@ import type {
   FileListCardData,
   TestResultsCardData,
   TypeCheckCardData,
-  BrowserScreenshotCardData,
-  BrowserExtractCardData,
-  BrowserToolError,
 } from '@/types';
 import { detectToolFromText, asRecord } from './utils';
 import {
@@ -30,25 +27,26 @@ import {
   batchWriteToSandbox,
   getSandboxDiff,
   listDirectory,
-  browserScreenshotInSandbox,
-  browserExtractInSandbox,
   downloadFromSandbox,
   type FileReadResult,
   type BatchWriteEntry,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { parseDiffStats } from './diff-utils';
-import { browserToolEnabled } from './feature-flags';
-import { recordBrowserMetric } from './browser-metrics';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger, extractSignatures } from './file-awareness-ledger';
 import { applyHashlineEdits, calculateLineHash, type HashlineOp } from "./hashline";
 import { getActiveGitHubToken } from './github-auth';
-const sandboxFileVersions = new Map<string, string>();
+import {
+  fileVersionKey,
+  getByKey as versionCacheGet,
+  setByKey as versionCacheSet,
+  deleteByKey as versionCacheDelete,
+  deleteFileVersion as versionCacheDeletePath,
+} from './sandbox-file-version-cache';
 
-function fileVersionKey(sandboxId: string, path: string): string {
-  return `${sandboxId}:${path}`;
-}
+// Re-export so existing consumers don't break
+export { clearFileVersionCache } from './sandbox-file-version-cache';
 
 
 function normalizeSandboxPath(path: string): string {
@@ -64,26 +62,6 @@ function normalizeSandboxPath(path: string): string {
 function normalizeSandboxWorkdir(workdir?: string): string | undefined {
   if (typeof workdir !== 'string') return undefined;
   return normalizeSandboxPath(workdir);
-}
-
-// --- Browser tool error taxonomy ---
-
-const BROWSER_ERROR_MESSAGES: Record<string, string> = {
-  NAVIGATION_TIMEOUT: 'The page took too long to load',
-  INVALID_URL: "The URL couldn't be reached",
-  BLOCKED_TARGET: "This URL points to a private or local network and can't be accessed",
-  IMAGE_TOO_LARGE: 'The screenshot was too large to capture',
-  SESSION_CREATE_FAILED: "Couldn't start a browser session — try again",
-  BROWSERBASE_NOT_CONFIGURED: "Browser service isn't configured — contact your admin",
-  BROWSER_CONNECT_URL_MISSING: "Couldn't start a browser session — try again",
-  BROWSERBASE_HTTP_ERROR: "The browser service returned an error — try again",
-  BROWSERBASE_EXECUTION_ERROR: 'Something went wrong while loading the page — try again',
-  EMPTY_EXTRACTION: 'No readable text was found on the page',
-};
-
-function toBrowserToolError(code: string, fallbackDetails?: string): BrowserToolError {
-  const message = BROWSER_ERROR_MESSAGES[code] || 'Something went wrong — try again';
-  return { code, message: fallbackDetails && !BROWSER_ERROR_MESSAGES[code] ? `${message} (${fallbackDetails})` : message };
 }
 
 // --- Enhanced error messages ---
@@ -401,8 +379,6 @@ export type SandboxToolCall =
   | { tool: 'sandbox_push'; args: Record<string, never> }
   | { tool: 'sandbox_run_tests'; args: { framework?: string } }
   | { tool: 'sandbox_check_types'; args: Record<string, never> }
-  | { tool: 'sandbox_browser_screenshot'; args: { url: string; fullPage?: boolean } }
-  | { tool: 'sandbox_browser_extract'; args: { url: string; instruction?: string } }
   | { tool: 'sandbox_download'; args: { path?: string } }
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
   | { tool: 'promote_to_github'; args: { repo_name: string; description?: string; private?: boolean } }
@@ -413,12 +389,6 @@ export type SandboxToolCall =
 
 function getToolName(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function getNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 }
 
 function parsePositiveIntegerArg(value: unknown): number | undefined | null {
@@ -491,13 +461,6 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
   if (tool === 'sandbox_check_types') {
     return { tool: 'sandbox_check_types', args: {} };
   }
-  const browserUrl = getNonEmptyString(args.url);
-  if (tool === 'sandbox_browser_screenshot' && browserUrl && browserToolEnabled) {
-    return { tool: 'sandbox_browser_screenshot', args: { url: browserUrl, fullPage: Boolean(args.fullPage) } };
-  }
-  if (tool === 'sandbox_browser_extract' && browserUrl && browserToolEnabled) {
-    return { tool: 'sandbox_browser_extract', args: { url: browserUrl, instruction: typeof args.instruction === 'string' ? args.instruction : undefined } };
-  }
   if (tool === 'sandbox_download') {
     return { tool: 'sandbox_download', args: { path: typeof args.path === 'string' ? normalizeSandboxPath(args.path) : undefined } };
   }
@@ -554,8 +517,7 @@ export const IMPLEMENTED_SANDBOX_TOOLS = new Set([
   'sandbox_exec', 'sandbox_read_file', 'sandbox_search', 'sandbox_write_file',
   "sandbox_edit_file",
   'sandbox_list_dir', 'sandbox_diff', 'sandbox_prepare_commit', 'sandbox_push',
-  'sandbox_run_tests', 'sandbox_check_types', 'sandbox_browser_screenshot',
-  'sandbox_browser_extract', 'sandbox_download', 'sandbox_save_draft',
+  'sandbox_run_tests', 'sandbox_check_types', 'sandbox_download', 'sandbox_save_draft',
   'promote_to_github', 'sandbox_read_symbols', 'sandbox_apply_patchset',
   // Compatibility aliases
   'read_sandbox_file', 'search_sandbox', 'list_sandbox_dir', 'sandbox_commit',
@@ -812,7 +774,7 @@ export async function executeSandboxToolCall(
 
         // Handle directory or read errors (e.g. "cat: /path: Is a directory")
         if (result.error) {
-          sandboxFileVersions.delete(cacheKey);
+          versionCacheDelete(cacheKey);
           recordReadFileMetric({
             outcome: 'error',
             payloadChars: 0,
@@ -824,9 +786,9 @@ export async function executeSandboxToolCall(
         }
 
         if (typeof result.version === 'string' && result.version) {
-          sandboxFileVersions.set(cacheKey, result.version);
+          versionCacheSet(cacheKey, result.version);
         } else {
-          sandboxFileVersions.delete(cacheKey);
+          versionCacheDelete(cacheKey);
         }
 
         const rangeStart = typeof result.start_line === 'number'
@@ -1116,7 +1078,7 @@ export async function executeSandboxToolCall(
         // Update version cache
         const editCacheKey = fileVersionKey(sandboxId, path);
         if (typeof editWriteResult.new_version === 'string' && editWriteResult.new_version) {
-          sandboxFileVersions.set(editCacheKey, editWriteResult.new_version);
+          versionCacheSet(editCacheKey, editWriteResult.new_version);
         }
         fileLedger.recordCreation(path);
 
@@ -1174,7 +1136,7 @@ export async function executeSandboxToolCall(
               });
               // Update version cache
               if (typeof autoReadVersion === 'string' && autoReadVersion) {
-                sandboxFileVersions.set(cacheKey, autoReadVersion);
+                versionCacheSet(cacheKey, autoReadVersion);
               }
               fileLedger.recordAutoExpandSuccess();
               console.debug(`[edit-guard] Auto-expanded "${call.args.path}" (${autoLineCount} lines) — proceeding with write.`);
@@ -1242,7 +1204,7 @@ export async function executeSandboxToolCall(
         // After auto-expand, the version cache may have been updated — refresh.
         // Prefer the cache (most recently observed version) over the caller's
         // expected_version, which may be stale from an earlier read.
-        const freshVersion = sandboxFileVersions.get(cacheKey) || call.args.expected_version;
+        const freshVersion = versionCacheGet(cacheKey) || call.args.expected_version;
 
         // Stale warning (soft — doesn't block, just informs)
         const staleWarning = fileLedger.getStaleWarning(call.args.path);
@@ -1253,7 +1215,7 @@ export async function executeSandboxToolCall(
           if (!result.ok) {
             if (result.code === 'STALE_FILE') {
               if (typeof result.current_version === 'string' && result.current_version) {
-                sandboxFileVersions.set(cacheKey, result.current_version);
+                versionCacheSet(cacheKey, result.current_version);
               }
               recordWriteFileMetric({
                 durationMs: Date.now() - writeStart,
@@ -1286,9 +1248,9 @@ export async function executeSandboxToolCall(
             return { text: formatStructuredError(writeErr, formatSandboxError(detail, call.args.path)), structuredError: writeErr };
           }
 
-          const previousVersion = sandboxFileVersions.get(cacheKey);
+          const previousVersion = versionCacheGet(cacheKey);
           if (typeof result.new_version === 'string' && result.new_version) {
-            sandboxFileVersions.set(cacheKey, result.new_version);
+            versionCacheSet(cacheKey, result.new_version);
           }
 
           // Build result message — no extra HTTP round-trip for git verification.
@@ -1724,162 +1686,6 @@ export async function executeSandboxToolCall(
         };
 
         return { text: lines.join('\n'), card: { type: 'type-check', data: cardData } };
-      }
-
-      case 'sandbox_browser_screenshot': {
-        if (!browserToolEnabled) {
-          return { text: '[Tool Error] Browser tools are disabled. Set VITE_BROWSER_TOOL_ENABLED=true to enable.' };
-        }
-
-        const targetUrl = call.args.url.trim();
-        if (!/^https?:\/\//i.test(targetUrl)) {
-          return { text: '[Tool Error] sandbox_browser_screenshot requires an absolute http(s) URL.' };
-        }
-
-        const ssStart = Date.now();
-        let ssRetries = 0;
-        let ssResult: Awaited<ReturnType<typeof browserScreenshotInSandbox>>;
-        try {
-          ssResult = await browserScreenshotInSandbox(
-            sandboxId, targetUrl, Boolean(call.args.fullPage),
-            (r) => { ssRetries = r; },
-          );
-        } catch (screenshotErr) {
-          const ssDuration = Date.now() - ssStart;
-          const errMsg = screenshotErr instanceof Error ? screenshotErr.message : String(screenshotErr);
-          const errCode = errMsg.match(/\(([A-Z_]+)\)/)?.[1] || 'FETCH_ERROR';
-          recordBrowserMetric('screenshot', { durationMs: ssDuration, success: false, errorCode: errCode, retries: ssRetries });
-          throw screenshotErr;
-        }
-        const ssDuration = Date.now() - ssStart;
-
-        if (!ssResult.ok) {
-          const errorCode = ssResult.error || 'UNKNOWN';
-          recordBrowserMetric('screenshot', { durationMs: ssDuration, success: false, errorCode, retries: ssRetries });
-          const error = toBrowserToolError(errorCode, ssResult.details);
-          const cardData: BrowserScreenshotCardData = {
-            url: targetUrl,
-            finalUrl: targetUrl,
-            title: '',
-            statusCode: null,
-            mimeType: '',
-            imageBase64: '',
-            truncated: false,
-            error,
-          };
-          return {
-            text: `[Tool Error] ${error.message}`,
-            card: { type: 'browser-screenshot', data: cardData },
-          };
-        }
-
-        if (!ssResult.image_base64 || !ssResult.mime_type) {
-          recordBrowserMetric('screenshot', { durationMs: ssDuration, success: false, errorCode: 'MISSING_IMAGE_DATA', retries: ssRetries });
-          return { text: '[Tool Error] Browser screenshot response was missing image data.' };
-        }
-
-        recordBrowserMetric('screenshot', { durationMs: ssDuration, success: true, retries: ssRetries });
-
-        const cardData: BrowserScreenshotCardData = {
-          url: targetUrl,
-          finalUrl: ssResult.final_url || targetUrl,
-          title: ssResult.title || 'Browser Screenshot',
-          statusCode: typeof ssResult.status_code === 'number' ? ssResult.status_code : null,
-          mimeType: ssResult.mime_type,
-          imageBase64: ssResult.image_base64,
-          truncated: Boolean(ssResult.truncated),
-        };
-
-        const lines = [
-          '[Tool Result — sandbox_browser_screenshot]',
-          `URL: ${cardData.url}`,
-          `Final URL: ${cardData.finalUrl}`,
-          `Title: ${cardData.title}`,
-          `Status: ${cardData.statusCode === null ? 'n/a' : cardData.statusCode}`,
-          cardData.truncated ? 'Image truncated: yes' : 'Image truncated: no',
-        ];
-
-        return { text: lines.join('\n'), card: { type: 'browser-screenshot', data: cardData } };
-      }
-
-      case 'sandbox_browser_extract': {
-        if (!browserToolEnabled) {
-          return { text: '[Tool Error] Browser tools are disabled. Set VITE_BROWSER_TOOL_ENABLED=true to enable.' };
-        }
-
-        const targetUrl = call.args.url.trim();
-        if (!/^https?:\/\//i.test(targetUrl)) {
-          return { text: '[Tool Error] sandbox_browser_extract requires an absolute http(s) URL.' };
-        }
-
-        const instruction = (call.args.instruction || '').trim();
-        const exStart = Date.now();
-        let exRetries = 0;
-        let exResult: Awaited<ReturnType<typeof browserExtractInSandbox>>;
-        try {
-          exResult = await browserExtractInSandbox(
-            sandboxId, targetUrl, instruction,
-            (r) => { exRetries = r; },
-          );
-        } catch (extractErr) {
-          const exDuration = Date.now() - exStart;
-          const errMsg = extractErr instanceof Error ? extractErr.message : String(extractErr);
-          const errCode = errMsg.match(/\(([A-Z_]+)\)/)?.[1] || 'FETCH_ERROR';
-          recordBrowserMetric('extract', { durationMs: exDuration, success: false, errorCode: errCode, retries: exRetries });
-          throw extractErr;
-        }
-        const exDuration = Date.now() - exStart;
-
-        if (!exResult.ok) {
-          const errorCode = exResult.error || 'UNKNOWN';
-          recordBrowserMetric('extract', { durationMs: exDuration, success: false, errorCode, retries: exRetries });
-          const error = toBrowserToolError(errorCode, exResult.details);
-          const cardData: BrowserExtractCardData = {
-            url: targetUrl,
-            finalUrl: targetUrl,
-            title: '',
-            statusCode: null,
-            instruction: instruction || undefined,
-            content: '',
-            truncated: false,
-            error,
-          };
-          return {
-            text: `[Tool Error] ${error.message}`,
-            card: { type: 'browser-extract', data: cardData },
-          };
-        }
-
-        const content = (exResult.content || '').trim();
-        if (!content) {
-          recordBrowserMetric('extract', { durationMs: exDuration, success: false, errorCode: 'EMPTY_CONTENT', retries: exRetries });
-          return { text: '[Tool Error] Browser extract returned no content.' };
-        }
-
-        recordBrowserMetric('extract', { durationMs: exDuration, success: true, retries: exRetries });
-
-        const cardData: BrowserExtractCardData = {
-          url: targetUrl,
-          finalUrl: exResult.final_url || targetUrl,
-          title: exResult.title || 'Browser Extract',
-          statusCode: typeof exResult.status_code === 'number' ? exResult.status_code : null,
-          instruction: instruction || undefined,
-          content,
-          truncated: Boolean(exResult.truncated),
-        };
-
-        const lines = [
-          '[Tool Result — sandbox_browser_extract]',
-          `URL: ${cardData.url}`,
-          `Final URL: ${cardData.finalUrl}`,
-          `Title: ${cardData.title}`,
-          `Status: ${cardData.statusCode === null ? 'n/a' : cardData.statusCode}`,
-          cardData.truncated ? 'Content truncated: yes' : 'Content truncated: no',
-          '',
-          cardData.content,
-        ];
-
-        return { text: lines.join('\n'), card: { type: 'browser-extract', data: cardData } };
       }
 
       case 'sandbox_download': {
@@ -2324,7 +2130,7 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
               // Update version cache
               const cacheKey = fileVersionKey(sandboxId, entry.path);
               if (typeof entry.new_version === 'string' && entry.new_version) {
-                sandboxFileVersions.set(cacheKey, entry.new_version);
+                versionCacheSet(cacheKey, entry.new_version);
               }
               fileLedger.recordCreation(entry.path);
               writeResults.push(`${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`);
@@ -2337,8 +2143,13 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
             }
           }
         } catch (batchErr) {
-          // Fallback to sequential writes if batch endpoint is unavailable
+          // Fallback to sequential writes if batch endpoint is unavailable.
+          // Invalidate version cache for ALL files first — sequential writes may
+          // partially succeed, leaving the cache inconsistent with sandbox truth.
           console.warn('[sandbox-tools] batch write failed, falling back to sequential writes:', batchErr);
+          for (const r of editResults) {
+            versionCacheDeletePath(sandboxId, r.path);
+          }
           for (const r of editResults) {
             try {
               const writeResult = await writeToSandbox(sandboxId, r.path, r.content, r.version);
@@ -2351,7 +2162,7 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
               } else {
                 const cacheKey = fileVersionKey(sandboxId, r.path);
                 if (typeof writeResult.new_version === 'string' && writeResult.new_version) {
-                  sandboxFileVersions.set(cacheKey, writeResult.new_version);
+                  versionCacheSet(cacheKey, writeResult.new_version);
                 }
                 fileLedger.recordCreation(r.path);
                 writeResults.push(`${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`);
@@ -2396,18 +2207,6 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
 
 // --- System prompt extension ---
 
-const BROWSER_TOOL_PROTOCOL_LINE = browserToolEnabled
-  ? '\n- sandbox_browser_screenshot(url, fullPage?) — Capture a webpage screenshot in the sandbox browser and return it as a card.\n- sandbox_browser_extract(url, instruction?) — Extract readable page text (or focused content with instruction) from a webpage.'
-  : '';
-
-const BROWSER_RULES_BLOCK = browserToolEnabled
-  ? `- For webpage tasks with external URLs, prefer browser tools first:
-  - Use sandbox_browser_screenshot for visual capture
-  - Use sandbox_browser_extract for text extraction
-  - Do not default to sandbox_exec with curl/python for these unless browser tools fail
-`
-  : '';
-
 export const SANDBOX_TOOL_PROTOCOL = `
 SANDBOX TOOLS — You have access to a code sandbox (persistent container with the repo cloned).
 
@@ -2424,7 +2223,7 @@ Additional tools available when sandbox is active:
 - sandbox_run_tests(framework?) — Run the test suite. Auto-detects npm/pytest/cargo/go if framework not specified. Returns pass/fail counts and output.
 - sandbox_check_types() — Run type checker (tsc for TypeScript, pyright/mypy for Python). Auto-detects from config files. Returns errors with file:line locations.
 - sandbox_save_draft(message?, branch_name?) — Quick-save all uncommitted changes to a draft branch. Stages everything, commits with the message (default: "WIP: draft save"), and pushes. Skips Auditor review (drafts are WIP). If not already on a draft/ branch, creates one automatically. Use this for checkpoints, WIP saves, or before sandbox expiry.
-- sandbox_download(path?) — Download workspace files as a compressed archive (tar.gz). Path defaults to /workspace. Returns a download card the user can save.${BROWSER_TOOL_PROTOCOL_LINE}
+- sandbox_download(path?) — Download workspace files as a compressed archive (tar.gz). Path defaults to /workspace. Returns a download card the user can save.
 - sandbox_read_symbols(path) — Extract a symbol index from a source file (functions, classes, interfaces, types, imports with line numbers). Works on .py (via ast), .ts/.tsx/.js/.jsx (via regex). Use this to understand file structure before editing — cheaper than reading the whole file.
 - sandbox_apply_patchset(edits, dryRun?) — Apply hashline edits to multiple files with all-or-nothing validation. edits is an array of { path, ops: HashlineOp[] } (each path must appear once). Phase 1 reads all files and validates all ops — if any fail, nothing is written. Phase 2 writes sequentially (partial failure possible if a write fails mid-way). Use dryRun=true to validate without writing. Prefer this over multiple sandbox_edit_file calls when editing 2+ files together.
 - promote_to_github(repo_name, description?, private?) — Create a new GitHub repo under the authenticated user, set the sandbox git remote, and push current branch. Defaults to private=true.
@@ -2451,7 +2250,7 @@ Sandbox rules:
 - For multi-step tasks (edit + test), use multiple tool calls in sequence
 - You may emit multiple tool calls in one message. Read-only calls (sandbox_read_file, sandbox_search, sandbox_list_dir, sandbox_diff) run in parallel. Place any mutating call (sandbox_exec, sandbox_write_file, sandbox_edit_file, sandbox_prepare_commit, sandbox_push, sandbox_apply_patchset, etc.) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
 - Prefer read → write flows for edits. Use expected_version from sandbox_read_file to avoid stale overwrites. For large files, use start_line/end_line to read only the relevant section before editing.
-${BROWSER_RULES_BLOCK}- sandbox_diff shows what you've changed — review before committing
+- sandbox_diff shows what you've changed — review before committing
 - sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.
 - If the push fails after a successful commit, use sandbox_push() to retry
 - Keep commands focused — avoid long-running servers or background processes

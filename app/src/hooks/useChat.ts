@@ -38,7 +38,6 @@ import {
 import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
-import { browserToolEnabled } from '@/lib/feature-flags';
 import { getModelNameForProvider } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
@@ -477,7 +476,7 @@ function buildMetaLine(
 
 function shouldPrewarmSandbox(text: string, attachments?: AttachmentData[]): boolean {
   const normalized = text.toLowerCase();
-  const intentRegex = /\b(edit|modify|change|refactor|fix|implement|write|create|add|remove|rename|run|test|build|lint|compile|typecheck|type-check|commit|push|patch|bug|failing|error|debug|screenshot|browser|webpage|website|navigate|url)\b/;
+  const intentRegex = /\b(edit|modify|change|refactor|fix|implement|write|create|add|remove|rename|run|test|build|lint|compile|typecheck|type-check|commit|push|patch|bug|failing|error|debug)\b/;
   if (intentRegex.test(normalized)) return true;
 
   const fileHintRegex = /\b([a-z0-9_\-/]+\.(ts|tsx|js|jsx|py|rs|go|java|rb|css|html|json|md|yml|yaml|toml|sh))\b/i;
@@ -487,43 +486,6 @@ function shouldPrewarmSandbox(text: string, attachments?: AttachmentData[]): boo
     return true;
   }
   return false;
-}
-
-function isBrowserIntentPrompt(text: string): boolean {
-  const normalized = text.toLowerCase();
-  const hasUrl = /https?:\/\/\S+/i.test(text);
-  if (!hasUrl) return false;
-
-  // Explicit browser/extract/screenshot intent
-  if (/\b(screenshot|extract|browser|webpage|website|navigate|url)\b/.test(normalized)) {
-    return true;
-  }
-
-  // Common phrasing: "what's on ...", "summarize ...", etc for a URL.
-  if (/\b(what('?s| is)? on|summari[sz]e|read|pull|scrape|get text|parse)\b/.test(normalized)) {
-    return true;
-  }
-
-  return false;
-}
-
-function withBrowserToolHint(messages: ChatMessage[]): ChatMessage[] {
-  if (!browserToolEnabled || messages.length === 0) return messages;
-
-  const idx = messages.length - 1;
-  const last = messages[idx];
-  if (last.role !== 'user' || last.isToolResult) return messages;
-  if (!isBrowserIntentPrompt(last.content)) return messages;
-
-  const hint =
-    '\n\n[INTERNAL TOOL HINT]\n' +
-    'For URL browsing tasks, use sandbox_browser_screenshot or sandbox_browser_extract before sandbox_exec.\n' +
-    'Only fall back to sandbox_exec (curl/python) if browser tools fail.\n' +
-    '[/INTERNAL TOOL HINT]';
-
-  const patched = [...messages];
-  patched[idx] = { ...last, content: `${last.content}${hint}` };
-  return patched;
 }
 
 export interface ScratchpadHandlers {
@@ -1264,7 +1226,7 @@ export function useChat(
       // Create new AbortController for this stream
       abortControllerRef.current = new AbortController();
 
-      let apiMessages = withBrowserToolHint([...updatedWithUser]);
+      let apiMessages = [...updatedWithUser];
       // Cap diagnosis-triggered retries per turn to prevent correction spirals.
       let diagnosisRetries = 0;
       const MAX_DIAGNOSIS_RETRIES = 2;
@@ -2277,40 +2239,21 @@ export function useChat(
               // No longer render or persist sandbox state cards in chat.
               continue;
             }
-            const isBrowserScreenshotCard = toolExecResult.card.type === 'browser-screenshot';
-            if (isBrowserScreenshotCard) {
-              const browserCardMsg: ChatMessage = {
-                id: createId(),
-                role: 'assistant',
-                content: '',
-                timestamp: Date.now(),
-                status: 'done',
-                cards: [toolExecResult.card],
-              };
-              setConversations((prev) => {
-                const conv = prev[chatId];
-                if (!conv) return prev;
-                return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, browserCardMsg] } };
-              });
-            }
-
-            if (!isBrowserScreenshotCard) {
-              setConversations((prev) => {
-                const conv = prev[chatId];
-                if (!conv) return prev;
-                const msgs = [...conv.messages];
-                for (let i = msgs.length - 1; i >= 0; i--) {
-                  if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
-                    msgs[i] = {
-                      ...msgs[i],
-                      cards: [...(msgs[i].cards || []), toolExecResult.card!],
-                    };
-                    break;
-                  }
+            setConversations((prev) => {
+              const conv = prev[chatId];
+              if (!conv) return prev;
+              const msgs = [...conv.messages];
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
+                  msgs[i] = {
+                    ...msgs[i],
+                    cards: [...(msgs[i].cards || []), toolExecResult.card!],
+                  };
+                  break;
                 }
-                return { ...prev, [chatId]: { ...conv, messages: msgs } };
-              });
-            }
+              }
+              return { ...prev, [chatId]: { ...conv, messages: msgs } };
+            });
           }
 
           // Create tool result message with provenance metadata + meta envelope

@@ -18,8 +18,6 @@ const FileSearchCard = lazy(() => import('./FileSearchCard').then(m => ({ defaul
 const CommitFilesCard = lazy(() => import('./CommitFilesCard').then(m => ({ default: m.CommitFilesCard })));
 const TestResultsCard = lazy(() => import('./TestResultsCard').then(m => ({ default: m.TestResultsCard })));
 const TypeCheckCard = lazy(() => import('./TypeCheckCard').then(m => ({ default: m.TypeCheckCard })));
-const BrowserScreenshotCard = lazy(() => import('./BrowserScreenshotCard').then(m => ({ default: m.BrowserScreenshotCard })));
-const BrowserExtractCard = lazy(() => import('./BrowserExtractCard').then(m => ({ default: m.BrowserExtractCard })));
 const SandboxDownloadCard = lazy(() => import('./SandboxDownloadCard').then(m => ({ default: m.SandboxDownloadCard })));
 const WorkflowRunsCard = lazy(() => import('./WorkflowRunsCard').then(m => ({ default: m.WorkflowRunsCard })));
 const WorkflowLogsCard = lazy(() => import('./WorkflowLogsCard').then(m => ({ default: m.WorkflowLogsCard })));
@@ -52,8 +50,6 @@ const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
   'commit-files':        CommitFilesCard,
   'test-results':        TestResultsCard,
   'type-check':          TypeCheckCard,
-  'browser-screenshot':  BrowserScreenshotCard,
-  'browser-extract':     BrowserExtractCard,
   'sandbox-download':    SandboxDownloadCard,
   'workflow-runs':       WorkflowRunsCard,
   'workflow-logs':       WorkflowLogsCard,

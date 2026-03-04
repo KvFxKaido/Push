@@ -42,8 +42,6 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Tool protocol:** Tools are prompt-engineered — the system prompt defines available tools and JSON format. The orchestrator detects JSON tool blocks in responses, executes them against GitHub's API, injects results as synthetic messages, and re-calls the LLM. Both the Orchestrator and Coder tool loops are unbounded — they continue until the model stops emitting tool calls (or the user aborts). Sandbox tools use the same JSON block pattern, detected by a unified tool dispatch layer. Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message, splits them into parallel read-only calls and an optional trailing mutation — reads execute via `Promise.all()`, then the mutation runs. Tool results include structured error fields (`error_type`, `retryable`) via `classifyError()`, and a `[meta]` envelope with round number, context size, and sandbox dirty state.
 
-**Browser tools (optional):** `sandbox_browser_screenshot` and `sandbox_browser_extract`, prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true`, routed through Worker endpoints. Browser session credentials are injected server-side by the Worker.
-
 **Harness focus (current):** Reliability improvements are prioritized over model churn. Active tracks are defined in `documents/plans/Harness Reliability Plan.md` (edit reliability, read efficiency, tool-loop robustness, and operator visibility). Track B shipped: `sandbox_read_file` supports line ranges with numbered output and out-of-bounds warnings. `sandbox_edit_file` is active — edits are expressed as `HashlineOp[]` referencing content hashes (default 7-char, extendable to 12-char for disambiguation; see `lib/hashline.ts`), which eliminates line-number drift and provides implicit staleness detection. **Agent Experience Wishlist shipped** (see `documents/analysis/Agent Experience Wishlist.md`): 10 harness improvements — error taxonomy with retry semantics, structured malformed-call feedback, edit result diffs, multi-tool per turn, universal meta envelope, machine-checkable acceptance criteria, agent working memory, `sandbox_read_symbols`, and `sandbox_apply_patchset`. Server-side background jobs (Track D) are currently deferred; resumable sessions are the active interruption-recovery path.
 
 **Web search tools:** The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). Web search is prompt-engineered — the system prompt defines a JSON tool format, and dispatch is client-side. API keys are configurable at runtime via Settings.
@@ -83,7 +81,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 ```
 app/src/
   components/chat/        # Chat UI (ChatContainer, ChatInput, MessageBubble, AgentStatusBar, AttachmentPreview, ContextMeter, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet)
-  components/cards/       # Rich inline cards (PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, SandboxDownloadCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, EditorPanel, FileCard, FileListCard, BrowserExtractCard, BrowserScreenshotCard, BranchListCard, CIStatusCard, CommitListCard, CommitFilesCard, PRListCard, TypeCheckCard, WorkflowRunsCard, WorkflowLogsCard, SandboxStateCard, CardRenderer)
+  components/cards/       # Rich inline cards (PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, SandboxDownloadCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, EditorPanel, FileCard, FileListCard, BranchListCard, CIStatusCard, CommitListCard, CommitFilesCard, PRListCard, TypeCheckCard, WorkflowRunsCard, WorkflowLogsCard, SandboxStateCard, CardRenderer)
   components/filebrowser/ # File browser UI (FileActionsSheet, CommitPushSheet, FileEditor, UploadButton)
   components/ui/          # shadcn/ui component library
   hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useOllamaConfig, useMistralConfig, useOpenRouterConfig, useZaiConfig, useGoogleConfig, useMinimaxConfig, useZenConfig, useTavilyConfig, useModelCatalog, useSnapshotManager, useBranchManager, useProjectInstructions, useUsageTracking, use-mobile)
@@ -106,7 +104,7 @@ cli/                 # Push CLI — local coding agent
   pushd.mjs          # Daemon skeleton (Unix socket, NDJSON IPC)
   AGENT-WISHLIST.md  # Agent experience wishlist (shipped — 10 items)
   tests/             # node:test suite (104 tests)
-sandbox/app.py       # Modal Python App — sandbox web endpoints (file ops, exec/git, browser tools, archive download)
+sandbox/app.py       # Modal Python App — sandbox web endpoints (file ops, exec/git, archive download)
 sandbox/requirements.txt
 scripts/             # One-off scripts (provider compliance, etc.)
 push                 # Bash launcher (repo root)
@@ -130,12 +128,10 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `lib/web-search-tools.ts` — Web search tool definitions (Tavily, Ollama native search, DuckDuckGo fallback; prompt-engineered JSON format, client-side dispatch)
 - `lib/model-catalog.ts` — Manages provider model lists and selection
 - `lib/prompts.ts` — Prompt building utilities
-- `lib/feature-flags.ts` — Feature flag system
 - `lib/snapshot-manager.ts` — Workspace snapshot management and recovery
 - `lib/file-processing.ts` — File content processing and transformation
 - `lib/file-utils.ts` — File utility helpers
 - `lib/sandbox-start-mode.ts` — Sandbox startup mode configuration
-- `lib/browser-metrics.ts` — Browser performance metrics tracking
 - `lib/codemirror-langs.ts` — CodeMirror language support configuration
 - `lib/codemirror-theme.ts` — CodeMirror editor theme
 - `lib/safe-storage.ts` — Safe localStorage/sessionStorage wrappers (null-safe, SSR-safe)
@@ -179,7 +175,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 Environment variables are defined in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI at runtime. Without any API keys the app runs in demo mode with mock data.
 
-Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZAI_API_KEY` (Z.AI), `VITE_GOOGLE_API_KEY` (Google), `VITE_MINIMAX_API_KEY` (MiniMax), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `VITE_BROWSER_TOOL_ENABLED` (browser tools toggle).
+Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZAI_API_KEY` (Z.AI), `VITE_GOOGLE_API_KEY` (Google), `VITE_MINIMAX_API_KEY` (MiniMax), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth).
 
 ## Design Principles
 

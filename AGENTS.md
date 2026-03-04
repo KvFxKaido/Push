@@ -70,13 +70,6 @@ Current harness priorities are tracked in `documents/plans/Harness Reliability P
 - operator visibility and failure diagnostics — `lib/edit-metrics.ts` tracks write latency/stale/error counts
 - **Agent Experience Wishlist shipped** (see `documents/analysis/Agent Experience Wishlist.md`): error taxonomy with retry semantics (`classifyError()`), structured malformed-call feedback (`[TOOL_CALL_PARSE_ERROR]`), edit result diffs, multi-tool per turn (`detectAllToolCalls()`), universal meta envelope (`[meta]` line on every tool result), machine-checkable acceptance criteria, agent working memory (`CoderWorkingMemory`), `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (multi-file transactional edits)
 
-### Browser Tools (Optional)
-
-- `sandbox_browser_screenshot` — capture a webpage screenshot and render a preview card
-- `sandbox_browser_extract` — extract main text from a URL, with optional `selector:` / `css:` instruction prefixes
-
-Prompt-gated by `VITE_BROWSER_TOOL_ENABLED=true`. Routed through Worker endpoints.
-
 ### Web Search Tools
 
 The Orchestrator can search the web mid-conversation via `web-search-tools.ts`. Three backends: **Tavily** (premium, LLM-optimized results via `VITE_TAVILY_API_KEY`), **Ollama native search** (POST `/api/web_search`), and **DuckDuckGo** (free fallback). Web search is prompt-engineered — the system prompt defines a JSON tool format, and dispatch is client-side.
@@ -193,11 +186,11 @@ Push/
 │   │   ├── App.tsx        # Root component, screen state machine, wires extracted hooks
 │   │   ├── components/
 │   │   │   ├── chat/      # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
-│   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
+│   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, and more
 │   │   │   ├── filebrowser/  # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/        # shadcn/ui component library
 │   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useModelCatalog, useSnapshotManager, useBranchManager, useProjectInstructions, useTavilyConfig, useUsageTracking, etc.)
-│   │   ├── lib/           # Core logic, agent modules, web search, model catalog, prompts, feature flags, snapshot manager
+│   │   ├── lib/           # Core logic, agent modules, web search, model catalog, prompts, snapshot manager
 │   │   ├── sections/      # OnboardingScreen, RepoPicker, FileBrowser, HomeScreen, ChatScreen
 │   │   ├── types/index.ts # All shared types
 │   │   └── main.tsx       # App entry point
@@ -245,12 +238,10 @@ Push/
 | `lib/web-search-tools.ts` | Web search tools (Tavily, Ollama native, DuckDuckGo fallback) |
 | `lib/model-catalog.ts` | Provider model lists and selection |
 | `lib/prompts.ts` | Prompt building utilities |
-| `lib/feature-flags.ts` | Feature flag system |
 | `lib/snapshot-manager.ts` | Workspace snapshot management and recovery |
 | `lib/file-processing.ts` | File content processing and transformation |
 | `lib/file-utils.ts` | File utility helpers |
 | `lib/sandbox-start-mode.ts` | Sandbox startup mode configuration |
-| `lib/browser-metrics.ts` | Browser performance metrics tracking |
 | `lib/codemirror-langs.ts` | CodeMirror language support configuration |
 | `lib/codemirror-theme.ts` | CodeMirror editor theme |
 | `lib/utils.ts` | General utility functions |
@@ -325,5 +316,4 @@ Push/
 - Chats are permanently branch-scoped — never duplicated or rebound across branches
 - All merges go through GitHub PR API — no local `git merge`
 - Sandbox containers auto-terminate after 30 minutes
-- Browser tools validate URL shape/protocol and reject private-network targets
 - Scratchpad content is escaped to prevent prompt injection (capped at 50KB)

@@ -111,7 +111,6 @@ VITE_GITHUB_CLIENT_ID=...             # Optional — GitHub App OAuth client ID
 VITE_GITHUB_APP_REDIRECT_URI=...      # Optional — GitHub App OAuth redirect URI
 VITE_GITHUB_OAUTH_PROXY=...           # Optional — GitHub OAuth token exchange proxy
 VITE_GITHUB_REDIRECT_URI=...          # Optional — GitHub OAuth redirect URI
-VITE_BROWSER_TOOL_ENABLED=true        # Optional — enables sandbox browser tools in prompts
 ```
 
 ### Provider Key Policy (All Providers)
@@ -163,7 +162,7 @@ Don't have GitHub access right now? Start a **Sandbox** — an ephemeral workspa
 - **30 minute lifetime** — Container auto-terminates (5-minute warning banner shown)
 - **Download anytime** — Export your work as a tar.gz archive before expiry
 - **No GitHub needed** — Start from onboarding or the repo dropdown
-- **Same agent power** — Full Coder capabilities: file ops, execution, browser tools
+- **Same agent power** — Full Coder capabilities: file ops, execution, web search
 
 Use it for quick experiments, learning the interface, or when you're on a device without GitHub credentials.
 
@@ -171,7 +170,6 @@ Use it for quick experiments, learning the interface, or when you're on a device
 
 For a self-hosted deployment, run the app on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, `/api/minimax/chat`, and `/api/zen/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
-For browser tools, set Worker secrets `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`. The Worker injects them server-side for `/api/sandbox/browser-screenshot` and `/api/sandbox/browser-extract` so browser credentials never reach the client.
 
 ```bash
 cd app && npm run build
@@ -215,7 +213,7 @@ Push/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/           # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet
-│   │   │   ├── cards/          # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, BrowserScreenshotCard, BrowserExtractCard, and more
+│   │   │   ├── cards/          # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, and more
 │   │   │   ├── filebrowser/    # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/             # shadcn/ui component library
 │   │   ├── hooks/              # useChat, useSandbox, useScratchpad, useUserProfile, useGitHubAuth, useGitHubAppAuth, useRepos, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useModelCatalog, useSnapshotManager, useBranchManager, useProjectInstructions, useTavilyConfig, useUsageTracking
