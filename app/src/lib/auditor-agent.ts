@@ -33,7 +33,7 @@ Schema:
 
 Review criteria:
 - Hardcoded secrets, tokens, passwords, API keys → UNSAFE (high)
-- Network calls to novel external endpoints → UNSAFE (high). To assess novelty: if the domain appears in unchanged context lines within the diff, it is an existing pattern (lower risk). If it appears only in added lines with no prior context anywhere in the diff, treat it as novel (higher risk).
+- Network calls to novel external endpoints → UNSAFE (high). To assess novelty: if the domain appears in unchanged context lines within the diff, it is a known domain (lower novelty) — but still assess the specific endpoint path, auth, and payload independently. A known domain does not make a new endpoint safe. If the domain appears only in added lines with no prior context, treat it as fully novel (higher risk).
 - Disabled security features (CORS, auth checks) → UNSAFE (high)
 - SQL injection, XSS, command injection vectors → UNSAFE (high)
 - Overly broad file permissions → UNSAFE (medium)

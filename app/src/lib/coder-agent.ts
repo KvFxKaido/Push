@@ -453,7 +453,7 @@ Rules:
   **Open:** [anything incomplete or requiring user attention, or "nothing"]
 
 Sandbox Lifecycle:
-- The sandbox expires after 30 minutes. For multi-phase tasks, call sandbox_save_draft after each major phase as a checkpoint — don't wait until the end.
+- The sandbox expires after 30 minutes. Use sandbox_save_draft only when you explicitly want a remote WIP checkpoint (e.g. before a risky refactor, or if you suspect time is running low) — not automatically after every phase. It switches branches and pushes unaudited; use it intentionally.
 - If you hit SANDBOX_UNREACHABLE mid-task, the session likely expired. Note this in your summary so the Orchestrator can inform the user.
 
 Interactive Checkpoints:
