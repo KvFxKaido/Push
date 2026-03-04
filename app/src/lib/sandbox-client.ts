@@ -47,29 +47,6 @@ export interface DiffResult {
   error?: string;
 }
 
-export interface BrowserScreenshotResult {
-  ok: boolean;
-  title?: string;
-  final_url?: string;
-  status_code?: number | null;
-  mime_type?: string;
-  image_base64?: string;
-  truncated?: boolean;
-  error?: string;
-  details?: string;
-}
-
-export interface BrowserExtractResult {
-  ok: boolean;
-  title?: string;
-  final_url?: string;
-  status_code?: number | null;
-  content?: string;
-  truncated?: boolean;
-  error?: string;
-  details?: string;
-}
-
 // --- Error types ---
 
 export interface SandboxError {
@@ -133,7 +110,6 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
 const SANDBOX_BASE = '/api/sandbox';
 const DEFAULT_TIMEOUT_MS = 30_000; // 30s for most operations
 const EXEC_TIMEOUT_MS = 120_000;   // 120s for command execution
-const BROWSER_TIMEOUT_MS = 90_000; // 90s for remote browser navigation + capture
 let sandboxOwnerToken: string | null = null;
 const sandboxOwnerTokensById = new Map<string, string>();
 
@@ -622,40 +598,3 @@ export async function sandboxStatus(sandboxId: string): Promise<SandboxStatusRes
   };
 }
 
-export async function browserScreenshotInSandbox(
-  sandboxId: string,
-  url: string,
-  fullPage: boolean = false,
-  onRetries?: (retries: number) => void,
-): Promise<BrowserScreenshotResult> {
-  return sandboxFetch<BrowserScreenshotResult>(
-    'browser-screenshot',
-    {
-      ...withOwnerToken({}, sandboxId),
-      sandbox_id: sandboxId,
-      url,
-      full_page: fullPage,
-    },
-    BROWSER_TIMEOUT_MS,
-    onRetries,
-  );
-}
-
-export async function browserExtractInSandbox(
-  sandboxId: string,
-  url: string,
-  instruction?: string,
-  onRetries?: (retries: number) => void,
-): Promise<BrowserExtractResult> {
-  return sandboxFetch<BrowserExtractResult>(
-    'browser-extract',
-    {
-      ...withOwnerToken({}, sandboxId),
-      sandbox_id: sandboxId,
-      url,
-      instruction: instruction || '',
-    },
-    BROWSER_TIMEOUT_MS,
-    onRetries,
-  );
-}

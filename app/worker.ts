@@ -17,8 +17,6 @@ interface Env {
   ZEN_API_KEY?: string;
   NVIDIA_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
-  BROWSERBASE_API_KEY?: string;
-  BROWSERBASE_PROJECT_ID?: string;
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
   RATE_LIMITER: RateLimit;
@@ -579,8 +577,6 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
     || route === 'list'
     || route === 'delete'
     || route === 'restore'
-    || route === 'browser-screenshot'
-    || route === 'browser-extract'
   ) {
     try {
       const payload = JSON.parse(bodyResult.text) as Record<string, unknown>;
@@ -591,11 +587,6 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
       if (route === 'list') payload.action = 'list';
       if (route === 'delete') payload.action = 'delete';
       if (route === 'restore') payload.action = 'hydrate';
-
-      if (route === 'browser-screenshot' || route === 'browser-extract') {
-        payload.browserbase_api_key = env.BROWSERBASE_API_KEY || '';
-        payload.browserbase_project_id = env.BROWSERBASE_PROJECT_ID || '';
-      }
 
       forwardBodyText = JSON.stringify(payload);
     } catch {

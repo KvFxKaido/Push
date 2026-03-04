@@ -176,8 +176,6 @@ export type ChatCard =
   | { type: 'commit-files'; data: CommitFilesCardData }
   | { type: 'test-results'; data: TestResultsCardData }
   | { type: 'type-check'; data: TypeCheckCardData }
-  | { type: 'browser-screenshot'; data: BrowserScreenshotCardData }
-  | { type: 'browser-extract'; data: BrowserExtractCardData }
   | { type: 'sandbox-download'; data: SandboxDownloadCardData }
   | { type: 'workflow-runs'; data: WorkflowRunsCardData }
   | { type: 'workflow-logs'; data: WorkflowLogsCardData }
@@ -360,33 +358,6 @@ export interface SandboxStateCardData {
   untrackedFiles: number;
   preview: string[];
   fetchedAt: string;
-}
-
-export interface BrowserToolError {
-  code: string;
-  message: string;
-}
-
-export interface BrowserScreenshotCardData {
-  url: string;
-  finalUrl: string;
-  title: string;
-  statusCode: number | null;
-  mimeType: string;
-  imageBase64: string;
-  truncated: boolean;
-  error?: BrowserToolError;
-}
-
-export interface BrowserExtractCardData {
-  url: string;
-  finalUrl: string;
-  title: string;
-  statusCode: number | null;
-  instruction?: string;
-  content: string;
-  truncated: boolean;
-  error?: BrowserToolError;
 }
 
 export interface SandboxDownloadCardData {
