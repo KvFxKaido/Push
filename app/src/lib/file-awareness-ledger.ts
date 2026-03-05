@@ -163,7 +163,7 @@ export function extractSignaturesWithLines(content: string, contentStartLine: nu
     { kind: 'class' as SymbolKind, regex: /^[ \t]*(?:export\s+)?class\s+(\w+)/ },
     { kind: 'interface' as SymbolKind, regex: /^[ \t]*(?:export\s+)?interface\s+(\w+)/ },
     { kind: 'type' as SymbolKind, regex: /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/ },
-    { kind: 'export' as SymbolKind, regex: /^[ \t]*export\s+default\s+(?:function\s+)?(\w+)?/ },
+    { kind: 'export' as SymbolKind, regex: /^[ \t]*export\s+default\s+(?:function\s+)?(\w+)/ },
     { kind: 'function' as SymbolKind, regex: /^[ \t]*def\s+(\w+)/ },
     { kind: 'class' as SymbolKind, regex: /^[ \t]*class\s+(\w+)\s*[:(]/ },
   ];
