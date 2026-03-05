@@ -891,7 +891,49 @@ describe('sandbox_edit_file symbolic guard', () => {
     expect(fileLedger.hasEntry('/workspace/src/app.ts')).toBe(true);
   });
 
-  it('returns EDIT_GUARD_BLOCKED when post-auto-expand re-check fails', async () => {
+  it('allows symbolic edits after a full read even when symbol extraction found none', async () => {
+    const path = '/workspace/src/plain.ts';
+    const fileContent = 'const value = 1;\n';
+
+    vi.mocked(sandboxClient.readFromSandbox)
+      // Initial explicit full read by the model
+      .mockResolvedValueOnce({
+        content: fileContent,
+        truncated: false,
+        version: 'v1',
+      })
+      // Fresh read in sandbox_edit_file Step 1
+      .mockResolvedValueOnce({
+        content: fileContent,
+        truncated: false,
+        version: 'v1',
+      });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 48 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+
+    const ref = await calculateLineHash('const value = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path,
+          edits: [{ op: 'replace_line', ref, content: 'export function introduced() { return 1; }' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/plain.ts');
+    expect(result.text).not.toContain('Edit guard');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalled();
+  });
+
+  it('surfaces hash mismatch after auto-expand full read when refs are invalid', async () => {
     // Auto-expand reads the file but the symbol being edited isn't found in it
     // The file contains `functionA` but the edit touches `functionB`
     const fileContent = 'export function functionA() {\n  return 0;\n}\n';
@@ -915,7 +957,7 @@ describe('sandbox_edit_file symbolic guard', () => {
     );
 
     expect(result.text).toContain('[Tool Error — sandbox_edit_file]');
-    expect(result.text).toContain('Edit guard');
+    expect(result.text).toContain('error_type: EDIT_HASH_MISMATCH');
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 });
@@ -941,6 +983,7 @@ describe('sandbox_apply_patchset symbolic guard', () => {
       version: 'v1',
     });
     vi.mocked(sandboxClient.batchWriteToSandbox).mockResolvedValue({
+      ok: true,
       results: [{ path: '/workspace/src/a.ts', ok: true, new_version: 'v2', bytes_written: 50 }],
     });
 
@@ -962,8 +1005,8 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     expect(result.text).toContain('patched successfully');
   });
 
-  it('blocks patchset when a file remains blocked after auto-expand', async () => {
-    // File contains functionA but edit touches functionB — guard should block
+  it('surfaces validation mismatch after auto-expand full read when refs are invalid', async () => {
+    // File contains functionA but the edit uses an invalid hash ref.
     const fileContent = 'export function functionA() {\n  return 0;\n}\n';
     vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
       content: fileContent,
@@ -986,8 +1029,98 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     );
 
     expect(result.text).toContain('[Tool Error — sandbox_apply_patchset]');
-    expect(result.text).toContain('Edit guard blocked');
+    expect(result.text).toContain('Validation failed');
+    expect(result.text).toContain('error_type: EDIT_HASH_MISMATCH');
     expect(result.text).toContain('/workspace/src/a.ts');
+    expect(vi.mocked(sandboxClient.batchWriteToSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('blocks patchset when guard auto-expand remains truncated', async () => {
+    const line = 'export function greet() {';
+    const content = `${line}\n`;
+
+    vi.mocked(sandboxClient.readFromSandbox)
+      // Guard auto-read
+      .mockResolvedValueOnce({
+        content,
+        truncated: true,
+        version: 'v1',
+      })
+      // Guard chunk hydration (still truncated)
+      .mockResolvedValueOnce({
+        content,
+        truncated: true,
+        version: 'v1',
+        start_line: 1,
+        end_line: 400,
+      } as unknown as sandboxClient.FileReadResult);
+
+    const ref = await calculateLineHash(line);
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path: '/workspace/src/a.ts',
+            ops: [{ op: 'replace_line', ref, content: 'export function greet() { return "hello"; }' }],
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_apply_patchset]');
+    expect(result.text).toContain('too large to fully load safely');
+    expect(vi.mocked(sandboxClient.batchWriteToSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('blocks patchset when phase-1 hydration remains truncated after guard pass', async () => {
+    const path = '/workspace/src/a.ts';
+    const fileContent = 'const value = 1;\n';
+
+    vi.mocked(sandboxClient.readFromSandbox)
+      // Pre-read so guard passes without auto-expand
+      .mockResolvedValueOnce({
+        content: fileContent,
+        truncated: false,
+        version: 'v1',
+      })
+      // Phase 1 read in sandbox_apply_patchset
+      .mockResolvedValueOnce({
+        content: 'const value = 1;',
+        truncated: true,
+        version: 'v2',
+      })
+      // Phase 1 chunk hydration (still truncated)
+      .mockResolvedValueOnce({
+        content: 'const value = 1;',
+        truncated: true,
+        version: 'v2',
+        start_line: 1,
+        end_line: 400,
+      } as unknown as sandboxClient.FileReadResult);
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+
+    const ref = await calculateLineHash('const value = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path,
+            ops: [{ op: 'replace_line', ref, content: 'const value = 2;' }],
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_apply_patchset]');
+    expect(result.text).toContain('too large to fully load safely');
     expect(vi.mocked(sandboxClient.batchWriteToSandbox)).not.toHaveBeenCalled();
   });
 });

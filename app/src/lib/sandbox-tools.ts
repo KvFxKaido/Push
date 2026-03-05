@@ -1029,8 +1029,8 @@ export async function executeSandboxToolCall(
         // --- Edit Guard: symbolic check before editing ---
         // Build a combined string from all edit ops to extract symbols the edit touches
         const editContentForGuard = edits
-          .filter((op: HashlineOp) => op.op !== 'delete_line' && op.content)
-          .map((op: HashlineOp) => op.content)
+          .filter((op): op is Extract<HashlineOp, { content: string }> => 'content' in op)
+          .map((op) => op.content)
           .join('\n');
         // Cache auto-expand result so Step 1 can reuse it instead of re-fetching
         let guardCachedContent: string | null = null;
@@ -2184,8 +2184,8 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
         const guardBlocked: string[] = [];
         const guardChecks = edits.map(async (edit) => {
           const patchEditContent = edit.ops
-            .filter((op: HashlineOp) => op.op !== 'delete_line' && op.content)
-            .map((op: HashlineOp) => op.content)
+            .filter((op): op is Extract<HashlineOp, { content: string }> => 'content' in op)
+            .map((op) => op.content)
             .join('\n');
           const patchVerdict = fileLedger.checkSymbolicEditAllowed(edit.path, patchEditContent);
           if (!patchVerdict.allowed) {
@@ -2212,6 +2212,10 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
                 });
                 if (typeof version === 'string' && version) {
                   versionCacheSet(fileVersionKey(sandboxId, edit.path), version);
+                }
+                if (truncated) {
+                  guardBlocked.push(`${edit.path}: file is too large to fully load safely (chunk hydration remained truncated)`);
+                  return;
                 }
                 fileLedger.recordAutoExpandSuccess();
                 if (symbols.length > 0) fileLedger.recordSymbolAutoExpand();
@@ -2251,6 +2255,7 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
         // Phase 1: Read all files and validate all hashline ops
         const fileContents = new Map<string, { content: string; version?: string }>();
         const validationErrors: string[] = [];
+        const phase1HydrationBlocked: string[] = [];
         const editResults: Array<{ path: string; content: string; applied: number; version?: string }> = [];
 
         // Read all files in parallel (reuse cached content from guard auto-expand)
@@ -2267,15 +2272,47 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
               validationErrors.push(`${edit.path}: ${readResult.error}`);
               return;
             }
+            let content = readResult.content;
+            let version = readResult.version;
+            if (readResult.truncated) {
+              const expanded = await readFullFileByChunks(sandboxId, edit.path, readResult.version);
+              content = expanded.content;
+              version = expanded.version ?? version;
+              if (expanded.truncated) {
+                phase1HydrationBlocked.push(`${edit.path}: file is too large to fully load safely (chunk hydration remained truncated)`);
+                return;
+              }
+            }
+            if (typeof version === 'string' && version) {
+              versionCacheSet(fileVersionKey(sandboxId, edit.path), version);
+            }
             fileContents.set(edit.path, {
-              content: readResult.content,
-              version: typeof readResult.version === 'string' ? readResult.version : undefined,
+              content,
+              version: typeof version === 'string' ? version : undefined,
             });
           } catch (e) {
             validationErrors.push(`${edit.path}: ${e instanceof Error ? e.message : String(e)}`);
           }
         });
         await Promise.all(readPromises);
+
+        if (phase1HydrationBlocked.length > 0) {
+          const err: StructuredToolError = {
+            type: 'EDIT_GUARD_BLOCKED',
+            retryable: false,
+            message: `Edit guard blocked ${phase1HydrationBlocked.length} file(s) in patchset`,
+            detail: phase1HydrationBlocked.join('; '),
+          };
+          return {
+            text: formatStructuredError(err, [
+              `[Tool Error — sandbox_apply_patchset]`,
+              `Edit guard blocked ${phase1HydrationBlocked.length} file(s):`,
+              ...phase1HydrationBlocked.map(e => `  - ${e}`),
+              `Use sandbox_read_file with narrower start_line/end_line ranges, then retry with targeted edits.`,
+            ].join('\n')),
+            structuredError: err,
+          };
+        }
 
         if (validationErrors.length > 0) {
           const err: StructuredToolError = { type: 'FILE_NOT_FOUND', retryable: false, message: `Failed to read ${validationErrors.length} file(s)`, detail: validationErrors.join('; ') };

@@ -430,12 +430,18 @@ export class FileAwarenessLedger {
     // Unwrap stale
     const base = entry.kind === 'stale' ? entry.previousState : entry;
 
+    // A full read should always allow edits; symbol extraction is regex-based
+    // and intentionally incomplete, so it should not block after full coverage.
+    if (base.kind === 'fully_read') {
+      this._metrics.checksTotal++;
+      this._metrics.allowedTotal++;
+      return { allowed: true };
+    }
+
     // Get symbols the model has read
     let readSymbols: SymbolRead[] = [];
     if (base.kind === 'partial_read') {
       readSymbols = base.symbols;
-    } else if (base.kind === 'fully_read') {
-      readSymbols = base.symbols ?? [];
     } else if (base.kind === 'model_authored') {
       this._metrics.checksTotal++;
       this._metrics.allowedTotal++;
