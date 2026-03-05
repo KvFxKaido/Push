@@ -1020,7 +1020,7 @@ describe('sandbox_edit_file symbolic guard', () => {
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 
-  it('softens unknown-symbol guard after full auto-expand and proceeds with warning', async () => {
+  it('resolves unknown-symbol guard after full auto-expand and proceeds silently', async () => {
     const path = '/workspace/src/app.ts';
     const fileContent = 'const value = 1;\n';
     fileLedger.recordRead(path, {
@@ -1059,36 +1059,24 @@ describe('sandbox_edit_file symbolic guard', () => {
     );
 
     expect(result.text).toContain('Edited /workspace/src/app.ts');
-    expect(result.text).toContain('Symbol guard warning:');
+    expect(result.text).not.toContain('Symbol guard warning:');
     expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalled();
-    expect(fileLedger.getMetrics().symbolWarningsSoftened).toBe(1);
   });
 
-  it('auto-retries stale line-qualified refs against latest hashes', async () => {
+  it('auto-retries stale line-qualified refs by hash when content shifted lines', async () => {
     const path = '/workspace/src/retry.ts';
+    // A header line was inserted before the target — content unchanged, line number stale.
     const oldContent = 'const value = 1;\n';
-    const latestContent = 'const value = 2;\n';
+    const latestContent = 'header line\nconst value = 1;\n';
 
     vi.mocked(sandboxClient.readFromSandbox)
       // Initial explicit read (to satisfy edit guard).
-      .mockResolvedValueOnce({
-        content: oldContent,
-        truncated: false,
-        version: 'v1',
-      })
+      .mockResolvedValueOnce({ content: oldContent, truncated: false, version: 'v1' })
       // sandbox_edit_file Step 1 read.
-      .mockResolvedValueOnce({
-        content: latestContent,
-        truncated: false,
-        version: 'v2',
-      })
+      .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' })
       // Auto-retry re-read.
-      .mockResolvedValueOnce({
-        content: latestContent,
-        truncated: false,
-        version: 'v2',
-      });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v3', bytes_written: 18 });
+      .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v3', bytes_written: 30 });
     vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
 
     await executeSandboxToolCall(
@@ -1108,12 +1096,13 @@ describe('sandbox_edit_file symbolic guard', () => {
       'sb-123',
     );
 
+    // Hash-only retry finds the content at its new line (2) and applies correctly.
     expect(result.text).toContain('Edited /workspace/src/retry.ts');
-    expect(result.text).toContain('Auto-retry remapped 1 line-qualified ref');
+    expect(result.text).toContain('Auto-retry succeeded');
     expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
       'sb-123',
       path,
-      'const value = 3;\n',
+      'header line\nconst value = 3;\n',
       'v2',
     );
     expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(3);
@@ -1282,7 +1271,7 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     expect(vi.mocked(sandboxClient.batchWriteToSandbox)).not.toHaveBeenCalled();
   });
 
-  it('includes guard warnings when unknown-symbol blocks are softened after full auto-read', async () => {
+  it('resolves unknown-symbol guard after full auto-read and proceeds silently', async () => {
     const path = '/workspace/src/a.ts';
     const fileContent = 'const value = 1;\n';
     fileLedger.recordRead(path, {
@@ -1316,10 +1305,9 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     );
 
     expect(result.text).toContain('[Tool Result — sandbox_apply_patchset]');
-    expect(result.text).toContain('Guard warnings:');
+    expect(result.text).not.toContain('Guard warnings:');
     expect(result.text).toContain(path);
     expect(vi.mocked(sandboxClient.batchWriteToSandbox)).toHaveBeenCalled();
-    expect(fileLedger.getMetrics().symbolWarningsSoftened).toBe(1);
   });
 
   it('blocks patchset when guard auto-expand remains truncated', async () => {

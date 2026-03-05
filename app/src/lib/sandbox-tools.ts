@@ -1125,8 +1125,6 @@ export async function executeSandboxToolCall(
         let guardCachedTruncated = false;
         let symbolicWarning: string | null = null;
         const symbolicVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
-        const symbolicUnknownInitiallyBlocked =
-          !symbolicVerdict.allowed && isUnknownSymbolGuardReason(symbolicVerdict.reason);
         if (!symbolicVerdict.allowed) {
           // Auto-expand: try reading the file so the ledger has coverage
           fileLedger.recordAutoExpandAttempt();
@@ -2403,8 +2401,6 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
             .map((op) => op.content)
             .join('\n');
           const patchVerdict = fileLedger.checkSymbolicEditAllowed(edit.path, patchEditContent);
-          const patchUnknownInitiallyBlocked =
-            !patchVerdict.allowed && isUnknownSymbolGuardReason(patchVerdict.reason);
           if (!patchVerdict.allowed) {
             // Auto-expand: try reading the file to populate ledger
             fileLedger.recordAutoExpandAttempt();
