@@ -157,15 +157,15 @@ export function extractSignaturesWithLines(content: string, contentStartLine: nu
   const symbols: SymbolRead[] = [];
   const seen = new Set<string>(); // deduplicate by name+kind
 
-  // Pattern definitions with their kind and regex
+  // Pattern definitions with their kind and regex (allow leading whitespace like SIGNATURE_PATTERNS)
   const patternDefs = [
-    { kind: 'function' as SymbolKind, regex: /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/ },
-    { kind: 'class' as SymbolKind, regex: /^(?:export\s+)?class\s+(\w+)/ },
-    { kind: 'interface' as SymbolKind, regex: /^(?:export\s+)?interface\s+(\w+)/ },
-    { kind: 'type' as SymbolKind, regex: /^(?:export\s+)?type\s+(\w+)\s*=/ },
-    { kind: 'export' as SymbolKind, regex: /^export\s+default\s+(?:function\s+)?(\w+)?/ },
-    { kind: 'function' as SymbolKind, regex: /^def\s+(\w+)/ },
-    { kind: 'class' as SymbolKind, regex: /^class\s+(\w+)\s*[:(]/ },
+    { kind: 'function' as SymbolKind, regex: /^[ \t]*(?:export\s+)?(?:async\s+)?function\s+(\w+)/ },
+    { kind: 'class' as SymbolKind, regex: /^[ \t]*(?:export\s+)?class\s+(\w+)/ },
+    { kind: 'interface' as SymbolKind, regex: /^[ \t]*(?:export\s+)?interface\s+(\w+)/ },
+    { kind: 'type' as SymbolKind, regex: /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/ },
+    { kind: 'export' as SymbolKind, regex: /^[ \t]*export\s+default\s+(?:function\s+)?(\w+)/ },
+    { kind: 'function' as SymbolKind, regex: /^[ \t]*def\s+(\w+)/ },
+    { kind: 'class' as SymbolKind, regex: /^[ \t]*class\s+(\w+)\s*[:(]/ },
   ];
 
   const lines = content.split('\n');
@@ -392,7 +392,7 @@ export class FileAwarenessLedger {
       { kind: 'class' as SymbolKind, regex: /(?:export\s+)?class\s+(\w+)/g },
       { kind: 'interface' as SymbolKind, regex: /(?:export\s+)?interface\s+(\w+)/g },
       { kind: 'type' as SymbolKind, regex: /(?:export\s+)?type\s+(\w+)\s*=/g },
-      { kind: 'export' as SymbolKind, regex: /export\s+default\s+(?:function\s+)?(\w+)?/g },
+      { kind: 'export' as SymbolKind, regex: /export\s+default\s+(?:function\s+)?(\w+)/g },
       { kind: 'function' as SymbolKind, regex: /def\s+(\w+)/g },
       { kind: 'class' as SymbolKind, regex: /class\s+(\w+)\s*[:(]/g },
     ];
@@ -419,11 +419,10 @@ export class FileAwarenessLedger {
    * Falls back to line-based check if no symbols detected in edit.
    */
   checkSymbolicEditAllowed(path: string, editContent: string): EditGuardVerdict {
-    this._metrics.checksTotal++;
     const key = this.normalizePath(path);
     const entry = this.entries.get(key);
 
-    // No ledger entry or never_read - use the basic check
+    // No ledger entry or never_read - delegate fully (checkWriteAllowed counts its own metrics)
     if (!entry || entry.kind === 'never_read') {
       return this.checkWriteAllowed(path);
     }
@@ -438,6 +437,7 @@ export class FileAwarenessLedger {
     } else if (base.kind === 'fully_read') {
       readSymbols = base.symbols ?? [];
     } else if (base.kind === 'model_authored') {
+      this._metrics.checksTotal++;
       this._metrics.allowedTotal++;
       return { allowed: true };
     }
@@ -450,12 +450,16 @@ export class FileAwarenessLedger {
       return this.checkWriteAllowed(path);
     }
 
-    // Check if all edit symbols have been read
-    const readSymbolNames = new Set(readSymbols.map(s => s.name));
+    // Count this check now (not double-counted — checkWriteAllowed fallbacks above handle their own)
+    this._metrics.checksTotal++;
+
+    // Check if all edit symbols have been read (match by name+kind for precision)
+    const readSymbolKeys = new Set(readSymbols.map(s => `${s.kind}:${s.name}`));
     const unknownSymbols: string[] = [];
 
     for (const editSym of editSymbols) {
-      if (!readSymbolNames.has(editSym.name)) {
+      const editKey = `${editSym.kind}:${editSym.name}`;
+      if (!readSymbolKeys.has(editKey)) {
         unknownSymbols.push(editSym.name);
       }
     }
