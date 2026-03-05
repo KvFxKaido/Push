@@ -558,6 +558,52 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+const LINE_QUALIFIED_REF_RE = /^(\d+):([a-f0-9]{7,12})$/i;
+
+function parseLineQualifiedRef(ref: string): { lineNo: number; hashLength: number } | null {
+  const m = ref.trim().match(LINE_QUALIFIED_REF_RE);
+  if (!m) return null;
+  return { lineNo: Number(m[1]), hashLength: m[2].length };
+}
+
+async function remapLineQualifiedRefs(
+  content: string,
+  edits: HashlineOp[],
+): Promise<{ remappedEdits: HashlineOp[]; remappedCount: number; outOfRangeLines: number[] }> {
+  const lines = content.split('\n');
+  const hashMemo = new Map<string, string>();
+  const outOfRangeLines: number[] = [];
+  let remappedCount = 0;
+
+  const remappedEdits: HashlineOp[] = [];
+  for (const edit of edits) {
+    const parsed = parseLineQualifiedRef(edit.ref);
+    if (!parsed) {
+      remappedEdits.push(edit);
+      continue;
+    }
+    const lineIdx = parsed.lineNo - 1;
+    if (lineIdx < 0 || lineIdx >= lines.length) {
+      outOfRangeLines.push(parsed.lineNo);
+      remappedEdits.push(edit);
+      continue;
+    }
+
+    const memoKey = `${parsed.lineNo}:${parsed.hashLength}`;
+    let currentHash = hashMemo.get(memoKey);
+    if (!currentHash) {
+      currentHash = await calculateLineHash(lines[lineIdx], parsed.hashLength);
+      hashMemo.set(memoKey, currentHash);
+    }
+
+    const nextRef = `${parsed.lineNo}:${currentHash}`;
+    if (nextRef !== edit.ref) remappedCount++;
+    remappedEdits.push(nextRef === edit.ref ? edit : { ...edit, ref: nextRef });
+  }
+
+  return { remappedEdits, remappedCount, outOfRangeLines };
+}
+
 
 async function readFullFileByChunks(
   sandboxId: string,
@@ -1148,16 +1194,65 @@ export async function executeSandboxToolCall(
             version: expanded.version ?? readResult.version,
           };
         }
-        // 2. Apply hashline edits
-        const editResult = await applyHashlineEdits(readResult.content, edits);
+        // 2. Apply hashline edits (with a single auto-retry path for stale
+        // line-qualified refs to reduce manual correction loops).
+        let editResult = await applyHashlineEdits(readResult.content, edits);
+        let autoRetryNote: string | null = null;
+
+        const allLineQualifiedRefs = edits.length > 0 && edits.every((op) => parseLineQualifiedRef(op.ref) !== null);
+        if (editResult.failed > 0 && allLineQualifiedRefs) {
+          try {
+            let retryRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+            if (!retryRead.error) {
+              if (retryRead.truncated) {
+                const expanded = await readFullFileByChunks(sandboxId, path, retryRead.version);
+                if (expanded.truncated) {
+                  autoRetryNote = 'Auto-retry skipped: latest file hydration remained truncated.';
+                } else {
+                  retryRead = {
+                    ...retryRead,
+                    content: expanded.content,
+                    truncated: expanded.truncated,
+                    version: expanded.version ?? retryRead.version,
+                  };
+                }
+              }
+
+              if (!retryRead.truncated) {
+                const remap = await remapLineQualifiedRefs(retryRead.content, edits);
+                if (remap.outOfRangeLines.length > 0) {
+                  autoRetryNote = `Auto-retry skipped: line(s) out of range (${[...new Set(remap.outOfRangeLines)].join(', ')}).`;
+                } else if (remap.remappedCount > 0) {
+                  const retryEditResult = await applyHashlineEdits(retryRead.content, remap.remappedEdits);
+                  if (retryEditResult.failed === 0) {
+                    editResult = retryEditResult;
+                    readResult = retryRead;
+                    autoRetryNote = `Auto-retry remapped ${remap.remappedCount} line-qualified ref(s) to latest hashes.`;
+                  } else {
+                    autoRetryNote = `Auto-retry attempted but still failed (${retryEditResult.failed} op(s)).`;
+                  }
+                } else {
+                  autoRetryNote = 'Auto-retry found no ref changes to apply.';
+                }
+              }
+            } else {
+              autoRetryNote = `Auto-retry skipped: ${retryRead.error}`;
+            }
+          } catch (retryErr) {
+            const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+            autoRetryNote = `Auto-retry failed: ${retryMsg}`;
+          }
+        }
 
         if (editResult.failed > 0) {
           const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Failed to apply ${editResult.failed} of ${edits.length} edits.`, detail: editResult.errors.join('; ') };
+          const autoRetryLine = autoRetryNote ? `Auto-retry: ${autoRetryNote}` : null;
           return {
             text: formatStructuredError(err, [
               `[Tool Error — sandbox_edit_file]`,
               `Failed to apply ${editResult.failed} of ${edits.length} edits.`,
               ...editResult.errors.map(e => `- ${e}`),
+              ...(autoRetryLine ? [autoRetryLine] : []),
               `No changes were saved. Review the file content and references then retry.`,
             ].join("\n")),
             structuredError: err,
@@ -1201,6 +1296,9 @@ export async function executeSandboxToolCall(
           `After version: ${editWriteResult.new_version || 'unknown'}`,
           `Bytes written: ${editWriteResult.bytes_written ?? editResult.content.length}`,
         ];
+        if (autoRetryNote) {
+          editLines.push(`Auto-retry: ${autoRetryNote}`);
+        }
         if (diffHunks) {
           // Limit diff output to prevent context bloat
           const maxDiffLen = 3000;

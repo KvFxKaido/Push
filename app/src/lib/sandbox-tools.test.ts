@@ -960,6 +960,61 @@ describe('sandbox_edit_file symbolic guard', () => {
     expect(result.text).toContain('error_type: EDIT_HASH_MISMATCH');
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
+
+  it('auto-retries stale line-qualified refs against latest hashes', async () => {
+    const path = '/workspace/src/retry.ts';
+    const oldContent = 'const value = 1;\n';
+    const latestContent = 'const value = 2;\n';
+
+    vi.mocked(sandboxClient.readFromSandbox)
+      // Initial explicit read (to satisfy edit guard).
+      .mockResolvedValueOnce({
+        content: oldContent,
+        truncated: false,
+        version: 'v1',
+      })
+      // sandbox_edit_file Step 1 read.
+      .mockResolvedValueOnce({
+        content: latestContent,
+        truncated: false,
+        version: 'v2',
+      })
+      // Auto-retry re-read.
+      .mockResolvedValueOnce({
+        content: latestContent,
+        truncated: false,
+        version: 'v2',
+      });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v3', bytes_written: 18 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+
+    const staleHash = await calculateLineHash('const value = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path,
+          edits: [{ op: 'replace_line', ref: `1:${staleHash}`, content: 'const value = 3;' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/retry.ts');
+    expect(result.text).toContain('Auto-retry remapped 1 line-qualified ref');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'const value = 3;\n',
+      'v2',
+    );
+    expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(3);
+  });
 });
 
 // ---------------------------------------------------------------------------
