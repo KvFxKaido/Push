@@ -577,6 +577,10 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+function isUnknownSymbolGuardReason(reason: string): boolean {
+  return /^Read symbol '.+' before editing\./.test(reason.trim());
+}
+
 const LINE_QUALIFIED_REF_RE = /^(\d+):([a-f0-9]{7,12})$/i;
 
 function parseLineQualifiedRef(ref: string): { lineNo: number; hashLength: number } | null {
@@ -1156,7 +1160,10 @@ export async function executeSandboxToolCall(
         let guardCachedContent: string | null = null;
         let guardCachedVersion: string | null = null;
         let guardCachedTruncated = false;
+        let symbolicWarning: string | null = null;
         const symbolicVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
+        const symbolicUnknownInitiallyBlocked =
+          !symbolicVerdict.allowed && isUnknownSymbolGuardReason(symbolicVerdict.reason);
         if (!symbolicVerdict.allowed) {
           // Auto-expand: try reading the file so the ledger has coverage
           fileLedger.recordAutoExpandAttempt();
@@ -1192,15 +1199,21 @@ export async function executeSandboxToolCall(
               // Re-check after auto-expand
               const retryVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
               if (!retryVerdict.allowed) {
-                const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${retryVerdict.reason}`, detail: 'Blocked after auto-expand' };
-                return {
-                  text: formatStructuredError(guardErr, [
-                    `[Tool Error — sandbox_edit_file]`,
-                    `Edit guard: ${retryVerdict.reason}`,
-                    `The file was auto-read but the guard still blocks this edit. Use sandbox_read_file to read the relevant sections, then retry.`,
-                  ].join('\n')),
-                  structuredError: guardErr,
-                };
+                if (isUnknownSymbolGuardReason(retryVerdict.reason) && !autoTruncated) {
+                  symbolicWarning = `${retryVerdict.reason} Proceeding because the file was fully auto-read.`;
+                } else {
+                  const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${retryVerdict.reason}`, detail: 'Blocked after auto-expand' };
+                  return {
+                    text: formatStructuredError(guardErr, [
+                      `[Tool Error — sandbox_edit_file]`,
+                      `Edit guard: ${retryVerdict.reason}`,
+                      `The file was auto-read but the guard still blocks this edit. Use sandbox_read_file to read the relevant sections, then retry.`,
+                    ].join('\n')),
+                    structuredError: guardErr,
+                  };
+                }
+              } else if (symbolicUnknownInitiallyBlocked && !autoTruncated) {
+                symbolicWarning = `${symbolicVerdict.reason} Proceeding because the file was fully auto-read.`;
               }
             } else {
               // Auto-read failed — block the edit
@@ -1370,6 +1383,9 @@ export async function executeSandboxToolCall(
           `After version: ${editWriteResult.new_version || 'unknown'}`,
           `Bytes written: ${editWriteResult.bytes_written ?? editResult.content.length}`,
         ];
+        if (symbolicWarning) {
+          editLines.push(`Symbol guard warning: ${symbolicWarning}`);
+        }
         if (autoRetryNote) {
           editLines.push(`Auto-retry: ${autoRetryNote}`);
         }
@@ -2416,12 +2432,15 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
         // Run guard checks in parallel, caching auto-expand results for reuse in Phase 1
         const guardCachedFiles = new Map<string, { content: string; version?: string }>();
         const guardBlocked: string[] = [];
+        const guardWarnings: string[] = [];
         const guardChecks = edits.map(async (edit) => {
           const patchEditContent = edit.ops
             .filter((op): op is Extract<HashlineOp, { content: string }> => 'content' in op)
             .map((op) => op.content)
             .join('\n');
           const patchVerdict = fileLedger.checkSymbolicEditAllowed(edit.path, patchEditContent);
+          const patchUnknownInitiallyBlocked =
+            !patchVerdict.allowed && isUnknownSymbolGuardReason(patchVerdict.reason);
           if (!patchVerdict.allowed) {
             // Auto-expand: try reading the file to populate ledger
             fileLedger.recordAutoExpandAttempt();
@@ -2461,7 +2480,13 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
                 // Re-check after auto-expand
                 const retryVerdict = fileLedger.checkSymbolicEditAllowed(edit.path, patchEditContent);
                 if (!retryVerdict.allowed) {
-                  guardBlocked.push(`${edit.path}: ${retryVerdict.reason}`);
+                  if (isUnknownSymbolGuardReason(retryVerdict.reason) && !truncated) {
+                    guardWarnings.push(`${edit.path}: ${retryVerdict.reason} (proceeded after full auto-read)`);
+                  } else {
+                    guardBlocked.push(`${edit.path}: ${retryVerdict.reason}`);
+                  }
+                } else if (patchUnknownInitiallyBlocked && !truncated) {
+                  guardWarnings.push(`${edit.path}: ${patchVerdict.reason} (proceeded after full auto-read)`);
                 }
               } else {
                 guardBlocked.push(`${edit.path}: ${patchVerdict.reason}${autoRead.error ? ` (auto-read error: ${autoRead.error})` : ''}`);
@@ -2601,6 +2626,10 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
           for (const r of editResults) {
             lines.push(`  ${r.path}: ${r.applied} op(s) would apply`);
           }
+          if (guardWarnings.length > 0) {
+            lines.push('Guard warnings:');
+            lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
+          }
           return { text: lines.join('\n') };
         }
 
@@ -2678,6 +2707,10 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
           }
           lines.push(`${writeFailures.length} file(s) failed:`);
           lines.push(...writeFailures.map(f => `  ✗ ${f}`));
+          if (guardWarnings.length > 0) {
+            lines.push('Guard warnings:');
+            lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
+          }
           return { text: lines.join('\n') };
         }
 
@@ -2686,6 +2719,10 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
           `All ${editResults.length} file(s) patched successfully:`,
           ...writeResults.map(r => `  ✓ ${r}`),
         ];
+        if (guardWarnings.length > 0) {
+          lines.push('Guard warnings:');
+          lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
+        }
         return { text: lines.join('\n') };
       }
 

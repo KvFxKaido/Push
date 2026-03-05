@@ -484,6 +484,27 @@ describe('executeSandboxToolCall -- edit guard', () => {
     expect(result.text).toContain('too large to fully load');
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
+
+  it('treats stale ledger entries as hard guard blocks until refreshed', async () => {
+    const path = '/workspace/src/stale.ts';
+    fileLedger.recordCreation(path);
+    fileLedger.markStale(path);
+
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      truncated: false,
+      error: 'permission denied',
+    } as unknown as sandboxClient.FileReadResult);
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path, content: 'updated content' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edit guard');
+    expect(result.text).toContain('may have changed since your last read');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
 });
 
 describe('sandbox path normalization', () => {
@@ -998,6 +1019,49 @@ describe('sandbox_edit_file symbolic guard', () => {
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 
+  it('softens unknown-symbol guard after full auto-expand and proceeds with warning', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'const value = 1;\n';
+    fileLedger.recordRead(path, {
+      startLine: 1,
+      endLine: 1,
+      truncated: false,
+      symbols: [{ name: 'known', kind: 'function', lineRange: { start: 1, end: 1 } }],
+    });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 16,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const ref = await calculateLineHash('const value = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path,
+          edits: [{ op: 'replace_line', ref, content: 'export function madeUp() { return 1; }' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    expect(result.text).toContain('Symbol guard warning:');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalled();
+  });
+
   it('auto-retries stale line-qualified refs against latest hashes', async () => {
     const path = '/workspace/src/retry.ts';
     const oldContent = 'const value = 1;\n';
@@ -1214,6 +1278,45 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     expect(result.text).toContain('error_type: EDIT_HASH_MISMATCH');
     expect(result.text).toContain('/workspace/src/a.ts');
     expect(vi.mocked(sandboxClient.batchWriteToSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('includes guard warnings when unknown-symbol blocks are softened after full auto-read', async () => {
+    const path = '/workspace/src/a.ts';
+    const fileContent = 'const value = 1;\n';
+    fileLedger.recordRead(path, {
+      startLine: 1,
+      endLine: 1,
+      truncated: false,
+      symbols: [{ name: 'known', kind: 'function', lineRange: { start: 1, end: 1 } }],
+    });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockResolvedValue({
+      ok: true,
+      results: [{ path, ok: true, new_version: 'v2', bytes_written: 16 }],
+    });
+
+    const ref = await calculateLineHash('const value = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path,
+            ops: [{ op: 'replace_line', ref, content: 'export function madeUp() { return 1; }' }],
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Result — sandbox_apply_patchset]');
+    expect(result.text).toContain('Guard warnings:');
+    expect(result.text).toContain(path);
+    expect(vi.mocked(sandboxClient.batchWriteToSandbox)).toHaveBeenCalled();
   });
 
   it('blocks patchset when guard auto-expand remains truncated', async () => {

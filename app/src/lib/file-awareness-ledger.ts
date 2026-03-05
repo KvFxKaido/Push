@@ -58,6 +58,7 @@ export interface EditGuardMetrics {
   allowedTotal: number;
   blockedTotal: number;
   blockedByNeverRead: number;
+  blockedByStale: number;
   blockedByPartialRead: number;
   blockedByUnknownSymbol: number;
   autoExpandAttempts: number;
@@ -73,6 +74,7 @@ function emptyMetrics(): EditGuardMetrics {
     allowedTotal: 0,
     blockedTotal: 0,
     blockedByNeverRead: 0,
+    blockedByStale: 0,
     blockedByPartialRead: 0,
     blockedByUnknownSymbol: 0,
     autoExpandAttempts: 0,
@@ -357,8 +359,16 @@ export class FileAwarenessLedger {
       };
     }
 
-    // Unwrap stale for guard purposes (stale is a warning, not a block)
-    const base = entry.kind === 'stale' ? entry.previousState : entry;
+    if (entry.kind === 'stale') {
+      this._metrics.blockedTotal++;
+      this._metrics.blockedByStale++;
+      return {
+        allowed: false,
+        reason: `File "${path}" may have changed since your last read. Re-read it with sandbox_read_file before writing.`,
+      };
+    }
+
+    const base = entry;
 
     switch (base.kind) {
       case 'fully_read':
@@ -427,8 +437,12 @@ export class FileAwarenessLedger {
       return this.checkWriteAllowed(path);
     }
 
-    // Unwrap stale
-    const base = entry.kind === 'stale' ? entry.previousState : entry;
+    // Stale entries are hard-blocked until refreshed.
+    if (entry.kind === 'stale') {
+      return this.checkWriteAllowed(path);
+    }
+
+    const base = entry;
 
     // A full read should always allow edits; symbol extraction is regex-based
     // and intentionally incomplete, so it should not block after full coverage.
