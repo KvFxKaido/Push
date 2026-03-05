@@ -561,15 +561,18 @@ describe('sandbox_edit_file large file fallback', () => {
     vi.mocked(sandboxClient.readFromSandbox).mockReset();
     vi.mocked(sandboxClient.writeToSandbox).mockReset();
     vi.mocked(sandboxClient.execInSandbox).mockReset();
+    fileLedger.reset();
   });
 
   it('re-reads truncated files in chunks before applying hashline edits', async () => {
     vi.mocked(sandboxClient.readFromSandbox)
+      // Auto-expand guard: initial read (truncated)
       .mockResolvedValueOnce({
         content: 'line 1\nline 2',
         truncated: true,
         version: 'v1',
       })
+      // Auto-expand guard: readFullFileByChunks first chunk (fits in one chunk → done)
       .mockResolvedValueOnce({
         content: 'line 1\nline 2\n',
         truncated: false,
@@ -577,12 +580,19 @@ describe('sandbox_edit_file large file fallback', () => {
         start_line: 1,
         end_line: 400,
       })
+      // Actual edit logic: initial read (truncated)
       .mockResolvedValueOnce({
-        content: '',
+        content: 'line 1\nline 2',
+        truncated: true,
+        version: 'v1',
+      })
+      // Actual edit logic: readFullFileByChunks first chunk (fits in one chunk → done)
+      .mockResolvedValueOnce({
+        content: 'line 1\nline 2\n',
         truncated: false,
         version: 'v1',
-        start_line: 3,
-        end_line: 402,
+        start_line: 1,
+        end_line: 400,
       });
 
     vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 20 });
@@ -602,16 +612,20 @@ describe('sandbox_edit_file large file fallback', () => {
     );
 
     expect(result.text).toContain('Edited /workspace/demo.txt');
-    expect(sandboxClient.readFromSandbox).toHaveBeenNthCalledWith(2, 'sb-123', '/workspace/demo.txt', 1, 400);
+    // Calls 1-2 are from the auto-expand guard, call 3 is the actual edit read (truncated),
+    // call 4 is the chunk hydration read with line range
+    expect(sandboxClient.readFromSandbox).toHaveBeenNthCalledWith(4, 'sb-123', '/workspace/demo.txt', 1, 400);
   });
 
   it('blocks sandbox_edit_file when chunk hydration remains truncated', async () => {
     vi.mocked(sandboxClient.readFromSandbox)
+      // Auto-expand guard: initial read (truncated)
       .mockResolvedValueOnce({
         content: 'line 1\nline 2',
         truncated: true,
         version: 'v1',
       })
+      // Auto-expand guard: chunk hydration (still truncated)
       .mockResolvedValueOnce({
         content: 'line 1\nline 2',
         truncated: true,
@@ -634,7 +648,7 @@ describe('sandbox_edit_file large file fallback', () => {
     );
 
     expect(result.text).toContain('[Tool Error — sandbox_edit_file]');
-    expect(result.text).toContain('Chunked hydration remained truncated');
+    expect(result.text).toContain('Edit guard');
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 });
