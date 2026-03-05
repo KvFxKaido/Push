@@ -589,43 +589,6 @@ function parseLineQualifiedRef(ref: string): { lineNo: number; hashLength: numbe
   return { lineNo: Number(m[1]), hashLength: m[2].length };
 }
 
-async function remapLineQualifiedRefs(
-  content: string,
-  edits: HashlineOp[],
-): Promise<{ remappedEdits: HashlineOp[]; remappedCount: number; outOfRangeLines: number[] }> {
-  const lines = content.split('\n');
-  const hashMemo = new Map<string, string>();
-  const outOfRangeLines: number[] = [];
-  let remappedCount = 0;
-
-  const remappedEdits: HashlineOp[] = [];
-  for (const edit of edits) {
-    const parsed = parseLineQualifiedRef(edit.ref);
-    if (!parsed) {
-      remappedEdits.push(edit);
-      continue;
-    }
-    const lineIdx = parsed.lineNo - 1;
-    if (lineIdx < 0 || lineIdx >= lines.length) {
-      outOfRangeLines.push(parsed.lineNo);
-      remappedEdits.push(edit);
-      continue;
-    }
-
-    const memoKey = `${parsed.lineNo}:${parsed.hashLength}`;
-    let currentHash = hashMemo.get(memoKey);
-    if (!currentHash) {
-      currentHash = await calculateLineHash(lines[lineIdx], parsed.hashLength);
-      hashMemo.set(memoKey, currentHash);
-    }
-
-    const nextRef = `${parsed.lineNo}:${currentHash}`;
-    if (nextRef !== edit.ref) remappedCount++;
-    remappedEdits.push(nextRef === edit.ref ? edit : { ...edit, ref: nextRef });
-  }
-
-  return { remappedEdits, remappedCount, outOfRangeLines };
-}
 
 async function buildRangeReplaceHashlineOps(
   content: string,
@@ -1213,9 +1176,6 @@ export async function executeSandboxToolCall(
                     structuredError: guardErr,
                   };
                 }
-              } else if (symbolicUnknownInitiallyBlocked && !autoTruncated) {
-                symbolicWarning = `${symbolicVerdict.reason} Proceeding because the file was fully auto-read.`;
-                fileLedger.recordSymbolWarningSoftened();
               }
             } else {
               // Auto-read failed — block the edit
@@ -1308,20 +1268,22 @@ export async function executeSandboxToolCall(
               }
 
               if (!retryRead.truncated) {
-                const remap = await remapLineQualifiedRefs(retryRead.content, edits);
-                if (remap.outOfRangeLines.length > 0) {
-                  autoRetryNote = `Auto-retry skipped: line(s) out of range (${[...new Set(remap.outOfRangeLines)].join(', ')}).`;
-                } else if (remap.remappedCount > 0) {
-                  const retryEditResult = await applyHashlineEdits(retryRead.content, remap.remappedEdits);
-                  if (retryEditResult.failed === 0) {
-                    editResult = retryEditResult;
-                    readResult = retryRead;
-                    autoRetryNote = `Auto-retry remapped ${remap.remappedCount} line-qualified ref(s) to latest hashes.`;
-                  } else {
-                    autoRetryNote = `Auto-retry attempted but still failed (${retryEditResult.failed} op(s)).`;
-                  }
+                // Strip line-number prefixes and retry by hash only. Remapping to
+                // the new hash at the same line number is unsafe when the file shifted
+                // structurally — it silently edits wrong content without detection.
+                // Retrying by hash lets applyHashlineEdits find the intended content
+                // wherever it moved; if the content is gone, it fails honestly.
+                const hashOnlyEdits = edits.map(op => {
+                  const m = op.ref.trim().match(/^\d+:([a-f0-9]{7,12})$/i);
+                  return m ? { ...op, ref: m[1] } : op;
+                });
+                const retryEditResult = await applyHashlineEdits(retryRead.content, hashOnlyEdits);
+                if (retryEditResult.failed === 0) {
+                  editResult = retryEditResult;
+                  readResult = retryRead;
+                  autoRetryNote = `Auto-retry succeeded (re-located content by hash after file version change).`;
                 } else {
-                  autoRetryNote = 'Auto-retry found no ref changes to apply.';
+                  autoRetryNote = `Auto-retry attempted but still failed (${retryEditResult.failed} op(s)).`;
                 }
               }
             } else {
@@ -2488,9 +2450,6 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
                   } else {
                     guardBlocked.push(`${edit.path}: ${retryVerdict.reason}`);
                   }
-                } else if (patchUnknownInitiallyBlocked && !truncated) {
-                  guardWarnings.push(`${edit.path}: ${patchVerdict.reason} (proceeded after full auto-read)`);
-                  fileLedger.recordSymbolWarningSoftened();
                 }
               } else {
                 guardBlocked.push(`${edit.path}: ${patchVerdict.reason}${autoRead.error ? ` (auto-read error: ${autoRead.error})` : ''}`);
