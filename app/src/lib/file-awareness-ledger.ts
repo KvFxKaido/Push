@@ -34,7 +34,7 @@ export type FileState =
 
 export type EditGuardVerdict =
   | { allowed: true }
-  | { allowed: false; reason: string; missingRanges?: LineRange[] };
+  | { allowed: false; reason: string };
 
 // ---------------------------------------------------------------------------
 // Metrics
@@ -83,6 +83,8 @@ function mergeRanges(ranges: LineRange[]): LineRange[] {
   }
   return merged;
 }
+
+// Range utilities — calculateMissingRanges removed (totalLines cannot be reliably known for partial reads)
 
 // ---------------------------------------------------------------------------
 // Signature extraction (Phase 2)
@@ -272,7 +274,6 @@ export class FileAwarenessLedger {
         return {
           allowed: false,
           reason: `File "${path}" was only partially read. Read the full file (or the remaining ranges) with sandbox_read_file before writing.`,
-          missingRanges: undefined, // We don't know total file length for whole-file writes
         };
 
       default:
