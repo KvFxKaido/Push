@@ -25,10 +25,23 @@ export interface LineRange {
   end: number;
 }
 
+/** Kind of symbol read from a file. */
+export type SymbolKind = 'function' | 'class' | 'interface' | 'export' | 'type';
+
+/**
+ * A symbol (function, class, interface, export) that the model has read.
+ * Used for semantic edit guard - we can block edits to symbols never read.
+ */
+export interface SymbolRead {
+  name: string;
+  kind: SymbolKind;
+  lineRange: LineRange;
+}
+
 export type FileState =
   | { kind: 'never_read' }
-  | { kind: 'partial_read'; ranges: LineRange[] }
-  | { kind: 'fully_read'; readAtRound: number }
+  | { kind: 'partial_read'; ranges: LineRange[]; symbols: SymbolRead[] }
+  | { kind: 'fully_read'; readAtRound: number; symbols?: SymbolRead[] }
   | { kind: 'model_authored'; createdAtRound: number }
   | { kind: 'stale'; previousState: Exclude<FileState, { kind: 'stale' }>; staleSinceRound: number };
 
@@ -46,8 +59,12 @@ export interface EditGuardMetrics {
   blockedTotal: number;
   blockedByNeverRead: number;
   blockedByPartialRead: number;
+  blockedByUnknownSymbol: number;
   autoExpandAttempts: number;
   autoExpandSuccesses: number;
+  symbolsReadTotal: number;
+  symbolBlocks: number;
+  symbolAutoExpands: number;
 }
 
 function emptyMetrics(): EditGuardMetrics {
@@ -57,8 +74,12 @@ function emptyMetrics(): EditGuardMetrics {
     blockedTotal: 0,
     blockedByNeverRead: 0,
     blockedByPartialRead: 0,
+    blockedByUnknownSymbol: 0,
     autoExpandAttempts: 0,
     autoExpandSuccesses: 0,
+    symbolsReadTotal: 0,
+    symbolBlocks: 0,
+    symbolAutoExpands: 0,
   };
 }
 
@@ -84,10 +105,8 @@ function mergeRanges(ranges: LineRange[]): LineRange[] {
   return merged;
 }
 
-// Range utilities — calculateMissingRanges removed (totalLines cannot be reliably known for partial reads)
-
 // ---------------------------------------------------------------------------
-// Signature extraction (Phase 2)
+// Signature extraction
 // ---------------------------------------------------------------------------
 
 /** Language-agnostic regex patterns for structural signatures. */
@@ -130,6 +149,66 @@ export function extractSignatures(content: string): string | null {
   return `contains: ${capped.join(', ')}${suffix}`;
 }
 
+/**
+ * Extract structural signatures from content WITH line numbers.
+ * Used to populate the ledger with symbol information for semantic edit guard.
+ */
+export function extractSignaturesWithLines(content: string, contentStartLine: number = 1): SymbolRead[] {
+  const symbols: SymbolRead[] = [];
+  const seen = new Set<string>(); // deduplicate by name+kind
+
+  // Pattern definitions with their kind and regex
+  const patternDefs = [
+    { kind: 'function' as SymbolKind, regex: /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/ },
+    { kind: 'class' as SymbolKind, regex: /^(?:export\s+)?class\s+(\w+)/ },
+    { kind: 'interface' as SymbolKind, regex: /^(?:export\s+)?interface\s+(\w+)/ },
+    { kind: 'type' as SymbolKind, regex: /^(?:export\s+)?type\s+(\w+)\s*=/ },
+    { kind: 'export' as SymbolKind, regex: /^export\s+default\s+(?:function\s+)?(\w+)?/ },
+    { kind: 'function' as SymbolKind, regex: /^def\s+(\w+)/ },
+    { kind: 'class' as SymbolKind, regex: /^class\s+(\w+)\s*[:(]/ },
+  ];
+
+  const lines = content.split('\n');
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
+    const lineNumber = contentStartLine + lineIdx;
+
+    for (const { kind, regex } of patternDefs) {
+      const match = line.match(regex);
+      if (match && match[1]) {
+        const name = match[1];
+        const key = `${kind}:${name}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          symbols.push({
+            name,
+            kind,
+            lineRange: { start: lineNumber, end: lineNumber },
+          });
+        }
+      }
+    }
+  }
+
+  return symbols;
+}
+
+/**
+ * Deduplicate symbols by name + kind.
+ */
+function deduplicateSymbols(symbols: SymbolRead[]): SymbolRead[] {
+  const seen = new Set<string>();
+  const unique: SymbolRead[] = [];
+  for (const sym of symbols) {
+    const key = `${sym.kind}:${sym.name}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(sym);
+    }
+  }
+  return unique;
+}
+
 // ---------------------------------------------------------------------------
 // Ledger class
 // ---------------------------------------------------------------------------
@@ -168,6 +247,7 @@ export class FileAwarenessLedger {
       endLine?: number;
       truncated?: boolean;
       totalLines?: number;
+      symbols?: SymbolRead[];
     } = {},
   ): void {
     const key = this.normalizePath(path);
@@ -180,28 +260,54 @@ export class FileAwarenessLedger {
     const base = existing?.kind === 'stale' ? existing.previousState : existing;
 
     const isFullRead = !opts.startLine && !opts.endLine && !opts.truncated;
+    const newSymbols = deduplicateSymbols(opts.symbols ?? []);
+
+    // Update symbol metrics
+    if (newSymbols.length > 0) {
+      this._metrics.symbolsReadTotal += newSymbols.length;
+    }
 
     if (isFullRead) {
-      this.entries.set(key, { kind: 'fully_read', readAtRound: this.currentRound });
+      this.entries.set(key, { 
+        kind: 'fully_read', 
+        readAtRound: this.currentRound,
+        symbols: newSymbols.length > 0 ? newSymbols : undefined,
+      });
       return;
     }
 
     // Range or truncated read — compute the range covered
     const start = opts.startLine ?? 1;
-    // For truncated full reads, we don't know the actual end — estimate from content
-    // For range reads, use the requested end (or a large sentinel)
     const end = opts.endLine ?? (opts.totalLines ?? 999_999);
 
     const newRange: LineRange = { start, end };
 
     if (base?.kind === 'partial_read') {
       const combined = mergeRanges([...base.ranges, newRange]);
-      this.entries.set(key, { kind: 'partial_read', ranges: combined });
+      const combinedSymbols = deduplicateSymbols([...base.symbols, ...newSymbols]);
+      this.entries.set(key, { 
+        kind: 'partial_read', 
+        ranges: combined,
+        symbols: combinedSymbols,
+      });
     } else if (base?.kind === 'fully_read') {
-      // Already fully read — no downgrade
+      // Already fully read — no downgrade, but merge symbols if provided
+      if (newSymbols.length > 0) {
+        const existingSymbols = base.symbols ?? [];
+        const mergedSymbols = deduplicateSymbols([...existingSymbols, ...newSymbols]);
+        this.entries.set(key, { 
+          kind: 'fully_read', 
+          readAtRound: base.readAtRound,
+          symbols: mergedSymbols,
+        });
+      }
       return;
     } else {
-      this.entries.set(key, { kind: 'partial_read', ranges: [newRange] });
+      this.entries.set(key, { 
+        kind: 'partial_read', 
+        ranges: [newRange],
+        symbols: newSymbols,
+      });
     }
   }
 
@@ -234,20 +340,14 @@ export class FileAwarenessLedger {
 
   /**
    * Check whether the model has sufficient read coverage to edit a file.
-   *
    * For sandbox_write_file (which replaces the entire file), we check
-   * whether the model has read the file at all. The model needs to have
-   * seen the file to produce a correct replacement.
+   * whether the model has read the file at all.
    */
   checkWriteAllowed(path: string): EditGuardVerdict {
     this._metrics.checksTotal++;
     const key = this.normalizePath(path);
     const entry = this.entries.get(key);
 
-    // No ledger entry or explicitly never_read — block the write.
-    // Missing entries are treated the same as never_read: the model hasn't
-    // read the file, so it shouldn't overwrite it.  New file creation is
-    // handled by the auto-expand path (read fails → file doesn't exist → allow).
     if (!entry || entry.kind === 'never_read') {
       this._metrics.blockedTotal++;
       this._metrics.blockedByNeverRead++;
@@ -267,8 +367,6 @@ export class FileAwarenessLedger {
         return { allowed: true };
 
       case 'partial_read':
-        // For whole-file writes, partial read is risky — the model may be
-        // improvising content it never saw. Block with guidance.
         this._metrics.blockedTotal++;
         this._metrics.blockedByPartialRead++;
         return {
@@ -283,8 +381,101 @@ export class FileAwarenessLedger {
   }
 
   /**
+   * Extract symbols that an edit touches from the edit content.
+   */
+  private extractSymbolsFromEdit(editContent: string): { name: string; kind: SymbolKind }[] {
+    const touched: { name: string; kind: SymbolKind }[] = [];
+    const seen = new Set<string>();
+
+    const editPatterns = [
+      { kind: 'function' as SymbolKind, regex: /(?:export\s+)?(?:async\s+)?function\s+(\w+)/g },
+      { kind: 'class' as SymbolKind, regex: /(?:export\s+)?class\s+(\w+)/g },
+      { kind: 'interface' as SymbolKind, regex: /(?:export\s+)?interface\s+(\w+)/g },
+      { kind: 'type' as SymbolKind, regex: /(?:export\s+)?type\s+(\w+)\s*=/g },
+      { kind: 'export' as SymbolKind, regex: /export\s+default\s+(?:function\s+)?(\w+)?/g },
+      { kind: 'function' as SymbolKind, regex: /def\s+(\w+)/g },
+      { kind: 'class' as SymbolKind, regex: /class\s+(\w+)\s*[:(]/g },
+    ];
+
+    for (const { kind, regex } of editPatterns) {
+      regex.lastIndex = 0;
+      let match;
+      while ((match = regex.exec(editContent)) !== null) {
+        if (match[1]) {
+          const key = `${kind}:${match[1]}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            touched.push({ name: match[1], kind });
+          }
+        }
+      }
+    }
+
+    return touched;
+  }
+
+  /**
+   * Check if an edit is allowed based on symbols the model has read.
+   * Falls back to line-based check if no symbols detected in edit.
+   */
+  checkSymbolicEditAllowed(path: string, editContent: string): EditGuardVerdict {
+    this._metrics.checksTotal++;
+    const key = this.normalizePath(path);
+    const entry = this.entries.get(key);
+
+    // No ledger entry or never_read - use the basic check
+    if (!entry || entry.kind === 'never_read') {
+      return this.checkWriteAllowed(path);
+    }
+
+    // Unwrap stale
+    const base = entry.kind === 'stale' ? entry.previousState : entry;
+
+    // Get symbols the model has read
+    let readSymbols: SymbolRead[] = [];
+    if (base.kind === 'partial_read') {
+      readSymbols = base.symbols;
+    } else if (base.kind === 'fully_read') {
+      readSymbols = base.symbols ?? [];
+    } else if (base.kind === 'model_authored') {
+      this._metrics.allowedTotal++;
+      return { allowed: true };
+    }
+
+    // Extract symbols from the edit content
+    const editSymbols = this.extractSymbolsFromEdit(editContent);
+
+    // If no symbols in edit, fall back to line-based check
+    if (editSymbols.length === 0) {
+      return this.checkWriteAllowed(path);
+    }
+
+    // Check if all edit symbols have been read
+    const readSymbolNames = new Set(readSymbols.map(s => s.name));
+    const unknownSymbols: string[] = [];
+
+    for (const editSym of editSymbols) {
+      if (!readSymbolNames.has(editSym.name)) {
+        unknownSymbols.push(editSym.name);
+      }
+    }
+
+    if (unknownSymbols.length > 0) {
+      this._metrics.blockedTotal++;
+      this._metrics.blockedByUnknownSymbol++;
+      this._metrics.symbolBlocks++;
+      return {
+        allowed: false,
+        reason: `Read symbol '${unknownSymbols[0]}' before editing. Use sandbox_read_file to read the file first.`,
+      };
+    }
+
+    this._metrics.allowedTotal++;
+    return { allowed: true };
+  }
+
+  /**
    * Get the stale warning for a file, if applicable.
-   * Returns a warning string or null.
    */
   getStaleWarning(path: string): string | null {
     const key = this.normalizePath(path);
@@ -326,7 +517,7 @@ export class FileAwarenessLedger {
 
   /**
    * Register a file as existing (seen in a listing, search, etc.)
-   * without recording a read. Sets to never_read if not already tracked.
+   * without recording a read.
    */
   registerFile(path: string): void {
     const key = this.normalizePath(path);
@@ -359,6 +550,11 @@ export class FileAwarenessLedger {
   /** Record a successful auto-expand. */
   recordAutoExpandSuccess(): void {
     this._metrics.autoExpandSuccesses++;
+  }
+
+  /** Record a symbol-based auto-expand. */
+  recordSymbolAutoExpand(): void {
+    this._metrics.symbolAutoExpands++;
   }
 
   /** Get number of tracked files. */

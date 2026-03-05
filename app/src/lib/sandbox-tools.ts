@@ -34,7 +34,7 @@ import {
 import { runAuditor } from './auditor-agent';
 import { parseDiffStats } from './diff-utils';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
-import { fileLedger, extractSignatures } from './file-awareness-ledger';
+import { fileLedger, extractSignatures, extractSignaturesWithLines } from './file-awareness-ledger';
 import { applyHashlineEdits, calculateLineHash, type HashlineOp } from "./hashline";
 import { getActiveGitHubToken } from './github-auth';
 import {
@@ -838,12 +838,16 @@ export async function executeSandboxToolCall(
         // treat it as a full read so the ledger doesn't false-positive as
         // partial_read.
         const effectivelyFullRead = isRangeRead && !rangeEnd && !result.truncated;
+        // Extract symbols for ledger tracking
+        const readStartLine = (isRangeRead && !effectivelyFullRead) ? rangeStart : 1;
+        const symbols = result.content ? extractSignaturesWithLines(result.content, readStartLine) : [];
         if (!emptyRangeWarning) {
           fileLedger.recordRead(call.args.path, {
             startLine: (isRangeRead && !effectivelyFullRead) ? rangeStart : undefined,
             endLine: (isRangeRead && !effectivelyFullRead) ? (rangeEnd ?? rangeStart + contentLineCount - 1) : undefined,
             truncated: Boolean(result.truncated),
             totalLines: contentLineCount,
+            symbols,
           });
         }
 
