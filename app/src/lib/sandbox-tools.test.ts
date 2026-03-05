@@ -573,20 +573,7 @@ describe('sandbox_edit_file large file fallback', () => {
         version: 'v1',
       })
       // Auto-expand guard: readFullFileByChunks first chunk (fits in one chunk → done)
-      .mockResolvedValueOnce({
-        content: 'line 1\nline 2\n',
-        truncated: false,
-        version: 'v1',
-        start_line: 1,
-        end_line: 400,
-      })
-      // Actual edit logic: initial read (truncated)
-      .mockResolvedValueOnce({
-        content: 'line 1\nline 2',
-        truncated: true,
-        version: 'v1',
-      })
-      // Actual edit logic: readFullFileByChunks first chunk (fits in one chunk → done)
+      // The cached result is reused by the edit logic — no duplicate reads
       .mockResolvedValueOnce({
         content: 'line 1\nline 2\n',
         truncated: false,
@@ -612,9 +599,10 @@ describe('sandbox_edit_file large file fallback', () => {
     );
 
     expect(result.text).toContain('Edited /workspace/demo.txt');
-    // Calls 1-2 are from the auto-expand guard, call 3 is the actual edit read (truncated),
-    // call 4 is the chunk hydration read with line range
-    expect(sandboxClient.readFromSandbox).toHaveBeenNthCalledWith(4, 'sb-123', '/workspace/demo.txt', 1, 400);
+    // Call 2 is the chunk hydration read with line range (cached result reused for edit logic)
+    expect(sandboxClient.readFromSandbox).toHaveBeenNthCalledWith(2, 'sb-123', '/workspace/demo.txt', 1, 400);
+    // Verify no duplicate reads — only 2 calls total (guard initial + chunk)
+    expect(sandboxClient.readFromSandbox).toHaveBeenCalledTimes(2);
   });
 
   it('blocks sandbox_edit_file when chunk hydration remains truncated', async () => {

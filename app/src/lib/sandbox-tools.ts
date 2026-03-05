@@ -1032,6 +1032,10 @@ export async function executeSandboxToolCall(
           .filter((op: HashlineOp) => op.op !== 'delete_line' && op.content)
           .map((op: HashlineOp) => op.content)
           .join('\n');
+        // Cache auto-expand result so Step 1 can reuse it instead of re-fetching
+        let guardCachedContent: string | null = null;
+        let guardCachedVersion: string | null = null;
+        let guardCachedTruncated = false;
         const symbolicVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
         if (!symbolicVerdict.allowed) {
           // Auto-expand: try reading the file so the ledger has coverage
@@ -1061,6 +1065,10 @@ export async function executeSandboxToolCall(
               fileLedger.recordAutoExpandSuccess();
               if (autoSymbols.length > 0) fileLedger.recordSymbolAutoExpand();
               console.debug(`[edit-guard] Auto-expanded "${path}" for sandbox_edit_file (${autoLineCount} lines, ${autoSymbols.length} symbols).`);
+              // Cache for reuse in Step 1
+              guardCachedContent = autoContent;
+              guardCachedVersion = typeof autoVersion === 'string' ? autoVersion : null;
+              guardCachedTruncated = autoTruncated;
               // Re-check after auto-expand
               const retryVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
               if (!retryVerdict.allowed) {
@@ -1076,7 +1084,7 @@ export async function executeSandboxToolCall(
               }
             } else {
               // Auto-read failed — block the edit
-              const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${symbolicVerdict.reason}` };
+              const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${symbolicVerdict.reason}`, detail: autoReadResult.error ? `Auto-read error: ${autoReadResult.error}` : undefined };
               return {
                 text: formatStructuredError(guardErr, [
                   `[Tool Error — sandbox_edit_file]`,
@@ -1085,8 +1093,9 @@ export async function executeSandboxToolCall(
                 structuredError: guardErr,
               };
             }
-          } catch {
-            const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${symbolicVerdict.reason}`, detail: 'Auto-read threw an exception' };
+          } catch (autoExpandErr) {
+            const errMsg = autoExpandErr instanceof Error ? autoExpandErr.message : String(autoExpandErr);
+            const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${symbolicVerdict.reason}`, detail: `Auto-read threw: ${errMsg}` };
             return {
               text: formatStructuredError(guardErr, [
                 `[Tool Error — sandbox_edit_file]`,
@@ -1097,8 +1106,17 @@ export async function executeSandboxToolCall(
           }
         }
 
-        // 1. Read the current file content
-        let readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        // 1. Read the current file content (reuse auto-expand cache if available)
+        let readResult: FileReadResult & { error?: string };
+        if (guardCachedContent !== null) {
+          readResult = {
+            content: guardCachedContent,
+            truncated: guardCachedTruncated,
+            version: guardCachedVersion ?? undefined,
+          } as FileReadResult & { error?: string };
+        } else {
+          readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        }
         if (readResult.error) {
           const err = classifyError(readResult.error, path);
           return { text: formatStructuredError(err, formatSandboxError(readResult.error, path)), structuredError: err };
@@ -2146,8 +2164,10 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
         }
 
         // --- Edit Guard: symbolic check for each file in the patchset ---
+        // Run guard checks in parallel, caching auto-expand results for reuse in Phase 1
+        const guardCachedFiles = new Map<string, { content: string; version?: string }>();
         const guardBlocked: string[] = [];
-        for (const edit of edits) {
+        const guardChecks = edits.map(async (edit) => {
           const patchEditContent = edit.ops
             .filter((op: HashlineOp) => op.op !== 'delete_line' && op.content)
             .map((op: HashlineOp) => op.content)
@@ -2180,19 +2200,26 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
                 }
                 fileLedger.recordAutoExpandSuccess();
                 if (symbols.length > 0) fileLedger.recordSymbolAutoExpand();
+                // Cache the fetched content so Phase 1 can reuse it
+                guardCachedFiles.set(edit.path, {
+                  content,
+                  version: typeof version === 'string' ? version : undefined,
+                });
                 // Re-check after auto-expand
                 const retryVerdict = fileLedger.checkSymbolicEditAllowed(edit.path, patchEditContent);
                 if (!retryVerdict.allowed) {
                   guardBlocked.push(`${edit.path}: ${retryVerdict.reason}`);
                 }
               } else {
-                guardBlocked.push(`${edit.path}: ${patchVerdict.reason}`);
+                guardBlocked.push(`${edit.path}: ${patchVerdict.reason}${autoRead.error ? ` (auto-read error: ${autoRead.error})` : ''}`);
               }
-            } catch {
-              guardBlocked.push(`${edit.path}: ${patchVerdict.reason}`);
+            } catch (guardErr) {
+              const errMsg = guardErr instanceof Error ? guardErr.message : String(guardErr);
+              guardBlocked.push(`${edit.path}: ${patchVerdict.reason} (auto-read threw: ${errMsg})`);
             }
           }
-        }
+        });
+        await Promise.all(guardChecks);
         if (guardBlocked.length > 0) {
           const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard blocked ${guardBlocked.length} file(s) in patchset`, detail: guardBlocked.join('; ') };
           return {
@@ -2211,8 +2238,14 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
         const validationErrors: string[] = [];
         const editResults: Array<{ path: string; content: string; applied: number; version?: string }> = [];
 
-        // Read all files in parallel
+        // Read all files in parallel (reuse cached content from guard auto-expand)
         const readPromises = edits.map(async (edit) => {
+          // If the guard already fetched this file, reuse it
+          const cached = guardCachedFiles.get(edit.path);
+          if (cached) {
+            fileContents.set(edit.path, cached);
+            return;
+          }
           try {
             const readResult = await readFromSandbox(sandboxId, edit.path) as FileReadResult & { error?: string };
             if (readResult.error) {
