@@ -27,7 +27,7 @@ export interface LineRange {
 
 export type FileState =
   | { kind: 'never_read' }
-  | { kind: 'partial_read'; ranges: LineRange[] }
+  | { kind: 'partial_read'; ranges: LineRange[]; totalLines?: number }
   | { kind: 'fully_read'; readAtRound: number }
   | { kind: 'model_authored'; createdAtRound: number }
   | { kind: 'stale'; previousState: Exclude<FileState, { kind: 'stale' }>; staleSinceRound: number };
@@ -82,6 +82,27 @@ function mergeRanges(ranges: LineRange[]): LineRange[] {
     }
   }
   return merged;
+
+/** Calculate missing ranges given known read ranges and total file length. */
+function calculateMissingRanges(ranges: LineRange[], totalLines: number): LineRange[] {
+  const missing: LineRange[] = [];
+  let current = 1;
+  
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
+  
+  for (const range of sorted) {
+    if (range.start > current) {
+      missing.push({ start: current, end: range.start - 1 });
+    }
+    current = Math.max(current, range.end + 1);
+  }
+  
+  if (current <= totalLines) {
+    missing.push({ start: current, end: totalLines });
+  }
+  
+  return missing;
+}
 }
 
 // ---------------------------------------------------------------------------
@@ -194,12 +215,12 @@ export class FileAwarenessLedger {
 
     if (base?.kind === 'partial_read') {
       const combined = mergeRanges([...base.ranges, newRange]);
-      this.entries.set(key, { kind: 'partial_read', ranges: combined });
+      this.entries.set(key, { kind: 'partial_read', ranges: combined, totalLines: (base as any).totalLines || opts.totalLines });
     } else if (base?.kind === 'fully_read') {
       // Already fully read — no downgrade
       return;
     } else {
-      this.entries.set(key, { kind: 'partial_read', ranges: [newRange] });
+      this.entries.set(key, { kind: 'partial_read', ranges: [newRange], totalLines: opts.totalLines });
     }
   }
 
@@ -272,7 +293,7 @@ export class FileAwarenessLedger {
         return {
           allowed: false,
           reason: `File "${path}" was only partially read. Read the full file (or the remaining ranges) with sandbox_read_file before writing.`,
-          missingRanges: undefined, // We don't know total file length for whole-file writes
+          missingRanges: base.totalLines ? calculateMissingRanges(base.ranges, base.totalLines) : undefined,
         };
 
       default:
