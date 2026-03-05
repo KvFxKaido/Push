@@ -64,6 +64,7 @@ Push prioritizes harness reliability over raw model capability. Core shipped cap
 
 - **Range-aware file reads** — `sandbox_read_file` supports `start_line`/`end_line` with line-numbered output for precise context
 - **Hashline edits** — `sandbox_edit_file` uses content hashes (default 7-char, up to 12-char for disambiguation) as line references, eliminating line-number drift
+- **Edit convenience wrappers** — `sandbox_edit_range` (line-range replacement) and `sandbox_search_replace` (unique-line substring replacement) compile/delegate to hashline edits with the same safety checks
 - **Garbled tool-call recovery** — three-phase diagnosis, JSON repair, and truncation detection so models self-correct in one retry
 - **Pre-commit audit gate** — Auditor agent enforces SAFE/UNSAFE verdict before standard commits (`sandbox_prepare_commit` path); draft checkpoints via `sandbox_save_draft` are explicitly unaudited
 - **Execution provenance** — tool-result metadata tracks every sandbox operation for traceability

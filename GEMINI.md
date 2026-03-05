@@ -36,7 +36,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Sandbox Mode:** Ephemeral workspace (no GitHub repo). Entry via onboarding or repo picker. GitHub tools blocked; 30-min lifetime with expiry warning. Download as tar.gz.
 *   **Web Search Tools:** Mid-conversation web search via Tavily (premium), Ollama native search, or DuckDuckGo fallback. Prompt-engineered JSON format, client-side dispatch.
 *   **Coder Delegation:** Orchestrator delegates via `delegate_coder`. Supports `acceptanceCriteria[]` (shell commands run post-task). Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — survives context trimming.
-*   **Harness Priority:** Push still prioritizes harness reliability over model churn, but the major checklist is shipped. `documents/plans/Harness Reliability Plan.md` is now reference/planning history rather than an active checklist in the product docs. **Agent Experience Wishlist shipped** (`documents/analysis/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`.
+*   **Harness Priority:** Push still prioritizes harness reliability over model churn, but the major checklist is shipped. `documents/plans/Harness Reliability Plan.md` is now reference/planning history rather than an active checklist in the product docs. **Agent Experience Wishlist shipped** (`documents/analysis/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`, plus edit convenience wrappers (`sandbox_edit_range`, `sandbox_search_replace`) on top of hashline editing.
 *   **User Identity:** Display name, bio, and GitHub login set in Settings. Stored in localStorage via `useUserProfile` hook. Injected into Orchestrator and Coder system prompts via `buildUserIdentityBlock()`.
 *   **Scratchpad:** Shared persistent notepad for user/AI collaboration.
 *   **Active Branch Model:** There is always exactly one Active Branch per repo session — commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Branch switching is available in history drawer, home page, and workspace selector. Branch creation via workspace/header action on main; feature branches show "Merge into main". Non-default inactive branches can be deleted in the workspace selector.
@@ -120,7 +120,7 @@ Push/
 │   │   │   ├── coder-agent.ts     # Coder sub-agent loop, working memory, acceptance criteria, onWorkingMemoryUpdate
 │   │   │   ├── auditor-agent.ts   # Auditor safety gate
 │   │   │   ├── github-tools.ts    # GitHub API tools, branch/merge/PR operations
-│   │   │   ├── sandbox-tools.ts   # Sandbox tools, error taxonomy, sandbox_read_symbols, sandbox_apply_patchset
+│   │   │   ├── sandbox-tools.ts   # Sandbox tools, error taxonomy, sandbox_edit_range, sandbox_search_replace, sandbox_read_symbols, sandbox_apply_patchset
 │   │   │   ├── sandbox-client.ts  # Sandbox HTTP client, mapSandboxErrorCode(), sandboxStatus() for resume reconciliation
 │   │   │   ├── tool-dispatch.ts   # Unified dispatch, detectAllToolCalls(), multi-tool support
 │   │   │   ├── web-search-tools.ts # Web search (Tavily, Ollama native, DuckDuckGo)
