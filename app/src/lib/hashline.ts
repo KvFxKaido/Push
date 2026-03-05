@@ -12,6 +12,24 @@ export interface HashlineEditResult {
 }
 
 /**
+ * Parse a ref string into an optional line number and a hash.
+ * Supported formats:
+ *   "abc1234"        — hash only (7-12 hex chars)
+ *   "12:abc1234"     — line-qualified (1-indexed line number + hash)
+ * Line-qualified refs resolve unambiguously even when multiple lines
+ * share identical content.
+ */
+function parseRef(ref: string): { lineNo: number | null; hash: string } {
+  const raw = ref.trim();
+  if (!raw) throw new Error('ref is required');
+  const m = raw.match(/^(?:(\d+):)?([a-f0-9]{7,12})$/i);
+  if (!m) throw new Error(`invalid ref format: ${raw}`);
+  const lineNo = m[1] ? Number(m[1]) : null;
+  const hash = m[2].toLowerCase();
+  return { lineNo, hash };
+}
+
+/**
  * Calculate a hash for a line of text (trimmed).
  * Uses SHA-256 truncated to `length` hex characters (default 7) for brevity in tool calls.
  * Callers can request longer hashes (up to 12) to disambiguate collisions.
@@ -52,9 +70,60 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
   const hashCache = await batchHashLines(resultLines);
 
   for (const edit of edits) {
-    // Match using prefix: the cache stores 12-char hashes, ref is 7-12 chars
+    // Parse ref — supports bare hash ("abc1234") and line-qualified ("12:abc1234")
+    let parsed: { lineNo: number | null; hash: string };
+    try {
+      parsed = parseRef(edit.ref);
+    } catch (e) {
+      failedCount++;
+      errors.push(`Invalid ref "${edit.ref}": ${(e as Error).message}`);
+      continue;
+    }
+
+    // Fast path: line-qualified ref — go directly to the line, validate hash
+    if (parsed.lineNo !== null) {
+      const idx = parsed.lineNo - 1;
+      if (idx < 0 || idx >= resultLines.length) {
+        failedCount++;
+        errors.push(`Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${resultLines.length} lines).`);
+        continue;
+      }
+      if (!hashCache[idx].startsWith(parsed.hash)) {
+        failedCount++;
+        errors.push(`Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Re-read the file to get current hashes.`);
+        continue;
+      }
+      // Resolved — fall through to apply
+      const targetIndex = idx;
+
+      switch (edit.op) {
+        case 'replace_line':
+          resultLines[targetIndex] = edit.content;
+          hashCache[targetIndex] = await calculateLineHash(edit.content, 12);
+          appliedCount++;
+          break;
+        case 'insert_after':
+          resultLines.splice(targetIndex + 1, 0, edit.content);
+          hashCache.splice(targetIndex + 1, 0, await calculateLineHash(edit.content, 12));
+          appliedCount++;
+          break;
+        case 'insert_before':
+          resultLines.splice(targetIndex, 0, edit.content);
+          hashCache.splice(targetIndex, 0, await calculateLineHash(edit.content, 12));
+          appliedCount++;
+          break;
+        case 'delete_line':
+          resultLines.splice(targetIndex, 1);
+          hashCache.splice(targetIndex, 1);
+          appliedCount++;
+          break;
+      }
+      continue;
+    }
+
+    // Hash-only path: match using prefix
     const matches = hashCache
-      .map((h, i) => h.startsWith(edit.ref) ? i : -1)
+      .map((h, i) => h.startsWith(parsed.hash) ? i : -1)
       .filter(i => i !== -1);
 
     if (matches.length === 0) {
@@ -65,7 +134,7 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
 
     if (matches.length > 1) {
       // Try to disambiguate — cache already has 12-char hashes
-      if (edit.ref.length < 12) {
+      if (parsed.hash.length < 12) {
         const distinctGroups = new Map<string, number[]>();
         for (const idx of matches) {
           const lh = hashCache[idx];
@@ -73,7 +142,7 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
           group.push(idx);
           distinctGroups.set(lh, group);
         }
-        const candidateGroups = [...distinctGroups.entries()].filter(([lh]) => lh.startsWith(edit.ref));
+        const candidateGroups = [...distinctGroups.entries()].filter(([lh]) => lh.startsWith(parsed.hash));
         if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
           matches.splice(0, matches.length, candidateGroups[0][1][0]);
         } else {
@@ -90,13 +159,22 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
           }
           failedCount++;
           errors.push(
-            `Reference "${edit.ref}" is ambiguous (${matches.length} matches). Use a longer hash prefix (up to 12 chars) to disambiguate:\n${diagnostics.join('\n')}`
+            `Reference "${edit.ref}" is ambiguous (${matches.length} matches). Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash}") to target a specific line:\n${diagnostics.join('\n')}`
           );
           continue;
         }
       } else {
+        // Even at max hash length, lines are identical — suggest line-qualified refs
+        const MAX_DIAGNOSTIC_LINES = 5;
+        const diagnostics: string[] = [];
+        for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
+          const idx = matches[k];
+          diagnostics.push(`  L${idx + 1}: "${resultLines[idx].trim().slice(0, 60)}"`);
+        }
         failedCount++;
-        errors.push(`Reference "${edit.ref}" is ambiguous (${matches.length} matches) even at max length. Lines have identical trimmed content.`);
+        errors.push(
+          `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical content. Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash.slice(0, 7)}") to target a specific line:\n${diagnostics.join('\n')}`
+        );
         continue;
       }
     }
