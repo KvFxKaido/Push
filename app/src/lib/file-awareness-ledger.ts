@@ -82,6 +82,7 @@ function mergeRanges(ranges: LineRange[]): LineRange[] {
     }
   }
   return merged;
+}
 
 /** Calculate missing ranges given known read ranges and total file length. */
 function calculateMissingRanges(ranges: LineRange[], totalLines: number): LineRange[] {
@@ -102,7 +103,6 @@ function calculateMissingRanges(ranges: LineRange[], totalLines: number): LineRa
   }
   
   return missing;
-}
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ export class FileAwarenessLedger {
 
     if (base?.kind === 'partial_read') {
       const combined = mergeRanges([...base.ranges, newRange]);
-      this.entries.set(key, { kind: 'partial_read', ranges: combined, totalLines: (base as any).totalLines || opts.totalLines });
+      this.entries.set(key, { kind: 'partial_read', ranges: combined, totalLines: base.totalLines || opts.totalLines });
     } else if (base?.kind === 'fully_read') {
       // Already fully read — no downgrade
       return;
