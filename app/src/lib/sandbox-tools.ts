@@ -2104,16 +2104,31 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
             const validKinds = new Set<string>(['function', 'class', 'interface', 'export', 'type']);
             const ledgerSymbols: SymbolRead[] = symbols
               .filter(s => validKinds.has(s.kind))
-              .map(s => ({
-                name: s.name,
-                kind: s.kind as SymbolKind,
-                lineRange: { start: s.line, end: s.line },
-              }));
+              .map(s => {
+                // Normalize default export kind: the Python extractor emits 'function'
+                // for `export default function Foo`, but the ledger's edit guard keys
+                // default exports as 'export'. Check signature to detect this.
+                let normalizedKind = s.kind as SymbolKind;
+                if (
+                  (normalizedKind === 'function' || normalizedKind === 'class') &&
+                  /^export\s+default\b/.test(s.signature)
+                ) {
+                  normalizedKind = 'export';
+                }
+                return {
+                  name: s.name,
+                  kind: normalizedKind,
+                  lineRange: { start: s.line, end: s.line },
+                };
+              });
             if (ledgerSymbols.length > 0) {
-              // Record as a partial read with symbol awareness (no line ranges — just symbols)
+              // Record as a partial/truncated read — the model only saw a symbol index,
+              // not the actual file content. Using truncated: true prevents recordRead
+              // from upgrading the state to fully_read.
               fileLedger.recordRead(filePath, {
                 symbols: ledgerSymbols,
                 totalLines,
+                truncated: true,
               });
             }
           }

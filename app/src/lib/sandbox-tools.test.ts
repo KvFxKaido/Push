@@ -823,3 +823,171 @@ describe('sandbox_write_file version precedence', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Symbolic edit guard tests — sandbox_edit_file
+// ---------------------------------------------------------------------------
+
+describe('sandbox_edit_file symbolic guard', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    fileLedger.reset();
+  });
+
+  it('blocks when guard fails and auto-read also fails', async () => {
+    // Auto-expand returns an error — guard should block
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      truncated: false,
+      error: 'permission denied',
+    } as sandboxClient.FileReadResult & { error: string });
+
+    const ref = await calculateLineHash('export function hello() {}');
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path: '/workspace/src/app.ts',
+          edits: [{ op: 'replace_line', ref, content: 'export function hello() { return 1; }' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_edit_file]');
+    expect(result.text).toContain('Edit guard');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('auto-expand populates ledger with symbols and allows edit', async () => {
+    // File has a function that the edit touches — auto-expand should discover it
+    const fileContent = 'export function hello() {\n  return 0;\n}\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 50 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    const ref = await calculateLineHash('export function hello() {');
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path: '/workspace/src/app.ts',
+          edits: [{ op: 'replace_line', ref, content: 'export function hello() { return 1; }' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    // Ledger should now have an entry for the file (from auto-expand + recordCreation)
+    expect(fileLedger.hasEntry('/workspace/src/app.ts')).toBe(true);
+  });
+
+  it('returns EDIT_GUARD_BLOCKED when post-auto-expand re-check fails', async () => {
+    // Auto-expand reads the file but the symbol being edited isn't found in it
+    // The file contains `functionA` but the edit touches `functionB`
+    const fileContent = 'export function functionA() {\n  return 0;\n}\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+
+    // Edit references a symbol not in the file
+    const ref = await calculateLineHash('dummy');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path: '/workspace/src/app.ts',
+          edits: [{ op: 'replace_line', ref, content: 'export function functionB() { return 1; }' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_edit_file]');
+    expect(result.text).toContain('Edit guard');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Symbolic edit guard tests — sandbox_apply_patchset
+// ---------------------------------------------------------------------------
+
+describe('sandbox_apply_patchset symbolic guard', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockReset();
+    fileLedger.reset();
+  });
+
+  it('allows patchset when all files pass guard after auto-expand', async () => {
+    const fileContent = 'export function greet() {\n  return "hi";\n}\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockResolvedValue({
+      results: [{ path: '/workspace/src/a.ts', ok: true, new_version: 'v2', bytes_written: 50 }],
+    });
+
+    const ref = await calculateLineHash('export function greet() {');
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path: '/workspace/src/a.ts',
+            ops: [{ op: 'replace_line', ref, content: 'export function greet() { return "hello"; }' }],
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('patched successfully');
+  });
+
+  it('blocks patchset when a file remains blocked after auto-expand', async () => {
+    // File contains functionA but edit touches functionB — guard should block
+    const fileContent = 'export function functionA() {\n  return 0;\n}\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+
+    const ref = await calculateLineHash('dummy');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path: '/workspace/src/a.ts',
+            ops: [{ op: 'replace_line', ref, content: 'export function functionB() { return 1; }' }],
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_apply_patchset]');
+    expect(result.text).toContain('Edit guard blocked');
+    expect(result.text).toContain('/workspace/src/a.ts');
+    expect(vi.mocked(sandboxClient.batchWriteToSandbox)).not.toHaveBeenCalled();
+  });
+});
