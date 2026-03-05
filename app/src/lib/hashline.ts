@@ -69,6 +69,38 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
   // Compute all 12-char hashes once upfront
   const hashCache = await batchHashLines(resultLines);
 
+  /** Apply a single edit op at the resolved target index. */
+  async function applyAt(targetIndex: number, edit: HashlineOp): Promise<void> {
+    switch (edit.op) {
+      case 'replace_line':
+        resultLines[targetIndex] = edit.content;
+        hashCache[targetIndex] = await calculateLineHash(edit.content, 12);
+        appliedCount++;
+        break;
+      case 'insert_after':
+        resultLines.splice(targetIndex + 1, 0, edit.content);
+        hashCache.splice(targetIndex + 1, 0, await calculateLineHash(edit.content, 12));
+        appliedCount++;
+        break;
+      case 'insert_before':
+        resultLines.splice(targetIndex, 0, edit.content);
+        hashCache.splice(targetIndex, 0, await calculateLineHash(edit.content, 12));
+        appliedCount++;
+        break;
+      case 'delete_line':
+        resultLines.splice(targetIndex, 1);
+        hashCache.splice(targetIndex, 1);
+        appliedCount++;
+        break;
+    }
+  }
+
+  /** Format a line snippet for diagnostic output (truncated at 60 chars with ellipsis). */
+  function snippetOf(idx: number): string {
+    const trimmed = resultLines[idx].trim();
+    return trimmed.length > 60 ? trimmed.slice(0, 60) + '…' : trimmed;
+  }
+
   for (const edit of edits) {
     // Parse ref — supports bare hash ("abc1234") and line-qualified ("12:abc1234")
     let parsed: { lineNo: number | null; hash: string };
@@ -93,31 +125,7 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
         errors.push(`Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Re-read the file to get current hashes.`);
         continue;
       }
-      // Resolved — fall through to apply
-      const targetIndex = idx;
-
-      switch (edit.op) {
-        case 'replace_line':
-          resultLines[targetIndex] = edit.content;
-          hashCache[targetIndex] = await calculateLineHash(edit.content, 12);
-          appliedCount++;
-          break;
-        case 'insert_after':
-          resultLines.splice(targetIndex + 1, 0, edit.content);
-          hashCache.splice(targetIndex + 1, 0, await calculateLineHash(edit.content, 12));
-          appliedCount++;
-          break;
-        case 'insert_before':
-          resultLines.splice(targetIndex, 0, edit.content);
-          hashCache.splice(targetIndex, 0, await calculateLineHash(edit.content, 12));
-          appliedCount++;
-          break;
-        case 'delete_line':
-          resultLines.splice(targetIndex, 1);
-          hashCache.splice(targetIndex, 1);
-          appliedCount++;
-          break;
-      }
+      await applyAt(idx, edit);
       continue;
     }
 
@@ -150,9 +158,7 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
           const diagnostics: string[] = [];
           for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
             const idx = matches[k];
-            const snippet = resultLines[idx].trim().slice(0, 60);
-            const longerRef = hashCache[idx];
-            diagnostics.push(`  L${idx + 1}: ${longerRef} "${snippet}${resultLines[idx].trim().length > 60 ? '…' : ''}"`);
+            diagnostics.push(`  L${idx + 1}: ${hashCache[idx]} "${snippetOf(idx)}"`);
           }
           if (matches.length > MAX_DIAGNOSTIC_LINES) {
             diagnostics.push(`  ... and ${matches.length - MAX_DIAGNOSTIC_LINES} more`);
@@ -169,7 +175,7 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
         const diagnostics: string[] = [];
         for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
           const idx = matches[k];
-          diagnostics.push(`  L${idx + 1}: "${resultLines[idx].trim().slice(0, 60)}"`);
+          diagnostics.push(`  L${idx + 1}: "${snippetOf(idx)}"`);
         }
         failedCount++;
         errors.push(
@@ -179,32 +185,7 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
       }
     }
 
-    const targetIndex = matches[0];
-
-    switch (edit.op) {
-      case 'replace_line':
-        resultLines[targetIndex] = edit.content;
-        // Update only the replaced line's hash
-        hashCache[targetIndex] = await calculateLineHash(edit.content, 12);
-        appliedCount++;
-        break;
-      case 'insert_after':
-        resultLines.splice(targetIndex + 1, 0, edit.content);
-        // Insert the new line's hash at the corresponding position
-        hashCache.splice(targetIndex + 1, 0, await calculateLineHash(edit.content, 12));
-        appliedCount++;
-        break;
-      case 'insert_before':
-        resultLines.splice(targetIndex, 0, edit.content);
-        hashCache.splice(targetIndex, 0, await calculateLineHash(edit.content, 12));
-        appliedCount++;
-        break;
-      case 'delete_line':
-        resultLines.splice(targetIndex, 1);
-        hashCache.splice(targetIndex, 1);
-        appliedCount++;
-        break;
-    }
+    await applyAt(matches[0], edit);
   }
 
   return {
