@@ -74,14 +74,10 @@ export function useScratchpad(repoFullName: string | null = null) {
   const [memories, setMemories] = useState<ScratchpadMemory[]>([]);
   const [activeMemoryId, setActiveMemoryId] = useState<string | null>(null);
   const hasMigratedRef = useRef(false);
-  // Cache for unsaved draft when viewing memories
-  const unsavedDraftRef = useRef<string | null>(null);
 
   // Load content when repo changes, with migration support
   useEffect(() => {
     const storageKey = getStorageKey(repoFullName);
-    // Clear unsaved draft when repo changes
-    unsavedDraftRef.current = null;
 
     try {
       // Try to load repo-scoped content first
@@ -251,31 +247,29 @@ export function useScratchpad(repoFullName: string | null = null) {
 
   const loadMemory = useCallback(
     (id: string | null) => {
-      if (!id) {
-        // Restore unsaved draft when switching back to "Scratchpad (unsaved)"
-        if (unsavedDraftRef.current !== null) {
-          setContent(unsavedDraftRef.current);
-          unsavedDraftRef.current = null;
+      if (id) {
+        const memory = memories.find((entry) => entry.id === id);
+        if (memory) {
+          setContent(memory.content);
+          setActiveMemoryId(id);
+        } else {
+          // Memory not found - reset selection and notify user
+          setActiveMemoryId(null);
+          toast.error('Memory not found — it may have been deleted');
         }
-        setActiveMemoryId(null);
-        return;
-      }
-      const memory = memories.find((entry) => entry.id === id);
-      if (memory) {
-        // Cache current content as unsaved draft before loading memory
-        // Only cache if we're not already viewing a memory
-        if (activeMemoryId === null) {
-          unsavedDraftRef.current = content;
-        }
-        setContent(memory.content);
-        setActiveMemoryId(id);
       } else {
-        // Memory not found - reset selection and notify user
+        // Switching to current scratchpad - load from localStorage
+        try {
+          const storageKey = getStorageKey(repoFullName);
+          const stored = localStorage.getItem(storageKey);
+          setContent(stored ?? '');
+        } catch {
+          setContent('');
+        }
         setActiveMemoryId(null);
-        toast.error('Memory not found — it may have been deleted');
       }
     },
-    [memories, activeMemoryId, content],
+    [memories, repoFullName],
   );
 
   const deleteMemory = useCallback((id: string) => {
