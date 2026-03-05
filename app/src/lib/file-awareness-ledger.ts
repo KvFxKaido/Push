@@ -297,6 +297,23 @@ export class FileAwarenessLedger {
   // State inspection
   // -----------------------------------------------------------------------
 
+  /** Get a concise summary of currently fresh (non-stale) file context. */
+  getAwarenessSummary(): string | null {
+    const parts: string[] = [];
+    for (const [path, state] of this.entries.entries()) {
+      if (state.kind === 'fully_read') {
+        parts.push(`${path} (full)`);
+      } else if (state.kind === 'model_authored') {
+        parts.push(`${path} (authored)`);
+      } else if (state.kind === 'partial_read') {
+        const rangeStr = state.ranges.map(r => `${r.start}-${r.end}`).join(', ');
+        parts.push(`${path} (lines ${rangeStr})`);
+      }
+    }
+    if (parts.length === 0) return null;
+    return `Fresh context for: ${parts.join(', ')}`;
+  }
+
   getState(path: string): FileState | undefined {
     return this.entries.get(this.normalizePath(path));
   }
