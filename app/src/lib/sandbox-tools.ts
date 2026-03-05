@@ -30,6 +30,7 @@ import {
   downloadFromSandbox,
   type FileReadResult,
   type BatchWriteEntry,
+  type BatchWriteResultEntry,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { parseDiffStats } from './diff-utils';
@@ -632,11 +633,43 @@ function isUnknownSymbolGuardReason(reason: string): boolean {
 }
 
 const LINE_QUALIFIED_REF_RE = /^(\d+):([a-f0-9]{7,12})$/i;
+const PATCHSET_DETAIL_MAX_FAILURES = 12;
+const PATCHSET_DETAIL_MAX_CHARS = 1500;
 
 function parseLineQualifiedRef(ref: string): { lineNo: number; hashLength: number } | null {
   const m = ref.trim().match(LINE_QUALIFIED_REF_RE);
   if (!m) return null;
   return { lineNo: Number(m[1]), hashLength: m[2].length };
+}
+
+function recordPatchsetStaleConflict(
+  sandboxId: string,
+  path: string,
+  expectedVersion?: string | null,
+  currentVersion?: string | null,
+): string {
+  const cacheKey = fileVersionKey(sandboxId, path);
+  if (typeof currentVersion === 'string' && currentVersion) {
+    versionCacheSet(cacheKey, currentVersion);
+  } else {
+    versionCacheDelete(cacheKey);
+  }
+  fileLedger.markStale(path);
+  const expected = expectedVersion || 'unknown';
+  const current = currentVersion || 'missing';
+  return `${path}: stale write rejected (expected=${expected} current=${current})`;
+}
+
+function buildPatchsetFailureDetail(writeFailures: string[]): string {
+  const shown = writeFailures.slice(0, PATCHSET_DETAIL_MAX_FAILURES);
+  let detail = shown.join('; ');
+  if (writeFailures.length > PATCHSET_DETAIL_MAX_FAILURES) {
+    detail += `; ... (+${writeFailures.length - PATCHSET_DETAIL_MAX_FAILURES} more)`;
+  }
+  if (detail.length > PATCHSET_DETAIL_MAX_CHARS) {
+    detail = `${detail.slice(0, PATCHSET_DETAIL_MAX_CHARS)}...`;
+  }
+  return detail;
 }
 
 
@@ -2827,17 +2860,14 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
               writeResults.push(`${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`);
             } else {
               if (entry.code === 'STALE_FILE') {
-                const cacheKey = fileVersionKey(sandboxId, entry.path);
-                if (typeof entry.current_version === 'string' && entry.current_version) {
-                  versionCacheSet(cacheKey, entry.current_version);
-                } else {
-                  versionCacheDelete(cacheKey);
-                }
-                fileLedger.markStale(entry.path);
+                const staleEntry = entry as BatchWriteResultEntry;
                 staleFailureCount += 1;
-                const expected = entry.expected_version || editInfo?.version || 'unknown';
-                const current = entry.current_version || 'missing';
-                writeFailures.push(`${entry.path}: stale write rejected (expected=${expected} current=${current})`);
+                writeFailures.push(recordPatchsetStaleConflict(
+                  sandboxId,
+                  staleEntry.path,
+                  staleEntry.expected_version || editInfo?.version,
+                  staleEntry.current_version,
+                ));
               } else {
                 writeFailures.push(`${entry.path}: ${entry.error || 'write failed'}`);
               }
@@ -2856,17 +2886,13 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
               const writeResult = await writeToSandbox(sandboxId, r.path, r.content, r.version);
               if (!writeResult.ok) {
                 if (writeResult.code === 'STALE_FILE') {
-                  const cacheKey = fileVersionKey(sandboxId, r.path);
-                  if (typeof writeResult.current_version === 'string' && writeResult.current_version) {
-                    versionCacheSet(cacheKey, writeResult.current_version);
-                  } else {
-                    versionCacheDelete(cacheKey);
-                  }
-                  fileLedger.markStale(r.path);
                   staleFailureCount += 1;
-                  const expected = writeResult.expected_version || r.version || 'unknown';
-                  const current = writeResult.current_version || 'missing';
-                  writeFailures.push(`${r.path}: stale write rejected (expected=${expected} current=${current})`);
+                  writeFailures.push(recordPatchsetStaleConflict(
+                    sandboxId,
+                    r.path,
+                    writeResult.expected_version || r.version,
+                    writeResult.current_version,
+                  ));
                 } else {
                   writeFailures.push(`${r.path}: ${writeResult.error || 'write failed'}`);
                 }
@@ -2885,18 +2911,19 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
         }
 
         if (writeFailures.length > 0) {
+          const detail = buildPatchsetFailureDetail(writeFailures);
           const err: StructuredToolError = staleFailureCount > 0
             ? {
                 type: 'STALE_FILE',
                 retryable: false,
                 message: `Patchset write failed for ${writeFailures.length} file(s), including ${staleFailureCount} stale version conflict(s).`,
-                detail: writeFailures.join('; '),
+                detail,
               }
             : {
                 type: 'WRITE_FAILED',
                 retryable: false,
                 message: `Patchset write failed for ${writeFailures.length} file(s).`,
-                detail: writeFailures.join('; '),
+                detail,
               };
           const lines: string[] = [
             `[Tool Error — sandbox_apply_patchset] (partial failure)`,

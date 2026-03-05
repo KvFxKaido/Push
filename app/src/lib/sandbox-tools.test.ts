@@ -1532,6 +1532,44 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     expect(result.structuredError?.type).toBe('STALE_FILE');
     expect(fileLedger.getState(path)?.kind).toBe('stale');
   });
+
+  it('caps patchset structured-error detail when many files fail', async () => {
+    const ref = await calculateLineHash('const value = 1;');
+    const paths = Array.from({ length: 13 }, (_, idx) => `/workspace/src/f${idx + 1}.ts`);
+
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'const value = 1;\n',
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockResolvedValue({
+      ok: true,
+      results: paths.map((path) => ({
+        path,
+        ok: false,
+        code: 'STALE_FILE',
+        expected_version: 'v1',
+        current_version: 'v2',
+      })),
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: paths.map((path) => ({
+            path,
+            ops: [{ op: 'replace_line', ref, content: 'const value = 2;' }],
+          })),
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.structuredError?.type).toBe('STALE_FILE');
+    expect(result.structuredError?.detail).toContain('(+1 more)');
+    expect(result.structuredError?.detail?.length ?? 0).toBeLessThanOrEqual(1600);
+  });
 });
 
 describe('sandbox_search_replace', () => {
