@@ -66,6 +66,7 @@ export interface EditGuardMetrics {
   symbolsReadTotal: number;
   symbolBlocks: number;
   symbolAutoExpands: number;
+  symbolWarningsSoftened: number;
 }
 
 function emptyMetrics(): EditGuardMetrics {
@@ -82,6 +83,7 @@ function emptyMetrics(): EditGuardMetrics {
     symbolsReadTotal: 0,
     symbolBlocks: 0,
     symbolAutoExpands: 0,
+    symbolWarningsSoftened: 0,
   };
 }
 
@@ -579,6 +581,11 @@ export class FileAwarenessLedger {
   /** Record a symbol-based auto-expand. */
   recordSymbolAutoExpand(): void {
     this._metrics.symbolAutoExpands++;
+  }
+
+  /** Record when an unknown-symbol guard block is softened to a warning. */
+  recordSymbolWarningSoftened(): void {
+    this._metrics.symbolWarningsSoftened++;
   }
 
   /** Get number of tracked files. */

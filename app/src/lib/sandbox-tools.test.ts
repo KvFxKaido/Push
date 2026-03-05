@@ -504,6 +504,7 @@ describe('executeSandboxToolCall -- edit guard', () => {
     expect(result.text).toContain('Edit guard');
     expect(result.text).toContain('may have changed since your last read');
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+    expect(fileLedger.getMetrics().blockedByStale).toBeGreaterThan(0);
   });
 });
 
@@ -1060,6 +1061,7 @@ describe('sandbox_edit_file symbolic guard', () => {
     expect(result.text).toContain('Edited /workspace/src/app.ts');
     expect(result.text).toContain('Symbol guard warning:');
     expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalled();
+    expect(fileLedger.getMetrics().symbolWarningsSoftened).toBe(1);
   });
 
   it('auto-retries stale line-qualified refs against latest hashes', async () => {
@@ -1317,6 +1319,7 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     expect(result.text).toContain('Guard warnings:');
     expect(result.text).toContain(path);
     expect(vi.mocked(sandboxClient.batchWriteToSandbox)).toHaveBeenCalled();
+    expect(fileLedger.getMetrics().symbolWarningsSoftened).toBe(1);
   });
 
   it('blocks patchset when guard auto-expand remains truncated', async () => {

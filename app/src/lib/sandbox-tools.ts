@@ -1201,6 +1201,7 @@ export async function executeSandboxToolCall(
               if (!retryVerdict.allowed) {
                 if (isUnknownSymbolGuardReason(retryVerdict.reason) && !autoTruncated) {
                   symbolicWarning = `${retryVerdict.reason} Proceeding because the file was fully auto-read.`;
+                  fileLedger.recordSymbolWarningSoftened();
                 } else {
                   const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${retryVerdict.reason}`, detail: 'Blocked after auto-expand' };
                   return {
@@ -1214,6 +1215,7 @@ export async function executeSandboxToolCall(
                 }
               } else if (symbolicUnknownInitiallyBlocked && !autoTruncated) {
                 symbolicWarning = `${symbolicVerdict.reason} Proceeding because the file was fully auto-read.`;
+                fileLedger.recordSymbolWarningSoftened();
               }
             } else {
               // Auto-read failed — block the edit
@@ -2482,11 +2484,13 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
                 if (!retryVerdict.allowed) {
                   if (isUnknownSymbolGuardReason(retryVerdict.reason) && !truncated) {
                     guardWarnings.push(`${edit.path}: ${retryVerdict.reason} (proceeded after full auto-read)`);
+                    fileLedger.recordSymbolWarningSoftened();
                   } else {
                     guardBlocked.push(`${edit.path}: ${retryVerdict.reason}`);
                   }
                 } else if (patchUnknownInitiallyBlocked && !truncated) {
                   guardWarnings.push(`${edit.path}: ${patchVerdict.reason} (proceeded after full auto-read)`);
+                  fileLedger.recordSymbolWarningSoftened();
                 }
               } else {
                 guardBlocked.push(`${edit.path}: ${patchVerdict.reason}${autoRead.error ? ` (auto-read error: ${autoRead.error})` : ''}`);

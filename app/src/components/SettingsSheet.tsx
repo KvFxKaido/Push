@@ -1,6 +1,7 @@
 import { Trash2, GitBranch, RefreshCw, Loader2, User, FolderCog, Cpu } from 'lucide-react';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
 import { getContextMetrics } from '@/lib/context-metrics';
+import { fileLedger } from '@/lib/file-awareness-ledger';
 import {
   Sheet,
   SheetContent,
@@ -413,6 +414,7 @@ export function SettingsSheet({
 }: SettingsSheetProps) {
   const tcMetrics = getMalformedToolCallMetrics();
   const ctxMetrics = getContextMetrics();
+  const guardMetrics = fileLedger.getMetrics();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -1384,6 +1386,59 @@ export function SettingsSheet({
                 hint="Not required — web search works without this. Add a Tavily API key for higher-quality, LLM-optimized results. Free tier: 1,000 searches/month."
               />
             </div>
+          </div>
+
+          {/* Edit Guard Diagnostics */}
+          <div className="space-y-3 pt-2 border-t border-push-edge">
+            <label className="text-sm font-medium text-push-fg">
+              Edit Guard Diagnostics
+            </label>
+            {guardMetrics.checksTotal === 0 && guardMetrics.autoExpandAttempts === 0 ? (
+              <p className="text-xs text-push-fg-dim">No edit-guard activity this session.</p>
+            ) : (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                  <span className="text-xs text-push-fg-secondary">Checks</span>
+                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.checksTotal}</span>
+                  <span className="text-xs text-push-fg-secondary">Allowed</span>
+                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.allowedTotal}</span>
+                  <span className="text-xs text-push-fg-secondary">Blocked</span>
+                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.blockedTotal}</span>
+                  <span className="text-xs text-push-fg-secondary">Auto-expand</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {guardMetrics.autoExpandSuccesses}/{guardMetrics.autoExpandAttempts}
+                  </span>
+                  <span className="text-xs text-push-fg-secondary">Symbols read</span>
+                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.symbolsReadTotal}</span>
+                  <span className="text-xs text-push-fg-secondary">Symbol warnings softened</span>
+                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.symbolWarningsSoftened}</span>
+                </div>
+                {(guardMetrics.blockedTotal > 0 || guardMetrics.symbolWarningsSoftened > 0) && (
+                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-push-fg-dim">Never read blocks</span>
+                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.blockedByNeverRead}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-push-fg-dim">Stale blocks</span>
+                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.blockedByStale}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-push-fg-dim">Partial-read blocks</span>
+                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.blockedByPartialRead}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-push-fg-dim">Unknown-symbol blocks</span>
+                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.blockedByUnknownSymbol}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-push-fg-dim">Symbol auto-expands</span>
+                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.symbolAutoExpands}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Tool Call Diagnostics */}
