@@ -338,6 +338,25 @@ export class FileAwarenessLedger {
     });
   }
 
+  /**
+   * Mark all tracked files stale (except never_read / already stale).
+   * Useful after broad mutating shell commands where touched files are unknown.
+   * Returns the number of files newly marked stale.
+   */
+  markAllStale(): number {
+    let marked = 0;
+    for (const [key, state] of this.entries.entries()) {
+      if (state.kind === 'never_read' || state.kind === 'stale') continue;
+      this.entries.set(key, {
+        kind: 'stale',
+        previousState: state,
+        staleSinceRound: this.currentRound,
+      });
+      marked++;
+    }
+    return marked;
+  }
+
   // -----------------------------------------------------------------------
   // Edit guard
   // -----------------------------------------------------------------------

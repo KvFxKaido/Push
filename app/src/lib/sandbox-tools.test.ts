@@ -144,6 +144,7 @@ describe('executeSandboxToolCall -- stale write handling', () => {
     vi.mocked(sandboxClient.execInSandbox).mockReset();
     vi.mocked(sandboxClient.readFromSandbox).mockReset();
     vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    fileLedger.reset();
   });
 
   it('reuses cached file version from read when write omits expected_version', async () => {
@@ -179,6 +180,7 @@ describe('executeSandboxToolCall -- stale write handling', () => {
     expect(writeResult.text).toContain('Stale write rejected');
     expect(writeResult.text).toContain('Expected version: v1');
     expect(writeResult.text).toContain('Current version: v2');
+    expect(fileLedger.getState('/workspace/src/example.ts')?.kind).toBe('stale');
     expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(expect.objectContaining({
       outcome: 'stale',
       errorCode: 'STALE_FILE',
@@ -613,6 +615,38 @@ describe('sandbox path normalization', () => {
 
     expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-123', 'pwd', '/workspace/app');
   });
+
+  it('marks previously-read files stale after sandbox_exec', async () => {
+    const path = '/workspace/src/stale-after-exec.ts';
+    fileLedger.reset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const value = 1;\n',
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+    expect(fileLedger.getState(path)?.kind).toBe('fully_read');
+
+    const execResult = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'pwd' } },
+      'sb-123',
+    );
+
+    expect(execResult.text).toContain('Marked 1 previously-read file(s) as stale');
+    expect(fileLedger.getState(path)?.kind).toBe('stale');
+  });
 });
 
 describe('sandbox_edit_file large file fallback', () => {
@@ -775,6 +809,53 @@ describe('sandbox_edit_file version precedence', () => {
       'hello universe',
       undefined,
     );
+  });
+
+  it('marks file stale and reports version details on stale write rejection', async () => {
+    const path = '/workspace/test-stale.txt';
+    const content = 'hello world\n';
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({
+        content,
+        truncated: false,
+        version: 'v1',
+      })
+      .mockResolvedValueOnce({
+        content,
+        truncated: false,
+        version: 'v1',
+      });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: false,
+      code: 'STALE_FILE',
+      error: 'Stale file version',
+      expected_version: 'v1',
+      current_version: 'v2',
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+
+    const ref = await calculateLineHash('hello world');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path,
+          edits: [{ op: 'replace_line', ref, content: 'hello universe' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_edit_file]');
+    expect(result.text).toContain('Stale write rejected');
+    expect(result.text).toContain('Expected version: v1');
+    expect(result.text).toContain('Current version: v2');
+    expect(result.structuredError?.type).toBe('STALE_FILE');
+    expect(fileLedger.getState(path)?.kind).toBe('stale');
   });
 });
 
@@ -1397,6 +1478,59 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     expect(result.text).toContain('[Tool Error — sandbox_apply_patchset]');
     expect(result.text).toContain('too large to fully load safely');
     expect(vi.mocked(sandboxClient.batchWriteToSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('returns structured stale error on partial patchset failure and marks file stale', async () => {
+    const path = '/workspace/src/a.ts';
+    const fileContent = 'const value = 1;\n';
+    vi.mocked(sandboxClient.readFromSandbox)
+      // Pre-read so guard passes without auto-expand
+      .mockResolvedValueOnce({
+        content: fileContent,
+        truncated: false,
+        version: 'v1',
+      })
+      // Phase 1 read
+      .mockResolvedValueOnce({
+        content: fileContent,
+        truncated: false,
+        version: 'v1',
+      });
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockResolvedValue({
+      ok: true,
+      results: [{
+        path,
+        ok: false,
+        code: 'STALE_FILE',
+        expected_version: 'v1',
+        current_version: 'v2',
+      }],
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+
+    const ref = await calculateLineHash('const value = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path,
+            ops: [{ op: 'replace_line', ref, content: 'const value = 2;' }],
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_apply_patchset] (partial failure)');
+    expect(result.text).toContain('stale write rejected (expected=v1 current=v2)');
+    expect(result.text).toContain('error_type: STALE_FILE');
+    expect(result.structuredError?.type).toBe('STALE_FILE');
+    expect(fileLedger.getState(path)?.kind).toBe('stale');
   });
 });
 

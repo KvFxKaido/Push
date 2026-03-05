@@ -905,6 +905,10 @@ export async function executeSandboxToolCall(
         // rejections on subsequent writes.
         // (exitCode === -1 already returned early above, so no guard needed here.)
         clearFileVersionCache(sandboxId);
+        const staleMarked = fileLedger.markAllStale();
+        if (staleMarked > 0) {
+          lines.push(`\n[Context] Marked ${staleMarked} previously-read file(s) as stale after sandbox_exec. Re-read before editing.`);
+        }
 
         const cardData: SandboxCardData = {
           command: call.args.command,
@@ -1380,20 +1384,42 @@ export async function executeSandboxToolCall(
         // Always prefer the version from the fresh read we just performed.
         // A caller-provided expected_version may be stale from a previous read, and
         // using it here would cause a spurious STALE_FILE rejection on the server.
+        const editCacheKey = fileVersionKey(sandboxId, path);
         const editWriteVersion = readResult.version || undefined;
         const editWriteResult = await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion);
 
         if (!editWriteResult.ok) {
           if (editWriteResult.code === 'STALE_FILE') {
-            const staleErr: StructuredToolError = { type: 'STALE_FILE', retryable: false, message: `Stale write rejected for ${path}.` };
-            return { text: formatStructuredError(staleErr, `[Tool Error — sandbox_edit_file]\nStale write rejected for ${path}. Re-read the file and retry.`), structuredError: staleErr };
+            if (typeof editWriteResult.current_version === 'string' && editWriteResult.current_version) {
+              versionCacheSet(editCacheKey, editWriteResult.current_version);
+            } else {
+              versionCacheDelete(editCacheKey);
+            }
+            fileLedger.markStale(path);
+            const expected = editWriteResult.expected_version || editWriteVersion || 'unknown';
+            const current = editWriteResult.current_version || 'missing';
+            const staleErr: StructuredToolError = {
+              type: 'STALE_FILE',
+              retryable: false,
+              message: `Stale write rejected for ${path}.`,
+              detail: `expected=${expected} current=${current}`,
+            };
+            return {
+              text: formatStructuredError(staleErr, [
+                `[Tool Error — sandbox_edit_file]`,
+                `Stale write rejected for ${path}.`,
+                `Expected version: ${expected}`,
+                `Current version: ${current}`,
+                `Re-read the file with sandbox_read_file, then retry the edit.`,
+              ].join('\n')),
+              structuredError: staleErr,
+            };
           }
           const wErr = classifyError(editWriteResult.error || 'Write failed', path);
           return { text: formatStructuredError(wErr, `[Tool Error — sandbox_edit_file]\n${editWriteResult.error || 'Write failed'}`), structuredError: wErr };
         }
 
         // Update version cache
-        const editCacheKey = fileVersionKey(sandboxId, path);
         if (typeof editWriteResult.new_version === 'string' && editWriteResult.new_version) {
           versionCacheSet(editCacheKey, editWriteResult.new_version);
         }
@@ -1713,7 +1739,10 @@ export async function executeSandboxToolCall(
             if (result.code === 'STALE_FILE') {
               if (typeof result.current_version === 'string' && result.current_version) {
                 versionCacheSet(cacheKey, result.current_version);
+              } else {
+                versionCacheDelete(cacheKey);
               }
+              fileLedger.markStale(call.args.path);
               recordWriteFileMetric({
                 durationMs: Date.now() - writeStart,
                 outcome: 'stale',
@@ -2773,6 +2802,7 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
         // Phase 2: Batch write all files in a single HTTP request
         const writeResults: string[] = [];
         const writeFailures: string[] = [];
+        let staleFailureCount = 0;
 
         // Build index for lookup by path
         const editResultsByPath = new Map(editResults.map(r => [r.path, r]));
@@ -2797,7 +2827,17 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
               writeResults.push(`${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`);
             } else {
               if (entry.code === 'STALE_FILE') {
-                writeFailures.push(`${entry.path}: stale write rejected (version changed during patchset)`);
+                const cacheKey = fileVersionKey(sandboxId, entry.path);
+                if (typeof entry.current_version === 'string' && entry.current_version) {
+                  versionCacheSet(cacheKey, entry.current_version);
+                } else {
+                  versionCacheDelete(cacheKey);
+                }
+                fileLedger.markStale(entry.path);
+                staleFailureCount += 1;
+                const expected = entry.expected_version || editInfo?.version || 'unknown';
+                const current = entry.current_version || 'missing';
+                writeFailures.push(`${entry.path}: stale write rejected (expected=${expected} current=${current})`);
               } else {
                 writeFailures.push(`${entry.path}: ${entry.error || 'write failed'}`);
               }
@@ -2816,7 +2856,17 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
               const writeResult = await writeToSandbox(sandboxId, r.path, r.content, r.version);
               if (!writeResult.ok) {
                 if (writeResult.code === 'STALE_FILE') {
-                  writeFailures.push(`${r.path}: stale write rejected (version changed during patchset)`);
+                  const cacheKey = fileVersionKey(sandboxId, r.path);
+                  if (typeof writeResult.current_version === 'string' && writeResult.current_version) {
+                    versionCacheSet(cacheKey, writeResult.current_version);
+                  } else {
+                    versionCacheDelete(cacheKey);
+                  }
+                  fileLedger.markStale(r.path);
+                  staleFailureCount += 1;
+                  const expected = writeResult.expected_version || r.version || 'unknown';
+                  const current = writeResult.current_version || 'missing';
+                  writeFailures.push(`${r.path}: stale write rejected (expected=${expected} current=${current})`);
                 } else {
                   writeFailures.push(`${r.path}: ${writeResult.error || 'write failed'}`);
                 }
@@ -2835,8 +2885,21 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
         }
 
         if (writeFailures.length > 0) {
+          const err: StructuredToolError = staleFailureCount > 0
+            ? {
+                type: 'STALE_FILE',
+                retryable: false,
+                message: `Patchset write failed for ${writeFailures.length} file(s), including ${staleFailureCount} stale version conflict(s).`,
+                detail: writeFailures.join('; '),
+              }
+            : {
+                type: 'WRITE_FAILED',
+                retryable: false,
+                message: `Patchset write failed for ${writeFailures.length} file(s).`,
+                detail: writeFailures.join('; '),
+              };
           const lines: string[] = [
-            `[Tool Result — sandbox_apply_patchset] (partial failure)`,
+            `[Tool Error — sandbox_apply_patchset] (partial failure)`,
             `${writeResults.length} of ${editResults.length} file(s) written successfully:`,
           ];
           if (writeResults.length > 0) {
@@ -2848,7 +2911,11 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
             lines.push('Guard warnings:');
             lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
           }
-          return { text: lines.join('\n') };
+          lines.push('Re-read failed files before retrying to avoid stale or partial-overwrite risk.');
+          return {
+            text: formatStructuredError(err, lines.join('\n')),
+            structuredError: err,
+          };
         }
 
         const lines: string[] = [
