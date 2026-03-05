@@ -437,6 +437,7 @@ export class FileAwarenessLedger {
     } else if (base.kind === 'fully_read') {
       readSymbols = base.symbols ?? [];
     } else if (base.kind === 'model_authored') {
+      this._metrics.checksTotal++;
       this._metrics.allowedTotal++;
       return { allowed: true };
     }
