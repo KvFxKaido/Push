@@ -379,6 +379,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_read_file'; args: { path: string; start_line?: number; end_line?: number } }
   | { tool: 'sandbox_search'; args: { query: string; path?: string } }
   | { tool: 'sandbox_edit_range'; args: { path: string; start_line: number; end_line: number; content: string; expected_version?: string } }
+  | { tool: 'sandbox_search_replace'; args: { path: string; search: string; replace: string; expected_version?: string } }
   | { tool: 'sandbox_edit_file'; args: { path: string; edits: HashlineOp[]; expected_version?: string } }
   | { tool: 'sandbox_write_file'; args: { path: string; content: string; expected_version?: string } }
   | { tool: 'sandbox_list_dir'; args: { path?: string } }
@@ -444,6 +445,18 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
         start_line: startLine,
         end_line: endLine,
         content: args.content,
+        expected_version: typeof args.expected_version === 'string' ? args.expected_version : undefined,
+      },
+    };
+  }
+  if (tool === 'sandbox_search_replace' && typeof args.path === 'string' && typeof args.search === 'string' && typeof args.replace === 'string') {
+    if (!args.search) return null; // empty search matches everything — reject
+    return {
+      tool: 'sandbox_search_replace',
+      args: {
+        path: normalizeSandboxPath(args.path),
+        search: args.search,
+        replace: args.replace,
         expected_version: typeof args.expected_version === 'string' ? args.expected_version : undefined,
       },
     };
@@ -540,7 +553,7 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
 /** The set of tool names that are actually implemented and wired up. */
 export const IMPLEMENTED_SANDBOX_TOOLS = new Set([
   'sandbox_exec', 'sandbox_read_file', 'sandbox_search', 'sandbox_write_file',
-  'sandbox_edit_range',
+  'sandbox_edit_range', 'sandbox_search_replace',
   "sandbox_edit_file",
   'sandbox_list_dir', 'sandbox_diff', 'sandbox_prepare_commit', 'sandbox_push',
   'sandbox_run_tests', 'sandbox_check_types', 'sandbox_download', 'sandbox_save_draft',
@@ -1423,6 +1436,98 @@ export async function executeSandboxToolCall(
             structuredError: err,
           };
         }
+      }
+
+      case 'sandbox_search_replace': {
+        const { path, search, replace, expected_version } = call.args;
+
+        // Read the full file so we can locate the search string.
+        const baseRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        if (baseRead.error) {
+          const err = classifyError(baseRead.error, path);
+          return { text: formatStructuredError(err, formatSandboxError(baseRead.error, path)), structuredError: err };
+        }
+        let hydrated = baseRead;
+        if (hydrated.truncated) {
+          const expanded = await readFullFileByChunks(sandboxId, path, hydrated.version);
+          if (expanded.truncated) {
+            const err: StructuredToolError = {
+              type: 'EDIT_GUARD_BLOCKED',
+              retryable: false,
+              message: `${path} is too large to fully load for search-replace.`,
+              detail: 'Use sandbox_read_file with ranges and sandbox_edit_file instead.',
+            };
+            return {
+              text: formatStructuredError(err, [
+                `[Tool Error — sandbox_search_replace]`,
+                `${path} is too large to fully load safely.`,
+                `Use sandbox_read_file with narrow ranges and sandbox_edit_file with hash refs instead.`,
+              ].join('\n')),
+              structuredError: err,
+            };
+          }
+          hydrated = { ...hydrated, content: expanded.content, truncated: false, version: expanded.version ?? hydrated.version };
+        }
+
+        // Find lines containing the search string.
+        const rawLines = hydrated.content.split('\n');
+        const visibleLines = hydrated.content.endsWith('\n') ? rawLines.slice(0, -1) : rawLines;
+        const matchingIndices = visibleLines
+          .map((line, i) => line.includes(search) ? i : -1)
+          .filter(i => i !== -1);
+
+        if (matchingIndices.length === 0) {
+          const err: StructuredToolError = { type: 'EDIT_CONTENT_NOT_FOUND', retryable: false, message: `Search string not found in ${path}.`, detail: `"${search.slice(0, 80)}" matched no lines.` };
+          return {
+            text: formatStructuredError(err, [
+              `[Tool Error — sandbox_search_replace]`,
+              `Search string not found in ${path}.`,
+              `"${search.slice(0, 80)}" matched no lines.`,
+              `Use sandbox_search to locate the content first.`,
+            ].join('\n')),
+            structuredError: err,
+          };
+        }
+
+        if (matchingIndices.length > 1) {
+          const MAX_SHOWN = 5;
+          const shown = matchingIndices.slice(0, MAX_SHOWN).map(i => `  L${i + 1}: ${visibleLines[i].trim().slice(0, 60)}`);
+          if (matchingIndices.length > MAX_SHOWN) shown.push(`  ... and ${matchingIndices.length - MAX_SHOWN} more`);
+          const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Ambiguous: "${search.slice(0, 80)}" matches ${matchingIndices.length} lines in ${path}.`, detail: shown.join('\n') };
+          return {
+            text: formatStructuredError(err, [
+              `[Tool Error — sandbox_search_replace]`,
+              `Ambiguous: "${search.slice(0, 80)}" matches ${matchingIndices.length} lines in ${path}.`,
+              `Add more surrounding context to make the search unique:`,
+              ...shown,
+            ].join('\n')),
+            structuredError: err,
+          };
+        }
+
+        // Exactly one match — build hashline ops and delegate to sandbox_edit_file.
+        // The new content of the matched line is the original with the search substring replaced.
+        const targetIdx = matchingIndices[0];
+        const originalLine = visibleLines[targetIdx];
+        const newContent = originalLine.replace(search, replace);
+        const newLines = newContent.split('\n');
+        const lineNo = targetIdx + 1; // 1-indexed
+        const anchorHash = await calculateLineHash(originalLine, 7);
+        const anchorRef = `${lineNo}:${anchorHash}`;
+
+        const ops: HashlineOp[] = [{ op: 'replace_line', ref: anchorRef, content: newLines[0] }];
+        if (newLines.length > 1) {
+          const newAnchorHash = await calculateLineHash(newLines[0], 7);
+          const newAnchorRef = `${lineNo}:${newAnchorHash}`;
+          for (const line of newLines.slice(1).reverse()) {
+            ops.push({ op: 'insert_after', ref: newAnchorRef, content: line });
+          }
+        }
+
+        return executeSandboxToolCall(
+          { tool: 'sandbox_edit_file', args: { path, edits: ops, expected_version: expected_version ?? hydrated.version ?? undefined } },
+          sandboxId,
+        );
       }
 
       case 'sandbox_write_file': {
@@ -2708,6 +2813,7 @@ Additional tools available when sandbox is active:
 - sandbox_list_dir(path?) — List files and folders in a sandbox directory (default: /workspace). Use this to explore the project structure before reading specific files.
 - sandbox_write_file(path, content, expected_version?) — Write or overwrite a file in the sandbox. If expected_version is provided, stale writes are rejected.
 - sandbox_edit_range(path, start_line, end_line, content, expected_version?) — Replace a contiguous line range using human-friendly line numbers. This compiles to hashline ops under the hood, then runs through sandbox_edit_file safety/guard checks. Best for "replace lines X-Y with this block" edits.
+- sandbox_search_replace(path, search, replace, expected_version?) — Find the unique line in path containing search (case-sensitive substring) and replace that substring with replace. Errors if search matches zero lines (not found) or multiple lines (ambiguous — add more context). replace may contain newlines to expand one line into several. Best for targeted one-line edits when you can name a distinctive string without knowing the hash.
 - sandbox_edit_file(path, edits, expected_version?) — Edit a file using content hashes as line references. edits is an array of HashlineOp: { op: "replace_line" | "insert_after" | "insert_before" | "delete_line", ref: string, content: string }. The ref can be a bare hash ("abc1234", 7-12 hex chars) or a line-qualified ref ("42:abc1234" — 1-indexed line number + colon + hash). Read results show "[hash] lineNo" per line; use those in refs. For unique lines, bare hashes work fine. When lines have duplicate content (same hash), use a line-qualified ref to target the exact line — this always resolves unambiguously. If an edit fails with an ambiguity error, the error shows matching line numbers — retry with a line-qualified ref.
 - sandbox_diff() — Get the git diff of all uncommitted changes
 - sandbox_prepare_commit(message) — Prepare a commit for review. Gets diff, runs Auditor. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
@@ -2740,7 +2846,7 @@ Sandbox rules:
 - The repo is cloned to /workspace — use that as the working directory
 - You can install packages, run tests, build, lint — anything you'd do in a terminal
 - For multi-step tasks (edit + test), use multiple tool calls in sequence
-- You may emit multiple tool calls in one message. Read-only calls (sandbox_read_file, sandbox_search, sandbox_list_dir, sandbox_diff) run in parallel. Place any mutating call (sandbox_exec, sandbox_write_file, sandbox_edit_range, sandbox_edit_file, sandbox_prepare_commit, sandbox_push, sandbox_apply_patchset, etc.) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
+- You may emit multiple tool calls in one message. Read-only calls (sandbox_read_file, sandbox_search, sandbox_list_dir, sandbox_diff) run in parallel. Place any mutating call (sandbox_exec, sandbox_write_file, sandbox_edit_range, sandbox_search_replace, sandbox_edit_file, sandbox_prepare_commit, sandbox_push, sandbox_apply_patchset, etc.) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
 - Prefer read → write flows for edits. Use expected_version from sandbox_read_file to avoid stale overwrites. For large files, use start_line/end_line to read only the relevant section before editing.
 - sandbox_diff shows what you've changed — review before committing
 - sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.

@@ -1399,3 +1399,93 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     expect(vi.mocked(sandboxClient.batchWriteToSandbox)).not.toHaveBeenCalled();
   });
 });
+
+describe('sandbox_search_replace', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    fileLedger.reset();
+  });
+
+  it('finds unique line and replaces matched substring', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'export function foo(x: number): number {\n  return x;\n}\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 50 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    // Pre-read so edit guard passes.
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search_replace', args: { path, search: 'x: number', replace: 'x: string' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'export function foo(x: string): number {\n  return x;\n}\n',
+      'v1',
+    );
+  });
+
+  it('errors when search string matches no lines', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'const a = 1;\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search_replace', args: { path, search: 'not present', replace: 'anything' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_search_replace]');
+    expect(result.text).toContain('not found');
+    expect(result.text).toContain('error_type: EDIT_CONTENT_NOT_FOUND');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('errors when search string matches multiple lines', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'const a = null;\nconst b = null;\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search_replace', args: { path, search: 'null', replace: 'undefined' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_search_replace]');
+    expect(result.text).toContain('Ambiguous');
+    expect(result.text).toContain('L1:');
+    expect(result.text).toContain('L2:');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('expands a single-line replace into multiple lines when replace contains newline', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'const x = 1;\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 30 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search_replace', args: { path, search: 'const x = 1;', replace: 'const x = 1;\nconst y = 2;' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'const x = 1;\nconst y = 2;\n',
+      'v1',
+    );
+  });
+});
