@@ -98,6 +98,43 @@ describe('validateSandboxToolCall -- sandbox_write_file', () => {
   });
 });
 
+describe('validateSandboxToolCall -- sandbox_edit_range', () => {
+  it('accepts normalized range-edit arguments', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_edit_range',
+      args: {
+        path: 'src/app.ts',
+        start_line: 10,
+        end_line: 12,
+        content: 'const x = 1;',
+      },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.tool).toBe('sandbox_edit_range');
+    if (result?.tool === 'sandbox_edit_range') {
+      expect(result.args.path).toBe('/workspace/src/app.ts');
+      expect(result.args.start_line).toBe(10);
+      expect(result.args.end_line).toBe(12);
+      expect(result.args.content).toBe('const x = 1;');
+    }
+  });
+
+  it('rejects invalid ranges', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_edit_range',
+      args: {
+        path: '/workspace/src/app.ts',
+        start_line: 20,
+        end_line: 10,
+        content: 'const x = 1;',
+      },
+    });
+
+    expect(result).toBeNull();
+  });
+});
+
 
 describe('executeSandboxToolCall -- stale write handling', () => {
   beforeEach(() => {
@@ -1014,6 +1051,95 @@ describe('sandbox_edit_file symbolic guard', () => {
       'v2',
     );
     expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('sandbox_edit_range', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    fileLedger.reset();
+  });
+
+  it('compiles line ranges to hashline ops and applies via sandbox_edit_file', async () => {
+    const path = '/workspace/demo.txt';
+    const fileContent = 'one\ntwo\nthree\n';
+
+    // Range wrapper pre-read + delegated sandbox_edit_file read.
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({
+        content: fileContent,
+        truncated: false,
+        version: 'v1',
+      })
+      .mockResolvedValueOnce({
+        content: fileContent,
+        truncated: false,
+        version: 'v1',
+      });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      bytes_written: 13,
+      new_version: 'v2',
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    // Avoid guard auto-expand to keep this focused on range compilation behavior.
+    fileLedger.recordCreation(path);
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_range',
+        args: {
+          path,
+          start_line: 2,
+          end_line: 3,
+          content: 'dos\ntres',
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/demo.txt');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'one\ndos\ntres\n',
+      'v1',
+    );
+  });
+
+  it('returns a tool error for out-of-range line windows', async () => {
+    const path = '/workspace/demo.txt';
+
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'one\ntwo\n',
+      truncated: false,
+      version: 'v1',
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_range',
+        args: {
+          path,
+          start_line: 4,
+          end_line: 5,
+          content: 'x',
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_edit_range]');
+    expect(result.text).toContain('Invalid range');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 });
 

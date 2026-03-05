@@ -378,6 +378,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_exec'; args: { command: string; workdir?: string } }
   | { tool: 'sandbox_read_file'; args: { path: string; start_line?: number; end_line?: number } }
   | { tool: 'sandbox_search'; args: { query: string; path?: string } }
+  | { tool: 'sandbox_edit_range'; args: { path: string; start_line: number; end_line: number; content: string; expected_version?: string } }
   | { tool: 'sandbox_edit_file'; args: { path: string; edits: HashlineOp[]; expected_version?: string } }
   | { tool: 'sandbox_write_file'; args: { path: string; content: string; expected_version?: string } }
   | { tool: 'sandbox_list_dir'; args: { path?: string } }
@@ -429,6 +430,23 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
   }
   if ((tool === 'sandbox_search' || tool === 'search_sandbox') && typeof args.query === 'string') {
     return { tool: 'sandbox_search', args: { query: args.query, path: typeof args.path === 'string' ? normalizeSandboxPath(args.path) : undefined } };
+  }
+  if (tool === 'sandbox_edit_range' && typeof args.path === 'string' && typeof args.content === 'string') {
+    const startLine = parsePositiveIntegerArg(args.start_line);
+    const endLine = parsePositiveIntegerArg(args.end_line);
+    if (startLine === null || endLine === null) return null;
+    if (startLine === undefined || endLine === undefined) return null;
+    if (startLine > endLine) return null;
+    return {
+      tool: 'sandbox_edit_range',
+      args: {
+        path: normalizeSandboxPath(args.path),
+        start_line: startLine,
+        end_line: endLine,
+        content: args.content,
+        expected_version: typeof args.expected_version === 'string' ? args.expected_version : undefined,
+      },
+    };
   }
   if (tool === 'sandbox_write_file' && typeof args.path === 'string' && typeof args.content === 'string') {
     return {
@@ -522,6 +540,7 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
 /** The set of tool names that are actually implemented and wired up. */
 export const IMPLEMENTED_SANDBOX_TOOLS = new Set([
   'sandbox_exec', 'sandbox_read_file', 'sandbox_search', 'sandbox_write_file',
+  'sandbox_edit_range',
   "sandbox_edit_file",
   'sandbox_list_dir', 'sandbox_diff', 'sandbox_prepare_commit', 'sandbox_push',
   'sandbox_run_tests', 'sandbox_check_types', 'sandbox_download', 'sandbox_save_draft',
@@ -602,6 +621,61 @@ async function remapLineQualifiedRefs(
   }
 
   return { remappedEdits, remappedCount, outOfRangeLines };
+}
+
+async function buildRangeReplaceHashlineOps(
+  content: string,
+  startLine: number,
+  endLine: number,
+  replacementContent: string,
+): Promise<{ ops: HashlineOp[]; visibleLineCount: number }> {
+  const rawLines = content.split('\n');
+  const visibleLines = content.endsWith('\n') ? rawLines.slice(0, -1) : rawLines;
+  const visibleLineCount = visibleLines.length;
+
+  if (visibleLineCount === 0) {
+    throw new Error('File is empty. Use sandbox_write_file or sandbox_edit_file to add initial content.');
+  }
+  if (startLine < 1 || endLine < startLine || endLine > visibleLineCount) {
+    throw new Error(
+      `Invalid range ${startLine}-${endLine}. File has ${visibleLineCount} visible line(s).`,
+    );
+  }
+
+  const refForVisibleLine = async (lineNo: number): Promise<string> => {
+    const line = visibleLines[lineNo - 1];
+    const hash = await calculateLineHash(line, 7);
+    return `${lineNo}:${hash}`;
+  };
+
+  const replacementLines = replacementContent.length === 0 ? [] : replacementContent.split('\n');
+  const ops: HashlineOp[] = [];
+
+  // Pure deletion of range
+  if (replacementLines.length === 0) {
+    for (let lineNo = endLine; lineNo >= startLine; lineNo -= 1) {
+      ops.push({ op: 'delete_line', ref: await refForVisibleLine(lineNo) });
+    }
+    return { ops, visibleLineCount };
+  }
+
+  // Remove old lines in descending order (except the anchor line), then replace anchor
+  for (let lineNo = endLine; lineNo >= startLine + 1; lineNo -= 1) {
+    ops.push({ op: 'delete_line', ref: await refForVisibleLine(lineNo) });
+  }
+  const anchorOldRef = await refForVisibleLine(startLine);
+  ops.push({ op: 'replace_line', ref: anchorOldRef, content: replacementLines[0] });
+
+  // Insert additional lines after the anchor. Reversed insertion preserves final order.
+  if (replacementLines.length > 1) {
+    const anchorNewHash = await calculateLineHash(replacementLines[0], 7);
+    const anchorNewRef = `${startLine}:${anchorNewHash}`;
+    for (const line of replacementLines.slice(1).reverse()) {
+      ops.push({ op: 'insert_after', ref: anchorNewRef, content: line });
+    }
+  }
+
+  return { ops, visibleLineCount };
 }
 
 
@@ -1309,6 +1383,68 @@ export async function executeSandboxToolCall(
         }
 
         return { text: editLines.join('\n') };
+      }
+
+      case 'sandbox_edit_range': {
+        const { path, start_line, end_line, content, expected_version } = call.args;
+        const baseRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        if (baseRead.error) {
+          const err = classifyError(baseRead.error, path);
+          return { text: formatStructuredError(err, formatSandboxError(baseRead.error, path)), structuredError: err };
+        }
+
+        let hydrated = baseRead;
+        if (hydrated.truncated) {
+          const expanded = await readFullFileByChunks(sandboxId, path, hydrated.version);
+          if (expanded.truncated) {
+            const err: StructuredToolError = {
+              type: 'EDIT_GUARD_BLOCKED',
+              retryable: false,
+              message: `Edit guard: ${path} is too large to fully load safely.`,
+              detail: 'Range edit requires full-file hydration',
+            };
+            return {
+              text: formatStructuredError(err, [
+                `[Tool Error — sandbox_edit_range]`,
+                `Edit guard: ${path} is too large to fully load safely.`,
+                `Chunked hydration remained truncated.`,
+                `Use sandbox_read_file with narrow ranges and sandbox_edit_file with targeted hash refs instead.`,
+              ].join('\n')),
+              structuredError: err,
+            };
+          }
+          hydrated = {
+            ...hydrated,
+            content: expanded.content,
+            truncated: expanded.truncated,
+            version: expanded.version ?? hydrated.version,
+          };
+        }
+
+        try {
+          const { ops } = await buildRangeReplaceHashlineOps(hydrated.content, start_line, end_line, content);
+          return executeSandboxToolCall(
+            {
+              tool: 'sandbox_edit_file',
+              args: {
+                path,
+                edits: ops,
+                expected_version: expected_version ?? hydrated.version ?? undefined,
+              },
+            },
+            sandboxId,
+          );
+        } catch (rangeErr) {
+          const msg = rangeErr instanceof Error ? rangeErr.message : String(rangeErr);
+          const err = classifyError(msg, path);
+          return {
+            text: formatStructuredError(err, [
+              `[Tool Error — sandbox_edit_range]`,
+              msg,
+            ].join('\n')),
+            structuredError: err,
+          };
+        }
       }
 
       case 'sandbox_write_file': {
@@ -2575,6 +2711,7 @@ Additional tools available when sandbox is active:
 - sandbox_search(query, path?) — Search file contents in the sandbox (uses rg/grep). Case-sensitive by default; supports regex patterns. Fast way to locate functions, symbols, and strings before editing. Tip: use short, distinctive substrings rather than full names to catch different naming conventions.
 - sandbox_list_dir(path?) — List files and folders in a sandbox directory (default: /workspace). Use this to explore the project structure before reading specific files.
 - sandbox_write_file(path, content, expected_version?) — Write or overwrite a file in the sandbox. If expected_version is provided, stale writes are rejected.
+- sandbox_edit_range(path, start_line, end_line, content, expected_version?) — Replace a contiguous line range using human-friendly line numbers. This compiles to hashline ops under the hood, then runs through sandbox_edit_file safety/guard checks. Best for "replace lines X-Y with this block" edits.
 - sandbox_edit_file(path, edits, expected_version?) — Edit a file using content hashes as line references. edits is an array of HashlineOp: { op: "replace_line" | "insert_after" | "insert_before" | "delete_line", ref: string, content: string }. The ref can be a bare hash ("abc1234", 7-12 hex chars) or a line-qualified ref ("42:abc1234" — 1-indexed line number + colon + hash). Read results show "[hash] lineNo" per line; use those in refs. For unique lines, bare hashes work fine. When lines have duplicate content (same hash), use a line-qualified ref to target the exact line — this always resolves unambiguously. If an edit fails with an ambiguity error, the error shows matching line numbers — retry with a line-qualified ref.
 - sandbox_diff() — Get the git diff of all uncommitted changes
 - sandbox_prepare_commit(message) — Prepare a commit for review. Gets diff, runs Auditor. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
@@ -2607,7 +2744,7 @@ Sandbox rules:
 - The repo is cloned to /workspace — use that as the working directory
 - You can install packages, run tests, build, lint — anything you'd do in a terminal
 - For multi-step tasks (edit + test), use multiple tool calls in sequence
-- You may emit multiple tool calls in one message. Read-only calls (sandbox_read_file, sandbox_search, sandbox_list_dir, sandbox_diff) run in parallel. Place any mutating call (sandbox_exec, sandbox_write_file, sandbox_edit_file, sandbox_prepare_commit, sandbox_push, sandbox_apply_patchset, etc.) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
+- You may emit multiple tool calls in one message. Read-only calls (sandbox_read_file, sandbox_search, sandbox_list_dir, sandbox_diff) run in parallel. Place any mutating call (sandbox_exec, sandbox_write_file, sandbox_edit_range, sandbox_edit_file, sandbox_prepare_commit, sandbox_push, sandbox_apply_patchset, etc.) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
 - Prefer read → write flows for edits. Use expected_version from sandbox_read_file to avoid stale overwrites. For large files, use start_line/end_line to read only the relevant section before editing.
 - sandbox_diff shows what you've changed — review before committing
 - sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.
