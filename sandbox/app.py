@@ -93,13 +93,13 @@ print(hashlib.sha256(payload).hexdigest())
 
 # Consolidated write script — does version check + mkdir + write + verify + hash
 # in a single subprocess call instead of 5 separate exec() calls.
-# Accepts JSON via stdin: { path, content_b64, expected_version? }
+# Accepts JSON via a temp file whose path is passed as sys.argv[1].
 # Outputs a JSON result: { ok, bytes_written?, new_version?, code?, expected_version?, current_version?, error? }
 WRITE_FILE_SCRIPT = """
 import hashlib, pathlib, base64, json, os, sys
 
 try:
-    data = json.loads(sys.argv[1])
+    data = json.loads(pathlib.Path(sys.argv[1]).read_text())
 except Exception as exc:
     print(json.dumps({"ok": False, "error": f"Invalid JSON input: {exc}"}))
     sys.exit(0)
@@ -186,13 +186,13 @@ except Exception as exc:
 """
 
 # Batch write script — writes multiple files in a single subprocess call.
-# Accepts JSON via stdin: { files: [{ path, content_b64, expected_version? }] }
+# Accepts JSON via a temp file whose path is passed as sys.argv[1].
 # Outputs a JSON result: { results: [{ ok, path, bytes_written?, new_version?, ... }] }
 BATCH_WRITE_SCRIPT = """
 import hashlib, pathlib, base64, json, os, sys
 
 try:
-    data = json.loads(sys.argv[1])
+    data = json.loads(pathlib.Path(sys.argv[1]).read_text())
 except Exception as exc:
     print(json.dumps({"results": [{"ok": False, "error": f"Invalid JSON input: {exc}"}]}))
     sys.exit(0)
@@ -409,6 +409,25 @@ def _load_sandbox(sandbox_id: str) -> tuple[modal.Sandbox | None, str | None]:
         return modal.Sandbox.from_id(sandbox_id), None
     except Exception as exc:
         return None, _format_sandbox_lookup_error(exc)
+
+
+def _write_temp_payload(sb: modal.Sandbox, payload: str, tmp_path: str = "/tmp/push_payload.json") -> str | None:
+    """Write a JSON payload to a temp file in the sandbox via chunked printf.
+
+    Returns None on success, or an error string on failure.
+    Uses chunked writes to avoid Linux's MAX_ARG_STRLEN (128KB per arg) limit.
+    """
+    sb.exec("rm", "-f", tmp_path).wait()
+    chunk_size = 100_000  # well under 128KB single-arg limit
+    for i in range(0, len(payload), chunk_size):
+        chunk = payload[i : i + chunk_size].replace("'", "'\\''")
+        p = sb.exec("bash", "-c", f"printf '%s' '{chunk}' >> {tmp_path}")
+        if not _wait_with_timeout(p, timeout_seconds=15):
+            return "Payload upload timed out"
+        if p.returncode != 0:
+            stderr = p.stderr.read()
+            return f"Payload upload failed: {stderr}"
+    return None
 
 
 def _get_file_version(sb: modal.Sandbox, path: str) -> tuple[str | None, str | None]:
@@ -645,13 +664,18 @@ def file_ops(data: dict):
 
         # Consolidated write: version check + mkdir + write + verify + hash
         # in a single subprocess call (was 5 separate exec calls).
+        # Payload is written to a temp file to avoid MAX_ARG_STRLEN (128KB) and stdin pipe issues.
         encoded = base64.b64encode(content.encode()).decode()
         write_payload = json.dumps({
             "path": path,
             "content_b64": encoded,
             "expected_version": expected_version,
         })
-        p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT, write_payload)
+        tmp_path = "/tmp/push_write_payload.json"
+        upload_err = _write_temp_payload(sb, write_payload, tmp_path)
+        if upload_err:
+            return {"ok": False, "error": upload_err}
+        p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT, tmp_path)
         if not _wait_with_timeout(p, timeout_seconds=55):
             return {"ok": False, "error": "Write timed out after 55 seconds. The sandbox may be under heavy load."}
         if p.returncode != 0:
@@ -690,7 +714,11 @@ def file_ops(data: dict):
             })
 
         batch_payload = json.dumps({"files": batch_entries})
-        p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT, batch_payload)
+        tmp_path = "/tmp/push_batch_payload.json"
+        upload_err = _write_temp_payload(sb, batch_payload, tmp_path)
+        if upload_err:
+            return {"ok": False, "error": upload_err, "results": []}
+        p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT, tmp_path)
         if not _wait_with_timeout(p, timeout_seconds=55):
             return {"ok": False, "error": "Batch write timed out after 55 seconds.", "results": []}
         if p.returncode != 0:
