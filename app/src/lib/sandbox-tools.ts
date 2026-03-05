@@ -34,7 +34,7 @@ import {
 import { runAuditor } from './auditor-agent';
 import { parseDiffStats } from './diff-utils';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
-import { fileLedger, extractSignatures, extractSignaturesWithLines } from './file-awareness-ledger';
+import { fileLedger, extractSignatures, extractSignaturesWithLines, type SymbolRead, type SymbolKind } from './file-awareness-ledger';
 import { applyHashlineEdits, calculateLineHash, type HashlineOp } from "./hashline";
 import { getActiveGitHubToken } from './github-auth';
 import {
@@ -1026,8 +1026,97 @@ export async function executeSandboxToolCall(
       case "sandbox_edit_file": {
         const { path, edits } = call.args;
 
-        // 1. Read the current file content
-        let readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        // --- Edit Guard: symbolic check before editing ---
+        // Build a combined string from all edit ops to extract symbols the edit touches
+        const editContentForGuard = edits
+          .filter((op: HashlineOp) => op.op !== 'delete_line' && op.content)
+          .map((op: HashlineOp) => op.content)
+          .join('\n');
+        // Cache auto-expand result so Step 1 can reuse it instead of re-fetching
+        let guardCachedContent: string | null = null;
+        let guardCachedVersion: string | null = null;
+        let guardCachedTruncated = false;
+        const symbolicVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
+        if (!symbolicVerdict.allowed) {
+          // Auto-expand: try reading the file so the ledger has coverage
+          fileLedger.recordAutoExpandAttempt();
+          try {
+            const autoReadResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+            if (!autoReadResult.error && autoReadResult.content !== undefined) {
+              let autoContent = autoReadResult.content;
+              let autoVersion = autoReadResult.version;
+              let autoTruncated = Boolean(autoReadResult.truncated);
+              if (autoTruncated) {
+                const expanded = await readFullFileByChunks(sandboxId, path, autoReadResult.version);
+                autoContent = expanded.content;
+                autoVersion = expanded.version ?? autoVersion;
+                autoTruncated = expanded.truncated;
+              }
+              const autoLineCount = autoContent.split('\n').length;
+              const autoSymbols = extractSignaturesWithLines(autoContent);
+              fileLedger.recordRead(path, {
+                truncated: autoTruncated,
+                totalLines: autoLineCount,
+                symbols: autoSymbols,
+              });
+              if (typeof autoVersion === 'string' && autoVersion) {
+                versionCacheSet(fileVersionKey(sandboxId, path), autoVersion);
+              }
+              fileLedger.recordAutoExpandSuccess();
+              if (autoSymbols.length > 0) fileLedger.recordSymbolAutoExpand();
+              console.debug(`[edit-guard] Auto-expanded "${path}" for sandbox_edit_file (${autoLineCount} lines, ${autoSymbols.length} symbols).`);
+              // Cache for reuse in Step 1
+              guardCachedContent = autoContent;
+              guardCachedVersion = typeof autoVersion === 'string' ? autoVersion : null;
+              guardCachedTruncated = autoTruncated;
+              // Re-check after auto-expand
+              const retryVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
+              if (!retryVerdict.allowed) {
+                const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${retryVerdict.reason}`, detail: 'Blocked after auto-expand' };
+                return {
+                  text: formatStructuredError(guardErr, [
+                    `[Tool Error — sandbox_edit_file]`,
+                    `Edit guard: ${retryVerdict.reason}`,
+                    `The file was auto-read but the guard still blocks this edit. Use sandbox_read_file to read the relevant sections, then retry.`,
+                  ].join('\n')),
+                  structuredError: guardErr,
+                };
+              }
+            } else {
+              // Auto-read failed — block the edit
+              const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${symbolicVerdict.reason}`, detail: autoReadResult.error ? `Auto-read error: ${autoReadResult.error}` : undefined };
+              return {
+                text: formatStructuredError(guardErr, [
+                  `[Tool Error — sandbox_edit_file]`,
+                  `Edit guard: ${symbolicVerdict.reason}`,
+                ].join('\n')),
+                structuredError: guardErr,
+              };
+            }
+          } catch (autoExpandErr) {
+            const errMsg = autoExpandErr instanceof Error ? autoExpandErr.message : String(autoExpandErr);
+            const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${symbolicVerdict.reason}`, detail: `Auto-read threw: ${errMsg}` };
+            return {
+              text: formatStructuredError(guardErr, [
+                `[Tool Error — sandbox_edit_file]`,
+                `Edit guard: ${symbolicVerdict.reason}`,
+              ].join('\n')),
+              structuredError: guardErr,
+            };
+          }
+        }
+
+        // 1. Read the current file content (reuse auto-expand cache if available)
+        let readResult: FileReadResult & { error?: string };
+        if (guardCachedContent !== null) {
+          readResult = {
+            content: guardCachedContent,
+            truncated: guardCachedTruncated,
+            version: guardCachedVersion ?? undefined,
+          } as FileReadResult & { error?: string };
+        } else {
+          readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        }
         if (readResult.error) {
           const err = classifyError(readResult.error, path);
           return { text: formatStructuredError(err, formatSandboxError(readResult.error, path)), structuredError: err };
@@ -2010,6 +2099,40 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
           const totalLines = parsed.total_lines || 0;
           const lang = ['py'].includes(ext) ? 'Python' : ['ts', 'tsx', 'js', 'jsx'].includes(ext) ? 'TypeScript/JavaScript' : ext;
 
+          // Record symbol reads in the ledger so edit guards can verify coverage
+          if (symbols.length > 0) {
+            const validKinds = new Set<string>(['function', 'class', 'interface', 'export', 'type']);
+            const ledgerSymbols: SymbolRead[] = symbols
+              .filter(s => validKinds.has(s.kind))
+              .map(s => {
+                // Normalize default export kind: the Python extractor emits 'function'
+                // for `export default function Foo`, but the ledger's edit guard keys
+                // default exports as 'export'. Check signature to detect this.
+                let normalizedKind = s.kind as SymbolKind;
+                if (
+                  (normalizedKind === 'function' || normalizedKind === 'class') &&
+                  /^export\s+default\b/.test(s.signature)
+                ) {
+                  normalizedKind = 'export';
+                }
+                return {
+                  name: s.name,
+                  kind: normalizedKind,
+                  lineRange: { start: s.line, end: s.line },
+                };
+              });
+            if (ledgerSymbols.length > 0) {
+              // Record as a partial/truncated read — the model only saw a symbol index,
+              // not the actual file content. Using truncated: true prevents recordRead
+              // from upgrading the state to fully_read.
+              fileLedger.recordRead(filePath, {
+                symbols: ledgerSymbols,
+                totalLines,
+                truncated: true,
+              });
+            }
+          }
+
           const lines: string[] = [
             `[Tool Result — sandbox_read_symbols]`,
             `File: ${filePath} (${totalLines} lines, ${lang})`,
@@ -2055,13 +2178,89 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
           };
         }
 
+        // --- Edit Guard: symbolic check for each file in the patchset ---
+        // Run guard checks in parallel, caching auto-expand results for reuse in Phase 1
+        const guardCachedFiles = new Map<string, { content: string; version?: string }>();
+        const guardBlocked: string[] = [];
+        const guardChecks = edits.map(async (edit) => {
+          const patchEditContent = edit.ops
+            .filter((op: HashlineOp) => op.op !== 'delete_line' && op.content)
+            .map((op: HashlineOp) => op.content)
+            .join('\n');
+          const patchVerdict = fileLedger.checkSymbolicEditAllowed(edit.path, patchEditContent);
+          if (!patchVerdict.allowed) {
+            // Auto-expand: try reading the file to populate ledger
+            fileLedger.recordAutoExpandAttempt();
+            try {
+              const autoRead = await readFromSandbox(sandboxId, edit.path) as FileReadResult & { error?: string };
+              if (!autoRead.error && autoRead.content !== undefined) {
+                let content = autoRead.content;
+                let version = autoRead.version;
+                let truncated = Boolean(autoRead.truncated);
+                if (truncated) {
+                  const expanded = await readFullFileByChunks(sandboxId, edit.path, autoRead.version);
+                  content = expanded.content;
+                  version = expanded.version ?? version;
+                  truncated = expanded.truncated;
+                }
+                const lineCount = content.split('\n').length;
+                const symbols = extractSignaturesWithLines(content);
+                fileLedger.recordRead(edit.path, {
+                  truncated,
+                  totalLines: lineCount,
+                  symbols,
+                });
+                if (typeof version === 'string' && version) {
+                  versionCacheSet(fileVersionKey(sandboxId, edit.path), version);
+                }
+                fileLedger.recordAutoExpandSuccess();
+                if (symbols.length > 0) fileLedger.recordSymbolAutoExpand();
+                // Cache the fetched content so Phase 1 can reuse it
+                guardCachedFiles.set(edit.path, {
+                  content,
+                  version: typeof version === 'string' ? version : undefined,
+                });
+                // Re-check after auto-expand
+                const retryVerdict = fileLedger.checkSymbolicEditAllowed(edit.path, patchEditContent);
+                if (!retryVerdict.allowed) {
+                  guardBlocked.push(`${edit.path}: ${retryVerdict.reason}`);
+                }
+              } else {
+                guardBlocked.push(`${edit.path}: ${patchVerdict.reason}${autoRead.error ? ` (auto-read error: ${autoRead.error})` : ''}`);
+              }
+            } catch (guardErr) {
+              const errMsg = guardErr instanceof Error ? guardErr.message : String(guardErr);
+              guardBlocked.push(`${edit.path}: ${patchVerdict.reason} (auto-read threw: ${errMsg})`);
+            }
+          }
+        });
+        await Promise.all(guardChecks);
+        if (guardBlocked.length > 0) {
+          const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard blocked ${guardBlocked.length} file(s) in patchset`, detail: guardBlocked.join('; ') };
+          return {
+            text: formatStructuredError(guardErr, [
+              `[Tool Error — sandbox_apply_patchset]`,
+              `Edit guard blocked ${guardBlocked.length} file(s):`,
+              ...guardBlocked.map(b => `  - ${b}`),
+              `Use sandbox_read_file to read the relevant files/sections, then retry.`,
+            ].join('\n')),
+            structuredError: guardErr,
+          };
+        }
+
         // Phase 1: Read all files and validate all hashline ops
         const fileContents = new Map<string, { content: string; version?: string }>();
         const validationErrors: string[] = [];
         const editResults: Array<{ path: string; content: string; applied: number; version?: string }> = [];
 
-        // Read all files in parallel
+        // Read all files in parallel (reuse cached content from guard auto-expand)
         const readPromises = edits.map(async (edit) => {
+          // If the guard already fetched this file, reuse it
+          const cached = guardCachedFiles.get(edit.path);
+          if (cached) {
+            fileContents.set(edit.path, cached);
+            return;
+          }
           try {
             const readResult = await readFromSandbox(sandboxId, edit.path) as FileReadResult & { error?: string };
             if (readResult.error) {
