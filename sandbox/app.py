@@ -99,7 +99,7 @@ WRITE_FILE_SCRIPT = """
 import hashlib, pathlib, base64, json, os, sys
 
 try:
-    data = json.loads(sys.stdin.read())
+    data = json.loads(sys.argv[1])
 except Exception as exc:
     print(json.dumps({"ok": False, "error": f"Invalid JSON input: {exc}"}))
     sys.exit(0)
@@ -192,7 +192,7 @@ BATCH_WRITE_SCRIPT = """
 import hashlib, pathlib, base64, json, os, sys
 
 try:
-    data = json.loads(sys.stdin.read())
+    data = json.loads(sys.argv[1])
 except Exception as exc:
     print(json.dumps({"results": [{"ok": False, "error": f"Invalid JSON input: {exc}"}]}))
     sys.exit(0)
@@ -651,9 +651,7 @@ def file_ops(data: dict):
             "content_b64": encoded,
             "expected_version": expected_version,
         })
-        p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT)
-        p.stdin.write(write_payload)
-        p.stdin.write_eof()
+        p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT, write_payload)
         if not _wait_with_timeout(p, timeout_seconds=55):
             return {"ok": False, "error": "Write timed out after 55 seconds. The sandbox may be under heavy load."}
         if p.returncode != 0:
@@ -692,9 +690,7 @@ def file_ops(data: dict):
             })
 
         batch_payload = json.dumps({"files": batch_entries})
-        p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT)
-        p.stdin.write(batch_payload)
-        p.stdin.write_eof()
+        p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT, batch_payload)
         if not _wait_with_timeout(p, timeout_seconds=55):
             return {"ok": False, "error": "Batch write timed out after 55 seconds.", "results": []}
         if p.returncode != 0:
