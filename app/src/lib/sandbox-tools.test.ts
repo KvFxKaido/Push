@@ -1488,4 +1488,54 @@ describe('sandbox_search_replace', () => {
       'v1',
     );
   });
+
+  it('treats replacement text literally (no $-pattern expansion)', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'const token = "foo";\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 28 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search_replace', args: { path, search: 'foo', replace: '$1$&$$' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'const token = "$1$&$$";\n',
+      'v1',
+    );
+  });
+
+  it('reuses prefetched content so delegated edit does not require a second read', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'const x = 1;\n';
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
+      // If a second read happens, delegated edit would see this error and fail.
+      .mockResolvedValueOnce({
+        content: '',
+        truncated: false,
+        error: 'permission denied',
+      } as unknown as sandboxClient.FileReadResult);
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 12 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search_replace', args: { path, search: 'x = 1', replace: 'x = 2' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'const x = 2;\n',
+      'v1',
+    );
+  });
 });

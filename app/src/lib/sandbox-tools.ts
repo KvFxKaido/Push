@@ -49,6 +49,15 @@ import {
 // Re-export so existing consumers don't break
 export { clearFileVersionCache } from './sandbox-file-version-cache';
 
+interface PrefetchedEditFileState {
+  content: string;
+  version?: string;
+  truncated: boolean;
+  expiresAt: number;
+}
+
+const PREFETCHED_EDIT_FILE_TTL_MS = 30_000;
+const prefetchedEditFiles = new Map<string, PrefetchedEditFileState>();
 
 function normalizeSandboxPath(path: string): string {
   const trimmed = path.trim();
@@ -63,6 +72,34 @@ function normalizeSandboxPath(path: string): string {
 function normalizeSandboxWorkdir(workdir?: string): string | undefined {
   if (typeof workdir !== 'string') return undefined;
   return normalizeSandboxPath(workdir);
+}
+
+function prefetchedEditFileKey(sandboxId: string, path: string): string {
+  return `${sandboxId}:${normalizeSandboxPath(path)}`;
+}
+
+function setPrefetchedEditFile(
+  sandboxId: string,
+  path: string,
+  content: string,
+  version?: string,
+  truncated: boolean = false,
+): void {
+  prefetchedEditFiles.set(prefetchedEditFileKey(sandboxId, path), {
+    content,
+    version,
+    truncated,
+    expiresAt: Date.now() + PREFETCHED_EDIT_FILE_TTL_MS,
+  });
+}
+
+function takePrefetchedEditFile(sandboxId: string, path: string): PrefetchedEditFileState | null {
+  const key = prefetchedEditFileKey(sandboxId, path);
+  const cached = prefetchedEditFiles.get(key);
+  if (!cached) return null;
+  prefetchedEditFiles.delete(key);
+  if (cached.expiresAt < Date.now()) return null;
+  return cached;
 }
 
 // --- Enhanced error messages ---
@@ -1137,6 +1174,22 @@ export async function executeSandboxToolCall(
         let guardCachedVersion: string | null = null;
         let guardCachedTruncated = false;
         let symbolicWarning: string | null = null;
+        const prefetched = takePrefetchedEditFile(sandboxId, path);
+        if (prefetched) {
+          const prefetchedLineCount = prefetched.content.split('\n').length;
+          const prefetchedSymbols = extractSignaturesWithLines(prefetched.content);
+          fileLedger.recordRead(path, {
+            truncated: prefetched.truncated,
+            totalLines: prefetchedLineCount,
+            symbols: prefetchedSymbols,
+          });
+          if (typeof prefetched.version === 'string' && prefetched.version) {
+            versionCacheSet(fileVersionKey(sandboxId, path), prefetched.version);
+          }
+          guardCachedContent = prefetched.content;
+          guardCachedVersion = typeof prefetched.version === 'string' ? prefetched.version : null;
+          guardCachedTruncated = prefetched.truncated;
+        }
         const symbolicVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
         if (!symbolicVerdict.allowed) {
           // Auto-expand: try reading the file so the ledger has coverage
@@ -1509,7 +1562,7 @@ export async function executeSandboxToolCall(
         // The new content of the matched line is the original with the search substring replaced.
         const targetIdx = matchingIndices[0];
         const originalLine = visibleLines[targetIdx];
-        const newContent = originalLine.replace(search, replace);
+        const newContent = originalLine.replace(search, () => replace);
         const newLines = newContent.split('\n');
         const lineNo = targetIdx + 1; // 1-indexed
         const anchorHash = await calculateLineHash(originalLine, 7);
@@ -1523,6 +1576,26 @@ export async function executeSandboxToolCall(
             ops.push({ op: 'insert_after', ref: newAnchorRef, content: line });
           }
         }
+
+        // Prime the edit guard/read path so delegated sandbox_edit_file does not
+        // need to re-read just to establish awareness.
+        const hydratedLineCount = hydrated.content.split('\n').length;
+        const hydratedSymbols = extractSignaturesWithLines(hydrated.content);
+        fileLedger.recordRead(path, {
+          truncated: hydrated.truncated,
+          totalLines: hydratedLineCount,
+          symbols: hydratedSymbols,
+        });
+        if (typeof hydrated.version === 'string' && hydrated.version) {
+          versionCacheSet(fileVersionKey(sandboxId, path), hydrated.version);
+        }
+        setPrefetchedEditFile(
+          sandboxId,
+          path,
+          hydrated.content,
+          typeof hydrated.version === 'string' ? hydrated.version : undefined,
+          hydrated.truncated,
+        );
 
         return executeSandboxToolCall(
           { tool: 'sandbox_edit_file', args: { path, edits: ops, expected_version: expected_version ?? hydrated.version ?? undefined } },
