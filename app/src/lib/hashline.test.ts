@@ -93,13 +93,11 @@ describe('ambiguous 7-char ref → diagnostic → retry with longer ref', () => 
     expect(result1.failed).toBe(1);
     expect(result1.applied).toBe(0);
     expect(result1.errors[0]).toContain('ambiguous');
-    expect(result1.errors[0]).toContain('longer hash prefix');
+    expect(result1.errors[0]).toContain('line-qualified ref');
 
-    // The error message should contain 12-char hashes for disambiguation
-    // Since both lines have identical content, even 12-char hashes will be the same
-    // So it should report "ambiguous even at max length"
-    // Actually, with identical trimmed content, the 12-char hashes will also match,
-    // so the disambiguation attempt will group them together and still fail
+    // The error message should suggest line-qualified refs for disambiguation
+    // Since both lines have identical content, even 12-char hashes will be the same,
+    // so the only way to disambiguate is via line number
     expect(result1.errors[0]).toContain('2 matches');
   });
 
