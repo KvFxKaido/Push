@@ -9,11 +9,7 @@ import { SANDBOX_ROUTES, resolveModalSandboxBase } from './src/lib/sandbox-route
 
 interface Env {
   OLLAMA_API_KEY?: string;
-  MISTRAL_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
-  MINIMAX_API_KEY?: string;
-  ZAI_API_KEY?: string;
-  GOOGLE_API_KEY?: string;
   ZEN_API_KEY?: string;
   NVIDIA_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
@@ -61,16 +57,6 @@ export default {
       return handleOllamaModels(request, env);
     }
 
-    // API route: streaming proxy to Mistral Vibe (SSE, OpenAI-compatible)
-    if (url.pathname === '/api/mistral/chat' && request.method === 'POST') {
-      return handleMistralChat(request, env);
-    }
-
-    // API route: model catalog proxy to Mistral
-    if (url.pathname === '/api/mistral/models' && request.method === 'GET') {
-      return handleMistralModels(request, env);
-    }
-
     // API route: streaming proxy to OpenRouter (SSE, OpenAI-compatible)
     if (url.pathname === '/api/openrouter/chat' && request.method === 'POST') {
       return handleOpenRouterChat(request, env);
@@ -79,36 +65,6 @@ export default {
     // API route: model catalog proxy to OpenRouter
     if (url.pathname === '/api/openrouter/models' && request.method === 'GET') {
       return handleOpenRouterModels(request, env);
-    }
-
-    // API route: streaming proxy to MiniMax (SSE, OpenAI-compatible)
-    if (url.pathname === '/api/minimax/chat' && request.method === 'POST') {
-      return handleMinimaxChat(request, env);
-    }
-
-    // API route: model catalog proxy to MiniMax
-    if (url.pathname === '/api/minimax/models' && request.method === 'GET') {
-      return handleMinimaxModels(request, env);
-    }
-
-    // API route: streaming proxy to Z.AI (SSE, OpenAI-compatible)
-    if (url.pathname === '/api/zai/chat' && request.method === 'POST') {
-      return handleZaiChat(request, env);
-    }
-
-    // API route: model catalog proxy to Z.AI
-    if (url.pathname === '/api/zai/models' && request.method === 'GET') {
-      return handleZaiModels(request, env);
-    }
-
-    // API route: streaming proxy to Google Gemini OpenAI-compatible endpoint
-    if (url.pathname === '/api/google/chat' && request.method === 'POST') {
-      return handleGoogleChat(request, env);
-    }
-
-    // API route: model catalog proxy to Google Gemini OpenAI-compatible endpoint
-    if (url.pathname === '/api/google/models' && request.method === 'GET') {
-      return handleGoogleModels(request, env);
     }
 
     // API route: streaming proxy to OpenCode Zen (SSE, OpenAI-compatible)
@@ -134,16 +90,6 @@ export default {
     // API route: Ollama web search proxy
     if (url.pathname === '/api/ollama/search' && request.method === 'POST') {
       return handleOllamaSearch(request, env);
-    }
-
-    // API route: Mistral agent creation proxy
-    if (url.pathname === '/api/mistral/agents' && request.method === 'POST') {
-      return handleMistralAgentCreate(request, env);
-    }
-
-    // API route: Mistral agent completions streaming proxy
-    if (url.pathname === '/api/mistral/agents/chat' && request.method === 'POST') {
-      return handleMistralAgentChat(request, env);
     }
 
     // API route: Tavily web search proxy (optional premium upgrade)
@@ -717,11 +663,7 @@ interface HealthStatus {
 
 async function handleHealthCheck(env: Env): Promise<Response> {
   const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
-  const mistralConfigured = Boolean(env.MISTRAL_API_KEY);
   const openRouterConfigured = Boolean(env.OPENROUTER_API_KEY);
-  const minimaxConfigured = Boolean(env.MINIMAX_API_KEY);
-  const zaiConfigured = Boolean(env.ZAI_API_KEY);
-  const googleConfigured = Boolean(env.GOOGLE_API_KEY);
   const zenConfigured = Boolean(env.ZEN_API_KEY);
   const nvidiaConfigured = Boolean(env.NVIDIA_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
@@ -739,7 +681,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     }
   }
 
-  const hasAnyLlm = ollamaConfigured || mistralConfigured || openRouterConfigured || minimaxConfigured || zaiConfigured || googleConfigured || zenConfigured || nvidiaConfigured;
+  const hasAnyLlm = ollamaConfigured || openRouterConfigured || zenConfigured || nvidiaConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -750,11 +692,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
     services: {
       worker: { status: 'ok' },
       ollama: { status: ollamaConfigured ? 'ok' : 'unconfigured', configured: ollamaConfigured },
-      mistral: { status: mistralConfigured ? 'ok' : 'unconfigured', configured: mistralConfigured },
       openrouter: { status: openRouterConfigured ? 'ok' : 'unconfigured', configured: openRouterConfigured },
-      minimax: { status: minimaxConfigured ? 'ok' : 'unconfigured', configured: minimaxConfigured },
-      zai: { status: zaiConfigured ? 'ok' : 'unconfigured', configured: zaiConfigured },
-      google: { status: googleConfigured ? 'ok' : 'unconfigured', configured: googleConfigured },
       zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
       nvidia: { status: nvidiaConfigured ? 'ok' : 'unconfigured', configured: nvidiaConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
@@ -793,25 +731,6 @@ const handleOllamaChat = createStreamProxyHandler({
 
 // --- Mistral ---
 
-const handleMistralModels = createJsonProxyHandler({
-  name: 'Mistral API', logTag: 'api/mistral/models',
-  upstreamUrl: 'https://api.mistral.ai/v1/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('MISTRAL_API_KEY'),
-  keyMissingError: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.',
-  timeoutError: 'Mistral model list timed out after 30 seconds',
-});
-
-const handleMistralChat = createStreamProxyHandler({
-  name: 'Mistral API', logTag: 'api/mistral/chat',
-  upstreamUrl: 'https://api.mistral.ai/v1/chat/completions',
-  timeoutMs: 120_000,
-  buildAuth: standardAuth('MISTRAL_API_KEY'),
-  keyMissingError: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.',
-  timeoutError: 'Mistral request timed out after 120 seconds',
-});
-
 // --- OpenRouter ---
 
 const handleOpenRouterChat = createStreamProxyHandler({
@@ -835,69 +754,6 @@ const handleOpenRouterModels = createJsonProxyHandler({
   buildAuth: standardAuth('OPENROUTER_API_KEY'),
   keyMissingError: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
   timeoutError: 'OpenRouter model list timed out after 30 seconds',
-});
-
-// --- MiniMax (OpenAI-compatible endpoint) ---
-
-const handleMinimaxChat = createStreamProxyHandler({
-  name: 'MiniMax API', logTag: 'api/minimax/chat',
-  upstreamUrl: 'https://api.minimax.io/v1/chat/completions',
-  timeoutMs: 120_000,
-  buildAuth: standardAuth('MINIMAX_API_KEY'),
-  keyMissingError: 'MiniMax API key not configured. Add it in Settings or set MINIMAX_API_KEY on the Worker.',
-  timeoutError: 'MiniMax request timed out after 120 seconds',
-});
-
-const handleMinimaxModels = createJsonProxyHandler({
-  name: 'MiniMax API', logTag: 'api/minimax/models',
-  upstreamUrl: 'https://api.minimax.io/v1/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('MINIMAX_API_KEY'),
-  keyMissingError: 'MiniMax API key not configured. Add it in Settings or set MINIMAX_API_KEY on the Worker.',
-  timeoutError: 'MiniMax model list timed out after 30 seconds',
-});
-
-// --- Z.AI (OpenAI-compatible coding endpoint) ---
-
-const handleZaiChat = createStreamProxyHandler({
-  name: 'Z.AI API', logTag: 'api/zai/chat',
-  upstreamUrl: 'https://api.z.ai/api/coding/paas/v4/chat/completions',
-  timeoutMs: 120_000,
-  buildAuth: standardAuth('ZAI_API_KEY'),
-  keyMissingError: 'Z.AI API key not configured. Add it in Settings or set ZAI_API_KEY on the Worker.',
-  timeoutError: 'Z.AI request timed out after 120 seconds',
-});
-
-const handleZaiModels = createJsonProxyHandler({
-  name: 'Z.AI API', logTag: 'api/zai/models',
-  upstreamUrl: 'https://api.z.ai/api/coding/paas/v4/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('ZAI_API_KEY'),
-  keyMissingError: 'Z.AI API key not configured. Add it in Settings or set ZAI_API_KEY on the Worker.',
-  timeoutError: 'Z.AI model list timed out after 30 seconds',
-});
-
-// --- Google Gemini (OpenAI-compatible endpoint) ---
-
-const handleGoogleChat = createStreamProxyHandler({
-  name: 'Google Gemini API', logTag: 'api/google/chat',
-  upstreamUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-  timeoutMs: 120_000,
-  buildAuth: standardAuth('GOOGLE_API_KEY'),
-  keyMissingError: 'Google API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
-  timeoutError: 'Google request timed out after 120 seconds',
-});
-
-const handleGoogleModels = createJsonProxyHandler({
-  name: 'Google Gemini API', logTag: 'api/google/models',
-  upstreamUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('GOOGLE_API_KEY'),
-  keyMissingError: 'Google API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
-  timeoutError: 'Google model list timed out after 30 seconds',
 });
 
 // --- OpenCode Zen (OpenAI-compatible endpoint) ---
@@ -952,27 +808,6 @@ const handleOllamaSearch = createJsonProxyHandler({
   buildAuth: standardAuth('OLLAMA_API_KEY'),
   keyMissingError: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama search timed out after 30 seconds',
-});
-
-// --- Mistral Agents API proxies ---
-
-const handleMistralAgentCreate = createJsonProxyHandler({
-  name: 'Mistral Agents API', logTag: 'api/mistral/agents',
-  upstreamUrl: 'https://api.mistral.ai/v1/agents',
-  method: 'POST',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('MISTRAL_API_KEY'),
-  keyMissingError: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.',
-  timeoutError: 'Mistral agent creation timed out after 30 seconds',
-});
-
-const handleMistralAgentChat = createStreamProxyHandler({
-  name: 'Mistral Agents API', logTag: 'api/mistral/agents/chat',
-  upstreamUrl: 'https://api.mistral.ai/v1/agents/completions',
-  timeoutMs: 120_000,
-  buildAuth: standardAuth('MISTRAL_API_KEY'),
-  keyMissingError: 'Mistral API key not configured. Add it in Settings or set MISTRAL_API_KEY on the Worker.',
-  timeoutError: 'Mistral agent chat timed out after 120 seconds',
 });
 
 // --- Tavily web search proxy (optional premium upgrade) ---

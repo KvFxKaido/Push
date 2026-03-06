@@ -6,11 +6,7 @@ import type { AIProviderType } from '@/types';
 const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
   // `models.dev/logos/ollama.svg` currently resolves to a generic fallback.
   ollama: 'https://models.dev/logos/ollama-cloud.svg',
-  mistral: 'https://models.dev/logos/mistral.svg',
   openrouter: 'https://models.dev/logos/openrouter.svg',
-  minimax: 'https://models.dev/logos/minimax.svg',
-  zai: 'https://models.dev/logos/zai.svg',
-  google: 'https://models.dev/logos/google.svg',
   // `zen` is represented by OpenCode branding.
   zen: 'https://models.dev/logos/opencode.svg',
   nvidia: 'https://models.dev/logos/nvidia.svg',
@@ -19,11 +15,7 @@ const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
 
 const PROVIDER_ALT: Record<AIProviderType, string> = {
   ollama: 'Ollama logo',
-  mistral: 'Mistral logo',
   openrouter: 'OpenRouter logo',
-  minimax: 'MiniMax logo',
-  zai: 'Z.AI logo',
-  google: 'Google logo',
   zen: 'OpenCode Zen logo',
   nvidia: 'NVIDIA NIM logo',
   demo: 'Push logo',
@@ -31,11 +23,7 @@ const PROVIDER_ALT: Record<AIProviderType, string> = {
 
 const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
   ollama: 'O',
-  mistral: 'M',
   openrouter: 'OR',
-  minimax: 'MM',
-  zai: 'Z',
-  google: 'G',
   zen: 'Z',
   nvidia: 'N',
   demo: 'P',

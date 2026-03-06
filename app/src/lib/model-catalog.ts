@@ -1,9 +1,5 @@
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
-import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
-import { getMinimaxKey } from '@/hooks/useMinimaxConfig';
-import { getZaiKey } from '@/hooks/useZaiConfig';
-import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { PROVIDER_URLS } from './providers';
@@ -98,24 +94,8 @@ export async function fetchOllamaModels(): Promise<string[]> {
   return fetchProviderModels(PROVIDER_URLS.ollama.models, getOllamaKey(), 'Ollama');
 }
 
-export async function fetchMistralModels(): Promise<string[]> {
-  return fetchProviderModels(PROVIDER_URLS.mistral.models, getMistralKey(), 'Mistral');
-}
-
 export async function fetchOpenRouterModels(): Promise<string[]> {
   return fetchProviderModels(PROVIDER_URLS.openrouter.models, getOpenRouterKey(), 'OpenRouter');
-}
-
-export async function fetchMinimaxModels(): Promise<string[]> {
-  return fetchProviderModels(PROVIDER_URLS.minimax.models, getMinimaxKey(), 'MiniMax');
-}
-
-export async function fetchZaiModels(): Promise<string[]> {
-  return fetchProviderModels(PROVIDER_URLS.zai.models, getZaiKey(), 'Z.AI');
-}
-
-export async function fetchGoogleModels(): Promise<string[]> {
-  return fetchProviderModels(PROVIDER_URLS.google.models, getGoogleKey(), 'Google');
 }
 
 export async function fetchZenModels(): Promise<string[]> {

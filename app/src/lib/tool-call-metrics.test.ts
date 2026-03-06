@@ -47,8 +47,8 @@ describe('tool-call-metrics', () => {
 
   it('returns a defensive copy from getMalformedToolCallMetrics', () => {
     recordMalformedToolCallMetric({
-      provider: 'mistral',
-      model: 'devstral-small-latest',
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4.6',
       reason: 'validation_failed',
       toolName: 'sandbox_write_file',
     });

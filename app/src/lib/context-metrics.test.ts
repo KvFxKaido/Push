@@ -37,7 +37,7 @@ describe('context-metrics', () => {
       phase: 'digest_drop',
       beforeTokens: 120000,
       afterTokens: 85000,
-      provider: 'mistral',
+      provider: 'openrouter',
       messagesDropped: 8,
     });
 
@@ -78,7 +78,7 @@ describe('context-metrics', () => {
 
   it('accumulates across providers', () => {
     recordContextMetric({ phase: 'summarization', beforeTokens: 90000, afterTokens: 80000, provider: 'openrouter' });
-    recordContextMetric({ phase: 'digest_drop', beforeTokens: 100000, afterTokens: 85000, provider: 'google', messagesDropped: 4 });
+    recordContextMetric({ phase: 'digest_drop', beforeTokens: 100000, afterTokens: 85000, provider: 'zen', messagesDropped: 4 });
 
     const snapshot = getContextMetrics();
     expect(snapshot.totalEvents).toBe(2);

@@ -136,31 +136,10 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/ollama/, ''),
       },
-      '/mistral': {
-        target: 'https://api.mistral.ai',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/mistral/, ''),
-      },
       '/openrouter': {
         target: 'https://openrouter.ai',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/openrouter/, ''),
-      },
-      '/minimax': {
-        target: 'https://api.minimax.io',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/minimax/, ''),
-      },
-      '/zai': {
-        target: 'https://api.z.ai',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/zai/, ''),
-      },
-      '/google': {
-        target: 'https://generativelanguage.googleapis.com',
-        changeOrigin: true,
-        agent: IPV4_HTTPS_AGENT,
-        rewrite: (path) => path.replace(/^\/google/, ''),
       },
       '/opencode': {
         target: 'https://opencode.ai',
