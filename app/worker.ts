@@ -648,12 +648,9 @@ interface HealthStatus {
   services: {
     worker: { status: 'ok' };
     ollama: { status: 'ok' | 'unconfigured'; configured: boolean };
-    mistral: { status: 'ok' | 'unconfigured'; configured: boolean };
     openrouter: { status: 'ok' | 'unconfigured'; configured: boolean };
-    minimax: { status: 'ok' | 'unconfigured'; configured: boolean };
-    zai: { status: 'ok' | 'unconfigured'; configured: boolean };
-    google: { status: 'ok' | 'unconfigured'; configured: boolean };
     zen: { status: 'ok' | 'unconfigured'; configured: boolean };
+    nvidia: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
     github_app_oauth: { status: 'ok' | 'unconfigured'; configured: boolean };

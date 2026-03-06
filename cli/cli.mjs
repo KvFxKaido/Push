@@ -852,9 +852,21 @@ async function initSession(sessionId, provider, model, cwd) {
   return state;
 }
 
+const DEPRECATED_PROVIDERS = {
+  mistral: 'openrouter',
+  zai: 'openrouter',
+  google: 'openrouter',
+  minimax: 'openrouter',
+};
+
 function parseProvider(raw) {
   const provider = (raw || process.env.PUSH_PROVIDER || 'ollama').toLowerCase();
   if (provider === 'ollama' || provider === 'openrouter' || provider === 'zen' || provider === 'nvidia') return provider;
+  if (DEPRECATED_PROVIDERS[provider]) {
+    const replacement = DEPRECATED_PROVIDERS[provider];
+    process.stderr.write(`Warning: provider "${provider}" has been removed. Falling back to "${replacement}".\n`);
+    return replacement;
+  }
   throw new Error(`Unsupported provider: ${raw}`);
 }
 
