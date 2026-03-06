@@ -363,3 +363,38 @@ describe('interactive REPL /compact', () => {
     assert.ok(parsedEvents.some((e) => e.type === 'context_compacted'), 'should append context_compacted event');
   });
 });
+
+// ─── deprecated provider migration ─────────────────────────────
+
+describe('deprecated provider migration', () => {
+  for (const deprecated of ['mistral', 'zai', 'google', 'minimax']) {
+    it(`warns and falls back for --provider ${deprecated}`, async () => {
+      // run --task will parse the provider, emit a warning, then proceed.
+      // It will eventually fail (no API key / no server), but the warning
+      // must appear on stderr and the resolved provider should be openrouter.
+      const { stderr } = await runCli(['run', '--task', 'hi', '--provider', deprecated]);
+      assert.ok(
+        stderr.includes(`provider "${deprecated}" has been removed`),
+        `should warn about removed provider "${deprecated}": ${stderr}`,
+      );
+      assert.ok(
+        stderr.includes('openrouter'),
+        `should mention openrouter as fallback: ${stderr}`,
+      );
+    });
+  }
+
+  it('accepts PUSH_PROVIDER env for deprecated provider', async () => {
+    const { stderr } = await runCli(['run', '--task', 'hi'], {
+      env: { PUSH_PROVIDER: 'google' },
+    });
+    assert.ok(stderr.includes('provider "google" has been removed'));
+    assert.ok(stderr.includes('openrouter'));
+  });
+
+  it('rejects truly unknown provider', async () => {
+    const { code, stderr } = await runCli(['run', '--task', 'hi', '--provider', 'banana']);
+    assert.equal(code, 1);
+    assert.ok(stderr.includes('Unsupported provider: banana'));
+  });
+});

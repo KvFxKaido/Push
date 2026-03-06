@@ -630,8 +630,8 @@ function toLLMMessages(
   }
 
   // Prompt caching: wrap the system message as a content-array with cache_control
-  // for providers that support it (OpenRouter/Anthropic, Mistral). Other providers
-  // (Ollama, Google, Z.AI, MiniMax, Zen) harmlessly ignore the extra field.
+  // for providers that support it (currently OpenRouter/Anthropic). Other
+  // providers harmlessly ignore the extra field.
   const cacheable = providerType === 'openrouter';
   const llmMessages: LLMMessage[] = [
     cacheable

@@ -12,7 +12,7 @@ function providerUrl(devPath: string, prodPath: string): string {
 
 export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: string }> = {
   ollama:     { chat: providerUrl('/ollama/v1/chat/completions',                '/api/ollama/chat'),     models: providerUrl('/ollama/v1/models',                '/api/ollama/models')     },
-  openrouter: { chat: providerUrl('/openrouter/api/v1/chat/completions',    '/api/openrouter/chat'), models: providerUrl('/openrouter/v1/models',            '/api/openrouter/models') },
+  openrouter: { chat: providerUrl('/openrouter/api/v1/chat/completions',    '/api/openrouter/chat'), models: providerUrl('/openrouter/api/v1/models',        '/api/openrouter/models') },
   zen:        { chat: providerUrl('/opencode/zen/v1/chat/completions',          '/api/zen/chat'),        models: providerUrl('/opencode/zen/v1/models',          '/api/zen/models')        },
   nvidia:     { chat: providerUrl('/nvidia/v1/chat/completions',                '/api/nvidia/chat'),     models: providerUrl('/nvidia/v1/models',                '/api/nvidia/models')     },
   demo:       { chat: '',                                                                                models: ''                                                                        },
