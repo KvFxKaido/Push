@@ -46,7 +46,7 @@ describe('context-metrics', () => {
     expect(snapshot.totalTokensSaved).toBe(35000);
     expect(snapshot.digestDrop.count).toBe(1);
     expect(snapshot.digestDrop.messagesDropped).toBe(8);
-    expect(snapshot.byProvider.mistral.count).toBe(1);
+    expect(snapshot.byProvider.openrouter.count).toBe(1);
   });
 
   it('records hard trim events', () => {
@@ -84,8 +84,8 @@ describe('context-metrics', () => {
     expect(snapshot.totalEvents).toBe(2);
     expect(snapshot.totalTokensSaved).toBe(25000);
     expect(snapshot.byProvider.openrouter.count).toBe(1);
-    expect(snapshot.byProvider.google.count).toBe(1);
-    expect(snapshot.byProvider.google.totalBefore).toBe(100000);
+    expect(snapshot.byProvider.zen.count).toBe(1);
+    expect(snapshot.byProvider.zen.totalBefore).toBe(100000);
   });
 
   it('falls back to unknown-provider when provider is missing', () => {

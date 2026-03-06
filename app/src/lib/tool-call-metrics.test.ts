@@ -54,11 +54,11 @@ describe('tool-call-metrics', () => {
     });
 
     const snapshot = getMalformedToolCallMetrics();
-    snapshot.byProvider.mistral.count = 99;
-    snapshot.byProvider.mistral.byModel['devstral-small-latest'].byTool.sandbox_write_file = 42;
+    snapshot.byProvider.openrouter.count = 99;
+    snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6'].byTool.sandbox_write_file = 42;
 
     const fresh = getMalformedToolCallMetrics();
-    expect(fresh.byProvider.mistral.count).toBe(1);
-    expect(fresh.byProvider.mistral.byModel['devstral-small-latest'].byTool.sandbox_write_file).toBe(1);
+    expect(fresh.byProvider.openrouter.count).toBe(1);
+    expect(fresh.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6'].byTool.sandbox_write_file).toBe(1);
   });
 });
