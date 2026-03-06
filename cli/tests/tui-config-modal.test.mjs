@@ -77,27 +77,24 @@ function mockHandleConfigModalInput(ms, key, providers) {
 describe('config modal state machine', () => {
   const providers = [
     { id: 'ollama' },
-    { id: 'mistral' },
     { id: 'openrouter' },
-    { id: 'zai' },
-    { id: 'google' },
-    { id: 'minimax' },
     { id: 'zen' },
+    { id: 'nvidia' },
   ];
 
-  it('navigates to minimax and enters edit mode', () => {
+  it('navigates to nvidia and enters edit mode', () => {
     const ms = createMockConfigModalState();
 
-    // Navigate to minimax (index 5)
-    ms.cursor = 5;
-    assert.equal(ms.cursor, 5);
+    // Navigate to nvidia (index 3)
+    ms.cursor = 3;
+    assert.equal(ms.cursor, 3);
 
     // Press Enter to activate
     const result = mockHandleConfigModalInput(ms, { name: 'return' }, providers);
     assert.equal(result.handled, true);
     assert.equal(result.activated, true);
     assert.equal(ms.mode, 'edit');
-    assert.equal(ms.editTarget, 'minimax');
+    assert.equal(ms.editTarget, 'nvidia');
     assert.equal(ms.editBuf, '');
     assert.equal(ms.editCursor, 0);
   });
@@ -105,8 +102,8 @@ describe('config modal state machine', () => {
   it('types API key characters in edit mode', () => {
     const ms = createMockConfigModalState();
 
-    // Enter edit mode for minimax
-    ms.cursor = 5;
+    // Enter edit mode for nvidia
+    ms.cursor = 3;
     mockHandleConfigModalInput(ms, { name: 'return' }, providers);
     assert.equal(ms.mode, 'edit');
 
@@ -123,7 +120,7 @@ describe('config modal state machine', () => {
 
   it('handles backspace in edit mode', () => {
     const ms = createMockConfigModalState();
-    ms.cursor = 5;
+    ms.cursor = 3;
     mockHandleConfigModalInput(ms, { name: 'return' }, providers);
 
     // Type 'abc', then backspace
@@ -140,7 +137,7 @@ describe('config modal state machine', () => {
 
   it('submits API key on Enter', () => {
     const ms = createMockConfigModalState();
-    ms.cursor = 5;
+    ms.cursor = 3;
     mockHandleConfigModalInput(ms, { name: 'return' }, providers);
 
     // Type key
@@ -158,7 +155,7 @@ describe('config modal state machine', () => {
 
   it('cancels edit on Escape', () => {
     const ms = createMockConfigModalState();
-    ms.cursor = 5;
+    ms.cursor = 3;
     mockHandleConfigModalInput(ms, { name: 'return' }, providers);
 
     // Type some characters

@@ -13,13 +13,12 @@ function makeDeps(providerId = 'ollama') {
 
   const getCuratedModels = (id) => {
     if (id === 'ollama') return ['gemini-3-flash-preview'];
-    if (id === 'mistral') return ['devstral-small-latest', 'mistral-large-latest'];
+    if (id === 'openrouter') return ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.4'];
     return [];
   };
 
   const getProviderList = () => [
-    { id: 'ollama' }, { id: 'mistral' }, { id: 'openrouter' },
-    { id: 'zai' }, { id: 'google' }, { id: 'zen' },
+    { id: 'ollama' }, { id: 'openrouter' }, { id: 'zen' }, { id: 'nvidia' },
   ];
 
   const getPathCompletions = (_root, fragment) => {
@@ -131,15 +130,15 @@ describe('createTabCompleter', () => {
     assert.equal(r1.index, 0);
 
     const r2 = tc.tab('/provider ', false);
-    assert.equal(r2.text, '/provider mistral');
+    assert.equal(r2.text, '/provider openrouter');
     assert.equal(r2.index, 1);
   });
 
   it('cycles backward with Shift+Tab', () => {
     tc.tab('/provider ', false);
     const r = tc.tab('/provider ', true);
-    assert.equal(r.text, '/provider zen');
-    assert.equal(r.index, 5);
+    assert.equal(r.text, '/provider nvidia');
+    assert.equal(r.index, 3);
   });
 
   it('wraps around forward', () => {
@@ -155,7 +154,7 @@ describe('createTabCompleter', () => {
   it('Shift+Tab on first press picks last candidate', () => {
     const r = tc.tab('/provider ', true);
     assert.notEqual(r, null);
-    assert.equal(r.text, '/provider zen');
+    assert.equal(r.text, '/provider nvidia');
   });
 
   it('reset clears state, next Tab re-resolves', () => {
@@ -179,9 +178,9 @@ describe('createTabCompleter', () => {
 
   it('getHint returns 1-based index when cycling', () => {
     tc.tab('/provider ', false);
-    assert.equal(tc.getHint(), 'Tab 1/6');
+    assert.equal(tc.getHint(), 'Tab 1/4');
     tc.tab('/provider ', false);
-    assert.equal(tc.getHint(), 'Tab 2/6');
+    assert.equal(tc.getHint(), 'Tab 2/4');
   });
 
   it('getHint returns null in preview mode', () => {
@@ -253,7 +252,7 @@ describe('suggest (live preview)', () => {
     tc.suggest('/provider ol');   // should be ignored (cycling)
     const s = tc.getState();
     assert.equal(s.index, 0);    // still at cycling index 0
-    assert.equal(s.items.length, 6); // original 6 candidates, not narrowed
+    assert.equal(s.items.length, 4); // original 4 candidates, not narrowed
   });
 
   it('Tab uses pre-suggested candidates', () => {
@@ -264,12 +263,12 @@ describe('suggest (live preview)', () => {
     const r = tc.tab('/provider ', false);
     assert.equal(r.text, '/provider ollama');
     assert.equal(r.index, 0); // now cycling
-    assert.equal(tc.getHint(), 'Tab 1/6');
+    assert.equal(tc.getHint(), 'Tab 1/4');
   });
 
   it('narrowing: suggest updates candidates after reset', () => {
     tc.suggest('/provider ');
-    assert.equal(tc.getState().items.length, 6);
+    assert.equal(tc.getState().items.length, 4);
 
     tc.reset();
     tc.suggest('/provider ol');
@@ -321,7 +320,7 @@ describe('/config completion', () => {
     const r = tc.tab('/config key ', false);
     assert.notEqual(r, null);
     assert.equal(r.text, '/config key ollama ');
-    assert.equal(r.total, 6);
+    assert.equal(r.total, 4);
   });
 
   it('completes sandbox on/off', () => {
@@ -386,7 +385,7 @@ describe('getState display labels', () => {
     tc.tab('/provider ', false);
     const s = tc.getState();
     assert.notEqual(s, null);
-    assert.deepEqual(s.items, ['ollama', 'mistral', 'openrouter', 'zai', 'google', 'zen']);
+    assert.deepEqual(s.items, ['ollama', 'openrouter', 'zen', 'nvidia']);
     assert.equal(s.index, 0);
   });
 });

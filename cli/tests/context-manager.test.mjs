@@ -103,8 +103,8 @@ describe('estimateMessageTokens', () => {
 // ─── getContextBudget ───────────────────────────────────────────
 
 describe('getContextBudget', () => {
-  it('returns default budget for unknown provider', () => {
-    const budget = getContextBudget('mistral', 'devstral-small-latest');
+  it('returns default budget for non-Gemini provider', () => {
+    const budget = getContextBudget('nvidia', 'nvidia/llama-3.1-nemotron-70b-instruct');
     assert.equal(budget.targetTokens, 88_000);
     assert.equal(budget.maxTokens, 100_000);
   });
@@ -125,12 +125,6 @@ describe('getContextBudget', () => {
     assert.equal(budget.targetTokens, 900_000);
   });
 
-  it('returns Gemini budget for Google provider regardless of model', () => {
-    const budget = getContextBudget('google', 'gemini-3.1-pro-preview');
-    assert.equal(budget.targetTokens, 900_000);
-    assert.equal(budget.maxTokens, 950_000);
-  });
-
   it('returns Gemini budget for OpenRouter with Gemini model', () => {
     const budget = getContextBudget('openrouter', 'google/gemini-3.1-pro-preview');
     assert.equal(budget.targetTokens, 900_000);
@@ -149,7 +143,7 @@ describe('getContextBudget', () => {
   });
 
   it('returns default budget for Gemini model on unsupported providers', () => {
-    const budget = getContextBudget('mistral', 'gemini-3-flash-preview');
+    const budget = getContextBudget('nvidia', 'gemini-3-flash-preview');
     assert.equal(budget.targetTokens, 88_000);
   });
 

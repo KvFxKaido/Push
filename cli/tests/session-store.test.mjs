@@ -152,7 +152,7 @@ describe('listSessions', () => {
     });
     await saveSessionState({
       sessionId: id2, createdAt: 2000, updatedAt: 2000,
-      provider: 'mistral', model: 'b', cwd: '/tmp', rounds: 0, eventSeq: 0, messages: [],
+      provider: 'openrouter', model: 'b', cwd: '/tmp', rounds: 0, eventSeq: 0, messages: [],
       sessionName: 'Review auth middleware',
     });
 

@@ -1134,7 +1134,7 @@ export async function backupFile(filePath, workspaceRoot) {
  * Execute a tool call. Options:
  * - approvalFn(tool, detail): async fn that returns true to proceed, false to deny.
  *   If not provided, all calls proceed (headless default: deny high-risk).
- * - providerId: active provider id ('ollama' | 'mistral' | 'openrouter') for provider-aware tools.
+ * - providerId: active provider id ('ollama' | 'openrouter' | 'zen' | 'nvidia') for provider-aware tools.
  * - providerApiKey: resolved provider API key for provider-aware tools.
  */
 export async function executeToolCall(call, workspaceRoot, options = {}) {
