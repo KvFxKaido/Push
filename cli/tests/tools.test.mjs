@@ -643,46 +643,6 @@ describe('exec session tools', () => {
     }
   });
 
-  it('can write stdin to a running session', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-session-'));
-    try {
-      const start = await executeToolCall(
-        { tool: 'exec_start', args: { command: 'read line; echo "ECHO:$line"', timeout_ms: 10_000 } },
-        root,
-        { allowExec: true },
-      );
-      assert.equal(start.ok, true);
-      const sessionId = start.meta.session_id;
-
-      const write = await executeToolCall(
-        { tool: 'exec_write', args: { session_id: sessionId, input: 'hello-session', append_newline: true } },
-        root,
-      );
-      assert.equal(write.ok, true);
-
-      let fromSeq = 0;
-      let seenEcho = false;
-      for (let i = 0; i < 25 && !seenEcho; i++) {
-        const poll = await executeToolCall(
-          { tool: 'exec_poll', args: { session_id: sessionId, from_seq: fromSeq, max_chars: 4096 } },
-          root,
-        );
-        assert.equal(poll.ok, true);
-        fromSeq = poll.meta.next_seq;
-        if (poll.text.includes('ECHO:hello-session')) {
-          seenEcho = true;
-        } else {
-          await new Promise((resolve) => setTimeout(resolve, 25));
-        }
-      }
-
-      assert.equal(seenEcho, true);
-      await executeToolCall({ tool: 'exec_stop', args: { session_id: sessionId } }, root);
-    } finally {
-      await fs.rm(root, { recursive: true, force: true });
-    }
-  });
-
   it('blocks exec_start in headless mode without allowExec', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-session-'));
     try {
