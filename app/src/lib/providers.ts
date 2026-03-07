@@ -43,7 +43,7 @@ export const OPENROUTER_MODELS: string[] = [
   'stepfun/step-3.5-flash:free',
   // Google Gemini
   'google/gemini-3.1-pro-preview',
-  'google/gemini-3.1-flash-preview',
+  'google/gemini-3.1-flash-lite-preview',
   // Mistral
   'mistralai/devstral-small-latest',
   'mistralai/mistral-large-latest',

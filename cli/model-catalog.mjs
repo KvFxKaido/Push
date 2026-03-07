@@ -12,7 +12,7 @@ export const OPENROUTER_MODELS = [
   'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
   'stepfun/step-3.5-flash:free',
-  'google/gemini-3.1-flash-preview',
+  'google/gemini-3.1-flash-lite-preview',
   'google/gemini-3.1-pro-preview',
   'x-ai/grok-4.1-fast',
   'moonshotai/kimi-k2.5',
