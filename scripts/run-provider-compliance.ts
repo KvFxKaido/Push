@@ -46,7 +46,7 @@ interface TestResult {
 const PROVIDER_CONFIGS = {
   mistral: {
     url: 'https://api.mistral.ai/v1/chat/completions',
-    model: 'devstral-small-latest',
+    model: 'mistral-large-2512',
     envKey: 'VITE_MISTRAL_API_KEY',
   },
   openrouter: {

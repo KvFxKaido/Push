@@ -17,8 +17,9 @@ export const OPENROUTER_MODELS = [
   'x-ai/grok-4.1-fast',
   'moonshotai/kimi-k2.5',
   // Mistral (via OpenRouter BYOK)
-  'mistralai/devstral-small-latest',
-  'mistralai/mistral-large-latest',
+  'mistralai/mistral-large-2512',
+  'mistralai/devstral-2512',
+  'mistralai/mistral-medium-2505',
   // MiniMax (via OpenRouter BYOK)
   'minimax/minimax-m2.5',
   'minimax/minimax-m2.1',
