@@ -91,7 +91,7 @@ Runs a single task and exits. No interaction. High-risk commands are blocked (no
 ```bash
 ./push config init              # interactive wizard
 ./push config show              # print current config (keys masked)
-./push config set --provider mistral --model devstral-small-latest
+./push config set --provider mistral --model mistral-large-2512
 ./push config set --api-key sk-abc123
 ./push config set --tavily-key tvly-abc123
 ./push config set --search-backend ollama
