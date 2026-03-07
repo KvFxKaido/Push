@@ -1,0 +1,95 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+const cliProviderSource = readFileSync(new URL('../provider.mjs', import.meta.url), 'utf8');
+const webProviderSource = readFileSync(new URL('../../app/src/lib/providers.ts', import.meta.url), 'utf8');
+
+function extractExportedStringConstant(source, exportName) {
+  const match = source.match(new RegExp(`export const ${exportName}\\s*=\\s*'([^']+)';`));
+  assert.ok(match, `Expected to find exported string constant ${exportName}`);
+  return match[1];
+}
+
+function extractUnionMembers(source, typeName) {
+  const match = source.match(new RegExp(`export type ${typeName}\\s*=\\s*([^;]+);`));
+  assert.ok(match, `Expected to find union type ${typeName}`);
+  return [...match[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
+}
+
+function extractProviderConfigsBlock(source) {
+  const match = source.match(/export const PROVIDER_CONFIGS = \{([\s\S]*?)\n\};/);
+  assert.ok(match, 'Expected to find PROVIDER_CONFIGS');
+  return match[1];
+}
+
+function extractCliProviderIds(source) {
+  const block = extractProviderConfigsBlock(source);
+  return [...block.matchAll(/^\s{2}([a-z]+):\s*\{/gm)].map(([, id]) => id);
+}
+
+function extractCliProviderEntry(source, providerId) {
+  const block = extractProviderConfigsBlock(source);
+  const escapedId = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = block.match(new RegExp(`^\\s{2}${escapedId}:\\s*\\{([\\s\\S]*?)^\\s{2}\\},?$`, 'm'));
+  assert.ok(match, `Expected to find CLI provider entry ${providerId}`);
+
+  const entry = match[1];
+  const idMatch = entry.match(/id:\s*'([^']+)'/);
+  const defaultModelMatch = entry.match(/defaultModel:\s*process\.env\.[A-Z0-9_]+\s*\|\|\s*'([^']+)'/);
+  const apiKeyEnvMatch = entry.match(/apiKeyEnv:\s*\[([\s\S]*?)\]/);
+
+  assert.ok(idMatch, `Expected CLI provider ${providerId} to define id`);
+  assert.ok(defaultModelMatch, `Expected CLI provider ${providerId} to define defaultModel`);
+  assert.ok(apiKeyEnvMatch, `Expected CLI provider ${providerId} to define apiKeyEnv`);
+
+  return {
+    id: idMatch[1],
+    defaultModel: defaultModelMatch[1],
+    apiKeyEnv: [...apiKeyEnvMatch[1].matchAll(/'([^']+)'/g)].map(([, value]) => value),
+  };
+}
+
+function extractWebProviderEnvKey(source, providerId) {
+  const escapedId = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = source.match(new RegExp(`type:\\s*'${escapedId}'[\\s\\S]*?envKey:\\s*'([^']+)'`));
+  assert.ok(match, `Expected to find web provider envKey for ${providerId}`);
+  return match[1];
+}
+
+describe('provider config parity', () => {
+  const providerIds = extractUnionMembers(webProviderSource, 'PreferredProvider');
+  const defaultConstByProvider = {
+    ollama: 'OLLAMA_DEFAULT_MODEL',
+    openrouter: 'OPENROUTER_DEFAULT_MODEL',
+    zen: 'ZEN_DEFAULT_MODEL',
+    nvidia: 'NVIDIA_DEFAULT_MODEL',
+  };
+
+  it('keeps the CLI provider roster in sync with the web provider set', () => {
+    assert.deepEqual(extractCliProviderIds(cliProviderSource).sort(), [...providerIds].sort());
+  });
+
+  it('keeps CLI provider ids and default models in sync with web defaults', () => {
+    for (const providerId of providerIds) {
+      const entry = extractCliProviderEntry(cliProviderSource, providerId);
+      assert.equal(entry.id, providerId);
+      assert.equal(
+        entry.defaultModel,
+        extractExportedStringConstant(webProviderSource, defaultConstByProvider[providerId]),
+        `Expected ${providerId} default model to match web providers.ts`,
+      );
+    }
+  });
+
+  it('keeps CLI API key fallbacks compatible with the web provider env keys', () => {
+    for (const providerId of providerIds) {
+      const entry = extractCliProviderEntry(cliProviderSource, providerId);
+      const webEnvKey = extractWebProviderEnvKey(webProviderSource, providerId);
+      assert.ok(
+        entry.apiKeyEnv.includes(webEnvKey),
+        `Expected ${providerId} apiKeyEnv to include ${webEnvKey}`,
+      );
+    }
+  });
+});
