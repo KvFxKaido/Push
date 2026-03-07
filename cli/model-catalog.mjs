@@ -12,8 +12,6 @@ export const OPENROUTER_MODELS = [
   'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
   'stepfun/step-3.5-flash:free',
-  'qwen/qwen3-coder:free',
-  'deepseek/deepseek-r1-0528:free',
   'google/gemini-3-flash-preview',
   'google/gemini-3.1-pro-preview',
   'x-ai/grok-4.1-fast',
@@ -25,8 +23,8 @@ export const OPENROUTER_MODELS = [
   'minimax/minimax-m2.5',
   'minimax/minimax-m2.1',
   // Z.AI (via OpenRouter BYOK)
-  'zhipu/glm-4.5',
-  'zhipu/glm-4-plus',
+  'zhipu/glm-4.7',
+  'zhipu/glm-5.0',
 ];
 
 export const OLLAMA_MODELS = [
