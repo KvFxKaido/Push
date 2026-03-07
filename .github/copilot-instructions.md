@@ -49,7 +49,7 @@ Three distinct agent roles, all served by the user-selected AI backend:
 | **Coder** | Autonomous code implementation in sandbox | Unbounded rounds, 90s timeout per round, 60KB context cap |
 | **Auditor** | Pre-commit safety gate | Binary SAFE/UNSAFE verdict, defaults to UNSAFE on error |
 
-**Models are replaceable; roles are not.** The user picks a backend (Mistral, Ollama, or OpenRouter); all agents use it.
+**Models are replaceable; roles are not.** The user picks a backend (Ollama, OpenRouter, Zen, or Nvidia); all agents use it.
 
 ### Active Branch Model
 
@@ -306,8 +306,10 @@ Key variables (all optional, app runs in demo mode without them):
 
 ```env
 # AI Providers (user picks in Settings)
-VITE_MISTRAL_API_KEY=...     # Mistral Vibe
 VITE_OLLAMA_API_KEY=...      # Ollama Cloud
+VITE_OPENROUTER_API_KEY=...  # OpenRouter
+VITE_ZEN_API_KEY=...         # OpenCode Zen
+VITE_NVIDIA_API_KEY=...      # Nvidia NIM
 
 # Optional Features
 VITE_TAVILY_API_KEY=...      # Web search (premium)

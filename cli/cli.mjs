@@ -70,7 +70,7 @@ Usage:
   push config set ...           Save provider config defaults
 
 Options:
-  --provider <name>             ollama | mistral | openrouter | zai | google | minimax | zen (default: ollama)
+  --provider <name>             ollama | openrouter | zen | nvidia (default: ollama)
   --model <name>                Override model
   --url <endpoint>              Override provider endpoint URL
   --api-key <secret>            Set provider API key (for push config set/init)
@@ -441,7 +441,7 @@ async function handleProviderCommand(arg, ctx, state, config) {
   }
 
   if (!target) {
-    process.stdout.write(`Unknown provider: ${arg}. Use: ollama, mistral, openrouter, zai, google, minimax, zen\n`);
+    process.stdout.write(`Unknown provider: ${arg}. Use: ollama, openrouter, zen, nvidia\n`);
     return;
   }
 
@@ -852,9 +852,21 @@ async function initSession(sessionId, provider, model, cwd) {
   return state;
 }
 
+const DEPRECATED_PROVIDERS = {
+  mistral: 'openrouter',
+  zai: 'openrouter',
+  google: 'openrouter',
+  minimax: 'openrouter',
+};
+
 function parseProvider(raw) {
   const provider = (raw || process.env.PUSH_PROVIDER || 'ollama').toLowerCase();
-  if (provider === 'ollama' || provider === 'mistral' || provider === 'openrouter' || provider === 'zai' || provider === 'google' || provider === 'minimax' || provider === 'zen' || provider === 'nvidia') return provider;
+  if (provider === 'ollama' || provider === 'openrouter' || provider === 'zen' || provider === 'nvidia') return provider;
+  if (DEPRECATED_PROVIDERS[provider]) {
+    const replacement = DEPRECATED_PROVIDERS[provider];
+    process.stderr.write(`Warning: provider "${provider}" has been removed. Falling back to "${replacement}".\n`);
+    return replacement;
+  }
   throw new Error(`Unsupported provider: ${raw}`);
 }
 
@@ -882,11 +894,7 @@ function sanitizeConfig(config) {
     webSearchBackend: config.webSearchBackend || null,
     safeExecPatterns: Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [],
     ollama: config.ollama ? redactProvider(config.ollama) : {},
-    mistral: config.mistral ? redactProvider(config.mistral) : {},
     openrouter: config.openrouter ? redactProvider(config.openrouter) : {},
-    zai: config.zai ? redactProvider(config.zai) : {},
-    google: config.google ? redactProvider(config.google) : {},
-    minimax: config.minimax ? redactProvider(config.minimax) : {},
     zen: config.zen ? redactProvider(config.zen) : {},
     nvidia: config.nvidia ? redactProvider(config.nvidia) : {},
   };

@@ -10,8 +10,8 @@ Self-hosted only. No managed service.
 
 Push is a personal chat interface backed by role-based AI agents that read your code, write patches, run checks in a sandbox, and commit/push changes from your phone or terminal.
 
-Try it free with provider free tiers: Google Gemini, OpenCode Zen, Ollama Cloud, or Z.AI.
-Bring your own provider: Mistral, Ollama Cloud, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, or Nvidia NIM.
+Try it free with provider free tiers: OpenCode Zen or Ollama Cloud.
+Bring your own provider: Ollama Cloud, OpenRouter, OpenCode Zen, or Nvidia NIM.
 Switch providers on new chats at any time.
 
 ## What It Does
@@ -51,7 +51,7 @@ The app is free. AI usage depends on the provider and plan you choose.
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Mistral Vibe, Ollama Cloud, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, or Nvidia NIM — flexible provider choice |
+| AI | Ollama Cloud, OpenRouter, OpenCode Zen, or Nvidia NIM — flexible provider choice |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -99,12 +99,8 @@ npx wrangler dev --port 8787
 Create `app/.env` for local development, or paste keys in the Settings UI at runtime:
 
 ```env
-VITE_MISTRAL_API_KEY=...              # Mistral Vibe
 VITE_OLLAMA_API_KEY=...               # Ollama Cloud
 VITE_OPENROUTER_API_KEY=...           # OpenRouter (50+ models via pay-per-use)
-VITE_ZAI_API_KEY=...                  # Z.AI (GLM)
-VITE_GOOGLE_API_KEY=...               # Google Gemini (OpenAI-compatible endpoint)
-VITE_MINIMAX_API_KEY=...              # MiniMax (OpenAI-compatible endpoint)
 VITE_ZEN_API_KEY=...                  # OpenCode Zen (OpenAI-compatible endpoint)
 VITE_NVIDIA_API_KEY=...               # Nvidia NIM (OpenAI-compatible endpoint)
 VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)
@@ -114,18 +110,6 @@ VITE_GITHUB_APP_REDIRECT_URI=...      # Optional — GitHub App OAuth redirect U
 VITE_GITHUB_OAUTH_PROXY=...           # Optional — GitHub OAuth token exchange proxy
 VITE_GITHUB_REDIRECT_URI=...          # Optional — GitHub OAuth redirect URI
 ```
-
-### Provider Key Policy (All Providers)
-
-- Use provider-native API keys for the selected backend and keep production keys server-side (Worker secrets), not in shipped client bundles.
-- Review cadence: quarterly. Last reviewed **2026-02-21** (next target **2026-05-21**).
-- Full per-provider policies and references:
-  - Mistral: `documents/security/PROVIDER_USAGE_POLICY.md`
-  - OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
-  - Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
-  - Z.AI: `documents/security/PROVIDER_USAGE_POLICY_ZAI.md`
-  - Google Gemini: `documents/security/PROVIDER_USAGE_POLICY_GOOGLE.md`
-  - OpenCode Zen: `documents/security/PROVIDER_USAGE_POLICY_ZEN.md`
 
 Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings. Web default mode is **Auto** (Zen-first when available), and users can still pin any provider.
 
@@ -170,7 +154,7 @@ Use it for quick experiments, learning the interface, or when you're on a device
 
 ## Deploying Your Instance
 
-For a self-hosted deployment, run the app on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, `/api/minimax/chat`, `/api/zen/chat`, and `/api/nvidia/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+For a self-hosted deployment, run the app on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, and `/api/nvidia/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 
 ```bash
@@ -186,7 +170,7 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Coder** — autonomous code implementation in sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap)
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Eight AI backends are supported: **Mistral Vibe**, **Ollama Cloud**, **OpenRouter**, **Z.AI**, **Google Gemini**, **MiniMax**, **OpenCode Zen**, and **Nvidia NIM**. All use OpenAI-compatible streaming. The active backend serves all three roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+Four AI backends are supported: **Ollama Cloud**, **OpenRouter**, **OpenCode Zen**, and **Nvidia NIM**. All use OpenAI-compatible streaming. The active backend serves all three roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
 
 **OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 14 models covering all major providers.
 
@@ -211,7 +195,7 @@ Push/
 │   ├── app.py             # Modal Python App — sandbox web endpoints
 │   └── requirements.txt
 ├── app/
-│   ├── worker.ts          # Cloudflare Worker — provider proxies (Ollama/Mistral/OpenRouter/Z.AI/Google/MiniMax/Zen/Nvidia) + sandbox proxy
+│   ├── worker.ts          # Cloudflare Worker — provider proxies (Ollama/OpenRouter/Zen/Nvidia) + sandbox proxy
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── chat/           # ChatContainer, ChatInput, MessageBubble, AgentStatusBar, WorkspaceHubSheet, RepoAndChatSelector, RepoChatDrawer, SandboxExpiryBanner, BranchCreateSheet, MergeFlowSheet

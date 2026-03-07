@@ -18,36 +18,21 @@ export const OPENROUTER_MODELS = [
   'google/gemini-3.1-pro-preview',
   'x-ai/grok-4.1-fast',
   'moonshotai/kimi-k2.5',
+  // Mistral (via OpenRouter BYOK)
+  'mistralai/devstral-small-latest',
+  'mistralai/mistral-large-latest',
+  // MiniMax (via OpenRouter BYOK)
+  'minimax/minimax-m2.5',
+  'minimax/minimax-m2.1',
+  // Z.AI (via OpenRouter BYOK)
+  'zhipu/glm-4.5',
+  'zhipu/glm-4-plus',
 ];
 
 export const OLLAMA_MODELS = [
   // Cloud-first curated fallback. Live `/models` fetch and free-text entry
   // cover account-specific availability beyond this baseline.
   'gemini-3-flash-preview',
-];
-
-export const MISTRAL_MODELS = [
-  'devstral-small-latest',
-  'mistral-large-latest',
-  'codestral-latest',
-];
-
-export const ZAI_MODELS = [
-  'glm-4.5',
-];
-
-export const GOOGLE_MODELS = [
-  'gemini-3.1-pro-preview',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-2.0-flash',
-];
-
-export const MINIMAX_MODELS = [
-  'MiniMax-M2.5',
-  'MiniMax-M2.1',
-  'MiniMax-M2',
-  'MiniMax-M2.5-highspeed',
 ];
 
 export const ZEN_MODELS = [
@@ -60,25 +45,28 @@ export const ZEN_MODELS = [
   'big-pickle',
 ];
 
+export const NVIDIA_MODELS = [
+  'nvidia/llama-3.1-nemotron-70b-instruct',
+  'meta/llama-3.3-70b-instruct',
+  'meta/llama-3.1-405b-instruct',
+  'deepseek-ai/deepseek-r1',
+  'qwen/qwen2.5-coder-32b-instruct',
+  'mistralai/mistral-large-2-instruct',
+];
+
 const CATALOG = {
   ollama: OLLAMA_MODELS,
-  mistral: MISTRAL_MODELS,
   openrouter: OPENROUTER_MODELS,
-  zai: ZAI_MODELS,
-  google: GOOGLE_MODELS,
-  minimax: MINIMAX_MODELS,
   zen: ZEN_MODELS,
+  nvidia: NVIDIA_MODELS,
 };
 
 /** Default model per provider — must match PROVIDER_CONFIGS defaults. */
 export const DEFAULT_MODELS = {
   ollama: 'gemini-3-flash-preview',
-  mistral: 'devstral-small-latest',
   openrouter: 'anthropic/claude-sonnet-4.6',
-  zai: 'glm-4.5',
-  google: 'gemini-3.1-pro-preview',
-  minimax: 'MiniMax-M2.5',
   zen: 'big-pickle',
+  nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
 };
 
 /**
@@ -98,23 +86,6 @@ function deriveModelsUrl(chatUrl) {
 }
 
 /**
- * Google lists models from the native Generative Language endpoint, not the
- * OpenAI-compatible `/openai/models` path. Convert:
- *   .../v1beta/openai/chat/completions -> .../v1beta/models
- */
-function deriveGoogleModelsUrl(chatUrl) {
-  const replaced = chatUrl.replace(/\/(v[^/]+)\/openai\/chat\/completions\/?$/, '/$1/models');
-  if (replaced === chatUrl) return null;
-  return replaced;
-}
-
-function addQueryParam(urlStr, key, value) {
-  const url = new URL(urlStr);
-  url.searchParams.set(key, value);
-  return url.toString();
-}
-
-/**
  * Fetch live model list from a provider's /models endpoint.
  * Returns { models: string[], source: 'live' | 'curated', error?: string }.
  * Falls back to curated list on any failure.
@@ -123,9 +94,7 @@ export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 }
   const providerId = providerConfig.id;
   const curated = getCuratedModels(providerId);
 
-  const modelsUrl = providerId === 'google'
-    ? (deriveGoogleModelsUrl(providerConfig.url) || deriveModelsUrl(providerConfig.url))
-    : deriveModelsUrl(providerConfig.url);
+  const modelsUrl = deriveModelsUrl(providerConfig.url);
   // If URL didn't change (no /chat/completions to replace), skip live fetch
   if (modelsUrl === providerConfig.url) {
     return { models: curated, source: 'curated' };
@@ -140,14 +109,7 @@ export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 }
     if (providerId === 'openrouter') {
       headers['HTTP-Referer'] = process.env.PUSH_OPENROUTER_REFERER || 'https://push.local';
     }
-    // Google uses ?key= instead of Authorization header
-    let url = modelsUrl;
-    if (providerId === 'google' && apiKey) {
-      url = addQueryParam(url, 'key', apiKey);
-      delete headers.Authorization;
-    }
-
-    const response = await fetch(url, { method: 'GET', headers, signal: controller.signal });
+    const response = await fetch(modelsUrl, { method: 'GET', headers, signal: controller.signal });
     if (!response.ok) {
       return { models: curated, source: 'curated', error: `HTTP ${response.status}` };
     }
@@ -162,20 +124,9 @@ export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 }
         .map(m => m.id || m.name || '')
         .filter(Boolean);
     } else if (Array.isArray(payload.models)) {
-      if (providerId === 'google') {
-        ids = payload.models
-          .filter((m) => {
-            if (!Array.isArray(m?.supportedGenerationMethods)) return true;
-            return m.supportedGenerationMethods.includes('generateContent');
-          })
-          .map(m => m.name || m.id || m.model || '')
-          .map((id) => String(id).replace(/^models\//, ''))
-          .filter(Boolean);
-      } else {
-        ids = payload.models
-          .map(m => m.name || m.id || m.model || '')
-          .filter(Boolean);
-      }
+      ids = payload.models
+        .map(m => m.name || m.id || m.model || '')
+        .filter(Boolean);
     }
 
     if (ids.length === 0) {

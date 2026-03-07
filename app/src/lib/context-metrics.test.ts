@@ -37,7 +37,7 @@ describe('context-metrics', () => {
       phase: 'digest_drop',
       beforeTokens: 120000,
       afterTokens: 85000,
-      provider: 'mistral',
+      provider: 'openrouter',
       messagesDropped: 8,
     });
 
@@ -46,7 +46,7 @@ describe('context-metrics', () => {
     expect(snapshot.totalTokensSaved).toBe(35000);
     expect(snapshot.digestDrop.count).toBe(1);
     expect(snapshot.digestDrop.messagesDropped).toBe(8);
-    expect(snapshot.byProvider.mistral.count).toBe(1);
+    expect(snapshot.byProvider.openrouter.count).toBe(1);
   });
 
   it('records hard trim events', () => {
@@ -78,14 +78,14 @@ describe('context-metrics', () => {
 
   it('accumulates across providers', () => {
     recordContextMetric({ phase: 'summarization', beforeTokens: 90000, afterTokens: 80000, provider: 'openrouter' });
-    recordContextMetric({ phase: 'digest_drop', beforeTokens: 100000, afterTokens: 85000, provider: 'google', messagesDropped: 4 });
+    recordContextMetric({ phase: 'digest_drop', beforeTokens: 100000, afterTokens: 85000, provider: 'zen', messagesDropped: 4 });
 
     const snapshot = getContextMetrics();
     expect(snapshot.totalEvents).toBe(2);
     expect(snapshot.totalTokensSaved).toBe(25000);
     expect(snapshot.byProvider.openrouter.count).toBe(1);
-    expect(snapshot.byProvider.google.count).toBe(1);
-    expect(snapshot.byProvider.google.totalBefore).toBe(100000);
+    expect(snapshot.byProvider.zen.count).toBe(1);
+    expect(snapshot.byProvider.zen.totalBefore).toBe(100000);
   });
 
   it('falls back to unknown-provider when provider is missing', () => {

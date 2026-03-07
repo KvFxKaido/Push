@@ -6,9 +6,7 @@ import {
   DEFAULT_MODELS,
   OPENROUTER_MODELS,
   OLLAMA_MODELS,
-  MISTRAL_MODELS,
-  ZAI_MODELS,
-  GOOGLE_MODELS,
+  NVIDIA_MODELS,
   ZEN_MODELS,
 } from '../model-catalog.mjs';
 
@@ -25,28 +23,16 @@ describe('getCuratedModels', () => {
     assert.deepEqual(models, OLLAMA_MODELS);
   });
 
-  it('returns Mistral models', () => {
-    const models = getCuratedModels('mistral');
-    assert.ok(models.length > 0);
-    assert.deepEqual(models, MISTRAL_MODELS);
-  });
-
-  it('returns Z.AI models', () => {
-    const models = getCuratedModels('zai');
-    assert.ok(models.length > 0);
-    assert.deepEqual(models, ZAI_MODELS);
-  });
-
-  it('returns Google models', () => {
-    const models = getCuratedModels('google');
-    assert.ok(models.length > 0);
-    assert.deepEqual(models, GOOGLE_MODELS);
-  });
-
   it('returns Zen models', () => {
     const models = getCuratedModels('zen');
     assert.ok(models.length > 0);
     assert.deepEqual(models, ZEN_MODELS);
+  });
+
+  it('returns Nvidia models', () => {
+    const models = getCuratedModels('nvidia');
+    assert.ok(models.length > 0);
+    assert.deepEqual(models, NVIDIA_MODELS);
   });
 
   it('returns empty array for unknown provider', () => {
@@ -56,61 +42,14 @@ describe('getCuratedModels', () => {
   });
 });
 
-describe('fetchModels (google live list)', () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it('uses Google native models endpoint and normalizes model names', async () => {
-    let requestedUrl = '';
-    let authHeader = null;
-    globalThis.fetch = async (url, init = {}) => {
-      requestedUrl = String(url);
-      authHeader = init.headers?.Authorization ?? null;
-      return new Response(JSON.stringify({
-        models: [
-          { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
-          { name: 'models/text-embedding-004', supportedGenerationMethods: ['embedContent'] },
-          { name: 'models/gemini-2.0-flash', supportedGenerationMethods: ['generateContent'] },
-          { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }, // duplicate
-        ],
-      }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    };
-
-    const providerConfig = {
-      id: 'google',
-      url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-    };
-    const result = await fetchModels(providerConfig, 'gkey_test');
-
-    assert.equal(result.source, 'live');
-    assert.equal(result.error, undefined);
-    assert.match(requestedUrl, /\/v1beta\/models\?/);
-    assert.match(requestedUrl, /key=gkey_test/);
-    assert.equal(authHeader, null, 'Google list endpoint should use ?key=, not Authorization header');
-    assert.ok(result.models.includes('gemini-2.5-flash'));
-    assert.ok(result.models.includes('gemini-2.0-flash'));
-    assert.ok(!result.models.includes('text-embedding-004'));
-    assert.equal(result.models.filter((m) => m === 'gemini-2.5-flash').length, 1);
-  });
-});
-
 describe('DEFAULT_MODELS', () => {
   // Hardcoded expected values — not cross-referencing PROVIDER_CONFIGS
   // because those are env-overridable at import time.
   const EXPECTED = {
     ollama: 'gemini-3-flash-preview',
-    mistral: 'devstral-small-latest',
     openrouter: 'anthropic/claude-sonnet-4.6',
-    zai: 'glm-4.5',
-    google: 'gemini-3.1-pro-preview',
-    minimax: 'MiniMax-M2.5',
     zen: 'big-pickle',
+    nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
   };
 
   it('has correct hardcoded defaults', () => {
@@ -124,7 +63,7 @@ describe('DEFAULT_MODELS', () => {
   });
 
   it('covers all providers', () => {
-    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['google', 'minimax', 'mistral', 'ollama', 'openrouter', 'zai', 'zen']);
+    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['nvidia', 'ollama', 'openrouter', 'zen']);
   });
 
   it('each default appears in its curated list', () => {

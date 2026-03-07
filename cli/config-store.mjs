@@ -61,35 +61,20 @@ export function applyConfigToEnv(config) {
   setEnvIfMissing('PUSH_OLLAMA_API_KEY', ollama.apiKey);
   setEnvIfMissing('PUSH_OLLAMA_MODEL', ollama.model);
 
-  const mistral = ensureObject(config.mistral);
-  setEnvIfMissing('PUSH_MISTRAL_URL', mistral.url);
-  setEnvIfMissing('PUSH_MISTRAL_API_KEY', mistral.apiKey);
-  setEnvIfMissing('PUSH_MISTRAL_MODEL', mistral.model);
-
   const openrouter = ensureObject(config.openrouter);
   setEnvIfMissing('PUSH_OPENROUTER_URL', openrouter.url);
   setEnvIfMissing('PUSH_OPENROUTER_API_KEY', openrouter.apiKey);
   setEnvIfMissing('PUSH_OPENROUTER_MODEL', openrouter.model);
 
-  const zai = ensureObject(config.zai);
-  setEnvIfMissing('PUSH_ZAI_URL', zai.url);
-  setEnvIfMissing('PUSH_ZAI_API_KEY', zai.apiKey);
-  setEnvIfMissing('PUSH_ZAI_MODEL', zai.model);
-
-  const google = ensureObject(config.google);
-  setEnvIfMissing('PUSH_GOOGLE_URL', google.url);
-  setEnvIfMissing('PUSH_GOOGLE_API_KEY', google.apiKey);
-  setEnvIfMissing('PUSH_GOOGLE_MODEL', google.model);
-
-  const minimax = ensureObject(config.minimax);
-  setEnvIfMissing('PUSH_MINIMAX_URL', minimax.url);
-  setEnvIfMissing('PUSH_MINIMAX_API_KEY', minimax.apiKey);
-  setEnvIfMissing('PUSH_MINIMAX_MODEL', minimax.model);
-
   const zen = ensureObject(config.zen);
   setEnvIfMissing('PUSH_ZEN_URL', zen.url);
   setEnvIfMissing('PUSH_ZEN_API_KEY', zen.apiKey);
   setEnvIfMissing('PUSH_ZEN_MODEL', zen.model);
+
+  const nvidia = ensureObject(config.nvidia);
+  setEnvIfMissing('PUSH_NVIDIA_URL', nvidia.url);
+  setEnvIfMissing('PUSH_NVIDIA_API_KEY', nvidia.apiKey);
+  setEnvIfMissing('PUSH_NVIDIA_MODEL', nvidia.model);
 }
 
 export function maskSecret(value) {

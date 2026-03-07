@@ -9,7 +9,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Type:** AI Coding Agent — Mobile PWA + Local CLI
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** Multi-provider support (Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, Nvidia NIM) via OpenAI-compatible SSE streaming.
+*   **AI Backend:** Multi-provider support (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) via OpenAI-compatible SSE streaming.
 *   **Current Product Focus:** CLI/TUI terminal UX improvements (CLI-first, transcript-first; no full-screen TUI rewrite).
 
 ## Tech Stack
@@ -20,7 +20,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 | **Styling** | Tailwind CSS 3, shadcn/ui (Radix primitives) |
 | **Backend** | Cloudflare Workers (TypeScript) |
 | **Sandbox** | Modal (Serverless Python Containers) |
-| **AI Integration** | OpenAI-compatible Streaming (Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, Nvidia NIM) |
+| **AI Integration** | OpenAI-compatible Streaming (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) |
 | **APIs** | GitHub REST API |
 
 ## Architecture
@@ -101,7 +101,7 @@ Current roadmap focus is improving terminal ergonomics around the transcript-fir
 *   `.push/` internal state (sessions, backups) excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Eight providers: Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, Nvidia NIM. All use OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Four providers: Ollama, OpenRouter, OpenCode Zen, Nvidia NIM. All use OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
 
 ## Directory Structure
 
@@ -124,7 +124,7 @@ Push/
 │   │   │   ├── sandbox-client.ts  # Sandbox HTTP client, mapSandboxErrorCode(), sandboxStatus() for resume reconciliation
 │   │   │   ├── tool-dispatch.ts   # Unified dispatch, detectAllToolCalls(), multi-tool support
 │   │   │   ├── web-search-tools.ts # Web search (Tavily, Ollama native, DuckDuckGo)
-│   │   │   ├── model-catalog.ts   # Ollama/Mistral model lists
+│   │   │   ├── model-catalog.ts   # Provider model lists and selection
 │   │   │   ├── prompts.ts         # Prompt building utilities
 │   │   │   ├── snapshot-manager.ts # Workspace snapshot management
 │   │   │   └── ...                # file-processing, file-utils, codemirror-*, utils
@@ -165,7 +165,7 @@ Push/
 ### Prerequisites
 *   Node.js & npm
 *   Python (for Modal sandbox deployment)
-*   API Keys: Ollama/Mistral/OpenRouter (AI), GitHub (Auth/API)
+*   API Keys: Ollama/OpenRouter/Zen/Nvidia (AI), GitHub (Auth/API)
 
 ### Setup & Run
 1.  **Install Frontend Dependencies:**
@@ -189,7 +189,7 @@ Push/
 ### Environment
 Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI.
 
-Key variables: `VITE_MISTRAL_API_KEY` (Mistral), `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZAI_API_KEY` (Z.AI), `VITE_GOOGLE_API_KEY` (Google), `VITE_MINIMAX_API_KEY` (MiniMax), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
+Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
 
 ## Coding Conventions
 *   **TypeScript:** Strict mode enabled. Explicit return types required on exported functions.

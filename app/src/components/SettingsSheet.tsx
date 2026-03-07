@@ -18,11 +18,7 @@ import type { RepoOverride } from '@/hooks/useProtectMain';
 
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
-  mistral: 'Mistral',
   openrouter: 'OpenRouter',
-  minimax: 'MiniMax',
-  zai: 'Z.AI',
-  google: 'Google',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
   demo: 'Demo',
@@ -88,20 +84,6 @@ export interface SettingsAIProps {
   setOllamaKeyInput: (v: string) => void;
   setOllamaKey: (v: string) => void;
   clearOllamaKey: () => void;
-  // Mistral
-  hasMistralKey: boolean;
-  mistralModel: string;
-  setMistralModel: (v: string) => void;
-  mistralModelOptions: string[];
-  mistralModelsLoading: boolean;
-  mistralModelsError: string | null;
-  mistralModelsUpdatedAt: number | null;
-  isMistralModelLocked: boolean;
-  refreshMistralModels: () => void;
-  mistralKeyInput: string;
-  setMistralKeyInput: (v: string) => void;
-  setMistralKey: (v: string) => void;
-  clearMistralKey: () => void;
   // OpenRouter
   hasOpenRouterKey: boolean;
   openRouterModel: string;
@@ -116,48 +98,6 @@ export interface SettingsAIProps {
   setOpenRouterKeyInput: (v: string) => void;
   setOpenRouterKey: (v: string) => void;
   clearOpenRouterKey: () => void;
-  // MiniMax
-  hasMinimaxKey: boolean;
-  minimaxModel: string;
-  setMinimaxModel: (v: string) => void;
-  minimaxModelOptions: string[];
-  minimaxModelsLoading: boolean;
-  minimaxModelsError: string | null;
-  minimaxModelsUpdatedAt: number | null;
-  isMinimaxModelLocked: boolean;
-  refreshMinimaxModels: () => void;
-  minimaxKeyInput: string;
-  setMinimaxKeyInput: (v: string) => void;
-  setMinimaxKey: (v: string) => void;
-  clearMinimaxKey: () => void;
-  // Z.AI
-  hasZaiKey: boolean;
-  zaiModel: string;
-  setZaiModel: (v: string) => void;
-  zaiModelOptions: string[];
-  zaiModelsLoading: boolean;
-  zaiModelsError: string | null;
-  zaiModelsUpdatedAt: number | null;
-  isZaiModelLocked: boolean;
-  refreshZaiModels: () => void;
-  zaiKeyInput: string;
-  setZaiKeyInput: (v: string) => void;
-  setZaiKey: (v: string) => void;
-  clearZaiKey: () => void;
-  // Google
-  hasGoogleKey: boolean;
-  googleModel: string;
-  setGoogleModel: (v: string) => void;
-  googleModelOptions: string[];
-  googleModelsLoading: boolean;
-  googleModelsError: string | null;
-  googleModelsUpdatedAt: number | null;
-  isGoogleModelLocked: boolean;
-  refreshGoogleModels: () => void;
-  googleKeyInput: string;
-  setGoogleKeyInput: (v: string) => void;
-  setGoogleKey: (v: string) => void;
-  clearGoogleKey: () => void;
   // OpenCode Zen
   hasZenKey: boolean;
   zenModel: string;
@@ -1131,38 +1071,6 @@ export function SettingsSheet({
               />
             </div>
 
-            {/* Mistral */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-push-fg-secondary">Mistral</label>
-              <ProviderKeySection
-                label="Mistral"
-                hasKey={ai.hasMistralKey}
-                keyInput={ai.mistralKeyInput}
-                setKeyInput={ai.setMistralKeyInput}
-                saveKey={() => ai.setMistralKey(ai.mistralKeyInput.trim())}
-                clearKey={ai.clearMistralKey}
-                activeBackend={ai.activeBackend}
-                backendId="mistral"
-                clearPreferredProvider={ai.clearPreferredProvider}
-                setActiveBackend={ai.setActiveBackend}
-                placeholder="Mistral API key"
-                saveLabel="Save Mistral key"
-                hint="Mistral API key from console.mistral.ai."
-                model={{
-                  value: ai.mistralModel,
-                  set: ai.setMistralModel,
-                  options: ai.mistralModelOptions,
-                  isLocked: ai.isMistralModelLocked,
-                  lockedModel: ai.lockedModel,
-                }}
-                refresh={{
-                  trigger: ai.refreshMistralModels,
-                  loading: ai.mistralModelsLoading,
-                  error: ai.mistralModelsError,
-                  updatedAt: ai.mistralModelsUpdatedAt,
-                }}
-              />
-            </div>
 
           </div>
 
@@ -1197,100 +1105,6 @@ export function SettingsSheet({
                 loading: ai.openRouterModelsLoading,
                 error: ai.openRouterModelsError,
                 updatedAt: ai.openRouterModelsUpdatedAt,
-              }}
-            />
-          </div>
-
-          {/* MiniMax */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-push-fg-secondary">MiniMax</label>
-            <ProviderKeySection
-              label="MiniMax"
-              hasKey={ai.hasMinimaxKey}
-              keyInput={ai.minimaxKeyInput}
-              setKeyInput={ai.setMinimaxKeyInput}
-              saveKey={() => ai.setMinimaxKey(ai.minimaxKeyInput.trim())}
-              clearKey={ai.clearMinimaxKey}
-              activeBackend={ai.activeBackend}
-              backendId="minimax"
-              clearPreferredProvider={ai.clearPreferredProvider}
-              setActiveBackend={ai.setActiveBackend}
-              placeholder="MiniMax API key"
-              saveLabel="Save MiniMax key"
-              hint="MiniMax OpenAI-compatible API key for https://api.minimax.io/v1."
-              savedHint="MiniMax-M2.5-highspeed requires the High-Speed subscription. Coding Plan supports MiniMax-M2.5, MiniMax-M2.1, and MiniMax-M2."
-              model={{
-                value: ai.minimaxModel,
-                set: ai.setMinimaxModel,
-                options: ai.minimaxModelOptions,
-                isLocked: ai.isMinimaxModelLocked,
-                lockedModel: ai.lockedModel,
-              }}
-            />
-          </div>
-
-          {/* Z.AI */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-push-fg-secondary">Z.AI</label>
-            <ProviderKeySection
-              label="Z.AI"
-              hasKey={ai.hasZaiKey}
-              keyInput={ai.zaiKeyInput}
-              setKeyInput={ai.setZaiKeyInput}
-              saveKey={() => ai.setZaiKey(ai.zaiKeyInput.trim())}
-              clearKey={ai.clearZaiKey}
-              activeBackend={ai.activeBackend}
-              backendId="zai"
-              clearPreferredProvider={ai.clearPreferredProvider}
-              setActiveBackend={ai.setActiveBackend}
-              placeholder="Z.AI API key"
-              saveLabel="Save Z.AI key"
-              hint="Z.AI API key for the coding endpoint."
-              model={{
-                value: ai.zaiModel,
-                set: ai.setZaiModel,
-                options: ai.zaiModelOptions,
-                isLocked: ai.isZaiModelLocked,
-                lockedModel: ai.lockedModel,
-              }}
-              refresh={{
-                trigger: ai.refreshZaiModels,
-                loading: ai.zaiModelsLoading,
-                error: ai.zaiModelsError,
-                updatedAt: ai.zaiModelsUpdatedAt,
-              }}
-            />
-          </div>
-
-          {/* Google */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-push-fg-secondary">Google</label>
-            <ProviderKeySection
-              label="Google"
-              hasKey={ai.hasGoogleKey}
-              keyInput={ai.googleKeyInput}
-              setKeyInput={ai.setGoogleKeyInput}
-              saveKey={() => ai.setGoogleKey(ai.googleKeyInput.trim())}
-              clearKey={ai.clearGoogleKey}
-              activeBackend={ai.activeBackend}
-              backendId="google"
-              clearPreferredProvider={ai.clearPreferredProvider}
-              setActiveBackend={ai.setActiveBackend}
-              placeholder="Google API key"
-              saveLabel="Save Google key"
-              hint="Google Gemini API key (OpenAI-compatible endpoint)."
-              model={{
-                value: ai.googleModel,
-                set: ai.setGoogleModel,
-                options: ai.googleModelOptions,
-                isLocked: ai.isGoogleModelLocked,
-                lockedModel: ai.lockedModel,
-              }}
-              refresh={{
-                trigger: ai.refreshGoogleModels,
-                loading: ai.googleModelsLoading,
-                error: ai.googleModelsError,
-                updatedAt: ai.googleModelsUpdatedAt,
               }}
             />
           </div>

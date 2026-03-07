@@ -69,7 +69,7 @@ describe('aggregateStats', () => {
     process.env.PUSH_SESSION_DIR = path.join(tmpDir, 'sessions');
 
     // Create two sessions with different providers
-    for (const [provider, model] of [['ollama', 'gemini-3-flash-preview'], ['mistral', 'devstral-small']]) {
+    for (const [provider, model] of [['ollama', 'gemini-3-flash-preview'], ['openrouter', 'anthropic/claude-sonnet-4.6']]) {
       const sessionId = makeSessionId();
       const state = {
         sessionId,
@@ -109,7 +109,7 @@ describe('aggregateStats', () => {
   });
 
   it('filters by model', async () => {
-    const { totals } = await aggregateStats({ model: 'devstral-small' });
+    const { totals } = await aggregateStats({ model: 'anthropic/claude-sonnet-4.6' });
     assert.equal(totals.sessions, 1);
   });
 });

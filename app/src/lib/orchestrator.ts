@@ -1,4 +1,4 @@
-import type { ChatMessage } from '@/types';
+import type { AIProviderType, ChatMessage } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
 import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
@@ -8,23 +8,15 @@ import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { recordContextMetric } from './context-metrics';
 import type { SummarizationCause } from './context-metrics';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
-import { getMistralKey } from '@/hooks/useMistralConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
-import { getMinimaxKey } from '@/hooks/useMinimaxConfig';
-import { getZaiKey } from '@/hooks/useZaiConfig';
-import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
 import {
   getOllamaModelName,
-  getMistralModelName,
   getPreferredProvider,
   getOpenRouterModelName,
-  getMinimaxModelName,
-  getZaiModelName,
-  getGoogleModelName,
   getZenModelName,
   getNvidiaModelName,
   PROVIDER_URLS,
@@ -66,10 +58,6 @@ function hasFinishReason(choice: unknown, reasons: string[]): boolean {
 
 // Provider chat URLs are now centralised in PROVIDER_URLS (providers.ts).
 
-/** Reset hook retained for compatibility with providers.ts model setter callback. */
-export function resetMistralAgent(): void {
-  // Native function-calling path no longer uses Mistral Agents API state.
-}
 
 // Context mode config (runtime toggle from Settings)
 const CONTEXT_MODE_STORAGE_KEY = 'push_context_mode';
@@ -110,15 +98,10 @@ function normalizeModelName(model?: string): string {
 }
 
 export function getContextBudget(
-  provider?: 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'nvidia' | 'demo',
+  provider?: AIProviderType,
   model?: string,
 ): ContextBudget {
-  // Google provider always runs Gemini models — full 1M budget
-  if (provider === 'google') {
-    return GEMINI_CONTEXT_BUDGET;
-  }
-
-  // Ollama, OpenRouter, or Zen running a Gemini model — same 1M budget
+  // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
   const normalizedModel = normalizeModelName(model);
   if (
     (provider === 'ollama' || provider === 'openrouter' || provider === 'zen') &&
@@ -601,7 +584,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'nvidia',
+  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia',
   providerModel?: string,
 ): LLMMessage[] {
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
@@ -647,9 +630,9 @@ function toLLMMessages(
   }
 
   // Prompt caching: wrap the system message as a content-array with cache_control
-  // for providers that support it (OpenRouter/Anthropic, Mistral). Other providers
-  // (Ollama, Google, Z.AI, MiniMax, Zen) harmlessly ignore the extra field.
-  const cacheable = providerType === 'openrouter' || providerType === 'mistral';
+  // for providers that support it (currently OpenRouter/Anthropic). Other
+  // providers harmlessly ignore the extra field.
+  const cacheable = providerType === 'openrouter';
   const llmMessages: LLMMessage[] = [
     cacheable
       ? { role: "system", content: [{ type: "text", text: systemContent, cache_control: { type: "ephemeral" } }] as LLMMessageContent[] }
@@ -899,8 +882,8 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'nvidia';
-  /** Override the fetch URL (e.g., Mistral Agents API uses a different endpoint) */
+  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia';
+  /** Override the fetch URL (e.g., for providers with alternate endpoints) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
   bodyTransform?: (body: Record<string, unknown>) => Record<string, unknown>;
@@ -1303,20 +1286,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       providerType: 'ollama',
     }),
   },
-  mistral: {
-    getKey: getMistralKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Mistral',
-      apiUrl: PROVIDER_URLS.mistral.chat,
-      apiKey,
-      model: modelOverride || getMistralModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('Mistral'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls', 'function_call']),
-      providerType: 'mistral' as const,
-    }),
-  },
   openrouter: {
     getKey: getOpenRouterKey,
     buildConfig: (apiKey, modelOverride) => ({
@@ -1329,48 +1298,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       parseError: (p, f) => parseProviderError(p, f, true),
       checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'openrouter',
-    }),
-  },
-  minimax: {
-    getKey: getMinimaxKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'MiniMax',
-      apiUrl: PROVIDER_URLS.minimax.chat,
-      apiKey,
-      model: modelOverride || getMinimaxModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('MiniMax'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'minimax',
-    }),
-  },
-  zai: {
-    getKey: getZaiKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Z.AI',
-      apiUrl: PROVIDER_URLS.zai.chat,
-      apiKey,
-      model: modelOverride || getZaiModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('Z.AI'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'zai',
-    }),
-  },
-  google: {
-    getKey: getGoogleKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Google',
-      apiUrl: PROVIDER_URLS.google.chat,
-      apiKey,
-      model: modelOverride || getGoogleModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('Google'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'google',
     }),
   },
   zen: {
@@ -1455,11 +1382,7 @@ type StreamChatFn = (
 ) => Promise<void>;
 
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
-export const streamMistralChat: StreamChatFn = (...args) => streamProviderChat('mistral', ...args);
 export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
-export const streamMinimaxChat: StreamChatFn = (...args) => streamProviderChat('minimax', ...args);
-export const streamZaiChat: StreamChatFn = (...args) => streamProviderChat('zai', ...args);
-export const streamGoogleChat: StreamChatFn = (...args) => streamProviderChat('google', ...args);
 export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
 
@@ -1467,16 +1390,12 @@ export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('n
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'ollama' | 'mistral' | 'openrouter' | 'minimax' | 'zai' | 'google' | 'zen' | 'nvidia' | 'demo';
+export type ActiveProvider = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'demo';
 
 /** Key getter for each configurable provider. */
 const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
   ollama:      getOllamaKey,
-  mistral:     getMistralKey,
   openrouter:  getOpenRouterKey,
-  minimax:     getMinimaxKey,
-  zai:         getZaiKey,
-  google:      getGoogleKey,
   zen:         getZenKey,
   nvidia:      getNvidiaKey,
 };
@@ -1485,7 +1404,7 @@ const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
  * Fallback order when no preference is set (or the preferred key is gone).
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'zen', 'minimax', 'ollama', 'mistral', 'openrouter', 'zai', 'google', 'nvidia',
+  'zen', 'ollama', 'openrouter', 'nvidia',
 ];
 
 /**
@@ -1515,11 +1434,7 @@ export function getActiveProvider(): ActiveProvider {
 export function getProviderStreamFn(provider: ActiveProvider) {
   switch (provider) {
     case 'ollama':  return { providerType: 'ollama' as const,  streamFn: streamOllamaChat };
-    case 'mistral': return { providerType: 'mistral' as const, streamFn: streamMistralChat };
     case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
-    case 'minimax': return { providerType: 'minimax' as const, streamFn: streamMinimaxChat };
-    case 'zai': return { providerType: 'zai' as const, streamFn: streamZaiChat };
-    case 'google': return { providerType: 'google' as const, streamFn: streamGoogleChat };
     case 'zen': return { providerType: 'zen' as const, streamFn: streamZenChat };
     case 'nvidia': return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
     default:        return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
@@ -1562,24 +1477,8 @@ export async function streamChat(
     return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
-  if (provider === 'mistral') {
-    return streamMistralChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
-  }
-
   if (provider === 'openrouter') {
     return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
-  }
-
-  if (provider === 'minimax') {
-    return streamMinimaxChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
-  }
-
-  if (provider === 'zai') {
-    return streamZaiChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
-  }
-
-  if (provider === 'google') {
-    return streamGoogleChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   if (provider === 'zen') {

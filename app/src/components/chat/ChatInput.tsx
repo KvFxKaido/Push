@@ -32,42 +32,10 @@ interface ChatInputProps {
     isOllamaModelLocked: boolean;
     refreshOllamaModels: () => void;
     onSelectOllamaModel: (model: string) => void;
-    mistralModel: string;
-    mistralModelOptions: string[];
-    mistralModelsLoading: boolean;
-    mistralModelsError: string | null;
-    mistralModelsUpdatedAt: number | null;
-    isMistralModelLocked: boolean;
-    refreshMistralModels: () => void;
-    onSelectMistralModel: (model: string) => void;
     openRouterModel: string;
     openRouterModelOptions: string[];
     isOpenRouterModelLocked: boolean;
     onSelectOpenRouterModel: (model: string) => void;
-    minimaxModel: string;
-    minimaxModelOptions: string[];
-    minimaxModelsLoading: boolean;
-    minimaxModelsError: string | null;
-    minimaxModelsUpdatedAt: number | null;
-    isMinimaxModelLocked: boolean;
-    refreshMinimaxModels: () => void;
-    onSelectMinimaxModel: (model: string) => void;
-    zaiModel: string;
-    zaiModelOptions: string[];
-    zaiModelsLoading: boolean;
-    zaiModelsError: string | null;
-    zaiModelsUpdatedAt: number | null;
-    isZaiModelLocked: boolean;
-    refreshZaiModels: () => void;
-    onSelectZaiModel: (model: string) => void;
-    googleModel: string;
-    googleModelOptions: string[];
-    googleModelsLoading: boolean;
-    googleModelsError: string | null;
-    googleModelsUpdatedAt: number | null;
-    isGoogleModelLocked: boolean;
-    refreshGoogleModels: () => void;
-    onSelectGoogleModel: (model: string) => void;
     zenModel: string;
     zenModelOptions: string[];
     zenModelsLoading: boolean;
@@ -92,11 +60,7 @@ const MAX_PAYLOAD = 750 * 1024; // 750KB total
 
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
-  mistral: 'Mistral',
   openrouter: 'OpenRouter',
-  minimax: 'MiniMax',
-  zai: 'Z.AI',
-  google: 'Google',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
   demo: 'Demo',
@@ -269,18 +233,11 @@ export function ChatInput({
     if (!providerControls) return '';
     if (isDisplayedProviderLocked && providerControls.lockedModel) return providerControls.lockedModel;
     if (selectedProvider === 'ollama') return providerControls.ollamaModel;
-    if (selectedProvider === 'mistral') return providerControls.mistralModel;
     if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
-    if (selectedProvider === 'minimax') return providerControls.minimaxModel;
-    if (selectedProvider === 'zai') return providerControls.zaiModel;
-    if (selectedProvider === 'google') return providerControls.googleModel;
     if (selectedProvider === 'zen') return providerControls.zenModel;
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModel;
     return 'demo';
   })();
-
-  const showMinimaxHighspeedNotice =
-    selectedProvider === 'minimax' && selectedModel === 'MiniMax-M2.5-highspeed';
 
   const canChangeProvider = Boolean(providerControls);
   const canChangeModel = Boolean(providerControls);
@@ -292,10 +249,6 @@ export function ChatInput({
   const selectedModelLoading = (() => {
     if (!providerControls) return false;
     if (selectedProvider === 'ollama') return providerControls.ollamaModelsLoading;
-    if (selectedProvider === 'mistral') return providerControls.mistralModelsLoading;
-    if (selectedProvider === 'minimax') return providerControls.minimaxModelsLoading;
-    if (selectedProvider === 'zai') return providerControls.zaiModelsLoading;
-    if (selectedProvider === 'google') return providerControls.googleModelsLoading;
     if (selectedProvider === 'zen') return providerControls.zenModelsLoading;
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModelsLoading;
     return false;
@@ -304,22 +257,15 @@ export function ChatInput({
   const selectedModelUpdatedAgo = (() => {
     if (!providerControls) return null;
     if (selectedProvider === 'ollama') return formatTimeAgo(providerControls.ollamaModelsUpdatedAt);
-    if (selectedProvider === 'mistral') return formatTimeAgo(providerControls.mistralModelsUpdatedAt);
-    if (selectedProvider === 'minimax') return formatTimeAgo(providerControls.minimaxModelsUpdatedAt);
-    if (selectedProvider === 'zai') return formatTimeAgo(providerControls.zaiModelsUpdatedAt);
-    if (selectedProvider === 'google') return formatTimeAgo(providerControls.googleModelsUpdatedAt);
     if (selectedProvider === 'zen') return formatTimeAgo(providerControls.zenModelsUpdatedAt);
     if (selectedProvider === 'nvidia') return formatTimeAgo(providerControls.nvidiaModelsUpdatedAt);
     return null;
   })();
 
-  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'mistral' || selectedProvider === 'zai' || selectedProvider === 'google' || selectedProvider === 'zen' || selectedProvider === 'nvidia';
+  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'zen' || selectedProvider === 'nvidia';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
-    if (selectedProvider === 'mistral') providerControls.refreshMistralModels();
-    if (selectedProvider === 'zai') providerControls.refreshZaiModels();
-    if (selectedProvider === 'google') providerControls.refreshGoogleModels();
     if (selectedProvider === 'zen') providerControls.refreshZenModels();
     if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
   };
@@ -486,41 +432,6 @@ export function ChatInput({
                         </>
                       )}
 
-                      {selectedProvider === 'mistral' && (
-                        <>
-                          <select
-                            value={providerControls.mistralModel}
-                            disabled={!canChangeModel || providerControls.mistralModelsLoading || providerControls.mistralModelOptions.length === 0}
-                            onChange={(e) => providerControls.onSelectMistralModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {(providerControls.mistralModelOptions.length > 0
-                              ? providerControls.mistralModelOptions
-                              : [providerControls.mistralModel]
-                            ).map((model) => (
-                              <option key={model || '__default'} value={model}>
-                                {model || '(default)'}
-                              </option>
-                            ))}
-                          </select>
-                          {providerControls.mistralModelsLoading && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Loading Mistral models...</p>
-                          )}
-                          {!providerControls.mistralModelsLoading && providerControls.mistralModelOptions.length === 0 && !providerControls.mistralModelsError && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
-                          {providerControls.mistralModelsError && (
-                            <p className="px-1 text-[10px] text-amber-400">{providerControls.mistralModelsError}</p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
-                          )}
-                          {providerControls.isMistralModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
-                          )}
-                        </>
-                      )}
-
                       {selectedProvider === 'openrouter' && (
                         <>
                           <select
@@ -536,116 +447,6 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.isOpenRouterModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'zai' && (
-                        <>
-                          <select
-                            value={providerControls.zaiModel}
-                            disabled={!canChangeModel || providerControls.zaiModelsLoading || providerControls.zaiModelOptions.length === 0}
-                            onChange={(e) => providerControls.onSelectZaiModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {(providerControls.zaiModelOptions.length > 0
-                              ? providerControls.zaiModelOptions
-                              : [providerControls.zaiModel]
-                            ).map((model) => (
-                              <option key={model || '__default'} value={model}>
-                                {model || '(default)'}
-                              </option>
-                            ))}
-                          </select>
-                          {providerControls.zaiModelsLoading && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Loading Z.AI models...</p>
-                          )}
-                          {!providerControls.zaiModelsLoading && providerControls.zaiModelOptions.length === 0 && !providerControls.zaiModelsError && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
-                          {providerControls.zaiModelsError && (
-                            <p className="px-1 text-[10px] text-amber-400">{providerControls.zaiModelsError}</p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
-                          )}
-                          {providerControls.isZaiModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'minimax' && (
-                        <>
-                          <select
-                            value={providerControls.minimaxModel}
-                            disabled={!canChangeModel || providerControls.minimaxModelsLoading || providerControls.minimaxModelOptions.length === 0}
-                            onChange={(e) => providerControls.onSelectMinimaxModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {(providerControls.minimaxModelOptions.length > 0
-                              ? providerControls.minimaxModelOptions
-                              : [providerControls.minimaxModel]
-                            ).map((model) => (
-                              <option key={model || '__default'} value={model}>
-                                {model || '(default)'}
-                              </option>
-                            ))}
-                          </select>
-                          {providerControls.minimaxModelsLoading && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Loading MiniMax models...</p>
-                          )}
-                          {!providerControls.minimaxModelsLoading && providerControls.minimaxModelOptions.length === 0 && !providerControls.minimaxModelsError && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
-                          {providerControls.minimaxModelsError && (
-                            <p className="px-1 text-[10px] text-amber-400">{providerControls.minimaxModelsError}</p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
-                          )}
-                          {showMinimaxHighspeedNotice && (
-                            <p className="px-1 text-[10px] text-amber-400">
-                              MiniMax-M2.5-highspeed requires the High-Speed subscription.
-                            </p>
-                          )}
-                          {providerControls.isMinimaxModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'google' && (
-                        <>
-                          <select
-                            value={providerControls.googleModel}
-                            disabled={!canChangeModel || providerControls.googleModelsLoading || providerControls.googleModelOptions.length === 0}
-                            onChange={(e) => providerControls.onSelectGoogleModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {(providerControls.googleModelOptions.length > 0
-                              ? providerControls.googleModelOptions
-                              : [providerControls.googleModel]
-                            ).map((model) => (
-                              <option key={model || '__default'} value={model}>
-                                {model || '(default)'}
-                              </option>
-                            ))}
-                          </select>
-                          {providerControls.googleModelsLoading && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Loading Google models...</p>
-                          )}
-                          {!providerControls.googleModelsLoading && providerControls.googleModelOptions.length === 0 && !providerControls.googleModelsError && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
-                          {providerControls.googleModelsError && (
-                            <p className="px-1 text-[10px] text-amber-400">{providerControls.googleModelsError}</p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
-                          )}
-                          {providerControls.isGoogleModelLocked && (
                             <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

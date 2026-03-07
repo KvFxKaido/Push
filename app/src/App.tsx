@@ -325,11 +325,7 @@ function App() {
   // Destructure stable setter refs from catalog to avoid depending on the whole object
   const { setActiveBackend: setCatalogBackend } = catalog;
   const setOllamaModel = catalog.ollama.setModel;
-  const setMistralModel = catalog.mistral.setModel;
   const setOpenRouterModel = catalog.openRouter.setModel;
-  const setMinimaxModel = catalog.minimax.setModel;
-  const setZaiModel = catalog.zai.setModel;
-  const setGoogleModel = catalog.google.setModel;
   const setZenModel = catalog.zen.setModel;
   const setNvidiaModel = catalog.nvidia.setModel;
 
@@ -344,30 +340,10 @@ function App() {
     setOllamaModel(model);
   }, [ensureUnlockedChatForProviderChange, setOllamaModel]);
 
-  const handleSelectMistralModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setMistralModel(model);
-  }, [ensureUnlockedChatForProviderChange, setMistralModel]);
-
   const handleSelectOpenRouterModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
     setOpenRouterModel(model);
   }, [ensureUnlockedChatForProviderChange, setOpenRouterModel]);
-
-  const handleSelectMinimaxModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setMinimaxModel(model);
-  }, [ensureUnlockedChatForProviderChange, setMinimaxModel]);
-
-  const handleSelectZaiModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setZaiModel(model);
-  }, [ensureUnlockedChatForProviderChange, setZaiModel]);
-
-  const handleSelectGoogleModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setGoogleModel(model);
-  }, [ensureUnlockedChatForProviderChange, setGoogleModel]);
 
   const handleSelectZenModelFromChat = useCallback((model: string) => {
     ensureUnlockedChatForProviderChange();
@@ -621,19 +597,6 @@ function App() {
         setOllamaKeyInput: catalog.ollama.setKeyInput,
         setOllamaKey: catalog.ollama.setKey,
         clearOllamaKey: catalog.ollama.clearKey,
-        hasMistralKey: catalog.mistral.hasKey,
-        mistralModel: catalog.mistral.model,
-        setMistralModel: catalog.mistral.setModel,
-        mistralModelOptions: catalog.mistralModelOptions,
-        mistralModelsLoading: catalog.mistralModels.loading,
-        mistralModelsError: catalog.mistralModels.error,
-        mistralModelsUpdatedAt: catalog.mistralModels.updatedAt,
-        isMistralModelLocked: isModelLocked && lockedProvider === 'mistral',
-        refreshMistralModels: catalog.refreshMistralModels,
-        mistralKeyInput: catalog.mistral.keyInput,
-        setMistralKeyInput: catalog.mistral.setKeyInput,
-        setMistralKey: catalog.mistral.setKey,
-        clearMistralKey: catalog.mistral.clearKey,
         hasOpenRouterKey: catalog.openRouter.hasKey,
         openRouterModel: catalog.openRouter.model,
         setOpenRouterModel: catalog.openRouter.setModel,
@@ -647,45 +610,6 @@ function App() {
         setOpenRouterKeyInput: catalog.openRouter.setKeyInput,
         setOpenRouterKey: catalog.openRouter.setKey,
         clearOpenRouterKey: catalog.openRouter.clearKey,
-        hasMinimaxKey: catalog.minimax.hasKey,
-        minimaxModel: catalog.minimax.model,
-        setMinimaxModel: catalog.minimax.setModel,
-        minimaxModelOptions: catalog.minimaxModelOptions,
-        minimaxModelsLoading: catalog.minimaxModels.loading,
-        minimaxModelsError: catalog.minimaxModels.error,
-        minimaxModelsUpdatedAt: catalog.minimaxModels.updatedAt,
-        isMinimaxModelLocked: isModelLocked && lockedProvider === 'minimax',
-        refreshMinimaxModels: catalog.refreshMinimaxModels,
-        minimaxKeyInput: catalog.minimax.keyInput,
-        setMinimaxKeyInput: catalog.minimax.setKeyInput,
-        setMinimaxKey: catalog.minimax.setKey,
-        clearMinimaxKey: catalog.minimax.clearKey,
-        hasZaiKey: catalog.zai.hasKey,
-        zaiModel: catalog.zai.model,
-        setZaiModel: catalog.zai.setModel,
-        zaiModelOptions: catalog.zaiModelOptions,
-        zaiModelsLoading: catalog.zaiModels.loading,
-        zaiModelsError: catalog.zaiModels.error,
-        zaiModelsUpdatedAt: catalog.zaiModels.updatedAt,
-        isZaiModelLocked: isModelLocked && lockedProvider === 'zai',
-        refreshZaiModels: catalog.refreshZaiModels,
-        zaiKeyInput: catalog.zai.keyInput,
-        setZaiKeyInput: catalog.zai.setKeyInput,
-        setZaiKey: catalog.zai.setKey,
-        clearZaiKey: catalog.zai.clearKey,
-        hasGoogleKey: catalog.google.hasKey,
-        googleModel: catalog.google.model,
-        setGoogleModel: catalog.google.setModel,
-        googleModelOptions: catalog.googleModelOptions,
-        googleModelsLoading: catalog.googleModels.loading,
-        googleModelsError: catalog.googleModels.error,
-        googleModelsUpdatedAt: catalog.googleModels.updatedAt,
-        isGoogleModelLocked: isModelLocked && lockedProvider === 'google',
-        refreshGoogleModels: catalog.refreshGoogleModels,
-        googleKeyInput: catalog.google.keyInput,
-        setGoogleKeyInput: catalog.google.setKeyInput,
-        setGoogleKey: catalog.google.setKey,
-        clearGoogleKey: catalog.google.clearKey,
         hasZenKey: catalog.zen.hasKey,
         zenModel: catalog.zen.model,
         setZenModel: catalog.zen.setModel,
@@ -877,11 +801,7 @@ function App() {
       sandboxDownloading={sandboxDownloading}
       handleSelectBackend={handleSelectBackend}
       handleSelectOllamaModelFromChat={handleSelectOllamaModelFromChat}
-      handleSelectMistralModelFromChat={handleSelectMistralModelFromChat}
       handleSelectOpenRouterModelFromChat={handleSelectOpenRouterModelFromChat}
-      handleSelectMinimaxModelFromChat={handleSelectMinimaxModelFromChat}
-      handleSelectZaiModelFromChat={handleSelectZaiModelFromChat}
-      handleSelectGoogleModelFromChat={handleSelectGoogleModelFromChat}
       handleSelectZenModelFromChat={handleSelectZenModelFromChat}
       handleSelectNvidiaModelFromChat={handleSelectNvidiaModelFromChat}
       handleSelectRepoFromDrawer={handleSelectRepoFromDrawer}
