@@ -47,7 +47,7 @@ Four providers, all using OpenAI-compatible SSE streaming. Any single API key is
 | **OpenCode Zen** | big-pickle |
 | **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
 
-**OpenRouter** provides access to 50+ models through a single API. Push includes 18 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-5.4 Pro and GPT-5.4, 2 Codex variants (5.3/5.2), Step 3.5 Flash (free), Gemini 3.1 Pro Preview/3.1 Flash Preview, Devstral Small, Mistral Large, MiniMax M2.5/M2.1, GLM 4.7/5.0, Grok 4.1, and Kimi K2.5.
+**OpenRouter** provides access to 50+ models through a single API. Push includes 18 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-5.4 Pro and GPT-5.4, 2 Codex variants (5.3/5.2), Step 3.5 Flash (free), Gemini 3.1 Pro Preview/3.1 Flash Lite Preview, Devstral Small, Mistral Large, MiniMax M2.5/M2.1, GLM 4.7/5.0, Grok 4.1, and Kimi K2.5.
 
 ### Tool Protocol
 
