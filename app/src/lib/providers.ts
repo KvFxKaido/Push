@@ -45,8 +45,9 @@ export const OPENROUTER_MODELS: string[] = [
   'google/gemini-3.1-pro-preview',
   'google/gemini-3.1-flash-lite-preview',
   // Mistral
-  'mistralai/devstral-small-latest',
-  'mistralai/mistral-large-latest',
+  'mistralai/mistral-large-2512',
+  'mistralai/devstral-2512',
+  'mistralai/mistral-medium-3.1',
   // MiniMax
   'minimax/minimax-m2.5',
   'minimax/minimax-m2.1',
