@@ -111,15 +111,6 @@ VITE_GITHUB_OAUTH_PROXY=...           # Optional — GitHub OAuth token exchange
 VITE_GITHUB_REDIRECT_URI=...          # Optional — GitHub OAuth redirect URI
 ```
 
-### Provider Key Policy (All Providers)
-
-- Use provider-native API keys for the selected backend and keep production keys server-side (Worker secrets), not in shipped client bundles.
-- Review cadence: quarterly. Last reviewed **2026-02-21** (next target **2026-05-21**).
-- Full per-provider policies and references:
-  - Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
-  - OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
-  - OpenCode Zen: `documents/security/PROVIDER_USAGE_POLICY_ZEN.md`
-
 Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings. Web default mode is **Auto** (Zen-first when available), and users can still pin any provider.
 
 ## Push CLI
