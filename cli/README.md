@@ -107,28 +107,19 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `mistral`, `openrouter`, `zai`, `google`, `minimax`, `zen`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
-| `PUSH_MISTRAL_URL` | Mistral endpoint (default: `https://api.mistral.ai/v1/chat/completions`) |
-| `PUSH_MISTRAL_API_KEY` | Mistral workspace API key for `api.mistral.ai` |
-| `PUSH_MISTRAL_MODEL` | Mistral model (default: `devstral-small-latest`) |
 | `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/chat/completions`) |
 | `PUSH_OPENROUTER_API_KEY` | OpenRouter API key |
 | `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6`) |
-| `PUSH_ZAI_URL` | Z.AI endpoint (default: `https://api.z.ai/api/coding/paas/v4/chat/completions`) |
-| `PUSH_ZAI_API_KEY` | Z.AI API key |
-| `PUSH_ZAI_MODEL` | Z.AI model (default: `glm-4.5`) |
-| `PUSH_GOOGLE_URL` | Google OpenAI-compatible endpoint (default: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`) |
-| `PUSH_GOOGLE_API_KEY` | Google API key |
-| `PUSH_GOOGLE_MODEL` | Google model (default: `gemini-3.1-pro-preview`) |
-| `PUSH_MINIMAX_URL` | MiniMax OpenAI-compatible endpoint (default: `https://api.minimax.io/v1/chat/completions`) |
-| `PUSH_MINIMAX_API_KEY` | MiniMax API key |
-| `PUSH_MINIMAX_MODEL` | MiniMax model (default: `MiniMax-M2.5`) |
 | `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`) |
 | `PUSH_ZEN_API_KEY` | OpenCode Zen API key |
 | `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `big-pickle`) |
+| `PUSH_NVIDIA_URL` | Nvidia NIM endpoint (default: `https://integrate.api.nvidia.com/v1/chat/completions`) |
+| `PUSH_NVIDIA_API_KEY` | Nvidia NIM API key |
+| `PUSH_NVIDIA_MODEL` | Nvidia NIM model (default: `nvidia/llama-3.1-nemotron-70b-instruct`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
@@ -139,32 +130,24 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-All seven providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+All four providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
 | `ollama` | `gemini-3-flash-preview` | Yes |
-| `mistral` | `devstral-small-latest` | Yes |
 | `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
-| `zai` | `glm-4.5` | Yes |
-| `google` | `gemini-3.1-pro-preview` | Yes |
-| `minimax` | `MiniMax-M2.5` | Yes |
 | `zen` | `big-pickle` | Yes |
+| `nvidia` | `nvidia/llama-3.1-nemotron-70b-instruct` | Yes |
+
+Removed providers (`mistral`, `zai`, `google`, `minimax`) are gracefully redirected to `openrouter` with a warning.
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 
-### Mistral key type
+### Provider policies
 
-- Supported: standard workspace API key from `console.mistral.ai` / `admin.mistral.ai` for `api.mistral.ai`.
-- Not supported in Push: auto-generated **Mistral Code extension** key.
-- Not supported in default Push config: **Codestral-only** domain keys/endpoints.
-- Policy + terms boundary + review cadence: `documents/security/PROVIDER_USAGE_POLICY.md` (last reviewed 2026-02-21).
-- Matching provider policies:
-  - OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
-  - Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
-  - Z.AI: `documents/security/PROVIDER_USAGE_POLICY_ZAI.md`
-  - Google Gemini: `documents/security/PROVIDER_USAGE_POLICY_GOOGLE.md`
-  - OpenCode Zen: `documents/security/PROVIDER_USAGE_POLICY_ZEN.md`
+- Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
+- OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
+- OpenCode Zen: `documents/security/PROVIDER_USAGE_POLICY_ZEN.md`
 
 ## Tools
 
@@ -300,7 +283,7 @@ push config init                    Interactive setup wizard
 push config set ...                 Save provider config
 
 Options:
-  --provider <name>       ollama | mistral | openrouter | zai | google | zen (default: ollama)
+  --provider <name>       ollama | openrouter | zen | nvidia (default: ollama)
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key

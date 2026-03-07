@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, Nvidia NIM (user picks, all roles) |
+| AI | Multi-backend: Ollama, OpenRouter, OpenCode Zen, Nvidia NIM (user picks, all roles) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -38,16 +38,12 @@ The active backend serves all three roles. The user picks a backend in Settings;
 
 ### AI Backends
 
-Eight providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/mistral/chat`, `/api/openrouter/chat`, `/api/zai/chat`, `/api/google/chat`, `/api/minimax/chat`, `/api/zen/chat`, and `/api/nvidia/chat`.
+Four providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, and `/api/nvidia/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
 | **Ollama Cloud** | gemini-3-flash-preview |
-| **Mistral Vibe** | devstral-small-latest |
 | **OpenRouter** | claude-sonnet-4.6 |
-| **Z.AI** | glm-4.5 |
-| **Google Gemini** | gemini-3.1-pro-preview |
-| **MiniMax** | MiniMax-M2.5 |
 | **OpenCode Zen** | big-pickle |
 | **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
 
@@ -176,7 +172,7 @@ Read-only tools run in parallel per turn. Only one mutating tool allowed per tur
 Workspace jail, high-risk command detection, tool loop detection, max rounds cap, output truncation. `.push/` internal state excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Eight providers (Ollama, Mistral, OpenRouter, Z.AI, Google, MiniMax, OpenCode Zen, Nvidia NIM), all OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Four providers (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM), all OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
 
 ## Directory Structure
 
@@ -270,16 +266,12 @@ Push/
 | `hooks/useCommitPush.ts` | Commit and push workflow state |
 | `hooks/useProtectMain.ts` | Main branch protection (global default + per-repo override), localStorage persistence |
 | `hooks/useOllamaConfig.ts` | Ollama backend configuration and model selection |
-| `hooks/useMistralConfig.ts` | Mistral backend configuration and model selection |
-| `hooks/useTavilyConfig.ts` | Tavily web search API key management |
 | `hooks/useOpenRouterConfig.ts` | OpenRouter backend configuration and model selection |
-| `hooks/useZaiConfig.ts` | Z.AI backend configuration and model selection |
-| `hooks/useGoogleConfig.ts` | Google backend configuration and model selection |
-| `hooks/useMinimaxConfig.ts` | MiniMax backend configuration and model selection |
 | `hooks/useZenConfig.ts` | OpenCode Zen backend configuration and model selection |
 | `hooks/useNvidiaConfig.ts` | Nvidia NIM backend configuration and model selection |
+| `hooks/useTavilyConfig.ts` | Tavily web search API key management |
 | `hooks/useApiKeyConfig.ts` | Factory for provider API key hooks (shared localStorage getter + env var fallback + React hook) |
-| `hooks/useModelCatalog.ts` | 8-provider model catalog (model lists, refresh, key input state, active backend) |
+| `hooks/useModelCatalog.ts` | 4-provider model catalog (model lists, refresh, key input state, active backend) |
 | `hooks/useSnapshotManager.ts` | Workspace snapshot auto-save/restore, idle detection, 4-hour hard cap |
 | `hooks/useBranchManager.ts` | Branch loading, display, delete with confirmation, menu state |
 | `hooks/useProjectInstructions.ts` | Two-phase AGENTS.md loading, workspace context, template/AI creation |
