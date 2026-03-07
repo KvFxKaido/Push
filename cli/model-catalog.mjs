@@ -26,6 +26,10 @@ export const OPENROUTER_MODELS = [
   // Z.AI (via OpenRouter BYOK)
   'zhipu/glm-4.7',
   'zhipu/glm-5.0',
+  // Inception (Mercury diffusion LLMs)
+  'inception/mercury-2',
+  'inception/mercury-coder',
+  'inception/mercury',
 ];
 
 export const OLLAMA_MODELS = [
