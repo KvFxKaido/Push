@@ -54,6 +54,10 @@ export const OPENROUTER_MODELS: string[] = [
   // Z.AI (GLM)
   'zhipu/glm-4.7',
   'zhipu/glm-5.0',
+  // Inception (Mercury diffusion LLMs)
+  'inception/mercury-2',
+  'inception/mercury-coder',
+  'inception/mercury',
   // Others
   'x-ai/grok-4.1-fast',
   'moonshotai/kimi-k2.5',
