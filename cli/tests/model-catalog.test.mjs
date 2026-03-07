@@ -1,5 +1,6 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   getCuratedModels,
   fetchModels,
@@ -9,6 +10,20 @@ import {
   NVIDIA_MODELS,
   ZEN_MODELS,
 } from '../model-catalog.mjs';
+
+function extractExportedStringArray(source, exportName) {
+  const match = source.match(
+    new RegExp(`export const ${exportName}(?::\\s*string\\[\\])?\\s*=\\s*\\[([\\s\\S]*?)\\r?\\n\\];`),
+  );
+  assert.ok(match, `Expected to find exported array ${exportName}`);
+  return [...match[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
+}
+
+function extractExportedStringConstant(source, exportName) {
+  const match = source.match(new RegExp(`export const ${exportName}\\s*=\\s*'([^']+)';`));
+  assert.ok(match, `Expected to find exported string constant ${exportName}`);
+  return match[1];
+}
 
 describe('getCuratedModels', () => {
   it('returns OpenRouter models', () => {
@@ -39,6 +54,25 @@ describe('getCuratedModels', () => {
     assert.deepEqual(getCuratedModels('unknown'), []);
     assert.deepEqual(getCuratedModels(''), []);
     assert.deepEqual(getCuratedModels(undefined), []);
+  });
+});
+
+describe('catalog parity', () => {
+  const providersSource = readFileSync(new URL('../../app/src/lib/providers.ts', import.meta.url), 'utf8');
+
+  it('keeps the shared curated model lists in sync with the web catalog', () => {
+    assert.deepEqual(OPENROUTER_MODELS, extractExportedStringArray(providersSource, 'OPENROUTER_MODELS'));
+    assert.deepEqual(ZEN_MODELS, extractExportedStringArray(providersSource, 'ZEN_MODELS'));
+    assert.deepEqual(NVIDIA_MODELS, extractExportedStringArray(providersSource, 'NVIDIA_MODELS'));
+  });
+
+  it('keeps the CLI provider defaults in sync with the web catalog', () => {
+    assert.deepEqual(DEFAULT_MODELS, {
+      ollama: extractExportedStringConstant(providersSource, 'OLLAMA_DEFAULT_MODEL'),
+      openrouter: extractExportedStringConstant(providersSource, 'OPENROUTER_DEFAULT_MODEL'),
+      zen: extractExportedStringConstant(providersSource, 'ZEN_DEFAULT_MODEL'),
+      nvidia: extractExportedStringConstant(providersSource, 'NVIDIA_DEFAULT_MODEL'),
+    });
   });
 });
 

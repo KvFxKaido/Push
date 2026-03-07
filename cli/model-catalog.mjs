@@ -12,14 +12,12 @@ export const OPENROUTER_MODELS = [
   'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
   'stepfun/step-3.5-flash:free',
-  'google/gemini-3.1-flash-lite-preview',
   'google/gemini-3.1-pro-preview',
-  'x-ai/grok-4.1-fast',
-  'moonshotai/kimi-k2.5',
+  'google/gemini-3.1-flash-lite-preview',
   // Mistral (via OpenRouter BYOK)
   'mistralai/mistral-large-2512',
   'mistralai/devstral-2512',
-  'mistralai/mistral-medium-2505',
+  'mistralai/mistral-medium-3.1',
   // MiniMax (via OpenRouter BYOK)
   'minimax/minimax-m2.5',
   'minimax/minimax-m2.1',
@@ -30,6 +28,8 @@ export const OPENROUTER_MODELS = [
   'inception/mercury-2',
   'inception/mercury-coder',
   'inception/mercury',
+  'x-ai/grok-4.1-fast',
+  'moonshotai/kimi-k2.5',
 ];
 
 export const OLLAMA_MODELS = [
@@ -42,6 +42,8 @@ export const ZEN_MODELS = [
   'openai/gpt-5.3-codex',
   'openai/gpt-5.2-codex',
   'qwen3-coder',
+  'gemini-3-flash',
+  'gemini-3-pro',
   'kimi-k2.5',
   'kimi-k2.5-free',
   'minimax-m2.5-free',
