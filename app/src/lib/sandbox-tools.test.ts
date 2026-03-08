@@ -422,6 +422,8 @@ describe('executeSandboxToolCall -- edit guard', () => {
     vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
       content: 'export function hello() {}\nexport class Foo {}\n',
       truncated: true,
+      truncated_at_line: 3,
+      remaining_bytes: 128,
       version: 'v1',
     });
 
@@ -430,6 +432,8 @@ describe('executeSandboxToolCall -- edit guard', () => {
       'sb-123',
     );
     expect(truncResult.text).toContain('[Truncated content contains:');
+    expect(truncResult.text).toContain('truncated_at_line: 3');
+    expect(truncResult.text).toContain('remaining_bytes: 128');
   });
 
   it('auto-expand handles empty files correctly (content is empty string)', async () => {

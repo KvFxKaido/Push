@@ -290,6 +290,31 @@ describe('truncateText', () => {
   });
 });
 
+describe('read_file truncation metadata', () => {
+  it('includes truncated_at_line and remaining_bytes in text and meta for large reads', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-read-trunc-'));
+    try {
+      const rel = 'large.txt';
+      const abs = path.join(root, rel);
+      const content = Array.from({ length: 8000 }, (_, i) => `line ${i + 1}`).join('\n');
+      await fs.writeFile(abs, content, 'utf8');
+
+      const read = await executeToolCall({ tool: 'read_file', args: { path: rel } }, root);
+
+      assert.equal(read.ok, true);
+      assert.equal(read.meta.truncated, true);
+      assert.equal(typeof read.meta.truncated_at_line, 'number');
+      assert.equal(typeof read.meta.remaining_bytes, 'number');
+      assert.ok(read.meta.truncated_at_line > 1);
+      assert.ok(read.meta.remaining_bytes > 0);
+      assert.ok(read.text.includes('truncated_at_line:'), read.text);
+      assert.ok(read.text.includes('remaining_bytes:'), read.text);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('edit_file hashline flow', () => {
   it('applies hashline edits using refs from read_file anchors', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));

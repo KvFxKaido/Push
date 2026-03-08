@@ -549,7 +549,7 @@ When you need tools, output one or more fenced JSON blocks:
 \`\`\`
 
 Available tools:
-- read_file(path, start_line?, end_line?) — read file content with stable line hash anchors
+- read_file(path, start_line?, end_line?) — read file content with stable line hash anchors; truncated reads include truncated_at_line and remaining_bytes
 - list_dir(path?) — list files/directories
 - search_files(pattern, path?, max_results?) — text search in workspace
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
@@ -587,6 +587,55 @@ export function truncateText(text, max = MAX_TOOL_OUTPUT_CHARS) {
   const keptLines = kept.split('\n').length;
   const extra = text.length - max;
   return `${kept}\n\n[truncated ${extra} chars, showing ${keptLines}/${totalLines} lines — use start_line/end_line to read specific ranges]`;
+}
+
+function truncateReadFileOutput(renderedText, rawContent, startLine, max = MAX_TOOL_OUTPUT_CHARS) {
+  if (renderedText.length <= max) {
+    return {
+      text: renderedText,
+      truncated: false,
+      truncatedAtLine: undefined,
+      remainingBytes: undefined,
+    };
+  }
+
+  const renderedLines = renderedText.split('\n');
+  const rawLines = String(rawContent).split(/\r?\n/);
+  let keptCount = 0;
+  let usedChars = 0;
+
+  for (let i = 0; i < renderedLines.length; i++) {
+    const lineChars = renderedLines[i].length + (i > 0 ? 1 : 0);
+    if (usedChars + lineChars > max) {
+      if (keptCount === 0) keptCount = 1;
+      break;
+    }
+    usedChars += lineChars;
+    keptCount += 1;
+  }
+
+  if (keptCount >= renderedLines.length) {
+    return {
+      text: renderedText,
+      truncated: false,
+      truncatedAtLine: undefined,
+      remainingBytes: undefined,
+    };
+  }
+
+  const truncatedAtLine = startLine + keptCount;
+  const remainingBytes = Buffer.byteLength(rawLines.slice(keptCount).join('\n'));
+  const preview = renderedLines.slice(0, keptCount).join('\n');
+  return {
+    text:
+      `${preview}\n\n[truncated]\n`
+      + `truncated_at_line: ${truncatedAtLine}\n`
+      + `remaining_bytes: ${remainingBytes}\n`
+      + `showing ${keptCount}/${renderedLines.length} lines — continue with start_line=${truncatedAtLine}`,
+    truncated: true,
+    truncatedAtLine,
+    remainingBytes,
+  };
 }
 
 function asString(value, field) {
@@ -1147,9 +1196,12 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const endLine = asOptionalNumber(call.args.end_line);
 
         const rendered = renderAnchoredRange(raw, startLine, endLine);
+        const rawLines = String(raw).split(/\r?\n/);
+        const relevantRaw = rawLines.slice(rendered.startLine - 1, rendered.endLine).join('\n');
+        const truncatedRead = truncateReadFileOutput(rendered.text || '<empty file>', relevantRaw, rendered.startLine);
         return {
           ok: true,
-          text: truncateText(rendered.text || '<empty file>'),
+          text: truncatedRead.text,
           meta: {
             path: filePath,
             start_line: rendered.startLine,
@@ -1158,6 +1210,9 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             lines: rendered.endLine - rendered.startLine + 1,
             version: calculateContentVersion(raw),
             anchored: true,
+            truncated: truncatedRead.truncated,
+            truncated_at_line: truncatedRead.truncatedAtLine,
+            remaining_bytes: truncatedRead.remainingBytes,
           },
         };
       }

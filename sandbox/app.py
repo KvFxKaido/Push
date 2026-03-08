@@ -441,6 +441,59 @@ def _get_file_version(sb: modal.Sandbox, path: str) -> tuple[str | None, str | N
     return (version or None), None
 
 
+def _truncate_read_content(content: str, start_line: int, max_chars: int) -> dict:
+    """Truncate read content at line boundaries when possible.
+
+    Returns:
+      {
+        "content": <visible prefix>,
+        "truncated": bool,
+        "truncated_at_line"?: int,  # line to resume from / line where truncation starts
+        "remaining_bytes"?: int,
+      }
+    """
+    if len(content) <= max_chars:
+        return {"content": content, "truncated": False}
+
+    lines = content.splitlines(keepends=True)
+    if not lines:
+        visible = content[:max_chars]
+        return {
+            "content": visible,
+            "truncated": True,
+            "truncated_at_line": start_line,
+            "remaining_bytes": len(content[len(visible) :].encode("utf-8")),
+        }
+
+    visible_parts: list[str] = []
+    used_chars = 0
+    used_lines = 0
+
+    for line in lines:
+        if used_chars + len(line) > max_chars:
+            if used_lines == 0:
+                visible = line[:max_chars]
+                return {
+                    "content": visible,
+                    "truncated": True,
+                    "truncated_at_line": start_line,
+                    "remaining_bytes": len(content[len(visible) :].encode("utf-8")),
+                }
+            break
+        visible_parts.append(line)
+        used_chars += len(line)
+        used_lines += 1
+
+    visible = "".join(visible_parts)
+    remaining = content[len(visible) :]
+    return {
+        "content": visible,
+        "truncated": True,
+        "truncated_at_line": start_line + used_lines,
+        "remaining_bytes": len(remaining.encode("utf-8")),
+    }
+
+
 @app.function(image=endpoint_image)
 @modal.fastapi_endpoint(method="POST")
 def create(data: dict):
@@ -648,7 +701,10 @@ def file_ops(data: dict):
             return {"error": version_error, "content": ""}
 
         max_read_chars = 200_000  # 200KB — fits files up to ~3000 lines without chunking
-        result = {"content": content[:max_read_chars], "truncated": len(content) > max_read_chars, "version": version}
+        result = {
+            **_truncate_read_content(content, start_line if use_range else 1, max_read_chars),
+            "version": version,
+        }
         if use_range:
             result["start_line"] = start_line
             if end_line is not None:

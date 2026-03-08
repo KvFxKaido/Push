@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type {
   BatchWriteResult,
   BatchWriteResultEntry,
+  FileReadResult,
   WriteResult,
 } from './sandbox-client';
 
@@ -182,5 +183,47 @@ describe('writeToSandbox', () => {
     await expect(
       writeToSandbox('sb-123', '/workspace/test.txt', 'hello'),
     ).rejects.toThrow(/access token missing/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. readFromSandbox client function
+// ---------------------------------------------------------------------------
+
+describe('readFromSandbox', () => {
+  it('sends POST to /api/sandbox/read with range arguments and returns truncation metadata', async () => {
+    const mockResponse: FileReadResult = {
+      content: 'line 1\nline 2\n',
+      truncated: true,
+      truncated_at_line: 3,
+      remaining_bytes: 42,
+      version: 'sha256abc',
+      start_line: 1,
+      end_line: 10,
+    };
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockResponse),
+    });
+
+    const { readFromSandbox } = await import('./sandbox-client');
+    const result = await readFromSandbox('sb-123', '/workspace/test.txt', 1, 10);
+
+    expect(mockFetch).toHaveBeenCalled();
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/sandbox/read');
+    expect(options.method).toBe('POST');
+
+    const body = JSON.parse(options.body);
+    expect(body.sandbox_id).toBe('sb-123');
+    expect(body.owner_token).toBe('test-owner-token');
+    expect(body.path).toBe('/workspace/test.txt');
+    expect(body.start_line).toBe(1);
+    expect(body.end_line).toBe(10);
+
+    expect(result.truncated).toBe(true);
+    expect(result.truncated_at_line).toBe(3);
+    expect(result.remaining_bytes).toBe(42);
   });
 });

@@ -17,6 +17,7 @@ This policy covers OpenRouter API key usage and operational terms-boundary check
 ## OpenRouter Key Policy
 
 - Supported key type for Push OpenRouter mode: OpenRouter API key for `https://openrouter.ai/api/v1/*`.
+- OpenRouter BYOK is supported when provider-native keys are stored in the user's OpenRouter account; Push still stores only the OpenRouter API key.
 - Web usage:
   - Local dev: `VITE_OPENROUTER_API_KEY`
   - Production worker: `OPENROUTER_API_KEY` secret
@@ -26,7 +27,7 @@ This policy covers OpenRouter API key usage and operational terms-boundary check
 
 ### Unsupported key types for Push OpenRouter mode
 
-- Provider-native keys (e.g. Anthropic/OpenAI direct keys) for OpenRouter endpoints.
+- Provider-native keys (e.g. Anthropic/OpenAI direct keys) pasted directly into Push for OpenRouter endpoints.
 - Public/client-exposed OpenRouter keys in shipped frontend/mobile bundles.
 
 ## Terms Boundary (Operational)
@@ -57,5 +58,6 @@ At each quarterly review:
 ## References
 
 - OpenRouter authentication + key guidance: https://openrouter.ai/docs/api-reference/authentication
+- OpenRouter BYOK guide: https://openrouter.ai/docs/guides/overview/auth/byok
 - OpenRouter quickstart (Bearer key usage): https://openrouter.ai/docs/quickstart
 - OpenRouter terms of service: https://openrouter.ai/terms

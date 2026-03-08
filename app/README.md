@@ -18,7 +18,7 @@ Create `.env` in this directory, or paste keys in the Settings UI at runtime:
 
 ```env
 VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud
-VITE_OPENROUTER_API_KEY=...       # Optional — OpenRouter
+VITE_OPENROUTER_API_KEY=...       # Optional — OpenRouter (BYOK-compatible)
 VITE_ZEN_API_KEY=...              # Optional — OpenCode Zen
 VITE_NVIDIA_API_KEY=...           # Optional — Nvidia NIM
 VITE_TAVILY_API_KEY=...           # Optional — Tavily web search

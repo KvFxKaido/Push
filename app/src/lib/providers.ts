@@ -112,7 +112,7 @@ export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'openrouter',
     name: 'OpenRouter',
-    description: 'OpenRouter — Access 50+ models including Claude, GPT-4, Gemini (OpenAI-compatible)',
+    description: 'OpenRouter — Access 50+ models including Claude, GPT-4, Gemini, with optional BYOK routing via your OpenRouter account',
     envKey: 'VITE_OPENROUTER_API_KEY',
     envUrl: 'https://openrouter.ai',
     models: makeRoleModels(OPENROUTER_DEFAULT_MODEL, 'OpenRouter', 'openrouter', 200_000),

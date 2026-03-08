@@ -1091,7 +1091,7 @@ export function SettingsSheet({
               setActiveBackend={ai.setActiveBackend}
               placeholder="OpenRouter API key"
               saveLabel="Save OpenRouter key"
-              hint="OpenRouter API key from openrouter.ai. Access 50+ models including Claude, GPT-4, Codex."
+              hint="OpenRouter API key from openrouter.ai. BYOK works too: keep provider-native keys in your OpenRouter account, then use your OpenRouter key here."
               model={{
                 value: ai.openRouterModel,
                 set: ai.setOpenRouterModel,

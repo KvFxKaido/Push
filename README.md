@@ -100,7 +100,7 @@ Create `app/.env` for local development, or paste keys in the Settings UI at run
 
 ```env
 VITE_OLLAMA_API_KEY=...               # Ollama Cloud
-VITE_OPENROUTER_API_KEY=...           # OpenRouter (50+ models via pay-per-use)
+VITE_OPENROUTER_API_KEY=...           # OpenRouter (BYOK-compatible; configure provider keys in OpenRouter if desired)
 VITE_ZEN_API_KEY=...                  # OpenCode Zen (OpenAI-compatible endpoint)
 VITE_NVIDIA_API_KEY=...               # Nvidia NIM (OpenAI-compatible endpoint)
 VITE_TAVILY_API_KEY=...               # Optional — Tavily web search (premium LLM-optimized results)

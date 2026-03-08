@@ -78,6 +78,59 @@ function formatGitHubError(status: number, context: string, branch?: string): st
 const GITHUB_TIMEOUT_MS = 15_000; // 15s timeout for GitHub API calls
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000; // 1s initial delay for exponential backoff
+const READ_FILE_RANGE_CHAR_LIMIT = 30_000;
+const READ_FILE_FULL_CHAR_LIMIT = 15_000;
+const utf8Encoder = new TextEncoder();
+
+function byteLength(text: string): number {
+  return utf8Encoder.encode(text).length;
+}
+
+function truncateDisplayLines(
+  sourceLines: string[],
+  displayLines: string[],
+  startLine: number,
+  maxChars: number,
+): {
+  displayLines: string[];
+  truncated: boolean;
+  truncatedAtLine?: number;
+  remainingBytes?: number;
+} {
+  if (displayLines.length === 0) {
+    return { displayLines, truncated: false };
+  }
+
+  let keptCount = 0;
+  let usedChars = 0;
+  for (let i = 0; i < displayLines.length; i++) {
+    const lineChars = displayLines[i].length + (i > 0 ? 1 : 0);
+    if (usedChars + lineChars > maxChars) {
+      if (keptCount === 0) keptCount = 1;
+      break;
+    }
+    usedChars += lineChars;
+    keptCount += 1;
+  }
+
+  if (keptCount >= displayLines.length) {
+    return { displayLines, truncated: false };
+  }
+
+  return {
+    displayLines: displayLines.slice(0, keptCount),
+    truncated: true,
+    truncatedAtLine: startLine + keptCount,
+    remainingBytes: byteLength(sourceLines.slice(keptCount).join('\n')),
+  };
+}
+
+function buildReadTruncationLines(truncatedAtLine?: number, remainingBytes?: number): string[] {
+  return [
+    typeof truncatedAtLine === 'number' ? `truncated_at_line: ${truncatedAtLine}` : null,
+    typeof remainingBytes === 'number' ? `remaining_bytes: ${remainingBytes}` : null,
+  ].filter((line): line is string => Boolean(line));
+}
 
 // Re-export for consumers that import from this module (e.g. MergeFlowSheet).
 export { getGitHubHeaders };
@@ -641,26 +694,24 @@ async function executeReadFile(repo: string, path: string, branch?: string, star
       .map((line, idx) => `${String(rangeStart + idx).padStart(padWidth)}\t${line}`)
       .join('\n');
 
-    const rangeChars = sliced.join('\n').length;
-    const truncated = rangeChars > 30_000;
-    let displayContent = numberedContent;
+    const rangeDisplayLines = numberedContent.split('\n');
+    const truncatedRange = truncateDisplayLines(sliced, rangeDisplayLines, rangeStart, READ_FILE_RANGE_CHAR_LIMIT);
+    const truncated = truncatedRange.truncated;
+    let displayContent = truncatedRange.displayLines.join('\n');
     if (truncated) {
-      // Truncate by lines to keep line numbers intact
-      const truncLines = numberedContent.split('\n');
-      let charCount = 0;
-      let cutIdx = truncLines.length;
-      for (let i = 0; i < truncLines.length; i++) {
-        charCount += truncLines[i].length + 1;
-        if (charCount > 30_000) { cutIdx = i; break; }
-      }
-      displayContent = truncLines.slice(0, cutIdx).join('\n') + `\n\n[...truncated — showing ${cutIdx} of ${sliced.length} lines in range]`;
+      displayContent += `\n\n[...truncated — showing ${truncatedRange.displayLines.length} of ${sliced.length} lines in range]`;
     }
+    const truncationLines = buildReadTruncationLines(
+      truncatedRange.truncatedAtLine,
+      truncatedRange.remainingBytes,
+    );
 
     const lines: string[] = [
       `[Tool Result — read_file]`,
       `Lines ${rangeStart}-${Math.min(rangeEnd, totalLines)} of ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''} (${totalLines} lines total)`,
       `Language: ${language}`,
       truncated ? `(truncated)\n` : '',
+      ...truncationLines,
       displayContent,
     ].filter(Boolean);
 
@@ -675,18 +726,26 @@ async function executeReadFile(repo: string, path: string, branch?: string, star
 
   // Full-file read (original behavior)
   let content = fullContent;
-  const truncated = content.length > 15_000;
+  const fullSourceLines = fullContent.split('\n');
+  const truncatedFull = truncateDisplayLines(fullSourceLines, fullSourceLines, 1, READ_FILE_FULL_CHAR_LIMIT);
+  const truncated = truncatedFull.truncated;
   if (truncated) {
     // Count total lines before truncation so the model knows the file size
-    const totalLines = fullContent.split('\n').length;
-    content = content.slice(0, 15_000) + `\n\n[...truncated at 15K chars — file has ${totalLines} lines. Use read_file with start_line/end_line to read specific ranges, search_files to find content, or grep_file for pattern matching.]`;
+    const totalLines = fullSourceLines.length;
+    content = truncatedFull.displayLines.join('\n')
+      + `\n\n[...truncated at ${READ_FILE_FULL_CHAR_LIMIT / 1000}K chars — file has ${totalLines} lines. Use read_file with start_line/end_line to continue from line ${truncatedFull.truncatedAtLine}, search_files to find content, or grep_file for pattern matching.]`;
   }
+  const fullTruncationLines = buildReadTruncationLines(
+    truncatedFull.truncatedAtLine,
+    truncatedFull.remainingBytes,
+  );
 
   const lines: string[] = [
     `[Tool Result — read_file]`,
     `File: ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''}`,
     `Size: ${data.size} bytes | Language: ${language}`,
     truncated ? `(truncated to 15K chars)\n` : '',
+    ...fullTruncationLines,
     `\`\`\`${language}`,
     content,
     '```',
@@ -1882,7 +1941,7 @@ Available tools:
 - fetch_pr(repo, pr) — Fetch full PR details with diff
 - list_prs(repo, state?) — List PRs (default state: "open")
 - list_commits(repo, count?) — List recent commits (default: 10, max: 30)
-- read_file(repo, path, branch?, start_line?, end_line?) — Read a single file's contents (default: repo's default branch). Only works on files — fails on directories. Use start_line/end_line (1-indexed) to read a specific line range — essential for large files. Range reads include line numbers for reference.
+- read_file(repo, path, branch?, start_line?, end_line?) — Read a single file's contents (default: repo's default branch). Only works on files — fails on directories. Use start_line/end_line (1-indexed) to read a specific line range — essential for large files. Range reads include line numbers for reference. Truncated reads include truncated_at_line and remaining_bytes.
 - grep_file(repo, path, pattern, branch?) — Search within a single file for a pattern (regex or substring). Returns matching lines with line numbers and ±1 line of context. Use this to locate functions, variables, or patterns in a specific file without reading the entire file. Much faster than read_file for large files when you know what you're looking for.
 - list_directory(repo, path?, branch?) — List files and folders in a directory (default path: repo root). Use this to browse the repo structure before reading specific files.
 - list_branches(repo) — List branches with default/protected status
@@ -1930,4 +1989,3 @@ Rules:
 - For "clean up branches" or after merging, use delete_branch to remove the merged branch
 - For "is this PR ready to merge?" use check_pr_mergeable to check merge eligibility and CI status
 - For "is there already a PR for [branch]?" use find_existing_pr`;
-

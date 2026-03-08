@@ -989,11 +989,13 @@ export async function executeSandboxToolCall(
         // For every read: add hashline anchors and line numbers to the tool result text
         let toolResultContent = '';
         const emptyRangeWarning = '';
+        let visibleLineCount = 0;
         if (result.content) {
           const contentLines = result.content.split('\n');
           // If content ends with a trailing newline, the last split element is empty — don't number it
           const hasTrailingNewline = result.content.endsWith('\n') && contentLines.length > 1;
           const linesToNumber = hasTrailingNewline ? contentLines.slice(0, -1) : contentLines;
+          visibleLineCount = linesToNumber.length;
           const maxLineNum = Math.max(rangeStart, rangeStart + linesToNumber.length - 1);
           const padWidth = String(maxLineNum).length;
 
@@ -1006,7 +1008,7 @@ export async function executeSandboxToolCall(
         }
 
         // --- File Awareness Ledger: record what the model has seen ---
-        const contentLineCount = result.content ? result.content.split('\n').length : 0;
+        const contentLineCount = visibleLineCount;
         // If start_line was provided without end_line and the result wasn't
         // truncated, the server returned the entire file from that offset —
         // treat it as a full read so the ledger doesn't false-positive as
@@ -1037,6 +1039,17 @@ export async function executeSandboxToolCall(
           }
         }
 
+        const truncationLines = result.truncated
+          ? [
+              typeof result.truncated_at_line === 'number'
+                ? `truncated_at_line: ${result.truncated_at_line}`
+                : null,
+              typeof result.remaining_bytes === 'number'
+                ? `remaining_bytes: ${result.remaining_bytes}`
+                : null,
+            ].filter((line): line is string => Boolean(line))
+          : [];
+
         const fileLabel = isRangeRead
           ? `Lines ${rangeStart}-${rangeEnd ?? '∞'} of ${call.args.path}`
           : `File: ${call.args.path}`;
@@ -1046,6 +1059,7 @@ export async function executeSandboxToolCall(
           fileLabel,
           `Version: ${result.version || 'unknown'}`,
           result.truncated ? `(truncated)` : '',
+          ...truncationLines,
           signatureHint,
           emptyRangeWarning,
           toolResultContent,
@@ -2975,7 +2989,7 @@ SANDBOX TOOLS — You have access to a code sandbox (persistent container with t
 
 Additional tools available when sandbox is active:
 - sandbox_exec(command, workdir?) — Run a shell command in the sandbox (default workdir: /workspace)
-- sandbox_read_file(path, start_line?, end_line?) — Read a file from the sandbox filesystem. Only works on files — fails on directories. Use start_line/end_line to read a specific line range (1-indexed). When a range is specified, output includes line numbers for reference.
+- sandbox_read_file(path, start_line?, end_line?) — Read a file from the sandbox filesystem. Only works on files — fails on directories. Use start_line/end_line to read a specific line range (1-indexed). When a range is specified, output includes line numbers for reference. Truncated reads include truncated_at_line and remaining_bytes.
 - sandbox_search(query, path?) — Search file contents in the sandbox (uses rg/grep). Case-sensitive by default; supports regex patterns. Fast way to locate functions, symbols, and strings before editing. Tip: use short, distinctive substrings rather than full names to catch different naming conventions.
 - sandbox_list_dir(path?) — List files and folders in a sandbox directory (default: /workspace). Use this to explore the project structure before reading specific files.
 - sandbox_write_file(path, content, expected_version?) — Write or overwrite a file in the sandbox. If expected_version is provided, stale writes are rejected.

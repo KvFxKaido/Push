@@ -31,6 +31,10 @@ export interface ExecResult {
 export interface FileReadResult {
   content: string;
   truncated: boolean;
+  /** Line where truncation begins; use as the next start_line when continuing a read. */
+  truncated_at_line?: number;
+  /** Approximate UTF-8 bytes omitted from the returned content. */
+  remaining_bytes?: number;
   /** SHA-256 of full file content at read time */
   version?: string | null;
   /** Normalized start line returned by backend for range reads */
@@ -602,4 +606,3 @@ export async function sandboxStatus(sandboxId: string): Promise<SandboxStatusRes
     error: result.exitCode !== 0 ? (result.stderr || 'git command failed') : undefined,
   };
 }
-
