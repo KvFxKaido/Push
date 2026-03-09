@@ -113,7 +113,7 @@ Context uses a token budget with summarization. Older tool-heavy messages are co
 
 ### Project Instructions (Two-Phase Loading)
 
-When the user selects a repo, the app fetches project instruction files via the GitHub REST API (tries `AGENTS.md`, then `CLAUDE.md` as fallback) and injects the content into the Orchestrator and Coder system prompts. When a sandbox becomes ready later, the app re-reads from the sandbox filesystem (which may have local edits) to upgrade the content.
+When the user selects a repo, the app fetches project instruction files via the GitHub REST API (tries `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md` as fallbacks) and injects the content into the Orchestrator and Coder system prompts. When a sandbox becomes ready later, the app re-reads from the sandbox filesystem using the same precedence order so local edits can upgrade the content.
 
 ### Data Flow
 
@@ -167,7 +167,7 @@ Read-only tools run in parallel per turn. Only one mutating tool is allowed per 
 
 ### Agent Experience
 *   **Workspace snapshot** in system prompt (git branch, file tree, manifest summary)
-*   **Project instructions** loaded from `.push/instructions.md`, `AGENTS.md`, or `CLAUDE.md`
+*   **Project instructions** loaded from `.push/instructions.md`, `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`
 *   **Hashline edits** with multi-line content, edit-site context preview, automatic file backup
 *   **Working memory** deduplicated (once per round), context budget tracking via `contextChars`
 *   **File awareness ledger** with per-file paths and read/write status

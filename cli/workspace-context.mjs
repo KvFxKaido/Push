@@ -211,6 +211,7 @@ const INSTRUCTION_FILES = [
   '.push/instructions.md',
   'AGENTS.md',
   'CLAUDE.md',
+  'GEMINI.md',
 ];
 
 // ─── loadMemory ────────────────────────────────────────────────

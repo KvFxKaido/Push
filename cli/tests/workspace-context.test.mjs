@@ -110,11 +110,8 @@ describe('loadProjectInstructions', () => {
     const result = await loadProjectInstructions(PUSH_ROOT);
 
     assert.ok(result !== null, 'should find an instruction file');
-    // Push repo has AGENTS.md which takes priority over CLAUDE.md
-    assert.ok(
-      result.file === 'AGENTS.md' || result.file === 'CLAUDE.md',
-      `expected AGENTS.md or CLAUDE.md, got ${result.file}`,
-    );
+    // Push repo has AGENTS.md which takes priority over CLAUDE.md and GEMINI.md
+    assert.equal(result.file, 'AGENTS.md');
     assert.ok(result.content.length > 0, 'content should not be empty');
     assert.ok(result.content.includes('Push'), 'content should mention Push');
   });
@@ -129,13 +126,14 @@ describe('loadProjectInstructions', () => {
     }
   });
 
-  it('prefers .push/instructions.md over AGENTS.md and CLAUDE.md', async () => {
+  it('prefers .push/instructions.md over AGENTS.md, CLAUDE.md, and GEMINI.md', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
     try {
       await fs.mkdir(path.join(tmpDir, '.push'));
       await fs.writeFile(path.join(tmpDir, '.push', 'instructions.md'), 'push instructions');
       await fs.writeFile(path.join(tmpDir, 'AGENTS.md'), 'agents file');
       await fs.writeFile(path.join(tmpDir, 'CLAUDE.md'), 'claude file');
+      await fs.writeFile(path.join(tmpDir, 'GEMINI.md'), 'gemini file');
 
       const result = await loadProjectInstructions(tmpDir);
       assert.equal(result.file, '.push/instructions.md');
@@ -150,10 +148,38 @@ describe('loadProjectInstructions', () => {
     try {
       await fs.writeFile(path.join(tmpDir, 'AGENTS.md'), 'agents content');
       await fs.writeFile(path.join(tmpDir, 'CLAUDE.md'), 'claude content');
+      await fs.writeFile(path.join(tmpDir, 'GEMINI.md'), 'gemini content');
 
       const result = await loadProjectInstructions(tmpDir);
       assert.equal(result.file, 'AGENTS.md');
       assert.equal(result.content, 'agents content');
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to CLAUDE.md when AGENTS.md is missing', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
+    try {
+      await fs.writeFile(path.join(tmpDir, 'CLAUDE.md'), 'claude content');
+      await fs.writeFile(path.join(tmpDir, 'GEMINI.md'), 'gemini content');
+
+      const result = await loadProjectInstructions(tmpDir);
+      assert.equal(result.file, 'CLAUDE.md');
+      assert.equal(result.content, 'claude content');
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to GEMINI.md last when AGENTS.md and CLAUDE.md are missing', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
+    try {
+      await fs.writeFile(path.join(tmpDir, 'GEMINI.md'), 'gemini content');
+
+      const result = await loadProjectInstructions(tmpDir);
+      assert.equal(result.file, 'GEMINI.md');
+      assert.equal(result.content, 'gemini content');
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

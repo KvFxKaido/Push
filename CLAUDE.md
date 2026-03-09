@@ -71,7 +71,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Users pick a 
 
 **PR awareness:** Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo.
 
-**Project instructions (two-phase loading):** When the user selects a repo, the app immediately fetches `AGENTS.md` (or `CLAUDE.md` as fallback) via the GitHub REST API and injects it into the Orchestrator's system prompt and the Coder's context. When a sandbox becomes ready later, the app re-reads from the sandbox filesystem (which may have local edits) and upgrades the content. This ensures all agents have project context from the first message, not just after sandbox spin-up.
+**Project instructions (two-phase loading):** When the user selects a repo, the app immediately fetches `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` via the GitHub REST API in that order and injects the first match into the Orchestrator's system prompt and the Coder's context. When a sandbox becomes ready later, the app re-reads from the sandbox filesystem using the same precedence and upgrades the content. This ensures all agents have project context from the first message, not just after sandbox spin-up.
 
 ## Project Layout
 
@@ -111,7 +111,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 ## Key Files
 
 - `lib/orchestrator.ts` — System prompt, multi-backend streaming (Ollama + OpenRouter + Zen + Nvidia SSE), think-token parsing, provider routing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
-- `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks), `delegate_coder`, `fetchProjectInstructions` (reads AGENTS.md/CLAUDE.md from repos via API), branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`)
+- `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks), `delegate_coder`, `fetchProjectInstructions` (reads AGENTS.md/CLAUDE.md/GEMINI.md from repos via API), branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`)
 - `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt; includes `sandbox_edit_file` (hashline-based edits with diff output), `sandbox_edit_range`, `sandbox_search_replace`, `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (multi-file transactional edits), `classifyError()` (structured error taxonomy), `formatStructuredError()`
 - `lib/hashline.ts` — Hashline edit protocol: `calculateLineHash()` (default 7-char content hash per line, extendable to 12-char for disambiguation), `applyHashlineEdits()`, `HashlineOp` type; underpins `sandbox_edit_file` and eliminates line-number drift
 - `lib/diff-utils.ts` — Canonical shared diff parsing: `parseDiffStats()`, `parseDiffIntoFiles()`, `formatSize()`; used by sandbox-tools, auditor-agent, coder-agent, FileListCard, SandboxDownloadCard, FileBrowser, file-utils, file-processing

@@ -93,7 +93,7 @@ Current roadmap focus is improving terminal ergonomics around the transcript-fir
 
 ### Agent Experience
 *   **Workspace snapshot** injected into system prompt at session init (git branch, file tree, manifest summary).
-*   **Project instructions** loaded from `.push/instructions.md`, `AGENTS.md`, or `CLAUDE.md`.
+*   **Project instructions** loaded from `.push/instructions.md`, `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`.
 *   **Hashline edits** with multi-line content support, edit-site context preview, and automatic file backup before mutations.
 *   **Working memory** deduplicated (injected once per round, not per tool result). Context budget tracking via `contextChars` in meta envelope.
 *   **File awareness ledger** with per-file paths and read/write status.

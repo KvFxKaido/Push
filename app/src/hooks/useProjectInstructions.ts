@@ -43,6 +43,12 @@ const AGENTS_MD_TEMPLATE = `# AGENTS.md
 - Things to avoid:
 `;
 
+const PROJECT_INSTRUCTION_PATHS = [
+  '/workspace/AGENTS.md',
+  '/workspace/CLAUDE.md',
+  '/workspace/GEMINI.md',
+] as const;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -82,17 +88,20 @@ export function useProjectInstructions(
   const [creatingAgentsMdWithAI, setCreatingAgentsMdWithAI] = useState(false);
 
   // Helpers
-  const refreshAgentsMdFromSandbox = useCallback(async (sandboxId: string): Promise<string | null> => {
-    try {
-      const result = await readFromSandbox(sandboxId, '/workspace/AGENTS.md');
-      const content = result.content || '';
-      if (!content.trim()) return null;
-      setAgentsMdContent(content);
-      setAgentsMd(content);
-      return content;
-    } catch {
-      return null;
+  const refreshProjectInstructionsFromSandbox = useCallback(async (sandboxId: string): Promise<string | null> => {
+    for (const path of PROJECT_INSTRUCTION_PATHS) {
+      try {
+        const result = await readFromSandbox(sandboxId, path);
+        const content = result.content || '';
+        if (!content.trim()) continue;
+        setAgentsMdContent(content);
+        setAgentsMd(content);
+        return content;
+      } catch {
+        continue;
+      }
     }
+    return null;
   }, [setAgentsMd]);
 
   const autoCommitAgentsMdInSandbox = useCallback(async (sandboxId: string): Promise<{ ok: boolean; message: string }> => {
@@ -193,7 +202,7 @@ export function useProjectInstructions(
         return;
       }
 
-      const refreshed = await refreshAgentsMdFromSandbox(id);
+      const refreshed = await refreshProjectInstructionsFromSandbox(id);
       if (!refreshed) {
         toast.error('AGENTS.md was written but could not be re-read.');
         return;
@@ -212,7 +221,7 @@ export function useProjectInstructions(
     } finally {
       setCreatingAgentsMd(false);
     }
-  }, [activeRepo, creatingAgentsMd, sandbox, refreshAgentsMdFromSandbox, autoCommitAgentsMdInSandbox, setShowFileBrowser]);
+  }, [activeRepo, creatingAgentsMd, sandbox, refreshProjectInstructionsFromSandbox, autoCommitAgentsMdInSandbox, setShowFileBrowser]);
 
   // Create AGENTS.md with AI
   const handleCreateAgentsMdWithAI = useCallback(async () => {
@@ -237,7 +246,7 @@ export function useProjectInstructions(
         return;
       }
 
-      const refreshed = await refreshAgentsMdFromSandbox(id);
+      const refreshed = await refreshProjectInstructionsFromSandbox(id);
       if (!refreshed) {
         toast.warning('AGENTS.md was not detected after AI run. You can retry or use Create Template.');
         return;
@@ -253,7 +262,7 @@ export function useProjectInstructions(
     } finally {
       setCreatingAgentsMdWithAI(false);
     }
-  }, [activeRepo, creatingAgentsMdWithAI, isStreaming, markSnapshotActivity, sendMessage, sandbox.sandboxId, refreshAgentsMdFromSandbox, autoCommitAgentsMdInSandbox, setShowFileBrowser]);
+  }, [activeRepo, creatingAgentsMdWithAI, isStreaming, markSnapshotActivity, sendMessage, sandbox.sandboxId, refreshProjectInstructionsFromSandbox, autoCommitAgentsMdInSandbox, setShowFileBrowser]);
 
   return {
     agentsMdContent,

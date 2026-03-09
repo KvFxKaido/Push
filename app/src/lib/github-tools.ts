@@ -1818,14 +1818,14 @@ export async function executeFindExistingPR(repo: string, headBranch: string, ba
 
 /**
  * Fetch project instruction files from a GitHub repo via the REST API.
- * Tries AGENTS.md first, then CLAUDE.md as fallback.
- * Returns content + filename, or null if neither file exists.
+ * Tries AGENTS.md first, then CLAUDE.md, then GEMINI.md as fallbacks.
+ * Returns content + filename, or null if none of those files exist.
  */
 export async function fetchProjectInstructions(
   repo: string,
   branch?: string,
 ): Promise<{ content: string; filename: string } | null> {
-  const FILES_TO_TRY = ['AGENTS.md', 'CLAUDE.md'];
+  const FILES_TO_TRY = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
   const headers = getGitHubHeaders();
 
   for (const filename of FILES_TO_TRY) {

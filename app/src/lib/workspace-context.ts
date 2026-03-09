@@ -10,14 +10,14 @@ import type { RepoWithActivity, ActiveRepo } from '@/types';
  */
 
 // --- Project instructions sanitization ---
-// AGENTS.md / CLAUDE.md content is user-controlled (repo owner writes it).
+// AGENTS.md / CLAUDE.md / GEMINI.md content is user-controlled (repo owner writes it).
 // We apply the same defense-in-depth as scratchpad and user bio:
 //   1. Size cap — prevents context bloat / 413 errors
 //   2. Delimiter escaping — zero-width space breaks block boundaries
 const MAX_PROJECT_INSTRUCTIONS_SIZE = 8000;
 
 /**
- * Sanitize project instructions (AGENTS.md) before injection into the
+ * Sanitize project instructions before injection into the
  * Orchestrator's system prompt.  Truncates to MAX_PROJECT_INSTRUCTIONS_SIZE
  * and escapes delimiter sequences so the content cannot break out of its
  * labeled block.
