@@ -1113,6 +1113,7 @@ export async function executeSandboxToolCall(
         const escapedQuery = shellEscape(query);
         const escapedPath = shellEscape(searchPath);
         const command = [
+          'set -o pipefail;',
           'if command -v rg >/dev/null 2>&1; then',
           `  rg -n --hidden --glob '!.git' --color never -- ${escapedQuery} ${escapedPath} | head -n 121;`,
           'else',
