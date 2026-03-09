@@ -8,13 +8,16 @@ import {
   GitCommitHorizontal,
   GitMerge,
   Loader2,
+  Plus,
   RefreshCw,
   Sparkles,
   StickyNote,
+  Terminal,
   TerminalSquare,
   Trash2,
   X,
 } from 'lucide-react';
+import { categorizeSandboxError } from '@/components/chat/SandboxStatusBanner';
 import { toast } from 'sonner';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { runAuditor } from '@/lib/auditor-agent';
@@ -53,8 +56,12 @@ interface WorkspaceHubSheetProps {
   messages: ChatMessage[];
   agentEvents: AgentStatusEvent[];
   sandboxId: string | null;
-  sandboxStatus: 'idle' | 'creating' | 'ready' | 'error';
+  sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
+  sandboxError: string | null;
   ensureSandbox: () => Promise<string | null>;
+  onStartSandbox: () => void;
+  onRetrySandbox: () => void;
+  onNewSandbox: () => void;
   repoName?: string;
   protectMainEnabled: boolean;
   showToolActivity: boolean;
@@ -177,7 +184,11 @@ export function WorkspaceHubSheet({
   agentEvents,
   sandboxId,
   sandboxStatus,
+  sandboxError,
   ensureSandbox,
+  onStartSandbox,
+  onRetrySandbox,
+  onNewSandbox,
   repoName,
   protectMainEnabled,
   showToolActivity,
@@ -641,6 +652,50 @@ export function WorkspaceHubSheet({
             </div>
 
           </header>
+
+          {/* Sandbox status strip */}
+          {sandboxStatus !== 'ready' && (
+            <div className="border-b border-push-edge px-3 py-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                {(sandboxStatus === 'creating' || sandboxStatus === 'reconnecting') ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-push-fg-dim flex-shrink-0" />
+                ) : sandboxStatus === 'error' ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                ) : (
+                  <Terminal className="h-3 w-3 text-[#5f6b80] flex-shrink-0" />
+                )}
+                <span className="text-[11px] truncate min-w-0">
+                  {sandboxStatus === 'reconnecting' && <span className="text-push-fg-dim">Reconnecting…</span>}
+                  {sandboxStatus === 'creating' && <span className="text-push-fg-dim">Starting sandbox…</span>}
+                  {sandboxStatus === 'idle' && <span className="text-push-fg-dim">Sandbox not running</span>}
+                  {sandboxStatus === 'error' && (
+                    <span className="text-red-400">
+                      {sandboxError ? categorizeSandboxError(sandboxError).title : 'Sandbox error'}
+                    </span>
+                  )}
+                </span>
+              </div>
+              {(sandboxStatus === 'idle' || sandboxStatus === 'error') && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {sandboxStatus === 'error' && sandboxId && (
+                    <button
+                      onClick={onRetrySandbox}
+                      className="flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/15 active:scale-95"
+                    >
+                      <RefreshCw className="h-2.5 w-2.5" />
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    onClick={sandboxStatus === 'error' ? onNewSandbox : onStartSandbox}
+                    className="flex items-center gap-1 rounded-md border border-[#243148] bg-[#0b1220] px-2 py-1 text-[11px] font-medium text-[#8ad4ff] transition-colors hover:bg-[#0d1526] active:scale-95"
+                  >
+                    {sandboxStatus === 'error' ? <><Plus className="h-2.5 w-2.5" />New</> : 'Start'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Branch switch confirmation overlay */}
           {switchConfirmBranch && (

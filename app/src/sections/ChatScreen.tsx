@@ -7,6 +7,7 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
 import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
+import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import { MergeFlowSheet } from '@/components/chat/MergeFlowSheet';
 import { LazySettingsSheet as SettingsSheet } from '@/components/LazySettingsSheet';
@@ -765,42 +766,31 @@ export function ChatScreen(props: ChatScreenProps) {
         <div className="pointer-events-none absolute inset-x-0 top-full h-8 bg-gradient-to-b from-black to-transparent" />
       </header>
 
-      {/* Sandbox error banner */}
-      {sandbox.status === 'error' && sandbox.error && (
-        <div className="mx-4 mt-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in-down">
-          <p className="text-xs text-red-400 min-w-0 truncate">{sandbox.error}</p>
-          <div className="flex items-center gap-2 shrink-0">
-            {sandbox.sandboxId && (
-              <button
-                onClick={() => void sandbox.refresh()}
-                className="text-xs font-medium text-amber-300 hover:text-amber-200 transition-colors"
-              >
-                Refresh
-              </button>
-            )}
-            <button
-              onClick={() => {
-                if (isSandboxMode) {
-                  void sandbox.start('', 'main');
-                } else if (activeRepo) {
-                  void sandbox.stop().then(() => sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
-                }
-              }}
-              className="text-xs font-medium text-red-300 hover:text-red-200 transition-colors"
-            >
-              Restart
-            </button>
-            {isSandboxMode && (
-              <button
-                onClick={handleExitSandboxMode}
-                className="text-xs font-medium text-[#71717a] hover:text-[#a1a1aa] transition-colors"
-              >
-                Exit
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Sandbox status banner (idle/creating/error) */}
+      <SandboxStatusBanner
+        status={sandbox.status}
+        error={sandbox.error}
+        hasMessages={messages.length > 0}
+        isStreaming={isStreaming}
+        sandboxId={sandbox.sandboxId}
+        isSandboxMode={isSandboxMode}
+        onStart={() => {
+          if (isSandboxMode) {
+            void sandbox.start('', 'main');
+          } else if (activeRepo) {
+            void sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
+          }
+        }}
+        onRetry={() => void sandbox.refresh()}
+        onNewSandbox={() => {
+          if (isSandboxMode) {
+            void sandbox.stop().then(() => sandbox.start('', 'main'));
+          } else if (activeRepo) {
+            void sandbox.stop().then(() => sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
+          }
+        }}
+        onExitSandboxMode={handleExitSandboxMode}
+      />
 
       {/* Sandbox expiry warning */}
       {isSandboxMode && (
@@ -812,7 +802,7 @@ export function ChatScreen(props: ChatScreenProps) {
         />
       )}
 
-      {!isSandboxMode && activeRepo && instructions.projectInstructionsChecked && !instructions.agentsMdContent && (
+      {!isSandboxMode && activeRepo && instructions.projectInstructionsChecked && !instructions.projectInstructionsCheckFailed && !instructions.agentsMdContent && (
         <div className="mx-4 mt-3 rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-3.5 shadow-push-card animate-fade-in-down">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -907,7 +897,23 @@ export function ChatScreen(props: ChatScreenProps) {
         agentEvents={agentEvents}
         sandboxId={sandbox.sandboxId}
         sandboxStatus={sandbox.status}
+        sandboxError={sandbox.error}
         ensureSandbox={ensureSandbox}
+        onStartSandbox={() => {
+          if (isSandboxMode) {
+            void sandbox.start('', 'main');
+          } else if (activeRepo) {
+            void sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
+          }
+        }}
+        onRetrySandbox={() => void sandbox.refresh()}
+        onNewSandbox={() => {
+          if (isSandboxMode) {
+            void sandbox.stop().then(() => sandbox.start('', 'main'));
+          } else if (activeRepo) {
+            void sandbox.stop().then(() => sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
+          }
+        }}
         repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
         protectMainEnabled={protectMain.isProtected}
         showToolActivity={showToolActivity}

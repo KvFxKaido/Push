@@ -56,6 +56,7 @@ const PROJECT_INSTRUCTION_PATHS = [
 export interface ProjectInstructionsManager {
   agentsMdContent: string | null;
   projectInstructionsChecked: boolean;
+  projectInstructionsCheckFailed: boolean;
   creatingAgentsMd: boolean;
   creatingAgentsMdWithAI: boolean;
   handleCreateAgentsMd: () => Promise<void>;
@@ -84,6 +85,7 @@ export function useProjectInstructions(
 ): ProjectInstructionsManager {
   const [agentsMdContent, setAgentsMdContent] = useState<string | null>(null);
   const [projectInstructionsChecked, setProjectInstructionsChecked] = useState(false);
+  const [projectInstructionsCheckFailed, setProjectInstructionsCheckFailed] = useState(false);
   const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
   const [creatingAgentsMdWithAI, setCreatingAgentsMdWithAI] = useState(false);
 
@@ -131,6 +133,7 @@ export function useProjectInstructions(
       return;
     }
     setProjectInstructionsChecked(false);
+    setProjectInstructionsCheckFailed(false);
     let cancelled = false;
     fetchProjectInstructions(activeRepo.full_name)
       .then((result) => {
@@ -144,6 +147,7 @@ export function useProjectInstructions(
         setAgentsMdContent(null);
         setAgentsMd(null);
         setProjectInstructionsChecked(true);
+        setProjectInstructionsCheckFailed(true);
       });
     return () => { cancelled = true; };
   }, [activeRepo, setAgentsMd]);
@@ -196,6 +200,12 @@ export function useProjectInstructions(
         return;
       }
 
+      const existing = await refreshProjectInstructionsFromSandbox(id);
+      if (existing) {
+        toast.error('Project instructions already exist. Use "Create with AI" to update them.');
+        return;
+      }
+
       const writeResult = await writeToSandbox(id, '/workspace/AGENTS.md', AGENTS_MD_TEMPLATE);
       if (!writeResult.ok) {
         toast.error(writeResult.error || 'Failed to create AGENTS.md');
@@ -214,6 +224,7 @@ export function useProjectInstructions(
       } else {
         toast.warning(commitStatus.message);
       }
+      setProjectInstructionsCheckFailed(false);
       setShowFileBrowser(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create AGENTS.md';
@@ -267,6 +278,7 @@ export function useProjectInstructions(
   return {
     agentsMdContent,
     projectInstructionsChecked,
+    projectInstructionsCheckFailed,
     creatingAgentsMd,
     creatingAgentsMdWithAI,
     handleCreateAgentsMd,

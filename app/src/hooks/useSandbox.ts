@@ -19,7 +19,7 @@ import { fileLedger } from '@/lib/file-awareness-ledger';
 import { clearFileVersionCache } from '@/lib/sandbox-file-version-cache';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 
-export type SandboxStatus = 'idle' | 'creating' | 'ready' | 'error';
+export type SandboxStatus = 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
 
 const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 
@@ -120,6 +120,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
 
     let cancelled = false;
     reconnectingRef.current = true;
+    setStatus('reconnecting');
     setSandboxOwnerToken(saved.ownerToken);
     setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
 
@@ -134,10 +135,14 @@ export function useSandbox(activeRepoFullName?: string | null) {
           return saved.sandboxId;
         }
         clearSession(saved.sandboxId);
+        setStatus('idle');
         return null;
       })
       .catch(() => {
-        if (!cancelled) clearSession(saved.sandboxId);
+        if (!cancelled) {
+          clearSession(saved.sandboxId);
+          setStatus('idle');
+        }
         return null;
       })
       .finally(() => {
@@ -175,7 +180,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
 
   const start = useCallback(async (repo: string, branch?: string): Promise<string | null> => {
     if (startPromiseRef.current) return startPromiseRef.current;
-    if (statusRef.current === 'creating') return null;
+    if (statusRef.current === 'creating' || statusRef.current === 'reconnecting') return null;
 
     const startPromise = (async () => {
       // If reconnection is in progress, wait for it
