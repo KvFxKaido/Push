@@ -1114,9 +1114,9 @@ export async function executeSandboxToolCall(
         const escapedPath = shellEscape(searchPath);
         const command = [
           'if command -v rg >/dev/null 2>&1; then',
-          `  rg -n --hidden --glob '!.git' --color never --max-count 120 -- ${escapedQuery} ${escapedPath};`,
+          `  rg -n --hidden --glob '!.git' --color never -- ${escapedQuery} ${escapedPath} | head -n 120;`,
           'else',
-          `  grep -RIn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=__pycache__ --exclude-dir=.next -- ${escapedQuery} ${escapedPath} | head -n 120;`,
+          `  grep -RIn --exclude-dir=.git -- ${escapedQuery} ${escapedPath} | head -n 120;`,
           'fi',
         ].join(' ');
 
