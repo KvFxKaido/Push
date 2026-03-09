@@ -33,6 +33,8 @@ export const OPENROUTER_MODELS: string[] = [
   'anthropic/claude-sonnet-4.6',
   'anthropic/claude-opus-4.6',
   'anthropic/claude-haiku-4.5',
+  // OpenAI GPT-4.1
+  'openai/gpt-4.1',
   // OpenAI GPT-5.4
   'openai/gpt-5.4-pro',
   'openai/gpt-5.4',
