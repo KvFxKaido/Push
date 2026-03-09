@@ -1116,7 +1116,7 @@ export async function executeSandboxToolCall(
           'if command -v rg >/dev/null 2>&1; then',
           `  rg -n --hidden --glob '!.git' --color never --max-count 120 -- ${escapedQuery} ${escapedPath};`,
           'else',
-          `  grep -RIn --exclude-dir=.git -- ${escapedQuery} ${escapedPath} | head -n 120;`,
+          `  grep -RIn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=__pycache__ --exclude-dir=.next -- ${escapedQuery} ${escapedPath} | head -n 120;`,
           'fi',
         ].join(' ');
 
