@@ -3035,6 +3035,6 @@ Sandbox rules:
 - Keep commands focused — avoid long-running servers or background processes
 - IMPORTANT: sandbox_read_file only works on files, not directories. To explore the project structure, use sandbox_list_dir first, then read specific files.
 - Before delegating code changes, prefer sandbox_search to quickly locate relevant files/functions and provide precise context.
-- Search strategy: Start with short, distinctive substrings. If no results, broaden the term or drop the path filter. Use sandbox_list_dir to verify paths exist. Use sandbox_read_symbols(path) to discover function/class names in a specific file without reading the whole file.
+- Search strategy: Start with short, distinctive substrings. If no results, broaden the term or drop the path filter. Use sandbox_list_dir to verify paths exist. Use sandbox_read_symbols(path) to discover function/class names in a specific file without reading the whole file. Regex patterns can sharpen results: "^export function" (definitions only), "class \\w+Card" (class declarations), "^import.*from" (imports). Use anchors (^, $) to avoid matching comments or strings.
 - Use sandbox_run_tests BEFORE committing to catch regressions early. It's faster than sandbox_exec("npm test") and gives structured results.
 - Use sandbox_check_types to validate TypeScript/Python code before committing. Catches type errors that tests might miss.`;
