@@ -9,7 +9,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Type:** AI Coding Agent — Mobile PWA + Local CLI
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** Multi-provider support (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) via OpenAI-compatible SSE streaming.
+*   **AI Backend:** Multi-provider support (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) via OpenAI-compatible SSE streaming. Users can choose a backend and pin a model for new chats; provider/model selection locks per chat after the first user message.
 *   **Current Product Focus:** CLI/TUI terminal UX improvements (CLI-first, transcript-first; no full-screen TUI rewrite).
 
 ## Tech Stack
@@ -84,10 +84,12 @@ Current roadmap focus is improving terminal ergonomics around the transcript-fir
 | `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
 | `undo_edit` | mutate | Restore a file from the most recent tool-created backup |
 | `git_commit` | mutate | Stage and commit files (excludes `.push/` internal state) |
+| `lsp_diagnostics` | read | Run workspace diagnostics/type-check output |
 | `save_memory` | memory | Persist concise project learnings across sessions (`.push/memory.md`) |
 | `coder_update_state` | memory | Update working memory |
+| `ask_user` | control | Pause for operator clarification when a critical ambiguity would waste work |
 
-**Read/mutate split:** Multiple read-only tools run in parallel per turn. Only one mutating tool allowed per turn.
+**Read/mutate split:** Multiple read-only tools run in parallel per turn. Only one mutating tool is allowed per turn; memory/control tools do not modify workspace files.
 
 ### Agent Experience
 *   **Workspace snapshot** injected into system prompt at session init (git branch, file tree, manifest summary).
@@ -156,6 +158,7 @@ Push/
 ├── push                   # Bash launcher (symlink-safe, POSIX-compatible)
 ├── AGENTS.md              # AI Agent Context & Instructions
 ├── CLAUDE.md              # Detailed Architecture Docs
+├── GEMINI.md              # Gemini-facing project context
 ├── wrangler.jsonc         # Cloudflare Workers Configuration
 └── README.md              # Project Documentation
 ```
@@ -187,7 +190,7 @@ Push/
 *   **Modal Sandbox:** `cd sandbox && python -m modal deploy app.py`
 
 ### Environment
-Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI.
+Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI. When no GitHub token is configured, repo and PR views fall back to mock/demo data. In local development, with no AI keys configured, the app uses the demo-provider path.
 
 Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
 

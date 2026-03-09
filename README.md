@@ -12,7 +12,7 @@ Push is a personal chat interface backed by role-based AI agents that read your 
 
 Try it free with provider free tiers: OpenCode Zen or Ollama Cloud.
 Bring your own provider: Ollama Cloud, OpenRouter, OpenCode Zen, or Nvidia NIM.
-Switch providers on new chats at any time.
+Switch providers or pinned models on new chats at any time.
 
 ## What It Does
 
@@ -111,7 +111,7 @@ VITE_GITHUB_OAUTH_PROXY=...           # Optional — GitHub OAuth token exchange
 VITE_GITHUB_REDIRECT_URI=...          # Optional — GitHub OAuth redirect URI
 ```
 
-Without any AI key the app prompts for one on first use. When 2+ provider keys are set, a backend picker appears in Settings. Web default mode is **Auto** (Zen-first when available), and users can still pin any provider.
+Provider keys can also be pasted into Settings at runtime. When 2+ provider keys are set, a backend picker appears in Settings, and model pickers are available in Settings and the chat composer for new chats. Web default mode is **Auto** (Zen-first when available), and users can still pin any provider. In local development, with no AI keys configured, the app falls back to the demo-provider path; separately, when no GitHub token is configured, repo and PR views fall back to mock data.
 
 ## Push CLI
 
@@ -170,9 +170,9 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Coder** — autonomous code implementation in sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap)
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Four AI backends are supported: **Ollama Cloud**, **OpenRouter**, **OpenCode Zen**, and **Nvidia NIM**. All use OpenAI-compatible streaming. The active backend serves all three roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider selection is locked per chat after the first user message; start a new chat to switch providers.
+Four AI backends are supported: **Ollama Cloud**, **OpenRouter**, **OpenCode Zen**, and **Nvidia NIM**. All use OpenAI-compatible streaming. The active backend serves all three roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider and model selection are locked per chat after the first user message; start a new chat to switch either.
 
-**OpenRouter** provides access to 50+ models (Claude, GPT-4, Codex, Gemini, etc.) through a single pay-per-use API. Push includes a curated list of 14 models covering all major providers.
+**OpenRouter** provides access to 50+ models through a single pay-per-use API. Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-5.4, Codex, Gemini, Mistral, MiniMax, GLM, Mercury, Grok, and Kimi.
 
 There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, console, scratchpad, and commit/push are unified in the **Workspace Hub**. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
 
@@ -183,7 +183,9 @@ If a run is interrupted (phone lock/background), Push checkpoints state and surf
 ```
 Push/
 ├── push                   # CLI launcher script
+├── AGENTS.md              # Agent-facing project context
 ├── CLAUDE.md              # AI assistant context (architecture, conventions)
+├── GEMINI.md              # Gemini-facing project context
 ├── wrangler.jsonc         # Cloudflare Workers config
 ├── cli/
 │   ├── cli.mjs            # CLI entrypoint (interactive + headless)

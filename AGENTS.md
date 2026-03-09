@@ -38,7 +38,7 @@ The active backend serves all three roles. The user picks a backend in Settings;
 
 ### AI Backends
 
-Four providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider selection is locked per chat after the first user message. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, and `/api/nvidia/chat`.
+Four providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider and model selection are locked per chat after the first user message. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Users can also pick a per-provider model in Settings or from the chat composer for new chats. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, and `/api/nvidia/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
@@ -47,7 +47,7 @@ Four providers, all using OpenAI-compatible SSE streaming. Any single API key is
 | **OpenCode Zen** | big-pickle |
 | **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
 
-**OpenRouter** provides access to 50+ models through a single API. Push includes 22 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-5.4 Pro and GPT-5.4, 2 Codex variants (5.3/5.2), Step 3.5 Flash (free), Gemini 3.1 Pro Preview/3.1 Flash Lite Preview, Mistral Large 3, Devstral 2, Mistral Medium 3.1, MiniMax M2.5/M2.1, GLM 4.7/5.0, Inception Mercury 2/Mercury Coder/Mercury, Grok 4.1, and Kimi K2.5.
+**OpenRouter** provides access to 50+ models through a single API. Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-5.4, Codex, Gemini, Mistral, MiniMax, GLM, Mercury, Grok, and Kimi.
 
 ### Tool Protocol
 
@@ -156,10 +156,14 @@ Local coding agent for the terminal. Same role-based agent architecture as the w
 | `exec_list_sessions` | read | List command sessions and status |
 | `write_file` | mutate | Write entire file (auto-backed up) |
 | `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
+| `undo_edit` | mutate | Restore a file from its most recent tool-created backup |
 | `git_commit` | mutate | Stage and commit files (excludes `.push/` internal state) |
+| `lsp_diagnostics` | read | Run workspace diagnostics/type-check output |
+| `save_memory` | memory | Persist concise project learnings across sessions (`.push/memory.md`) |
 | `coder_update_state` | memory | Update working memory |
+| `ask_user` | control | Pause for operator clarification when a critical ambiguity would waste work |
 
-Read-only tools run in parallel per turn. Only one mutating tool allowed per turn.
+Read-only tools run in parallel per turn. Only one mutating tool is allowed per turn; memory/control tools do not modify workspace files.
 
 ### Agent Experience
 *   **Workspace snapshot** in system prompt (git branch, file tree, manifest summary)
@@ -180,6 +184,7 @@ Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Four p
 Push/
 ├── AGENTS.md              # This file — AI assistant context
 ├── CLAUDE.md              # Detailed architecture and conventions
+├── GEMINI.md              # Gemini-facing project context
 ├── push                   # Bash launcher (symlink-safe, POSIX-compatible)
 ├── wrangler.jsonc         # Cloudflare Workers config
 ├── app/

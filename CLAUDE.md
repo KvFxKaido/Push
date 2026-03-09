@@ -27,15 +27,15 @@ npm run dev
 
 ## Architecture
 
-Role-based agent system. Models are replaceable. Roles are locked. The user never picks a model — they pick a backend.
+Role-based agent system. Models are replaceable. Roles are locked. Users pick a backend and can also pin a model for new chats, but the role split stays fixed underneath.
 
 - **Orchestrator** — Conversational lead, interprets user intent, coordinates specialists, assembles results. The voice of the app.
 - **Coder** — Code implementation and execution engine. Writes, edits, and runs code in a sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap).
 - **Auditor** — Risk specialist, pre-commit gate, binary verdict. Required for standard commit flow (`sandbox_prepare_commit` path).
 
-**AI backends:** Four providers — **Ollama Cloud** (`ollama.com`), **OpenRouter** (`openrouter.ai`), **OpenCode Zen** (`opencode.ai/zen`), and **Nvidia NIM** (`integrate.api.nvidia.com`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI. The active backend serves all three roles. Provider selection is locked per chat after the first user message. For new web chats, Auto backend mode prefers OpenCode Zen when available (users can still pin any provider). Default Ollama model is `gemini-3-flash-preview`. Default OpenRouter model is `claude-sonnet-4.6`. Default Zen model is `big-pickle`. Default Nvidia model is `nvidia/llama-3.1-nemotron-70b-instruct`. OpenRouter provides access to 50+ models through a single API — Push includes 23 curated models: Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5, GPT-4.1, GPT-5.4 Pro and GPT-5.4, 2 Codex variants (5.3/5.2), Step 3.5 Flash (free), Gemini 3.1 Pro Preview/3.1 Flash Lite Preview, Mistral Large 3, Devstral 2, Mistral Medium 3.1, MiniMax M2.5/M2.1, GLM 4.7/5.0, Inception Mercury 2/Mercury Coder/Mercury, Grok 4.1, and Kimi K2.5.
+**AI backends:** Four providers — **Ollama Cloud** (`ollama.com`), **OpenRouter** (`openrouter.ai`), **OpenCode Zen** (`opencode.ai/zen`), and **Nvidia NIM** (`integrate.api.nvidia.com`). All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI. The active backend serves all three roles. Provider and model selection are locked per chat after the first user message. For new web chats, Auto backend mode prefers OpenCode Zen when available, but users can still pin any provider and choose a per-provider model in Settings or from the chat composer. Default Ollama model is `gemini-3-flash-preview`. Default OpenRouter model is `claude-sonnet-4.6`. Default Zen model is `big-pickle`. Default Nvidia model is `nvidia/llama-3.1-nemotron-70b-instruct`. OpenRouter provides access to 50+ models through a single API, and Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-5.4, Codex, Gemini, Mistral, MiniMax, GLM, Mercury, Grok, and Kimi.
 
-**Onboarding & state machine:** Users connect with GitHub App (recommended) or GitHub PAT, then select an active repo before chatting. Demo mode is an escape hatch with mock data. Sandbox Mode lets users start an ephemeral workspace without any GitHub auth. State machine: `onboarding → home → chat` (plus `file-browser` when sandbox files are open). The `isSandboxMode` flag bypasses auth and repo selection.
+**Onboarding & state machine:** Users connect with GitHub App (recommended) or GitHub PAT, then select an active repo before chatting. Sandbox Mode lets users start an ephemeral workspace without any GitHub auth. The codebase still contains demo/mock fallbacks: GitHub repo and PR views fall back to mock data when no GitHub token is configured, and local development uses a demo-provider path when no AI keys are configured. State machine: `onboarding → home → chat` (plus `file-browser` when sandbox files are open). The `isSandboxMode` flag bypasses auth and repo selection.
 
 **Tool protocol:** Tools are prompt-engineered — the system prompt defines available tools and JSON format. The orchestrator detects JSON tool blocks in responses, executes them against GitHub's API, injects results as synthetic messages, and re-calls the LLM. The Orchestrator tool loop is unbounded; the Coder loop is bounded by safety limits (30 rounds, 60s inactivity timeout per round, ~120k-char context cap). Sandbox tools use the same JSON block pattern, detected by a unified tool dispatch layer. Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message, splits them into parallel read-only calls and an optional trailing mutation — reads execute via `Promise.all()`, then the mutation runs. Tool results include structured error fields (`error_type`, `retryable`) via `classifyError()`, and a `[meta]` envelope with round number, context size, and sandbox dirty state.
 
@@ -49,7 +49,7 @@ Role-based agent system. Models are replaceable. Roles are locked. The user neve
 
 **Coder delegation:** The Orchestrator can delegate coding tasks to the Coder via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap), then returns a summary + cards to the Orchestrator. Delegation supports optional `acceptanceCriteria[]` — shell commands run after the Coder finishes to verify the task succeeded (pass/fail + output). The Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — plan, open tasks, files touched, assumptions, and errors are injected as a `[CODER_STATE]` block into every tool result, surviving context trimming.
 
-**Auditor gate:** Every `sandbox_commit` runs through the Auditor first. The Auditor reviews the diff and returns a binary verdict (SAFE/UNSAFE). UNSAFE blocks the commit. The Auditor defaults to UNSAFE on any error (fail-safe).
+**Auditor gate:** Every standard commit goes through the Auditor via `sandbox_prepare_commit`. The Auditor reviews the diff and returns a binary verdict (SAFE/UNSAFE). UNSAFE blocks the commit. The Auditor defaults to UNSAFE on any error (fail-safe).
 
 **Repo hard lock:** The Orchestrator only sees the active repo in its context. Other repos are stripped entirely. Repo switching is UI-driven (home repo cards + history drawer), never implicit from model output.
 
@@ -167,7 +167,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 ## Environment
 
-Environment variables are defined in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI at runtime. Without any API keys the app runs in demo mode with mock data.
+Environment variables are defined in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI at runtime. When no GitHub token is configured, repo and PR views fall back to mock/demo data. In local development, with no AI keys configured, the app uses the demo-provider path. Live AI runs require a configured provider key.
 
 Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth).
 
@@ -189,9 +189,9 @@ Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (
 - Hooks encapsulate all data fetching and state for a concern
 - Types are centralized in `types/index.ts`
 - Tool detection/execution follows the pattern: `detect*ToolCall()` → `execute*ToolCall()`, unified via `tool-dispatch.ts`
-- Demo mode falls back to mock repos when no GitHub PAT is set
+- When no GitHub token is configured, repo and PR views fall back to mock/demo data
 - Errors surface in the UI — never swallowed silently
-- Model selection is automatic — the Orchestrator routes to the right specialist
+- Role routing is automatic inside the agent system, but users can still choose a provider and pin a model for new chats
 - Active repo is hard-locked — the Orchestrator's context only contains the selected repo
 - Active branch is the single context for commits, pushes, diffs, and chat — switching branches tears down the sandbox
 - Chats are permanently branch-scoped — never duplicated or rebound across branches

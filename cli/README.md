@@ -172,10 +172,14 @@ Available tools:
 | `exec_list_sessions` | read | List active/finished command sessions |
 | `write_file` | mutate | Write entire file (auto-backed up) |
 | `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
+| `undo_edit` | mutate | Restore a file from the most recent tool-created backup |
 | `git_commit` | mutate | Stage and commit files |
+| `lsp_diagnostics` | read | Run workspace diagnostics/type-check output |
+| `save_memory` | memory | Persist concise project learnings across sessions (`.push/memory.md`) |
 | `coder_update_state` | memory | Update working memory (plan, tasks, etc.) |
+| `ask_user` | control | Pause for operator clarification when a critical ambiguity would waste work |
 
-**Read/mutate split:** Multiple read-only tools can run in parallel per turn. Only one mutating tool is allowed per turn — extras are rejected with a structured error.
+**Read/mutate split:** Multiple read-only tools can run in parallel per turn. Only one mutating tool is allowed per turn — extras are rejected with a structured error. Memory/control tools do not modify workspace files.
 
 ### Hashline edits
 
