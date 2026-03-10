@@ -322,9 +322,8 @@ def _sandbox_error_response(exc: Exception, default_fields: dict | None = None) 
         "Sandbox container error. The container may be unhealthy "
         f"— try restarting the sandbox. ({type(exc).__name__})"
     )
-    result = {"error": msg}
-    if default_fields:
-        result.update(default_fields)
+    result = default_fields.copy() if default_fields else {}
+    result["error"] = msg
     return result
 
 
