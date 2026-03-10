@@ -664,11 +664,10 @@ describe('sandbox path normalization', () => {
       'sb-123',
       'pwd',
       '/workspace/app',
-      { markWorkspaceMutated: true },
     );
   });
 
-  it('marks previously-read files stale after sandbox_exec', async () => {
+  it('marks previously-read files stale after mutating sandbox_exec', async () => {
     const path = '/workspace/src/stale-after-exec.ts';
     fileLedger.reset();
     vi.mocked(sandboxClient.readFromSandbox).mockReset();
@@ -692,12 +691,55 @@ describe('sandbox path normalization', () => {
     expect(fileLedger.getState(path)?.kind).toBe('fully_read');
 
     const execResult = await executeSandboxToolCall(
-      { tool: 'sandbox_exec', args: { command: 'pwd' } },
+      { tool: 'sandbox_exec', args: { command: 'touch /workspace/.push-write-test' } },
       'sb-123',
     );
 
     expect(execResult.text).toContain('Marked 1 previously-read file(s) as stale');
     expect(fileLedger.getState(path)?.kind).toBe('stale');
+    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+      'sb-123',
+      'touch /workspace/.push-write-test',
+      undefined,
+      { markWorkspaceMutated: true },
+    );
+  });
+
+  it('keeps read snapshots intact after read-only sandbox_exec', async () => {
+    const path = '/workspace/src/read-only-exec.ts';
+    fileLedger.reset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const value = 1;\n',
+      truncated: false,
+      version: 'v1',
+      workspace_revision: 2,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '/workspace\n',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+
+    const execResult = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'pwd' } },
+      'sb-123',
+    );
+
+    expect(execResult.text).not.toContain('Marked 1 previously-read file(s) as stale');
+    expect(fileLedger.getState(path)?.kind).toBe('fully_read');
+    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+      'sb-123',
+      'pwd',
+      undefined,
+    );
   });
 });
 

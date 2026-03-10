@@ -681,6 +681,30 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+function isLikelyMutatingSandboxExec(command: string): boolean {
+  const normalized = command.trim().toLowerCase();
+  if (!normalized) return false;
+
+  if (
+    /^(cd\s+\S+\s*&&\s*)?(pwd|ls|find|cat|head|tail|wc|stat|file|rg|grep|sed -n|awk|git status|git diff|git show|git branch --show-current)\b/.test(normalized)
+  ) {
+    return false;
+  }
+
+  if (/(^|[^0-9])>>?/.test(normalized)) {
+    return true;
+  }
+
+  return /\b(rm|mv|cp|mkdir|rmdir|touch|chmod|chown|tee|patch)\b/.test(normalized)
+    || /\bgit\s+(add|commit|checkout|switch|merge|rebase|reset|restore|clean|stash|cherry-pick|apply|am|push)\b/.test(normalized)
+    || /\b(npm|pnpm|yarn)\s+(install|add|remove|uninstall|update|up|ci)\b/.test(normalized)
+    || /\b(pip|pip3)\s+install\b/.test(normalized)
+    || /\bgo\s+mod\b/.test(normalized)
+    || /\bcargo\s+(add|remove)\b/.test(normalized)
+    || /\bsed\s+-i\b/.test(normalized)
+    || /\bperl\s+-pi\b/.test(normalized);
+}
+
 function isUnknownSymbolGuardReason(reason: string): boolean {
   return /^Read symbol '.+' before editing\./.test(reason.trim());
 }
@@ -979,12 +1003,20 @@ export async function executeSandboxToolCall(
     switch (call.tool) {
       case 'sandbox_exec': {
         const start = Date.now();
-        const result = await execInSandbox(
-          sandboxId,
-          call.args.command,
-          normalizeSandboxWorkdir(call.args.workdir),
-          { markWorkspaceMutated: true },
-        );
+        const markWorkspaceMutated = isLikelyMutatingSandboxExec(call.args.command);
+        const normalizedWorkdir = normalizeSandboxWorkdir(call.args.workdir);
+        const result = markWorkspaceMutated
+          ? await execInSandbox(
+              sandboxId,
+              call.args.command,
+              normalizedWorkdir,
+              { markWorkspaceMutated: true },
+            )
+          : await execInSandbox(
+              sandboxId,
+              call.args.command,
+              normalizedWorkdir,
+            );
         const durationMs = Date.now() - start;
 
         // Exit code -1 means the command was never dispatched — the container
@@ -1025,16 +1057,14 @@ export async function executeSandboxToolCall(
           if (hint) lines.push(`\n[Hint] ${hint}`);
         }
 
-        // Invalidate version cache after exec — commands like `npm install`,
-        // `git checkout`, `sed -i`, etc. can modify files without going through
-        // the write path, leaving the cache stale and causing spurious STALE_FILE
-        // rejections on subsequent writes.
-        // (exitCode === -1 already returned early above, so no guard needed here.)
-        clearFileVersionCache(sandboxId);
-        clearPrefetchedEditFileCache(sandboxId);
-        const staleMarked = fileLedger.markAllStale();
-        if (staleMarked > 0) {
-          lines.push(`\n[Context] Marked ${staleMarked} previously-read file(s) as stale after sandbox_exec. Re-read before editing.`);
+        if (markWorkspaceMutated) {
+          // Mutating execs can change files outside the normal write path.
+          clearFileVersionCache(sandboxId);
+          clearPrefetchedEditFileCache(sandboxId);
+          const staleMarked = fileLedger.markAllStale();
+          if (staleMarked > 0) {
+            lines.push(`\n[Context] Marked ${staleMarked} previously-read file(s) as stale after sandbox_exec. Re-read before editing.`);
+          }
         }
 
         const cardData: SandboxCardData = {
