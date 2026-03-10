@@ -54,7 +54,19 @@ type ReviewContext =
       label: string;
     };
 
+type SavedReviewPayload = {
+  version: 1;
+  savedAt: number;
+  reviewSource: ReviewSourceMode;
+  result: ReviewResult;
+  reviewContext: ReviewContext | null;
+  reviewDiffData: DiffPreviewCardData | null;
+  diffStorageTruncated: boolean;
+};
+
 const REVIEW_PROVIDER_KEY = 'push:review:selected-provider';
+const SAVED_REVIEW_STORAGE_PREFIX = 'push:review:saved:';
+const MAX_SAVED_REVIEW_DIFF_CHARS = 120_000;
 const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   ollama: 'push:review:model:ollama',
   openrouter: 'push:review:model:openrouter',
@@ -81,6 +93,18 @@ function readStoredReviewProvider(): PreferredProvider | null {
   return null;
 }
 
+function isPreferredProvider(value: string): value is PreferredProvider {
+  return (
+    value === 'ollama'
+    || value === 'openrouter'
+    || value === 'zen'
+    || value === 'nvidia'
+    || value === 'azure'
+    || value === 'bedrock'
+    || value === 'vertex'
+  );
+}
+
 function readStoredReviewModels(providerModels: Record<PreferredProvider, string>): Record<PreferredProvider, string> {
   return {
     ollama: safeStorageGet(REVIEW_MODEL_KEYS.ollama) || providerModels.ollama,
@@ -90,6 +114,58 @@ function readStoredReviewModels(providerModels: Record<PreferredProvider, string
     azure: safeStorageGet(REVIEW_MODEL_KEYS.azure) || providerModels.azure,
     bedrock: safeStorageGet(REVIEW_MODEL_KEYS.bedrock) || providerModels.bedrock,
     vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || providerModels.vertex,
+  };
+}
+
+function buildSavedReviewStorageKey(
+  reviewSource: ReviewSourceMode,
+  repoFullName?: string,
+  activeBranch?: string,
+): string {
+  const repoPart = encodeURIComponent(repoFullName || 'sandbox');
+  const branchPart = encodeURIComponent(activeBranch || 'none');
+  return `${SAVED_REVIEW_STORAGE_PREFIX}${repoPart}:${branchPart}:${reviewSource}`;
+}
+
+function parseSavedReviewPayload(raw: string | null): SavedReviewPayload | null {
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<SavedReviewPayload> | null;
+    if (!parsed || parsed.version !== 1) return null;
+    if (!parsed.result || typeof parsed.savedAt !== 'number') return null;
+    return {
+      version: 1,
+      savedAt: parsed.savedAt,
+      reviewSource: parsed.reviewSource === 'github' || parsed.reviewSource === 'commit' || parsed.reviewSource === 'sandbox'
+        ? parsed.reviewSource
+        : 'sandbox',
+      result: parsed.result,
+      reviewContext: parsed.reviewContext ?? null,
+      reviewDiffData: parsed.reviewDiffData ?? null,
+      diffStorageTruncated: Boolean(parsed.diffStorageTruncated),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function trimDiffForStorage(diffData: DiffPreviewCardData | null): {
+  reviewDiffData: DiffPreviewCardData | null;
+  diffStorageTruncated: boolean;
+} {
+  if (!diffData) {
+    return { reviewDiffData: null, diffStorageTruncated: false };
+  }
+  if (diffData.diff.length <= MAX_SAVED_REVIEW_DIFF_CHARS) {
+    return { reviewDiffData: diffData, diffStorageTruncated: false };
+  }
+  return {
+    reviewDiffData: {
+      ...diffData,
+      diff: diffData.diff.slice(0, MAX_SAVED_REVIEW_DIFF_CHARS),
+    },
+    diffStorageTruncated: true,
   };
 }
 
@@ -119,6 +195,16 @@ function groupByFile(comments: ReviewComment[]): Map<string, ReviewComment[]> {
     map.set(c.file, group);
   }
   return map;
+}
+
+function buildAutoExpandFiles(comments: ReviewComment[]): Set<string> {
+  const autoExpand = new Set<string>();
+  for (const comment of comments) {
+    if (comment.severity === 'critical' || comment.severity === 'warning') {
+      autoExpand.add(comment.file);
+    }
+  }
+  return autoExpand;
 }
 
 function severityOrder(s: ReviewComment['severity']): number {
@@ -196,11 +282,18 @@ export function HubReviewTab({
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [reviewContext, setReviewContext] = useState<ReviewContext | null>(null);
   const [reviewDiffData, setReviewDiffData] = useState<DiffPreviewCardData | null>(null);
+  const [savedReview, setSavedReview] = useState<SavedReviewPayload | null>(null);
+  const [savedReviewNotice, setSavedReviewNotice] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [loadedSavedReviewMeta, setLoadedSavedReviewMeta] = useState<{ savedAt: number; diffStorageTruncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [postState, setPostState] = useState<'idle' | 'posting' | 'posted' | 'error'>('idle');
   const [postError, setPostError] = useState<string | null>(null);
+  const reviewStorageKey = useMemo(
+    () => buildSavedReviewStorageKey(reviewSource, repoFullName, activeBranch),
+    [activeBranch, repoFullName, reviewSource],
+  );
 
   useEffect(() => {
     const nextSelected =
@@ -220,6 +313,11 @@ export function HubReviewTab({
       setError(null);
     }
   }, [activeProvider, providerOptions, selectedProvider]);
+
+  useEffect(() => {
+    setSavedReview(parseSavedReviewPayload(safeStorageGet(reviewStorageKey)));
+    setSavedReviewNotice(null);
+  }, [reviewStorageKey]);
 
   useEffect(() => {
     setSelectedModels((prev) => {
@@ -272,6 +370,8 @@ export function HubReviewTab({
       setReviewContext(null);
       setReviewDiffData(null);
       setError(null);
+      setSavedReviewNotice(null);
+      setLoadedSavedReviewMeta(null);
       setPostState('idle');
       setPostError(null);
     }
@@ -299,6 +399,8 @@ export function HubReviewTab({
     setReviewDiffData(null);
     setError(null);
     setStatus(null);
+    setSavedReviewNotice(null);
+    setLoadedSavedReviewMeta(null);
     setExpandedFiles(new Set());
     setPostState('idle');
     setPostError(null);
@@ -340,6 +442,91 @@ export function HubReviewTab({
   const selectedReviewModel = selectedProvider
     ? (selectedModels[selectedProvider]?.trim() || selectedDefaultModel)
     : '';
+  const isCurrentReviewSaved = Boolean(result && savedReview && savedReview.result.reviewedAt === result.reviewedAt);
+
+  const applySavedReview = useCallback((payload: SavedReviewPayload) => {
+    setResult(payload.result);
+    setReviewContext(payload.reviewContext);
+    setReviewDiffData(payload.reviewDiffData);
+    setExpandedFiles(buildAutoExpandFiles(payload.result.comments));
+    setError(null);
+    setStatus(null);
+    setPostState('idle');
+    setPostError(null);
+    setLoadedSavedReviewMeta({
+      savedAt: payload.savedAt,
+      diffStorageTruncated: payload.diffStorageTruncated,
+    });
+
+    if (isPreferredProvider(payload.result.provider)) {
+      setSelectedModels((prev) => ({
+        ...prev,
+        [payload.result.provider]: payload.result.model,
+      }));
+      if (providerOptions.some((provider) => provider.type === payload.result.provider)) {
+        setSelectedProvider(payload.result.provider);
+      }
+    }
+  }, [providerOptions]);
+
+  const handleSaveReview = useCallback(() => {
+    if (!result) {
+      setSavedReviewNotice({ tone: 'error', text: 'Run a review before saving it locally.' });
+      return;
+    }
+
+    const trimmed = trimDiffForStorage(reviewDiffData);
+    const payload: SavedReviewPayload = {
+      version: 1,
+      savedAt: Date.now(),
+      reviewSource,
+      result,
+      reviewContext,
+      reviewDiffData: trimmed.reviewDiffData,
+      diffStorageTruncated: trimmed.diffStorageTruncated,
+    };
+
+    if (!safeStorageSet(reviewStorageKey, JSON.stringify(payload))) {
+      const fallbackPayload: SavedReviewPayload = {
+        ...payload,
+        reviewDiffData: null,
+        diffStorageTruncated: true,
+      };
+      if (!safeStorageSet(reviewStorageKey, JSON.stringify(fallbackPayload))) {
+        setSavedReviewNotice({ tone: 'error', text: 'Failed to save review locally.' });
+        return;
+      }
+      setSavedReview(fallbackPayload);
+      setSavedReviewNotice({ tone: 'info', text: 'Review saved locally without a diff snapshot due to storage limits.' });
+      return;
+    }
+
+    setSavedReview(payload);
+    setSavedReviewNotice({
+      tone: trimmed.diffStorageTruncated ? 'info' : 'success',
+      text: trimmed.diffStorageTruncated
+        ? 'Review saved locally. The diff snapshot was trimmed for storage.'
+        : 'Review saved locally.',
+    });
+  }, [result, reviewContext, reviewDiffData, reviewSource, reviewStorageKey]);
+
+  const handleLoadSavedReview = useCallback(() => {
+    if (!savedReview) return;
+    applySavedReview(savedReview);
+    setSavedReviewNotice({
+      tone: 'info',
+      text: savedReview.diffStorageTruncated
+        ? 'Loaded saved review. The stored diff snapshot was trimmed for local storage.'
+        : 'Loaded saved review.',
+    });
+  }, [applySavedReview, savedReview]);
+
+  const handleClearSavedReview = useCallback(() => {
+    safeStorageRemove(reviewStorageKey);
+    setSavedReview(null);
+    setSavedReviewNotice({ tone: 'success', text: 'Cleared saved review for this scope.' });
+    setLoadedSavedReviewMeta(null);
+  }, [reviewStorageKey]);
 
   const handleRunReview = useCallback(async () => {
     if (running || !selectedProvider) return;
@@ -350,6 +537,8 @@ export function HubReviewTab({
     setReviewContext(null);
     setReviewDiffData(null);
     setStatus(null);
+    setSavedReviewNotice(null);
+    setLoadedSavedReviewMeta(null);
     setExpandedFiles(new Set());
     setPostState('idle');
     setPostError(null);
@@ -425,14 +614,7 @@ export function HubReviewTab({
         deletions: stats.deletions,
         truncated: false,
       });
-      // Expand critical and warning files by default
-      const autoExpand = new Set<string>();
-      for (const c of reviewResult.comments) {
-        if (c.severity === 'critical' || c.severity === 'warning') {
-          autoExpand.add(c.file);
-        }
-      }
-      setExpandedFiles(autoExpand);
+      setExpandedFiles(buildAutoExpandFiles(reviewResult.comments));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Review failed.');
     } finally {
@@ -571,11 +753,53 @@ export function HubReviewTab({
         {error && (
           <p className="text-[11px] text-red-400">{error}</p>
         )}
+        {savedReviewNotice && (
+          <p
+            className={`text-[11px] ${
+              savedReviewNotice.tone === 'error'
+                ? 'text-red-400'
+                : savedReviewNotice.tone === 'success'
+                ? 'text-emerald-400'
+                : 'text-push-fg-dim'
+            }`}
+          >
+            {savedReviewNotice.text}
+          </p>
+        )}
       </div>
 
       {/* Results */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {!result && !running && !error && (
+        {!result && !running && !error && savedReview && (
+          <div className="px-3 py-3">
+            <div className="rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-push-fg">Saved review available</p>
+                  <p className="text-[11px] text-push-fg-dim">
+                    {savedReview.reviewContext?.label || 'Saved review'} · {new Date(savedReview.savedAt).toLocaleString()}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleLoadSavedReview}
+                    className="rounded-lg border border-push-accent/30 bg-push-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15"
+                  >
+                    Load saved
+                  </button>
+                  <button
+                    onClick={handleClearSavedReview}
+                    className="rounded-lg border border-push-edge px-2.5 py-1.5 text-[11px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!result && !running && !error && !savedReview && (
           <div className="flex h-full items-center justify-center">
             <p className="text-xs text-push-fg-dim">
               {reviewSource === 'github'
@@ -614,6 +838,42 @@ export function HubReviewTab({
                 </div>
               )}
               <p className="text-[11px] leading-relaxed text-push-fg-secondary">{result.summary}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <button
+                  onClick={handleSaveReview}
+                  className="rounded-lg border border-push-accent/30 bg-push-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15"
+                >
+                  {isCurrentReviewSaved ? 'Saved locally' : savedReview ? 'Replace saved review' : 'Save locally'}
+                </button>
+                {savedReview && !isCurrentReviewSaved && (
+                  <button
+                    onClick={handleLoadSavedReview}
+                    className="rounded-lg border border-push-edge px-2.5 py-1.5 text-[11px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                  >
+                    Load saved
+                  </button>
+                )}
+                {savedReview && (
+                  <button
+                    onClick={handleClearSavedReview}
+                    className="rounded-lg border border-push-edge px-2.5 py-1.5 text-[11px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                  >
+                    Clear saved
+                  </button>
+                )}
+                {savedReview && (
+                  <span className="text-[10px] text-push-fg-dim">
+                    Saved {new Date(savedReview.savedAt).toLocaleString()}
+                  </span>
+                )}
+              </div>
+              {loadedSavedReviewMeta?.diffStorageTruncated && (
+                <div className="mt-2 rounded-lg border border-push-edge bg-[#0d1119] px-2.5 py-2">
+                  <p className="text-[10px] text-push-fg-dim">
+                    Loaded from local save. The stored diff snapshot was trimmed, so Diff jump targets may be incomplete.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Post to PR */}
@@ -734,6 +994,7 @@ export function HubReviewTab({
                                   {typeof c.line === 'number' ? (
                                     <button
                                       onClick={() => handleOpenCommentInDiff(c.file, c.line)}
+                                      disabled={!reviewDiffData}
                                       className="rounded-full border border-push-accent/30 px-1.5 py-0.5 text-[10px] font-mono text-push-accent transition-colors hover:bg-push-accent/10"
                                       title={`Open ${c.file} at line ${c.line} in Diff`}
                                     >
@@ -745,7 +1006,8 @@ export function HubReviewTab({
                               </div>
                               <button
                                 onClick={() => handleOpenCommentInDiff(c.file, c.line)}
-                                className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-push-edge px-2 py-1 text-[10px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                                disabled={!reviewDiffData}
+                                className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-push-edge px-2 py-1 text-[10px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
                                 title={`Open ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} in Diff`}
                               >
                                 <FileDiff className="h-3 w-3" />
