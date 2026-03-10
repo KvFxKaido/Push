@@ -128,3 +128,131 @@ describe('ambiguous 7-char ref → diagnostic → retry with longer ref', () => 
     expect(result.content).toBe('AAA\nbbb\nCCC\nddd');
   });
 });
+
+describe('batched edits: same-line replace + insert_after', () => {
+  it('replace_line then insert_after with the same line-qualified ref', async () => {
+    const content = 'line1\nline2\nline3';
+    const ref2 = '2:' + await calculateLineHash('line2', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref: ref2, content: 'REPLACED' },
+      { op: 'insert_after', ref: ref2, content: 'INSERTED' },
+    ]);
+    expect(result.applied).toBe(2);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('line1\nREPLACED\nINSERTED\nline3');
+  });
+
+  it('replace_line then insert_before with the same line-qualified ref', async () => {
+    const content = 'line1\nline2\nline3';
+    const ref2 = '2:' + await calculateLineHash('line2', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref: ref2, content: 'REPLACED' },
+      { op: 'insert_before', ref: ref2, content: 'INSERTED' },
+    ]);
+    expect(result.applied).toBe(2);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('line1\nINSERTED\nREPLACED\nline3');
+  });
+
+  it('insert_after shifts later line-qualified refs correctly', async () => {
+    const content = 'aaa\nbbb\nccc\nddd';
+    const refB = '2:' + await calculateLineHash('bbb', 7);
+    const refD = '4:' + await calculateLineHash('ddd', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'insert_after', ref: refB, content: 'NEW' },
+      { op: 'replace_line', ref: refD, content: 'DDD' },
+    ]);
+    expect(result.applied).toBe(2);
+    expect(result.failed).toBe(0);
+    // insert_after bbb adds NEW at position 3, shifting ddd from idx 3 to idx 4
+    expect(result.content).toBe('aaa\nbbb\nNEW\nccc\nDDD');
+  });
+
+  it('delete_line shifts later line-qualified refs correctly', async () => {
+    const content = 'aaa\nbbb\nccc\nddd';
+    const refB = '2:' + await calculateLineHash('bbb', 7);
+    const refD = '4:' + await calculateLineHash('ddd', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'delete_line', ref: refB },
+      { op: 'replace_line', ref: refD, content: 'DDD' },
+    ]);
+    expect(result.applied).toBe(2);
+    expect(result.failed).toBe(0);
+    // delete bbb shifts ccc to idx 1, ddd to idx 2
+    expect(result.content).toBe('aaa\nccc\nDDD');
+  });
+
+  it('multiple ops on same line: replace + two inserts', async () => {
+    const content = 'before\ntarget\nafter';
+    const ref = '2:' + await calculateLineHash('target', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: 'REPLACED' },
+      { op: 'insert_before', ref, content: 'PRE' },
+      { op: 'insert_after', ref, content: 'POST' },
+    ]);
+    expect(result.applied).toBe(3);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('before\nPRE\nREPLACED\nPOST\nafter');
+  });
+
+  it('multiple insert_after on same line preserve order', async () => {
+    const content = 'A\nB\nC';
+    const ref = '2:' + await calculateLineHash('B', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'insert_after', ref, content: 'X' },
+      { op: 'insert_after', ref, content: 'Y' },
+      { op: 'insert_after', ref, content: 'Z' },
+    ]);
+    expect(result.applied).toBe(3);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('A\nB\nX\nY\nZ\nC');
+  });
+
+  it('rejects duplicate delete_line on the same line', async () => {
+    const content = 'A\nB\nC';
+    const ref = '2:' + await calculateLineHash('B', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'delete_line', ref },
+      { op: 'delete_line', ref },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('already deleted');
+    expect(result.content).toBe('A\nC');
+  });
+
+  it('rejects replace_line targeting a line deleted earlier in batch', async () => {
+    const content = 'A\nB\nC';
+    const ref = '2:' + await calculateLineHash('B', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'delete_line', ref },
+      { op: 'replace_line', ref, content: 'NEW' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('already deleted');
+    expect(result.content).toBe('A\nC');
+  });
+
+  it('rejects insert_after targeting a line deleted earlier in batch', async () => {
+    const content = 'A\nB\nC';
+    const ref = '2:' + await calculateLineHash('B', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'delete_line', ref },
+      { op: 'insert_after', ref, content: 'NEW' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('already deleted');
+    expect(result.content).toBe('A\nC');
+  });
+});
