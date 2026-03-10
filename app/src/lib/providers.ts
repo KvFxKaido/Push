@@ -41,6 +41,7 @@ export const OPENROUTER_MODELS: string[] = [
   'openai/gpt-5.3-codex',
   // Free model picks
   'stepfun/step-3.5-flash:free',
+  'stepfun/step-3.5-flash:nitro',
   // Google Gemini
   'google/gemini-3.1-pro-preview:nitro',
   'google/gemini-3.1-flash-lite-preview:nitro',
@@ -49,10 +50,10 @@ export const OPENROUTER_MODELS: string[] = [
   'mistralai/devstral-2512',
   'mistralai/mistral-medium-3.1',
   // MiniMax
-  'minimax/minimax-m2.5',
-  'minimax/minimax-m2.1',
+  'minimax/minimax-m2.5:nitro',
+  'minimax/minimax-m2.1:nitro',
   // Qwen
-  'qwen/qwen3.5-397b-a17b',
+  'qwen/qwen3.5-397b-a17b:nitro',
   // Z.AI (GLM)
   'z-ai/glm-5:nitro',
   'z-ai/glm-4.7:nitro',
