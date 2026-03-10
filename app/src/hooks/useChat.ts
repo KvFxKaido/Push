@@ -509,6 +509,11 @@ export interface ChatRuntimeHandlers {
   onSandboxUnreachable?: (reason: string) => void;
 }
 
+interface ChatDraftSelection {
+  provider: AIProviderType | null;
+  model: string | null;
+}
+
 export function useChat(
   activeRepoFullName: string | null,
   scratchpad?: ScratchpadHandlers,
@@ -548,7 +553,7 @@ export function useChat(
   const loopActiveRef = useRef(false);
 
   // Ref-based access to sendMessage for resume callback (defined later in the hook)
-  const sendMessageRef = useRef<((text: string, attachments?: AttachmentData[]) => Promise<void>) | null>(null);
+  const sendMessageRef = useRef<((text: string, attachments?: AttachmentData[], options?: Partial<ChatDraftSelection>) => Promise<void>) | null>(null);
 
   // Keep activeRepoFullName in a ref so callbacks always see the latest value
   const repoRef = useRef(activeRepoFullName);
@@ -1148,7 +1153,7 @@ export function useChat(
   // --- Send message with tool execution loop ---
 
   const sendMessage = useCallback(
-    async (text: string, attachments?: AttachmentData[]) => {
+    async (text: string, attachments?: AttachmentData[], options?: Partial<ChatDraftSelection>) => {
       if ((!text.trim() && (!attachments || attachments.length === 0)) || isStreaming) return;
 
       let chatId = activeChatId;
@@ -1172,9 +1177,18 @@ export function useChat(
       const newTitle = isFirstMessage ? generateTitle(updatedWithUser) : conversations[chatId]?.title || 'New Chat';
 
       const existingConversation = conversations[chatId];
-      const lockedProviderForChat = (existingConversation?.provider || getActiveProvider()) as ActiveProvider;
+      const requestedProvider = options?.provider || null;
+      const requestedModel = options?.model?.trim() || null;
+      const lockedProviderForChat = (
+        existingConversation?.provider ||
+        requestedProvider ||
+        getActiveProvider()
+      ) as ActiveProvider;
       const existingLockedModel = existingConversation?.model;
-      const resolvedModelForChat = existingLockedModel || getModelNameForProvider(lockedProviderForChat);
+      const resolvedModelForChat =
+        existingLockedModel ||
+        requestedModel ||
+        getModelNameForProvider(lockedProviderForChat);
 
       const shouldPersistProvider = isFirstMessage && !existingConversation?.provider;
       const shouldPersistModel =

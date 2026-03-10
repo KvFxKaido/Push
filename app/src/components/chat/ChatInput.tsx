@@ -17,8 +17,7 @@ interface ChatInputProps {
   repoName?: string;
   contextUsage?: { used: number; max: number; percent: number };
   providerControls?: {
-    activeProvider: AIProviderType;
-    activeBackend: PreferredProvider | null;
+    selectedProvider: PreferredProvider | null;
     availableProviders: readonly (readonly [PreferredProvider, string, boolean])[];
     isProviderLocked: boolean;
     lockedProvider: AIProviderType | null;
@@ -219,8 +218,8 @@ export function ChatInput({
   const selectedProvider: AIProviderType = (() => {
     if (!providerControls) return 'demo';
     if (providerControls.isProviderLocked && providerControls.lockedProvider) return providerControls.lockedProvider;
-    if (providerControls.activeBackend) return providerControls.activeBackend;
-    return providerControls.activeProvider;
+    if (providerControls.selectedProvider) return providerControls.selectedProvider;
+    return providerControls.availableProviders[0]?.[0] ?? 'demo';
   })();
 
   const isDisplayedProviderLocked = Boolean(
@@ -349,7 +348,7 @@ export function ChatInput({
                   <div className="space-y-2.5 px-1 py-1">
                     <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-1.5">
                       <p className="text-[10px] text-[#8e99ad]">
-                        {isDisplayedProviderLocked ? 'Current chat: locked' : 'New chat defaults'}
+                        {isDisplayedProviderLocked ? 'Current chat: locked' : 'This chat selection'}
                       </p>
                     </div>
                     <div className="space-y-1">
@@ -522,6 +521,9 @@ export function ChatInput({
                         </>
                       )}
                     </div>
+                    <p className="px-1 text-[10px] text-[#7c879b]">
+                      Settings controls your defaults. This picker only changes the selected backend/model for this chat.
+                    </p>
                     {isDisplayedProviderLocked && (
                       <p className="px-1 text-[10px] text-amber-400">Changing backend/model here will start a new chat.</p>
                     )}

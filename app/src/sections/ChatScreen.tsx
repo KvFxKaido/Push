@@ -174,6 +174,8 @@ interface ChatScreenProps {
   sandboxDownloading: boolean;
 
   // Provider/model selection from chat
+  selectedChatProvider: PreferredProvider | null;
+  selectedChatModels: Record<PreferredProvider, string>;
   handleSelectBackend: (provider: PreferredProvider) => void;
   handleSelectOllamaModelFromChat: (model: string) => void;
   handleSelectOpenRouterModelFromChat: (model: string) => void;
@@ -283,6 +285,8 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSandboxRestart,
     handleSandboxDownload,
     sandboxDownloading,
+    selectedChatProvider,
+    selectedChatModels,
     handleSelectBackend,
     handleSelectOllamaModelFromChat,
     handleSelectOpenRouterModelFromChat,
@@ -854,14 +858,13 @@ export function ChatScreen(props: ChatScreenProps) {
         repoName={activeRepo?.name}
         contextUsage={contextUsage}
         providerControls={{
-          activeProvider: catalog.activeProviderLabel,
-          activeBackend: catalog.activeBackend,
+          selectedProvider: selectedChatProvider,
           availableProviders: catalog.availableProviders,
           isProviderLocked,
           lockedProvider,
           lockedModel,
           onSelectBackend: handleSelectBackend,
-          ollamaModel: catalog.ollama.model,
+          ollamaModel: selectedChatModels.ollama,
           ollamaModelOptions: catalog.ollamaModelOptions,
           ollamaModelsLoading: catalog.ollamaModels.loading,
           ollamaModelsError: catalog.ollamaModels.error,
@@ -869,11 +872,11 @@ export function ChatScreen(props: ChatScreenProps) {
           isOllamaModelLocked,
           refreshOllamaModels: catalog.refreshOllamaModels,
           onSelectOllamaModel: handleSelectOllamaModelFromChat,
-          openRouterModel: catalog.openRouter.model,
+          openRouterModel: selectedChatModels.openrouter,
           openRouterModelOptions: catalog.openRouterModelOptions,
           isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
           onSelectOpenRouterModel: handleSelectOpenRouterModelFromChat,
-          zenModel: catalog.zen.model,
+          zenModel: selectedChatModels.zen,
           zenModelOptions: catalog.zenModelOptions,
           zenModelsLoading: catalog.zenModels.loading,
           zenModelsError: catalog.zenModels.error,
@@ -881,7 +884,7 @@ export function ChatScreen(props: ChatScreenProps) {
           isZenModelLocked,
           refreshZenModels: catalog.refreshZenModels,
           onSelectZenModel: handleSelectZenModelFromChat,
-          nvidiaModel: catalog.nvidia.model,
+          nvidiaModel: selectedChatModels.nvidia,
           nvidiaModelOptions: catalog.nvidiaModelOptions,
           nvidiaModelsLoading: catalog.nvidiaModels.loading,
           nvidiaModelsError: catalog.nvidiaModels.error,

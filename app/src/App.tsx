@@ -15,7 +15,6 @@ import { useSnapshotManager } from '@/hooks/useSnapshotManager';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { useProjectInstructions } from '@/hooks/useProjectInstructions';
 import {
-  setPreferredProvider,
   type PreferredProvider,
 } from '@/lib/providers';
 import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
@@ -23,7 +22,7 @@ import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import { LazySettingsSheet } from '@/components/LazySettingsSheet';
-import type { AppScreen, RepoWithActivity, SandboxStateCardData } from '@/types';
+import type { AppScreen, AttachmentData, RepoWithActivity, SandboxStateCardData } from '@/types';
 import './App.css';
 
 // --- Lazy-loaded screen & settings components (code-split) ---
@@ -43,6 +42,16 @@ const ChatScreen = lazyWithRecovery(
 
 const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
 
+type ChatComposerDraft = {
+  provider: PreferredProvider | null;
+  models: Record<PreferredProvider, string>;
+};
+
+type ChatComposerDraftUpdate = {
+  provider?: PreferredProvider | null;
+  models?: Partial<Record<PreferredProvider, string>>;
+};
+
 function App() {
   // --- Core state ---
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
@@ -50,6 +59,47 @@ function App() {
   const [isWorkspaceHubOpen, setIsWorkspaceHubOpen] = useState(false);
   const [isSandboxMode, setIsSandboxMode] = useState(false);
   const sandbox = useSandbox(isSandboxMode ? '' : (activeRepo?.full_name ?? null));
+  const catalog = useModelCatalog();
+
+  const defaultChatModels = useMemo<Record<PreferredProvider, string>>(() => ({
+    ollama: catalog.ollama.model,
+    openrouter: catalog.openRouter.model,
+    zen: catalog.zen.model,
+    nvidia: catalog.nvidia.model,
+  }), [catalog.nvidia.model, catalog.ollama.model, catalog.openRouter.model, catalog.zen.model]);
+
+  const availableChatProviders = useMemo(
+    () => new Set(catalog.availableProviders.map(([provider]) => provider)),
+    [catalog.availableProviders],
+  );
+
+  const defaultChatProvider = useMemo<PreferredProvider | null>(() => {
+    if (catalog.activeBackend && availableChatProviders.has(catalog.activeBackend)) {
+      return catalog.activeBackend;
+    }
+    if (catalog.activeProviderLabel !== 'demo' && availableChatProviders.has(catalog.activeProviderLabel)) {
+      return catalog.activeProviderLabel;
+    }
+    return catalog.availableProviders[0]?.[0] ?? null;
+  }, [availableChatProviders, catalog.activeBackend, catalog.activeProviderLabel, catalog.availableProviders]);
+
+  const normalizeChatDraft = useCallback((draft?: Partial<ChatComposerDraft> | null): ChatComposerDraft => {
+    const models: Record<PreferredProvider, string> = {
+      ollama: draft?.models?.ollama?.trim() || defaultChatModels.ollama,
+      openrouter: draft?.models?.openrouter?.trim() || defaultChatModels.openrouter,
+      zen: draft?.models?.zen?.trim() || defaultChatModels.zen,
+      nvidia: draft?.models?.nvidia?.trim() || defaultChatModels.nvidia,
+    };
+
+    let provider = draft?.provider ?? defaultChatProvider;
+    if (provider && !availableChatProviders.has(provider)) {
+      provider = defaultChatProvider;
+    }
+
+    return { provider, models };
+  }, [availableChatProviders, defaultChatModels, defaultChatProvider]);
+
+  const [chatDrafts, setChatDrafts] = useState<Record<string, ChatComposerDraft>>({});
 
   // --- Chat ---
   const skipBranchTeardownRef = useRef(false);
@@ -116,6 +166,69 @@ function App() {
     },
   );
 
+  const activeConversation = activeChatId ? conversations[activeChatId] : undefined;
+
+  const activeChatDraft = useMemo(() => {
+    const storedDraft = activeChatId ? chatDrafts[activeChatId] : null;
+    const baseDraft = normalizeChatDraft(storedDraft);
+
+    if (activeConversation?.provider && activeConversation.provider !== 'demo') {
+      return normalizeChatDraft({
+        provider: activeConversation.provider,
+        models: activeConversation.model
+          ? { ...baseDraft.models, [activeConversation.provider]: activeConversation.model }
+          : baseDraft.models,
+      });
+    }
+
+    return baseDraft;
+  }, [activeChatId, activeConversation?.model, activeConversation?.provider, chatDrafts, normalizeChatDraft]);
+
+  useEffect(() => {
+    setChatDrafts((prev) => {
+      let changed = false;
+      const next: Record<string, ChatComposerDraft> = {};
+
+      for (const [chatId, draft] of Object.entries(prev)) {
+        const conversation = conversations[chatId];
+        if (!conversation || conversation.provider) {
+          changed = true;
+          continue;
+        }
+        next[chatId] = draft;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [conversations]);
+
+  const upsertChatDraft = useCallback((chatId: string, updates: ChatComposerDraftUpdate) => {
+    setChatDrafts((prev) => {
+      const current = normalizeChatDraft(prev[chatId]);
+      const next = normalizeChatDraft({
+        provider: updates.provider ?? current.provider,
+        models: {
+          ...current.models,
+          ...(updates.models ?? {}),
+        },
+      });
+      return {
+        ...prev,
+        [chatId]: next,
+      };
+    });
+  }, [normalizeChatDraft]);
+
+  const ensureDraftChatForComposerChange = useCallback((): string => {
+    if (activeChatId && !isProviderLocked && !isModelLocked) {
+      return activeChatId;
+    }
+
+    const nextId = createNewChat();
+    upsertChatDraft(nextId, activeChatDraft);
+    return nextId;
+  }, [activeChatDraft, activeChatId, createNewChat, isModelLocked, isProviderLocked, upsertChatDraft]);
+
   // --- Protect Main ---
   const protectMain = useProtectMain(activeRepo?.full_name ?? undefined);
   useEffect(() => {
@@ -151,8 +264,14 @@ function App() {
   const validatedUser = appUser || patUser;
   const { repos, loading: reposLoading, error: reposError, sync: syncRepos } = useRepos();
 
+  const sendMessageWithChatDraft = useCallback((message: string, attachments?: AttachmentData[]) => {
+    return sendMessage(message, attachments, {
+      provider: activeChatDraft.provider,
+      model: activeChatDraft.provider ? activeChatDraft.models[activeChatDraft.provider] : null,
+    });
+  }, [activeChatDraft, sendMessage]);
+
   // --- Extracted hooks ---
-  const catalog = useModelCatalog();
   const snapshots = useSnapshotManager(isSandboxMode, sandbox, activeRepo, isStreaming);
   const branches = useBranchManager(activeRepo, isSandboxMode);
   const [showFileBrowser, setShowFileBrowser] = useState(false);
@@ -164,7 +283,7 @@ function App() {
     sandbox,
     setAgentsMd,
     setWorkspaceContext,
-    sendMessage,
+    sendMessageWithChatDraft,
     isStreaming,
     setShowFileBrowser,
     snapshots.markSnapshotActivity,
@@ -325,45 +444,30 @@ function App() {
     setSettingsOpen(true);
   }, []);
 
-  const ensureUnlockedChatForProviderChange = useCallback(() => {
-    if (isProviderLocked || isModelLocked) {
-      const id = createNewChat();
-      switchChat(id);
-    }
-  }, [isProviderLocked, isModelLocked, createNewChat, switchChat]);
-
-  // Destructure stable setter refs from catalog to avoid depending on the whole object
-  const { setActiveBackend: setCatalogBackend } = catalog;
-  const setOllamaModel = catalog.ollama.setModel;
-  const setOpenRouterModel = catalog.openRouter.setModel;
-  const setZenModel = catalog.zen.setModel;
-  const setNvidiaModel = catalog.nvidia.setModel;
-
   const handleSelectBackend = useCallback((provider: PreferredProvider) => {
-    ensureUnlockedChatForProviderChange();
-    setPreferredProvider(provider);
-    setCatalogBackend(provider);
-  }, [ensureUnlockedChatForProviderChange, setCatalogBackend]);
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { provider });
+  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
 
   const handleSelectOllamaModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setOllamaModel(model);
-  }, [ensureUnlockedChatForProviderChange, setOllamaModel]);
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { ollama: model } });
+  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
 
   const handleSelectOpenRouterModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setOpenRouterModel(model);
-  }, [ensureUnlockedChatForProviderChange, setOpenRouterModel]);
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { openrouter: model } });
+  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
 
   const handleSelectZenModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setZenModel(model);
-  }, [ensureUnlockedChatForProviderChange, setZenModel]);
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { zen: model } });
+  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
 
   const handleSelectNvidiaModelFromChat = useCallback((model: string) => {
-    ensureUnlockedChatForProviderChange();
-    setNvidiaModel(model);
-  }, [ensureUnlockedChatForProviderChange, setNvidiaModel]);
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { nvidia: model } });
+  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
 
   const handleDisconnect = useCallback(() => {
     appDisconnect();
@@ -751,7 +855,7 @@ function App() {
       isSandboxMode={isSandboxMode}
       sandbox={sandbox}
       messages={messages}
-      sendMessage={sendMessage}
+      sendMessage={sendMessageWithChatDraft}
       agentStatus={agentStatus}
       agentEvents={agentEvents}
       isStreaming={isStreaming}
@@ -809,6 +913,8 @@ function App() {
       handleSandboxRestart={handleSandboxRestart}
       handleSandboxDownload={handleSandboxDownload}
       sandboxDownloading={sandboxDownloading}
+      selectedChatProvider={activeChatDraft.provider}
+      selectedChatModels={activeChatDraft.models}
       handleSelectBackend={handleSelectBackend}
       handleSelectOllamaModelFromChat={handleSelectOllamaModelFromChat}
       handleSelectOpenRouterModelFromChat={handleSelectOpenRouterModelFromChat}

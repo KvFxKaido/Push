@@ -6,6 +6,7 @@ import { executePostPRReview, fetchGitHubReviewDiff, fetchLatestCommitDiff } fro
 import { parseDiffStats } from '@/lib/diff-utils';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import type { PreferredProvider } from '@/lib/providers';
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import type { DiffPreviewCardData, ReviewResult, ReviewComment } from '@/types';
 
 interface HubReviewTabProps {
@@ -51,6 +52,31 @@ type ReviewContext =
       kind: 'sandbox';
       label: string;
     };
+
+const REVIEW_PROVIDER_KEY = 'push:review:selected-provider';
+const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
+  ollama: 'push:review:model:ollama',
+  openrouter: 'push:review:model:openrouter',
+  zen: 'push:review:model:zen',
+  nvidia: 'push:review:model:nvidia',
+};
+
+function readStoredReviewProvider(): PreferredProvider | null {
+  const stored = safeStorageGet(REVIEW_PROVIDER_KEY);
+  if (stored === 'ollama' || stored === 'openrouter' || stored === 'zen' || stored === 'nvidia') {
+    return stored;
+  }
+  return null;
+}
+
+function readStoredReviewModels(providerModels: Record<PreferredProvider, string>): Record<PreferredProvider, string> {
+  return {
+    ollama: safeStorageGet(REVIEW_MODEL_KEYS.ollama) || providerModels.ollama,
+    openrouter: safeStorageGet(REVIEW_MODEL_KEYS.openrouter) || providerModels.openrouter,
+    zen: safeStorageGet(REVIEW_MODEL_KEYS.zen) || providerModels.zen,
+    nvidia: safeStorageGet(REVIEW_MODEL_KEYS.nvidia) || providerModels.nvidia,
+  };
+}
 
 function severityIcon(severity: ReviewComment['severity']) {
   switch (severity) {
@@ -105,9 +131,9 @@ export function HubReviewTab({
   // Open PRs with the default branch as head are essentially impossible in practice.
   const hasGitHubSource = Boolean(repoFullName && activeBranch && defaultBranch && activeBranch !== defaultBranch);
   const hasCommitSource = Boolean(repoFullName && activeBranch);
-  const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(() => readStoredReviewProvider());
   const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(hasGitHubSource ? 'github' : hasCommitSource ? 'commit' : 'sandbox');
-  const [modelOverride, setModelOverride] = useState('');
+  const [selectedModels, setSelectedModels] = useState<Record<PreferredProvider, string>>(() => readStoredReviewModels(providerModels));
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [reviewContext, setReviewContext] = useState<ReviewContext | null>(null);
@@ -128,7 +154,6 @@ export function HubReviewTab({
 
     if (nextSelected !== selectedProvider) {
       setSelectedProvider(nextSelected);
-      setModelOverride('');
     }
 
     if (providerOptions.length === 0) {
@@ -137,6 +162,33 @@ export function HubReviewTab({
       setError(null);
     }
   }, [activeProvider, providerOptions, selectedProvider]);
+
+  useEffect(() => {
+    setSelectedModels((prev) => {
+      const next = {
+        ollama: prev.ollama || providerModels.ollama,
+        openrouter: prev.openrouter || providerModels.openrouter,
+        zen: prev.zen || providerModels.zen,
+        nvidia: prev.nvidia || providerModels.nvidia,
+      };
+      return (
+        next.ollama === prev.ollama &&
+        next.openrouter === prev.openrouter &&
+        next.zen === prev.zen &&
+        next.nvidia === prev.nvidia
+      )
+        ? prev
+        : next;
+    });
+  }, [providerModels.nvidia, providerModels.ollama, providerModels.openrouter, providerModels.zen]);
+
+  useEffect(() => {
+    if (selectedProvider) {
+      safeStorageSet(REVIEW_PROVIDER_KEY, selectedProvider);
+    } else {
+      safeStorageRemove(REVIEW_PROVIDER_KEY);
+    }
+  }, [selectedProvider]);
 
   useEffect(() => {
     const needsReset =
@@ -155,8 +207,18 @@ export function HubReviewTab({
 
   const handleProviderChange = useCallback((p: PreferredProvider) => {
     setSelectedProvider(p);
-    setModelOverride('');
   }, []);
+
+  const handleModelChange = useCallback((nextModel: string) => {
+    if (!selectedProvider) return;
+    setSelectedModels((prev) => ({ ...prev, [selectedProvider]: nextModel }));
+    const trimmed = nextModel.trim();
+    if (trimmed) {
+      safeStorageSet(REVIEW_MODEL_KEYS[selectedProvider], trimmed);
+    } else {
+      safeStorageRemove(REVIEW_MODEL_KEYS[selectedProvider]);
+    }
+  }, [selectedProvider]);
 
   const handleSourceChange = useCallback((source: ReviewSourceMode) => {
     setReviewSource(source);
@@ -200,6 +262,12 @@ export function HubReviewTab({
       target: { path: file, ...(line !== undefined ? { line } : {}) },
     });
   }, [onOpenDiff, reviewContext, reviewDiffData]);
+
+  const selectedDefaultModel = selectedProvider ? providerModels[selectedProvider] : '';
+  const selectedReviewModelInput = selectedProvider ? selectedModels[selectedProvider] ?? '' : '';
+  const selectedReviewModel = selectedProvider
+    ? (selectedModels[selectedProvider]?.trim() || selectedDefaultModel)
+    : '';
 
   const handleRunReview = useCallback(async () => {
     if (running || !selectedProvider) return;
@@ -271,7 +339,7 @@ export function HubReviewTab({
 
       const reviewResult = await runReviewer(
         diff,
-        { provider: selectedProvider, model: modelOverride.trim() || undefined },
+        { provider: selectedProvider, model: selectedReviewModel || undefined },
         (phase) => setStatus(phase),
       );
       const stats = parseDiffStats(diff);
@@ -303,16 +371,15 @@ export function HubReviewTab({
     activeBranch,
     defaultBranch,
     ensureSandbox,
-    modelOverride,
     repoFullName,
     reviewSource,
     running,
     sandboxId,
     selectedProvider,
+    selectedReviewModel,
   ]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
-  const selectedDefaultModel = selectedProvider ? providerModels[selectedProvider] : '';
   const canRunReview =
     !running &&
     Boolean(selectedProvider) &&
@@ -402,9 +469,9 @@ export function HubReviewTab({
             <div className="flex items-center gap-2">
               <input
                 type="text"
-                value={modelOverride}
-                onChange={(e) => setModelOverride(e.target.value)}
-                placeholder={selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Model ID override'}
+                value={selectedReviewModelInput}
+                onChange={(e) => handleModelChange(e.target.value)}
+                placeholder={selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'}
                 className="min-w-0 flex-1 rounded-lg border border-push-edge bg-[#080d14] px-2.5 py-1.5 text-[11px] text-push-fg-secondary placeholder:text-push-fg-dim focus:border-push-accent/40 focus:outline-none"
               />
               <button
@@ -418,8 +485,8 @@ export function HubReviewTab({
             </div>
             {selectedDefaultModel && (
               <p className="text-[10px] text-push-fg-dim">
-                Using provider default: <span className="text-push-fg-secondary">{selectedDefaultModel}</span>
-                {modelOverride.trim() ? ' (override active)' : ''}
+                Review model: <span className="text-push-fg-secondary">{selectedReviewModel}</span>
+                {selectedReviewModelInput.trim() ? '' : ' (using Settings default)'}
               </p>
             )}
           </>
