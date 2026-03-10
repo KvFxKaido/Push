@@ -65,7 +65,7 @@ export function EditorPanel({
     });
     // The parent will handle the actual write — we optimistically show saved state
     setTimeout(() => setSaving(false), 1000);
-  }, [onAction, messageId, cardIndex, data.path, data.sandboxId, data.version, editedContent, isDirty]);
+  }, [onAction, messageId, cardIndex, data.path, data.sandboxId, data.version, data.workspaceRevision, editedContent, isDirty]);
 
   const filename = data.path.split('/').pop() || data.path;
 
