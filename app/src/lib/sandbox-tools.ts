@@ -1541,6 +1541,27 @@ export async function executeSandboxToolCall(
 
         try {
           const { ops } = await buildRangeReplaceHashlineOps(hydrated.content, start_line, end_line, content);
+
+          // Prime the edit guard/read path so delegated sandbox_edit_file does not
+          // need to re-read just to establish awareness.
+          const hydratedLineCount = hydrated.content.split('\n').length;
+          const hydratedSymbols = extractSignaturesWithLines(hydrated.content);
+          fileLedger.recordRead(path, {
+            truncated: hydrated.truncated,
+            totalLines: hydratedLineCount,
+            symbols: hydratedSymbols,
+          });
+          if (typeof hydrated.version === 'string' && hydrated.version) {
+            versionCacheSet(fileVersionKey(sandboxId, path), hydrated.version);
+          }
+          setPrefetchedEditFile(
+            sandboxId,
+            path,
+            hydrated.content,
+            typeof hydrated.version === 'string' ? hydrated.version : undefined,
+            hydrated.truncated,
+          );
+
           return executeSandboxToolCall(
             {
               tool: 'sandbox_edit_file',
@@ -1644,10 +1665,10 @@ export async function executeSandboxToolCall(
 
         const ops: HashlineOp[] = [{ op: 'replace_line', ref: anchorRef, content: newLines[0] }];
         if (newLines.length > 1) {
-          const newAnchorHash = await calculateLineHash(newLines[0], 7);
-          const newAnchorRef = `${lineNo}:${newAnchorHash}`;
+          // Use the original anchor ref — applyHashlineEdits resolves all refs
+          // against the original content, so a post-replace hash would fail.
           for (const line of newLines.slice(1).reverse()) {
-            ops.push({ op: 'insert_after', ref: newAnchorRef, content: line });
+            ops.push({ op: 'insert_after', ref: anchorRef, content: line });
           }
         }
 
