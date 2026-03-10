@@ -17,7 +17,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { categorizeSandboxError } from '@/components/chat/SandboxStatusBanner';
+import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
 import { toast } from 'sonner';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { runAuditor } from '@/lib/auditor-agent';
