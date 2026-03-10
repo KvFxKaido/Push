@@ -82,11 +82,11 @@ module.exports = {
         },
       },
       fontSize: {
-        'push-2xs': '10px',   // micro labels, badges
-        'push-xs':  '11px',   // labels, timestamps
-        'push-sm':  '12px',   // secondary body
-        'push-base': '13px',  // primary body
-        'push-lg':  '15px',   // section headings
+        'push-2xs': ['10px', { lineHeight: '14px' }],  // micro labels, badges
+        'push-xs':  ['11px', { lineHeight: '16px' }],  // labels, timestamps
+        'push-sm':  ['12px', { lineHeight: '16px' }],  // secondary body
+        'push-base': ['13px', { lineHeight: '18px' }], // primary body
+        'push-lg':  ['15px', { lineHeight: '20px' }],  // section headings
       },
       borderRadius: {
         xl: "calc(var(--radius) + 4px)",
