@@ -402,12 +402,14 @@ def _sandbox_error_response(exc: Exception, default_fields: dict | None = None) 
     Instead of letting these bubble up as raw 500s, callers catch and return
     structured JSON so the client gets a proper error_type it can act on.
     """
+    exc_type = type(exc).__name__
     msg = (
         "Sandbox container error. The container may be unhealthy "
-        f"— try restarting the sandbox. ({type(exc).__name__})"
+        f"— try restarting the sandbox. ({exc_type})"
     )
     result = default_fields.copy() if default_fields else {}
     result["error"] = msg
+    result["code"] = "CONTAINER_ERROR"
     return result
 
 
@@ -521,11 +523,19 @@ def _write_temp_payload(sb: modal.Sandbox, payload: str, tmp_path: str = "/tmp/p
     Returns None on success, or an error string on failure.
     Uses chunked writes to avoid Linux's MAX_ARG_STRLEN (128KB per arg) limit.
     """
-    sb.exec("rm", "-f", tmp_path).wait()
+    try:
+        p = sb.exec("rm", "-f", tmp_path)
+        if not _wait_with_timeout(p, timeout_seconds=10):
+            return "Temp file cleanup timed out"
+    except Exception as exc:
+        return f"Temp file cleanup failed: {type(exc).__name__}: {exc}"
     chunk_size = 100_000  # well under 128KB single-arg limit
     for i in range(0, len(payload), chunk_size):
         chunk = payload[i : i + chunk_size].replace("'", "'\\''")
-        p = sb.exec("bash", "-c", f"printf '%s' '{chunk}' >> {tmp_path}")
+        try:
+            p = sb.exec("bash", "-c", f"printf '%s' '{chunk}' >> {tmp_path}")
+        except Exception as exc:
+            return f"Payload upload exec failed: {type(exc).__name__}: {exc}"
         if not _wait_with_timeout(p, timeout_seconds=15):
             return "Payload upload timed out"
         if p.returncode != 0:
@@ -964,6 +974,25 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
                 result["end_line"] = end_line
         return result
 
+    if action in ("write", "batch_write"):
+        # Health-check: verify the sandbox can execute before starting the
+        # multi-step write flow.  A quick `true` catches dead containers early
+        # and produces a clear error instead of an opaque InvalidError mid-write.
+        try:
+            ping = sb.exec("true")
+            if not _wait_with_timeout(ping, timeout_seconds=10):
+                code = "CONTAINER_ERROR"
+                msg = "Sandbox health check timed out before write. The container may need to be restarted."
+                if action == "batch_write":
+                    return {"ok": False, "error": msg, "code": code, "results": []}
+                return {"ok": False, "error": msg, "code": code}
+        except Exception as exc:
+            code = "CONTAINER_ERROR"
+            msg = f"Sandbox health check failed before write: {type(exc).__name__}: {exc}"
+            if action == "batch_write":
+                return {"ok": False, "error": msg, "code": code, "results": []}
+            return {"ok": False, "error": msg, "code": code}
+
     if action == "write":
         content = str(data.get("content", ""))
         expected_version_raw = data.get("expected_version")
@@ -1006,7 +1035,8 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
             return result
         finally:
             try:
-                sb.exec("rm", "-f", tmp_path).wait()
+                p = sb.exec("rm", "-f", tmp_path)
+                _wait_with_timeout(p, timeout_seconds=5)
             except Exception:
                 pass
 
@@ -1068,7 +1098,8 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
             }
         finally:
             try:
-                sb.exec("rm", "-f", tmp_path).wait()
+                p = sb.exec("rm", "-f", tmp_path)
+                _wait_with_timeout(p, timeout_seconds=5)
             except Exception:
                 pass
 
