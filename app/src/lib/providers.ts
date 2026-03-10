@@ -33,15 +33,25 @@ export const OPENROUTER_MODELS: string[] = [
   'anthropic/claude-sonnet-4.6:nitro',
   'anthropic/claude-opus-4.6:nitro',
   'anthropic/claude-haiku-4.5:nitro',
-  // OpenAI GPT-5.4
+  'anthropic/claude-3.5-haiku:nitro',
+  'anthropic/claude-3-haiku:nitro',
+  // OpenAI GPT-4.1 / GPT-4o / GPT-5.4
+  'openai/gpt-4.1-mini:nitro',
+  'openai/gpt-4.1-nano:nitro',
+  'openai/gpt-4o-mini:nitro',
   'openai/gpt-5.4-pro',
   'openai/gpt-5.4',
+  'openai/gpt-5-mini:nitro',
   // OpenAI Codex
+  'openai/gpt-5.1-codex-mini:nitro',
   'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
   // Free model picks
   'stepfun/step-3.5-flash:free',
   'stepfun/step-3.5-flash:nitro',
+  // Cohere
+  'cohere/command-r-plus-08-2024',
+  'cohere/command-r-08-2024',
   // Google Gemini
   'google/gemini-3.1-pro-preview:nitro',
   'google/gemini-3.1-flash-lite-preview:nitro',
@@ -66,6 +76,7 @@ export const OPENROUTER_MODELS: string[] = [
   'inception/mercury-coder',
   'inception/mercury',
   // Others
+  'xiaomi/mimo-v2-flash:nitro',
   'x-ai/grok-4.1-fast',
   'moonshotai/kimi-k2.5:nitro',
 ];

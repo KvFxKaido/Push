@@ -48,7 +48,7 @@ Four providers, all using OpenAI-compatible SSE streaming. Any single API key is
 | **OpenCode Zen** | big-pickle |
 | **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
 
-**OpenRouter** provides access to 50+ models through a single API. Push ships with a curated catalog spanning Claude, GPT-5.4, Codex, Gemini, Mistral, MiniMax, Qwen, GLM, DeepSeek, Mercury, Grok, and Kimi.
+**OpenRouter** provides access to 50+ models through a single API. Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-4o/GPT-5.4, Codex, Cohere Command-R, Gemini, Mistral, MiniMax, Qwen, GLM, DeepSeek, Mercury, Xiaomi MiMo, Grok, and Kimi.
 
 ### Tool Protocol
 
