@@ -348,13 +348,15 @@ export function classifyError(error: string, context?: string): StructuredToolEr
   if (lower.includes('no such file') || lower.includes('enoent') || lower.includes('not found') || lower.includes('does not exist')) {
     return { type: 'FILE_NOT_FOUND', retryable: false, message: error, detail: context };
   }
-  if (lower.includes('timed out') || lower.includes('timeout') || lower.includes('modal_timeout')) {
-    return { type: 'EXEC_TIMEOUT', retryable: true, message: error, detail: context };
-  }
+  // Health-check failures must be matched before the generic timeout check so
+  // "health check timed out" is classified as SANDBOX_UNREACHABLE, not EXEC_TIMEOUT.
   if (lower.includes('sandbox_unreachable') || lower.includes('modal_network_error') || lower.includes('cannot connect') || lower.includes('modal_error') || lower.includes('sandbox unavailable') || lower.includes('container error') || lower.includes('container_error') || lower.includes('no longer reachable') || lower.includes('internal server error') || lower.includes('health check failed') || lower.includes('health check timed out')) {
     // Transient container health issues are retryable; permanent config issues are not
     const transient = lower.includes('internal server error') || lower.includes('container error') || lower.includes('container_error') || lower.includes('modal_network_error') || lower.includes('modal_error') || lower.includes('health check');
     return { type: 'SANDBOX_UNREACHABLE', retryable: transient, message: error, detail: context };
+  }
+  if (lower.includes('timed out') || lower.includes('timeout') || lower.includes('modal_timeout')) {
+    return { type: 'EXEC_TIMEOUT', retryable: true, message: error, detail: context };
   }
   if (lower.includes('workspace changed') || lower.includes('workspace_changed')) {
     return { type: 'WORKSPACE_CHANGED', retryable: false, message: error, detail: context };
@@ -390,6 +392,25 @@ function formatStructuredError(err: StructuredToolError, baseText: string): stri
     `error_type: ${err.type}`,
     `retryable: ${err.retryable}`,
   ].join('\n');
+}
+
+/**
+ * Retry a sandbox write operation once after a 2s backoff when the result
+ * indicates a CONTAINER_ERROR.  HTTP-level retries in sandboxFetch only fire on
+ * non-200 responses; container errors come back as 200 with ok:false, so this
+ * application-level retry is needed to catch transient health blips.
+ */
+async function retryOnContainerError<T extends { ok: boolean; code?: string }>(
+  label: string,
+  writeFn: () => Promise<T>,
+): Promise<T> {
+  let result = await writeFn();
+  if (!result.ok && result.code === 'CONTAINER_ERROR') {
+    console.log(`[${label}] Container error, retrying in 2s...`);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    result = await writeFn();
+  }
+  return result;
 }
 
 function getGitHubHeaders(token: string): Record<string, string> {
@@ -1582,21 +1603,12 @@ export async function executeSandboxToolCall(
           typeof readResult.workspace_revision === 'number'
             ? readResult.workspace_revision
             : getWorkspaceRevisionByKey(editCacheKey);
-        let editWriteResult = editWriteWorkspaceRevision === undefined
-          ? await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion)
-          : await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion, editWriteWorkspaceRevision);
-
-        // Application-level retry for container errors — the HTTP-level retry in
-        // sandboxFetch only fires on non-200 responses, but container errors come
-        // back as 200 with ok:false.  One retry with a 2s backoff catches transient
-        // sandbox health blips that resolve on the next attempt.
-        if (!editWriteResult.ok && editWriteResult.code === 'CONTAINER_ERROR') {
-          console.log(`[sandbox_edit_file] Container error on write to ${path}, retrying in 2s...`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          editWriteResult = editWriteWorkspaceRevision === undefined
-            ? await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion)
-            : await writeToSandbox(sandboxId, path, editResult.content, editWriteVersion, editWriteWorkspaceRevision);
-        }
+        const editWriteResult = await retryOnContainerError(
+          'sandbox_edit_file',
+          () => editWriteWorkspaceRevision === undefined
+            ? writeToSandbox(sandboxId, path, editResult.content, editWriteVersion)
+            : writeToSandbox(sandboxId, path, editResult.content, editWriteVersion, editWriteWorkspaceRevision),
+        );
 
         if (!editWriteResult.ok) {
           if (editWriteResult.code === 'WORKSPACE_CHANGED') {
@@ -2005,18 +2017,12 @@ export async function executeSandboxToolCall(
         const staleWarning = fileLedger.getStaleWarning(call.args.path);
 
         try {
-          let result = freshWorkspaceRevision === undefined
-            ? await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion)
-            : await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion, freshWorkspaceRevision);
-
-          // Application-level retry for container errors (see sandbox_edit_file for rationale)
-          if (!result.ok && result.code === 'CONTAINER_ERROR') {
-            console.log(`[sandbox_write_file] Container error on write to ${call.args.path}, retrying in 2s...`);
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            result = freshWorkspaceRevision === undefined
-              ? await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion)
-              : await writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion, freshWorkspaceRevision);
-          }
+          const result = await retryOnContainerError(
+            'sandbox_write_file',
+            () => freshWorkspaceRevision === undefined
+              ? writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion)
+              : writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion, freshWorkspaceRevision),
+          );
 
           if (!result.ok) {
             if (result.code === 'WORKSPACE_CHANGED') {
@@ -3203,17 +3209,27 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
             content: r.content,
             expected_version: r.version,
           }));
-          let batchResult = patchsetWorkspaceRevision === undefined
-            ? await batchWriteToSandbox(sandboxId, batchEntries)
-            : await batchWriteToSandbox(sandboxId, batchEntries, patchsetWorkspaceRevision);
+          const batchResult = await retryOnContainerError(
+            'sandbox_apply_patchset',
+            () => patchsetWorkspaceRevision === undefined
+              ? batchWriteToSandbox(sandboxId, batchEntries)
+              : batchWriteToSandbox(sandboxId, batchEntries, patchsetWorkspaceRevision),
+          );
 
-          // Application-level retry for container errors (see sandbox_edit_file for rationale)
-          if (!batchResult.ok && batchResult.code === 'CONTAINER_ERROR') {
-            console.log(`[sandbox_apply_patchset] Container error on batch write, retrying in 2s...`);
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            batchResult = patchsetWorkspaceRevision === undefined
-              ? await batchWriteToSandbox(sandboxId, batchEntries)
-              : await batchWriteToSandbox(sandboxId, batchEntries, patchsetWorkspaceRevision);
+          // Batch-level failure: the backend returned ok:false with no per-file results
+          // (e.g. CONTAINER_ERROR after retry, or an unexpected server error).
+          if (!batchResult.ok && (!batchResult.results || batchResult.results.length === 0)) {
+            const errCode = batchResult.code || 'WRITE_FAILED';
+            const errMsg = batchResult.error || 'Batch write failed with no results';
+            const err = classifyError(`${errMsg} (${errCode})`, 'sandbox_apply_patchset');
+            return {
+              text: formatStructuredError(err, [
+                `[Tool Error — sandbox_apply_patchset]`,
+                errMsg,
+                batchResult.code ? `Error code: ${batchResult.code}` : null,
+              ].filter(Boolean).join('\n')),
+              structuredError: err,
+            };
           }
 
           if (batchResult.code === 'WORKSPACE_CHANGED') {

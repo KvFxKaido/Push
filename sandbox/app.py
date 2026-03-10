@@ -986,6 +986,12 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
                 if action == "batch_write":
                     return {"ok": False, "error": msg, "code": code, "results": []}
                 return {"ok": False, "error": msg, "code": code}
+            if ping.returncode != 0:
+                code = "CONTAINER_ERROR"
+                msg = f"Sandbox health check failed (exit code {ping.returncode}). The container environment may be broken."
+                if action == "batch_write":
+                    return {"ok": False, "error": msg, "code": code, "results": []}
+                return {"ok": False, "error": msg, "code": code}
         except Exception as exc:
             code = "CONTAINER_ERROR"
             msg = f"Sandbox health check failed before write: {type(exc).__name__}: {exc}"
@@ -1015,7 +1021,7 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
         try:
             upload_err = _write_temp_payload(sb, write_payload, tmp_path)
             if upload_err:
-                return {"ok": False, "error": upload_err}
+                return {"ok": False, "error": upload_err, "code": "CONTAINER_ERROR"}
             p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT, tmp_path, WORKSPACE_REVISION_FILE)
             if not _wait_with_timeout(p, timeout_seconds=55):
                 return {"ok": False, "error": "Write timed out after 55 seconds. The sandbox may be under heavy load."}
@@ -1069,7 +1075,7 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
         try:
             upload_err = _write_temp_payload(sb, batch_payload, tmp_path)
             if upload_err:
-                return {"ok": False, "error": upload_err, "results": []}
+                return {"ok": False, "error": upload_err, "code": "CONTAINER_ERROR", "results": []}
             p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT, tmp_path, WORKSPACE_REVISION_FILE)
             if not _wait_with_timeout(p, timeout_seconds=55):
                 return {"ok": False, "error": "Batch write timed out after 55 seconds.", "results": []}
