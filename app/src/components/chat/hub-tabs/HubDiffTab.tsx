@@ -204,7 +204,7 @@ export function HubDiffTab({
       cancelAnimationFrame(rafA);
       if (rafB !== null) cancelAnimationFrame(rafB);
     };
-  }, [jumpTarget?.requestKey, jumpTarget?.path, jumpTarget?.line, parsedFileDiffs]);
+  }, [jumpTarget, jumpTarget?.requestKey, jumpTarget?.path, jumpTarget?.line, parsedFileDiffs]);
 
   if (!diffData && !sandboxReady) {
     return (

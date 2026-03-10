@@ -1,4 +1,4 @@
-import { Component, Suspense, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
+import { Component, Suspense, type ComponentType, type ReactNode } from 'react';
 import type { ChatCard, CardAction } from '@/types';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 
@@ -54,7 +54,7 @@ class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBound
     };
   }
 
-  componentDidCatch(error: Error, _info: ErrorInfo) {
+  componentDidCatch(error: Error) {
     console.error('[CardRenderer] Failed to load card component', error);
   }
 

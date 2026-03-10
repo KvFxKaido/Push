@@ -47,6 +47,7 @@ async function recoverFromChunkError(): Promise<never> {
   return new Promise<never>(() => {});
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function lazyWithRecovery<T extends ComponentType<any>>(
   importer: () => Promise<{ default: T }>,
 ): LazyExoticComponent<T> {
@@ -71,6 +72,7 @@ export function lazyWithRecovery<T extends ComponentType<any>>(
   });
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function toDefaultExport<TModule, TComponent extends ComponentType<any>>(
   importer: () => Promise<TModule>,
   pick: (module: TModule) => TComponent,
