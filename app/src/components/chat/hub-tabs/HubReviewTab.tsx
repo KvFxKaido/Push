@@ -109,18 +109,22 @@ export function HubReviewTab({
     });
   }, []);
 
-  // Detect open PR for the active branch whenever a review result is ready
+  // Detect open PR for the active branch whenever a review result is ready.
+  // The cancelled flag prevents a stale response from a previous branch/result
+  // from overwriting state after the effect has been re-run.
   useEffect(() => {
     if (!result || !repoFullName || !activeBranch) {
       setPrInfo(null);
       return;
     }
+    let cancelled = false;
     setPrInfo('loading');
     setPostState('idle');
     setPostError(null);
     void findOpenPRForBranch(repoFullName, activeBranch).then((pr) => {
-      setPrInfo(pr ?? null);
+      if (!cancelled) setPrInfo(pr ?? null);
     });
+    return () => { cancelled = true; };
   }, [result, repoFullName, activeBranch]);
 
   const handlePostToPR = useCallback(async () => {

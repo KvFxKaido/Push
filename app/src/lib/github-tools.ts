@@ -1875,29 +1875,46 @@ export async function executePostPRReview(
       body: `**${c.severity.toUpperCase()}**: ${c.comment}`,
     }));
 
-  const fileLevelComments = reviewResult.comments.filter((c) => typeof c.line !== 'number');
-  let body = reviewResult.summary;
-  if (fileLevelComments.length > 0) {
-    body += '\n\n---\n\n**File-level findings:**\n';
-    for (const c of fileLevelComments) {
-      body += `\n- **${c.file}** (${c.severity}): ${c.comment}`;
-    }
-  }
-  body += `\n\n---\n*Review by Push · ${reviewResult.model}*`;
+  function buildBody(includeInlineAsbullets: boolean): string {
+    const allComments = includeInlineAsbullets
+      ? reviewResult.comments
+      : reviewResult.comments.filter((c) => typeof c.line !== 'number');
 
-  const res = await githubFetch(
-    `https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`,
-    {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        commit_id: commitSha,
-        body,
-        event: 'COMMENT',
-        comments: inlineComments,
-      }),
-    },
-  );
+    let b = reviewResult.summary;
+    if (allComments.length > 0) {
+      b += '\n\n---\n\n**Findings:**\n';
+      for (const c of allComments) {
+        const loc = typeof c.line === 'number' ? ` L${c.line}` : '';
+        b += `\n- **${c.file}${loc}** (${c.severity}): ${c.comment}`;
+      }
+    }
+    b += `\n\n---\n*Review by Push · ${reviewResult.model}*`;
+    return b;
+  }
+
+  const postReview = async (comments: typeof inlineComments, bodyText: string) =>
+    githubFetch(
+      `https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`,
+      {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commit_id: commitSha,
+          body: bodyText,
+          event: 'COMMENT',
+          comments,
+        }),
+      },
+    );
+
+  let res = await postReview(inlineComments, buildBody(false));
+
+  // GitHub 422 means one or more inline comment anchors are invalid (hallucinated
+  // file/line or line outside a diff hunk). Degrade: fold all inline comments into
+  // the body as bullets and retry without any inline anchors.
+  if (res.status === 422 && inlineComments.length > 0) {
+    res = await postReview([], buildBody(true));
+  }
 
   if (!res.ok) {
     throw new Error(formatGitHubError(res.status, `posting review to PR #${prNumber}`));
