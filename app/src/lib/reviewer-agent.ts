@@ -84,16 +84,20 @@ Severity guide:
 - critical: correctness bugs, data loss risk, broken functionality, security vulnerabilities
 - warning: potential bugs, missing error handling, risky patterns, unhandled edge cases
 - suggestion: better approaches, refactoring opportunities, performance improvements
-- note: style observations, minor nitpicks, informational comments
+- note: genuinely useful informational comments only; avoid low-value nits
 
 Review for:
 - Correctness: logic errors, off-by-ones, null/undefined handling, race conditions
+- Regressions: user-visible behavior changes, broken flows, or subtle changes from previous behavior
+- Testing: missing tests, insufficient coverage for risky logic, or assertions that should be added
+- Compatibility: API contract drift, schema/localStorage changes, migration assumptions, versioning risk
+- State/async edges: loading, resume, reconnect, branch switching, stale state, ordering, and cancellation issues
 - Security: injection vectors, auth issues, secret exposure (flag but don't block — that is the Auditor's job)
 - Code quality: readability, maintainability, appropriate abstractions, dead code
 - Conventions: consistency with surrounding code patterns visible in the diff
 - Performance: obvious inefficiencies, unnecessary re-renders, expensive operations in hot paths
 
-Keep comments specific and actionable. If the diff does not give you enough context to assess something, skip it rather than guessing. One precise comment is worth more than three vague ones.`;
+Keep comments specific and actionable. Prefer 0-5 high-signal comments total. Use "note" sparingly, and skip low-value style nits unless they materially affect maintainability or correctness. If the diff does not give you enough context to assess something, skip it rather than guessing. One precise comment is worth more than three vague ones.`;
 
 export interface ReviewerOptions {
   provider: AIProviderType;
