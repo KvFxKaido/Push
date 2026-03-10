@@ -8,6 +8,7 @@ import {
   GitBranch,
   GitCommitHorizontal,
   GitMerge,
+  GitPullRequest,
   Loader2,
   Plus,
   RefreshCw,
@@ -28,7 +29,7 @@ import { parseDiffStats } from '@/lib/diff-utils';
 import { getActiveProvider, getProviderStreamFn } from '@/lib/orchestrator';
 import { getModelForRole, type PreferredProvider } from '@/lib/providers';
 import { streamWithTimeout } from '@/lib/utils';
-import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubReviewTab } from './hub-tabs';
+import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab } from './hub-tabs';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import type { AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types';
 
@@ -36,7 +37,7 @@ import type { AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types
 // Types
 // ---------------------------------------------------------------------------
 
-type HubTab = 'scratchpad' | 'console' | 'files' | 'diff' | 'review';
+type HubTab = 'scratchpad' | 'console' | 'files' | 'diff' | 'prs' | 'review';
 
 type CommitPhase = 'idle' | 'fetching-diff' | 'branching' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
 type CommitTargetMode = 'current' | 'new';
@@ -115,6 +116,7 @@ const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: typeof Files 
   { key: 'console', label: 'Console', icon: TerminalSquare },
   { key: 'files', label: 'Files', icon: Files },
   { key: 'diff', label: 'Diff', icon: FileDiff },
+  { key: 'prs', label: 'PRs', icon: GitPullRequest },
   { key: 'review', label: 'Review', icon: Eye },
 ];
 
@@ -319,18 +321,22 @@ export function WorkspaceHubSheet({
     diffData: DiffPreviewCardData;
     label: string;
     mode: Exclude<DiffViewMode, 'working-tree'>;
-    target: { path: string; line?: number };
+    target?: { path: string; line?: number };
   }) => {
     setReviewDiffSelection({
       data: payload.diffData,
       label: payload.label,
       mode: payload.mode,
     });
-    setDiffJumpTarget({
-      path: payload.target.path,
-      ...(payload.target.line !== undefined ? { line: payload.target.line } : {}),
-      requestKey: Date.now(),
-    });
+    setDiffJumpTarget(
+      payload.target
+        ? {
+            path: payload.target.path,
+            ...(payload.target.line !== undefined ? { line: payload.target.line } : {}),
+            requestKey: Date.now(),
+          }
+        : null,
+    );
     setActiveTab('diff');
   }, []);
 
@@ -1159,6 +1165,17 @@ export function WorkspaceHubSheet({
                   onClearReviewDiff={reviewDiffSelection ? handleClearReviewDiff : undefined}
                   onDiffUpdate={handleDiffUpdate}
                   onDiffLoadingChange={handleDiffLoadingChange}
+                />
+              </div>
+            )}
+
+            {activeTab === 'prs' && (
+              <div className="flex h-full min-h-0 flex-col">
+                <HubPRsTab
+                  repoFullName={repoFullName}
+                  activeBranch={branchProps.currentBranch}
+                  onOpenDiff={handleOpenReviewDiff}
+                  onOpenReviewTab={() => setActiveTab('review')}
                 />
               </div>
             )}

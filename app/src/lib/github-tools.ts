@@ -1846,6 +1846,210 @@ export async function findOpenPRForBranch(
   }
 }
 
+export interface RepoPullRequestListItem {
+  number: number;
+  title: string;
+  author: string;
+  state: 'open' | 'closed' | 'merged';
+  createdAt: string;
+  updatedAt: string;
+  url: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  comments: number;
+  reviewComments: number;
+  headRef: string;
+  headSha: string;
+  baseRef: string;
+  isDraft: boolean;
+}
+
+export interface RepoPullRequestCommit {
+  sha: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface RepoPullRequestFile {
+  filename: string;
+  status: 'added' | 'removed' | 'modified' | 'renamed';
+  additions: number;
+  deletions: number;
+  patch?: string;
+}
+
+export interface RepoPullRequestDetail extends RepoPullRequestListItem {
+  body: string;
+  mergedAt: string | null;
+  files: RepoPullRequestFile[];
+  commits: RepoPullRequestCommit[];
+  diff: string;
+}
+
+function normalizePullRequestState(pr: { merged_at?: string | null; merged?: boolean; state?: string }): 'open' | 'closed' | 'merged' {
+  if (pr.merged || pr.merged_at) return 'merged';
+  return pr.state === 'closed' ? 'closed' : 'open';
+}
+
+function normalizePullRequestFileStatus(status: string): RepoPullRequestFile['status'] {
+  if (status === 'added' || status === 'removed' || status === 'modified' || status === 'renamed') {
+    return status;
+  }
+  return 'modified';
+}
+
+export async function fetchRepoPullRequests(
+  repo: string,
+  state: 'open' | 'closed' | 'all' = 'open',
+): Promise<RepoPullRequestListItem[]> {
+  const headers = getGitHubHeaders();
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/pulls?state=${state}&per_page=30&sort=updated&direction=desc`,
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `PRs on ${repo}`));
+  }
+
+  const prs = await res.json() as Array<{
+    number: number;
+    title: string;
+    state: string;
+    draft?: boolean;
+    html_url?: string;
+    created_at?: string;
+    updated_at?: string;
+    merged_at?: string | null;
+    additions?: number;
+    deletions?: number;
+    changed_files?: number;
+    comments?: number;
+    review_comments?: number;
+    head?: { ref?: string; sha?: string };
+    base?: { ref?: string };
+    user?: { login?: string };
+  }>;
+
+  return prs.map((pr) => ({
+    number: pr.number,
+    title: pr.title || `PR #${pr.number}`,
+    author: pr.user?.login || 'unknown',
+    state: normalizePullRequestState(pr),
+    createdAt: pr.created_at || '',
+    updatedAt: pr.updated_at || pr.created_at || '',
+    url: pr.html_url || '',
+    additions: pr.additions || 0,
+    deletions: pr.deletions || 0,
+    changedFiles: pr.changed_files || 0,
+    comments: pr.comments || 0,
+    reviewComments: pr.review_comments || 0,
+    headRef: pr.head?.ref || '',
+    headSha: pr.head?.sha || '',
+    baseRef: pr.base?.ref || '',
+    isDraft: Boolean(pr.draft),
+  }));
+}
+
+export async function fetchPullRequestDetail(
+  repo: string,
+  prNumber: number,
+): Promise<RepoPullRequestDetail> {
+  const headers = getGitHubHeaders();
+
+  const [prRes, filesRes, commitsRes, diffRes] = await Promise.all([
+    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/files?per_page=100`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/commits?per_page=20`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
+      headers: { ...headers, Accept: 'application/vnd.github.v3.diff' },
+    }),
+  ]);
+
+  if (!prRes.ok) {
+    throw new Error(formatGitHubError(prRes.status, `PR #${prNumber} on ${repo}`));
+  }
+  if (!filesRes.ok) {
+    throw new Error(formatGitHubError(filesRes.status, `files for PR #${prNumber} on ${repo}`));
+  }
+  if (!commitsRes.ok) {
+    throw new Error(formatGitHubError(commitsRes.status, `commits for PR #${prNumber} on ${repo}`));
+  }
+  if (!diffRes.ok) {
+    throw new Error(formatGitHubError(diffRes.status, `diff for PR #${prNumber} on ${repo}`));
+  }
+
+  const pr = await prRes.json() as {
+    number: number;
+    title: string;
+    body?: string | null;
+    state: string;
+    draft?: boolean;
+    html_url?: string;
+    created_at?: string;
+    updated_at?: string;
+    merged_at?: string | null;
+    merged?: boolean;
+    additions?: number;
+    deletions?: number;
+    changed_files?: number;
+    comments?: number;
+    review_comments?: number;
+    head?: { ref?: string; sha?: string };
+    base?: { ref?: string };
+    user?: { login?: string };
+  };
+  const files = await filesRes.json() as Array<{
+    filename: string;
+    status: string;
+    additions: number;
+    deletions: number;
+    patch?: string;
+  }>;
+  const commits = await commitsRes.json() as Array<{
+    sha: string;
+    commit?: { message?: string; author?: { name?: string; date?: string } };
+    author?: { login?: string };
+  }>;
+
+  return {
+    number: pr.number,
+    title: pr.title || `PR #${pr.number}`,
+    author: pr.user?.login || 'unknown',
+    state: normalizePullRequestState(pr),
+    createdAt: pr.created_at || '',
+    updatedAt: pr.updated_at || pr.created_at || '',
+    url: pr.html_url || '',
+    additions: pr.additions || 0,
+    deletions: pr.deletions || 0,
+    changedFiles: pr.changed_files || 0,
+    comments: pr.comments || 0,
+    reviewComments: pr.review_comments || 0,
+    headRef: pr.head?.ref || '',
+    headSha: pr.head?.sha || '',
+    baseRef: pr.base?.ref || '',
+    isDraft: Boolean(pr.draft),
+    body: pr.body || '',
+    mergedAt: pr.merged_at || null,
+    files: files.map((file) => ({
+      filename: file.filename,
+      status: normalizePullRequestFileStatus(file.status),
+      additions: file.additions,
+      deletions: file.deletions,
+      ...(file.patch ? { patch: file.patch } : {}),
+    })),
+    commits: commits.map((commit) => ({
+      sha: (commit.sha || '').slice(0, 7),
+      message: (commit.commit?.message || '').split('\n')[0],
+      author: commit.commit?.author?.name || commit.author?.login || 'unknown',
+      date: commit.commit?.author?.date || '',
+    })),
+    diff: await diffRes.text(),
+  };
+}
+
 export interface GitHubReviewDiffTarget {
   diff: string;
   source: 'pr' | 'branch';

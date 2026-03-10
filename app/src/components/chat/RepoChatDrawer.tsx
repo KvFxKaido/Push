@@ -36,7 +36,7 @@ interface RepoChatDrawerProps {
   activeRepo: ActiveRepo | null;
   conversations: Record<string, Conversation>;
   activeChatId: string;
-  onSelectRepo: (repo: RepoWithActivity) => void;
+  onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onSwitchChat: (id: string) => void;
   onNewChat: () => void;
   onDeleteChat: (id: string) => void;

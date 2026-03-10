@@ -406,12 +406,12 @@ function App() {
     [setActiveRepo],
   );
 
-  const handleSelectRepoFromDrawer = useCallback((repo: RepoWithActivity) => {
+  const handleSelectRepoFromDrawer = useCallback((repo: RepoWithActivity, branch?: string) => {
     if (isSandboxMode) {
       setIsSandboxMode(false);
       void sandbox.stop();
     }
-    handleSelectRepo(repo);
+    handleSelectRepo(repo, branch);
   }, [isSandboxMode, sandbox, handleSelectRepo]);
 
   const handleBrowseRepos = useCallback(() => {
@@ -876,9 +876,11 @@ function App() {
       resumeInterruptedRun={resumeInterruptedRun}
       dismissResume={dismissResume}
       ciStatus={ciStatus}
-      diagnoseCIFailure={diagnoseCIFailure}
-      repos={repos}
-      branches={branches}
+	      diagnoseCIFailure={diagnoseCIFailure}
+	      repos={repos}
+	      reposLoading={reposLoading}
+	      reposError={reposError}
+	      branches={branches}
       catalog={catalog}
       snapshots={snapshots}
       instructions={instructions}

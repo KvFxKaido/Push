@@ -1,5 +1,5 @@
-import { useCallback, Suspense } from 'react';
-import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight } from 'lucide-react';
+import { useCallback, Suspense, useState } from 'react';
+import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight, House } from 'lucide-react';
 import { toast } from 'sonner';
 import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import { Toaster } from '@/components/ui/sonner';
@@ -12,6 +12,7 @@ import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import { MergeFlowSheet } from '@/components/chat/MergeFlowSheet';
 import { LazySettingsSheet as SettingsSheet } from '@/components/LazySettingsSheet';
+import { RepoLauncherSheet } from '@/components/launcher/RepoLauncherSheet';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -94,6 +95,8 @@ interface ChatScreenProps {
 
   // Repos
   repos: RepoWithActivity[];
+  reposLoading: boolean;
+  reposError: string | null;
 
   // Branches
   branches: BranchManager;
@@ -184,7 +187,7 @@ interface ChatScreenProps {
   handleSelectNvidiaModelFromChat: (model: string) => void;
 
   // Repo selection
-  handleSelectRepoFromDrawer: (repo: RepoWithActivity) => void;
+  handleSelectRepoFromDrawer: (repo: RepoWithActivity, branch?: string) => void;
   handleBrowseRepos: () => void;
   setCurrentBranch: (branch: string) => void;
   onSandboxBranchSwitch: (branch: string) => void;
@@ -253,6 +256,8 @@ export function ChatScreen(props: ChatScreenProps) {
     ciStatus,
     diagnoseCIFailure,
     repos,
+    reposLoading,
+    reposError,
     branches,
     catalog,
     snapshots,
@@ -320,6 +325,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleBioBlur,
     ensureSandbox,
   } = props;
+  const [isLauncherOpen, setIsLauncherOpen] = useState(false);
 
   const {
     currentBranch,
@@ -370,6 +376,17 @@ export function ChatScreen(props: ChatScreenProps) {
 
     await sendMessage(prompt);
   }, [isStreaming, markSnapshotActivity, sandbox.sandboxId, ensureSandbox, sendMessage, setIsWorkspaceHubOpen]);
+
+  const handleResumeConversationFromLauncher = useCallback((chatId: string) => {
+    const conversation = conversations[chatId];
+    if (!conversation?.repoFullName) return;
+    const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
+    if (!repo) return;
+    handleSelectRepoFromDrawer(repo, conversation.branch);
+    requestAnimationFrame(() => {
+      switchChat(chatId);
+    });
+  }, [conversations, handleSelectRepoFromDrawer, repos, switchChat]);
 
   const handleCardActionWithSnapshotHeartbeat = useCallback((action: CardAction) => {
     markSnapshotActivity();
@@ -772,6 +789,16 @@ export function ChatScreen(props: ChatScreenProps) {
           </div>
         )}
         <div className="flex items-center gap-2">
+          {!isSandboxMode && (
+            <button
+              onClick={() => setIsLauncherOpen(true)}
+              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-[#1b2230] bg-push-grad-input text-[#8891a1] shadow-[0_10px_26px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] hover:brightness-110 spring-press"
+              aria-label="Open launcher"
+              title="Launcher"
+            >
+              <House className="h-4 w-4" />
+            </button>
+          )}
           {(activeRepo || isSandboxMode) && (
             <button
               onClick={() => setIsWorkspaceHubOpen(true)}
@@ -975,6 +1002,19 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
         onSandboxBranchSwitch={onSandboxBranchSwitch}
         onFixReviewFinding={handleFixReviewFinding}
+      />
+
+      <RepoLauncherSheet
+        open={isLauncherOpen}
+        onOpenChange={setIsLauncherOpen}
+        repos={repos}
+        loading={reposLoading}
+        error={reposError}
+        conversations={conversations}
+        activeRepo={activeRepo}
+        onSelectRepo={handleSelectRepoFromDrawer}
+        onResumeConversation={handleResumeConversationFromLauncher}
+        onSandboxMode={handleSandboxMode}
       />
 
       {/* Toast notifications */}
