@@ -6,7 +6,7 @@
  * result back into the conversation as a synthetic message.
  */
 
-import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData } from '@/types';
+import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData, ReviewResult } from '@/types';
 import { asRecord, detectToolFromText } from './utils';
 import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
 
@@ -1814,6 +1814,94 @@ export async function executeFindExistingPR(repo: string, headBranch: string, ba
       `URL: ${pr.html_url}`,
     ].join('\n'),
   };
+}
+
+/**
+ * Find the open PR for a branch and return structured data for UI use.
+ * Returns null when no token is configured, no PR exists, or the API call fails.
+ */
+export async function findOpenPRForBranch(
+  repo: string,
+  headBranch: string,
+): Promise<{ number: number; title: string; commitSha: string; url: string } | null> {
+  const headers = getGitHubHeaders();
+  const owner = repo.split('/')[0];
+  if (!owner) return null;
+
+  try {
+    const res = await githubFetch(
+      `https://api.github.com/repos/${repo}/pulls?head=${encodeURIComponent(`${owner}:${headBranch}`)}&state=open`,
+      { headers },
+    );
+    if (!res.ok) return null;
+
+    const prs = await res.json();
+    if (!Array.isArray(prs) || prs.length === 0) return null;
+
+    const pr = prs[0];
+    return {
+      number: pr.number as number,
+      title: typeof pr.title === 'string' ? pr.title : '',
+      commitSha: typeof pr.head?.sha === 'string' ? pr.head.sha : '',
+      url: typeof pr.html_url === 'string' ? pr.html_url : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Post a reviewer result to a GitHub PR as a review.
+ *
+ * Comments with a `line` field become inline review comments anchored to that
+ * line on the RIGHT (new-file) side. Comments without a line are folded into
+ * the review body. Event is always COMMENT — the Reviewer is advisory, not a
+ * gatekeeper.
+ */
+export async function executePostPRReview(
+  repo: string,
+  prNumber: number,
+  commitSha: string,
+  reviewResult: ReviewResult,
+): Promise<void> {
+  const headers = getGitHubHeaders();
+
+  const inlineComments = reviewResult.comments
+    .filter((c) => typeof c.line === 'number')
+    .map((c) => ({
+      path: c.file,
+      line: c.line,
+      side: 'RIGHT' as const,
+      body: `**${c.severity.toUpperCase()}**: ${c.comment}`,
+    }));
+
+  const fileLevelComments = reviewResult.comments.filter((c) => typeof c.line !== 'number');
+  let body = reviewResult.summary;
+  if (fileLevelComments.length > 0) {
+    body += '\n\n---\n\n**File-level findings:**\n';
+    for (const c of fileLevelComments) {
+      body += `\n- **${c.file}** (${c.severity}): ${c.comment}`;
+    }
+  }
+  body += `\n\n---\n*Review by Push · ${reviewResult.model}*`;
+
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`,
+    {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commit_id: commitSha,
+        body,
+        event: 'COMMENT',
+        comments: inlineComments,
+      }),
+    },
+  );
+
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `posting review to PR #${prNumber}`));
+  }
 }
 
 /**

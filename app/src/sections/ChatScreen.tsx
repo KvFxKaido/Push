@@ -923,6 +923,7 @@ export function ChatScreen(props: ChatScreenProps) {
           nvidia: catalog.nvidia.model,
         }}
         repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
+        repoFullName={activeRepo?.full_name}
         protectMainEnabled={protectMain.isProtected}
         showToolActivity={showToolActivity}
         scratchpadContent={scratchpad.content}

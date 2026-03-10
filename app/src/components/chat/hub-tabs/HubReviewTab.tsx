@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Info, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, RefreshCw, Send, Sparkles } from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
+import { findOpenPRForBranch, executePostPRReview } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ReviewResult, ReviewComment } from '@/types';
@@ -13,6 +14,10 @@ interface HubReviewTabProps {
   availableProviders: readonly (readonly [PreferredProvider, string, boolean])[];
   activeProvider: ActiveProvider;
   providerModels: Record<PreferredProvider, string>;
+  /** owner/name — undefined in Sandbox Mode or when no repo is selected */
+  repoFullName?: string;
+  /** active branch name — used to find an open PR */
+  activeBranch?: string;
 }
 
 function severityIcon(severity: ReviewComment['severity']) {
@@ -54,6 +59,8 @@ export function HubReviewTab({
   availableProviders,
   activeProvider,
   providerModels,
+  repoFullName,
+  activeBranch,
 }: HubReviewTabProps) {
   const providerOptions = useMemo(
     () => availableProviders.map(([type, label]) => ({ type, label })),
@@ -66,6 +73,9 @@ export function HubReviewTab({
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+  const [prInfo, setPrInfo] = useState<{ number: number; title: string; commitSha: string; url: string } | null | 'loading'>(null);
+  const [postState, setPostState] = useState<'idle' | 'posting' | 'posted' | 'error'>('idle');
+  const [postError, setPostError] = useState<string | null>(null);
 
   useEffect(() => {
     const nextSelected =
@@ -98,6 +108,33 @@ export function HubReviewTab({
       return next;
     });
   }, []);
+
+  // Detect open PR for the active branch whenever a review result is ready
+  useEffect(() => {
+    if (!result || !repoFullName || !activeBranch) {
+      setPrInfo(null);
+      return;
+    }
+    setPrInfo('loading');
+    setPostState('idle');
+    setPostError(null);
+    void findOpenPRForBranch(repoFullName, activeBranch).then((pr) => {
+      setPrInfo(pr ?? null);
+    });
+  }, [result, repoFullName, activeBranch]);
+
+  const handlePostToPR = useCallback(async () => {
+    if (!result || !repoFullName || typeof prInfo !== 'object' || !prInfo) return;
+    setPostState('posting');
+    setPostError(null);
+    try {
+      await executePostPRReview(repoFullName, prInfo.number, prInfo.commitSha, result);
+      setPostState('posted');
+    } catch (err) {
+      setPostState('error');
+      setPostError(err instanceof Error ? err.message : 'Failed to post review.');
+    }
+  }, [result, repoFullName, prInfo]);
 
   const handleRunReview = useCallback(async () => {
     if (running || !selectedProvider) return;
@@ -249,6 +286,60 @@ export function HubReviewTab({
               )}
               <p className="text-[11px] leading-relaxed text-push-fg-secondary">{result.summary}</p>
             </div>
+
+            {/* Post to PR */}
+            {prInfo === 'loading' && (
+              <div className="flex items-center gap-1.5 text-[11px] text-push-fg-dim">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Checking for open PR…
+              </div>
+            )}
+            {typeof prInfo === 'object' && prInfo && postState !== 'posted' && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="text-[11px] text-push-fg-secondary truncate">
+                    PR <a
+                      href={prInfo.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-push-accent hover:underline inline-flex items-center gap-0.5"
+                    >
+                      #{prInfo.number} <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                    {' '}open
+                  </span>
+                  {postState === 'error' && postError && (
+                    <span className="text-[10px] text-red-400 truncate">{postError}</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => void handlePostToPR()}
+                  disabled={postState === 'posting'}
+                  className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-push-accent/30 bg-push-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15 active:scale-95 disabled:opacity-50"
+                >
+                  {postState === 'posting'
+                    ? <><Loader2 className="h-3 w-3 animate-spin" /> Posting…</>
+                    : <><Send className="h-3 w-3" /> Post to PR</>
+                  }
+                </button>
+              </div>
+            )}
+            {postState === 'posted' && typeof prInfo === 'object' && prInfo && (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2.5">
+                <CheckCircle className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
+                <span className="text-[11px] text-emerald-400">
+                  Review posted to{' '}
+                  <a
+                    href={prInfo.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline inline-flex items-center gap-0.5"
+                  >
+                    PR #{prInfo.number} <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                </span>
+              </div>
+            )}
 
             {/* No comments */}
             {result.comments.length === 0 && (

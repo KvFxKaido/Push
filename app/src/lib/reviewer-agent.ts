@@ -16,6 +16,51 @@ import { parseDiffStats } from './diff-utils';
 
 const REVIEWER_TIMEOUT_MS = 90_000; // 90s — reviews can be thorough
 
+/**
+ * Annotate added lines in a unified diff with [Lxxx] line-number markers.
+ *
+ * Parses each @@ hunk header to track the new-file line counter, then stamps
+ * every `+` line (added content) with its actual line number. Context lines
+ * advance the counter silently. This gives the model explicit anchors instead
+ * of asking it to count lines itself.
+ */
+function annotateDiffWithLineNumbers(diff: string): string {
+  const lines = diff.split('\n');
+  const out: string[] = [];
+  let newLine = 0;
+
+  for (const line of lines) {
+    if (line.startsWith('@@')) {
+      // @@ -old_start[,old_count] +new_start[,new_count] @@
+      const match = line.match(/\+(\d+)/);
+      if (match) newLine = parseInt(match[1], 10) - 1;
+      out.push(line);
+    } else if (
+      line.startsWith('+++') ||
+      line.startsWith('---') ||
+      line.startsWith('diff ') ||
+      line.startsWith('index ')
+    ) {
+      out.push(line);
+    } else if (line.startsWith('+')) {
+      newLine++;
+      out.push(`${line} [L${newLine}]`);
+    } else if (line.startsWith('-')) {
+      // removed — does not advance new-file line counter
+      out.push(line);
+    } else if (line.startsWith('\\')) {
+      // "\ No newline at end of file"
+      out.push(line);
+    } else {
+      // context line — advances new-file counter, no annotation
+      newLine++;
+      out.push(line);
+    }
+  }
+
+  return out.join('\n');
+}
+
 const REVIEWER_SYSTEM_PROMPT = `You are the Reviewer agent for Push, a mobile AI coding assistant. Your role is to provide advisory code review feedback on diffs.
 
 You MUST respond with ONLY a valid JSON object. No other text, no markdown fences.
@@ -26,11 +71,14 @@ Schema:
   "comments": [
     {
       "file": "path/to/file.ts",
+      "line": 42,
       "severity": "critical" | "warning" | "suggestion" | "note",
       "comment": "Specific, actionable feedback about this file or section"
     }
   ]
 }
+
+Added lines in the diff are annotated with [Lxxx] indicating their line number in the new file. When your comment targets a specific added line, include "line": <that number>. Omit "line" for file-level or general comments that span multiple lines or the whole file.
 
 Severity guide:
 - critical: correctness bugs, data loss risk, broken functionality, security vulnerabilities
@@ -58,8 +106,9 @@ export async function runReviewer(
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
   const DIFF_LIMIT = 40_000;
-  const slicedDiff = diff.length > DIFF_LIMIT ? diff.slice(0, DIFF_LIMIT) : diff;
-  const truncated = slicedDiff.length < diff.length;
+  const annotatedDiff = annotateDiffWithLineNumbers(diff);
+  const slicedDiff = annotatedDiff.length > DIFF_LIMIT ? annotatedDiff.slice(0, DIFF_LIMIT) : annotatedDiff;
+  const truncated = slicedDiff.length < annotatedDiff.length;
   const totalFiles = parseDiffStats(diff).filesChanged;
   const filesReviewed = truncated ? parseDiffStats(slicedDiff).filesChanged : totalFiles;
   const { provider, model: modelOverride } = options;
@@ -121,10 +170,15 @@ export async function runReviewer(
       sev === 'critical' || sev === 'warning' || sev === 'suggestion' || sev === 'note'
         ? sev
         : 'note';
+    const rawLine = rc?.line;
+    const line = typeof rawLine === 'number' && Number.isInteger(rawLine) && rawLine > 0
+      ? rawLine
+      : undefined;
     return {
       file: typeof rc?.file === 'string' ? rc.file : 'unknown',
       severity,
       comment: typeof rc?.comment === 'string' ? rc.comment : '',
+      ...(line !== undefined && { line }),
     };
   }).filter((c) => c.comment.length > 0);
 

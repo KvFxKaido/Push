@@ -23,6 +23,8 @@ export interface ReviewComment {
   file: string;
   severity: 'critical' | 'warning' | 'suggestion' | 'note';
   comment: string;
+  /** Line number in the new file (RIGHT side) — present when the model targeted a specific added line */
+  line?: number;
 }
 
 export interface ReviewResult {

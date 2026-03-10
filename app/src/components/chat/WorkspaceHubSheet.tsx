@@ -67,6 +67,8 @@ interface WorkspaceHubSheetProps {
   reviewActiveProvider: ReturnType<typeof getActiveProvider>;
   reviewProviderModels: Record<PreferredProvider, string>;
   repoName?: string;
+  /** owner/name format — passed to Review tab for PR detection */
+  repoFullName?: string;
   protectMainEnabled: boolean;
   showToolActivity: boolean;
   // Scratchpad
@@ -198,6 +200,7 @@ export function WorkspaceHubSheet({
   reviewActiveProvider,
   reviewProviderModels,
   repoName,
+  repoFullName,
   protectMainEnabled,
   showToolActivity,
   scratchpadContent,
@@ -883,6 +886,8 @@ export function WorkspaceHubSheet({
                   availableProviders={reviewProviders}
                   activeProvider={reviewActiveProvider}
                   providerModels={reviewProviderModels}
+                  repoFullName={repoFullName}
+                  activeBranch={branchProps.currentBranch}
                 />
               </div>
             )}
