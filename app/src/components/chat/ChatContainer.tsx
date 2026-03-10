@@ -43,7 +43,7 @@ function ResumeBanner({
   }, [checkpoint.savedAt]);
 
   return (
-    <div className="mx-4 mt-2 mb-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-3 flex items-center justify-between gap-3 animate-fade-in-down">
+    <div className="mx-4 mt-2 mb-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-3 flex items-center justify-between gap-3 animate-fade-in">
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-amber-200">Session interrupted {phaseLabel(checkpoint.phase)}</p>
         <p className="text-[11px] text-amber-200/60 mt-0.5">

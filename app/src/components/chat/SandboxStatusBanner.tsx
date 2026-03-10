@@ -30,7 +30,7 @@ export function SandboxStatusBanner({
   // Idle after a confirmed cold session (reconnect already failed or never attempted)
   if (status === 'idle' && hasMessages && !isStreaming) {
     return (
-      <div className="mx-4 mt-2 rounded-xl border border-[#1b2230] bg-[#080d14] px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in-down">
+      <div className="mx-4 mt-2 rounded-xl border border-[#1b2230] bg-[#080d14] px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in">
         <div className="flex items-center gap-2.5 min-w-0">
           <Terminal className="h-3.5 w-3.5 text-[#5f6b80] flex-shrink-0" />
           <div>
@@ -51,7 +51,7 @@ export function SandboxStatusBanner({
   // Creating (user-initiated, not driven by the agent — agent has AgentStatusBar)
   if (status === 'creating' && !isStreaming) {
     return (
-      <div className="mx-4 mt-2 rounded-xl border border-[#1b2230] bg-[#080d14] px-3.5 py-3 flex items-center gap-2.5 animate-fade-in-down">
+      <div className="mx-4 mt-2 rounded-xl border border-[#1b2230] bg-[#080d14] px-3.5 py-3 flex items-center gap-2.5 animate-fade-in">
         <Loader2 className="h-3.5 w-3.5 text-push-accent animate-spin flex-shrink-0" />
         <p className="text-xs text-[#8b96aa]">Starting sandbox…</p>
       </div>
@@ -62,7 +62,7 @@ export function SandboxStatusBanner({
   if (status === 'error' && error) {
     const { title, detail } = categorizeSandboxError(error);
     return (
-      <div className="mx-4 mt-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in-down">
+      <div className="mx-4 mt-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in">
         <div className="min-w-0">
           <p className="text-xs font-medium text-red-300">{title}</p>
           <p className="text-[10px] text-red-400/70">{detail}</p>

@@ -358,7 +358,7 @@ export function ChatInput({
                   side="top"
                   align="start"
                   sideOffset={10}
-                  className="w-[250px] rounded-xl border border-[#1f2531] bg-push-grad-panel p-2.5 text-[#d7deeb] shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] animate-scale-in"
+                  className="w-[250px] rounded-xl border border-[#1f2531] bg-push-grad-panel p-2.5 text-[#d7deeb] shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] animate-fade-in"
                 >
                   <div className="space-y-2.5 px-1 py-1">
                     <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-1.5">

@@ -13,12 +13,7 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Smooth transitions */
-* {
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* CodeMirror — disable the global transition on internal elements (causes jank on scroll) */
+/* CodeMirror — disable transitions on internal elements (causes jank on scroll) */
 .cm-editor *,
 .cm-editor *::before,
 .cm-editor *::after {
@@ -119,7 +114,7 @@ select:focus-visible {
 }
 
 .hex-tap {
-  animation: hex-tap 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: hex-tap var(--motion-slow) var(--ease-press);
 }
 
 /* Fallback: when keyboard is visible, ensure inputs stay visible */

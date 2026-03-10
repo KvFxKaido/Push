@@ -16,7 +16,7 @@ export function CIStatusBanner({ status, onDiagnose }: CIStatusBannerProps) {
 
   return (
     <div 
-      className={`mx-4 mt-2 mb-1 rounded-xl border px-3.5 py-3 flex items-center justify-between gap-3 animate-fade-in-down ${
+      className={`mx-4 mt-2 mb-1 rounded-xl border px-3.5 py-3 flex items-center justify-between gap-3 animate-fade-in ${
         isFailure 
           ? 'border-red-500/20 bg-red-500/5' 
           : 'border-blue-500/20 bg-blue-500/5'

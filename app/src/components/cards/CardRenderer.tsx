@@ -131,7 +131,7 @@ export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRende
   return (
     <CardErrorBoundary>
       <Suspense fallback={<div className="h-16 animate-pulse rounded-lg bg-zinc-900/50" />}>
-        <div className="animate-card-expand">{inner}</div>
+        <div className="animate-fade-in-up">{inner}</div>
       </Suspense>
     </CardErrorBoundary>
   );
