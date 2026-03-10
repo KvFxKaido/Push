@@ -87,6 +87,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   MODAL_TIMEOUT: 'Sandbox operation timed out. Try a simpler command.',
   MODAL_NETWORK_ERROR: 'Cannot connect to the sandbox. Check your network or Modal status.',
   MODAL_ERROR: 'Sandbox container error. The container may be unhealthy — try restarting the sandbox.',
+  CONTAINER_ERROR: 'Sandbox container is unhealthy. Restarting the sandbox may fix this.',
   MODAL_UNKNOWN_ERROR: 'An unexpected sandbox error occurred.',
 };
 
@@ -121,6 +122,7 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
     case 'MODAL_AUTH_FAILED': return 'AUTH_FAILURE';
     case 'MODAL_UNAVAILABLE': return 'SANDBOX_UNREACHABLE';
     case 'MODAL_ERROR': return 'SANDBOX_UNREACHABLE';
+    case 'CONTAINER_ERROR': return 'SANDBOX_UNREACHABLE';
     case 'STALE_FILE': return 'STALE_FILE';
     case 'WORKSPACE_CHANGED': return 'WORKSPACE_CHANGED';
     default: return 'UNKNOWN';
