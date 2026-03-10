@@ -71,6 +71,17 @@ const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for sys
 // undercount on code-dense or CJK-heavy conversations.
 const GEMINI_CONTEXT_MAX_TOKENS = 850_000;
 const GEMINI_CONTEXT_TARGET_TOKENS = 800_000;
+// GPT-5.4 models expose a large context window, but we keep a more conservative
+// target than Grok because long prompts are materially more expensive.
+const GPT5_PRO_CONTEXT_MAX_TOKENS = 850_000;
+const GPT5_PRO_CONTEXT_TARGET_TOKENS = 725_000;
+const GPT5_PRO_CONTEXT_SUMMARIZE_TOKENS = 160_000;
+// Grok models on OpenRouter can expose ~2M context. Keep a larger margin than
+// Gemini because token estimation is rough and our tool/system prompt overhead is
+// substantial on long-running sessions.
+const GROK_CONTEXT_MAX_TOKENS = 1_500_000;
+const GROK_CONTEXT_TARGET_TOKENS = 1_350_000;
+const GROK_CONTEXT_SUMMARIZE_TOKENS = 180_000;
 
 export interface ContextBudget {
   maxTokens: number;
@@ -93,6 +104,24 @@ const GEMINI_CONTEXT_BUDGET: ContextBudget = {
   summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // summarize early like other providers
 };
 
+const CLAUDE_CONTEXT_BUDGET: ContextBudget = {
+  maxTokens: GEMINI_CONTEXT_MAX_TOKENS,
+  targetTokens: GEMINI_CONTEXT_TARGET_TOKENS,
+  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
+};
+
+const GPT5_PRO_CONTEXT_BUDGET: ContextBudget = {
+  maxTokens: GPT5_PRO_CONTEXT_MAX_TOKENS,
+  targetTokens: GPT5_PRO_CONTEXT_TARGET_TOKENS,
+  summarizeTokens: GPT5_PRO_CONTEXT_SUMMARIZE_TOKENS,
+};
+
+const GROK_CONTEXT_BUDGET: ContextBudget = {
+  maxTokens: GROK_CONTEXT_MAX_TOKENS,
+  targetTokens: GROK_CONTEXT_TARGET_TOKENS,
+  summarizeTokens: GROK_CONTEXT_SUMMARIZE_TOKENS,
+};
+
 function normalizeModelName(model?: string): string {
   return (model || '').trim().toLowerCase();
 }
@@ -101,8 +130,25 @@ export function getContextBudget(
   provider?: AIProviderType,
   model?: string,
 ): ContextBudget {
-  // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
   const normalizedModel = normalizeModelName(model);
+  // GPT-5.4 models get a large-context profile, but with a conservative target
+  // to avoid turning long sessions into runaway expensive prompts.
+  if (normalizedModel.includes('gpt-5.4')) {
+    return GPT5_PRO_CONTEXT_BUDGET;
+  }
+
+  // Non-Haiku Claude models get the larger 1M-class profile.
+  if (normalizedModel.includes('claude') && !normalizedModel.includes('haiku')) {
+    return CLAUDE_CONTEXT_BUDGET;
+  }
+
+  // OpenRouter or other providers running a Grok model — larger long-term
+  // history, but still summarize well before the hard cap.
+  if (normalizedModel.includes('grok')) {
+    return GROK_CONTEXT_BUDGET;
+  }
+
+  // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
   if (
     (provider === 'ollama' || provider === 'openrouter' || provider === 'zen') &&
     normalizedModel.includes('gemini')
