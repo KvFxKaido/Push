@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, FileDiff, Info, Loader2, RefreshCw, Send, Sparkles } from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
-import { executePostPRReview, fetchGitHubReviewDiff } from '@/lib/github-tools';
+import { executePostPRReview, fetchGitHubReviewDiff, fetchLatestCommitDiff } from '@/lib/github-tools';
 import { parseDiffStats } from '@/lib/diff-utils';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import type { PreferredProvider } from '@/lib/providers';
@@ -29,7 +29,7 @@ interface HubReviewTabProps {
   }) => void;
 }
 
-type ReviewSourceMode = 'github' | 'sandbox';
+type ReviewSourceMode = 'github' | 'commit' | 'sandbox';
 
 type ReviewContext =
   | {
@@ -40,6 +40,12 @@ type ReviewContext =
   | {
       kind: 'github-branch';
       label: string;
+    }
+  | {
+      kind: 'github-commit';
+      label: string;
+      shortSha: string;
+      url: string;
     }
   | {
       kind: 'sandbox';
@@ -95,8 +101,9 @@ export function HubReviewTab({
     [availableProviders],
   );
   const hasGitHubSource = Boolean(repoFullName && activeBranch && defaultBranch);
+  const hasCommitSource = Boolean(repoFullName && activeBranch);
   const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(null);
-  const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(hasGitHubSource ? 'github' : 'sandbox');
+  const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(hasGitHubSource ? 'github' : hasCommitSource ? 'commit' : 'sandbox');
   const [modelOverride, setModelOverride] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
@@ -129,7 +136,10 @@ export function HubReviewTab({
   }, [activeProvider, providerOptions, selectedProvider]);
 
   useEffect(() => {
-    if (!hasGitHubSource && reviewSource === 'github') {
+    const needsReset =
+      (reviewSource === 'github' && !hasGitHubSource) ||
+      (reviewSource === 'commit' && !hasCommitSource);
+    if (needsReset) {
       setReviewSource('sandbox');
       setResult(null);
       setReviewContext(null);
@@ -138,7 +148,7 @@ export function HubReviewTab({
       setPostState('idle');
       setPostError(null);
     }
-  }, [hasGitHubSource, reviewSource]);
+  }, [hasCommitSource, hasGitHubSource, reviewSource]);
 
   const handleProviderChange = useCallback((p: PreferredProvider) => {
     setSelectedProvider(p);
@@ -216,6 +226,20 @@ export function HubReviewTab({
         nextContext = githubDiff.source === 'pr' && githubDiff.pr
           ? { kind: 'github-pr', label: githubDiff.label, pr: githubDiff.pr }
           : { kind: 'github-branch', label: githubDiff.label };
+      } else if (reviewSource === 'commit') {
+        if (!repoFullName || !activeBranch) {
+          setError('Commit review is not available for this workspace.');
+          return;
+        }
+        setStatus('Fetching latest commit diff…');
+        const commitDiff = await fetchLatestCommitDiff(repoFullName, activeBranch);
+        diff = commitDiff.diff;
+        nextContext = {
+          kind: 'github-commit',
+          label: `${commitDiff.shortSha} ${commitDiff.message}`,
+          shortSha: commitDiff.shortSha,
+          url: commitDiff.url,
+        };
       } else {
         let id = sandboxId;
         if (!id) {
@@ -277,7 +301,6 @@ export function HubReviewTab({
     defaultBranch,
     ensureSandbox,
     modelOverride,
-    onOpenDiff,
     repoFullName,
     reviewSource,
     running,
@@ -291,9 +314,9 @@ export function HubReviewTab({
     !running &&
     Boolean(selectedProvider) &&
     (
-      reviewSource === 'github'
-        ? hasGitHubSource
-        : (sandboxReady || sandboxStatus === 'idle')
+      reviewSource === 'github' ? hasGitHubSource :
+      reviewSource === 'commit' ? hasCommitSource :
+      (sandboxReady || sandboxStatus === 'idle')
     );
   const showSandboxPostingHint = reviewContext?.kind === 'sandbox' && hasGitHubSource;
 
@@ -307,7 +330,7 @@ export function HubReviewTab({
           </p>
         ) : (
           <>
-            {(hasGitHubSource || reviewSource === 'sandbox') && (
+            {(hasGitHubSource || hasCommitSource || reviewSource === 'sandbox') && (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {hasGitHubSource && (
@@ -319,7 +342,19 @@ export function HubReviewTab({
                           : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
                       }`}
                     >
-                      GitHub diff
+                      Branch diff
+                    </button>
+                  )}
+                  {hasCommitSource && (
+                    <button
+                      onClick={() => handleSourceChange('commit')}
+                      className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                        reviewSource === 'commit'
+                          ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
+                          : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
+                      }`}
+                    >
+                      Last commit
                     </button>
                   )}
                   <button
@@ -335,7 +370,9 @@ export function HubReviewTab({
                 </div>
                 <p className="text-[10px] text-push-fg-dim">
                   {reviewSource === 'github'
-                    ? 'Reviews the pushed branch diff or open PR from GitHub without starting a sandbox.'
+                    ? 'Reviews the pushed PR or branch diff against the default branch.'
+                    : reviewSource === 'commit'
+                    ? 'Reviews the diff of the most recent commit — no sandbox needed.'
                     : 'Reviews uncommitted sandbox edits in the current working tree.'}
                 </p>
               </div>
@@ -401,6 +438,8 @@ export function HubReviewTab({
             <p className="text-xs text-push-fg-dim">
               {reviewSource === 'github'
                 ? 'Run a review to inspect the active branch or open PR from GitHub.'
+                : reviewSource === 'commit'
+                ? 'Run a review to inspect the most recent commit on this branch.'
                 : 'Run a review to see feedback on your current working tree changes.'}
             </p>
           </div>
@@ -494,6 +533,19 @@ export function HubReviewTab({
                 <p className="text-[11px] text-push-fg-dim">
                   No open PR for this branch. This review covers the pushed branch diff against <span className="text-push-fg-secondary">{defaultBranch}</span>.
                 </p>
+              </div>
+            )}
+            {reviewContext?.kind === 'github-commit' && (
+              <div className="flex items-center gap-2 rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-2.5">
+                <span className="text-[11px] text-push-fg-dim">Commit</span>
+                <a
+                  href={reviewContext.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-0.5 font-mono text-[11px] text-push-accent hover:underline"
+                >
+                  {reviewContext.shortSha} <ExternalLink className="h-2.5 w-2.5" />
+                </a>
               </div>
             )}
 

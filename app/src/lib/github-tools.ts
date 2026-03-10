@@ -1915,6 +1915,48 @@ export async function fetchGitHubReviewDiff(
 }
 
 /**
+ * Fetch the diff of the most recent pushed commit on a branch.
+ * Works on any branch including the default, requires no sandbox.
+ */
+export async function fetchLatestCommitDiff(
+  repo: string,
+  branch: string,
+): Promise<{ diff: string; sha: string; shortSha: string; message: string; url: string }> {
+  const headers = getGitHubHeaders();
+
+  const listRes = await githubFetch(
+    `https://api.github.com/repos/${repo}/commits?sha=${encodeURIComponent(branch)}&per_page=1`,
+    { headers },
+  );
+  if (!listRes.ok) {
+    throw new Error(formatGitHubError(listRes.status, `latest commit on ${branch}`));
+  }
+
+  const commits = await listRes.json();
+  if (!Array.isArray(commits) || commits.length === 0) {
+    throw new Error(`No commits found on ${branch}.`);
+  }
+
+  const commit = commits[0];
+  const sha = typeof commit.sha === 'string' ? commit.sha : '';
+  const shortSha = sha.slice(0, 7);
+  const message = typeof commit.commit?.message === 'string'
+    ? commit.commit.message.split('\n')[0]
+    : sha;
+  const url = typeof commit.html_url === 'string' ? commit.html_url : '';
+
+  const diffRes = await githubFetch(
+    `https://api.github.com/repos/${repo}/commits/${sha}`,
+    { headers: { ...headers, Accept: 'application/vnd.github.v3.diff' } },
+  );
+  if (!diffRes.ok) {
+    throw new Error(formatGitHubError(diffRes.status, `diff for commit ${shortSha}`));
+  }
+
+  return { diff: await diffRes.text(), sha, shortSha, message, url };
+}
+
+/**
  * Post a reviewer result to a GitHub PR as a review.
  *
  * Comments with a `line` field become inline review comments anchored to that
