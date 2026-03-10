@@ -1,27 +1,18 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Info, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
-import { getActiveProvider } from '@/lib/orchestrator';
-import { getModelForRole } from '@/lib/providers';
-import { getOllamaKey } from '@/hooks/useOllamaConfig';
-import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
-import { getZenKey } from '@/hooks/useZenConfig';
-import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
-import type { AIProviderType } from '@/types';
+import type { ActiveProvider } from '@/lib/orchestrator';
+import type { PreferredProvider } from '@/lib/providers';
 import type { ReviewResult, ReviewComment } from '@/types';
-
-const ALL_PROVIDERS: { type: AIProviderType; label: string; getKey: () => string | null }[] = [
-  { type: 'zen',        label: 'Zen',        getKey: getZenKey },
-  { type: 'openrouter', label: 'OpenRouter', getKey: getOpenRouterKey },
-  { type: 'ollama',     label: 'Ollama',     getKey: getOllamaKey },
-  { type: 'nvidia',     label: 'Nvidia',     getKey: getNvidiaKey },
-];
 
 interface HubReviewTabProps {
   sandboxId: string | null;
   sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
   ensureSandbox: () => Promise<string | null>;
+  availableProviders: readonly (readonly [PreferredProvider, string, boolean])[];
+  activeProvider: ActiveProvider;
+  providerModels: Record<PreferredProvider, string>;
 }
 
 function severityIcon(severity: ReviewComment['severity']) {
@@ -56,35 +47,48 @@ function severityOrder(s: ReviewComment['severity']): number {
   return { critical: 0, warning: 1, suggestion: 2, note: 3 }[s];
 }
 
-export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubReviewTabProps) {
-  const availableProviders = useMemo(
-    () => ALL_PROVIDERS.filter((p) => Boolean(p.getKey())),
-    [],
+export function HubReviewTab({
+  sandboxId,
+  sandboxStatus,
+  ensureSandbox,
+  availableProviders,
+  activeProvider,
+  providerModels,
+}: HubReviewTabProps) {
+  const providerOptions = useMemo(
+    () => availableProviders.map(([type, label]) => ({ type, label })),
+    [availableProviders],
   );
-
-  const [selectedProvider, setSelectedProvider] = useState<AIProviderType | null>(() => {
-    const active = getActiveProvider();
-    if (active !== 'demo' && ALL_PROVIDERS.some((p) => p.type === active && Boolean(p.getKey()))) {
-      return active as AIProviderType;
-    }
-    return availableProviders[0]?.type ?? null;
-  });
-
-  const [modelInput, setModelInput] = useState(() => {
-    const active = getActiveProvider();
-    const defaultP = (active !== 'demo' ? active : availableProviders[0]?.type) as AIProviderType | undefined;
-    return defaultP ? (getModelForRole(defaultP, 'reviewer')?.id ?? '') : '';
-  });
+  const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(null);
+  const [modelOverride, setModelOverride] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
 
-  const handleProviderChange = useCallback((p: AIProviderType) => {
+  useEffect(() => {
+    const nextSelected =
+      selectedProvider && providerOptions.some((provider) => provider.type === selectedProvider)
+        ? selectedProvider
+        : activeProvider !== 'demo' && providerOptions.some((provider) => provider.type === activeProvider)
+          ? activeProvider
+          : providerOptions[0]?.type ?? null;
+
+    if (nextSelected !== selectedProvider) {
+      setSelectedProvider(nextSelected);
+      setModelOverride('');
+    }
+
+    if (providerOptions.length === 0) {
+      setResult(null);
+      setError(null);
+    }
+  }, [activeProvider, providerOptions, selectedProvider]);
+
+  const handleProviderChange = useCallback((p: PreferredProvider) => {
     setSelectedProvider(p);
-    const roleModel = getModelForRole(p, 'reviewer');
-    setModelInput(roleModel?.id ?? '');
+    setModelOverride('');
   }, []);
 
   const toggleFile = useCallback((file: string) => {
@@ -124,7 +128,7 @@ export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubRev
 
       const reviewResult = await runReviewer(
         diffResult.diff,
-        { provider: selectedProvider!, model: modelInput.trim() || undefined },
+        { provider: selectedProvider, model: modelOverride.trim() || undefined },
         (phase) => setStatus(phase),
       );
 
@@ -143,15 +147,16 @@ export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubRev
       setRunning(false);
       setStatus(null);
     }
-  }, [running, sandboxId, ensureSandbox, selectedProvider, modelInput]);
+  }, [running, sandboxId, ensureSandbox, selectedProvider, modelOverride]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
+  const selectedDefaultModel = selectedProvider ? providerModels[selectedProvider] : '';
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Controls */}
       <div className="flex-shrink-0 border-b border-push-edge px-3 py-3 space-y-2.5">
-        {availableProviders.length === 0 ? (
+        {providerOptions.length === 0 ? (
           <p className="text-[11px] text-push-fg-dim">
             No AI provider configured. Add an API key in Settings to use the Reviewer.
           </p>
@@ -159,7 +164,7 @@ export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubRev
           <>
             {/* Provider pills — only configured providers */}
             <div className="flex items-center gap-1.5 flex-wrap">
-              {availableProviders.map(({ type, label }) => (
+              {providerOptions.map(({ type, label }) => (
                 <button
                   key={type}
                   onClick={() => handleProviderChange(type)}
@@ -178,9 +183,9 @@ export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubRev
             <div className="flex items-center gap-2">
               <input
                 type="text"
-                value={modelInput}
-                onChange={(e) => setModelInput(e.target.value)}
-                placeholder="Model ID (uses role default if blank)"
+                value={modelOverride}
+                onChange={(e) => setModelOverride(e.target.value)}
+                placeholder={selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Model ID override'}
                 className="min-w-0 flex-1 rounded-lg border border-push-edge bg-[#080d14] px-2.5 py-1.5 text-[11px] text-push-fg-secondary placeholder:text-push-fg-dim focus:border-push-accent/40 focus:outline-none"
               />
               <button
@@ -192,6 +197,12 @@ export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubRev
                 {running ? 'Reviewing…' : 'Run review'}
               </button>
             </div>
+            {selectedDefaultModel && (
+              <p className="text-[10px] text-push-fg-dim">
+                Using provider default: <span className="text-push-fg-secondary">{selectedDefaultModel}</span>
+                {modelOverride.trim() ? ' (override active)' : ''}
+              </p>
+            )}
           </>
         )}
 

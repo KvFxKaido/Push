@@ -25,7 +25,7 @@ import { runAuditor } from '@/lib/auditor-agent';
 import { execInSandbox, getSandboxDiff } from '@/lib/sandbox-client';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { getActiveProvider, getProviderStreamFn } from '@/lib/orchestrator';
-import { getModelForRole } from '@/lib/providers';
+import { getModelForRole, type PreferredProvider } from '@/lib/providers';
 import { streamWithTimeout } from '@/lib/utils';
 import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubReviewTab } from './hub-tabs';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
@@ -63,6 +63,9 @@ interface WorkspaceHubSheetProps {
   onStartSandbox: () => void;
   onRetrySandbox: () => void;
   onNewSandbox: () => void;
+  reviewProviders: readonly (readonly [PreferredProvider, string, boolean])[];
+  reviewActiveProvider: ReturnType<typeof getActiveProvider>;
+  reviewProviderModels: Record<PreferredProvider, string>;
   repoName?: string;
   protectMainEnabled: boolean;
   showToolActivity: boolean;
@@ -191,6 +194,9 @@ export function WorkspaceHubSheet({
   onStartSandbox,
   onRetrySandbox,
   onNewSandbox,
+  reviewProviders,
+  reviewActiveProvider,
+  reviewProviderModels,
   repoName,
   protectMainEnabled,
   showToolActivity,
@@ -874,6 +880,9 @@ export function WorkspaceHubSheet({
                   sandboxId={sandboxId}
                   sandboxStatus={sandboxStatus}
                   ensureSandbox={ensureSandbox}
+                  availableProviders={reviewProviders}
+                  activeProvider={reviewActiveProvider}
+                  providerModels={reviewProviderModels}
                 />
               </div>
             )}

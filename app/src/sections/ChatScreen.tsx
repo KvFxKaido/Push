@@ -914,6 +914,14 @@ export function ChatScreen(props: ChatScreenProps) {
             void sandbox.stop().then(() => sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
           }
         }}
+        reviewProviders={catalog.availableProviders}
+        reviewActiveProvider={catalog.activeProviderLabel}
+        reviewProviderModels={{
+          ollama: catalog.ollama.model,
+          openrouter: catalog.openRouter.model,
+          zen: catalog.zen.model,
+          nvidia: catalog.nvidia.model,
+        }}
         repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
         protectMainEnabled={protectMain.isProtected}
         showToolActivity={showToolActivity}
