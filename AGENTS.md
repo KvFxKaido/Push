@@ -88,7 +88,7 @@ Ephemeral workspace with no GitHub repo. Entry via onboarding or repo picker. Gi
 
 ### Active Branch Model
 
-There is always exactly one Active Branch per repo session — it is the commit target, push target, diff base, and chat context. Switching branches is atomic and explicit — it tears down the sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer, home page, and workspace branch selector. Branch creation happens via the workspace/header branch action on main; on feature branches, that action becomes "Merge into main". Non-default inactive branches can be deleted from the workspace branch selector.
+There is always exactly one Active Branch per repo session — it is the commit target, push target, diff base, and chat context. Switching branches is atomic and explicit — it tears down the sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer, home page, and workspace branch selector. Branch creation is an explicit UI action available from Home, the workspace/header branch controls, and the Workspace Hub commit/push sheet; the assistant does not create branches itself. On feature branches, the primary workspace action becomes "Merge into main". Non-default inactive branches can be deleted from the workspace branch selector.
 
 ### Merge Flow (GitHub PR Merge)
 

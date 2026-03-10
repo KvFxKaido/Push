@@ -44,6 +44,10 @@ function App() {
 
   // --- Chat ---
   const skipBranchTeardownRef = useRef(false);
+  const handleSandboxBranchSwitch = useCallback((branch: string) => {
+    skipBranchTeardownRef.current = true;
+    setCurrentBranch(branch);
+  }, [setCurrentBranch]);
   const {
     messages,
     sendMessage,
@@ -92,10 +96,7 @@ function App() {
         setIsSandboxMode(false);
         toast.success(`Promoted to GitHub: ${repo.full_name}`);
       },
-      onBranchSwitch: (branch) => {
-        skipBranchTeardownRef.current = true;
-        setCurrentBranch(branch);
-      },
+      onBranchSwitch: handleSandboxBranchSwitch,
       onSandboxUnreachable: (reason) => {
         sandbox.markUnreachable(reason);
       },
@@ -807,6 +808,7 @@ function App() {
       handleSelectRepoFromDrawer={handleSelectRepoFromDrawer}
       handleBrowseRepos={handleBrowseRepos}
       setCurrentBranch={setCurrentBranch}
+      onSandboxBranchSwitch={handleSandboxBranchSwitch}
       sandboxState={sandboxState}
       sandboxStateLoading={sandboxStateLoading}
       fetchSandboxState={fetchSandboxState}

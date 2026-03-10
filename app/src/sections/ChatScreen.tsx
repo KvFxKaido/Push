@@ -184,6 +184,7 @@ interface ChatScreenProps {
   handleSelectRepoFromDrawer: (repo: RepoWithActivity) => void;
   handleBrowseRepos: () => void;
   setCurrentBranch: (branch: string) => void;
+  onSandboxBranchSwitch: (branch: string) => void;
 
   // Sandbox state (for settings)
   sandboxState: SandboxStateCardData | null;
@@ -290,6 +291,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSelectRepoFromDrawer,
     handleBrowseRepos,
     setCurrentBranch,
+    onSandboxBranchSwitch,
     sandboxState,
     sandboxStateLoading,
     fetchSandboxState,
@@ -950,6 +952,7 @@ export function ChatScreen(props: ChatScreenProps) {
           onShowMergeFlow: () => setShowMergeFlow(true),
           onDeleteBranch: handleDeleteBranch,
         }}
+        onSandboxBranchSwitch={onSandboxBranchSwitch}
       />
 
       {/* Toast notifications */}

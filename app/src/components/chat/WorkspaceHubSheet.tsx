@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -20,9 +20,10 @@ import {
 } from 'lucide-react';
 import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
 import { toast } from 'sonner';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { runAuditor } from '@/lib/auditor-agent';
 import { execInSandbox, getSandboxDiff } from '@/lib/sandbox-client';
+import { deriveBranchNameFromCommitMessage, getBranchSuggestionPrefix, normalizeSuggestedBranchName, sanitizeBranchName } from '@/lib/branch-names';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { getActiveProvider, getProviderStreamFn } from '@/lib/orchestrator';
 import { getModelForRole, type PreferredProvider } from '@/lib/providers';
@@ -37,7 +38,8 @@ import type { AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types
 
 type HubTab = 'scratchpad' | 'console' | 'files' | 'diff' | 'review';
 
-type CommitPhase = 'idle' | 'fetching-diff' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
+type CommitPhase = 'idle' | 'fetching-diff' | 'branching' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
+type CommitTargetMode = 'current' | 'new';
 type DiffViewMode = 'working-tree' | 'review-github' | 'review-sandbox';
 
 interface DiffJumpTarget {
@@ -50,6 +52,11 @@ interface ReviewDiffSelection {
   data: DiffPreviewCardData;
   label: string;
   mode: Exclude<DiffViewMode, 'working-tree'>;
+}
+
+interface CommitPushTarget {
+  mode: CommitTargetMode;
+  branchName?: string;
 }
 
 export interface HubBranchProps {
@@ -95,6 +102,7 @@ interface WorkspaceHubSheetProps {
   onScratchpadDeleteMemory: (id: string) => void;
   // Branch management
   branchProps: HubBranchProps;
+  onSandboxBranchSwitch: (branch: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +122,7 @@ const TABS_WITHOUT_CONSOLE = TABS_WITH_CONSOLE.filter((tab) => tab.key !== 'cons
 const PHASE_LABELS: Record<CommitPhase, string> = {
   idle: '',
   'fetching-diff': 'Checking changes...',
+  branching: 'Creating branch...',
   auditing: 'Auditing...',
   committing: 'Committing...',
   pushing: 'Pushing...',
@@ -122,6 +131,7 @@ const PHASE_LABELS: Record<CommitPhase, string> = {
 };
 
 const COMMIT_MESSAGE_SUGGEST_TIMEOUT_MS = 30_000;
+const BRANCH_NAME_SUGGEST_TIMEOUT_MS = 30_000;
 
 const COMMIT_MESSAGE_SUGGEST_SYSTEM_PROMPT = `You generate git commit messages.
 
@@ -135,6 +145,21 @@ Rules:
 - No trailing period
 - Keep total line length <= 72 characters
 - No quotes, no markdown, no bullets`;
+
+const BRANCH_NAME_SUGGEST_SYSTEM_PROMPT = `You generate git branch names.
+
+Return ONLY one branch name, nothing else.
+
+Rules:
+- lowercase only
+- kebab-case words
+- one slash-separated prefix followed by a descriptive topic
+- no spaces, quotes, markdown, bullets, or explanations
+- keep it concise but specific`;
+
+function escapeSingleQuotes(value: string): string {
+  return value.replace(/'/g, `'"'"'`);
+}
 
 function truncateCommitSubject(subject: string, type: string): string {
   const maxTotalLength = 72;
@@ -225,6 +250,7 @@ export function WorkspaceHubSheet({
   onScratchpadLoadMemory,
   onScratchpadDeleteMemory,
   branchProps,
+  onSandboxBranchSwitch,
 }: WorkspaceHubSheetProps) {
   const [activeTab, setActiveTab] = useState<HubTab>('files');
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -240,7 +266,13 @@ export function WorkspaceHubSheet({
   const [commitPhase, setCommitPhase] = useState<CommitPhase>('idle');
   const [commitMessage, setCommitMessage] = useState('');
   const [suggestingCommitMessage, setSuggestingCommitMessage] = useState(false);
+  const [commitTargetSheetOpen, setCommitTargetSheetOpen] = useState(false);
+  const [commitTargetMode, setCommitTargetMode] = useState<CommitTargetMode>('current');
+  const [newBranchName, setNewBranchName] = useState('');
+  const [commitTargetError, setCommitTargetError] = useState<string | null>(null);
+  const [suggestingBranchName, setSuggestingBranchName] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
+  const branchSuggestionAttemptedRef = useRef(false);
 
   // Branch dropdown
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
@@ -263,6 +295,13 @@ export function WorkspaceHubSheet({
   );
 
   const isOnMain = branchProps.currentBranch === branchProps.defaultBranch;
+  const currentBranchName = branchProps.currentBranch || branchProps.defaultBranch || 'main';
+  const branchSuggestionPrefix = useMemo(() => getBranchSuggestionPrefix(repoName), [repoName]);
+  const fallbackBranchName = useMemo(
+    () => deriveBranchNameFromCommitMessage(commitMessage, branchSuggestionPrefix),
+    [commitMessage, branchSuggestionPrefix],
+  );
+  const sanitizedNewBranchName = sanitizeBranchName(newBranchName);
 
   // ---- Diff callbacks for HubDiffTab ----
   const handleDiffUpdate = useCallback((data: DiffPreviewCardData | null, error: string | null) => {
@@ -304,7 +343,19 @@ export function WorkspaceHubSheet({
   }, [repoFullName, branchProps.currentBranch]);
 
   // ---- Commit & Push flow ----
-  const runCommitAndPush = useCallback(async () => {
+  const openCommitTargetSheet = useCallback(() => {
+    if (!sandboxReady) {
+      toast.error('Sandbox is not ready.');
+      return;
+    }
+    setCommitTargetMode(blockedByProtectMain ? 'new' : 'current');
+    setCommitTargetError(null);
+    setNewBranchName((prev) => prev || fallbackBranchName);
+    branchSuggestionAttemptedRef.current = false;
+    setCommitTargetSheetOpen(true);
+  }, [sandboxReady, blockedByProtectMain, fallbackBranchName]);
+
+  const runCommitAndPush = useCallback(async (target: CommitPushTarget) => {
     if (!sandboxId) {
       toast.error('Sandbox is not ready.');
       return;
@@ -316,7 +367,7 @@ export function WorkspaceHubSheet({
       return;
     }
 
-    if (blockedByProtectMain) {
+    if (target.mode === 'current' && blockedByProtectMain) {
       toast.error(`Protected branch: commits to "${branchProps.defaultBranch}" are blocked.`);
       return;
     }
@@ -327,12 +378,37 @@ export function WorkspaceHubSheet({
       return;
     }
 
-    const safeMessage = message.replace(/'/g, `'"'"'`);
+    const safeMessage = escapeSingleQuotes(message);
+    const targetBranchName = target.mode === 'new' ? target.branchName : currentBranchName;
 
-    // Phase: Fetching diff
-    setCommitPhase('fetching-diff');
     setCommitError(null);
     try {
+      if (target.mode === 'new' && target.branchName) {
+        setCommitPhase('branching');
+        const switchResult = await execInSandbox(
+          sandboxId,
+          `cd /workspace && if git show-ref --verify --quiet refs/heads/${target.branchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ls-remote --exit-code --heads origin ${target.branchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi && git switch -c ${target.branchName}`,
+        );
+
+        if (switchResult.exitCode !== 0) {
+          const output = `${switchResult.stdout}\n${switchResult.stderr}`;
+          if (output.includes('__PUSH_BRANCH_EXISTS_LOCAL__') || output.includes('__PUSH_BRANCH_EXISTS_REMOTE__')) {
+            setCommitPhase('error');
+            setCommitError(`Branch "${target.branchName}" already exists.`);
+            return;
+          }
+
+          const detail = switchResult.stderr || switchResult.stdout || 'Unknown git error';
+          setCommitPhase('error');
+          setCommitError(`Branch switch failed: ${detail}`);
+          return;
+        }
+
+        onSandboxBranchSwitch(target.branchName);
+      }
+
+      // Phase: Fetching diff
+      setCommitPhase('fetching-diff');
       const diffResult = await getSandboxDiff(sandboxId);
       if (!diffResult.diff) {
         setCommitPhase('error');
@@ -371,7 +447,10 @@ export function WorkspaceHubSheet({
 
       // Phase: Pushing
       setCommitPhase('pushing');
-      const pushResult = await execInSandbox(sandboxId, 'cd /workspace && git push origin HEAD');
+      const pushCommand = target.mode === 'new' && target.branchName
+        ? `cd /workspace && git push -u origin HEAD:refs/heads/${target.branchName}`
+        : 'cd /workspace && git push origin HEAD';
+      const pushResult = await execInSandbox(sandboxId, pushCommand);
       if (pushResult.exitCode !== 0) {
         const detail = pushResult.stderr || pushResult.stdout || 'Unknown git error';
         setCommitPhase('error');
@@ -381,7 +460,10 @@ export function WorkspaceHubSheet({
 
       // Success
       setCommitPhase('success');
-      toast.success('Committed & pushed.');
+      toast.success(`Committed & pushed to ${targetBranchName}.`);
+      if (target.mode === 'new') {
+        branchProps.onRefreshBranches();
+      }
 
       // Refresh diff data
       try {
@@ -405,7 +487,14 @@ export function WorkspaceHubSheet({
       setCommitPhase('error');
       setCommitError(err instanceof Error ? err.message : 'Commit failed');
     }
-  }, [sandboxId, commitMessage, blockedByProtectMain, branchProps.defaultBranch]);
+  }, [
+    sandboxId,
+    commitMessage,
+    blockedByProtectMain,
+    branchProps,
+    currentBranchName,
+    onSandboxBranchSwitch,
+  ]);
 
   const suggestCommitMessage = useCallback(async () => {
     if (!sandboxId) {
@@ -485,6 +574,124 @@ export function WorkspaceHubSheet({
     }
   }, [sandboxId]);
 
+  const suggestBranchName = useCallback(async () => {
+    setSuggestingBranchName(true);
+    setCommitTargetError(null);
+    try {
+      if (!sandboxId) {
+        throw new Error('Sandbox is not ready.');
+      }
+
+      const diffResult = await getSandboxDiff(sandboxId);
+      if (!diffResult.diff) {
+        setNewBranchName(fallbackBranchName);
+        return;
+      }
+
+      const activeProvider = getActiveProvider();
+      if (activeProvider === 'demo') {
+        setNewBranchName(fallbackBranchName);
+        return;
+      }
+
+      const stats = parseDiffStats(diffResult.diff);
+      const diffSnippet = diffResult.diff.slice(0, 20_000);
+      const { streamFn } = getProviderStreamFn(activeProvider);
+      const modelId = getModelForRole(activeProvider, 'orchestrator')?.id;
+      const prompt = [
+        `Generate a git branch name for this change.`,
+        `Required prefix: ${branchSuggestionPrefix}/`,
+        `Current branch: ${currentBranchName}`,
+        commitMessage ? `Commit message: ${commitMessage}` : null,
+        `Changed files: ${stats.filesChanged}, additions: ${stats.additions}, deletions: ${stats.deletions}.`,
+        `Return exactly one branch name.`,
+        '',
+        '```diff',
+        diffSnippet,
+        '```',
+      ].filter(Boolean).join('\n');
+
+      const llmMessages: ChatMessage[] = [
+        {
+          id: 'branch-name-suggest',
+          role: 'user',
+          content: prompt,
+          timestamp: Date.now(),
+        },
+      ];
+
+      const { promise, getAccumulated } = streamWithTimeout(
+        BRANCH_NAME_SUGGEST_TIMEOUT_MS,
+        `Branch name suggestion timed out after ${BRANCH_NAME_SUGGEST_TIMEOUT_MS / 1000}s.`,
+        (onToken, onDone, onError) => {
+          streamFn(
+            llmMessages,
+            onToken,
+            onDone,
+            onError,
+            undefined,
+            undefined,
+            false,
+            modelId,
+            BRANCH_NAME_SUGGEST_SYSTEM_PROMPT,
+          );
+        },
+      );
+
+      const streamError = await promise;
+      if (streamError) {
+        throw streamError;
+      }
+
+      const suggested = normalizeSuggestedBranchName(getAccumulated(), branchSuggestionPrefix);
+      setNewBranchName(suggested || fallbackBranchName);
+    } catch {
+      setNewBranchName(fallbackBranchName);
+    } finally {
+      setSuggestingBranchName(false);
+    }
+  }, [sandboxId, branchSuggestionPrefix, commitMessage, currentBranchName, fallbackBranchName]);
+
+  const handleCommitTargetConfirm = useCallback(() => {
+    const message = commitMessage.replace(/[\r\n]+/g, ' ').trim();
+    if (!message) {
+      setCommitTargetError('Enter a commit message first.');
+      return;
+    }
+
+    if (commitTargetMode === 'current') {
+      if (blockedByProtectMain) {
+        setCommitTargetError(`Direct pushes to "${branchProps.defaultBranch}" are blocked.`);
+        return;
+      }
+      setCommitTargetError(null);
+      setCommitTargetSheetOpen(false);
+      void runCommitAndPush({ mode: 'current' });
+      return;
+    }
+
+    if (!sanitizedNewBranchName) {
+      setCommitTargetError('Enter a branch name.');
+      return;
+    }
+    if (sanitizedNewBranchName === currentBranchName) {
+      setCommitTargetError(`Branch "${sanitizedNewBranchName}" is already active.`);
+      return;
+    }
+
+    setCommitTargetError(null);
+    setCommitTargetSheetOpen(false);
+    void runCommitAndPush({ mode: 'new', branchName: sanitizedNewBranchName });
+  }, [
+    commitMessage,
+    commitTargetMode,
+    blockedByProtectMain,
+    branchProps.defaultBranch,
+    sanitizedNewBranchName,
+    currentBranchName,
+    runCommitAndPush,
+  ]);
+
   // ---- Branch switching with confirmation ----
   const handleBranchSwitch = useCallback((branch: string) => {
     if (branch === branchProps.currentBranch) return;
@@ -513,9 +720,12 @@ export function WorkspaceHubSheet({
     if (!open) {
       setCommitPhase('idle');
       setCommitError(null);
+      setCommitTargetSheetOpen(false);
+      setCommitTargetError(null);
       setBranchDropdownOpen(false);
       setPendingDeleteBranch(null);
       setSwitchConfirmBranch(null);
+      branchSuggestionAttemptedRef.current = false;
     }
   }, [open]);
 
@@ -525,10 +735,25 @@ export function WorkspaceHubSheet({
   }, [activeTab]);
 
   useEffect(() => {
+    setCommitTargetSheetOpen(false);
+    setCommitTargetError(null);
+    setCommitTargetMode(blockedByProtectMain ? 'new' : 'current');
+    setNewBranchName('');
+    branchSuggestionAttemptedRef.current = false;
+  }, [repoFullName, branchProps.currentBranch, blockedByProtectMain]);
+
+  useEffect(() => {
     if (!showToolActivity && activeTab === 'console') {
       setActiveTab('files');
     }
   }, [showToolActivity, activeTab]);
+
+  useEffect(() => {
+    if (!commitTargetSheetOpen || commitTargetMode !== 'new') return;
+    if (branchSuggestionAttemptedRef.current) return;
+    branchSuggestionAttemptedRef.current = true;
+    void suggestBranchName();
+  }, [commitTargetSheetOpen, commitTargetMode, suggestBranchName]);
 
   // Auto-load diff when opening diff tab
   useEffect(() => {
@@ -836,7 +1061,7 @@ export function WorkspaceHubSheet({
                       setCommitError(null);
                       return;
                     }
-                    void runCommitAndPush();
+                    openCommitTargetSheet();
                   }}
                   disabled={
                     (commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error') ||
@@ -858,7 +1083,7 @@ export function WorkspaceHubSheet({
                     <GitCommitHorizontal className="h-3.5 w-3.5" />
                   )}
                   {commitPhase === 'idle'
-                    ? 'Commit & Push'
+                    ? 'Commit & Push…'
                     : commitPhase === 'success' || commitPhase === 'error'
                     ? 'Reset'
                     : PHASE_LABELS[commitPhase]}
@@ -944,6 +1169,168 @@ export function WorkspaceHubSheet({
               </div>
             )}
           </div>
+
+          <Sheet
+            open={commitTargetSheetOpen}
+            onOpenChange={(nextOpen) => {
+              setCommitTargetSheetOpen(nextOpen);
+              if (!nextOpen) {
+                setCommitTargetError(null);
+                branchSuggestionAttemptedRef.current = false;
+              }
+            }}
+          >
+            <SheetContent
+              side="bottom"
+              className="border-t border-[#151b26] bg-[#0d0d0d] px-0 pb-6 pt-0 text-push-fg"
+            >
+              <SheetHeader className="border-b border-push-edge px-4 py-4">
+                <SheetTitle className="text-sm font-semibold text-push-fg">Push target</SheetTitle>
+                <SheetDescription className="text-xs text-push-fg-dim">
+                  Push to the current branch or fork this working tree into a new branch first.
+                </SheetDescription>
+              </SheetHeader>
+
+              <div className="space-y-4 px-4 pt-4">
+                <div className="rounded-xl border border-push-edge bg-[#0b1018]/90 p-3">
+                  <div className="flex items-start gap-2">
+                    <button
+                      onClick={() => {
+                        if (blockedByProtectMain) return;
+                        setCommitTargetMode('current');
+                        setCommitTargetError(null);
+                      }}
+                      disabled={blockedByProtectMain}
+                      className={`mt-0.5 h-4 w-4 rounded-full border ${
+                        commitTargetMode === 'current'
+                          ? 'border-push-link bg-push-link'
+                          : 'border-[#31425a] bg-transparent'
+                      } ${blockedByProtectMain ? 'opacity-40' : ''}`}
+                      aria-label="Push to current branch"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-push-fg">Current branch</p>
+                        <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[10px] text-[#58a6ff]">
+                          {currentBranchName}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-push-fg-dim">
+                        Commit and push directly to the active branch.
+                      </p>
+                      {blockedByProtectMain && (
+                        <p className="mt-2 text-[11px] text-amber-300">
+                          Protect Main blocks direct pushes to {branchProps.defaultBranch}.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-push-edge bg-[#0b1018]/90 p-3">
+                  <div className="flex items-start gap-2">
+                    <button
+                      onClick={() => {
+                        setCommitTargetMode('new');
+                        setCommitTargetError(null);
+                        setNewBranchName((prev) => prev || fallbackBranchName);
+                        if (!branchSuggestionAttemptedRef.current) {
+                          branchSuggestionAttemptedRef.current = true;
+                          void suggestBranchName();
+                        }
+                      }}
+                      className={`mt-0.5 h-4 w-4 rounded-full border ${
+                        commitTargetMode === 'new'
+                          ? 'border-push-link bg-push-link'
+                          : 'border-[#31425a] bg-transparent'
+                      }`}
+                      aria-label="Push to a new branch"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-push-fg">New branch</p>
+                        <span className="rounded-full bg-[#131a27] px-1.5 py-0.5 text-[10px] text-push-fg-dim">
+                          from {currentBranchName}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-push-fg-dim">
+                        Create a new branch from the current working tree, then commit and push there.
+                      </p>
+
+                      <div className="mt-3 flex items-center gap-2">
+                        <input
+                          value={newBranchName}
+                          onChange={(event) => {
+                            setNewBranchName(event.target.value);
+                            setCommitTargetMode('new');
+                            setCommitTargetError(null);
+                          }}
+                          placeholder={`${branchSuggestionPrefix}/update-workspace`}
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          className="h-10 min-w-0 flex-1 rounded-lg border border-[#1b2230] bg-push-grad-input px-3 text-sm text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all placeholder:text-push-fg-dim focus:border-push-sky/50"
+                        />
+                        <button
+                          onClick={() => {
+                            setCommitTargetMode('new');
+                            branchSuggestionAttemptedRef.current = true;
+                            void suggestBranchName();
+                          }}
+                          disabled={suggestingBranchName}
+                          className="flex h-10 items-center gap-1 rounded-lg border border-[#1b2230] bg-push-grad-input px-3 text-xs text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg-secondary hover:brightness-110 disabled:opacity-50"
+                        >
+                          {suggestingBranchName ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-3.5 w-3.5" />
+                          )}
+                          AI
+                        </button>
+                      </div>
+
+                      {newBranchName && sanitizedNewBranchName !== newBranchName.toLowerCase().trim() && (
+                        <p className="mt-2 text-[11px] text-push-fg-dim">
+                          Will create: <span className="font-mono text-push-fg-secondary">{sanitizedNewBranchName || `${branchSuggestionPrefix}/update-workspace`}</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-[#1b2230] bg-push-grad-input px-3 py-2">
+                  <p className="text-[11px] text-push-fg-dim">
+                    Commit message
+                  </p>
+                  <p className="mt-1 truncate text-sm text-push-fg-secondary">
+                    {commitMessage.trim() || 'Enter a commit message in the bar above first.'}
+                  </p>
+                </div>
+
+                {commitTargetError && (
+                  <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+                    <p className="text-xs text-red-300">{commitTargetError}</p>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleCommitTargetConfirm}
+                    disabled={suggestingBranchName}
+                    className="flex-1 rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2.5 text-sm text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 disabled:opacity-50"
+                  >
+                    Commit &amp; Push
+                  </button>
+                  <button
+                    onClick={() => setCommitTargetSheetOpen(false)}
+                    className="rounded-lg px-3 py-2.5 text-sm text-push-fg-dim transition-colors hover:text-push-fg-secondary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
       </SheetContent>
     </Sheet>

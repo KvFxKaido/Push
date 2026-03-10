@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { executeCreateBranch } from '@/lib/github-tools';
+import { sanitizeBranchName } from '@/lib/branch-names';
 import type { ActiveRepo } from '@/types';
 
 interface BranchCreateSheetProps {
@@ -19,17 +20,6 @@ interface BranchCreateSheetProps {
   onOpenChange: (open: boolean) => void;
   activeRepo: ActiveRepo;
   setCurrentBranch: (branch: string) => void;
-}
-
-/** Sanitize branch name: lowercase, spaces to hyphens, strip invalid chars. */
-function sanitizeBranchName(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9\-/]/g, '')
-    .replace(/\/{2,}/g, '/')       // collapse consecutive slashes
-    .replace(/^[-/]+/, '')          // no leading hyphens or slashes
-    .replace(/[-/]+$/, '');         // no trailing hyphens or slashes
 }
 
 function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }: BranchCreateSheetProps) {

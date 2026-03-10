@@ -31,6 +31,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { fetchRepoBranches } from '@/lib/github-tools';
+import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import type { ActiveRepo, Conversation, GitHubUser, RepoWithActivity } from '@/types';
 
 interface HomeScreenProps {
@@ -119,6 +120,7 @@ export function HomeScreen({
   const [repoBranchesByRepo, setRepoBranchesByRepo] = useState<Record<string, RepoBranchOption[]>>({});
   const [repoBranchLoadingByRepo, setRepoBranchLoadingByRepo] = useState<Record<string, boolean>>({});
   const [repoBranchErrorByRepo, setRepoBranchErrorByRepo] = useState<Record<string, string | null>>({});
+  const [branchCreateRepo, setBranchCreateRepo] = useState<RepoWithActivity | null>(null);
   const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false);
 
   const loadBranchesForRepo = useCallback(async (repoFullName: string, force: boolean = false) => {
@@ -195,6 +197,31 @@ export function HomeScreen({
         (r.description && r.description.toLowerCase().includes(q)),
     );
   }, [repos, search]);
+
+  const branchCreateActiveRepo = useMemo<ActiveRepo | null>(() => {
+    if (!branchCreateRepo) return null;
+    const currentBranch =
+      activeRepo?.full_name === branchCreateRepo.full_name
+        ? activeRepo.current_branch || activeRepo.default_branch
+        : branchCreateRepo.default_branch;
+    return {
+      id: branchCreateRepo.id,
+      name: branchCreateRepo.name,
+      full_name: branchCreateRepo.full_name,
+      owner: branchCreateRepo.owner,
+      default_branch: branchCreateRepo.default_branch,
+      current_branch: currentBranch,
+      private: branchCreateRepo.private,
+    };
+  }, [activeRepo, branchCreateRepo]);
+
+  const handleOpenBranchCreate = useCallback((repo: RepoWithActivity) => {
+    setBranchCreateRepo(repo);
+  }, []);
+
+  const handleBranchCreateSheetOpenChange = useCallback((open: boolean) => {
+    if (!open) setBranchCreateRepo(null);
+  }, []);
 
   const renderRepoButton = (repo: RepoWithActivity) => {
     const chatMeta = repoChatMeta.get(repo.full_name);
@@ -283,85 +310,97 @@ export function HomeScreen({
           </div>
         </button>
 
-        <DropdownMenu
-          open={isBranchMenuOpen}
-          onOpenChange={(open) => {
-            setOpenRepoBranchMenu(open ? repo.full_name : null);
-            if (open) {
-              void loadBranchesForRepo(repo.full_name);
-            }
-          }}
-        >
-          <DropdownMenuTrigger className="mt-2 flex h-8 w-full items-center justify-between rounded-lg border border-[#1b2230] bg-push-grad-input px-2.5 text-xs text-[#9db8df] shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:brightness-110">
-            <span className="inline-flex min-w-0 items-center gap-1">
-              <GitBranch className="h-3 w-3 text-[#5f6b80]" />
-              <span className="truncate">Open on branch</span>
-            </span>
-            <span className="truncate text-[11px] text-[#788396]">{repo.default_branch}</span>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            sideOffset={8}
-            className="w-[240px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            onClick={() => handleOpenBranchCreate(repo)}
+            className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#1b2230] bg-push-grad-input px-2.5 text-xs text-push-fg-secondary shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:text-push-fg hover:brightness-110"
           >
-            <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
-              {repo.name} Branches
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator className="bg-push-edge" />
+            <GitBranch className="h-3.5 w-3.5 text-[#5f6b80]" />
+            Create branch
+          </button>
 
-            {branchesLoading && (
-              <DropdownMenuItem disabled className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Loading branches...
-              </DropdownMenuItem>
-            )}
-
-            {!branchesLoading && branchesError && (
-              <>
-                <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400">
-                  Failed to load branches
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    void loadBranchesForRepo(repo.full_name, true);
-                  }}
-                  className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-[#0d1119]"
-                >
-                  Retry
-                </DropdownMenuItem>
-              </>
-            )}
-
-            {!branchesLoading && !branchesError && branchOptions.length === 0 && (
-              <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
-                No branches found
-              </DropdownMenuItem>
-            )}
-
-            {!branchesLoading && !branchesError && branchOptions.map((branch) => (
-              <DropdownMenuItem
-                key={branch.name}
-                onSelect={() => onSelectRepo(repo, branch.name)}
-                className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-[#0d1119]"
-              >
-                <span className="min-w-0 flex-1 truncate text-xs text-push-fg-secondary">
-                  {branch.name}
+          <DropdownMenu
+            open={isBranchMenuOpen}
+            onOpenChange={(open) => {
+              setOpenRepoBranchMenu(open ? repo.full_name : null);
+              if (open) {
+                void loadBranchesForRepo(repo.full_name);
+              }
+            }}
+          >
+            <DropdownMenuTrigger asChild>
+              <button className="flex h-8 flex-1 items-center justify-between rounded-lg border border-[#1b2230] bg-push-grad-input px-2.5 text-xs text-[#9db8df] shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:brightness-110">
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <GitBranch className="h-3 w-3 text-[#5f6b80]" />
+                  <span className="truncate">Open on branch</span>
                 </span>
-                {branch.isDefault && (
-                  <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[10px] text-[#58a6ff]">
-                    default
+                <span className="truncate text-[11px] text-[#788396]">{repo.default_branch}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              sideOffset={8}
+              className="w-[240px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
+            >
+              <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
+                {repo.name} Branches
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator className="bg-push-edge" />
+
+              {branchesLoading && (
+                <DropdownMenuItem disabled className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading branches...
+                </DropdownMenuItem>
+              )}
+
+              {!branchesLoading && branchesError && (
+                <>
+                  <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400">
+                    Failed to load branches
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      void loadBranchesForRepo(repo.full_name, true);
+                    }}
+                    className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-[#0d1119]"
+                  >
+                    Retry
+                  </DropdownMenuItem>
+                </>
+              )}
+
+              {!branchesLoading && !branchesError && branchOptions.length === 0 && (
+                <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
+                  No branches found
+                </DropdownMenuItem>
+              )}
+
+              {!branchesLoading && !branchesError && branchOptions.map((branch) => (
+                <DropdownMenuItem
+                  key={branch.name}
+                  onSelect={() => onSelectRepo(repo, branch.name)}
+                  className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-[#0d1119]"
+                >
+                  <span className="min-w-0 flex-1 truncate text-xs text-push-fg-secondary">
+                    {branch.name}
                   </span>
-                )}
-                {branch.isProtected && (
-                  <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-[10px] text-[#fca5a5]">
-                    protected
-                  </span>
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                  {branch.isDefault && (
+                    <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[10px] text-[#58a6ff]">
+                      default
+                    </span>
+                  )}
+                  {branch.isProtected && (
+                    <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-[10px] text-[#fca5a5]">
+                      protected
+                    </span>
+                  )}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
     );
   };
@@ -573,6 +612,18 @@ export function HomeScreen({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {branchCreateActiveRepo && (
+        <BranchCreateSheet
+          open={Boolean(branchCreateActiveRepo)}
+          onOpenChange={handleBranchCreateSheetOpenChange}
+          activeRepo={branchCreateActiveRepo}
+          setCurrentBranch={(branch) => {
+            if (!branchCreateRepo) return;
+            onSelectRepo(branchCreateRepo, branch);
+          }}
+        />
+      )}
     </div>
   );
 }

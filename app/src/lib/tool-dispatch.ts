@@ -371,7 +371,7 @@ const GITHUB_TOOL_NAMES = new Set([
   'fetch_pr', 'list_prs', 'list_commits', 'read_file', 'grep_file', 'list_directory',
   'list_branches', 'fetch_checks', 'search_files', 'list_commit_files',
   'trigger_workflow', 'get_workflow_runs', 'get_workflow_logs',
-  'create_branch', 'create_pr', 'merge_pr', 'delete_branch',
+  'create_pr', 'merge_pr', 'delete_branch',
   'check_pr_mergeable', 'find_existing_pr',
 ]);
 
@@ -516,7 +516,6 @@ const TOOL_ARG_HINTS: Record<string, string> = {
   list_commits: '{"tool": "list_commits", "args": {"repo": "owner/name"}}',
   list_branches: '{"tool": "list_branches", "args": {"repo": "owner/name"}}',
   fetch_checks: '{"tool": "fetch_checks", "args": {"repo": "owner/name", "ref": "branch-or-sha"}}',
-  create_branch: '{"tool": "create_branch", "args": {"repo": "owner/name", "branch_name": "feature/x"}}',
   create_pr: '{"tool": "create_pr", "args": {"repo": "owner/name", "title": "PR title", "body": "description", "head": "feature-branch", "base": "main"}}',
   // Sandbox tools
   sandbox_exec: '{"tool": "sandbox_exec", "args": {"command": "your command"}}',
@@ -814,7 +813,6 @@ function inferToolFromArgs(args: Record<string, unknown>): string | null {
     if (hasCount && !hasState) return 'list_commits';
     if (hasState) return 'list_prs';
     if (hasBranchName && hasTitle) return 'create_pr';
-    if (hasBranchName && !hasTitle) return 'create_branch';
     if (hasPrNumber && typeof args.merge_method === 'string') return 'merge_pr';
     if (hasPrNumber) return 'check_pr_mergeable';
     if (hasHeadBranch) return 'find_existing_pr';
