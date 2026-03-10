@@ -63,20 +63,27 @@ The app is free. AI usage depends on the provider and plan you choose.
 
 Push prioritizes harness reliability over raw model capability. Core shipped capabilities include:
 
+**Context Control**
 - **Range-aware file reads** — `sandbox_read_file` supports `start_line`/`end_line` with line-numbered output for precise context
-- **Hashline edits** — `sandbox_edit_file` uses content hashes (default 7-char, up to 12-char for disambiguation) as line references, eliminating line-number drift
-- **Edit convenience wrappers** — `sandbox_edit_range` (line-range replacement) and `sandbox_search_replace` (unique-line substring replacement) compile/delegate to hashline edits with the same safety checks
-- **Garbled tool-call recovery** — three-phase diagnosis, JSON repair, and truncation detection so models self-correct in one retry
-- **Pre-commit audit gate** — Auditor agent enforces SAFE/UNSAFE verdict before standard commits (`sandbox_prepare_commit` path); draft checkpoints via `sandbox_save_draft` are explicitly unaudited
-- **Execution provenance** — tool-result metadata tracks every sandbox operation for traceability
-- **Error taxonomy** — structured error types (`FILE_NOT_FOUND`, `EXEC_TIMEOUT`, `STALE_FILE`, etc.) with `retryable` flag so the agent makes intelligent retry decisions
+- **Symbol extraction** — `sandbox_read_symbols` extracts function/class/type indexes without reading full files
 - **Multi-tool per turn** — parallel read-only tool calls in a single round, with optional trailing mutation
 - **Meta envelope** — every tool result includes `[meta]` with round number, context size, and sandbox dirty state
-- **Acceptance criteria** — `delegate_coder` supports shell commands that verify task success post-completion
 - **Agent working memory** — Coder maintains compaction-safe internal state (plan, files touched, errors) via `[CODER_STATE]` blocks
-- **Resumable sessions** — interrupted runs checkpoint to localStorage and resume with sandbox reconciliation (`[SESSION_RESUMED]`) plus multi-tab lock safety
-- **Symbol extraction** — `sandbox_read_symbols` extracts function/class/type indexes without reading full files
+
+**Edit Safety**
+- **Hashline edits** — `sandbox_edit_file` uses content hashes (default 7-char, up to 12-char for disambiguation) as line references, eliminating line-number drift
+- **Edit convenience wrappers** — `sandbox_edit_range` (line-range replacement) and `sandbox_search_replace` (unique-line substring replacement) compile/delegate to hashline edits with the same safety checks
 - **Multi-file patchsets** — `sandbox_apply_patchset` validates all edits before writing any files
+
+**Execution Safety**
+- **Pre-commit audit gate** — Auditor agent enforces SAFE/UNSAFE verdict before standard commits (`sandbox_prepare_commit` path); draft checkpoints via `sandbox_save_draft` are explicitly unaudited
+- **Acceptance criteria** — `delegate_coder` supports shell commands that verify task success post-completion
+- **Error taxonomy** — structured error types (`FILE_NOT_FOUND`, `EXEC_TIMEOUT`, `STALE_FILE`, etc.) with `retryable` flag so the agent makes intelligent retry decisions
+- **Execution provenance** — tool-result metadata tracks every sandbox operation for traceability
+- **Garbled tool-call recovery** — three-phase diagnosis, JSON repair, and truncation detection so models self-correct in one retry
+
+**Session Reliability**
+- **Resumable sessions** — interrupted runs checkpoint to localStorage and resume with sandbox reconciliation (`[SESSION_RESUMED]`) plus multi-tab lock safety
 
 Harness reliability remains a core product priority. `documents/plans/Harness Reliability Plan.md` is kept as planning/reference history, not an active README checklist.
 
@@ -91,7 +98,6 @@ npm run dev
 For local auth/sandbox routes (`/api/*`), run the Worker in a second terminal:
 
 ```bash
-cd /workspace/Push
 npx wrangler dev --port 8787
 ```
 
