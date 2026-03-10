@@ -1,5 +1,6 @@
 import { useCallback, Suspense } from 'react';
 import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight } from 'lucide-react';
+import { toast } from 'sonner';
 import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import { Toaster } from '@/components/ui/sonner';
 import { ChatContainer } from '@/components/chat/ChatContainer';
@@ -68,7 +69,7 @@ interface ChatScreenProps {
 
   // Chat
   messages: ChatMessage[];
-  sendMessage: (message: string, attachments?: AttachmentData[]) => void;
+  sendMessage: (message: string, attachments?: AttachmentData[]) => Promise<void> | void;
   agentStatus: AgentStatus;
   agentEvents: AgentStatusEvent[];
   isStreaming: boolean;
@@ -349,6 +350,26 @@ export function ChatScreen(props: ChatScreenProps) {
     markSnapshotActivity();
     return sendMessage(message, attachments);
   }, [markSnapshotActivity, sendMessage]);
+
+  const handleFixReviewFinding = useCallback(async (prompt: string) => {
+    if (isStreaming) {
+      toast.error('Wait for the current response to finish before sending a fix request.');
+      return;
+    }
+
+    markSnapshotActivity();
+    setIsWorkspaceHubOpen(false);
+
+    if (!sandbox.sandboxId) {
+      try {
+        await ensureSandbox();
+      } catch {
+        // Best effort — still send the fix request so the agent can explain next steps.
+      }
+    }
+
+    await sendMessage(prompt);
+  }, [isStreaming, markSnapshotActivity, sandbox.sandboxId, ensureSandbox, sendMessage, setIsWorkspaceHubOpen]);
 
   const handleCardActionWithSnapshotHeartbeat = useCallback((action: CardAction) => {
     markSnapshotActivity();
@@ -953,6 +974,7 @@ export function ChatScreen(props: ChatScreenProps) {
           onDeleteBranch: handleDeleteBranch,
         }}
         onSandboxBranchSwitch={onSandboxBranchSwitch}
+        onFixReviewFinding={handleFixReviewFinding}
       />
 
       {/* Toast notifications */}

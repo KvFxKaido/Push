@@ -103,6 +103,7 @@ interface WorkspaceHubSheetProps {
   // Branch management
   branchProps: HubBranchProps;
   onSandboxBranchSwitch: (branch: string) => void;
+  onFixReviewFinding: (prompt: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +252,7 @@ export function WorkspaceHubSheet({
   onScratchpadDeleteMemory,
   branchProps,
   onSandboxBranchSwitch,
+  onFixReviewFinding,
 }: WorkspaceHubSheetProps) {
   const [activeTab, setActiveTab] = useState<HubTab>('files');
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -1165,6 +1167,7 @@ export function WorkspaceHubSheet({
                   activeBranch={branchProps.currentBranch}
                   defaultBranch={branchProps.defaultBranch}
                   onOpenDiff={handleOpenReviewDiff}
+                  onFixFinding={onFixReviewFinding}
                 />
               </div>
             )}

@@ -28,6 +28,7 @@ interface HubReviewTabProps {
     mode: 'review-github' | 'review-sandbox';
     target: { path: string; line?: number };
   }) => void;
+  onFixFinding?: (prompt: string) => void;
 }
 
 type ReviewSourceMode = 'github' | 'commit' | 'sandbox';
@@ -110,6 +111,48 @@ function severityOrder(s: ReviewComment['severity']): number {
   return { critical: 0, warning: 1, suggestion: 2, note: 3 }[s];
 }
 
+function buildFixPrompt(params: {
+  comment: ReviewComment;
+  reviewContext: ReviewContext | null;
+  activeBranch?: string;
+  defaultBranch?: string;
+}): string {
+  const { comment, reviewContext, activeBranch, defaultBranch } = params;
+
+  const reviewContextLine = (() => {
+    switch (reviewContext?.kind) {
+      case 'sandbox':
+        return 'This finding came from a Working tree review of the current sandbox changes. Reuse the current sandbox state if it is available.';
+      case 'github-pr':
+        return `This finding came from the pushed PR diff (${reviewContext.label}). Start from the current branch workspace, but verify against the current sandbox because local code may have diverged from the reviewed snapshot.`;
+      case 'github-branch':
+        return `This finding came from the pushed branch diff for ${activeBranch ?? 'the active branch'} against ${defaultBranch ?? 'the default branch'}. Verify the current workspace before editing.`;
+      case 'github-commit':
+        return `This finding came from the latest pushed commit ${reviewContext.shortSha}${activeBranch ? ` on ${activeBranch}` : ''}. The current workspace may differ from that reviewed commit, so verify before editing.`;
+      default:
+        return 'This finding came from a review run in Push. Inspect the current workspace before deciding on edits.';
+    }
+  })();
+
+  return [
+    'Please investigate and fix the following review finding in the current workspace.',
+    '',
+    `Target file: ${comment.file}`,
+    ...(typeof comment.line === 'number' ? [`Target line: ${comment.line}`] : []),
+    `Severity: ${comment.severity}`,
+    `Finding: ${comment.comment}`,
+    '',
+    `Review context: ${reviewContextLine}`,
+    '',
+    'Instructions:',
+    '- Start from the current sandbox/workspace state, not just the reviewed snapshot.',
+    '- Inspect the referenced file and any nearby call sites before editing.',
+    '- If the finding is still valid, make the smallest reasonable fix.',
+    '- If the current code already differs enough that the finding is stale or invalid, explain that briefly instead of forcing a change.',
+    '- After the fix, summarize what changed and mention any follow-up checks worth running.',
+  ].join('\n');
+}
+
 export function HubReviewTab({
   sandboxId,
   sandboxStatus,
@@ -121,6 +164,7 @@ export function HubReviewTab({
   activeBranch,
   defaultBranch,
   onOpenDiff,
+  onFixFinding,
 }: HubReviewTabProps) {
   const providerOptions = useMemo(
     () => availableProviders.map(([type, label]) => ({ type, label })),
@@ -679,6 +723,21 @@ export function HubReviewTab({
                                 <FileDiff className="h-3 w-3" />
                                 Diff
                               </button>
+                              {onFixFinding && (
+                                <button
+                                  onClick={() => onFixFinding(buildFixPrompt({
+                                    comment: c,
+                                    reviewContext,
+                                    activeBranch,
+                                    defaultBranch,
+                                  }))}
+                                  className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-push-accent/30 px-2 py-1 text-[10px] text-push-accent transition-colors hover:bg-push-accent/10"
+                                  title={`Send ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} to chat as a fix request`}
+                                >
+                                  <Sparkles className="h-3 w-3" />
+                                  Fix
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
