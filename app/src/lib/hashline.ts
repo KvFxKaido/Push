@@ -54,11 +54,15 @@ async function batchHashLines(lines: string[]): Promise<string[]> {
 /**
  * Apply a set of hashline edits to file content.
  *
- * Uses a hash cache to avoid recomputing all line hashes for every edit.
- * Hashes are computed once upfront (O(n)) and surgically updated after
- * each edit. The per-edit linear scan to find matching hashes is O(n),
- * so total cost is O(n + n·m) — but this eliminates the dominant cost
- * of O(n·m) SHA-256 recomputations from the original implementation.
+ * Two-phase approach:
+ * 1. Resolve ALL refs against the original content upfront, so every op sees
+ *    the same file state regardless of what earlier ops in the batch do.
+ * 2. Apply resolved ops sequentially, adjusting target indices to account for
+ *    line shifts from prior inserts/deletes.
+ *
+ * This fixes the "stale ref in same batch" bug where e.g. a replace_line
+ * followed by insert_after on the same line would fail because the replace
+ * changed the hash before the insert could resolve its ref.
  */
 export async function applyHashlineEdits(originalContent: string, edits: HashlineOp[]): Promise<HashlineEditResult> {
   const resultLines = originalContent.split('\n');
@@ -66,77 +70,50 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
   let failedCount = 0;
   const errors: string[] = [];
 
-  // Compute all 12-char hashes once upfront
+  // Compute all 12-char hashes once upfront against the original content
   const hashCache = await batchHashLines(resultLines);
-
-  /** Apply a single edit op at the resolved target index. */
-  async function applyAt(targetIndex: number, edit: HashlineOp): Promise<void> {
-    switch (edit.op) {
-      case 'replace_line':
-        resultLines[targetIndex] = edit.content;
-        hashCache[targetIndex] = await calculateLineHash(edit.content, 12);
-        appliedCount++;
-        break;
-      case 'insert_after':
-        resultLines.splice(targetIndex + 1, 0, edit.content);
-        hashCache.splice(targetIndex + 1, 0, await calculateLineHash(edit.content, 12));
-        appliedCount++;
-        break;
-      case 'insert_before':
-        resultLines.splice(targetIndex, 0, edit.content);
-        hashCache.splice(targetIndex, 0, await calculateLineHash(edit.content, 12));
-        appliedCount++;
-        break;
-      case 'delete_line':
-        resultLines.splice(targetIndex, 1);
-        hashCache.splice(targetIndex, 1);
-        appliedCount++;
-        break;
-    }
-  }
 
   /** Format a line snippet for diagnostic output (truncated at 60 chars with ellipsis). */
   function snippetOf(idx: number): string {
-    const trimmed = resultLines[idx].trim();
+    const trimmed = resultLines[idx]?.trim() ?? '';
     return trimmed.length > 60 ? trimmed.slice(0, 60) + '…' : trimmed;
   }
 
+  // --- Phase 1: Resolve all refs against the original content ---
+  type ResolvedEdit = { index: number; edit: HashlineOp } | { error: string };
+  const resolved: ResolvedEdit[] = [];
+
   for (const edit of edits) {
-    // Parse ref — supports bare hash ("abc1234") and line-qualified ("12:abc1234")
     let parsed: { lineNo: number | null; hash: string };
     try {
       parsed = parseRef(edit.ref);
     } catch (e) {
-      failedCount++;
-      errors.push(`Invalid ref "${edit.ref}": ${(e as Error).message}`);
+      resolved.push({ error: `Invalid ref "${edit.ref}": ${(e as Error).message}` });
       continue;
     }
 
-    // Fast path: line-qualified ref — go directly to the line, validate hash
+    // Line-qualified ref — validate directly against the original line
     if (parsed.lineNo !== null) {
       const idx = parsed.lineNo - 1;
       if (idx < 0 || idx >= resultLines.length) {
-        failedCount++;
-        errors.push(`Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${resultLines.length} lines).`);
+        resolved.push({ error: `Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${resultLines.length} lines).` });
         continue;
       }
       if (!hashCache[idx].startsWith(parsed.hash)) {
-        failedCount++;
-        errors.push(`Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Re-read the file to get current hashes.`);
+        resolved.push({ error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Re-read the file to get current hashes.` });
         continue;
       }
-      await applyAt(idx, edit);
+      resolved.push({ index: idx, edit });
       continue;
     }
 
-    // Hash-only path: match using prefix
+    // Hash-only path: match using prefix against the original hashes
     const matches = hashCache
       .map((h, i) => h.startsWith(parsed.hash) ? i : -1)
       .filter(i => i !== -1);
 
     if (matches.length === 0) {
-      failedCount++;
-      errors.push(`Reference "${edit.ref}" not found.`);
+      resolved.push({ error: `Reference "${edit.ref}" not found.` });
       continue;
     }
 
@@ -152,7 +129,7 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
         }
         const candidateGroups = [...distinctGroups.entries()].filter(([lh]) => lh.startsWith(parsed.hash));
         if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
-          matches.splice(0, matches.length, candidateGroups[0][1][0]);
+          resolved.push({ index: candidateGroups[0][1][0], edit });
         } else {
           const MAX_DIAGNOSTIC_LINES = 5;
           const diagnostics: string[] = [];
@@ -163,11 +140,9 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
           if (matches.length > MAX_DIAGNOSTIC_LINES) {
             diagnostics.push(`  ... and ${matches.length - MAX_DIAGNOSTIC_LINES} more`);
           }
-          failedCount++;
-          errors.push(
-            `Reference "${edit.ref}" is ambiguous (${matches.length} matches). Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash}") to target a specific line:\n${diagnostics.join('\n')}`
-          );
-          continue;
+          resolved.push({
+            error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches). Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash}") to target a specific line:\n${diagnostics.join('\n')}`,
+          });
         }
       } else {
         // Even at max hash length, lines are identical — suggest line-qualified refs
@@ -177,15 +152,58 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
           const idx = matches[k];
           diagnostics.push(`  L${idx + 1}: "${snippetOf(idx)}"`);
         }
-        failedCount++;
-        errors.push(
-          `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical content. Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash.slice(0, 7)}") to target a specific line:\n${diagnostics.join('\n')}`
-        );
-        continue;
+        resolved.push({
+          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical content. Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash.slice(0, 7)}") to target a specific line:\n${diagnostics.join('\n')}`,
+        });
       }
+      continue;
     }
 
-    await applyAt(matches[0], edit);
+    resolved.push({ index: matches[0], edit });
+  }
+
+  // --- Phase 2: Apply resolved edits with offset tracking ---
+  // Each applied op records its original index and op type so later ops can
+  // compute their adjusted index accounting for prior inserts/deletes.
+  const applied: { originalIndex: number; op: HashlineOp['op'] }[] = [];
+
+  for (const r of resolved) {
+    if ('error' in r) {
+      failedCount++;
+      errors.push(r.error);
+      continue;
+    }
+
+    // Compute adjusted index based on line shifts from prior ops
+    let adjustedIdx = r.index;
+    for (const prior of applied) {
+      if (prior.op === 'insert_after' && r.index > prior.originalIndex) {
+        adjustedIdx++;
+      } else if (prior.op === 'insert_before' && r.index >= prior.originalIndex) {
+        adjustedIdx++;
+      } else if (prior.op === 'delete_line' && r.index > prior.originalIndex) {
+        adjustedIdx--;
+      }
+      // replace_line doesn't shift indices
+    }
+
+    const edit = r.edit;
+    switch (edit.op) {
+      case 'replace_line':
+        resultLines[adjustedIdx] = edit.content;
+        break;
+      case 'insert_after':
+        resultLines.splice(adjustedIdx + 1, 0, edit.content);
+        break;
+      case 'insert_before':
+        resultLines.splice(adjustedIdx, 0, edit.content);
+        break;
+      case 'delete_line':
+        resultLines.splice(adjustedIdx, 1);
+        break;
+    }
+    appliedCount++;
+    applied.push({ originalIndex: r.index, op: edit.op });
   }
 
   return {
