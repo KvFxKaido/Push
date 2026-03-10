@@ -13,7 +13,26 @@ export const USER_PROFILE_DEFAULTS: UserProfile = {
   bio: '',
 };
 
-export type AgentRole = 'orchestrator' | 'coder' | 'auditor';
+export type AgentRole = 'orchestrator' | 'coder' | 'auditor' | 'reviewer';
+
+// ---------------------------------------------------------------------------
+// Reviewer agent types
+// ---------------------------------------------------------------------------
+
+export interface ReviewComment {
+  file: string;
+  severity: 'critical' | 'warning' | 'suggestion' | 'note';
+  comment: string;
+}
+
+export interface ReviewResult {
+  summary: string;
+  comments: ReviewComment[];
+  filesReviewed: number;
+  provider: string;
+  model: string;
+  reviewedAt: number;
+}
 
 export type AIProviderType = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'demo';
 

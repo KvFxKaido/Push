@@ -93,7 +93,7 @@ function makeRoleModels(
   provider: AIProviderType,
   context: number,
 ): AIModel[] {
-  return (['orchestrator', 'coder', 'auditor'] as const).map((role) => ({
+  return (['orchestrator', 'coder', 'auditor', 'reviewer'] as const).map((role) => ({
     id,
     name: `${displayName} (${role.charAt(0).toUpperCase() + role.slice(1)})`,
     provider,

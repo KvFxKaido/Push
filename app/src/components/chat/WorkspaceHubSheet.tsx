@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
+  Eye,
   FileDiff,
   Files,
   GitBranch,
@@ -26,7 +27,7 @@ import { parseDiffStats } from '@/lib/diff-utils';
 import { getActiveProvider, getProviderStreamFn } from '@/lib/orchestrator';
 import { getModelForRole } from '@/lib/providers';
 import { streamWithTimeout } from '@/lib/utils';
-import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab } from './hub-tabs';
+import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubReviewTab } from './hub-tabs';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import type { AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types';
 
@@ -34,7 +35,7 @@ import type { AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types
 // Types
 // ---------------------------------------------------------------------------
 
-type HubTab = 'scratchpad' | 'console' | 'files' | 'diff';
+type HubTab = 'scratchpad' | 'console' | 'files' | 'diff' | 'review';
 
 type CommitPhase = 'idle' | 'fetching-diff' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
 
@@ -87,6 +88,7 @@ const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: typeof Files 
   { key: 'console', label: 'Console', icon: TerminalSquare },
   { key: 'files', label: 'Files', icon: Files },
   { key: 'diff', label: 'Diff', icon: FileDiff },
+  { key: 'review', label: 'Review', icon: Eye },
 ];
 
 const TABS_WITHOUT_CONSOLE = TABS_WITH_CONSOLE.filter((tab) => tab.key !== 'console');
@@ -862,6 +864,16 @@ export function WorkspaceHubSheet({
                   diffError={diffError}
                   onDiffUpdate={handleDiffUpdate}
                   onDiffLoadingChange={handleDiffLoadingChange}
+                />
+              </div>
+            )}
+
+            {activeTab === 'review' && (
+              <div className="flex h-full min-h-0 flex-col">
+                <HubReviewTab
+                  sandboxId={sandboxId}
+                  sandboxStatus={sandboxStatus}
+                  ensureSandbox={ensureSandbox}
                 />
               </div>
             )}
