@@ -681,7 +681,9 @@ def file_ops(data: dict):
     try:
         return _file_ops_inner(sb, action, path, data)
     except Exception as exc:
-        if action in ("write", "delete", "hydrate", "batch_write"):
+        if action == "batch_write":
+            return _sandbox_error_response(exc, {"ok": False, "results": []})
+        if action in ("write", "delete", "hydrate"):
             return _sandbox_error_response(exc, {"ok": False})
         if action == "read":
             return _sandbox_error_response(exc, {"content": ""})
@@ -1019,8 +1021,12 @@ def cleanup(data: dict):
         return {"ok": False, "error": "Unauthorized sandbox access"}
     try:
         sb.terminate()
-    except Exception:
-        pass  # Container already gone — that's fine
+    except Exception as exc:
+        err_msg = str(exc).lower()
+        if "not found" in err_msg or "terminated" in err_msg or "closed" in err_msg:
+            pass  # Container already gone — that's fine
+        else:
+            return {"ok": False, "error": f"Termination failed: {type(exc).__name__}"}
     return {"ok": True}
 
 
