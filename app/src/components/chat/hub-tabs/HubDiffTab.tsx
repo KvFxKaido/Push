@@ -1,10 +1,16 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, CornerDownRight, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { DiffLine } from '@/components/cards/DiffPreviewCard';
 import { parseDiffStats, parseDiffIntoFiles, type FileDiff } from '@/lib/diff-utils';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import type { DiffPreviewCardData } from '@/types';
+
+interface DiffJumpTarget {
+  path: string;
+  line?: number;
+  requestKey: number;
+}
 
 interface HubDiffTabProps {
   sandboxId: string | null;
@@ -14,8 +20,23 @@ interface HubDiffTabProps {
   diffData: DiffPreviewCardData | null;
   diffLoading: boolean;
   diffError: string | null;
+  diffLabel: string;
+  diffMode: 'working-tree' | 'review-github' | 'review-sandbox';
+  jumpTarget: DiffJumpTarget | null;
+  onClearReviewDiff?: () => void;
   onDiffUpdate: (data: DiffPreviewCardData | null, error: string | null) => void;
   onDiffLoadingChange: (loading: boolean) => void;
+}
+
+interface DiffRenderLine {
+  key: string;
+  text: string;
+  newLine?: number;
+}
+
+interface ParsedFileDiff extends FileDiff {
+  renderLines: DiffRenderLine[];
+  lineKeyByNewLine: Map<number, string>;
 }
 
 export function HubDiffTab({
@@ -25,13 +46,21 @@ export function HubDiffTab({
   diffData,
   diffLoading,
   diffError,
+  diffLabel,
+  diffMode,
+  jumpTarget,
+  onClearReviewDiff,
   onDiffUpdate,
   onDiffLoadingChange,
 }: HubDiffTabProps) {
   const [startingSandbox, setStartingSandbox] = useState(false);
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
+  const [highlightedFile, setHighlightedFile] = useState<string | null>(null);
+  const [highlightedLineKey, setHighlightedLineKey] = useState<string | null>(null);
   const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const lineRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
+  const showingReviewDiff = diffMode !== 'working-tree';
 
   const ensureHubSandbox = useCallback(async (): Promise<string | null> => {
     if (sandboxId) return sandboxId;
@@ -78,6 +107,51 @@ export function HubDiffTab({
     [diffData?.diff],
   );
 
+  const parsedFileDiffs: ParsedFileDiff[] = useMemo(() => {
+    return fileDiffs.map((fd) => {
+      const renderLines: DiffRenderLine[] = [];
+      const lineKeyByNewLine = new Map<number, string>();
+      let newLine = 0;
+
+      for (const [index, text] of fd.hunks.split('\n').entries()) {
+        const key = `${fd.path}:${index}`;
+        let resolvedNewLine: number | undefined;
+
+        if (text.startsWith('@@')) {
+          const match = text.match(/\+(\d+)/);
+          if (match) newLine = parseInt(match[1], 10) - 1;
+        } else if (
+          text.startsWith('+++') ||
+          text.startsWith('---') ||
+          text.startsWith('diff ') ||
+          text.startsWith('index ')
+        ) {
+          // Header lines are not part of the new-file line map.
+        } else if (text.startsWith('+')) {
+          newLine++;
+          resolvedNewLine = newLine;
+        } else if (text.startsWith('-') || text.startsWith('\\')) {
+          // Removed lines and "\ No newline..." do not advance the new-file line map.
+        } else {
+          newLine++;
+          resolvedNewLine = newLine;
+        }
+
+        if (resolvedNewLine !== undefined && !lineKeyByNewLine.has(resolvedNewLine)) {
+          lineKeyByNewLine.set(resolvedNewLine, key);
+        }
+
+        renderLines.push({
+          key,
+          text,
+          ...(resolvedNewLine !== undefined ? { newLine: resolvedNewLine } : {}),
+        });
+      }
+
+      return { ...fd, renderLines, lineKeyByNewLine };
+    });
+  }, [fileDiffs]);
+
   const toggleFile = (path: string) => {
     setCollapsedFiles((prev) => {
       const next = new Set(prev);
@@ -98,7 +172,41 @@ export function HubDiffTab({
     });
   };
 
-  if (!sandboxReady) {
+  useEffect(() => {
+    if (!jumpTarget) {
+      setHighlightedFile(null);
+      setHighlightedLineKey(null);
+      return;
+    }
+
+    const file = parsedFileDiffs.find((fd) => fd.path === jumpTarget.path);
+    if (!file) return;
+
+    setCollapsedFiles((prev) => {
+      const next = new Set(prev);
+      next.delete(jumpTarget.path);
+      return next;
+    });
+
+    let rafB: number | null = null;
+    const rafA = requestAnimationFrame(() => {
+      rafB = requestAnimationFrame(() => {
+        const lineKey = jumpTarget.line !== undefined ? file.lineKeyByNewLine.get(jumpTarget.line) ?? null : null;
+        const targetEl = lineKey ? lineRefs.current.get(lineKey) : null;
+        const fallbackEl = sectionRefs.current.get(jumpTarget.path) ?? null;
+        (targetEl ?? fallbackEl)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setHighlightedFile(jumpTarget.path);
+        setHighlightedLineKey(lineKey);
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(rafA);
+      if (rafB !== null) cancelAnimationFrame(rafB);
+    };
+  }, [jumpTarget?.requestKey, jumpTarget?.path, jumpTarget?.line, parsedFileDiffs]);
+
+  if (!diffData && !sandboxReady) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="text-sm text-push-fg-secondary">Start a sandbox to view diff.</p>
@@ -121,21 +229,37 @@ export function HubDiffTab({
   return (
     <>
       <div className="flex items-center justify-between border-b border-push-edge px-3 py-2">
-        <p className="text-xs text-push-fg-dim">Working tree diff</p>
-        <button
-          onClick={() => void refreshDiff()}
-          disabled={diffLoading}
-          className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
-        >
-          {diffLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Refresh
-        </button>
+        <div className="min-w-0">
+          <p className="truncate text-xs text-push-fg-dim">{diffLabel}</p>
+          {showingReviewDiff && (
+            <p className="text-[10px] text-push-fg-dim">Reviewed diff snapshot</p>
+          )}
+        </div>
+        {showingReviewDiff ? (
+          <button
+            onClick={onClearReviewDiff}
+            disabled={!onClearReviewDiff}
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+          >
+            <CornerDownRight className="h-3.5 w-3.5" />
+            Live diff
+          </button>
+        ) : (
+          <button
+            onClick={() => void refreshDiff()}
+            disabled={diffLoading}
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+          >
+            {diffLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Refresh
+          </button>
+        )}
       </div>
 
       {/* File index pills */}
-      {fileDiffs.length > 1 && (
+      {parsedFileDiffs.length > 1 && (
         <div className="flex items-center gap-1.5 overflow-x-auto border-b border-push-edge px-3 py-2 scrollbar-none">
-          {fileDiffs.map((fd) => {
+          {parsedFileDiffs.map((fd) => {
             const filename = fd.path.split('/').pop() || fd.path;
             return (
               <button
@@ -165,11 +289,11 @@ export function HubDiffTab({
           </div>
         ) : diffError ? (
           <p className="p-3 text-xs text-red-300">{diffError}</p>
-        ) : fileDiffs.length > 0 ? (
+        ) : parsedFileDiffs.length > 0 ? (
           <div>
-            {fileDiffs.map((fd) => {
+            {parsedFileDiffs.map((fd) => {
               const isCollapsed = collapsedFiles.has(fd.path);
-              const lines = fd.hunks.split('\n');
+              const isHighlightedFile = highlightedFile === fd.path;
               return (
                 <div
                   key={fd.path}
@@ -181,7 +305,9 @@ export function HubDiffTab({
                   {/* Sticky file header */}
                   <button
                     onClick={() => toggleFile(fd.path)}
-                    className="sticky top-0 z-10 flex w-full items-center gap-2 border-b border-push-edge bg-[#0a0e16]/95 px-3 py-2 text-left backdrop-blur-sm"
+                    className={`sticky top-0 z-10 flex w-full items-center gap-2 border-b border-push-edge px-3 py-2 text-left backdrop-blur-sm ${
+                      isHighlightedFile ? 'bg-push-accent/10' : 'bg-[#0a0e16]/95'
+                    }`}
                   >
                     {isCollapsed ? (
                       <ChevronRight className="h-3 w-3 shrink-0 text-push-fg-dim" />
@@ -199,8 +325,17 @@ export function HubDiffTab({
                   {/* Diff lines */}
                   {!isCollapsed && (
                     <div className="py-0.5">
-                      {lines.map((line, i) => (
-                        <DiffLine key={i} line={line} index={i} />
+                      {fd.renderLines.map((line, i) => (
+                        <div
+                          key={line.key}
+                          ref={(el) => {
+                            if (el) lineRefs.current.set(line.key, el);
+                            else lineRefs.current.delete(line.key);
+                          }}
+                          className={highlightedLineKey === line.key ? 'rounded-md ring-1 ring-push-accent/50 bg-push-accent/5' : ''}
+                        >
+                          <DiffLine line={line.text} index={i} />
+                        </div>
                       ))}
                     </div>
                   )}

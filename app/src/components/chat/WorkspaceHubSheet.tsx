@@ -38,6 +38,19 @@ import type { AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types
 type HubTab = 'scratchpad' | 'console' | 'files' | 'diff' | 'review';
 
 type CommitPhase = 'idle' | 'fetching-diff' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
+type DiffViewMode = 'working-tree' | 'review-github' | 'review-sandbox';
+
+interface DiffJumpTarget {
+  path: string;
+  line?: number;
+  requestKey: number;
+}
+
+interface ReviewDiffSelection {
+  data: DiffPreviewCardData;
+  label: string;
+  mode: Exclude<DiffViewMode, 'working-tree'>;
+}
 
 export interface HubBranchProps {
   currentBranch: string | undefined;
@@ -220,6 +233,8 @@ export function WorkspaceHubSheet({
   const [diffData, setDiffData] = useState<DiffPreviewCardData | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const [reviewDiffSelection, setReviewDiffSelection] = useState<ReviewDiffSelection | null>(null);
+  const [diffJumpTarget, setDiffJumpTarget] = useState<DiffJumpTarget | null>(null);
 
   // Commit flow state (replaces old hand-rolled commit/push)
   const [commitPhase, setCommitPhase] = useState<CommitPhase>('idle');
@@ -236,7 +251,9 @@ export function WorkspaceHubSheet({
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
   const tabs = showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE;
   const activeTabIndex = tabs.findIndex((tab) => tab.key === activeTab);
-  const showCommitBar = activeTab === 'files' || activeTab === 'diff';
+  const showCommitBar =
+    activeTab === 'files' ||
+    (activeTab === 'diff' && reviewDiffSelection?.mode !== 'review-github');
 
   const blockedByProtectMain = Boolean(
     protectMainEnabled &&
@@ -256,6 +273,35 @@ export function WorkspaceHubSheet({
   const handleDiffLoadingChange = useCallback((loading: boolean) => {
     setDiffLoading(loading);
   }, []);
+
+  const handleOpenReviewDiff = useCallback((payload: {
+    diffData: DiffPreviewCardData;
+    label: string;
+    mode: Exclude<DiffViewMode, 'working-tree'>;
+    target: { path: string; line?: number };
+  }) => {
+    setReviewDiffSelection({
+      data: payload.diffData,
+      label: payload.label,
+      mode: payload.mode,
+    });
+    setDiffJumpTarget({
+      path: payload.target.path,
+      ...(payload.target.line !== undefined ? { line: payload.target.line } : {}),
+      requestKey: Date.now(),
+    });
+    setActiveTab('diff');
+  }, []);
+
+  const handleClearReviewDiff = useCallback(() => {
+    setReviewDiffSelection(null);
+    setDiffJumpTarget(null);
+  }, []);
+
+  useEffect(() => {
+    setReviewDiffSelection(null);
+    setDiffJumpTarget(null);
+  }, [repoFullName, branchProps.currentBranch]);
 
   // ---- Commit & Push flow ----
   const runCommitAndPush = useCallback(async () => {
@@ -868,9 +914,13 @@ export function WorkspaceHubSheet({
                   sandboxId={sandboxId}
                   sandboxStatus={sandboxStatus}
                   ensureSandbox={ensureSandbox}
-                  diffData={diffData}
-                  diffLoading={diffLoading}
-                  diffError={diffError}
+                  diffData={reviewDiffSelection?.data ?? diffData}
+                  diffLoading={reviewDiffSelection ? false : diffLoading}
+                  diffError={reviewDiffSelection ? null : diffError}
+                  diffLabel={reviewDiffSelection?.label ?? 'Working tree diff'}
+                  diffMode={reviewDiffSelection?.mode ?? 'working-tree'}
+                  jumpTarget={diffJumpTarget}
+                  onClearReviewDiff={reviewDiffSelection ? handleClearReviewDiff : undefined}
                   onDiffUpdate={handleDiffUpdate}
                   onDiffLoadingChange={handleDiffLoadingChange}
                 />
@@ -889,6 +939,7 @@ export function WorkspaceHubSheet({
                   repoFullName={repoFullName}
                   activeBranch={branchProps.currentBranch}
                   defaultBranch={branchProps.defaultBranch}
+                  onOpenDiff={handleOpenReviewDiff}
                 />
               </div>
             )}

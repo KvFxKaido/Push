@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, RefreshCw, Send, Sparkles } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, FileDiff, Info, Loader2, RefreshCw, Send, Sparkles } from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
 import { executePostPRReview, fetchGitHubReviewDiff } from '@/lib/github-tools';
+import { parseDiffStats } from '@/lib/diff-utils';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import type { PreferredProvider } from '@/lib/providers';
-import type { ReviewResult, ReviewComment } from '@/types';
+import type { DiffPreviewCardData, ReviewResult, ReviewComment } from '@/types';
 
 interface HubReviewTabProps {
   sandboxId: string | null;
@@ -20,6 +21,12 @@ interface HubReviewTabProps {
   activeBranch?: string;
   /** default branch name — used for GitHub branch-vs-default review */
   defaultBranch?: string;
+  onOpenDiff: (payload: {
+    diffData: DiffPreviewCardData;
+    label: string;
+    mode: 'review-github' | 'review-sandbox';
+    target: { path: string; line?: number };
+  }) => void;
 }
 
 type ReviewSourceMode = 'github' | 'sandbox';
@@ -81,6 +88,7 @@ export function HubReviewTab({
   repoFullName,
   activeBranch,
   defaultBranch,
+  onOpenDiff,
 }: HubReviewTabProps) {
   const providerOptions = useMemo(
     () => availableProviders.map(([type, label]) => ({ type, label })),
@@ -93,6 +101,7 @@ export function HubReviewTab({
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [reviewContext, setReviewContext] = useState<ReviewContext | null>(null);
+  const [reviewDiffData, setReviewDiffData] = useState<DiffPreviewCardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
@@ -114,6 +123,7 @@ export function HubReviewTab({
 
     if (providerOptions.length === 0) {
       setResult(null);
+      setReviewDiffData(null);
       setError(null);
     }
   }, [activeProvider, providerOptions, selectedProvider]);
@@ -123,6 +133,7 @@ export function HubReviewTab({
       setReviewSource('sandbox');
       setResult(null);
       setReviewContext(null);
+      setReviewDiffData(null);
       setError(null);
       setPostState('idle');
       setPostError(null);
@@ -138,6 +149,7 @@ export function HubReviewTab({
     setReviewSource(source);
     setResult(null);
     setReviewContext(null);
+    setReviewDiffData(null);
     setError(null);
     setStatus(null);
     setExpandedFiles(new Set());
@@ -166,6 +178,16 @@ export function HubReviewTab({
     }
   }, [result, repoFullName, reviewContext]);
 
+  const handleOpenCommentInDiff = useCallback((file: string, line?: number) => {
+    if (!reviewDiffData || !reviewContext) return;
+    onOpenDiff({
+      diffData: reviewDiffData,
+      label: reviewContext.kind === 'sandbox' ? 'Working tree review snapshot' : reviewContext.label,
+      mode: reviewContext.kind === 'sandbox' ? 'review-sandbox' : 'review-github',
+      target: { path: file, ...(line !== undefined ? { line } : {}) },
+    });
+  }, [onOpenDiff, reviewContext, reviewDiffData]);
+
   const handleRunReview = useCallback(async () => {
     if (running || !selectedProvider) return;
 
@@ -173,6 +195,7 @@ export function HubReviewTab({
     setError(null);
     setResult(null);
     setReviewContext(null);
+    setReviewDiffData(null);
     setStatus(null);
     setExpandedFiles(new Set());
     setPostState('idle');
@@ -224,9 +247,17 @@ export function HubReviewTab({
         { provider: selectedProvider, model: modelOverride.trim() || undefined },
         (phase) => setStatus(phase),
       );
+      const stats = parseDiffStats(diff);
 
       setResult(reviewResult);
       setReviewContext(nextContext);
+      setReviewDiffData({
+        diff,
+        filesChanged: stats.filesChanged,
+        additions: stats.additions,
+        deletions: stats.deletions,
+        truncated: false,
+      });
       // Expand critical and warning files by default
       const autoExpand = new Set<string>();
       for (const c of reviewResult.comments) {
@@ -246,6 +277,7 @@ export function HubReviewTab({
     defaultBranch,
     ensureSandbox,
     modelOverride,
+    onOpenDiff,
     repoFullName,
     reviewSource,
     running,
@@ -505,14 +537,26 @@ export function HubReviewTab({
                               <div className="min-w-0 flex-1">
                                 <div className="mb-0.5 flex items-center gap-2">
                                   {severityLabel(c.severity)}
-                                  {typeof c.line === 'number' && (
-                                    <span className="rounded-full border border-push-edge px-1.5 py-0.5 text-[10px] font-mono text-push-fg-dim">
+                                  {typeof c.line === 'number' ? (
+                                    <button
+                                      onClick={() => handleOpenCommentInDiff(c.file, c.line)}
+                                      className="rounded-full border border-push-accent/30 px-1.5 py-0.5 text-[10px] font-mono text-push-accent transition-colors hover:bg-push-accent/10"
+                                      title={`Open ${c.file} at line ${c.line} in Diff`}
+                                    >
                                       L{c.line}
-                                    </span>
-                                  )}
+                                    </button>
+                                  ) : null}
                                 </div>
                                 <p className="text-[11px] leading-relaxed text-push-fg-secondary">{c.comment}</p>
                               </div>
+                              <button
+                                onClick={() => handleOpenCommentInDiff(c.file, c.line)}
+                                className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-push-edge px-2 py-1 text-[10px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                                title={`Open ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} in Diff`}
+                              >
+                                <FileDiff className="h-3 w-3" />
+                                Diff
+                              </button>
                             </div>
                           ))}
                         </div>
