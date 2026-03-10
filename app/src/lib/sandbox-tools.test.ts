@@ -1206,13 +1206,9 @@ describe('sandbox_edit_range', () => {
     const path = '/workspace/demo.txt';
     const fileContent = 'one\ntwo\nthree\n';
 
-    // Range wrapper pre-read + delegated sandbox_edit_file read.
+    // Range wrapper pre-reads the file, then primes the prefetch cache so the
+    // delegated sandbox_edit_file skips a second read.
     vi.mocked(sandboxClient.readFromSandbox)
-      .mockResolvedValueOnce({
-        content: fileContent,
-        truncated: false,
-        version: 'v1',
-      })
       .mockResolvedValueOnce({
         content: fileContent,
         truncated: false,
@@ -1229,9 +1225,6 @@ describe('sandbox_edit_range', () => {
       exitCode: 0,
       truncated: false,
     });
-
-    // Avoid guard auto-expand to keep this focused on range compilation behavior.
-    fileLedger.recordCreation(path);
 
     const result = await executeSandboxToolCall(
       {
