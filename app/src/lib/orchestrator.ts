@@ -1193,6 +1193,11 @@ async function streamSSEChatOnce(
               outputTokens: parsed.usage.completion_tokens || 0,
               totalTokens: parsed.usage.total_tokens || 0,
             };
+            const cacheWrite = parsed.usage.cache_creation_input_tokens;
+            const cacheRead = parsed.usage.cache_read_input_tokens;
+            if (cacheWrite || cacheRead) {
+              console.log(`[Push] cache — write: ${cacheWrite ?? 0} tokens, read: ${cacheRead ?? 0} tokens`);
+            }
           }
 
           const choice = parsed.choices?.[0];
