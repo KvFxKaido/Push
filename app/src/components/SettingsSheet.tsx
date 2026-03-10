@@ -139,7 +139,7 @@ export interface SettingsWorkspaceProps {
   updateContextMode: (mode: ContextMode) => void;
   sandboxStartMode: SandboxStartMode;
   updateSandboxStartMode: (mode: SandboxStartMode) => void;
-  sandboxStatus: 'idle' | 'creating' | 'ready' | 'error';
+  sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
   sandboxId: string | null;
   sandboxError: string | null;
   sandboxState: SandboxStateCardData | null;

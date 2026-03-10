@@ -8,7 +8,7 @@ const WARNING_THRESHOLD_MS = 5 * 60 * 1000;  // Warn at 5 min remaining
 interface SandboxExpiryBannerProps {
   createdAt: number | null;
   sandboxId: string | null;
-  sandboxStatus: 'idle' | 'creating' | 'ready' | 'error';
+  sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
   onRestart: () => void;
 }
 

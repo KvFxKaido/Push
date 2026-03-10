@@ -8,7 +8,7 @@ import type { DiffPreviewCardData } from '@/types';
 
 interface HubDiffTabProps {
   sandboxId: string | null;
-  sandboxStatus: 'idle' | 'creating' | 'ready' | 'error';
+  sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
   ensureSandbox: () => Promise<string | null>;
   /** Externally-managed diff data (so the hub shell can trigger refreshes after commit). */
   diffData: DiffPreviewCardData | null;

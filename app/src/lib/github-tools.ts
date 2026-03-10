@@ -1829,24 +1829,23 @@ export async function fetchProjectInstructions(
   const headers = getGitHubHeaders();
 
   for (const filename of FILES_TO_TRY) {
-    try {
-      const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
-      const res = await githubFetch(
-        `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(filename)}${ref}`,
-        { headers },
-      );
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data.type !== 'file' || !data.content) continue;
+    const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+    const res = await githubFetch(
+      `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(filename)}${ref}`,
+      { headers },
+    );
+    // 404 means this file doesn't exist — try the next fallback
+    if (res.status === 404) continue;
+    // Any other non-OK response (403, 500, etc.) is a real error — propagate it
+    if (!res.ok) throw new Error(`GitHub API error ${res.status} fetching ${filename}`);
+    const data = await res.json();
+    if (data.type !== 'file' || !data.content) continue;
 
-      let content = atob(data.content.replace(/\n/g, ''));
-      if (content.length > 5_000) {
-        content = content.slice(0, 5_000) + '\n\n[...truncated at 5K chars]';
-      }
-      return { content, filename };
-    } catch {
-      continue;
+    let content = atob(data.content.replace(/\n/g, ''));
+    if (content.length > 5_000) {
+      content = content.slice(0, 5_000) + '\n\n[...truncated at 5K chars]';
     }
+    return { content, filename };
   }
   return null;
 }

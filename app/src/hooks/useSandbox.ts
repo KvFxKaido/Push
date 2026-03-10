@@ -180,7 +180,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
 
   const start = useCallback(async (repo: string, branch?: string): Promise<string | null> => {
     if (startPromiseRef.current) return startPromiseRef.current;
-    if (statusRef.current === 'creating' || statusRef.current === 'reconnecting') return null;
+    if (statusRef.current === 'creating') return null;
 
     const startPromise = (async () => {
       // If reconnection is in progress, wait for it

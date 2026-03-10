@@ -14,7 +14,7 @@ import { useFileBrowser } from '@/hooks/useFileBrowser';
 
 interface HubFilesTabProps {
   sandboxId: string | null;
-  sandboxStatus: 'idle' | 'creating' | 'ready' | 'error';
+  sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
   ensureSandbox: () => Promise<string | null>;
 }
 
