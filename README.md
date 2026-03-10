@@ -12,14 +12,14 @@ Push is a personal chat interface backed by role-based AI agents that read your 
 
 Try it free with provider free tiers: OpenCode Zen or Ollama Cloud.
 Bring your own provider: Ollama Cloud, OpenRouter, OpenCode Zen, or Nvidia NIM.
-Switch providers or pinned models on new chats at any time.
+Set provider/model defaults in Settings, then choose active chat and review models separately.
 
 ## What It Does
 
 Push is an execution control plane for developers who need to keep shipping when away from their desk.
 
 - Review fast with structured cards for PRs, diffs, checks, and repo state
-- Run on-demand Reviewer feedback on a GitHub diff or local working tree, and post PR-backed reviews to GitHub
+- Run on-demand Reviewer feedback on branch diffs, last commits, or local working trees, then send findings to chat or post PR-backed reviews to GitHub
 - Delegate implementation from Orchestrator to Coder in a live sandbox
 - Gate risky changes with Auditor SAFE/UNSAFE pre-commit verdicts
 - Keep context repo-locked to one repo and one active branch
@@ -112,7 +112,7 @@ VITE_GITHUB_OAUTH_PROXY=...           # Optional — GitHub OAuth token exchange
 VITE_GITHUB_REDIRECT_URI=...          # Optional — GitHub OAuth redirect URI
 ```
 
-Provider keys can also be pasted into Settings at runtime. When 2+ provider keys are set, a backend picker appears in Settings, and model pickers are available in Settings and the chat composer for new chats. Web default mode is **Auto** (Zen-first when available), and users can still pin any provider. In local development, with no AI keys configured, the app falls back to the demo-provider path; separately, when no GitHub token is configured, repo and PR views fall back to mock data.
+Provider keys can also be pasted into Settings at runtime. When 2+ provider keys are set, a backend picker appears in Settings. Settings owns the default backend/model picks, the chat composer owns the current chat selection, and Reviewer keeps its own sticky provider/model selection. Web default mode is **Auto** (Zen-first when available). In local development, with no AI keys configured, the app falls back to the demo-provider path; separately, when no GitHub token is configured, repo and PR views fall back to mock data.
 
 ## Push CLI
 
@@ -169,14 +169,14 @@ Role-based agent system. **Models are replaceable; roles are not.**
 
 - **Orchestrator** — conversational lead, tool orchestration, delegates to Coder
 - **Coder** — autonomous code implementation in sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap)
-- **Reviewer** — on-demand advisory diff review in the Workspace Hub; can review a GitHub branch/PR diff without a sandbox or review local working-tree changes inside the sandbox
+- **Reviewer** — on-demand advisory diff review in the Workspace Hub; can review branch diffs, last commits, or local working-tree changes
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Four AI backends are supported: **Ollama Cloud**, **OpenRouter**, **OpenCode Zen**, and **Nvidia NIM**. All use OpenAI-compatible streaming. The active backend serves all four roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider and model selection are locked per chat after the first user message; start a new chat to switch either.
+Four AI backends are supported: **Ollama Cloud**, **OpenRouter**, **OpenCode Zen**, and **Nvidia NIM**. All use OpenAI-compatible streaming. The active backend serves all four roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Settings stores default backend/model picks, chat keeps its own current selection, and Reviewer keeps its own sticky provider/model selection. After the first user message, a chat's provider/model are locked; changing either starts a new chat.
 
-**OpenRouter** provides access to 50+ models through a single pay-per-use API. Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-5.4, Codex, Gemini, Mistral, MiniMax, GLM, Mercury, Grok, and Kimi.
+**OpenRouter** provides access to 50+ models through a single pay-per-use API. Push ships with a curated catalog spanning Claude, GPT-5.4, Codex, Gemini, Mistral, MiniMax, Qwen, GLM, DeepSeek, Mercury, Grok, and Kimi.
 
-There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, review, console, scratchpad, and commit/push are unified in the **Workspace Hub**. Reviewer has two modes: **GitHub diff** reviews the pushed branch against the default branch or the open PR diff without starting a sandbox, while **Working tree** reviews uncommitted sandbox edits. Only PR-backed GitHub reviews can be posted back as a GitHub PR review. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
+There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, review, console, scratchpad, and commit/push are unified in the **Workspace Hub**. Reviewer has three sources: **Branch diff** reviews the pushed branch against the default branch or the open PR diff without starting a sandbox, **Last commit** reviews the most recent pushed commit on the active branch, and **Working tree** reviews uncommitted sandbox edits. Findings can jump into Diff or be sent into chat as fix requests. Only PR-backed Branch diff reviews can be posted back as a GitHub PR review. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
 
 If a run is interrupted (phone lock/background), Push checkpoints state and surfaces a **ResumeBanner** on return. Resume validates sandbox/branch/repo identity, fetches sandbox status (HEAD/dirty/diff), injects a reconciliation message, and continues the tool loop.
 

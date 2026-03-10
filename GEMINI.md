@@ -9,7 +9,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Type:** AI Coding Agent — Mobile PWA + Local CLI
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** Multi-provider support (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) via OpenAI-compatible SSE streaming. Users can choose a backend and pin a model for new chats; provider/model selection locks per chat after the first user message.
+*   **AI Backend:** Multi-provider support (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) via OpenAI-compatible SSE streaming. Settings stores default backend/model picks, chat keeps its own current selection, and Reviewer keeps its own sticky provider/model selection. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
 *   **Current Product Focus:** CLI/TUI terminal UX improvements (CLI-first, transcript-first; no full-screen TUI rewrite).
 
 ## Tech Stack
@@ -28,7 +28,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 ### Role-Based Agents
 *   **Orchestrator:** Conversational lead, interprets intent, delegates to Coder.
 *   **Coder:** Autonomous code implementation and execution in the sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap).
-*   **Reviewer:** On-demand advisory diff review in the Workspace Hub. Can review a GitHub branch/PR diff without a sandbox or local working-tree changes in the sandbox, and can post PR-backed GitHub reviews to GitHub.
+*   **Reviewer:** On-demand advisory diff review in the Workspace Hub. Can review Branch diff, Last commit, or Working tree changes, send findings into chat as fix requests, and post PR-backed Branch diff reviews to GitHub.
 *   **Auditor:** Pre-commit safety gate. Reviews diffs and issues a binary SAFE/UNSAFE verdict.
 
 ### Key Systems
@@ -37,7 +37,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Sandbox Mode:** Ephemeral workspace (no GitHub repo). Entry via onboarding or repo picker. GitHub tools blocked; 30-min lifetime with expiry warning. Download as tar.gz.
 *   **Web Search Tools:** Mid-conversation web search via Tavily (premium), Ollama native search, or DuckDuckGo fallback. Prompt-engineered JSON format, client-side dispatch.
 *   **Coder Delegation:** Orchestrator delegates via `delegate_coder`. Supports `acceptanceCriteria[]` (shell commands run post-task). Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — survives context trimming.
-*   **Reviewer:** The Workspace Hub `Review` tab has two sources: `GitHub diff` reviews the pushed branch against the default branch or the open PR diff without starting a sandbox, while `Working tree` reviews uncommitted sandbox edits. It adds line anchors when possible, and only PR-backed GitHub reviews can be posted back as a GitHub PR review.
+*   **Reviewer:** The Workspace Hub `Review` tab has three sources: `Branch diff` reviews the pushed branch against the default branch or the open PR diff without starting a sandbox, `Last commit` reviews the diff of the most recent pushed commit on the active branch, and `Working tree` reviews uncommitted sandbox edits. It adds line anchors when possible, can jump findings into Diff or chat, and only PR-backed Branch diff reviews can be posted back as a GitHub PR review.
 *   **Harness Priority:** Push still prioritizes harness reliability over model churn, but the major checklist is shipped. `documents/plans/Harness Reliability Plan.md` is now reference/planning history rather than an active checklist in the product docs. **Agent Experience Wishlist shipped** (`documents/analysis/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`, plus edit convenience wrappers (`sandbox_edit_range`, `sandbox_search_replace`) on top of hashline editing.
 *   **User Identity:** Display name, bio, and GitHub login set in Settings. Stored in localStorage via `useUserProfile` hook. Injected into Orchestrator and Coder system prompts via `buildUserIdentityBlock()`.
 *   **Scratchpad:** Shared persistent notepad for user/AI collaboration.
@@ -46,7 +46,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Protect Main:** Optional setting that blocks direct commits to `main`, requiring a branch for all work. Global default (on/off) plus per-repo override (inherit/always/never). Stored in localStorage via `useProtectMain` hook. No-op in Sandbox Mode.
 *   **Branch-Scoped Chats:** Conversations are permanently bound to the branch on which they were created. History drawer groups chats by branch. After merge, branch chats receive a closure message; deleted branches marked `(Merged + Deleted)`.
 *   **Resumable Sessions:** If the app is interrupted mid-run (phone lock/background), `useChat` checkpoints run state to localStorage (`run_checkpoint_${chatId}`) and shows a `ResumeBanner` on return. Resume validates sandbox/branch/repo identity, calls `sandboxStatus()` for HEAD/dirty/diff reconciliation, injects a phase-specific `[SESSION_RESUMED]` message, and continues the tool loop. Coder delegation state is captured via `onWorkingMemoryUpdate`. Multi-tab coordination uses localStorage locks; checkpoint delta is trimmed/capped at 50KB; resume telemetry is recorded (`getResumeEvents()`).
-*   **PR Awareness:** Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches`. The Workspace Hub `Review` tab can review the active branch directly from GitHub without a sandbox, and when that GitHub-backed review resolves to an open PR it can post Reviewer findings back to GitHub.
+*   **PR Awareness:** Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches`. The Workspace Hub `Review` tab can review the active branch or latest commit directly from GitHub without a sandbox, send findings into chat as fix requests, and, when a Branch diff review resolves to an open PR, post Reviewer findings back to GitHub.
 *   **Context Management:** Token-budget rolling window with summarization.
 
 ## Push CLI

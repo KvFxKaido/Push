@@ -21,8 +21,8 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
 // Valid Ollama model names — these must exist on the Ollama server
 export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 
-// OpenRouter default model — Claude Sonnet 4.6
-export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
+// OpenRouter default model — Claude Sonnet 4.6 Nitro
+export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
 // OpenCode Zen (OpenAI-compatible) default model
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
 // Nvidia NIM (OpenAI-compatible) default model
@@ -30,11 +30,9 @@ export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
 
 export const OPENROUTER_MODELS: string[] = [
   // Claude 4 series
-  'anthropic/claude-sonnet-4.6',
-  'anthropic/claude-opus-4.6',
-  'anthropic/claude-haiku-4.5',
-  // OpenAI GPT-4.1
-  'openai/gpt-4.1',
+  'anthropic/claude-sonnet-4.6:nitro',
+  'anthropic/claude-opus-4.6:nitro',
+  'anthropic/claude-haiku-4.5:nitro',
   // OpenAI GPT-5.4
   'openai/gpt-5.4-pro',
   'openai/gpt-5.4',
@@ -44,8 +42,8 @@ export const OPENROUTER_MODELS: string[] = [
   // Free model picks
   'stepfun/step-3.5-flash:free',
   // Google Gemini
-  'google/gemini-3.1-pro-preview',
-  'google/gemini-3.1-flash-lite-preview',
+  'google/gemini-3.1-pro-preview:nitro',
+  'google/gemini-3.1-flash-lite-preview:nitro',
   // Mistral
   'mistralai/mistral-large-2512',
   'mistralai/devstral-2512',
@@ -53,16 +51,22 @@ export const OPENROUTER_MODELS: string[] = [
   // MiniMax
   'minimax/minimax-m2.5',
   'minimax/minimax-m2.1',
+  // Qwen
+  'qwen/qwen3.5-397b-a17b',
   // Z.AI (GLM)
-  'zhipu/glm-4.7',
-  'zhipu/glm-5.0',
+  'z-ai/glm-5:nitro',
+  'z-ai/glm-4.7:nitro',
+  'z-ai/glm-4.7-flash:nitro',
+  'z-ai/glm-4.5-air:free',
+  // DeepSeek
+  'deepseek/deepseek-v3.2-exp:nitro',
   // Inception (Mercury diffusion LLMs)
   'inception/mercury-2',
   'inception/mercury-coder',
   'inception/mercury',
   // Others
   'x-ai/grok-4.1-fast',
-  'moonshotai/kimi-k2.5',
+  'moonshotai/kimi-k2.5:nitro',
 ];
 
 export const ZEN_MODELS: string[] = [

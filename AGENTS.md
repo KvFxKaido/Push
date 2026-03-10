@@ -39,16 +39,16 @@ The active backend serves all four roles. The user picks a backend in Settings; 
 
 ### AI Backends
 
-Four providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Provider and model selection are locked per chat after the first user message. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Users can also pick a per-provider model in Settings or from the chat composer for new chats. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, and `/api/nvidia/chat`.
+Four providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Settings stores default backend/model picks, the chat composer keeps a per-chat selection, and Reviewer keeps its own sticky provider/model selection. Once a chat sends its first message, that chat's provider/model are locked and changing either starts a new chat. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, and `/api/nvidia/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
 | **Ollama Cloud** | gemini-3-flash-preview |
-| **OpenRouter** | claude-sonnet-4.6 |
+| **OpenRouter** | claude-sonnet-4.6:nitro |
 | **OpenCode Zen** | big-pickle |
 | **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
 
-**OpenRouter** provides access to 50+ models through a single API. Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-5.4, Codex, Gemini, Mistral, MiniMax, GLM, Mercury, Grok, and Kimi.
+**OpenRouter** provides access to 50+ models through a single API. Push ships with a curated catalog spanning Claude, GPT-5.4, Codex, Gemini, Mistral, MiniMax, Qwen, GLM, DeepSeek, Mercury, Grok, and Kimi.
 
 ### Tool Protocol
 
@@ -58,7 +58,7 @@ Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message
 
 The Orchestrator can delegate complex coding tasks to the Coder sub-agent via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox, then returns results to the Orchestrator. Delegation supports optional `acceptanceCriteria[]` — shell commands run post-task to verify success. The Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state`, injected as a `[CODER_STATE]` block into every tool result to survive context trimming.
 
-The Reviewer is an on-demand advisory role used from the Workspace Hub `Review` tab. It has two sources: `GitHub diff` reviews the pushed branch against the default branch or the open PR diff without starting a sandbox, while `Working tree` reviews uncommitted sandbox edits. Findings are structured by file, include line anchors when possible, and only PR-backed GitHub reviews can be posted back as a GitHub PR review with inline comments for anchored findings.
+The Reviewer is an on-demand advisory role used from the Workspace Hub `Review` tab. It has three sources: `Branch diff` reviews the pushed branch against the default branch or the open PR diff without starting a sandbox, `Last commit` reviews the diff of the most recent pushed commit on the active branch, and `Working tree` reviews uncommitted sandbox edits. Findings are structured by file, include line anchors when possible, can jump into the Diff tab or be sent to chat as fix requests, and only PR-backed Branch diff reviews can be posted back as a GitHub PR review with inline comments for anchored findings.
 
 ### Harness Focus
 
@@ -108,7 +108,7 @@ When the user locks their phone or switches apps mid-tool-loop, the app checkpoi
 
 ### PR Awareness
 
-Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo. The Workspace Hub `Review` tab can review the active branch from GitHub without a sandbox, and if that GitHub-backed review resolves to an open PR, it can post Reviewer findings back as a GitHub PR review.
+Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo. The Workspace Hub `Review` tab can review the active branch or latest commit from GitHub without a sandbox, send findings into chat as fix requests, and, when a Branch diff review resolves to an open PR, post Reviewer findings back as a GitHub PR review.
 
 ### Rolling Window
 
@@ -116,7 +116,7 @@ Context uses a token budget with summarization. Older tool-heavy messages are co
 
 ### Project Instructions (Two-Phase Loading)
 
-When the user selects a repo, the app fetches project instruction files via the GitHub REST API (tries `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md` as fallbacks) and injects the content into the Orchestrator and Coder system prompts. When a sandbox becomes ready later, the app re-reads from the sandbox filesystem using the same precedence order so local edits can upgrade the content.
+When the user selects a repo, the app fetches project instruction files via the GitHub REST API (tries `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md` as fallbacks) and injects the content into the Orchestrator and Coder system prompts. When a sandbox becomes ready later, the app currently re-reads `/workspace/AGENTS.md` only, so local edits to the canonical project instructions file can upgrade the content.
 
 ### Data Flow
 
@@ -128,7 +128,7 @@ When the user selects a repo, the app fetches project instruction files via the 
 6. **Sandbox** → Clone repo to container, run commands, edit files
 7. **Coder** → Autonomous coding task execution (uses active backend)
 8. **Branch** → Create branches, switch context (tears down sandbox), commit to active branch
-9. **Reviewer** → Run advisory review on a GitHub branch/PR diff or the sandbox working tree; PR posting is only available for PR-backed GitHub reviews
+9. **Reviewer** → Run advisory review on a Branch diff, Last commit, or sandbox Working tree; findings can jump to Diff or be sent to chat, and PR posting is only available for PR-backed Branch diff reviews
 10. **Auditor** → Standard commits (`sandbox_prepare_commit` path) get a safety verdict (uses active backend)
 11. **Merge** → PR creation + Auditor review + GitHub merge (merge commit strategy)
 12. **Cards** → Structured results render as inline cards
