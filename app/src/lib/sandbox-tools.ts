@@ -717,11 +717,11 @@ async function buildRangeReplaceHashlineOps(
   ops.push({ op: 'replace_line', ref: anchorOldRef, content: replacementLines[0] });
 
   // Insert additional lines after the anchor. Reversed insertion preserves final order.
+  // Use the original anchor ref — applyHashlineEdits resolves all refs against the
+  // original content upfront, so a ref based on the post-replace hash would fail.
   if (replacementLines.length > 1) {
-    const anchorNewHash = await calculateLineHash(replacementLines[0], 7);
-    const anchorNewRef = `${startLine}:${anchorNewHash}`;
     for (const line of replacementLines.slice(1).reverse()) {
-      ops.push({ op: 'insert_after', ref: anchorNewRef, content: line });
+      ops.push({ op: 'insert_after', ref: anchorOldRef, content: line });
     }
   }
 
