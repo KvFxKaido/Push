@@ -312,6 +312,21 @@ def _wait_with_timeout(p, timeout_seconds: int = 55) -> bool:
     return completed
 
 
+def _sandbox_error_response(exc: Exception, default_fields: dict | None = None) -> dict:
+    """Build a JSON error response for unhandled sandbox/Modal exceptions.
+
+    Instead of letting these bubble up as raw 500s, callers catch and return
+    structured JSON so the client gets a proper error_type it can act on.
+    """
+    msg = (
+        "Sandbox container error. The container may be unhealthy "
+        f"— try restarting the sandbox. ({type(exc).__name__})"
+    )
+    result = default_fields.copy() if default_fields else {}
+    result["error"] = msg
+    return result
+
+
 def _fetch_github_user(token: str) -> tuple[str, str]:
     """Fetch name and email from GitHub API. Returns (name, email) or defaults."""
     try:
@@ -590,27 +605,30 @@ def exec_command(data: dict):
             "truncated": False,
             "error": "Unauthorized sandbox access",
         }
-    p = sb.exec("bash", "-c", f"cd {workdir} && {command}")
-    completed = _wait_with_timeout(p, timeout_seconds=110)
+    try:
+        p = sb.exec("bash", "-c", f"cd {workdir} && {command}")
+        completed = _wait_with_timeout(p, timeout_seconds=110)
 
-    if not completed:
+        if not completed:
+            return {
+                "stdout": "",
+                "stderr": "Command timed out after 110 seconds. The operation may still be running in the sandbox.",
+                "exit_code": -1,
+                "truncated": False,
+                "error": "Command execution timed out",
+            }
+
+        stdout = p.stdout.read()
+        stderr = p.stderr.read()
+
         return {
-            "stdout": "",
-            "stderr": "Command timed out after 110 seconds. The operation may still be running in the sandbox.",
-            "exit_code": -1,
-            "truncated": False,
-            "error": "Command execution timed out",
+            "stdout": stdout[:10_000],
+            "stderr": stderr[:5_000],
+            "exit_code": p.returncode,
+            "truncated": len(stdout) > 10_000 or len(stderr) > 5_000,
         }
-
-    stdout = p.stdout.read()
-    stderr = p.stderr.read()
-
-    return {
-        "stdout": stdout[:10_000],
-        "stderr": stderr[:5_000],
-        "exit_code": p.returncode,
-        "truncated": len(stdout) > 10_000 or len(stderr) > 5_000,
-    }
+    except Exception as exc:
+        return _sandbox_error_response(exc, {"stdout": "", "stderr": "", "exit_code": -1, "truncated": False})
 
 
 @app.function(image=endpoint_image)
@@ -657,6 +675,23 @@ def file_ops(data: dict):
         if action == "read":
             return {"error": "Unauthorized sandbox access", "content": ""}
         return {"error": "Unauthorized sandbox access", "entries": []}
+
+    # Wrap all sandbox operations so Modal gRPC crashes return proper
+    # JSON errors instead of raw 500s.
+    try:
+        return _file_ops_inner(sb, action, path, data)
+    except Exception as exc:
+        if action == "batch_write":
+            return _sandbox_error_response(exc, {"ok": False, "results": []})
+        if action in ("write", "delete", "hydrate"):
+            return _sandbox_error_response(exc, {"ok": False})
+        if action == "read":
+            return _sandbox_error_response(exc, {"content": ""})
+        return _sandbox_error_response(exc, {"entries": []})
+
+
+def _file_ops_inner(sb, action: str, path: str, data: dict):
+    """Inner file_ops logic, separated so the caller can catch container crashes."""
 
     if action == "read":
         if not path:
@@ -931,39 +966,42 @@ def get_diff(data: dict):
     if not _validate_owner_token(sb, owner_token):
         return {"error": "Unauthorized sandbox access", "diff": ""}
 
-    # Step 1: Clear stale index lock (left by crashed git operations)
-    sb.exec("bash", "-c", "rm -f /workspace/.git/index.lock").wait()
+    try:
+        # Step 1: Clear stale index lock (left by crashed git operations)
+        sb.exec("bash", "-c", "rm -f /workspace/.git/index.lock").wait()
 
-    # Step 2: Check git status first to diagnose "no changes" issues
-    p = sb.exec("bash", "-c", "cd /workspace && git status --porcelain")
-    p.wait()
-    status_output = p.stdout.read().strip()
-    status_stderr = p.stderr.read().strip()
+        # Step 2: Check git status first to diagnose "no changes" issues
+        p = sb.exec("bash", "-c", "cd /workspace && git status --porcelain")
+        p.wait()
+        status_output = p.stdout.read().strip()
+        status_stderr = p.stderr.read().strip()
 
-    if status_stderr:
-        return {"error": f"git status failed: {status_stderr}", "diff": ""}
+        if status_stderr:
+            return {"error": f"git status failed: {status_stderr}", "diff": ""}
 
-    if not status_output:
-        # No changes detected by git — return empty diff with diagnostic info
-        return {"diff": "", "truncated": False, "git_status": "clean"}
+        if not status_output:
+            # No changes detected by git — return empty diff with diagnostic info
+            return {"diff": "", "truncated": False, "git_status": "clean"}
 
-    # Step 3: Stage all changes
-    p = sb.exec("bash", "-c", "cd /workspace && git add -A")
-    p.wait()
-    if p.returncode != 0:
-        stderr = p.stderr.read()
-        return {"error": f"git add failed: {stderr}", "diff": ""}
+        # Step 3: Stage all changes
+        p = sb.exec("bash", "-c", "cd /workspace && git add -A")
+        p.wait()
+        if p.returncode != 0:
+            stderr = p.stderr.read()
+            return {"error": f"git add failed: {stderr}", "diff": ""}
 
-    # Step 4: Get the diff of staged changes
-    p = sb.exec("bash", "-c", "cd /workspace && git diff --cached")
-    p.wait()
+        # Step 4: Get the diff of staged changes
+        p = sb.exec("bash", "-c", "cd /workspace && git diff --cached")
+        p.wait()
 
-    diff = p.stdout.read()
-    return {
-        "diff": diff[:20_000],
-        "truncated": len(diff) > 20_000,
-        "git_status": status_output[:2_000],
-    }
+        diff = p.stdout.read()
+        return {
+            "diff": diff[:20_000],
+            "truncated": len(diff) > 20_000,
+            "git_status": status_output[:2_000],
+        }
+    except Exception as exc:
+        return _sandbox_error_response(exc, {"diff": ""})
 
 
 @app.function(image=endpoint_image)
@@ -981,7 +1019,14 @@ def cleanup(data: dict):
         return {"ok": False, "error": sandbox_error or "Sandbox unavailable"}
     if not _validate_owner_token(sb, owner_token):
         return {"ok": False, "error": "Unauthorized sandbox access"}
-    sb.terminate()
+    try:
+        sb.terminate()
+    except Exception as exc:
+        err_msg = str(exc).lower()
+        if "not found" in err_msg or "terminated" in err_msg or "closed" in err_msg:
+            pass  # Container already gone — that's fine
+        else:
+            return {"ok": False, "error": f"Termination failed: {type(exc).__name__}"}
     return {"ok": True}
 
 
@@ -1055,5 +1100,10 @@ def create_archive(data: dict):
             "size_bytes": size_bytes,
             "format": "tar.gz",
         }
+    except Exception as exc:
+        return _sandbox_error_response(exc, {"ok": False})
     finally:
-        sb.exec("rm", "-f", "/tmp/archive.tar.gz").wait()
+        try:
+            sb.exec("rm", "-f", "/tmp/archive.tar.gz").wait()
+        except Exception:
+            pass
