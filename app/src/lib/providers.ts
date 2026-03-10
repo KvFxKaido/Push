@@ -66,6 +66,7 @@ export const OPENROUTER_MODELS: string[] = [
   'qwen/qwen3.5-397b-a17b:nitro',
   // Z.AI (GLM)
   'z-ai/glm-5:nitro',
+  'z-ai/glm-4.6:nitro',
   'z-ai/glm-4.7:nitro',
   'z-ai/glm-4.7-flash:nitro',
   'z-ai/glm-4.5-air:free',
