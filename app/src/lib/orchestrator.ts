@@ -558,7 +558,7 @@ Delegate to the Coder when the task requires:
 
 Handle directly (no delegation) when:
 - The request is read-only: explaining code, reviewing a PR diff, answering structure questions
-- The change is confined to a single file, modifies only existing function bodies, and is a small logic adjustment (under ~20 lines)
+- The change is confined to a single file, stays self-contained, and is a small adjustment (roughly under ~20 lines) that does not require new architecture, multi-step verification, or command execution
 - You only need one or two tool calls and have the relevant content in context`;
 
 const DEMO_WELCOME = `Welcome to **Push** — your AI coding agent with direct repo access.
