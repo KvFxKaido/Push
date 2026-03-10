@@ -888,6 +888,7 @@ export function WorkspaceHubSheet({
                   providerModels={reviewProviderModels}
                   repoFullName={repoFullName}
                   activeBranch={branchProps.currentBranch}
+                  defaultBranch={branchProps.defaultBranch}
                 />
               </div>
             )}

@@ -1850,6 +1850,74 @@ export async function findOpenPRForBranch(
   }
 }
 
+export interface GitHubReviewDiffTarget {
+  diff: string;
+  source: 'pr' | 'branch';
+  label: string;
+  pr?: {
+    number: number;
+    title: string;
+    commitSha: string;
+    url: string;
+  };
+}
+
+/**
+ * Resolve the GitHub-backed diff that should be reviewed for an active branch.
+ *
+ * If the branch has an open PR, review the PR diff so comments can map back to
+ * GitHub review anchors. Otherwise, review the branch diff against the repo's
+ * default branch without requiring a sandbox.
+ */
+export async function fetchGitHubReviewDiff(
+  repo: string,
+  headBranch: string,
+  defaultBranch: string,
+): Promise<GitHubReviewDiffTarget> {
+  const headers = getGitHubHeaders();
+  const openPr = await findOpenPRForBranch(repo, headBranch);
+
+  if (openPr) {
+    const diffRes = await githubFetch(
+      `https://api.github.com/repos/${repo}/pulls/${openPr.number}`,
+      { headers: { ...headers, Accept: 'application/vnd.github.v3.diff' } },
+    );
+    if (!diffRes.ok) {
+      throw new Error(formatGitHubError(diffRes.status, `PR diff for #${openPr.number} on ${repo}`));
+    }
+    return {
+      diff: await diffRes.text(),
+      source: 'pr',
+      label: `PR #${openPr.number}`,
+      pr: openPr,
+    };
+  }
+
+  if (!headBranch || !defaultBranch) {
+    throw new Error('GitHub review is unavailable until the active branch is known.');
+  }
+
+  if (headBranch === defaultBranch) {
+    throw new Error('No GitHub branch diff to review on the default branch. Use Working tree for local edits or switch to a feature branch.');
+  }
+
+  const diffRes = await githubFetch(
+    `https://api.github.com/repos/${repo}/compare/${encodeURIComponent(defaultBranch)}...${encodeURIComponent(headBranch)}`,
+    { headers: { ...headers, Accept: 'application/vnd.github.v3.diff' } },
+  );
+  if (!diffRes.ok) {
+    throw new Error(
+      formatGitHubError(diffRes.status, `branch comparison ${defaultBranch}...${headBranch} on ${repo}`),
+    );
+  }
+
+  return {
+    diff: await diffRes.text(),
+    source: 'branch',
+    label: `${headBranch} vs ${defaultBranch}`,
+  };
+}
+
 /**
  * Post a reviewer result to a GitHub PR as a review.
  *

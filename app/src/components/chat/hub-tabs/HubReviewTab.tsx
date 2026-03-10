@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, RefreshCw, Send, Sparkles } from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
-import { findOpenPRForBranch, executePostPRReview } from '@/lib/github-tools';
+import { executePostPRReview, fetchGitHubReviewDiff } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ReviewResult, ReviewComment } from '@/types';
@@ -18,7 +18,26 @@ interface HubReviewTabProps {
   repoFullName?: string;
   /** active branch name — used to find an open PR */
   activeBranch?: string;
+  /** default branch name — used for GitHub branch-vs-default review */
+  defaultBranch?: string;
 }
+
+type ReviewSourceMode = 'github' | 'sandbox';
+
+type ReviewContext =
+  | {
+      kind: 'github-pr';
+      label: string;
+      pr: { number: number; title: string; commitSha: string; url: string };
+    }
+  | {
+      kind: 'github-branch';
+      label: string;
+    }
+  | {
+      kind: 'sandbox';
+      label: string;
+    };
 
 function severityIcon(severity: ReviewComment['severity']) {
   switch (severity) {
@@ -61,19 +80,22 @@ export function HubReviewTab({
   providerModels,
   repoFullName,
   activeBranch,
+  defaultBranch,
 }: HubReviewTabProps) {
   const providerOptions = useMemo(
     () => availableProviders.map(([type, label]) => ({ type, label })),
     [availableProviders],
   );
+  const hasGitHubSource = Boolean(repoFullName && activeBranch && defaultBranch);
   const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(null);
+  const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(hasGitHubSource ? 'github' : 'sandbox');
   const [modelOverride, setModelOverride] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
+  const [reviewContext, setReviewContext] = useState<ReviewContext | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
-  const [prInfo, setPrInfo] = useState<{ number: number; title: string; commitSha: string; url: string } | null | 'loading'>(null);
   const [postState, setPostState] = useState<'idle' | 'posting' | 'posted' | 'error'>('idle');
   const [postError, setPostError] = useState<string | null>(null);
 
@@ -96,9 +118,31 @@ export function HubReviewTab({
     }
   }, [activeProvider, providerOptions, selectedProvider]);
 
+  useEffect(() => {
+    if (!hasGitHubSource && reviewSource === 'github') {
+      setReviewSource('sandbox');
+      setResult(null);
+      setReviewContext(null);
+      setError(null);
+      setPostState('idle');
+      setPostError(null);
+    }
+  }, [hasGitHubSource, reviewSource]);
+
   const handleProviderChange = useCallback((p: PreferredProvider) => {
     setSelectedProvider(p);
     setModelOverride('');
+  }, []);
+
+  const handleSourceChange = useCallback((source: ReviewSourceMode) => {
+    setReviewSource(source);
+    setResult(null);
+    setReviewContext(null);
+    setError(null);
+    setStatus(null);
+    setExpandedFiles(new Set());
+    setPostState('idle');
+    setPostError(null);
   }, []);
 
   const toggleFile = useCallback((file: string) => {
@@ -109,36 +153,18 @@ export function HubReviewTab({
     });
   }, []);
 
-  // Detect open PR for the active branch whenever a review result is ready.
-  // The cancelled flag prevents a stale response from a previous branch/result
-  // from overwriting state after the effect has been re-run.
-  useEffect(() => {
-    if (!result || !repoFullName || !activeBranch) {
-      setPrInfo(null);
-      return;
-    }
-    let cancelled = false;
-    setPrInfo('loading');
-    setPostState('idle');
-    setPostError(null);
-    void findOpenPRForBranch(repoFullName, activeBranch).then((pr) => {
-      if (!cancelled) setPrInfo(pr ?? null);
-    });
-    return () => { cancelled = true; };
-  }, [result, repoFullName, activeBranch]);
-
   const handlePostToPR = useCallback(async () => {
-    if (!result || !repoFullName || typeof prInfo !== 'object' || !prInfo) return;
+    if (!result || !repoFullName || reviewContext?.kind !== 'github-pr') return;
     setPostState('posting');
     setPostError(null);
     try {
-      await executePostPRReview(repoFullName, prInfo.number, prInfo.commitSha, result);
+      await executePostPRReview(repoFullName, reviewContext.pr.number, reviewContext.pr.commitSha, result);
       setPostState('posted');
     } catch (err) {
       setPostState('error');
       setPostError(err instanceof Error ? err.message : 'Failed to post review.');
     }
-  }, [result, repoFullName, prInfo]);
+  }, [result, repoFullName, reviewContext]);
 
   const handleRunReview = useCallback(async () => {
     if (running || !selectedProvider) return;
@@ -146,34 +172,61 @@ export function HubReviewTab({
     setRunning(true);
     setError(null);
     setResult(null);
+    setReviewContext(null);
     setStatus(null);
     setExpandedFiles(new Set());
+    setPostState('idle');
+    setPostError(null);
 
     try {
-      let id = sandboxId;
-      if (!id) {
-        setStatus('Starting sandbox…');
-        id = await ensureSandbox();
-      }
-      if (!id) {
-        setError('Sandbox is not available. Start it first.');
-        return;
+      let diff = '';
+      let nextContext: ReviewContext | null = null;
+
+      if (reviewSource === 'github') {
+        if (!repoFullName || !activeBranch || !defaultBranch) {
+          setError('GitHub review is not available for this workspace.');
+          return;
+        }
+        setStatus('Resolving branch / PR diff…');
+        const githubDiff = await fetchGitHubReviewDiff(repoFullName, activeBranch, defaultBranch);
+        diff = githubDiff.diff;
+        nextContext = githubDiff.source === 'pr' && githubDiff.pr
+          ? { kind: 'github-pr', label: githubDiff.label, pr: githubDiff.pr }
+          : { kind: 'github-branch', label: githubDiff.label };
+      } else {
+        let id = sandboxId;
+        if (!id) {
+          setStatus('Starting sandbox…');
+          id = await ensureSandbox();
+        }
+        if (!id) {
+          setError('Sandbox is not available. Start it first.');
+          return;
+        }
+
+        setStatus('Fetching working tree diff…');
+        const diffResult = await getSandboxDiff(id);
+        diff = diffResult.diff;
+        nextContext = { kind: 'sandbox', label: 'Working tree' };
       }
 
-      setStatus('Fetching diff…');
-      const diffResult = await getSandboxDiff(id);
-      if (!diffResult.diff?.trim()) {
-        setError('No changes to review. Make some edits first.');
+      if (!diff?.trim()) {
+        setError(
+          reviewSource === 'github'
+            ? 'No GitHub changes to review. Push your branch or open a PR first.'
+            : 'No working tree changes to review. Make some edits first.',
+        );
         return;
       }
 
       const reviewResult = await runReviewer(
-        diffResult.diff,
+        diff,
         { provider: selectedProvider, model: modelOverride.trim() || undefined },
         (phase) => setStatus(phase),
       );
 
       setResult(reviewResult);
+      setReviewContext(nextContext);
       // Expand critical and warning files by default
       const autoExpand = new Set<string>();
       for (const c of reviewResult.comments) {
@@ -188,10 +241,29 @@ export function HubReviewTab({
       setRunning(false);
       setStatus(null);
     }
-  }, [running, sandboxId, ensureSandbox, selectedProvider, modelOverride]);
+  }, [
+    activeBranch,
+    defaultBranch,
+    ensureSandbox,
+    modelOverride,
+    repoFullName,
+    reviewSource,
+    running,
+    sandboxId,
+    selectedProvider,
+  ]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
   const selectedDefaultModel = selectedProvider ? providerModels[selectedProvider] : '';
+  const canRunReview =
+    !running &&
+    Boolean(selectedProvider) &&
+    (
+      reviewSource === 'github'
+        ? hasGitHubSource
+        : (sandboxReady || sandboxStatus === 'idle')
+    );
+  const showSandboxPostingHint = reviewContext?.kind === 'sandbox' && hasGitHubSource;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -203,6 +275,40 @@ export function HubReviewTab({
           </p>
         ) : (
           <>
+            {(hasGitHubSource || reviewSource === 'sandbox') && (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {hasGitHubSource && (
+                    <button
+                      onClick={() => handleSourceChange('github')}
+                      className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                        reviewSource === 'github'
+                          ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
+                          : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
+                      }`}
+                    >
+                      GitHub diff
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleSourceChange('sandbox')}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      reviewSource === 'sandbox'
+                        ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
+                        : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
+                    }`}
+                  >
+                    Working tree
+                  </button>
+                </div>
+                <p className="text-[10px] text-push-fg-dim">
+                  {reviewSource === 'github'
+                    ? 'Reviews the pushed branch diff or open PR from GitHub without starting a sandbox.'
+                    : 'Reviews uncommitted sandbox edits in the current working tree.'}
+                </p>
+              </div>
+            )}
+
             {/* Provider pills — only configured providers */}
             <div className="flex items-center gap-1.5 flex-wrap">
               {providerOptions.map(({ type, label }) => (
@@ -231,7 +337,7 @@ export function HubReviewTab({
               />
               <button
                 onClick={() => void handleRunReview()}
-                disabled={running || !selectedProvider || (!sandboxReady && sandboxStatus !== 'idle')}
+                disabled={!canRunReview}
                 className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-push-accent/30 bg-push-accent/10 px-3 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15 active:scale-95 disabled:opacity-50"
               >
                 {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
@@ -260,7 +366,11 @@ export function HubReviewTab({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!result && !running && !error && (
           <div className="flex h-full items-center justify-center">
-            <p className="text-xs text-push-fg-dim">Run a review to see feedback on your current changes.</p>
+            <p className="text-xs text-push-fg-dim">
+              {reviewSource === 'github'
+                ? 'Run a review to inspect the active branch or open PR from GitHub.'
+                : 'Run a review to see feedback on your current working tree changes.'}
+            </p>
           </div>
         )}
 
@@ -271,7 +381,9 @@ export function HubReviewTab({
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <div className="flex items-center gap-2">
                   <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
-                  <span className="text-xs font-medium text-push-fg">Review complete</span>
+                  <span className="text-xs font-medium text-push-fg">
+                    Review complete{reviewContext ? ` · ${reviewContext.label}` : ''}
+                  </span>
                 </div>
                 <span className="text-[10px] text-push-fg-dim">
                   {result.truncated
@@ -292,23 +404,17 @@ export function HubReviewTab({
             </div>
 
             {/* Post to PR */}
-            {prInfo === 'loading' && (
-              <div className="flex items-center gap-1.5 text-[11px] text-push-fg-dim">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Checking for open PR…
-              </div>
-            )}
-            {typeof prInfo === 'object' && prInfo && postState !== 'posted' && (
+            {reviewContext?.kind === 'github-pr' && postState !== 'posted' && (
               <div className="flex items-center justify-between gap-2 rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-2.5">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="text-[11px] text-push-fg-secondary truncate">
                     PR <a
-                      href={prInfo.url}
+                      href={reviewContext.pr.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-push-accent hover:underline inline-flex items-center gap-0.5"
                     >
-                      #{prInfo.number} <ExternalLink className="h-2.5 w-2.5" />
+                      #{reviewContext.pr.number} <ExternalLink className="h-2.5 w-2.5" />
                     </a>
                     {' '}open
                   </span>
@@ -328,20 +434,34 @@ export function HubReviewTab({
                 </button>
               </div>
             )}
-            {postState === 'posted' && typeof prInfo === 'object' && prInfo && (
+            {postState === 'posted' && reviewContext?.kind === 'github-pr' && (
               <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2.5">
                 <CheckCircle className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
                 <span className="text-[11px] text-emerald-400">
                   Review posted to{' '}
                   <a
-                    href={prInfo.url}
+                    href={reviewContext.pr.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline inline-flex items-center gap-0.5"
                   >
-                    PR #{prInfo.number} <ExternalLink className="h-2.5 w-2.5" />
+                    PR #{reviewContext.pr.number} <ExternalLink className="h-2.5 w-2.5" />
                   </a>
                 </span>
+              </div>
+            )}
+            {showSandboxPostingHint && (
+              <div className="rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-2.5">
+                <p className="text-[11px] text-push-fg-dim">
+                  Working tree reviews stay in Push. Switch to <span className="text-push-fg-secondary">GitHub diff</span> to review the pushed branch or post findings back to a PR.
+                </p>
+              </div>
+            )}
+            {reviewContext?.kind === 'github-branch' && (
+              <div className="rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-2.5">
+                <p className="text-[11px] text-push-fg-dim">
+                  No open PR for this branch. This review covers the pushed branch diff against <span className="text-push-fg-secondary">{defaultBranch}</span>.
+                </p>
               </div>
             )}
 
@@ -383,7 +503,14 @@ export function HubReviewTab({
                             <div key={i} className="flex items-start gap-2.5 px-3.5 py-2.5">
                               {severityIcon(c.severity)}
                               <div className="min-w-0 flex-1">
-                                <div className="mb-0.5">{severityLabel(c.severity)}</div>
+                                <div className="mb-0.5 flex items-center gap-2">
+                                  {severityLabel(c.severity)}
+                                  {typeof c.line === 'number' && (
+                                    <span className="rounded-full border border-push-edge px-1.5 py-0.5 text-[10px] font-mono text-push-fg-dim">
+                                      L{c.line}
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-[11px] leading-relaxed text-push-fg-secondary">{c.comment}</p>
                               </div>
                             </div>

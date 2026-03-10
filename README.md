@@ -19,7 +19,7 @@ Switch providers or pinned models on new chats at any time.
 Push is an execution control plane for developers who need to keep shipping when away from their desk.
 
 - Review fast with structured cards for PRs, diffs, checks, and repo state
-- Run on-demand Reviewer feedback on the current diff and optionally post it to an open PR
+- Run on-demand Reviewer feedback on a GitHub diff or local working tree, and post PR-backed reviews to GitHub
 - Delegate implementation from Orchestrator to Coder in a live sandbox
 - Gate risky changes with Auditor SAFE/UNSAFE pre-commit verdicts
 - Keep context repo-locked to one repo and one active branch
@@ -169,14 +169,14 @@ Role-based agent system. **Models are replaceable; roles are not.**
 
 - **Orchestrator** — conversational lead, tool orchestration, delegates to Coder
 - **Coder** — autonomous code implementation in sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap)
-- **Reviewer** — on-demand advisory diff review in the Workspace Hub, with structured findings and optional GitHub PR review posting
+- **Reviewer** — on-demand advisory diff review in the Workspace Hub; can review a GitHub branch/PR diff without a sandbox or review local working-tree changes inside the sandbox
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
 Four AI backends are supported: **Ollama Cloud**, **OpenRouter**, **OpenCode Zen**, and **Nvidia NIM**. All use OpenAI-compatible streaming. The active backend serves all four roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Provider and model selection are locked per chat after the first user message; start a new chat to switch either.
 
 **OpenRouter** provides access to 50+ models through a single pay-per-use API. Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-5.4, Codex, Gemini, Mistral, MiniMax, GLM, Mercury, Grok, and Kimi.
 
-There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, review, console, scratchpad, and commit/push are unified in the **Workspace Hub**. If the active branch has an open PR, Reviewer findings can be posted back as a GitHub PR review. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
+There is always exactly one **Active Branch** per repo session — it is the commit target, push target, diff base, and chat context. Switching branches tears down the sandbox and creates a fresh one (clean state). Workspace actions for files, diff, review, console, scratchpad, and commit/push are unified in the **Workspace Hub**. Reviewer has two modes: **GitHub diff** reviews the pushed branch against the default branch or the open PR diff without starting a sandbox, while **Working tree** reviews uncommitted sandbox edits. Only PR-backed GitHub reviews can be posted back as a GitHub PR review. All merges go through **GitHub Pull Requests** — Push never runs `git merge` locally. The merge flow: check working tree → find/create PR → Auditor review → check eligibility → merge via GitHub API (merge commit strategy). Chats are permanently **branch-scoped** and grouped by branch in the history drawer.
 
 If a run is interrupted (phone lock/background), Push checkpoints state and surfaces a **ResumeBanner** on return. Resume validates sandbox/branch/repo identity, fetches sandbox status (HEAD/dirty/diff), injects a reconciliation message, and continues the tool loop.
 

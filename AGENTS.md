@@ -34,7 +34,7 @@ The active backend serves all four roles. The user picks a backend in Settings; 
 |------|----------------|
 | **Orchestrator** | Conversational lead, interprets intent, delegates to Coder |
 | **Coder** | Autonomous code implementation in sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap) |
-| **Reviewer** | On-demand advisory diff review in the Workspace Hub; can post findings to an open PR as a GitHub review |
+| **Reviewer** | On-demand advisory diff review in the Workspace Hub; reviews GitHub branch/PR diffs without a sandbox or local working-tree changes in the sandbox |
 | **Auditor** | Pre-commit risk review — binary SAFE/UNSAFE verdict (fail-safe) |
 
 ### AI Backends
@@ -58,7 +58,7 @@ Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message
 
 The Orchestrator can delegate complex coding tasks to the Coder sub-agent via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox, then returns results to the Orchestrator. Delegation supports optional `acceptanceCriteria[]` — shell commands run post-task to verify success. The Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state`, injected as a `[CODER_STATE]` block into every tool result to survive context trimming.
 
-The Reviewer is an on-demand advisory role used from the Workspace Hub `Review` tab. It reviews the current working diff with structured file-level findings, includes line anchors when possible, and can post findings back to an open PR as a GitHub PR review with inline comments for anchored findings.
+The Reviewer is an on-demand advisory role used from the Workspace Hub `Review` tab. It has two sources: `GitHub diff` reviews the pushed branch against the default branch or the open PR diff without starting a sandbox, while `Working tree` reviews uncommitted sandbox edits. Findings are structured by file, include line anchors when possible, and only PR-backed GitHub reviews can be posted back as a GitHub PR review with inline comments for anchored findings.
 
 ### Harness Focus
 
@@ -108,7 +108,7 @@ When the user locks their phone or switches apps mid-tool-loop, the app checkpoi
 
 ### PR Awareness
 
-Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo. The Workspace Hub `Review` tab can also detect an open PR for the active branch and post Reviewer findings back as a GitHub PR review.
+Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo. The Workspace Hub `Review` tab can review the active branch from GitHub without a sandbox, and if that GitHub-backed review resolves to an open PR, it can post Reviewer findings back as a GitHub PR review.
 
 ### Rolling Window
 
@@ -128,7 +128,7 @@ When the user selects a repo, the app fetches project instruction files via the 
 6. **Sandbox** → Clone repo to container, run commands, edit files
 7. **Coder** → Autonomous coding task execution (uses active backend)
 8. **Branch** → Create branches, switch context (tears down sandbox), commit to active branch
-9. **Reviewer** → Run advisory review on the working diff; optionally post findings to an open PR
+9. **Reviewer** → Run advisory review on a GitHub branch/PR diff or the sandbox working tree; PR posting is only available for PR-backed GitHub reviews
 10. **Auditor** → Standard commits (`sandbox_prepare_commit` path) get a safety verdict (uses active backend)
 11. **Merge** → PR creation + Auditor review + GitHub merge (merge commit strategy)
 12. **Cards** → Structured results render as inline cards
@@ -231,7 +231,7 @@ Push/
 | File | Purpose |
 |------|---------|
 | `lib/orchestrator.ts` | SSE streaming, think-token parsing, token-budget context management |
-| `lib/github-tools.ts` | GitHub tool protocol, `delegate_coder`, `fetchProjectInstructions`, branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`, `findOpenPRForBranch`, `executePostPRReview`) |
+| `lib/github-tools.ts` | GitHub tool protocol, `delegate_coder`, `fetchProjectInstructions`, branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`, `findOpenPRForBranch`, `fetchGitHubReviewDiff`, `executePostPRReview`) |
 | `lib/sandbox-tools.ts` | Sandbox tool definitions; includes `sandbox_edit_file` (hashline-based edits with diff output), `sandbox_edit_range`, `sandbox_search_replace`, `sandbox_read_symbols`, `sandbox_apply_patchset`, `classifyError()` (error taxonomy) |
 | `lib/hashline.ts` | Hashline edit protocol — `calculateLineHash()`, `applyHashlineEdits()`, `HashlineOp`; eliminates line-number drift |
 | `lib/diff-utils.ts` | Shared diff parsing — `parseDiffStats()`, `parseDiffIntoFiles()`, `formatSize()` |
