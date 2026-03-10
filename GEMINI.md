@@ -2,7 +2,7 @@
 
 **Mobile-native AI coding agent with direct GitHub repo access.**
 
-Push is a personal chat interface backed by role-based AI agents (Orchestrator, Coder, Auditor) designed for reviewing PRs, exploring codebases, and shipping changes from a mobile device.
+Push is a personal chat interface backed by role-based AI agents (Orchestrator, Coder, Reviewer, Auditor) designed for reviewing PRs, exploring codebases, and shipping changes from a mobile device.
 
 ## Project Overview
 
@@ -28,6 +28,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 ### Role-Based Agents
 *   **Orchestrator:** Conversational lead, interprets intent, delegates to Coder.
 *   **Coder:** Autonomous code implementation and execution in the sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap).
+*   **Reviewer:** On-demand advisory diff review in the Workspace Hub. Produces structured findings and can post them to an open PR as a GitHub review.
 *   **Auditor:** Pre-commit safety gate. Reviews diffs and issues a binary SAFE/UNSAFE verdict.
 
 ### Key Systems
@@ -36,6 +37,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Sandbox Mode:** Ephemeral workspace (no GitHub repo). Entry via onboarding or repo picker. GitHub tools blocked; 30-min lifetime with expiry warning. Download as tar.gz.
 *   **Web Search Tools:** Mid-conversation web search via Tavily (premium), Ollama native search, or DuckDuckGo fallback. Prompt-engineered JSON format, client-side dispatch.
 *   **Coder Delegation:** Orchestrator delegates via `delegate_coder`. Supports `acceptanceCriteria[]` (shell commands run post-task). Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — survives context trimming.
+*   **Reviewer:** The Workspace Hub `Review` tab can review the current working diff, add line anchors when possible, detect an open PR for the active branch, and post findings back as a GitHub PR review.
 *   **Harness Priority:** Push still prioritizes harness reliability over model churn, but the major checklist is shipped. `documents/plans/Harness Reliability Plan.md` is now reference/planning history rather than an active checklist in the product docs. **Agent Experience Wishlist shipped** (`documents/analysis/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`, plus edit convenience wrappers (`sandbox_edit_range`, `sandbox_search_replace`) on top of hashline editing.
 *   **User Identity:** Display name, bio, and GitHub login set in Settings. Stored in localStorage via `useUserProfile` hook. Injected into Orchestrator and Coder system prompts via `buildUserIdentityBlock()`.
 *   **Scratchpad:** Shared persistent notepad for user/AI collaboration.
@@ -44,7 +46,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Protect Main:** Optional setting that blocks direct commits to `main`, requiring a branch for all work. Global default (on/off) plus per-repo override (inherit/always/never). Stored in localStorage via `useProtectMain` hook. No-op in Sandbox Mode.
 *   **Branch-Scoped Chats:** Conversations are permanently bound to the branch on which they were created. History drawer groups chats by branch. After merge, branch chats receive a closure message; deleted branches marked `(Merged + Deleted)`.
 *   **Resumable Sessions:** If the app is interrupted mid-run (phone lock/background), `useChat` checkpoints run state to localStorage (`run_checkpoint_${chatId}`) and shows a `ResumeBanner` on return. Resume validates sandbox/branch/repo identity, calls `sandboxStatus()` for HEAD/dirty/diff reconciliation, injects a phase-specific `[SESSION_RESUMED]` message, and continues the tool loop. Coder delegation state is captured via `onWorkingMemoryUpdate`. Multi-tab coordination uses localStorage locks; checkpoint delta is trimmed/capped at 50KB; resume telemetry is recorded (`getResumeEvents()`).
-*   **PR Awareness:** Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches`.
+*   **PR Awareness:** Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches`. The Workspace Hub `Review` tab can also detect an open PR for the active branch and post Reviewer findings back to GitHub.
 *   **Context Management:** Token-budget rolling window with summarization.
 
 ## Push CLI
@@ -120,6 +122,7 @@ Push/
 │   │   ├── lib/           # Core Logic
 │   │   │   ├── orchestrator.ts    # Agent coordination & streaming
 │   │   │   ├── coder-agent.ts     # Coder sub-agent loop, working memory, acceptance criteria, onWorkingMemoryUpdate
+│   │   │   ├── reviewer-agent.ts  # Reviewer advisory diff review + line anchors
 │   │   │   ├── auditor-agent.ts   # Auditor safety gate
 │   │   │   ├── github-tools.ts    # GitHub API tools, branch/merge/PR operations
 │   │   │   ├── sandbox-tools.ts   # Sandbox tools, error taxonomy, sandbox_edit_range, sandbox_search_replace, sandbox_read_symbols, sandbox_apply_patchset

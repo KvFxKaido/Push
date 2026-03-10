@@ -28,12 +28,13 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 
 ### Role-Based Agent System
 
-The active backend serves all three roles. The user picks a backend in Settings; all agents use it.
+The active backend serves all four roles. The user picks a backend in Settings; all agents use it.
 
 | Role | Responsibility |
 |------|----------------|
 | **Orchestrator** | Conversational lead, interprets intent, delegates to Coder |
 | **Coder** | Autonomous code implementation in sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap) |
+| **Reviewer** | On-demand advisory diff review in the Workspace Hub; can post findings to an open PR as a GitHub review |
 | **Auditor** | Pre-commit risk review — binary SAFE/UNSAFE verdict (fail-safe) |
 
 ### AI Backends
@@ -56,6 +57,8 @@ Tools are prompt-engineered — the system prompt defines available tools and JS
 Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message, splits them into parallel read-only calls and an optional trailing mutation — reads execute via `Promise.all()`, then the mutation runs. Tool results include structured error fields (`error_type`, `retryable`) via `classifyError()`, a `[meta]` envelope with round number, context size, and sandbox dirty state, and malformed-call feedback includes a `[TOOL_CALL_PARSE_ERROR]` header with structured diagnosis.
 
 The Orchestrator can delegate complex coding tasks to the Coder sub-agent via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox, then returns results to the Orchestrator. Delegation supports optional `acceptanceCriteria[]` — shell commands run post-task to verify success. The Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state`, injected as a `[CODER_STATE]` block into every tool result to survive context trimming.
+
+The Reviewer is an on-demand advisory role used from the Workspace Hub `Review` tab. It reviews the current working diff with structured file-level findings, includes line anchors when possible, and can post findings back to an open PR as a GitHub PR review with inline comments for anchored findings.
 
 ### Harness Focus
 
@@ -105,7 +108,7 @@ When the user locks their phone or switches apps mid-tool-loop, the app checkpoi
 
 ### PR Awareness
 
-Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo.
+Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo. The Workspace Hub `Review` tab can also detect an open PR for the active branch and post Reviewer findings back as a GitHub PR review.
 
 ### Rolling Window
 
@@ -125,9 +128,10 @@ When the user selects a repo, the app fetches project instruction files via the 
 6. **Sandbox** → Clone repo to container, run commands, edit files
 7. **Coder** → Autonomous coding task execution (uses active backend)
 8. **Branch** → Create branches, switch context (tears down sandbox), commit to active branch
-9. **Auditor** → Standard commits (`sandbox_prepare_commit` path) get a safety verdict (uses active backend)
-10. **Merge** → PR creation + Auditor review + GitHub merge (merge commit strategy)
-11. **Cards** → Structured results render as inline cards
+9. **Reviewer** → Run advisory review on the working diff; optionally post findings to an open PR
+10. **Auditor** → Standard commits (`sandbox_prepare_commit` path) get a safety verdict (uses active backend)
+11. **Merge** → PR creation + Auditor review + GitHub merge (merge commit strategy)
+12. **Cards** → Structured results render as inline cards
 
 ## Push CLI
 
@@ -227,7 +231,7 @@ Push/
 | File | Purpose |
 |------|---------|
 | `lib/orchestrator.ts` | SSE streaming, think-token parsing, token-budget context management |
-| `lib/github-tools.ts` | GitHub tool protocol, `delegate_coder`, `fetchProjectInstructions`, branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`) |
+| `lib/github-tools.ts` | GitHub tool protocol, `delegate_coder`, `fetchProjectInstructions`, branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`, `findOpenPRForBranch`, `executePostPRReview`) |
 | `lib/sandbox-tools.ts` | Sandbox tool definitions; includes `sandbox_edit_file` (hashline-based edits with diff output), `sandbox_edit_range`, `sandbox_search_replace`, `sandbox_read_symbols`, `sandbox_apply_patchset`, `classifyError()` (error taxonomy) |
 | `lib/hashline.ts` | Hashline edit protocol — `calculateLineHash()`, `applyHashlineEdits()`, `HashlineOp`; eliminates line-number drift |
 | `lib/diff-utils.ts` | Shared diff parsing — `parseDiffStats()`, `parseDiffIntoFiles()`, `formatSize()` |
@@ -239,6 +243,7 @@ Push/
 | `lib/sandbox-client.ts` | HTTP client for `/api/sandbox/*` endpoints, `mapSandboxErrorCode()`, `sandboxStatus()` (HEAD/dirty/diff snapshot for resume reconciliation) |
 | `lib/tool-dispatch.ts` | Unified dispatch for all tools, `detectAllToolCalls()` (multi-tool with read/mutate split), `isReadOnlyToolCall()` |
 | `lib/coder-agent.ts` | Coder autonomous loop (uses active backend), working memory (`coder_update_state`), acceptance criteria, parallel reads, `onWorkingMemoryUpdate` callback for resumable checkpoints |
+| `lib/reviewer-agent.ts` | Reviewer advisory diff review, line-anchored findings, and structured review result parsing |
 | `lib/auditor-agent.ts` | Auditor review + verdict (fail-safe, uses active backend) |
 | `lib/workspace-context.ts` | Active repo context builder |
 | `lib/providers.ts` | AI provider config and role model mapping |
