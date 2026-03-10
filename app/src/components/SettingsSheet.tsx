@@ -1,4 +1,4 @@
-import { Trash2, GitBranch, RefreshCw, Loader2, User, FolderCog, Cpu } from 'lucide-react';
+import { Trash2, GitBranch, RefreshCw, Loader2, User, FolderCog, Cpu, Check, Plus } from 'lucide-react';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
 import { getContextMetrics } from '@/lib/context-metrics';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -15,6 +15,7 @@ import type { PreferredProvider } from '@/lib/providers';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
 import type { RepoOverride } from '@/hooks/useProtectMain';
+import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
@@ -138,14 +139,17 @@ export interface SettingsAIProps {
   azureBaseUrl: string;
   azureBaseUrlInput: string;
   setAzureBaseUrlInput: (v: string) => void;
-  setAzureBaseUrl: (v: string) => void;
-  clearAzureBaseUrl: () => void;
   azureBaseUrlError: string | null;
   azureModel: string;
   azureModelInput: string;
   setAzureModelInput: (v: string) => void;
-  setAzureModel: (v: string) => void;
-  clearAzureModel: () => void;
+  azureDeployments: ExperimentalDeployment[];
+  azureActiveDeploymentId: string | null;
+  saveAzureDeployment: (baseUrl: string, model: string) => boolean;
+  selectAzureDeployment: (id: string) => void;
+  removeAzureDeployment: (id: string) => void;
+  clearAzureDeployments: () => void;
+  isAzureDeploymentLimitReached: boolean;
   isAzureConfigured: boolean;
   // AWS Bedrock (experimental)
   hasBedrockKey: boolean;
@@ -156,14 +160,17 @@ export interface SettingsAIProps {
   bedrockBaseUrl: string;
   bedrockBaseUrlInput: string;
   setBedrockBaseUrlInput: (v: string) => void;
-  setBedrockBaseUrl: (v: string) => void;
-  clearBedrockBaseUrl: () => void;
   bedrockBaseUrlError: string | null;
   bedrockModel: string;
   bedrockModelInput: string;
   setBedrockModelInput: (v: string) => void;
-  setBedrockModel: (v: string) => void;
-  clearBedrockModel: () => void;
+  bedrockDeployments: ExperimentalDeployment[];
+  bedrockActiveDeploymentId: string | null;
+  saveBedrockDeployment: (baseUrl: string, model: string) => boolean;
+  selectBedrockDeployment: (id: string) => void;
+  removeBedrockDeployment: (id: string) => void;
+  clearBedrockDeployments: () => void;
+  isBedrockDeploymentLimitReached: boolean;
   isBedrockConfigured: boolean;
   // Google Vertex (experimental)
   hasVertexKey: boolean;
@@ -174,14 +181,17 @@ export interface SettingsAIProps {
   vertexBaseUrl: string;
   vertexBaseUrlInput: string;
   setVertexBaseUrlInput: (v: string) => void;
-  setVertexBaseUrl: (v: string) => void;
-  clearVertexBaseUrl: () => void;
   vertexBaseUrlError: string | null;
   vertexModel: string;
   vertexModelInput: string;
   setVertexModelInput: (v: string) => void;
-  setVertexModel: (v: string) => void;
-  clearVertexModel: () => void;
+  vertexDeployments: ExperimentalDeployment[];
+  vertexActiveDeploymentId: string | null;
+  saveVertexDeployment: (baseUrl: string, model: string) => boolean;
+  selectVertexDeployment: (id: string) => void;
+  removeVertexDeployment: (id: string) => void;
+  clearVertexDeployments: () => void;
+  isVertexDeploymentLimitReached: boolean;
   isVertexConfigured: boolean;
   // Tavily
   hasTavilyKey: boolean;
@@ -279,16 +289,29 @@ interface ExperimentalProviderSectionProps {
   baseUrl: string;
   baseUrlInput: string;
   setBaseUrlInput: (value: string) => void;
-  setBaseUrl: (value: string) => void;
-  clearBaseUrl: () => void;
   baseUrlError: string | null;
   baseUrlPlaceholder: string;
   model: string;
   modelInput: string;
   setModelInput: (value: string) => void;
-  setModel: (value: string) => void;
-  clearModel: () => void;
+  deployments: ExperimentalDeployment[];
+  activeDeploymentId: string | null;
+  saveDeployment: (baseUrl: string, model: string) => boolean;
+  selectDeployment: (id: string) => void;
+  removeDeployment: (id: string) => void;
+  clearDeployments: () => void;
+  deploymentLimitReached: boolean;
   modelPlaceholder: string;
+}
+
+function formatExperimentalDeploymentTarget(baseUrl: string): string {
+  try {
+    const parsed = new URL(baseUrl);
+    const trimmedPath = parsed.pathname.replace(/\/openai\/v1$/, '') || '/openai/v1';
+    return `${parsed.host}${trimmedPath}`;
+  } catch {
+    return baseUrl;
+  }
 }
 
 function ProviderKeySection({
@@ -439,21 +462,33 @@ function ExperimentalProviderSection({
   baseUrl,
   baseUrlInput,
   setBaseUrlInput,
-  setBaseUrl,
-  clearBaseUrl,
   baseUrlError,
   baseUrlPlaceholder,
   model,
   modelInput,
   setModelInput,
-  setModel,
-  clearModel,
+  deployments,
+  activeDeploymentId,
+  saveDeployment,
+  selectDeployment,
+  removeDeployment,
+  clearDeployments,
+  deploymentLimitReached,
   modelPlaceholder,
 }: ExperimentalProviderSectionProps) {
+  const saveCurrentDeployment = () => {
+    const nextBaseUrl = baseUrlInput.trim();
+    const nextModel = modelInput.trim();
+    if (!nextBaseUrl || !nextModel) return;
+    const saved = saveDeployment(nextBaseUrl, nextModel);
+    if (!saved) return;
+    setBaseUrlInput('');
+    setModelInput('');
+  };
+
   const clearAll = () => {
     clearKey();
-    clearBaseUrl();
-    clearModel();
+    clearDeployments();
     setKeyInput('');
     setBaseUrlInput('');
     setModelInput('');
@@ -491,63 +526,119 @@ function ExperimentalProviderSection({
       </div>
 
       <div className="space-y-1.5">
-        <label className="text-[11px] font-medium text-push-fg-secondary">Base URL</label>
-        <input
-          type="url"
-          value={baseUrlInput}
-          onChange={(e) => setBaseUrlInput(e.target.value)}
-          placeholder={baseUrl || baseUrlPlaceholder}
-          className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
-        />
-        <div className="flex gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              const next = baseUrlInput.trim();
-              if (!next) return;
-              setBaseUrl(next);
-              setBaseUrlInput('');
-            }}
-            disabled={!baseUrlInput.trim()}
-            className="text-push-fg-secondary hover:text-push-fg"
-          >
-            Save URL
-          </Button>
-          {baseUrl && (
-            <span className="min-w-0 self-center truncate text-[11px] text-push-fg-dim">{baseUrl}</span>
-          )}
+        <div className="flex items-center justify-between gap-3">
+          <label className="text-[11px] font-medium text-push-fg-secondary">Deployments</label>
+          <span className="text-[10px] text-push-fg-dim">{deployments.length}/3 saved</span>
         </div>
-        {baseUrlError && <p className="text-xs text-amber-400">{baseUrlError}</p>}
+        {deployments.length > 0 ? (
+          <div className="space-y-2">
+            {deployments.map((deployment) => {
+              const isActive = deployment.id === activeDeploymentId;
+              return (
+                <div
+                  key={deployment.id}
+                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 ${
+                    isActive
+                      ? 'border-emerald-500/40 bg-emerald-500/10'
+                      : 'border-[#1b2230] bg-push-surface/60'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectDeployment(deployment.id)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm text-push-fg">{deployment.model}</span>
+                      {isActive && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-emerald-400">
+                          <Check className="h-3 w-3" />
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <p className="truncate text-[11px] text-push-fg-dim">
+                      {formatExperimentalDeploymentTarget(deployment.baseUrl)}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeDeployment(deployment.id)}
+                    className="text-push-fg-dim transition-colors hover:text-red-400"
+                    aria-label={`Remove ${deployment.model}`}
+                    title="Remove deployment"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : configured ? (
+          <p className="text-xs text-push-fg-dim">No saved deployments yet. Add this one if you want to reuse it later.</p>
+        ) : (
+          <p className="text-xs text-push-fg-dim">No saved deployments yet.</p>
+        )}
+        {deploymentLimitReached && (
+          <p className="text-xs text-amber-400">
+            Max 3 saved deployments. Remove one before adding another.
+          </p>
+        )}
       </div>
 
-      <div className="space-y-1.5">
-        <label className="text-[11px] font-medium text-push-fg-secondary">Deployment / model</label>
-        <input
-          type="text"
-          value={modelInput}
-          onChange={(e) => setModelInput(e.target.value)}
-          placeholder={model || modelPlaceholder}
-          className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
-        />
-        <div className="flex gap-2">
+      <details
+        className="rounded-lg border border-[#1b2230] bg-push-surface/40 px-3 py-2.5"
+        {...(deployments.length === 0 ? { open: true } : {})}
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-push-fg-secondary">
+          <Plus className="h-3.5 w-3.5" />
+          Add deployment
+        </summary>
+        <div className="mt-3 space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium text-push-fg-secondary">Base URL</label>
+            <input
+              type="url"
+              value={baseUrlInput}
+              onChange={(e) => setBaseUrlInput(e.target.value)}
+              placeholder={baseUrl || baseUrlPlaceholder}
+              className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+            />
+            {baseUrlError && <p className="text-xs text-amber-400">{baseUrlError}</p>}
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium text-push-fg-secondary">Deployment / model</label>
+            <input
+              type="text"
+              value={modelInput}
+              onChange={(e) => setModelInput(e.target.value)}
+              placeholder={model || modelPlaceholder}
+              className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+            />
+          </div>
+
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              const next = modelInput.trim();
-              if (!next) return;
-              setModel(next);
-              setModelInput('');
-            }}
-            disabled={!modelInput.trim()}
+            onClick={saveCurrentDeployment}
+            disabled={!baseUrlInput.trim() || !modelInput.trim() || Boolean(baseUrlError)}
             className="text-push-fg-secondary hover:text-push-fg"
           >
-            Save model
+            Add deployment
           </Button>
-          <span className="min-w-0 self-center truncate text-[11px] text-push-fg-dim">{model}</span>
         </div>
-      </div>
+      </details>
+
+      {configured && (
+        <div className="rounded-lg border border-[#1b2230] bg-push-surface/40 px-3 py-2">
+          <p className="text-[11px] text-push-fg-secondary">Active now</p>
+          <p className="truncate text-sm text-push-fg">{model}</p>
+          {baseUrl && (
+            <p className="truncate text-[11px] text-push-fg-dim">{formatExperimentalDeploymentTarget(baseUrl)}</p>
+          )}
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <label className="text-[11px] font-medium text-push-fg-secondary">API key</label>
@@ -1441,15 +1532,18 @@ export function SettingsSheet({
                 baseUrl={ai.azureBaseUrl}
                 baseUrlInput={ai.azureBaseUrlInput}
                 setBaseUrlInput={ai.setAzureBaseUrlInput}
-                setBaseUrl={ai.setAzureBaseUrl}
-                clearBaseUrl={ai.clearAzureBaseUrl}
                 baseUrlError={ai.azureBaseUrlError}
                 baseUrlPlaceholder="https://your-resource.services.ai.azure.com/api/projects/PROJECT"
                 model={ai.azureModel}
                 modelInput={ai.azureModelInput}
                 setModelInput={ai.setAzureModelInput}
-                setModel={ai.setAzureModel}
-                clearModel={ai.clearAzureModel}
+                deployments={ai.azureDeployments}
+                activeDeploymentId={ai.azureActiveDeploymentId}
+                saveDeployment={ai.saveAzureDeployment}
+                selectDeployment={ai.selectAzureDeployment}
+                removeDeployment={ai.removeAzureDeployment}
+                clearDeployments={ai.clearAzureDeployments}
+                deploymentLimitReached={ai.isAzureDeploymentLimitReached}
                 modelPlaceholder="Deployment or model name"
               />
 
@@ -1469,15 +1563,18 @@ export function SettingsSheet({
                 baseUrl={ai.bedrockBaseUrl}
                 baseUrlInput={ai.bedrockBaseUrlInput}
                 setBaseUrlInput={ai.setBedrockBaseUrlInput}
-                setBaseUrl={ai.setBedrockBaseUrl}
-                clearBaseUrl={ai.clearBedrockBaseUrl}
                 baseUrlError={ai.bedrockBaseUrlError}
                 baseUrlPlaceholder="https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"
                 model={ai.bedrockModel}
                 modelInput={ai.bedrockModelInput}
                 setModelInput={ai.setBedrockModelInput}
-                setModel={ai.setBedrockModel}
-                clearModel={ai.clearBedrockModel}
+                deployments={ai.bedrockDeployments}
+                activeDeploymentId={ai.bedrockActiveDeploymentId}
+                saveDeployment={ai.saveBedrockDeployment}
+                selectDeployment={ai.selectBedrockDeployment}
+                removeDeployment={ai.removeBedrockDeployment}
+                clearDeployments={ai.clearBedrockDeployments}
+                deploymentLimitReached={ai.isBedrockDeploymentLimitReached}
                 modelPlaceholder="Bedrock model id"
               />
 
@@ -1497,15 +1594,18 @@ export function SettingsSheet({
                 baseUrl={ai.vertexBaseUrl}
                 baseUrlInput={ai.vertexBaseUrlInput}
                 setBaseUrlInput={ai.setVertexBaseUrlInput}
-                setBaseUrl={ai.setVertexBaseUrl}
-                clearBaseUrl={ai.clearVertexBaseUrl}
                 baseUrlError={ai.vertexBaseUrlError}
                 baseUrlPlaceholder="https://us-central1-aiplatform.googleapis.com/v1/projects/PROJECT/locations/us-central1/endpoints/openapi"
                 model={ai.vertexModel}
                 modelInput={ai.vertexModelInput}
                 setModelInput={ai.setVertexModelInput}
-                setModel={ai.setVertexModel}
-                clearModel={ai.clearVertexModel}
+                deployments={ai.vertexDeployments}
+                activeDeploymentId={ai.vertexActiveDeploymentId}
+                saveDeployment={ai.saveVertexDeployment}
+                selectDeployment={ai.selectVertexDeployment}
+                removeDeployment={ai.removeVertexDeployment}
+                clearDeployments={ai.clearVertexDeployments}
+                deploymentLimitReached={ai.isVertexDeploymentLimitReached}
                 modelPlaceholder="Vertex model id"
               />
             </div>

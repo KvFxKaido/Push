@@ -1,6 +1,13 @@
 export const EXPERIMENTAL_PROVIDER_TYPES = ['azure', 'bedrock', 'vertex'] as const;
 
 export type ExperimentalProviderType = (typeof EXPERIMENTAL_PROVIDER_TYPES)[number];
+export const MAX_EXPERIMENTAL_DEPLOYMENTS = 3;
+
+export interface ExperimentalDeployment {
+  id: string;
+  baseUrl: string;
+  model: string;
+}
 
 export interface ExperimentalProviderDescriptor {
   type: ExperimentalProviderType;
@@ -62,6 +69,23 @@ export function isExperimentalProviderType(value: string): value is Experimental
 
 export function getExperimentalProviderDescriptor(provider: ExperimentalProviderType): ExperimentalProviderDescriptor {
   return EXPERIMENTAL_PROVIDER_DESCRIPTORS[provider];
+}
+
+function hashDeploymentKey(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash >>> 0).toString(36);
+}
+
+export function buildExperimentalDeploymentId(baseUrl: string, model: string): string {
+  return `dep_${hashDeploymentKey(`${baseUrl}\n${model}`)}`;
+}
+
+function deploymentFingerprint(baseUrl: string, model: string): string {
+  return `${baseUrl}@@${model}`;
 }
 
 function stripKnownSuffixes(pathname: string): string {
@@ -170,6 +194,67 @@ export function normalizeExperimentalBaseUrl(
   }
 
   return { ok: true, normalized: `${parsed.origin}${pathname}` };
+}
+
+export function normalizeExperimentalDeployment(
+  provider: ExperimentalProviderType,
+  raw: {
+    id?: string | null;
+    baseUrl?: string | null;
+    model?: string | null;
+  },
+): ExperimentalDeployment | null {
+  const normalizedBaseUrl = normalizeExperimentalBaseUrl(provider, raw.baseUrl);
+  if (!normalizedBaseUrl.ok) return null;
+
+  const model = (raw.model || '').trim();
+  if (!model) return null;
+
+  return {
+    id: (raw.id || '').trim() || buildExperimentalDeploymentId(normalizedBaseUrl.normalized, model),
+    baseUrl: normalizedBaseUrl.normalized,
+    model,
+  };
+}
+
+export function parseStoredExperimentalDeployments(
+  provider: ExperimentalProviderType,
+  rawValue: string | null | undefined,
+): ExperimentalDeployment[] {
+  if (!rawValue) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawValue);
+  } catch {
+    return [];
+  }
+
+  if (!Array.isArray(parsed)) return [];
+
+  const seen = new Set<string>();
+  const deployments: ExperimentalDeployment[] = [];
+
+  for (const item of parsed) {
+    const normalized = normalizeExperimentalDeployment(
+      provider,
+      typeof item === 'object' && item
+        ? item as { id?: string | null; baseUrl?: string | null; model?: string | null }
+        : {},
+    );
+    if (!normalized) continue;
+
+    const fingerprint = deploymentFingerprint(normalized.baseUrl, normalized.model);
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    deployments.push(normalized);
+
+    if (deployments.length >= MAX_EXPERIMENTAL_DEPLOYMENTS) {
+      break;
+    }
+  }
+
+  return deployments;
 }
 
 export function buildExperimentalProxyHeaders(

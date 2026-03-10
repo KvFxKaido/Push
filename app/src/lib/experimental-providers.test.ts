@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeExperimentalBaseUrl } from './experimental-providers';
+import {
+  MAX_EXPERIMENTAL_DEPLOYMENTS,
+  normalizeExperimentalBaseUrl,
+  normalizeExperimentalDeployment,
+  parseStoredExperimentalDeployments,
+} from './experimental-providers';
 
 describe('normalizeExperimentalBaseUrl', () => {
   it('normalizes Azure OpenAI chat-completions URLs back to the /openai/v1 base', () => {
@@ -65,5 +70,37 @@ describe('normalizeExperimentalBaseUrl', () => {
       ok: true,
       normalized: 'https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/endpoints/openapi',
     });
+  });
+});
+
+describe('experimental deployments', () => {
+  it('normalizes a deployment with a deterministic id', () => {
+    expect(
+      normalizeExperimentalDeployment('azure', {
+        baseUrl: 'https://example.openai.azure.com/openai/v1/chat/completions',
+        model: 'gpt-4.1',
+      }),
+    ).toEqual({
+      id: expect.stringMatching(/^dep_/),
+      baseUrl: 'https://example.openai.azure.com/openai/v1',
+      model: 'gpt-4.1',
+    });
+  });
+
+  it('dedupes and caps stored deployments', () => {
+    const parsed = parseStoredExperimentalDeployments('azure', JSON.stringify([
+      { baseUrl: 'https://one.openai.azure.com/openai/v1', model: 'gpt-4.1' },
+      { baseUrl: 'https://one.openai.azure.com/openai/v1', model: 'gpt-4.1' },
+      { baseUrl: 'https://two.openai.azure.com/openai/v1', model: 'gpt-4.1-mini' },
+      { baseUrl: 'https://three.openai.azure.com/openai/v1', model: 'grok-4.1' },
+      { baseUrl: 'https://four.openai.azure.com/openai/v1', model: 'ignored-over-limit' },
+    ]));
+
+    expect(parsed).toHaveLength(MAX_EXPERIMENTAL_DEPLOYMENTS);
+    expect(parsed.map((deployment) => deployment.model)).toEqual([
+      'gpt-4.1',
+      'gpt-4.1-mini',
+      'grok-4.1',
+    ]);
   });
 });

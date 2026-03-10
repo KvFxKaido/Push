@@ -21,6 +21,7 @@ import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
 import { useAzureConfig, useBedrockConfig, useVertexConfig } from '@/hooks/useExperimentalProviderConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
+import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,6 +61,13 @@ interface ExperimentalProviderConfig {
   model: string;
   setModel: (m: string) => void;
   clearModel: () => void;
+  deployments: ExperimentalDeployment[];
+  activeDeploymentId: string | null;
+  saveDeployment: (baseUrl: string, model: string) => boolean;
+  selectDeployment: (id: string) => void;
+  removeDeployment: (id: string) => void;
+  clearDeployments: () => void;
+  deploymentLimitReached: boolean;
   isConfigured: boolean;
 }
 
@@ -298,6 +306,13 @@ export function useModelCatalog(): ModelCatalog {
       model: azureCfg.model,
       setModel: azureCfg.setModel,
       clearModel: azureCfg.clearModel,
+      deployments: azureCfg.deployments,
+      activeDeploymentId: azureCfg.activeDeploymentId,
+      saveDeployment: azureCfg.saveDeployment,
+      selectDeployment: azureCfg.selectDeployment,
+      removeDeployment: azureCfg.removeDeployment,
+      clearDeployments: azureCfg.clearDeployments,
+      deploymentLimitReached: azureCfg.deploymentLimitReached,
       isConfigured: azureCfg.isConfigured,
     },
     bedrock: {
@@ -317,6 +332,13 @@ export function useModelCatalog(): ModelCatalog {
       model: bedrockCfg.model,
       setModel: bedrockCfg.setModel,
       clearModel: bedrockCfg.clearModel,
+      deployments: bedrockCfg.deployments,
+      activeDeploymentId: bedrockCfg.activeDeploymentId,
+      saveDeployment: bedrockCfg.saveDeployment,
+      selectDeployment: bedrockCfg.selectDeployment,
+      removeDeployment: bedrockCfg.removeDeployment,
+      clearDeployments: bedrockCfg.clearDeployments,
+      deploymentLimitReached: bedrockCfg.deploymentLimitReached,
       isConfigured: bedrockCfg.isConfigured,
     },
     vertex: {
@@ -336,6 +358,13 @@ export function useModelCatalog(): ModelCatalog {
       model: vertexCfg.model,
       setModel: vertexCfg.setModel,
       clearModel: vertexCfg.clearModel,
+      deployments: vertexCfg.deployments,
+      activeDeploymentId: vertexCfg.activeDeploymentId,
+      saveDeployment: vertexCfg.saveDeployment,
+      selectDeployment: vertexCfg.selectDeployment,
+      removeDeployment: vertexCfg.removeDeployment,
+      clearDeployments: vertexCfg.clearDeployments,
+      deploymentLimitReached: vertexCfg.deploymentLimitReached,
       isConfigured: vertexCfg.isConfigured,
     },
     tavily: { setKey: tavilyCfg.setKey, clearKey: tavilyCfg.clearKey, hasKey: tavilyCfg.hasKey, keyInput: tavilyKeyInput, setKeyInput: setTavilyKeyInput },
