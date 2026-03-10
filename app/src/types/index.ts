@@ -28,7 +28,12 @@ export interface ReviewComment {
 export interface ReviewResult {
   summary: string;
   comments: ReviewComment[];
+  /** Files included in the diff that was actually sent to the model */
   filesReviewed: number;
+  /** Total files in the full diff (may exceed filesReviewed when truncated) */
+  totalFiles: number;
+  /** True when the diff was sliced before review — coverage is partial */
+  truncated: boolean;
   provider: string;
   model: string;
   reviewedAt: number;

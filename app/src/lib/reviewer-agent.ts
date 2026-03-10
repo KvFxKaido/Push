@@ -57,7 +57,11 @@ export async function runReviewer(
   options: ReviewerOptions,
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
-  const filesReviewed = parseDiffStats(diff).filesChanged;
+  const DIFF_LIMIT = 40_000;
+  const slicedDiff = diff.length > DIFF_LIMIT ? diff.slice(0, DIFF_LIMIT) : diff;
+  const truncated = slicedDiff.length < diff.length;
+  const totalFiles = parseDiffStats(diff).filesChanged;
+  const filesReviewed = truncated ? parseDiffStats(slicedDiff).filesChanged : totalFiles;
   const { provider, model: modelOverride } = options;
 
   const { streamFn } = getProviderStreamFn(provider);
@@ -70,7 +74,7 @@ export async function runReviewer(
     {
       id: 'review-request',
       role: 'user',
-      content: `Review this diff:\n\n\`\`\`diff\n${diff.slice(0, 40_000).replace(/`/g, '\\`')}\n\`\`\``,
+      content: `Review this diff:\n\n\`\`\`diff\n${slicedDiff.replace(/`/g, '\\`')}\n\`\`\``,
       timestamp: Date.now(),
     },
   ];
@@ -128,6 +132,8 @@ export async function runReviewer(
     summary,
     comments,
     filesReviewed,
+    totalFiles,
+    truncated,
     provider,
     model: modelId ?? provider,
     reviewedAt: Date.now(),

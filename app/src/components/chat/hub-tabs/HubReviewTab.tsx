@@ -1,17 +1,21 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Info, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
 import { getActiveProvider } from '@/lib/orchestrator';
 import { getModelForRole } from '@/lib/providers';
+import { getOllamaKey } from '@/hooks/useOllamaConfig';
+import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
+import { getZenKey } from '@/hooks/useZenConfig';
+import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import type { AIProviderType } from '@/types';
 import type { ReviewResult, ReviewComment } from '@/types';
 
-const PROVIDERS: { type: AIProviderType; label: string }[] = [
-  { type: 'ollama', label: 'Ollama' },
-  { type: 'openrouter', label: 'OpenRouter' },
-  { type: 'zen', label: 'Zen' },
-  { type: 'nvidia', label: 'Nvidia' },
+const ALL_PROVIDERS: { type: AIProviderType; label: string; getKey: () => string | null }[] = [
+  { type: 'zen',        label: 'Zen',        getKey: getZenKey },
+  { type: 'openrouter', label: 'OpenRouter', getKey: getOpenRouterKey },
+  { type: 'ollama',     label: 'Ollama',     getKey: getOllamaKey },
+  { type: 'nvidia',     label: 'Nvidia',     getKey: getNvidiaKey },
 ];
 
 interface HubReviewTabProps {
@@ -53,15 +57,23 @@ function severityOrder(s: ReviewComment['severity']): number {
 }
 
 export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubReviewTabProps) {
-  const defaultProvider = (() => {
-    const active = getActiveProvider();
-    return active === 'demo' ? 'openrouter' : active;
-  })() as AIProviderType;
+  const availableProviders = useMemo(
+    () => ALL_PROVIDERS.filter((p) => Boolean(p.getKey())),
+    [],
+  );
 
-  const [selectedProvider, setSelectedProvider] = useState<AIProviderType>(defaultProvider);
+  const [selectedProvider, setSelectedProvider] = useState<AIProviderType | null>(() => {
+    const active = getActiveProvider();
+    if (active !== 'demo' && ALL_PROVIDERS.some((p) => p.type === active && Boolean(p.getKey()))) {
+      return active as AIProviderType;
+    }
+    return availableProviders[0]?.type ?? null;
+  });
+
   const [modelInput, setModelInput] = useState(() => {
-    const roleModel = getModelForRole(defaultProvider, 'reviewer');
-    return roleModel?.id ?? '';
+    const active = getActiveProvider();
+    const defaultP = (active !== 'demo' ? active : availableProviders[0]?.type) as AIProviderType | undefined;
+    return defaultP ? (getModelForRole(defaultP, 'reviewer')?.id ?? '') : '';
   });
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
@@ -84,7 +96,7 @@ export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubRev
   }, []);
 
   const handleRunReview = useCallback(async () => {
-    if (running) return;
+    if (running || !selectedProvider) return;
 
     setRunning(true);
     setError(null);
@@ -112,7 +124,7 @@ export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubRev
 
       const reviewResult = await runReviewer(
         diffResult.diff,
-        { provider: selectedProvider, model: modelInput.trim() || undefined },
+        { provider: selectedProvider!, model: modelInput.trim() || undefined },
         (phase) => setStatus(phase),
       );
 
@@ -139,41 +151,49 @@ export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubRev
     <div className="flex h-full min-h-0 flex-col">
       {/* Controls */}
       <div className="flex-shrink-0 border-b border-push-edge px-3 py-3 space-y-2.5">
-        {/* Provider pills */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {PROVIDERS.map(({ type, label }) => (
-            <button
-              key={type}
-              onClick={() => handleProviderChange(type)}
-              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                selectedProvider === type
-                  ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
-                  : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {availableProviders.length === 0 ? (
+          <p className="text-[11px] text-push-fg-dim">
+            No AI provider configured. Add an API key in Settings to use the Reviewer.
+          </p>
+        ) : (
+          <>
+            {/* Provider pills — only configured providers */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {availableProviders.map(({ type, label }) => (
+                <button
+                  key={type}
+                  onClick={() => handleProviderChange(type)}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    selectedProvider === type
+                      ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
+                      : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
-        {/* Model input */}
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={modelInput}
-            onChange={(e) => setModelInput(e.target.value)}
-            placeholder="Model ID (uses role default if blank)"
-            className="min-w-0 flex-1 rounded-lg border border-push-edge bg-[#080d14] px-2.5 py-1.5 text-[11px] text-push-fg-secondary placeholder:text-push-fg-dim focus:border-push-accent/40 focus:outline-none"
-          />
-          <button
-            onClick={() => void handleRunReview()}
-            disabled={running || (!sandboxReady && sandboxStatus !== 'idle')}
-            className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-push-accent/30 bg-push-accent/10 px-3 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15 active:scale-95 disabled:opacity-50"
-          >
-            {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-            {running ? 'Reviewing…' : 'Run review'}
-          </button>
-        </div>
+            {/* Model input */}
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={modelInput}
+                onChange={(e) => setModelInput(e.target.value)}
+                placeholder="Model ID (uses role default if blank)"
+                className="min-w-0 flex-1 rounded-lg border border-push-edge bg-[#080d14] px-2.5 py-1.5 text-[11px] text-push-fg-secondary placeholder:text-push-fg-dim focus:border-push-accent/40 focus:outline-none"
+              />
+              <button
+                onClick={() => void handleRunReview()}
+                disabled={running || !selectedProvider || (!sandboxReady && sandboxStatus !== 'idle')}
+                className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-push-accent/30 bg-push-accent/10 px-3 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15 active:scale-95 disabled:opacity-50"
+              >
+                {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                {running ? 'Reviewing…' : 'Run review'}
+              </button>
+            </div>
+          </>
+        )}
 
         {/* Status line */}
         {running && status && (
@@ -202,9 +222,20 @@ export function HubReviewTab({ sandboxId, sandboxStatus, ensureSandbox }: HubRev
                   <span className="text-xs font-medium text-push-fg">Review complete</span>
                 </div>
                 <span className="text-[10px] text-push-fg-dim">
-                  {result.filesReviewed} file{result.filesReviewed !== 1 ? 's' : ''} · {result.model}
+                  {result.truncated
+                    ? `${result.filesReviewed} of ${result.totalFiles} files`
+                    : `${result.filesReviewed} file${result.filesReviewed !== 1 ? 's' : ''}`
+                  } · {result.model}
                 </span>
               </div>
+              {result.truncated && (
+                <div className="flex items-center gap-1.5 mb-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5">
+                  <AlertTriangle className="h-3 w-3 text-amber-400 flex-shrink-0" />
+                  <p className="text-[10px] text-amber-400">
+                    Diff too large — review covers {result.filesReviewed} of {result.totalFiles} files. Later files were not seen.
+                  </p>
+                </div>
+              )}
               <p className="text-[11px] leading-relaxed text-push-fg-secondary">{result.summary}</p>
             </div>
 
