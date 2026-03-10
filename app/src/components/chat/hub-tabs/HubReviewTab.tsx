@@ -100,7 +100,10 @@ export function HubReviewTab({
     () => availableProviders.map(([type, label]) => ({ type, label })),
     [availableProviders],
   );
-  const hasGitHubSource = Boolean(repoFullName && activeBranch && defaultBranch);
+  // Branch diff requires a feature branch — on the default branch there's nothing
+  // to compare against and fetchGitHubReviewDiff explicitly rejects it.
+  // Open PRs with the default branch as head are essentially impossible in practice.
+  const hasGitHubSource = Boolean(repoFullName && activeBranch && defaultBranch && activeBranch !== defaultBranch);
   const hasCommitSource = Boolean(repoFullName && activeBranch);
   const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(null);
   const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(hasGitHubSource ? 'github' : hasCommitSource ? 'commit' : 'sandbox');
