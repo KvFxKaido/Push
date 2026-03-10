@@ -30,6 +30,14 @@ function getStorageKey(repoFullName: string | null): string {
     : GLOBAL_STORAGE_KEY;
 }
 
+function readStoredScratchpadContent(repoFullName: string | null): string {
+  try {
+    return localStorage.getItem(getStorageKey(repoFullName)) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export interface ScratchpadState {
   isOpen: boolean;
   content: string;
@@ -70,7 +78,7 @@ function validateMemories(data: unknown): ScratchpadMemory[] {
 
 export function useScratchpad(repoFullName: string | null = null) {
   const [isOpen, setIsOpen] = useState(false);
-  const [content, setContent] = useState('');
+  const [content, setContentState] = useState('');
   const [memories, setMemories] = useState<ScratchpadMemory[]>([]);
   const [activeMemoryId, setActiveMemoryId] = useState<string | null>(null);
   const hasMigratedRef = useRef(false);
@@ -86,23 +94,23 @@ export function useScratchpad(repoFullName: string | null = null) {
       if (stored !== null) {
         // Repo-specific scratchpad exists
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setContent(stored);
+        setContentState(stored);
       } else if (!hasMigratedRef.current) {
         // No repo-specific content - try to migrate from global
         const globalContent = localStorage.getItem(GLOBAL_STORAGE_KEY);
         if (globalContent) {
           // Migrate global content to this repo
-          setContent(globalContent);
+          setContentState(globalContent);
           localStorage.setItem(storageKey, globalContent);
         } else {
-          setContent('');
+          setContentState('');
         }
         hasMigratedRef.current = true;
       } else {
-        setContent('');
+        setContentState('');
       }
     } catch {
-      setContent('');
+      setContentState('');
     }
   }, [repoFullName]);
 
@@ -134,7 +142,7 @@ export function useScratchpad(repoFullName: string | null = null) {
     if (loadedActiveId) {
       const activeMemory = loadedMemories.find((m) => m.id === loadedActiveId);
       if (activeMemory) {
-        setContent(activeMemory.content);
+        setContentState(activeMemory.content);
         setActiveMemoryId(loadedActiveId);
       } else {
         // Active memory no longer exists - clear the reference
@@ -148,6 +156,9 @@ export function useScratchpad(repoFullName: string | null = null) {
 
   // Auto-save on change with error feedback
   useEffect(() => {
+    // Keep the unsaved scratchpad draft separate from loaded memories.
+    if (activeMemoryId) return;
+
     const storageKey = getStorageKey(repoFullName);
 
     // Warn if content is getting large (but still try to save)
@@ -167,7 +178,7 @@ export function useScratchpad(repoFullName: string | null = null) {
         }
       }
     }
-  }, [content, repoFullName]);
+  }, [activeMemoryId, content, repoFullName]);
 
   useEffect(() => {
     const memoryKey = getMemoryStorageKey(repoFullName);
@@ -202,18 +213,41 @@ export function useScratchpad(repoFullName: string | null = null) {
   const toggle = useCallback(() => setIsOpen((prev) => !prev), []);
   const open = useCallback(() => setIsOpen(true), []);
   const close = useCallback(() => setIsOpen(false), []);
-  const clear = useCallback(() => setContent(''), []);
+
+  const detachActiveMemoryIfNeeded = useCallback((nextContent: string) => {
+    if (!activeMemoryId) return;
+    const activeMemory = memories.find((memory) => memory.id === activeMemoryId);
+    if (!activeMemory || activeMemory.content !== nextContent) {
+      setActiveMemoryId(null);
+    }
+  }, [activeMemoryId, memories]);
+
+  const setContent = useCallback((nextContent: string) => {
+    setContentState(nextContent);
+    detachActiveMemoryIfNeeded(nextContent);
+  }, [detachActiveMemoryIfNeeded]);
+
+  const clear = useCallback(() => {
+    setContentState('');
+    if (activeMemoryId) {
+      setActiveMemoryId(null);
+    }
+  }, [activeMemoryId]);
 
   const append = useCallback((text: string) => {
-    setContent((prev) => {
+    setContentState((prev) => {
       const trimmed = prev.trim();
       return trimmed ? `${trimmed}\n\n${text}` : text;
     });
-  }, []);
+    if (activeMemoryId) {
+      setActiveMemoryId(null);
+    }
+  }, [activeMemoryId]);
 
   const replace = useCallback((text: string) => {
-    setContent(text);
-  }, []);
+    setContentState(text);
+    detachActiveMemoryIfNeeded(text);
+  }, [detachActiveMemoryIfNeeded]);
 
   const saveMemory = useCallback(
     (name: string) => {
@@ -250,22 +284,17 @@ export function useScratchpad(repoFullName: string | null = null) {
       if (id) {
         const memory = memories.find((entry) => entry.id === id);
         if (memory) {
-          setContent(memory.content);
+          setContentState(memory.content);
           setActiveMemoryId(id);
         } else {
-          // Memory not found - reset selection and notify user
+          // Memory not found - fall back to the unsaved draft and notify user
+          setContentState(readStoredScratchpadContent(repoFullName));
           setActiveMemoryId(null);
           toast.error('Memory not found — it may have been deleted');
         }
       } else {
-        // Switching to current scratchpad - load from localStorage
-        try {
-          const storageKey = getStorageKey(repoFullName);
-          const stored = localStorage.getItem(storageKey);
-          setContent(stored ?? '');
-        } catch {
-          setContent('');
-        }
+        // Switching to current scratchpad restores the unsaved draft.
+        setContentState(readStoredScratchpadContent(repoFullName));
         setActiveMemoryId(null);
       }
     },
@@ -273,9 +302,15 @@ export function useScratchpad(repoFullName: string | null = null) {
   );
 
   const deleteMemory = useCallback((id: string) => {
+    const wasActive = activeMemoryId === id;
     setMemories((prev) => prev.filter((memory) => memory.id !== id));
+    if (wasActive) {
+      setContentState(readStoredScratchpadContent(repoFullName));
+      setActiveMemoryId(null);
+      return;
+    }
     setActiveMemoryId((prev) => (prev === id ? null : prev));
-  }, []);
+  }, [activeMemoryId, repoFullName]);
 
   const hasContent = content.trim().length > 0;
 

@@ -115,7 +115,7 @@ interface ChatScreenProps {
     memories: ScratchpadMemory[];
     activeMemoryId: string | null;
     saveMemory: (label: string) => void;
-    loadMemory: (id: string) => void;
+    loadMemory: (id: string | null) => void;
     deleteMemory: (id: string) => void;
   };
 
@@ -934,10 +934,7 @@ export function ChatScreen(props: ChatScreenProps) {
         onScratchpadContentChange={scratchpad.setContent}
         onScratchpadClear={scratchpad.clear}
         onScratchpadSaveMemory={scratchpad.saveMemory}
-        onScratchpadLoadMemory={(id) => {
-          if (!id) return;
-          scratchpad.loadMemory(id);
-        }}
+        onScratchpadLoadMemory={scratchpad.loadMemory}
         onScratchpadDeleteMemory={scratchpad.deleteMemory}
         branchProps={{
           currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
