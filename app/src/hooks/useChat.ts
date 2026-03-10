@@ -2054,6 +2054,8 @@ export function useChat(
                               context,
                               apiMessages.slice(-6),
                               abortControllerRef.current?.signal,
+                              lockedProviderForChat,
+                              resolvedModelForChat || undefined,
                             );
 
                             updateAgentStatus(
@@ -2080,6 +2082,8 @@ export function useChat(
                             handleCheckpoint,
                             isLastTask ? delegateArgs.acceptanceCriteria : undefined,
                             (state) => { lastCoderStateRef.current = state; },
+                            lockedProviderForChat,
+                            resolvedModelForChat || undefined,
                           );
 
                           return { taskIndex, coderResult };
@@ -2130,6 +2134,8 @@ export function useChat(
                           context,
                           apiMessages.slice(-6), // recent chat for user intent context
                           abortControllerRef.current?.signal,
+                          lockedProviderForChat,
+                          resolvedModelForChat || undefined,
                         );
 
                         updateAgentStatus(
@@ -2157,6 +2163,8 @@ export function useChat(
                         handleCheckpoint,
                         isLastTask ? delegateArgs.acceptanceCriteria : undefined,
                         (state) => { lastCoderStateRef.current = state; },
+                        lockedProviderForChat,
+                        resolvedModelForChat || undefined,
                       );
                       totalRounds += coderResult.rounds;
                       totalCheckpoints += coderResult.checkpoints;

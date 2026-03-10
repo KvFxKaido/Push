@@ -19,7 +19,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: Ollama, OpenRouter, OpenCode Zen, Nvidia NIM (user picks, all roles) |
+| AI | Multi-backend: built-ins (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) + opt-in private connectors (Azure, Bedrock, Vertex) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -28,7 +28,7 @@ Push is a personal chat interface backed by role-based AI agents. Users select a
 
 ### Role-Based Agent System
 
-The active backend serves all four roles. The user picks a backend in Settings; all agents use it.
+Backend/model routing is currently split. Settings stores default backend/model picks plus the preferred active backend. `useChat` locks the Orchestrator to a per-chat provider/model on first send, delegated Coder runs inherit that chat-locked provider/model, Reviewer keeps its own sticky provider/model selection, and Auditor still resolves through `getActiveProvider()` rather than the chat lock.
 
 | Role | Responsibility |
 |------|----------------|
@@ -39,7 +39,7 @@ The active backend serves all four roles. The user picks a backend in Settings; 
 
 ### AI Backends
 
-Four providers, all using OpenAI-compatible SSE streaming. Any single API key is sufficient. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Settings stores default backend/model picks, the chat composer keeps a per-chat selection, and Reviewer keeps its own sticky provider/model selection. Once a chat sends its first message, that chat's provider/model are locked and changing either starts a new chat. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, and `/api/nvidia/chat`.
+The web app has four built-in providers, all using OpenAI-compatible SSE streaming: Ollama, OpenRouter, OpenCode Zen, and Nvidia NIM. It also exposes opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex in advanced Settings. Any single built-in provider key is sufficient; private connectors additionally require a base URL plus a model/deployment value, and can each save up to three deployment presets. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Settings stores default backend/model picks, the chat composer keeps a per-chat selection, delegated Coder runs inherit that chat-locked provider/model, Reviewer keeps its own sticky provider/model selection, and Auditor still follows the active backend/default-provider path. Once a chat sends its first message, that chat's provider/model are locked and changing either starts a new chat. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, `/api/nvidia/chat`, and the opt-in private-connector routes `/api/azure/chat`, `/api/bedrock/chat`, and `/api/vertex/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
@@ -126,10 +126,10 @@ When the user selects a repo, the app fetches project instruction files via the 
 4. **Tools** → JSON tool blocks → execute against GitHub API or sandbox
 5. **Scratchpad** → Shared notepad for ideas/requirements (user + AI can edit)
 6. **Sandbox** → Clone repo to container, run commands, edit files
-7. **Coder** → Autonomous coding task execution (uses active backend)
+7. **Coder** → Autonomous coding task execution (delegated runs inherit the current chat's locked provider/model)
 8. **Branch** → Create branches, switch context (tears down sandbox), commit to active branch
 9. **Reviewer** → Run advisory review on a Branch diff, Last commit, or sandbox Working tree; findings can jump to Diff or be sent to chat, and PR posting is only available for PR-backed Branch diff reviews
-10. **Auditor** → Standard commits (`sandbox_prepare_commit` path) get a safety verdict (uses active backend)
+10. **Auditor** → Standard commits (`sandbox_prepare_commit` path) get a safety verdict (currently uses the active backend/default-provider path)
 11. **Merge** → PR creation + Auditor review + GitHub merge (merge commit strategy)
 12. **Cards** → Structured results render as inline cards
 
@@ -242,7 +242,7 @@ Push/
 | `lib/scratchpad-tools.ts` | Scratchpad tools, prompt injection escaping |
 | `lib/sandbox-client.ts` | HTTP client for `/api/sandbox/*` endpoints, `mapSandboxErrorCode()`, `sandboxStatus()` (HEAD/dirty/diff snapshot for resume reconciliation) |
 | `lib/tool-dispatch.ts` | Unified dispatch for all tools, `detectAllToolCalls()` (multi-tool with read/mutate split), `isReadOnlyToolCall()` |
-| `lib/coder-agent.ts` | Coder autonomous loop (uses active backend), working memory (`coder_update_state`), acceptance criteria, parallel reads, `onWorkingMemoryUpdate` callback for resumable checkpoints |
+| `lib/coder-agent.ts` | Coder autonomous loop (delegated runs inherit the chat-locked provider/model), working memory (`coder_update_state`), acceptance criteria, parallel reads, `onWorkingMemoryUpdate` callback for resumable checkpoints |
 | `lib/reviewer-agent.ts` | Reviewer advisory diff review, line-anchored findings, and structured review result parsing |
 | `lib/auditor-agent.ts` | Auditor review + verdict (fail-safe, uses active backend) |
 | `lib/workspace-context.ts` | Active repo context builder |

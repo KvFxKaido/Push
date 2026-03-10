@@ -11,8 +11,8 @@ Self-hosted only. No managed service.
 Push is a personal chat interface backed by role-based AI agents that read your code, write patches, run checks in a sandbox, and commit/push changes from your phone or terminal.
 
 Try it free with provider free tiers: OpenCode Zen or Ollama Cloud.
-Bring your own provider: Ollama Cloud, OpenRouter, OpenCode Zen, or Nvidia NIM.
-Set provider/model defaults in Settings, then choose active chat and review models separately.
+Bring your own provider: Ollama Cloud, OpenRouter, OpenCode Zen, or Nvidia NIM. Advanced Settings also expose opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex.
+Set provider/model defaults in Settings, then choose active chat and review models separately. Delegated Coder runs now inherit the current chat's locked provider/model, while Auditor still follows the app's active backend selection.
 
 ## What It Does
 
@@ -52,7 +52,7 @@ The app is free. AI usage depends on the provider and plan you choose.
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Ollama Cloud, OpenRouter, OpenCode Zen, or Nvidia NIM — flexible provider choice |
+| AI | Built-in providers: Ollama Cloud, OpenRouter, OpenCode Zen, Nvidia NIM; opt-in private connectors: Azure OpenAI, AWS Bedrock, Google Vertex |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
@@ -118,7 +118,7 @@ VITE_GITHUB_OAUTH_PROXY=...           # Optional — GitHub OAuth token exchange
 VITE_GITHUB_REDIRECT_URI=...          # Optional — GitHub OAuth redirect URI
 ```
 
-Provider keys can also be pasted into Settings at runtime. When 2+ provider keys are set, a backend picker appears in Settings. Settings owns the default backend/model picks, the chat composer owns the current chat selection, and Reviewer keeps its own sticky provider/model selection. Web default mode is **Auto** (Zen-first when available). In local development, with no AI keys configured, the app falls back to the demo-provider path; separately, when no GitHub token is configured, repo and PR views fall back to mock data.
+Provider keys can also be pasted into Settings at runtime. When 2+ provider keys are set, a backend picker appears in Settings. Settings owns the default backend/model picks plus the app's active backend preference, the chat composer owns the current chat selection, delegated Coder runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor still follows the active backend. Web default mode is **Auto** (Zen-first when available). In local development, with no AI keys configured, the app falls back to the demo-provider path; separately, when no GitHub token is configured, repo and PR views fall back to mock data.
 
 ## Push CLI
 
@@ -161,7 +161,7 @@ Use it for quick experiments, learning the interface, or when you're on a device
 
 ## Deploying Your Instance
 
-For a self-hosted deployment, run the app on Cloudflare Workers. The worker at `app/worker.ts` proxies `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, and `/api/nvidia/chat`, plus `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
+For a self-hosted deployment, run the app on Cloudflare Workers. The worker at `app/worker.ts` proxies the built-in chat routes (`/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, `/api/nvidia/chat`), the opt-in private-connector routes (`/api/azure/chat`, `/api/bedrock/chat`, `/api/vertex/chat`), and `/api/sandbox/*` to Modal web endpoints, with API keys stored as runtime secrets. Static assets are served by the Cloudflare Assets layer. The Modal sandbox backend at `sandbox/app.py` is deployed separately via `modal deploy`.
 
 
 ```bash
@@ -178,7 +178,7 @@ Role-based agent system. **Models are replaceable; roles are not.**
 - **Reviewer** — on-demand advisory diff review in the Workspace Hub; can review branch diffs, last commits, or local working-tree changes
 - **Auditor** — pre-commit safety gate, binary SAFE/UNSAFE verdict
 
-Four AI backends are supported: **Ollama Cloud**, **OpenRouter**, **OpenCode Zen**, and **Nvidia NIM**. All use OpenAI-compatible streaming. The active backend serves all four roles. For new web chats, Auto backend selection prefers OpenCode Zen when available. Settings stores default backend/model picks, chat keeps its own current selection, and Reviewer keeps its own sticky provider/model selection. After the first user message, a chat's provider/model are locked; changing either starts a new chat.
+The web app ships with four built-in AI backends: **Ollama Cloud**, **OpenRouter**, **OpenCode Zen**, and **Nvidia NIM**. It also exposes opt-in private connectors for **Azure OpenAI**, **AWS Bedrock**, and **Google Vertex** in advanced Settings. All use OpenAI-compatible streaming. Backend/model routing is currently split: Settings stores default backend/model picks and the app's active backend preference, the chat composer owns a per-chat selection that locks the Orchestrator after the first user message, delegated Coder runs inherit that chat-locked provider/model, Reviewer keeps its own sticky provider/model selection, and Auditor still follows the app's active backend rather than the chat lock. For new web chats, Auto backend selection prefers OpenCode Zen when available; the private connectors only appear once configured and can each save up to three deployment presets.
 
 **OpenRouter** provides access to 50+ models through a single pay-per-use API. Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-4o/GPT-5.4, Codex, Cohere Command-R, Gemini, Mistral, MiniMax, Qwen, GLM, DeepSeek, Perplexity Sonar, Arcee Trinity, Mercury, Xiaomi MiMo, Grok, and Kimi.
 

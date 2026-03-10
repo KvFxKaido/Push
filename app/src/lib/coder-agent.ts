@@ -1,8 +1,9 @@
 /**
  * Coder Agent — sub-agent that implements coding tasks autonomously.
  *
- * Uses the active provider (Ollama / Mistral / OpenRouter / Z.AI / Google / Zen) with the role-specific
- * model resolved via providers.ts. The Coder can read files, write files,
+ * Uses the chat-selected provider/model when supplied, otherwise falls back to
+ * the active provider with the role-specific model resolved via providers.ts.
+ * The Coder can read files, write files,
  * run commands, and get diffs — all within the sandbox. Runs until done (no round cap).
  *
  * Interactive Checkpoints: The Coder can pause mid-task to ask the Orchestrator
@@ -12,7 +13,7 @@
 
 import type { ChatMessage, ChatCard, AcceptanceCriterion, CriterionResult, CoderWorkingMemory } from '@/types';
 import { parseDiffStats } from './diff-utils';
-import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock } from './orchestrator';
+import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
@@ -326,15 +327,17 @@ export async function generateCheckpointAnswer(
   coderContext: string,
   recentChatHistory?: ChatMessage[],
   signal?: AbortSignal,
+  providerOverride?: ActiveProvider,
+  modelOverride?: string,
 ): Promise<string> {
-  const activeProvider = getActiveProvider();
+  const activeProvider = providerOverride || getActiveProvider();
   if (activeProvider === 'demo') {
     return 'No AI provider configured. Try a different approach.';
   }
 
   const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'orchestrator');
-  const modelId = roleModel?.id;
+  const modelId = modelOverride || roleModel?.id;
 
   const checkpointSystemPrompt = `You are the Orchestrator agent for Push, answering a question from the Coder agent who has paused mid-task.
 
@@ -487,15 +490,18 @@ export async function runCoderAgent(
   onCheckpoint?: (question: string, context: string) => Promise<string>,
   acceptanceCriteria?: AcceptanceCriterion[],
   onWorkingMemoryUpdate?: (state: CoderWorkingMemory) => void,
+  providerOverride?: ActiveProvider,
+  modelOverride?: string,
 ): Promise<{ summary: string; cards: ChatCard[]; rounds: number; checkpoints: number; criteriaResults?: CriterionResult[] }> {
-  // Resolve provider and model for the 'coder' role via providers.ts
-  const activeProvider = getActiveProvider();
+  // Resolve provider/model for the Coder. Delegated chat tasks can pin the
+  // Coder to the chat-locked provider/model instead of the app-global default.
+  const activeProvider = providerOverride || getActiveProvider();
   if (activeProvider === 'demo') {
     throw new Error('No AI provider configured. Add an API key in Settings.');
   }
   const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'coder');
-  const coderModelId = roleModel?.id; // undefined falls back to provider default
+  const coderModelId = modelOverride || roleModel?.id; // undefined falls back to provider default
 
   // Build system prompt, optionally including user identity and AGENTS.md
   let systemPrompt = buildCoderSystemPrompt();
