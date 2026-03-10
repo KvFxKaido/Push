@@ -1,4 +1,4 @@
-const CACHE_NAME = 'push-v5';
+const CACHE_NAME = 'push-v6';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -28,6 +28,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+  if (request.method !== 'GET') return;
 
   // Never cache API calls
   if (
@@ -39,6 +40,26 @@ self.addEventListener('fetch', (event) => {
     || request.url.includes('/google/')
     || request.url.includes('/opencode/')
   ) {
+    return;
+  }
+
+  const isDocumentRequest =
+    request.mode === 'navigate' ||
+    request.destination === 'document' ||
+    (request.headers.get('accept') || '').includes('text/html');
+
+  if (isDocumentRequest) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/index.html')))
+    );
     return;
   }
 

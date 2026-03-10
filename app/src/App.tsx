@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
@@ -21,16 +21,25 @@ import {
 import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
+import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import { LazySettingsSheet } from '@/components/LazySettingsSheet';
 import type { AppScreen, RepoWithActivity, SandboxStateCardData } from '@/types';
 import './App.css';
 
 // --- Lazy-loaded screen & settings components (code-split) ---
 const SettingsSheet = LazySettingsSheet;
-const OnboardingScreen = lazy(() => import('@/sections/OnboardingScreen').then(m => ({ default: m.OnboardingScreen })));
-const HomeScreen = lazy(() => import('@/sections/HomeScreen').then(m => ({ default: m.HomeScreen })));
-const FileBrowser = lazy(() => import('@/sections/FileBrowser').then(m => ({ default: m.FileBrowser })));
-const ChatScreen = lazy(() => import('@/sections/ChatScreen').then(m => ({ default: m.ChatScreen })));
+const OnboardingScreen = lazyWithRecovery(
+  toDefaultExport(() => import('@/sections/OnboardingScreen'), (module) => module.OnboardingScreen),
+);
+const HomeScreen = lazyWithRecovery(
+  toDefaultExport(() => import('@/sections/HomeScreen'), (module) => module.HomeScreen),
+);
+const FileBrowser = lazyWithRecovery(
+  toDefaultExport(() => import('@/sections/FileBrowser'), (module) => module.FileBrowser),
+);
+const ChatScreen = lazyWithRecovery(
+  toDefaultExport(() => import('@/sections/ChatScreen'), (module) => module.ChatScreen),
+);
 
 const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
 

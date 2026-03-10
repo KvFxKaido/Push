@@ -1,34 +1,73 @@
-import { lazy, Suspense, type ComponentType } from 'react';
+import { Component, Suspense, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
 import type { ChatCard, CardAction } from '@/types';
+import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 
 // --- Lazy-loaded card components (code-split) ---
-const PRCard = lazy(() => import('./PRCard').then(m => ({ default: m.PRCard })));
-const PRListCard = lazy(() => import('./PRListCard').then(m => ({ default: m.PRListCard })));
-const CommitListCard = lazy(() => import('./CommitListCard').then(m => ({ default: m.CommitListCard })));
-const FileCard = lazy(() => import('./FileCard').then(m => ({ default: m.FileCard })));
-const BranchListCard = lazy(() => import('./BranchListCard').then(m => ({ default: m.BranchListCard })));
-const FileListCard = lazy(() => import('./FileListCard').then(m => ({ default: m.FileListCard })));
-const SandboxCard = lazy(() => import('./SandboxCard').then(m => ({ default: m.SandboxCard })));
-const DiffPreviewCard = lazy(() => import('./DiffPreviewCard').then(m => ({ default: m.DiffPreviewCard })));
-const AuditVerdictCard = lazy(() => import('./AuditVerdictCard').then(m => ({ default: m.AuditVerdictCard })));
-const CommitReviewCard = lazy(() => import('./CommitReviewCard').then(m => ({ default: m.CommitReviewCard })));
-const CIStatusCard = lazy(() => import('./CIStatusCard').then(m => ({ default: m.CIStatusCard })));
-const EditorCard = lazy(() => import('./EditorCard').then(m => ({ default: m.EditorCard })));
-const FileSearchCard = lazy(() => import('./FileSearchCard').then(m => ({ default: m.FileSearchCard })));
-const CommitFilesCard = lazy(() => import('./CommitFilesCard').then(m => ({ default: m.CommitFilesCard })));
-const TestResultsCard = lazy(() => import('./TestResultsCard').then(m => ({ default: m.TestResultsCard })));
-const TypeCheckCard = lazy(() => import('./TypeCheckCard').then(m => ({ default: m.TypeCheckCard })));
-const SandboxDownloadCard = lazy(() => import('./SandboxDownloadCard').then(m => ({ default: m.SandboxDownloadCard })));
-const WorkflowRunsCard = lazy(() => import('./WorkflowRunsCard').then(m => ({ default: m.WorkflowRunsCard })));
-const WorkflowLogsCard = lazy(() => import('./WorkflowLogsCard').then(m => ({ default: m.WorkflowLogsCard })));
-const WebSearchCard = lazy(() => import('./WebSearchCard').then(m => ({ default: m.WebSearchCard })));
-const CoderProgressCard = lazy(() => import('./CoderProgressCard').then(m => ({ default: m.CoderProgressCard })));
+const PRCard = lazyWithRecovery(toDefaultExport(() => import('./PRCard'), (module) => module.PRCard));
+const PRListCard = lazyWithRecovery(toDefaultExport(() => import('./PRListCard'), (module) => module.PRListCard));
+const CommitListCard = lazyWithRecovery(toDefaultExport(() => import('./CommitListCard'), (module) => module.CommitListCard));
+const FileCard = lazyWithRecovery(toDefaultExport(() => import('./FileCard'), (module) => module.FileCard));
+const BranchListCard = lazyWithRecovery(toDefaultExport(() => import('./BranchListCard'), (module) => module.BranchListCard));
+const FileListCard = lazyWithRecovery(toDefaultExport(() => import('./FileListCard'), (module) => module.FileListCard));
+const SandboxCard = lazyWithRecovery(toDefaultExport(() => import('./SandboxCard'), (module) => module.SandboxCard));
+const DiffPreviewCard = lazyWithRecovery(toDefaultExport(() => import('./DiffPreviewCard'), (module) => module.DiffPreviewCard));
+const AuditVerdictCard = lazyWithRecovery(toDefaultExport(() => import('./AuditVerdictCard'), (module) => module.AuditVerdictCard));
+const CommitReviewCard = lazyWithRecovery(toDefaultExport(() => import('./CommitReviewCard'), (module) => module.CommitReviewCard));
+const CIStatusCard = lazyWithRecovery(toDefaultExport(() => import('./CIStatusCard'), (module) => module.CIStatusCard));
+const EditorCard = lazyWithRecovery(toDefaultExport(() => import('./EditorCard'), (module) => module.EditorCard));
+const FileSearchCard = lazyWithRecovery(toDefaultExport(() => import('./FileSearchCard'), (module) => module.FileSearchCard));
+const CommitFilesCard = lazyWithRecovery(toDefaultExport(() => import('./CommitFilesCard'), (module) => module.CommitFilesCard));
+const TestResultsCard = lazyWithRecovery(toDefaultExport(() => import('./TestResultsCard'), (module) => module.TestResultsCard));
+const TypeCheckCard = lazyWithRecovery(toDefaultExport(() => import('./TypeCheckCard'), (module) => module.TypeCheckCard));
+const SandboxDownloadCard = lazyWithRecovery(toDefaultExport(() => import('./SandboxDownloadCard'), (module) => module.SandboxDownloadCard));
+const WorkflowRunsCard = lazyWithRecovery(toDefaultExport(() => import('./WorkflowRunsCard'), (module) => module.WorkflowRunsCard));
+const WorkflowLogsCard = lazyWithRecovery(toDefaultExport(() => import('./WorkflowLogsCard'), (module) => module.WorkflowLogsCard));
+const WebSearchCard = lazyWithRecovery(toDefaultExport(() => import('./WebSearchCard'), (module) => module.WebSearchCard));
+const CoderProgressCard = lazyWithRecovery(toDefaultExport(() => import('./CoderProgressCard'), (module) => module.CoderProgressCard));
 
 interface CardRendererProps {
   card: ChatCard;
   messageId?: string;
   cardIndex?: number;
   onAction?: (action: CardAction) => void;
+}
+
+interface CardErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface CardErrorBoundaryState {
+  hasError: boolean;
+  message: string | null;
+}
+
+class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBoundaryState> {
+  state: CardErrorBoundaryState = {
+    hasError: false,
+    message: null,
+  };
+
+  static getDerivedStateFromError(error: Error): CardErrorBoundaryState {
+    return {
+      hasError: true,
+      message: error.message,
+    };
+  }
+
+  componentDidCatch(error: Error, _info: ErrorInfo) {
+    console.error('[CardRenderer] Failed to load card component', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">
+          Card failed to load. Refresh Push to fetch the latest assets.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -90,8 +129,10 @@ export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRende
   const inner = renderCard(card, messageId, cardIndex, onAction);
   if (!inner) return null;
   return (
-    <Suspense fallback={<div className="h-16 animate-pulse rounded-lg bg-zinc-900/50" />}>
-      <div className="animate-card-expand">{inner}</div>
-    </Suspense>
+    <CardErrorBoundary>
+      <Suspense fallback={<div className="h-16 animate-pulse rounded-lg bg-zinc-900/50" />}>
+        <div className="animate-card-expand">{inner}</div>
+      </Suspense>
+    </CardErrorBoundary>
   );
 }
