@@ -16,7 +16,7 @@ import { createSandbox, cleanupSandbox, execInSandbox, setSandboxOwnerToken, get
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { fileLedger } from '@/lib/file-awareness-ledger';
-import { clearFileVersionCache } from '@/lib/sandbox-file-version-cache';
+import { clearFileVersionCache, clearSandboxWorkspaceRevision } from '@/lib/sandbox-file-version-cache';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 
 export type SandboxStatus = 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
@@ -170,6 +170,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
       // Reset file awareness ledger and version cache — different repo = different files
       fileLedger.reset();
       clearFileVersionCache(saved.sandboxId);
+      clearSandboxWorkspaceRevision(saved.sandboxId);
       if (sandboxIdRef.current && status === 'ready') {
         sandboxIdRef.current = null;
         setSandboxId(null);
@@ -251,6 +252,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
     // Reset file awareness ledger and version cache — new sandbox = clean slate
     fileLedger.reset();
     clearFileVersionCache(id);
+    clearSandboxWorkspaceRevision(id);
 
     setSandboxId(null);
     setStatus('idle');

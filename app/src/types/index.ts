@@ -269,6 +269,7 @@ export type ToolErrorType =
   | 'EXEC_TIMEOUT'
   | 'EXEC_NON_ZERO_EXIT'
   | 'SANDBOX_UNREACHABLE'
+  | 'WORKSPACE_CHANGED'
   | 'EDIT_HASH_MISMATCH'
   | 'EDIT_CONTENT_NOT_FOUND'
   | 'AUTH_FAILURE'
@@ -356,6 +357,8 @@ export interface EditorCardData {
   truncated: boolean;
   /** SHA-256 version at read time (used for stale write detection) */
   version?: string;
+  /** Monotonic workspace revision at read time (used for workspace-level stale detection) */
+  workspaceRevision?: number;
   /** 'github' = read-only, 'sandbox' = editable with save */
   source: 'github' | 'sandbox';
   repo?: string;
@@ -444,7 +447,7 @@ export type CardAction =
   | { type: 'commit-reject'; messageId: string; cardIndex: number }
   | { type: 'ci-refresh'; messageId: string; cardIndex: number }
   | { type: 'sandbox-state-refresh'; messageId: string; cardIndex: number; sandboxId: string }
-  | { type: 'editor-save'; messageId: string; cardIndex: number; path: string; content: string; sandboxId: string; expectedVersion?: string };
+  | { type: 'editor-save'; messageId: string; cardIndex: number; path: string; content: string; sandboxId: string; expectedVersion?: string; expectedWorkspaceRevision?: number };
 
 export interface AgentStatus {
   active: boolean;

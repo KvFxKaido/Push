@@ -19,7 +19,7 @@ interface FileEditorProps {
   file: FileEntry;
   sandboxId: string;
   onBack: () => void;
-  onSave: (path: string, content: string, expectedVersion?: string) => Promise<WriteResult>;
+  onSave: (path: string, content: string, expectedVersion?: string, expectedWorkspaceRevision?: number) => Promise<WriteResult>;
 }
 
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB
@@ -34,6 +34,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
   const [hasChanges, setHasChanges] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [fileVersion, setFileVersion] = useState<string | undefined>(undefined);
+  const [workspaceRevision, setWorkspaceRevision] = useState<number | undefined>(undefined);
 
   const editability = useMemo(() => getFileEditability(file.path, file.size), [file]);
   const language = editability.language || 'text';
@@ -44,9 +45,13 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
     setError(null);
 
     try {
-      const data = await readFromSandbox(sandboxId, file.path) as { content?: string; version?: string | null };
+      const data = await readFromSandbox(sandboxId, file.path) as { content?: string; version?: string | null; error?: string; workspace_revision?: number };
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
       
-      if (!data.content) {
+      if (data.content === undefined) {
         throw new Error('File is empty or could not be read');
       }
 
@@ -64,6 +69,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
       setContent(data.content);
       setOriginalContent(data.content);
       setFileVersion(typeof data.version === 'string' ? data.version : undefined);
+      setWorkspaceRevision(typeof data.workspace_revision === 'number' ? data.workspace_revision : undefined);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load file';
       setError(message);
@@ -91,9 +97,12 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
 
     setSaving(true);
     try {
-      const saveResult = await onSave(file.path, content, fileVersion);
+      const saveResult = await onSave(file.path, content, fileVersion, workspaceRevision);
       if (typeof saveResult.new_version === 'string') {
         setFileVersion(saveResult.new_version);
+      }
+      if (typeof saveResult.workspace_revision === 'number') {
+        setWorkspaceRevision(saveResult.workspace_revision);
       }
       toast.success('File saved');
       onBack();

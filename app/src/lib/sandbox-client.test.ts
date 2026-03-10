@@ -98,7 +98,7 @@ describe('batchWriteToSandbox', () => {
     const { batchWriteToSandbox } = await import('./sandbox-client');
     const result = await batchWriteToSandbox('sb-123', [
       { path: '/workspace/a.txt', content: 'hello', expected_version: 'v1' },
-    ]);
+    ], 7);
 
     expect(mockFetch).toHaveBeenCalled();
     const [url, options] = mockFetch.mock.calls[0];
@@ -112,6 +112,7 @@ describe('batchWriteToSandbox', () => {
     expect(body.files[0].path).toBe('/workspace/a.txt');
     expect(body.files[0].content).toBe('hello');
     expect(body.files[0].expected_version).toBe('v1');
+    expect(body.expected_workspace_revision).toBe(7);
 
     expect(result.ok).toBe(true);
     expect(result.results).toHaveLength(1);
@@ -145,7 +146,7 @@ describe('writeToSandbox', () => {
     });
 
     const { writeToSandbox } = await import('./sandbox-client');
-    const result = await writeToSandbox('sb-123', '/workspace/test.txt', 'hello world!', 'v1');
+    const result = await writeToSandbox('sb-123', '/workspace/test.txt', 'hello world!', 'v1', 11);
 
     expect(mockFetch).toHaveBeenCalled();
     const [url, options] = mockFetch.mock.calls[0];
@@ -158,6 +159,7 @@ describe('writeToSandbox', () => {
     expect(body.path).toBe('/workspace/test.txt');
     expect(body.content).toBe('hello world!');
     expect(body.expected_version).toBe('v1');
+    expect(body.expected_workspace_revision).toBe(11);
 
     expect(result.ok).toBe(true);
     expect(result.bytes_written).toBe(12);

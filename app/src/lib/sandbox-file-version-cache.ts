@@ -9,6 +9,8 @@
  */
 
 const sandboxFileVersions = new Map<string, string>();
+const sandboxFileWorkspaceRevisions = new Map<string, number>();
+const sandboxWorkspaceRevisions = new Map<string, number>();
 
 export function fileVersionKey(sandboxId: string, path: string): string {
   return `${sandboxId}:${path}`;
@@ -23,7 +25,17 @@ export function setFileVersion(sandboxId: string, path: string, version: string)
 }
 
 export function deleteFileVersion(sandboxId: string, path: string): void {
-  sandboxFileVersions.delete(fileVersionKey(sandboxId, path));
+  const key = fileVersionKey(sandboxId, path);
+  sandboxFileVersions.delete(key);
+  sandboxFileWorkspaceRevisions.delete(key);
+}
+
+export function getFileWorkspaceRevision(sandboxId: string, path: string): number | undefined {
+  return sandboxFileWorkspaceRevisions.get(fileVersionKey(sandboxId, path));
+}
+
+export function setFileWorkspaceRevision(sandboxId: string, path: string, workspaceRevision: number): void {
+  sandboxFileWorkspaceRevisions.set(fileVersionKey(sandboxId, path), workspaceRevision);
 }
 
 /** Key-based accessors for callers that pre-compute the cache key. */
@@ -37,6 +49,31 @@ export function setByKey(key: string, version: string): void {
 
 export function deleteByKey(key: string): void {
   sandboxFileVersions.delete(key);
+  sandboxFileWorkspaceRevisions.delete(key);
+}
+
+export function getWorkspaceRevisionByKey(key: string): number | undefined {
+  return sandboxFileWorkspaceRevisions.get(key);
+}
+
+export function setWorkspaceRevisionByKey(key: string, workspaceRevision: number): void {
+  sandboxFileWorkspaceRevisions.set(key, workspaceRevision);
+}
+
+export function getSandboxWorkspaceRevision(sandboxId: string): number | undefined {
+  return sandboxWorkspaceRevisions.get(sandboxId);
+}
+
+export function setSandboxWorkspaceRevision(sandboxId: string, workspaceRevision: number): void {
+  sandboxWorkspaceRevisions.set(sandboxId, workspaceRevision);
+}
+
+export function clearSandboxWorkspaceRevision(sandboxId?: string): void {
+  if (!sandboxId) {
+    sandboxWorkspaceRevisions.clear();
+    return;
+  }
+  sandboxWorkspaceRevisions.delete(sandboxId);
 }
 
 /**
@@ -47,12 +84,18 @@ export function deleteByKey(key: string): void {
 export function clearFileVersionCache(sandboxId?: string): void {
   if (!sandboxId) {
     sandboxFileVersions.clear();
+    sandboxFileWorkspaceRevisions.clear();
     return;
   }
   const prefix = `${sandboxId}:`;
   for (const key of [...sandboxFileVersions.keys()]) {
     if (key.startsWith(prefix)) {
       sandboxFileVersions.delete(key);
+    }
+  }
+  for (const key of [...sandboxFileWorkspaceRevisions.keys()]) {
+    if (key.startsWith(prefix)) {
+      sandboxFileWorkspaceRevisions.delete(key);
     }
   }
 }

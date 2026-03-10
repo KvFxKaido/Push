@@ -129,6 +129,8 @@ export function useCommitPush(sandboxId: string) {
       const commitResult = await execInSandbox(
         sandboxId,
         `cd /workspace && git add -A && git commit -m '${safeCommitMessage}'`,
+        undefined,
+        { markWorkspaceMutated: true },
       );
 
       if (commitResult.exitCode !== 0) {
@@ -145,7 +147,12 @@ export function useCommitPush(sandboxId: string) {
       // Phase: Pushing
       setState((s) => ({ ...s, phase: 'pushing' }));
 
-      const pushResult = await execInSandbox(sandboxId, 'cd /workspace && git push origin HEAD');
+      const pushResult = await execInSandbox(
+        sandboxId,
+        'cd /workspace && git push origin HEAD',
+        undefined,
+        { markWorkspaceMutated: true },
+      );
 
       if (pushResult.exitCode !== 0) {
         const errorDetail = pushResult.stderr || pushResult.stdout || 'Unknown error';

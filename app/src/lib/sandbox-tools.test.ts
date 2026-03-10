@@ -187,6 +187,49 @@ describe('executeSandboxToolCall -- stale write handling', () => {
       durationMs: expect.any(Number),
     }));
   });
+
+  it('invalidates cached workspace snapshots on workspace-level stale write rejection', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const x = 1;',
+      truncated: false,
+      version: 'v1',
+      workspace_revision: 4,
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: false,
+      code: 'WORKSPACE_CHANGED',
+      error: 'Workspace changed since last read.',
+      expected_workspace_revision: 4,
+      current_workspace_revision: 5,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/example.ts' } },
+      'sb-123',
+    );
+
+    const writeResult = await executeSandboxToolCall(
+      { tool: 'sandbox_write_file', args: { path: '/workspace/src/example.ts', content: 'export const x = 2;' } },
+      'sb-123',
+    );
+
+    expect(sandboxClient.writeToSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      '/workspace/src/example.ts',
+      'export const x = 2;',
+      'v1',
+      4,
+    );
+    expect(writeResult.text).toContain('Workspace changed before /workspace/src/example.ts could be written.');
+    expect(writeResult.text).toContain('Expected workspace revision: 4');
+    expect(writeResult.text).toContain('Current workspace revision: 5');
+    expect(fileLedger.getState('/workspace/src/example.ts')?.kind).toBe('stale');
+    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'stale',
+      errorCode: 'WORKSPACE_CHANGED',
+      durationMs: expect.any(Number),
+    }));
+  });
 });
 
 describe('executeSandboxToolCall -- read metrics', () => {
@@ -617,7 +660,12 @@ describe('sandbox path normalization', () => {
       'sb-123',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-123', 'pwd', '/workspace/app');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      'pwd',
+      '/workspace/app',
+      { markWorkspaceMutated: true },
+    );
   });
 
   it('marks previously-read files stale after sandbox_exec', async () => {

@@ -104,9 +104,19 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
     setEditingFile(file);
   }, []);
 
-  const handleSaveFile = useCallback(async (path: string, content: string, expectedVersion?: string) => {
-    const result = await writeToSandbox(sandboxId, path, content, expectedVersion);
+  const handleSaveFile = useCallback(async (
+    path: string,
+    content: string,
+    expectedVersion?: string,
+    expectedWorkspaceRevision?: number,
+  ) => {
+    const result = await writeToSandbox(sandboxId, path, content, expectedVersion, expectedWorkspaceRevision);
     if (!result.ok) {
+      if (result.code === 'WORKSPACE_CHANGED') {
+        const expected = result.expected_workspace_revision ?? expectedWorkspaceRevision ?? 'unknown';
+        const current = result.current_workspace_revision ?? result.workspace_revision ?? 'unknown';
+        throw new Error(`Workspace changed since last read (expected revision ${expected}, current ${current}). Re-open and retry.`);
+      }
       if (result.code === 'STALE_FILE') {
         const expected = result.expected_version || expectedVersion || 'unknown';
         const current = result.current_version || 'missing';

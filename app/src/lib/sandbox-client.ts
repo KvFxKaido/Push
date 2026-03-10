@@ -5,6 +5,14 @@
  * No Modal SDK or gRPC — just plain fetch().
  */
 
+import {
+  deleteFileVersion,
+  fileVersionKey,
+  setByKey as setFileVersionByKey,
+  setWorkspaceRevisionByKey,
+  setSandboxWorkspaceRevision,
+} from './sandbox-file-version-cache';
+
 // --- Types ---
 
 export interface SandboxSession {
@@ -12,6 +20,7 @@ export interface SandboxSession {
   ownerToken?: string;
   status: 'ready' | 'error';
   error?: string;
+  workspaceRevision?: number;
 }
 
 export interface GitCommitIdentity {
@@ -26,11 +35,13 @@ export interface ExecResult {
   truncated: boolean;
   /** Error message from the sandbox backend (e.g. "Sandbox not found or expired"). Present when exit_code is -1 (command never dispatched). */
   error?: string;
+  workspaceRevision?: number;
 }
 
 export interface FileReadResult {
   content: string;
   truncated: boolean;
+  error?: string;
   /** Line where truncation begins; use as the next start_line when continuing a read. */
   truncated_at_line?: number;
   /** Approximate UTF-8 bytes omitted from the returned content. */
@@ -41,6 +52,12 @@ export interface FileReadResult {
   start_line?: number;
   /** End line returned by backend for bounded range reads */
   end_line?: number;
+  /** Monotonic workspace revision at read time */
+  workspace_revision?: number;
+  /** Structured read failure code when the backend detected a moving target. */
+  code?: string;
+  expected_workspace_revision?: number;
+  current_workspace_revision?: number;
 }
 
 export interface DiffResult {
@@ -105,6 +122,7 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
     case 'MODAL_UNAVAILABLE': return 'SANDBOX_UNREACHABLE';
     case 'MODAL_ERROR': return 'SANDBOX_UNREACHABLE';
     case 'STALE_FILE': return 'STALE_FILE';
+    case 'WORKSPACE_CHANGED': return 'WORKSPACE_CHANGED';
     default: return 'UNKNOWN';
   }
 }
@@ -284,7 +302,7 @@ export async function createSandbox(
   githubToken?: string,
   githubIdentity?: GitCommitIdentity,
 ): Promise<SandboxSession> {
-  const data = await sandboxFetch<{ sandbox_id: string | null; owner_token?: string; status?: string; error?: string }>(
+  const data = await sandboxFetch<{ sandbox_id: string | null; owner_token?: string; status?: string; error?: string; workspace_revision?: number }>(
     'create',
     {
       repo,
@@ -300,30 +318,41 @@ export async function createSandbox(
 
   setSandboxOwnerToken(data.owner_token);
   setSandboxOwnerToken(data.owner_token, data.sandbox_id);
-  return { sandboxId: data.sandbox_id, ownerToken: data.owner_token, status: 'ready' };
+  if (typeof data.workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(data.sandbox_id, data.workspace_revision);
+  }
+  return { sandboxId: data.sandbox_id, ownerToken: data.owner_token, status: 'ready', workspaceRevision: data.workspace_revision };
 }
 
 export async function execInSandbox(
   sandboxId: string,
   command: string,
   workdir?: string,
+  options?: {
+    markWorkspaceMutated?: boolean;
+  },
 ): Promise<ExecResult> {
   // API returns snake_case, we need camelCase
-  const raw = await sandboxFetch<{ stdout: string; stderr: string; exit_code: number; truncated: boolean; error?: string }>(
+  const raw = await sandboxFetch<{ stdout: string; stderr: string; exit_code: number; truncated: boolean; error?: string; workspace_revision?: number }>(
     'exec',
     withOwnerToken({
       sandbox_id: sandboxId,
       command,
       workdir: workdir || '/workspace',
+      mark_workspace_mutated: options?.markWorkspaceMutated === true,
     }, sandboxId),
     EXEC_TIMEOUT_MS,
   );
+  if (typeof raw.workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, raw.workspace_revision);
+  }
   return {
     stdout: raw.stdout,
     stderr: raw.stderr,
     exitCode: raw.exit_code,
     truncated: raw.truncated,
     error: raw.error,
+    workspaceRevision: raw.workspace_revision,
   };
 }
 
@@ -340,7 +369,21 @@ export async function readFromSandbox(
   };
   if (startLine !== undefined) body.start_line = startLine;
   if (endLine !== undefined) body.end_line = endLine;
-  return sandboxFetch<FileReadResult>('read', body);
+  const result = await sandboxFetch<FileReadResult>('read', body);
+  if (typeof result.workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, result.workspace_revision);
+    if (typeof result.version === 'string' && result.version) {
+      const key = fileVersionKey(sandboxId, path);
+      setFileVersionByKey(key, result.version);
+      setWorkspaceRevisionByKey(key, result.workspace_revision);
+    } else if (!result.error) {
+      deleteFileVersion(sandboxId, path);
+    }
+  }
+  if (typeof result.current_workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, result.current_workspace_revision);
+  }
+  return result;
 }
 
 export interface WriteResult {
@@ -351,6 +394,9 @@ export interface WriteResult {
   expected_version?: string;
   current_version?: string | null;
   new_version?: string | null;
+  workspace_revision?: number;
+  expected_workspace_revision?: number;
+  current_workspace_revision?: number;
 }
 
 const WRITE_TIMEOUT_MS = 60_000; // 60s for write operations (large files can be slow)
@@ -363,14 +409,28 @@ export async function writeToSandbox(
   path: string,
   content: string,
   expectedVersion?: string,
+  expectedWorkspaceRevision?: number,
 ): Promise<WriteResult> {
-  return sandboxFetch<WriteResult>('write', {
+  const result = await sandboxFetch<WriteResult>('write', {
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
     content,
     expected_version: expectedVersion,
+    expected_workspace_revision: expectedWorkspaceRevision,
   }, WRITE_TIMEOUT_MS, undefined, WRITE_MAX_RETRIES);
+  if (typeof result.workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, result.workspace_revision);
+    if (result.ok && typeof result.new_version === 'string' && result.new_version) {
+      const key = fileVersionKey(sandboxId, path);
+      setFileVersionByKey(key, result.new_version);
+      setWorkspaceRevisionByKey(key, result.workspace_revision);
+    }
+  }
+  if (typeof result.current_workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, result.current_workspace_revision);
+  }
+  return result;
 }
 
 // --- Batch write ---
@@ -390,12 +450,17 @@ export interface BatchWriteResultEntry {
   new_version?: string | null;
   expected_version?: string;
   current_version?: string | null;
+  workspace_revision?: number;
 }
 
 export interface BatchWriteResult {
   ok: boolean;
   results: BatchWriteResultEntry[];
   error?: string;
+  code?: string;
+  workspace_revision?: number;
+  expected_workspace_revision?: number;
+  current_workspace_revision?: number;
 }
 
 const BATCH_WRITE_TIMEOUT_MS = 60_000; // 60s for batch operations
@@ -403,12 +468,28 @@ const BATCH_WRITE_TIMEOUT_MS = 60_000; // 60s for batch operations
 export async function batchWriteToSandbox(
   sandboxId: string,
   files: BatchWriteEntry[],
+  expectedWorkspaceRevision?: number,
 ): Promise<BatchWriteResult> {
-  return sandboxFetch<BatchWriteResult>('batch-write', {
+  const result = await sandboxFetch<BatchWriteResult>('batch-write', {
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     files,
+    expected_workspace_revision: expectedWorkspaceRevision,
   }, BATCH_WRITE_TIMEOUT_MS, undefined, WRITE_MAX_RETRIES);
+  if (typeof result.workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, result.workspace_revision);
+    for (const entry of result.results) {
+      if (entry.ok && typeof entry.new_version === 'string' && entry.new_version) {
+        const key = fileVersionKey(sandboxId, entry.path);
+        setFileVersionByKey(key, entry.new_version);
+        setWorkspaceRevisionByKey(key, result.workspace_revision);
+      }
+    }
+  }
+  if (typeof result.current_workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, result.current_workspace_revision);
+  }
+  return result;
 }
 
 export async function getSandboxDiff(
@@ -478,6 +559,7 @@ export interface RestoreResult {
   ok: boolean;
   restoredFiles?: number;
   error?: string;
+  workspaceRevision?: number;
 }
 
 export async function hydrateSnapshotInSandbox(
@@ -489,6 +571,7 @@ export async function hydrateSnapshotInSandbox(
     ok: boolean;
     restored_files?: number;
     error?: string;
+    workspace_revision?: number;
   }>('restore', {
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
@@ -496,11 +579,15 @@ export async function hydrateSnapshotInSandbox(
     path,
     format: 'tar.gz',
   }, RESTORE_TIMEOUT_MS);
+  if (typeof raw.workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, raw.workspace_revision);
+  }
 
   return {
     ok: raw.ok,
     restoredFiles: raw.restored_files,
     error: raw.error,
+    workspaceRevision: raw.workspace_revision,
   };
 }
 
@@ -530,11 +617,15 @@ export async function deleteFromSandbox(
   sandboxId: string,
   path: string,
 ): Promise<void> {
-  const data = await sandboxFetch<{ ok: boolean; error?: string }>('delete', {
+  const data = await sandboxFetch<{ ok: boolean; error?: string; workspace_revision?: number }>('delete', {
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
   });
+  if (typeof data.workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, data.workspace_revision);
+    deleteFileVersion(sandboxId, path);
+  }
   if (!data.ok) throw new Error(data.error || 'Delete failed');
 }
 

@@ -2511,6 +2511,8 @@ export function useChat(
             const commitResult = await execInSandbox(
               sandboxId,
               `cd /workspace && git add -A && git commit -m '${safeCommitMessage}'`,
+              undefined,
+              { markWorkspaceMutated: true },
             );
 
             if (commitResult.exitCode !== 0) {
@@ -2528,7 +2530,12 @@ export function useChat(
               return { ...card, data: { ...card.data, status: 'pushing' } as CommitReviewCardData };
             });
 
-            const pushResult = await execInSandbox(sandboxId, 'cd /workspace && git push origin HEAD');
+            const pushResult = await execInSandbox(
+              sandboxId,
+              'cd /workspace && git push origin HEAD',
+              undefined,
+              { markWorkspaceMutated: true },
+            );
 
             if (pushResult.exitCode !== 0) {
               const pushErrorDetail = pushResult.stderr || pushResult.stdout || 'Unknown error';
@@ -2690,10 +2697,18 @@ export function useChat(
               action.path,
               action.content,
               action.expectedVersion,
+              action.expectedWorkspaceRevision,
             );
 
             if (!writeResult.ok) {
-              if (writeResult.code === 'STALE_FILE') {
+              if (writeResult.code === 'WORKSPACE_CHANGED') {
+                const expected = writeResult.expected_workspace_revision ?? action.expectedWorkspaceRevision ?? 'unknown';
+                const current = writeResult.current_workspace_revision ?? writeResult.workspace_revision ?? 'unknown';
+                injectSyntheticMessage(
+                  chatId,
+                  `Save blocked for ${action.path}: workspace changed since last read (expected revision ${expected}, current ${current}). Re-open and retry.`,
+                );
+              } else if (writeResult.code === 'STALE_FILE') {
                 const expected = writeResult.expected_version || action.expectedVersion || 'unknown';
                 const current = writeResult.current_version || 'missing';
                 injectSyntheticMessage(
@@ -2715,6 +2730,7 @@ export function useChat(
                   content: action.content,
                   truncated: false,
                   version: typeof writeResult.new_version === 'string' ? writeResult.new_version : card.data.version,
+                  workspaceRevision: typeof writeResult.workspace_revision === 'number' ? writeResult.workspace_revision : card.data.workspaceRevision,
                 },
               };
             });

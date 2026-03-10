@@ -37,6 +37,7 @@ sandbox_image = (
 # Image for the web endpoint functions themselves (needs FastAPI + remote browser control)
 endpoint_image = modal.Image.debian_slim(python_version="3.12").pip_install("fastapi[standard]")
 OWNER_TOKEN_FILE = "/tmp/push-owner-token"
+WORKSPACE_REVISION_FILE = "/tmp/push-workspace-revision"
 MAX_ARCHIVE_BYTES = 100_000_000
 LIST_DIR_SCRIPT = """
 import json
@@ -94,7 +95,7 @@ print(hashlib.sha256(payload).hexdigest())
 # Consolidated write script — does version check + mkdir + write + verify + hash
 # in a single subprocess call instead of 5 separate exec() calls.
 # Accepts JSON via a temp file whose path is passed as sys.argv[1].
-# Outputs a JSON result: { ok, bytes_written?, new_version?, code?, expected_version?, current_version?, error? }
+# Outputs a JSON result: { ok, bytes_written?, new_version?, workspace_revision?, code?, expected_version?, current_version?, error? }
 WRITE_FILE_SCRIPT = """
 import hashlib, pathlib, base64, json, os, sys
 
@@ -107,6 +108,9 @@ except Exception as exc:
 path_str = data.get("path", "")
 content_b64 = data.get("content_b64", "")
 expected_version = data.get("expected_version", "")
+expected_workspace_revision = data.get("expected_workspace_revision")
+revision_file = pathlib.Path(sys.argv[2])
+lock_file = revision_file.with_suffix(revision_file.suffix + ".lock")
 
 if not path_str:
     print(json.dumps({"ok": False, "error": "Missing path"}))
@@ -122,72 +126,109 @@ if not path_str.startswith("/workspace/") and path_str != "/workspace":
 
 p = pathlib.Path(path_str)
 
-# Step 1: Version check (if expected_version provided)
-if expected_version:
-    if p.exists() and p.is_file():
+try:
+    import fcntl, tempfile
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_file, "w", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:
-            current = hashlib.sha256(p.read_bytes()).hexdigest()
+            current_workspace_revision = int(revision_file.read_text(encoding="utf-8").strip()) if revision_file.exists() else 0
+        except Exception:
+            current_workspace_revision = 0
+
+        if expected_workspace_revision is not None:
+            try:
+                expected_workspace_revision = int(expected_workspace_revision)
+            except Exception:
+                print(json.dumps({"ok": False, "error": f"Invalid expected_workspace_revision: {expected_workspace_revision}"}))
+                sys.exit(0)
+            if current_workspace_revision != expected_workspace_revision:
+                print(json.dumps({
+                    "ok": False,
+                    "code": "WORKSPACE_CHANGED",
+                    "error": "Workspace changed since last read. Re-read before writing.",
+                    "expected_workspace_revision": expected_workspace_revision,
+                    "current_workspace_revision": current_workspace_revision,
+                }))
+                sys.exit(0)
+
+        # Step 1: Version check (if expected_version provided)
+        if expected_version:
+            if p.exists() and p.is_file():
+                try:
+                    current = hashlib.sha256(p.read_bytes()).hexdigest()
+                except Exception as exc:
+                    print(json.dumps({"ok": False, "error": f"Version check failed: {exc}"}))
+                    sys.exit(0)
+                if current != expected_version:
+                    print(json.dumps({
+                        "ok": False,
+                        "code": "STALE_FILE",
+                        "error": "Stale file version. Re-read the file before writing.",
+                        "expected_version": expected_version,
+                        "current_version": current,
+                        "workspace_revision": current_workspace_revision,
+                    }))
+                    sys.exit(0)
+
+        # Step 2: Create parent directory
+        try:
+            parent = os.path.dirname(path_str)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
         except Exception as exc:
-            print(json.dumps({"ok": False, "error": f"Version check failed: {exc}"}))
+            print(json.dumps({"ok": False, "error": f"Failed to create directory: {exc}"}))
             sys.exit(0)
-        if current != expected_version:
+
+        # Step 3: Write content via atomic temp + rename to prevent partial writes
+        try:
+            content = base64.b64decode(content_b64)
+            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path_str))
+            try:
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(content)
+                    f.flush()
+                    os.fsync(f.fileno())
+                # Preserve permissions of the original file if it exists
+                try:
+                    mode = os.stat(path_str).st_mode
+                    os.chmod(tmp_path, mode)
+                except FileNotFoundError:
+                    pass
+                os.rename(tmp_path, path_str)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": f"Write failed: {exc}"}))
+            sys.exit(0)
+
+        # Step 4+5: Verify size + compute new version + bump workspace revision
+        try:
+            actual_size = p.stat().st_size
+            new_version = hashlib.sha256(p.read_bytes()).hexdigest()
+            next_workspace_revision = current_workspace_revision + 1
+            revision_file.write_text(str(next_workspace_revision), encoding="utf-8")
             print(json.dumps({
-                "ok": False,
-                "code": "STALE_FILE",
-                "error": "Stale file version. Re-read the file before writing.",
-                "expected_version": expected_version,
-                "current_version": current,
+                "ok": True,
+                "bytes_written": actual_size,
+                "new_version": new_version,
+                "workspace_revision": next_workspace_revision,
             }))
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": f"Verification failed: {exc}"}))
             sys.exit(0)
-
-# Step 2: Create parent directory
-try:
-    parent = os.path.dirname(path_str)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-except Exception as exc:
-    print(json.dumps({"ok": False, "error": f"Failed to create directory: {exc}"}))
-    sys.exit(0)
-
-# Step 3: Write content via atomic temp + rename to prevent partial writes
-try:
-    content = base64.b64decode(content_b64)
-    import tempfile
-    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path_str))
-    try:
-        with os.fdopen(fd, 'wb') as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-        # Preserve permissions of the original file if it exists
-        try:
-            mode = os.stat(path_str).st_mode
-            os.chmod(tmp_path, mode)
-        except FileNotFoundError:
-            pass
-        os.rename(tmp_path, path_str)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
 except Exception as exc:
     print(json.dumps({"ok": False, "error": f"Write failed: {exc}"}))
     sys.exit(0)
-
-# Step 4+5: Verify size + compute new version
-try:
-    actual_size = p.stat().st_size
-    new_version = hashlib.sha256(p.read_bytes()).hexdigest()
-    print(json.dumps({"ok": True, "bytes_written": actual_size, "new_version": new_version}))
-except Exception as exc:
-    print(json.dumps({"ok": False, "error": f"Verification failed: {exc}"}))
 """
 
 # Batch write script — writes multiple files in a single subprocess call.
 # Accepts JSON via a temp file whose path is passed as sys.argv[1].
-# Outputs a JSON result: { results: [{ ok, path, bytes_written?, new_version?, ... }] }
+# Outputs a JSON result: { ok, workspace_revision?, results: [{ ok, path, bytes_written?, new_version?, ... }] }
 BATCH_WRITE_SCRIPT = """
 import hashlib, pathlib, base64, json, os, sys
 
@@ -198,88 +239,131 @@ except Exception as exc:
     sys.exit(0)
 
 files = data.get("files", [])
+expected_workspace_revision = data.get("expected_workspace_revision")
+revision_file = pathlib.Path(sys.argv[2])
+lock_file = revision_file.with_suffix(revision_file.suffix + ".lock")
 results = []
 
-for f in files:
-    path_str = f.get("path", "")
-    content_b64 = f.get("content_b64", "")
-    expected_version = f.get("expected_version", "")
-
-    if not path_str:
-        results.append({"ok": False, "path": path_str, "error": "Missing path"})
-        continue
-
-    # Normalize relative paths to /workspace and block traversal
-    if not os.path.isabs(path_str):
-        path_str = os.path.join("/workspace", path_str)
-    path_str = os.path.normpath(path_str)
-    if not path_str.startswith("/workspace/") and path_str != "/workspace":
-        results.append({"ok": False, "path": path_str, "error": f"Path outside /workspace is not allowed: {path_str}"})
-        continue
-
-    p = pathlib.Path(path_str)
-
-    # Version check
-    if expected_version:
-        if p.exists() and p.is_file():
-            try:
-                current = hashlib.sha256(p.read_bytes()).hexdigest()
-            except Exception as exc:
-                results.append({"ok": False, "path": path_str, "error": f"Version check failed: {exc}"})
-                continue
-            if current != expected_version:
-                results.append({
-                    "ok": False, "path": path_str, "code": "STALE_FILE",
-                    "error": "Stale file version.",
-                    "expected_version": expected_version, "current_version": current,
-                })
-                continue
-
-    # Create parent directory
-    try:
-        parent = os.path.dirname(path_str)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-    except Exception as exc:
-        results.append({"ok": False, "path": path_str, "error": f"Failed to create directory: {exc}"})
-        continue
-
-    # Write content via atomic temp + rename
-    try:
-        content = base64.b64decode(content_b64)
-        import tempfile
-        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path_str))
+try:
+    import fcntl, tempfile
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_file, "w", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:
-            with os.fdopen(fd, 'wb') as f:
-                f.write(content)
-                f.flush()
-                os.fsync(f.fileno())
-            # Preserve permissions of the original file if it exists
-            try:
-                mode = os.stat(path_str).st_mode
-                os.chmod(tmp_path, mode)
-            except FileNotFoundError:
-                pass
-            os.rename(tmp_path, path_str)
+            current_workspace_revision = int(revision_file.read_text(encoding="utf-8").strip()) if revision_file.exists() else 0
         except Exception:
+            current_workspace_revision = 0
+
+        if expected_workspace_revision is not None:
             try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-    except Exception as exc:
-        results.append({"ok": False, "path": path_str, "error": f"Write failed: {exc}"})
-        continue
+                expected_workspace_revision = int(expected_workspace_revision)
+            except Exception:
+                print(json.dumps({
+                    "ok": False,
+                    "error": f"Invalid expected_workspace_revision: {expected_workspace_revision}",
+                    "results": [],
+                }))
+                sys.exit(0)
+            if current_workspace_revision != expected_workspace_revision:
+                print(json.dumps({
+                    "ok": False,
+                    "code": "WORKSPACE_CHANGED",
+                    "error": "Workspace changed since last read. Re-read before writing.",
+                    "expected_workspace_revision": expected_workspace_revision,
+                    "current_workspace_revision": current_workspace_revision,
+                    "results": [],
+                }))
+                sys.exit(0)
 
-    # Verify + new version
-    try:
-        actual_size = p.stat().st_size
-        new_version = hashlib.sha256(p.read_bytes()).hexdigest()
-        results.append({"ok": True, "path": path_str, "bytes_written": actual_size, "new_version": new_version})
-    except Exception as exc:
-        results.append({"ok": False, "path": path_str, "error": f"Verification failed: {exc}"})
+        wrote_any = False
 
-print(json.dumps({"results": results}))
+        for f in files:
+            path_str = f.get("path", "")
+            content_b64 = f.get("content_b64", "")
+            expected_version = f.get("expected_version", "")
+
+            if not path_str:
+                results.append({"ok": False, "path": path_str, "error": "Missing path"})
+                continue
+
+            # Normalize relative paths to /workspace and block traversal
+            if not os.path.isabs(path_str):
+                path_str = os.path.join("/workspace", path_str)
+            path_str = os.path.normpath(path_str)
+            if not path_str.startswith("/workspace/") and path_str != "/workspace":
+                results.append({"ok": False, "path": path_str, "error": f"Path outside /workspace is not allowed: {path_str}"})
+                continue
+
+            p = pathlib.Path(path_str)
+
+            # Version check
+            if expected_version:
+                if p.exists() and p.is_file():
+                    try:
+                        current = hashlib.sha256(p.read_bytes()).hexdigest()
+                    except Exception as exc:
+                        results.append({"ok": False, "path": path_str, "error": f"Version check failed: {exc}"})
+                        continue
+                    if current != expected_version:
+                        results.append({
+                            "ok": False, "path": path_str, "code": "STALE_FILE",
+                            "error": "Stale file version.",
+                            "expected_version": expected_version, "current_version": current,
+                            "workspace_revision": current_workspace_revision,
+                        })
+                        continue
+
+            # Create parent directory
+            try:
+                parent = os.path.dirname(path_str)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+            except Exception as exc:
+                results.append({"ok": False, "path": path_str, "error": f"Failed to create directory: {exc}"})
+                continue
+
+            # Write content via atomic temp + rename
+            try:
+                content = base64.b64decode(content_b64)
+                fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path_str))
+                try:
+                    with os.fdopen(fd, 'wb') as f:
+                        f.write(content)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    # Preserve permissions of the original file if it exists
+                    try:
+                        mode = os.stat(path_str).st_mode
+                        os.chmod(tmp_path, mode)
+                    except FileNotFoundError:
+                        pass
+                    os.rename(tmp_path, path_str)
+                except Exception:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
+            except Exception as exc:
+                results.append({"ok": False, "path": path_str, "error": f"Write failed: {exc}"})
+                continue
+
+            # Verify + new version
+            try:
+                actual_size = p.stat().st_size
+                new_version = hashlib.sha256(p.read_bytes()).hexdigest()
+                wrote_any = True
+                results.append({"ok": True, "path": path_str, "bytes_written": actual_size, "new_version": new_version})
+            except Exception as exc:
+                results.append({"ok": False, "path": path_str, "error": f"Verification failed: {exc}"})
+
+        next_workspace_revision = current_workspace_revision
+        if wrote_any:
+            next_workspace_revision += 1
+            revision_file.write_text(str(next_workspace_revision), encoding="utf-8")
+        print(json.dumps({"ok": all(r.get("ok", False) for r in results), "workspace_revision": next_workspace_revision, "results": results}))
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": f"Batch write failed: {exc}", "results": []}))
 """
 
 
@@ -461,6 +545,93 @@ def _get_file_version(sb: modal.Sandbox, path: str) -> tuple[str | None, str | N
     return (version or None), None
 
 
+def _set_workspace_revision(sb: modal.Sandbox, revision: int) -> str | None:
+    p = sb.exec(
+        "python3",
+        "-c",
+        (
+            "import pathlib,sys;"
+            "path=pathlib.Path(sys.argv[1]);"
+            "path.parent.mkdir(parents=True, exist_ok=True);"
+            "path.write_text(str(int(sys.argv[2])), encoding='utf-8')"
+        ),
+        WORKSPACE_REVISION_FILE,
+        str(revision),
+    )
+    if not _wait_with_timeout(p, timeout_seconds=10):
+        return "Workspace revision init timed out"
+    if p.returncode != 0:
+        stderr = p.stderr.read().strip()
+        return f"Workspace revision init failed: {stderr or 'unknown error'}"
+    return None
+
+
+def _get_workspace_revision(sb: modal.Sandbox) -> tuple[int | None, str | None]:
+    p = sb.exec(
+        "python3",
+        "-c",
+        """
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+value = "0"
+if path.exists():
+    value = path.read_text(encoding="utf-8").strip() or "0"
+print(int(value))
+""",
+        WORKSPACE_REVISION_FILE,
+    )
+    if not _wait_with_timeout(p, timeout_seconds=10):
+        return None, "Workspace revision read timed out"
+    if p.returncode != 0:
+        stderr = p.stderr.read().strip()
+        return None, f"Workspace revision read failed: {stderr or 'unknown error'}"
+    raw = p.stdout.read().strip() or "0"
+    try:
+        return int(raw), None
+    except ValueError:
+        return 0, None
+
+
+def _bump_workspace_revision(sb: modal.Sandbox) -> tuple[int | None, str | None]:
+    p = sb.exec(
+        "python3",
+        "-c",
+        """
+import fcntl
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+lock = path.with_suffix(path.suffix + ".lock")
+lock.parent.mkdir(parents=True, exist_ok=True)
+
+with open(lock, "w", encoding="utf-8") as fh:
+    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+    raw = path.read_text(encoding="utf-8").strip() if path.exists() else "0"
+    try:
+        current = int(raw or "0")
+    except ValueError:
+        current = 0
+    current += 1
+    path.write_text(str(current), encoding="utf-8")
+    print(current)
+""",
+        WORKSPACE_REVISION_FILE,
+    )
+    if not _wait_with_timeout(p, timeout_seconds=10):
+        return None, "Workspace revision bump timed out"
+    if p.returncode != 0:
+        stderr = p.stderr.read().strip()
+        return None, f"Workspace revision bump failed: {stderr or 'unknown error'}"
+    raw = p.stdout.read().strip() or "0"
+    try:
+        return int(raw), None
+    except ValueError:
+        return None, "Workspace revision bump returned invalid data"
+
+
 def _truncate_read_content(content: str, start_line: int, max_chars: int) -> dict:
     """Truncate read content at line boundaries when possible.
 
@@ -566,8 +737,12 @@ def create(data: dict):
     if not owner_token:
         sb.terminate()
         return {"error": "Failed to initialize sandbox access token", "sandbox_id": None}
+    revision_error = _set_workspace_revision(sb, 0)
+    if revision_error:
+        sb.terminate()
+        return {"error": revision_error, "sandbox_id": None}
 
-    return {"sandbox_id": sb.object_id, "owner_token": owner_token, "status": "ready"}
+    return {"sandbox_id": sb.object_id, "owner_token": owner_token, "status": "ready", "workspace_revision": 0}
 
 
 @app.function(image=endpoint_image)
@@ -578,6 +753,7 @@ def exec_command(data: dict):
     owner_token = data.get("owner_token", "")
     command = data.get("command", "")
     workdir = data.get("workdir", "/workspace")
+    mark_workspace_mutated = bool(data.get("mark_workspace_mutated"))
 
     if not sandbox_id or not command:
         return {
@@ -610,22 +786,39 @@ def exec_command(data: dict):
         completed = _wait_with_timeout(p, timeout_seconds=110)
 
         if not completed:
+            workspace_revision, _ = _get_workspace_revision(sb)
             return {
                 "stdout": "",
                 "stderr": "Command timed out after 110 seconds. The operation may still be running in the sandbox.",
                 "exit_code": -1,
                 "truncated": False,
                 "error": "Command execution timed out",
+                "workspace_revision": workspace_revision,
             }
 
         stdout = p.stdout.read()
         stderr = p.stderr.read()
+        workspace_revision = None
+        revision_error = None
+        if mark_workspace_mutated:
+            workspace_revision, revision_error = _bump_workspace_revision(sb)
+        else:
+            workspace_revision, revision_error = _get_workspace_revision(sb)
+        if revision_error:
+            return {
+                "stdout": stdout[:10_000],
+                "stderr": stderr[:5_000],
+                "exit_code": p.returncode,
+                "truncated": len(stdout) > 10_000 or len(stderr) > 5_000,
+                "error": revision_error,
+            }
 
         return {
             "stdout": stdout[:10_000],
             "stderr": stderr[:5_000],
             "exit_code": p.returncode,
             "truncated": len(stdout) > 10_000 or len(stderr) > 5_000,
+            "workspace_revision": workspace_revision,
         }
     except Exception as exc:
         return _sandbox_error_response(exc, {"stdout": "", "stderr": "", "exit_code": -1, "truncated": False})
@@ -663,6 +856,8 @@ def file_ops(data: dict):
     sb, sandbox_error = _load_sandbox(str(sandbox_id))
     if not sb:
         error_message = sandbox_error or "Sandbox unavailable"
+        if action == "batch_write":
+            return {"ok": False, "error": error_message, "results": []}
         if action in ("write", "delete", "hydrate"):
             return {"ok": False, "error": error_message}
         if action == "read":
@@ -670,6 +865,8 @@ def file_ops(data: dict):
         return {"error": error_message, "entries": []}
 
     if not _validate_owner_token(sb, owner_token):
+        if action == "batch_write":
+            return {"ok": False, "error": "Unauthorized sandbox access", "results": []}
         if action in ("write", "delete", "hydrate"):
             return {"ok": False, "error": "Unauthorized sandbox access"}
         if action == "read":
@@ -696,6 +893,10 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
     if action == "read":
         if not path:
             return {"error": "Missing sandbox_id or path"}
+
+        before_revision, before_revision_error = _get_workspace_revision(sb)
+        if before_revision_error:
+            return {"error": before_revision_error, "content": ""}
 
         # Optional line-range parameters
         raw_start = data.get("start_line")
@@ -739,11 +940,23 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
         version, version_error = _get_file_version(sb, path)
         if version_error:
             return {"error": version_error, "content": ""}
+        after_revision, after_revision_error = _get_workspace_revision(sb)
+        if after_revision_error:
+            return {"error": after_revision_error, "content": ""}
+        if before_revision != after_revision:
+            return {
+                "error": "Workspace changed during read. Retry the read before editing.",
+                "code": "WORKSPACE_CHANGED",
+                "content": "",
+                "expected_workspace_revision": before_revision,
+                "current_workspace_revision": after_revision,
+            }
 
         max_read_chars = 200_000  # 200KB — fits files up to ~3000 lines without chunking
         result = {
             **_truncate_read_content(content, start_line if use_range else 1, max_read_chars),
             "version": version,
+            "workspace_revision": after_revision,
         }
         if use_range:
             result["start_line"] = start_line
@@ -755,6 +968,7 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
         content = str(data.get("content", ""))
         expected_version_raw = data.get("expected_version")
         expected_version = expected_version_raw.strip() if isinstance(expected_version_raw, str) else ""
+        expected_workspace_revision = data.get("expected_workspace_revision")
         if not path:
             return {"ok": False, "error": "Missing sandbox_id or path"}
 
@@ -766,13 +980,14 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
             "path": path,
             "content_b64": encoded,
             "expected_version": expected_version,
+            "expected_workspace_revision": expected_workspace_revision,
         })
         tmp_path = _sandbox_tmp_path("push-write-payload")
         try:
             upload_err = _write_temp_payload(sb, write_payload, tmp_path)
             if upload_err:
                 return {"ok": False, "error": upload_err}
-            p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT, tmp_path)
+            p = sb.exec("python3", "-c", WRITE_FILE_SCRIPT, tmp_path, WORKSPACE_REVISION_FILE)
             if not _wait_with_timeout(p, timeout_seconds=55):
                 return {"ok": False, "error": "Write timed out after 55 seconds. The sandbox may be under heavy load."}
             if p.returncode != 0:
@@ -797,6 +1012,7 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
 
     if action == "batch_write":
         files = data.get("files", [])
+        expected_workspace_revision = data.get("expected_workspace_revision")
         if not isinstance(files, list) or len(files) == 0:
             return {"ok": False, "error": "Missing or empty files array", "results": []}
         if len(files) > 20:
@@ -815,13 +1031,16 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
                 "expected_version": expected_ver,
             })
 
-        batch_payload = json.dumps({"files": batch_entries})
+        batch_payload = json.dumps({
+            "files": batch_entries,
+            "expected_workspace_revision": expected_workspace_revision,
+        })
         tmp_path = _sandbox_tmp_path("push-batch-payload")
         try:
             upload_err = _write_temp_payload(sb, batch_payload, tmp_path)
             if upload_err:
                 return {"ok": False, "error": upload_err, "results": []}
-            p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT, tmp_path)
+            p = sb.exec("python3", "-c", BATCH_WRITE_SCRIPT, tmp_path, WORKSPACE_REVISION_FILE)
             if not _wait_with_timeout(p, timeout_seconds=55):
                 return {"ok": False, "error": "Batch write timed out after 55 seconds.", "results": []}
             if p.returncode != 0:
@@ -838,8 +1057,15 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
                 return {"ok": False, "error": f"Batch write script produced invalid JSON: {stdout[:200]}", "results": []}
 
             results = batch_result.get("results", [])
-            all_ok = all(r.get("ok", False) for r in results)
-            return {"ok": all_ok, "results": results}
+            return {
+                "ok": bool(batch_result.get("ok", all(r.get("ok", False) for r in results))),
+                "results": results,
+                "error": batch_result.get("error"),
+                "code": batch_result.get("code"),
+                "workspace_revision": batch_result.get("workspace_revision"),
+                "expected_workspace_revision": batch_result.get("expected_workspace_revision"),
+                "current_workspace_revision": batch_result.get("current_workspace_revision"),
+            }
         finally:
             try:
                 sb.exec("rm", "-f", tmp_path).wait()
@@ -901,7 +1127,10 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
         restored_files = int(restored_files_raw) if restored_files_raw.isdigit() else 0
 
         sb.exec("rm", "-f", tmp_b64, tmp_archive).wait()
-        return {"ok": True, "restored_files": restored_files}
+        next_revision, revision_error = _bump_workspace_revision(sb)
+        if revision_error:
+            return {"ok": False, "error": revision_error}
+        return {"ok": True, "restored_files": restored_files, "workspace_revision": next_revision}
 
     if action == "list":
         target = path or "/workspace"
@@ -947,7 +1176,12 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
 
     p = sb.exec("rm", "-rf", path)
     p.wait()
-    return {"ok": p.returncode == 0}
+    if p.returncode != 0:
+        return {"ok": False, "error": "Delete failed"}
+    next_revision, revision_error = _bump_workspace_revision(sb)
+    if revision_error:
+        return {"ok": False, "error": revision_error}
+    return {"ok": True, "workspace_revision": next_revision}
 
 
 @app.function(image=endpoint_image)

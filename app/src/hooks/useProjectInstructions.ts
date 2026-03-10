@@ -110,6 +110,8 @@ export function useProjectInstructions(
     const commitResult = await execInSandbox(
       sandboxId,
       `cd /workspace && if [ ! -d .git ]; then git init >/dev/null 2>&1; fi && git add AGENTS.md && if git diff --cached --quiet; then echo "__PUSH_NO_CHANGES__"; else git commit -m "Add project instructions"; fi`,
+      undefined,
+      { markWorkspaceMutated: true },
     );
 
     if (commitResult.exitCode !== 0) {

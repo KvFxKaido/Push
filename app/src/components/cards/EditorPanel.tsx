@@ -61,6 +61,7 @@ export function EditorPanel({
       content: editedContent,
       sandboxId: data.sandboxId,
       expectedVersion: data.version,
+      expectedWorkspaceRevision: data.workspaceRevision,
     });
     // The parent will handle the actual write — we optimistically show saved state
     setTimeout(() => setSaving(false), 1000);

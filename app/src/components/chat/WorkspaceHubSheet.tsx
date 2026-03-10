@@ -390,6 +390,8 @@ export function WorkspaceHubSheet({
         const switchResult = await execInSandbox(
           sandboxId,
           `cd /workspace && if git show-ref --verify --quiet refs/heads/${target.branchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ls-remote --exit-code --heads origin ${target.branchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi && git switch -c ${target.branchName}`,
+          undefined,
+          { markWorkspaceMutated: true },
         );
 
         if (switchResult.exitCode !== 0) {
@@ -432,6 +434,8 @@ export function WorkspaceHubSheet({
       const commitResult = await execInSandbox(
         sandboxId,
         `cd /workspace && git add -A && if git diff --cached --quiet; then echo "__PUSH_NO_CHANGES__"; else git commit -m '${safeMessage}'; fi`,
+        undefined,
+        { markWorkspaceMutated: true },
       );
 
       if (commitResult.exitCode !== 0) {
@@ -452,7 +456,12 @@ export function WorkspaceHubSheet({
       const pushCommand = target.mode === 'new' && target.branchName
         ? `cd /workspace && git push -u origin HEAD:refs/heads/${target.branchName}`
         : 'cd /workspace && git push origin HEAD';
-      const pushResult = await execInSandbox(sandboxId, pushCommand);
+      const pushResult = await execInSandbox(
+        sandboxId,
+        pushCommand,
+        undefined,
+        { markWorkspaceMutated: true },
+      );
       if (pushResult.exitCode !== 0) {
         const detail = pushResult.stderr || pushResult.stdout || 'Unknown git error';
         setCommitPhase('error');
