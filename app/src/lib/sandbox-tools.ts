@@ -716,11 +716,13 @@ async function buildRangeReplaceHashlineOps(
   const anchorOldRef = await refForVisibleLine(startLine);
   ops.push({ op: 'replace_line', ref: anchorOldRef, content: replacementLines[0] });
 
-  // Insert additional lines after the anchor. Reversed insertion preserves final order.
+  // Insert additional lines after the anchor.
   // Use the original anchor ref — applyHashlineEdits resolves all refs against the
   // original content upfront, so a ref based on the post-replace hash would fail.
+  // Same-anchor insert_after ops are applied in declaration order
+  // (applyHashlineEdits shifts indices for stacking), so no .reverse().
   if (replacementLines.length > 1) {
-    for (const line of replacementLines.slice(1).reverse()) {
+    for (const line of replacementLines.slice(1)) {
       ops.push({ op: 'insert_after', ref: anchorOldRef, content: line });
     }
   }
@@ -1667,7 +1669,9 @@ export async function executeSandboxToolCall(
         if (newLines.length > 1) {
           // Use the original anchor ref — applyHashlineEdits resolves all refs
           // against the original content, so a post-replace hash would fail.
-          for (const line of newLines.slice(1).reverse()) {
+          // Same-anchor insert_after ops are applied in declaration order
+          // (applyHashlineEdits shifts indices for stacking), so no .reverse().
+          for (const line of newLines.slice(1)) {
             ops.push({ op: 'insert_after', ref: anchorRef, content: line });
           }
         }
