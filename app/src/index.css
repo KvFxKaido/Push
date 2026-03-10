@@ -4,6 +4,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* tailwindcss-animate v1.0.7 omits fill-mode — without it, animate-out
+   elements snap back to visible after the exit animation completes,
+   which breaks any forceMount sheet/dialog. */
+@layer utilities {
+  .animate-in,
+  .animate-out,
+  [data-state="open"].animate-in,
+  [data-state="closed"].animate-out {
+    animation-fill-mode: both;
+  }
+}
+
 @layer base {
   :root {
     color-scheme: dark;

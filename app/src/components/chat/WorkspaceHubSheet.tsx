@@ -809,7 +809,7 @@ export function WorkspaceHubSheet({
 
   // ---- Render ----
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={onOpenChange} modal={false}>
       <SheetContent
         forceMount
         side="right"
