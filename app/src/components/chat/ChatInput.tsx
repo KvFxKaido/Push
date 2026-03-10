@@ -51,6 +51,15 @@ interface ChatInputProps {
     isNvidiaModelLocked: boolean;
     refreshNvidiaModels: () => void;
     onSelectNvidiaModel: (model: string) => void;
+    azureModel: string;
+    isAzureModelLocked: boolean;
+    onSelectAzureModel: (model: string) => void;
+    bedrockModel: string;
+    isBedrockModelLocked: boolean;
+    onSelectBedrockModel: (model: string) => void;
+    vertexModel: string;
+    isVertexModelLocked: boolean;
+    onSelectVertexModel: (model: string) => void;
   };
 }
 
@@ -62,6 +71,9 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   openrouter: 'OpenRouter',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
+  azure: 'Azure OpenAI',
+  bedrock: 'AWS Bedrock',
+  vertex: 'Google Vertex',
   demo: 'Demo',
 };
 
@@ -235,6 +247,9 @@ export function ChatInput({
     if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
     if (selectedProvider === 'zen') return providerControls.zenModel;
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModel;
+    if (selectedProvider === 'azure') return providerControls.azureModel;
+    if (selectedProvider === 'bedrock') return providerControls.bedrockModel;
+    if (selectedProvider === 'vertex') return providerControls.vertexModel;
     return 'demo';
   })();
 
@@ -516,6 +531,51 @@ export function ChatInput({
                             <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isNvidiaModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'azure' && (
+                        <>
+                          <input
+                            type="text"
+                            value={providerControls.azureModel}
+                            onChange={(e) => providerControls.onSelectAzureModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
+                            placeholder="Deployment or model"
+                          />
+                          {providerControls.isAzureModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a deployment starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'bedrock' && (
+                        <>
+                          <input
+                            type="text"
+                            value={providerControls.bedrockModel}
+                            onChange={(e) => providerControls.onSelectBedrockModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
+                            placeholder="Bedrock model id"
+                          />
+                          {providerControls.isBedrockModelLocked && (
+                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'vertex' && (
+                        <>
+                          <input
+                            type="text"
+                            value={providerControls.vertexModel}
+                            onChange={(e) => providerControls.onSelectVertexModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
+                            placeholder="Vertex model id"
+                          />
+                          {providerControls.isVertexModelLocked && (
                             <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

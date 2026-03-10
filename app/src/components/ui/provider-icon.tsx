@@ -10,6 +10,9 @@ const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
   // `zen` is represented by OpenCode branding.
   zen: 'https://models.dev/logos/opencode.svg',
   nvidia: 'https://models.dev/logos/nvidia.svg',
+  azure: 'https://models.dev/logos/azure.svg',
+  bedrock: 'https://models.dev/logos/aws.svg',
+  vertex: 'https://models.dev/logos/google.svg',
   demo: demoIcon,
 };
 
@@ -18,6 +21,9 @@ const PROVIDER_ALT: Record<AIProviderType, string> = {
   openrouter: 'OpenRouter logo',
   zen: 'OpenCode Zen logo',
   nvidia: 'NVIDIA NIM logo',
+  azure: 'Azure OpenAI logo',
+  bedrock: 'AWS Bedrock logo',
+  vertex: 'Google Vertex logo',
   demo: 'Push logo',
 };
 
@@ -26,6 +32,9 @@ const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
   openrouter: 'OR',
   zen: 'Z',
   nvidia: 'N',
+  azure: 'Az',
+  bedrock: 'B',
+  vertex: 'V',
   demo: 'P',
 };
 

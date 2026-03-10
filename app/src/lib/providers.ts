@@ -1,4 +1,9 @@
 import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/types';
+import {
+  getAzureModelName,
+  getBedrockModelName,
+  getVertexModelName,
+} from '@/hooks/useExperimentalProviderConfig';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 
 // ---------------------------------------------------------------------------
@@ -15,6 +20,9 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   openrouter: { chat: providerUrl('/openrouter/api/v1/chat/completions',    '/api/openrouter/chat'), models: providerUrl('/openrouter/api/v1/models',        '/api/openrouter/models') },
   zen:        { chat: providerUrl('/opencode/zen/v1/chat/completions',          '/api/zen/chat'),        models: providerUrl('/opencode/zen/v1/models',          '/api/zen/models')        },
   nvidia:     { chat: providerUrl('/nvidia/v1/chat/completions',                '/api/nvidia/chat'),     models: providerUrl('/nvidia/v1/models',                '/api/nvidia/models')     },
+  azure:      { chat: providerUrl('/api/azure/chat',                              '/api/azure/chat'),      models: providerUrl('/api/azure/models',                '/api/azure/models')      },
+  bedrock:    { chat: providerUrl('/api/bedrock/chat',                            '/api/bedrock/chat'),    models: providerUrl('/api/bedrock/models',              '/api/bedrock/models')    },
+  vertex:     { chat: providerUrl('/api/vertex/chat',                             '/api/vertex/chat'),     models: providerUrl('/api/vertex/models',               '/api/vertex/models')     },
   demo:       { chat: '',                                                                                models: ''                                                                        },
 };
 
@@ -27,6 +35,11 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
 // Nvidia NIM (OpenAI-compatible) default model
 export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
+// Experimental direct-deployment defaults — only used as placeholders before the user
+// configures a concrete deployment/model.
+export const AZURE_DEFAULT_MODEL = 'gpt-4.1';
+export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0';
+export const VERTEX_DEFAULT_MODEL = 'google/gemini-2.5-pro';
 
 export const OPENROUTER_MODELS: string[] = [
   // Claude 4 series
@@ -163,6 +176,30 @@ export const PROVIDERS: AIProviderConfig[] = [
     envUrl: 'https://build.nvidia.com',
     models: makeRoleModels(NVIDIA_DEFAULT_MODEL, 'Nvidia NIM', 'nvidia', 131_072),
   },
+  {
+    type: 'azure',
+    name: 'Azure OpenAI',
+    description: 'Experimental private connector for direct Azure OpenAI deployments',
+    envKey: 'VITE_AZURE_OPENAI_API_KEY',
+    envUrl: 'https://your-resource.openai.azure.com/openai/v1',
+    models: makeRoleModels(AZURE_DEFAULT_MODEL, 'Azure OpenAI', 'azure', 200_000),
+  },
+  {
+    type: 'bedrock',
+    name: 'AWS Bedrock',
+    description: 'Experimental private connector for direct Bedrock OpenAI-compatible endpoints',
+    envKey: 'VITE_BEDROCK_API_KEY',
+    envUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
+    models: makeRoleModels(BEDROCK_DEFAULT_MODEL, 'AWS Bedrock', 'bedrock', 200_000),
+  },
+  {
+    type: 'vertex',
+    name: 'Google Vertex',
+    description: 'Experimental private connector for direct Vertex AI OpenAI-compatible endpoints',
+    envKey: 'VITE_VERTEX_API_KEY',
+    envUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/PROJECT/locations/us-central1/endpoints/openapi',
+    models: makeRoleModels(VERTEX_DEFAULT_MODEL, 'Google Vertex', 'vertex', 1_000_000),
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -208,12 +245,24 @@ const nvidiaModel = createModelNameStorage('nvidia_model', NVIDIA_DEFAULT_MODEL)
 export const getNvidiaModelName = nvidiaModel.get;
 export const setNvidiaModelName = nvidiaModel.set;
 
+const azureModel = createModelNameStorage('azure_model', AZURE_DEFAULT_MODEL);
+export const setAzureModelName = azureModel.set;
+
+const bedrockModel = createModelNameStorage('bedrock_model', BEDROCK_DEFAULT_MODEL);
+export const setBedrockModelName = bedrockModel.set;
+
+const vertexModel = createModelNameStorage('vertex_model', VERTEX_DEFAULT_MODEL);
+export const setVertexModelName = vertexModel.set;
+
 /** Runtime model-name getters for providers where the user can override the default. */
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
   openrouter: getOpenRouterModelName,
   zen: getZenModelName,
   nvidia: getNvidiaModelName,
+  azure: getAzureModelName,
+  bedrock: getBedrockModelName,
+  vertex: getVertexModelName,
 };
 
 /** Return the current runtime model name for a provider, or undefined if unknown. */
@@ -239,11 +288,26 @@ export function getModelForRole(
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider = 'ollama' | 'openrouter' | 'zen' | 'nvidia';
+export type PreferredProvider =
+  | 'ollama'
+  | 'openrouter'
+  | 'zen'
+  | 'nvidia'
+  | 'azure'
+  | 'bedrock'
+  | 'vertex';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (stored === 'ollama' || stored === 'openrouter' || stored === 'zen' || stored === 'nvidia') return stored;
+  if (
+    stored === 'ollama'
+    || stored === 'openrouter'
+    || stored === 'zen'
+    || stored === 'nvidia'
+    || stored === 'azure'
+    || stored === 'bedrock'
+    || stored === 'vertex'
+  ) return stored;
   return null;
 }
 

@@ -18,6 +18,14 @@ describe('getContextBudget', () => {
     });
   });
 
+  it('uses the large Gemini budget for Vertex Gemini models too', () => {
+    expect(getContextBudget('vertex', 'google/gemini-2.5-pro')).toEqual({
+      maxTokens: 850_000,
+      targetTokens: 800_000,
+      summarizeTokens: 88_000,
+    });
+  });
+
   it('uses the large-context budget for non-Haiku Claude models', () => {
     expect(getContextBudget('openrouter', 'anthropic/claude-sonnet-4.6:nitro')).toEqual({
       maxTokens: 850_000,

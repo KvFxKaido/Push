@@ -60,11 +60,22 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   openrouter: 'push:review:model:openrouter',
   zen: 'push:review:model:zen',
   nvidia: 'push:review:model:nvidia',
+  azure: 'push:review:model:azure',
+  bedrock: 'push:review:model:bedrock',
+  vertex: 'push:review:model:vertex',
 };
 
 function readStoredReviewProvider(): PreferredProvider | null {
   const stored = safeStorageGet(REVIEW_PROVIDER_KEY);
-  if (stored === 'ollama' || stored === 'openrouter' || stored === 'zen' || stored === 'nvidia') {
+  if (
+    stored === 'ollama'
+    || stored === 'openrouter'
+    || stored === 'zen'
+    || stored === 'nvidia'
+    || stored === 'azure'
+    || stored === 'bedrock'
+    || stored === 'vertex'
+  ) {
     return stored;
   }
   return null;
@@ -76,6 +87,9 @@ function readStoredReviewModels(providerModels: Record<PreferredProvider, string
     openrouter: safeStorageGet(REVIEW_MODEL_KEYS.openrouter) || providerModels.openrouter,
     zen: safeStorageGet(REVIEW_MODEL_KEYS.zen) || providerModels.zen,
     nvidia: safeStorageGet(REVIEW_MODEL_KEYS.nvidia) || providerModels.nvidia,
+    azure: safeStorageGet(REVIEW_MODEL_KEYS.azure) || providerModels.azure,
+    bedrock: safeStorageGet(REVIEW_MODEL_KEYS.bedrock) || providerModels.bedrock,
+    vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || providerModels.vertex,
   };
 }
 
@@ -214,17 +228,31 @@ export function HubReviewTab({
         openrouter: prev.openrouter || providerModels.openrouter,
         zen: prev.zen || providerModels.zen,
         nvidia: prev.nvidia || providerModels.nvidia,
+        azure: prev.azure || providerModels.azure,
+        bedrock: prev.bedrock || providerModels.bedrock,
+        vertex: prev.vertex || providerModels.vertex,
       };
       return (
         next.ollama === prev.ollama &&
         next.openrouter === prev.openrouter &&
         next.zen === prev.zen &&
-        next.nvidia === prev.nvidia
+        next.nvidia === prev.nvidia &&
+        next.azure === prev.azure &&
+        next.bedrock === prev.bedrock &&
+        next.vertex === prev.vertex
       )
         ? prev
         : next;
     });
-  }, [providerModels.nvidia, providerModels.ollama, providerModels.openrouter, providerModels.zen]);
+  }, [
+    providerModels.azure,
+    providerModels.bedrock,
+    providerModels.nvidia,
+    providerModels.ollama,
+    providerModels.openrouter,
+    providerModels.vertex,
+    providerModels.zen,
+  ]);
 
   useEffect(() => {
     if (selectedProvider) {

@@ -11,6 +11,17 @@ import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
+import {
+  getAzureBaseUrl,
+  getAzureKey,
+  getAzureModelName,
+  getBedrockBaseUrl,
+  getBedrockKey,
+  getBedrockModelName,
+  getVertexBaseUrl,
+  getVertexKey,
+  getVertexModelName,
+} from '@/hooks/useExperimentalProviderConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
 import {
@@ -22,6 +33,8 @@ import {
   PROVIDER_URLS,
 } from './providers';
 import type { PreferredProvider } from './providers';
+import { buildExperimentalProxyHeaders, normalizeExperimentalBaseUrl } from './experimental-providers';
+import { extractProviderErrorDetail } from './provider-error-utils';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -39,14 +52,7 @@ export interface ChunkMetadata {
 import { asRecord } from './utils';
 
 function parseProviderError(parsed: unknown, fallback: string, includeTopLevelMessage = false): string {
-  const record = asRecord(parsed);
-  if (!record) return fallback;
-  const errorValue = record.error;
-  if (typeof errorValue === 'string') return errorValue;
-  const errorRecord = asRecord(errorValue);
-  if (typeof errorRecord?.message === 'string') return errorRecord.message;
-  if (includeTopLevelMessage && typeof record.message === 'string') return record.message;
-  return fallback;
+  return extractProviderErrorDetail(parsed, fallback, includeTopLevelMessage);
 }
 
 function hasFinishReason(choice: unknown, reasons: string[]): boolean {
@@ -150,7 +156,10 @@ export function getContextBudget(
 
   // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
   if (
-    (provider === 'ollama' || provider === 'openrouter' || provider === 'zen') &&
+    (provider === 'ollama'
+      || provider === 'openrouter'
+      || provider === 'zen'
+      || provider === 'vertex') &&
     normalizedModel.includes('gemini')
   ) {
     return GEMINI_CONTEXT_BUDGET;
@@ -631,7 +640,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia',
+  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'azure' | 'bedrock' | 'vertex',
   providerModel?: string,
 ): LLMMessage[] {
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
@@ -929,11 +938,13 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia';
+  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'azure' | 'bedrock' | 'vertex';
   /** Override the fetch URL (e.g., for providers with alternate endpoints) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
   bodyTransform?: (body: Record<string, unknown>) => Record<string, unknown>;
+  /** Extra headers required by proxy adapters. */
+  extraHeaders?: Record<string, string>;
 }
 
 interface AutoRetryConfig {
@@ -1021,6 +1032,7 @@ async function streamSSEChatOnce(
     providerType,
     apiUrlOverride,
     bodyTransform,
+    extraHeaders,
   } = config;
 
   const controller = new AbortController();
@@ -1085,6 +1097,7 @@ async function streamSSEChatOnce(
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
+        ...(extraHeaders ?? {}),
       },
       body: JSON.stringify(requestBody),
       signal: controller.signal,
@@ -1109,7 +1122,8 @@ async function streamSSEChatOnce(
         detail = `HTTP ${response.status} (the server returned an HTML error page instead of JSON)`;
       }
       console.error(`[Push] ${name} error: ${response.status}`, detail);
-      throw new Error(`${name} ${response.status}: ${detail}`);
+      const alreadyPrefixed = detail.toLowerCase().startsWith(name.toLowerCase());
+      throw new Error(alreadyPrefixed ? detail : `${name} ${response.status}: ${detail}`);
     }
 
     const reader = response.body?.getReader();
@@ -1319,6 +1333,32 @@ interface ProviderStreamEntry {
   buildConfig: (apiKey: string, modelOverride?: string) => Promise<StreamProviderConfig> | StreamProviderConfig;
 }
 
+function buildExperimentalStreamConfig(
+  provider: 'azure' | 'bedrock' | 'vertex',
+  name: string,
+  apiKey: string,
+  baseUrl: string,
+  model: string,
+): StreamProviderConfig {
+  const headers = buildExperimentalProxyHeaders(provider, baseUrl);
+  if (!headers['X-Push-Upstream-Base']) {
+    throw new Error(`${name} base URL is missing or invalid`);
+  }
+
+  return {
+    name,
+    apiUrl: PROVIDER_URLS[provider].chat,
+    apiKey,
+    model,
+    ...STANDARD_TIMEOUTS,
+    errorMessages: buildErrorMessages(name),
+    parseError: (p, f) => parseProviderError(p, f, true),
+    checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+    providerType: provider,
+    extraHeaders: headers,
+  };
+}
+
 const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
   ollama: {
     getKey: getOllamaKey,
@@ -1380,6 +1420,36 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       providerType: 'nvidia',
     }),
   },
+  azure: {
+    getKey: getAzureKey,
+    buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
+      'azure',
+      'Azure OpenAI',
+      apiKey,
+      getAzureBaseUrl(),
+      modelOverride || getAzureModelName(),
+    ),
+  },
+  bedrock: {
+    getKey: getBedrockKey,
+    buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
+      'bedrock',
+      'AWS Bedrock',
+      apiKey,
+      getBedrockBaseUrl(),
+      modelOverride || getBedrockModelName(),
+    ),
+  },
+  vertex: {
+    getKey: getVertexKey,
+    buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
+      'vertex',
+      'Google Vertex',
+      apiKey,
+      getVertexBaseUrl(),
+      modelOverride || getVertexModelName(),
+    ),
+  },
 };
 
 /** Core streaming function — looks up provider config and delegates to streamSSEChat. */
@@ -1409,7 +1479,13 @@ async function streamProviderChat(
     return;
   }
 
-  const config = await entry.buildConfig(apiKey, modelOverride);
+  let config: StreamProviderConfig;
+  try {
+    config = await entry.buildConfig(apiKey, modelOverride);
+  } catch (err) {
+    onError(err instanceof Error ? err : new Error(String(err)));
+    return;
+  }
 
   return streamSSEChat(
     config, messages, onToken, onDone, onError, onThinkingToken,
@@ -1437,19 +1513,32 @@ export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('o
 export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
 export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
+export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
+export const streamBedrockChat: StreamChatFn = (...args) => streamProviderChat('bedrock', ...args);
+export const streamVertexChat: StreamChatFn = (...args) => streamProviderChat('vertex', ...args);
 
 // ---------------------------------------------------------------------------
 // Active provider detection
 // ---------------------------------------------------------------------------
 
-export type ActiveProvider = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'demo';
+export type ActiveProvider =
+  | 'ollama'
+  | 'openrouter'
+  | 'zen'
+  | 'nvidia'
+  | 'azure'
+  | 'bedrock'
+  | 'vertex'
+  | 'demo';
 
-/** Key getter for each configurable provider. */
-const PROVIDER_KEY_GETTERS: Record<PreferredProvider, () => string | null> = {
-  ollama:      getOllamaKey,
-  openrouter:  getOpenRouterKey,
-  zen:         getZenKey,
-  nvidia:      getNvidiaKey,
+const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
+  ollama: () => Boolean(getOllamaKey()),
+  openrouter: () => Boolean(getOpenRouterKey()),
+  zen: () => Boolean(getZenKey()),
+  nvidia: () => Boolean(getNvidiaKey()),
+  azure: () => Boolean(getAzureKey() && normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok && getAzureModelName()),
+  bedrock: () => Boolean(getBedrockKey() && normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok && getBedrockModelName()),
+  vertex: () => Boolean(getVertexKey() && normalizeExperimentalBaseUrl('vertex', getVertexBaseUrl()).ok && getVertexModelName()),
 };
 
 /**
@@ -1469,12 +1558,12 @@ const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
 export function getActiveProvider(): ActiveProvider {
   const preferred = getPreferredProvider();
 
-  // Honour explicit preference when the key is available
-  if (preferred && PROVIDER_KEY_GETTERS[preferred]()) return preferred;
+  // Honour explicit preference when the provider is fully configured.
+  if (preferred && PROVIDER_READY_CHECKS[preferred]()) return preferred;
 
   // No preference (or preferred key was removed) — first available
   for (const p of PROVIDER_FALLBACK_ORDER) {
-    if (PROVIDER_KEY_GETTERS[p]()) return p;
+    if (PROVIDER_READY_CHECKS[p]()) return p;
   }
   return 'demo';
 }
@@ -1489,6 +1578,9 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
     case 'zen': return { providerType: 'zen' as const, streamFn: streamZenChat };
     case 'nvidia': return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
+    case 'azure': return { providerType: 'azure' as const, streamFn: streamAzureChat };
+    case 'bedrock': return { providerType: 'bedrock' as const, streamFn: streamBedrockChat };
+    case 'vertex': return { providerType: 'vertex' as const, streamFn: streamVertexChat };
     default:        return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
   }
 }
@@ -1539,6 +1631,18 @@ export async function streamChat(
 
   if (provider === 'nvidia') {
     return streamNvidiaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'azure') {
+    return streamAzureChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'bedrock') {
+    return streamBedrockChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  }
+
+  if (provider === 'vertex') {
+    return streamVertexChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
   }
 
   return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);

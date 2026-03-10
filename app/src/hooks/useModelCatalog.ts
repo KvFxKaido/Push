@@ -19,6 +19,7 @@ import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
+import { useAzureConfig, useBedrockConfig, useVertexConfig } from '@/hooks/useExperimentalProviderConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,26 @@ interface ProviderKeyConfig {
   setKeyInput: (v: string) => void;
 }
 
+interface ExperimentalProviderConfig {
+  keyInput: string;
+  setKeyInput: (value: string) => void;
+  setKey: (k: string) => void;
+  clearKey: () => void;
+  hasKey: boolean;
+  baseUrlInput: string;
+  setBaseUrlInput: (value: string) => void;
+  baseUrl: string;
+  baseUrlError: string | null;
+  setBaseUrl: (value: string) => void;
+  clearBaseUrl: () => void;
+  modelInput: string;
+  setModelInput: (value: string) => void;
+  model: string;
+  setModel: (m: string) => void;
+  clearModel: () => void;
+  isConfigured: boolean;
+}
+
 interface TavilyKeyConfig {
   setKey: (k: string) => void;
   clearKey: () => void;
@@ -56,6 +77,9 @@ export interface ModelCatalog {
   openRouter: ProviderKeyConfig;
   zen: ProviderKeyConfig;
   nvidia: ProviderKeyConfig;
+  azure: ExperimentalProviderConfig;
+  bedrock: ExperimentalProviderConfig;
+  vertex: ExperimentalProviderConfig;
   tavily: TavilyKeyConfig;
 
   // Active backend
@@ -106,6 +130,9 @@ export function useModelCatalog(): ModelCatalog {
   const openRouterCfg = useOpenRouterConfig();
   const zenCfg = useZenConfig();
   const nvidiaCfg = useNvidiaConfig();
+  const azureCfg = useAzureConfig();
+  const bedrockCfg = useBedrockConfig();
+  const vertexCfg = useVertexConfig();
   const tavilyCfg = useTavilyConfig();
 
   // Key input state (controlled text fields for Settings UI)
@@ -113,6 +140,15 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
   const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
+  const [azureKeyInput, setAzureKeyInput] = useState('');
+  const [azureBaseUrlInput, setAzureBaseUrlInput] = useState('');
+  const [azureModelInput, setAzureModelInput] = useState('');
+  const [bedrockKeyInput, setBedrockKeyInput] = useState('');
+  const [bedrockBaseUrlInput, setBedrockBaseUrlInput] = useState('');
+  const [bedrockModelInput, setBedrockModelInput] = useState('');
+  const [vertexKeyInput, setVertexKeyInput] = useState('');
+  const [vertexBaseUrlInput, setVertexBaseUrlInput] = useState('');
+  const [vertexModelInput, setVertexModelInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
 
   // Active backend state
@@ -125,6 +161,9 @@ export function useModelCatalog(): ModelCatalog {
     ['ollama', 'Ollama', ollamaCfg.hasKey],
     ['openrouter', 'OpenRouter', openRouterCfg.hasKey],
     ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
+    ['azure', 'Azure OpenAI', azureCfg.isConfigured],
+    ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],
+    ['vertex', 'Google Vertex', vertexCfg.isConfigured],
   ] as const).filter(([, , has]) => has);
 
   // ----- Per-provider model lists -----
@@ -242,6 +281,63 @@ export function useModelCatalog(): ModelCatalog {
     openRouter: { setKey: openRouterCfg.setKey, clearKey: openRouterCfg.clearKey, hasKey: openRouterCfg.hasKey, model: openRouterCfg.model, setModel: openRouterCfg.setModel, keyInput: openRouterKeyInput, setKeyInput: setOpenRouterKeyInput },
     zen: { setKey: zenCfg.setKey, clearKey: zenCfg.clearKey, hasKey: zenCfg.hasKey, model: zenCfg.model, setModel: zenCfg.setModel, keyInput: zenKeyInput, setKeyInput: setZenKeyInput },
     nvidia: { setKey: nvidiaCfg.setKey, clearKey: nvidiaCfg.clearKey, hasKey: nvidiaCfg.hasKey, model: nvidiaCfg.model, setModel: nvidiaCfg.setModel, keyInput: nvidiaKeyInput, setKeyInput: setNvidiaKeyInput },
+    azure: {
+      keyInput: azureKeyInput,
+      setKeyInput: setAzureKeyInput,
+      setKey: azureCfg.setKey,
+      clearKey: azureCfg.clearKey,
+      hasKey: azureCfg.hasKey,
+      baseUrlInput: azureBaseUrlInput,
+      setBaseUrlInput: setAzureBaseUrlInput,
+      baseUrl: azureCfg.baseUrl,
+      baseUrlError: azureCfg.baseUrlError,
+      setBaseUrl: azureCfg.setBaseUrl,
+      clearBaseUrl: azureCfg.clearBaseUrl,
+      modelInput: azureModelInput,
+      setModelInput: setAzureModelInput,
+      model: azureCfg.model,
+      setModel: azureCfg.setModel,
+      clearModel: azureCfg.clearModel,
+      isConfigured: azureCfg.isConfigured,
+    },
+    bedrock: {
+      keyInput: bedrockKeyInput,
+      setKeyInput: setBedrockKeyInput,
+      setKey: bedrockCfg.setKey,
+      clearKey: bedrockCfg.clearKey,
+      hasKey: bedrockCfg.hasKey,
+      baseUrlInput: bedrockBaseUrlInput,
+      setBaseUrlInput: setBedrockBaseUrlInput,
+      baseUrl: bedrockCfg.baseUrl,
+      baseUrlError: bedrockCfg.baseUrlError,
+      setBaseUrl: bedrockCfg.setBaseUrl,
+      clearBaseUrl: bedrockCfg.clearBaseUrl,
+      modelInput: bedrockModelInput,
+      setModelInput: setBedrockModelInput,
+      model: bedrockCfg.model,
+      setModel: bedrockCfg.setModel,
+      clearModel: bedrockCfg.clearModel,
+      isConfigured: bedrockCfg.isConfigured,
+    },
+    vertex: {
+      keyInput: vertexKeyInput,
+      setKeyInput: setVertexKeyInput,
+      setKey: vertexCfg.setKey,
+      clearKey: vertexCfg.clearKey,
+      hasKey: vertexCfg.hasKey,
+      baseUrlInput: vertexBaseUrlInput,
+      setBaseUrlInput: setVertexBaseUrlInput,
+      baseUrl: vertexCfg.baseUrl,
+      baseUrlError: vertexCfg.baseUrlError,
+      setBaseUrl: vertexCfg.setBaseUrl,
+      clearBaseUrl: vertexCfg.clearBaseUrl,
+      modelInput: vertexModelInput,
+      setModelInput: setVertexModelInput,
+      model: vertexCfg.model,
+      setModel: vertexCfg.setModel,
+      clearModel: vertexCfg.clearModel,
+      isConfigured: vertexCfg.isConfigured,
+    },
     tavily: { setKey: tavilyCfg.setKey, clearKey: tavilyCfg.clearKey, hasKey: tavilyCfg.hasKey, keyInput: tavilyKeyInput, setKeyInput: setTavilyKeyInput },
 
     activeBackend,

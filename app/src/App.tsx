@@ -66,7 +66,18 @@ function App() {
     openrouter: catalog.openRouter.model,
     zen: catalog.zen.model,
     nvidia: catalog.nvidia.model,
-  }), [catalog.nvidia.model, catalog.ollama.model, catalog.openRouter.model, catalog.zen.model]);
+    azure: catalog.azure.model,
+    bedrock: catalog.bedrock.model,
+    vertex: catalog.vertex.model,
+  }), [
+    catalog.azure.model,
+    catalog.bedrock.model,
+    catalog.nvidia.model,
+    catalog.ollama.model,
+    catalog.openRouter.model,
+    catalog.vertex.model,
+    catalog.zen.model,
+  ]);
 
   const availableChatProviders = useMemo(
     () => new Set(catalog.availableProviders.map(([provider]) => provider)),
@@ -89,6 +100,9 @@ function App() {
       openrouter: draft?.models?.openrouter?.trim() || defaultChatModels.openrouter,
       zen: draft?.models?.zen?.trim() || defaultChatModels.zen,
       nvidia: draft?.models?.nvidia?.trim() || defaultChatModels.nvidia,
+      azure: draft?.models?.azure?.trim() || defaultChatModels.azure,
+      bedrock: draft?.models?.bedrock?.trim() || defaultChatModels.bedrock,
+      vertex: draft?.models?.vertex?.trim() || defaultChatModels.vertex,
     };
 
     let provider = draft?.provider ?? defaultChatProvider;
@@ -469,6 +483,21 @@ function App() {
     upsertChatDraft(chatId, { models: { nvidia: model } });
   }, [ensureDraftChatForComposerChange, upsertChatDraft]);
 
+  const handleSelectAzureModelFromChat = useCallback((model: string) => {
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { azure: model } });
+  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+
+  const handleSelectBedrockModelFromChat = useCallback((model: string) => {
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { bedrock: model } });
+  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+
+  const handleSelectVertexModelFromChat = useCallback((model: string) => {
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { vertex: model } });
+  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+
   const handleDisconnect = useCallback(() => {
     appDisconnect();
     patLogout();
@@ -750,6 +779,57 @@ function App() {
         setNvidiaKeyInput: catalog.nvidia.setKeyInput,
         setNvidiaKey: catalog.nvidia.setKey,
         clearNvidiaKey: catalog.nvidia.clearKey,
+        hasAzureKey: catalog.azure.hasKey,
+        azureKeyInput: catalog.azure.keyInput,
+        setAzureKeyInput: catalog.azure.setKeyInput,
+        setAzureKey: catalog.azure.setKey,
+        clearAzureKey: catalog.azure.clearKey,
+        azureBaseUrl: catalog.azure.baseUrl,
+        azureBaseUrlInput: catalog.azure.baseUrlInput,
+        setAzureBaseUrlInput: catalog.azure.setBaseUrlInput,
+        setAzureBaseUrl: catalog.azure.setBaseUrl,
+        clearAzureBaseUrl: catalog.azure.clearBaseUrl,
+        azureBaseUrlError: catalog.azure.baseUrlError,
+        azureModel: catalog.azure.model,
+        azureModelInput: catalog.azure.modelInput,
+        setAzureModelInput: catalog.azure.setModelInput,
+        setAzureModel: catalog.azure.setModel,
+        clearAzureModel: catalog.azure.clearModel,
+        isAzureConfigured: catalog.azure.isConfigured,
+        hasBedrockKey: catalog.bedrock.hasKey,
+        bedrockKeyInput: catalog.bedrock.keyInput,
+        setBedrockKeyInput: catalog.bedrock.setKeyInput,
+        setBedrockKey: catalog.bedrock.setKey,
+        clearBedrockKey: catalog.bedrock.clearKey,
+        bedrockBaseUrl: catalog.bedrock.baseUrl,
+        bedrockBaseUrlInput: catalog.bedrock.baseUrlInput,
+        setBedrockBaseUrlInput: catalog.bedrock.setBaseUrlInput,
+        setBedrockBaseUrl: catalog.bedrock.setBaseUrl,
+        clearBedrockBaseUrl: catalog.bedrock.clearBaseUrl,
+        bedrockBaseUrlError: catalog.bedrock.baseUrlError,
+        bedrockModel: catalog.bedrock.model,
+        bedrockModelInput: catalog.bedrock.modelInput,
+        setBedrockModelInput: catalog.bedrock.setModelInput,
+        setBedrockModel: catalog.bedrock.setModel,
+        clearBedrockModel: catalog.bedrock.clearModel,
+        isBedrockConfigured: catalog.bedrock.isConfigured,
+        hasVertexKey: catalog.vertex.hasKey,
+        vertexKeyInput: catalog.vertex.keyInput,
+        setVertexKeyInput: catalog.vertex.setKeyInput,
+        setVertexKey: catalog.vertex.setKey,
+        clearVertexKey: catalog.vertex.clearKey,
+        vertexBaseUrl: catalog.vertex.baseUrl,
+        vertexBaseUrlInput: catalog.vertex.baseUrlInput,
+        setVertexBaseUrlInput: catalog.vertex.setBaseUrlInput,
+        setVertexBaseUrl: catalog.vertex.setBaseUrl,
+        clearVertexBaseUrl: catalog.vertex.clearBaseUrl,
+        vertexBaseUrlError: catalog.vertex.baseUrlError,
+        vertexModel: catalog.vertex.model,
+        vertexModelInput: catalog.vertex.modelInput,
+        setVertexModelInput: catalog.vertex.setModelInput,
+        setVertexModel: catalog.vertex.setModel,
+        clearVertexModel: catalog.vertex.clearModel,
+        isVertexConfigured: catalog.vertex.isConfigured,
         hasTavilyKey: catalog.tavily.hasKey,
         tavilyKeyInput: catalog.tavily.keyInput,
         setTavilyKeyInput: catalog.tavily.setKeyInput,
@@ -922,6 +1002,9 @@ function App() {
       handleSelectOpenRouterModelFromChat={handleSelectOpenRouterModelFromChat}
       handleSelectZenModelFromChat={handleSelectZenModelFromChat}
       handleSelectNvidiaModelFromChat={handleSelectNvidiaModelFromChat}
+      handleSelectAzureModelFromChat={handleSelectAzureModelFromChat}
+      handleSelectBedrockModelFromChat={handleSelectBedrockModelFromChat}
+      handleSelectVertexModelFromChat={handleSelectVertexModelFromChat}
       handleSelectRepoFromDrawer={handleSelectRepoFromDrawer}
       handleBrowseRepos={handleBrowseRepos}
       setCurrentBranch={setCurrentBranch}

@@ -41,7 +41,15 @@ export interface ReviewResult {
   reviewedAt: number;
 }
 
-export type AIProviderType = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'demo';
+export type AIProviderType =
+  | 'ollama'
+  | 'openrouter'
+  | 'zen'
+  | 'nvidia'
+  | 'azure'
+  | 'bedrock'
+  | 'vertex'
+  | 'demo';
 
 export interface AIModel {
   id: string;

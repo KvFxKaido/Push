@@ -6,6 +6,11 @@
  */
 
 import { SANDBOX_ROUTES, resolveModalSandboxBase } from './src/lib/sandbox-routes';
+import {
+  normalizeExperimentalBaseUrl,
+  type ExperimentalProviderType,
+} from './src/lib/experimental-providers';
+import { formatExperimentalProviderHttpError } from './src/lib/provider-error-utils';
 
 interface Env {
   OLLAMA_API_KEY?: string;
@@ -85,6 +90,30 @@ export default {
     // API route: model catalog proxy to Nvidia NIM
     if (url.pathname === '/api/nvidia/models' && request.method === 'GET') {
       return handleNvidiaModels(request, env);
+    }
+
+    if (url.pathname === '/api/azure/chat' && request.method === 'POST') {
+      return handleAzureChat(request, env);
+    }
+
+    if (url.pathname === '/api/azure/models' && request.method === 'GET') {
+      return handleAzureModels(request, env);
+    }
+
+    if (url.pathname === '/api/bedrock/chat' && request.method === 'POST') {
+      return handleBedrockChat(request, env);
+    }
+
+    if (url.pathname === '/api/bedrock/models' && request.method === 'GET') {
+      return handleBedrockModels(request, env);
+    }
+
+    if (url.pathname === '/api/vertex/chat' && request.method === 'POST') {
+      return handleVertexChat(request, env);
+    }
+
+    if (url.pathname === '/api/vertex/models' && request.method === 'GET') {
+      return handleVertexModels(request, env);
     }
 
     // API route: Ollama web search proxy
@@ -261,8 +290,11 @@ async function runPreamble(
   let bodyText = '';
   if (opts.needsBody !== false) {
     const bodyResult = await readBodyText(request, opts.maxBodyBytes ?? MAX_BODY_SIZE_BYTES);
-    if (!bodyResult.ok) {
-      return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+    if ('error' in bodyResult) {
+      return Response.json(
+        { error: bodyResult.error },
+        { status: bodyResult.status },
+      );
     }
     bodyText = bodyResult.text;
   }
@@ -276,6 +308,30 @@ function standardAuth(envKey: keyof Env): AuthBuilder {
     const clientAuth = request.headers.get('Authorization');
     return serverKey ? `Bearer ${serverKey}` : clientAuth;
   };
+}
+
+function passthroughAuth(_env: Env, request: Request): string | null {
+  return request.headers.get('Authorization');
+}
+
+function getExperimentalUpstreamUrl(
+  request: Request,
+  provider: ExperimentalProviderType,
+  suffix: '/chat/completions' | '/models',
+): { ok: true; url: string } | { ok: false; response: Response } {
+  const rawBase = request.headers.get('X-Push-Upstream-Base');
+  const normalized = normalizeExperimentalBaseUrl(provider, rawBase);
+  if ('error' in normalized) {
+    return {
+      ok: false,
+      response: Response.json(
+        { error: `${provider} base URL is invalid: ${normalized.error}` },
+        { status: 400 },
+      ),
+    };
+  }
+
+  return { ok: true, url: `${normalized.normalized}${suffix}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +348,7 @@ interface StreamProxyConfig {
   timeoutError: string;
   extraFetchHeaders?: Record<string, string> | ((request: Request) => Record<string, string>);
   preserveUpstreamHeaders?: boolean;
+  formatUpstreamError?: (status: number, bodyText: string) => { error: string; code?: string };
 }
 
 function createStreamProxyHandler(
@@ -341,6 +398,10 @@ function createStreamProxyHandler(
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
         wlog('error', 'upstream_error', { route: config.logTag, status: upstream.status, body: errBody.slice(0, 500) });
+        if (config.formatUpstreamError) {
+          const formatted = config.formatUpstreamError(upstream.status, errBody);
+          return Response.json(formatted, { status: upstream.status });
+        }
         // Strip HTML error pages (e.g. Cloudflare 403/503 pages) — return a clean message
         const isHtml = /<\s*html[\s>]/i.test(errBody) || /<\s*!doctype/i.test(errBody);
         const errDetail = isHtml
@@ -405,6 +466,7 @@ interface JsonProxyConfig {
   timeoutError: string;
   needsBody?: boolean;
   extraFetchHeaders?: Record<string, string>;
+  formatUpstreamError?: (status: number, bodyText: string) => { error: string; code?: string };
 }
 
 function createJsonProxyHandler(
@@ -448,6 +510,10 @@ function createJsonProxyHandler(
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
         wlog('error', 'upstream_error', { route: config.logTag, status: upstream.status, body: errBody.slice(0, 500) });
+        if (config.formatUpstreamError) {
+          const formatted = config.formatUpstreamError(upstream.status, errBody);
+          return Response.json(formatted, { status: upstream.status });
+        }
         return Response.json(
           { error: `${config.name} error ${upstream.status}: ${errBody.slice(0, 200)}` },
           { status: upstream.status },
@@ -483,7 +549,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   }
 
   const resolvedBase = resolveModalSandboxBase(baseUrl);
-  if (!resolvedBase.ok) {
+  if ('code' in resolvedBase) {
     return Response.json({
       error: 'Sandbox misconfigured',
       code: resolvedBase.code,
@@ -510,8 +576,11 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   // Read and forward body
   const maxBodyBytes = (route === 'restore' || route === 'batch-write') ? RESTORE_MAX_BODY_SIZE_BYTES : MAX_BODY_SIZE_BYTES;
   const bodyResult = await readBodyText(request, maxBodyBytes);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  if ('error' in bodyResult) {
+    return Response.json(
+      { error: bodyResult.error },
+      { status: bodyResult.status },
+    );
   }
 
   // Route-specific payload enrichment without changing client contracts.
@@ -670,12 +739,12 @@ async function handleHealthCheck(env: Env): Promise<Response> {
 
   if (sandboxUrl) {
     const resolvedBase = resolveModalSandboxBase(sandboxUrl);
-    if (resolvedBase.ok) {
+    if (!('code' in resolvedBase)) {
       sandboxStatus = 'ok';
     } else {
       sandboxStatus = 'misconfigured';
       sandboxError = resolvedBase.details;
-    }
+  }
   }
 
   const hasAnyLlm = ollamaConfigured || openRouterConfigured || zenConfigured || nvidiaConfigured;
@@ -794,6 +863,67 @@ const handleNvidiaModels = createJsonProxyHandler({
   keyMissingError: 'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
 });
+
+// --- Experimental private connectors (OpenAI-compatible upstreams) ---
+
+function createExperimentalStreamProxyHandler(
+  provider: ExperimentalProviderType,
+  name: string,
+  logTag: string,
+): (request: Request, env: Env) => Promise<Response> {
+  return async (request, env) => {
+    const upstream = getExperimentalUpstreamUrl(request, provider, '/chat/completions');
+    if ('response' in upstream) return upstream.response;
+
+    return createStreamProxyHandler({
+      name,
+      logTag,
+      upstreamUrl: upstream.url,
+      timeoutMs: 180_000,
+      buildAuth: passthroughAuth,
+      keyMissingError: `${name} API key not configured. Add it in Advanced AI settings.`,
+      timeoutError: `${name} request timed out after 180 seconds`,
+      formatUpstreamError: (status, bodyText) => ({
+        error: formatExperimentalProviderHttpError(name, status, bodyText),
+        code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+      }),
+    })(request, env);
+  };
+}
+
+function createExperimentalModelsHandler(
+  provider: ExperimentalProviderType,
+  name: string,
+  logTag: string,
+): (request: Request, env: Env) => Promise<Response> {
+  return async (request, env) => {
+    const upstream = getExperimentalUpstreamUrl(request, provider, '/models');
+    if ('response' in upstream) return upstream.response;
+
+    return createJsonProxyHandler({
+      name,
+      logTag,
+      upstreamUrl: upstream.url,
+      method: 'GET',
+      timeoutMs: 30_000,
+      buildAuth: passthroughAuth,
+      keyMissingError: `${name} API key not configured. Add it in Advanced AI settings.`,
+      timeoutError: `${name} model list timed out after 30 seconds`,
+      needsBody: false,
+      formatUpstreamError: (status, bodyText) => ({
+        error: formatExperimentalProviderHttpError(name, status, bodyText),
+        code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+      }),
+    })(request, env);
+  };
+}
+
+const handleAzureChat = createExperimentalStreamProxyHandler('azure', 'Azure OpenAI', 'api/azure/chat');
+const handleAzureModels = createExperimentalModelsHandler('azure', 'Azure OpenAI', 'api/azure/models');
+const handleBedrockChat = createExperimentalStreamProxyHandler('bedrock', 'AWS Bedrock', 'api/bedrock/chat');
+const handleBedrockModels = createExperimentalModelsHandler('bedrock', 'AWS Bedrock', 'api/bedrock/models');
+const handleVertexChat = createExperimentalStreamProxyHandler('vertex', 'Google Vertex', 'api/vertex/chat');
+const handleVertexModels = createExperimentalModelsHandler('vertex', 'Google Vertex', 'api/vertex/models');
 
 // --- Ollama Web Search proxy ---
 
@@ -1016,8 +1146,11 @@ async function handleGitHubAppOAuth(request: Request, env: Env): Promise<Respons
   }
 
   const bodyResult = await readBodyText(request, 4096);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  if ('error' in bodyResult) {
+    return Response.json(
+      { error: bodyResult.error },
+      { status: bodyResult.status },
+    );
   }
 
   let payload: { code?: string };
@@ -1178,8 +1311,11 @@ async function handleGitHubAppToken(request: Request, env: Env): Promise<Respons
   }
 
   const bodyResult = await readBodyText(request, 4096);
-  if (!bodyResult.ok) {
-    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  if ('error' in bodyResult) {
+    return Response.json(
+      { error: bodyResult.error },
+      { status: bodyResult.status },
+    );
   }
 
   let payload: { installation_id?: string };

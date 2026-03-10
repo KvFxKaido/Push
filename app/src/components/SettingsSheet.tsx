@@ -21,6 +21,9 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   openrouter: 'OpenRouter',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
+  azure: 'Azure OpenAI',
+  bedrock: 'AWS Bedrock',
+  vertex: 'Google Vertex',
   demo: 'Demo',
 };
 
@@ -126,6 +129,60 @@ export interface SettingsAIProps {
   setNvidiaKeyInput: (v: string) => void;
   setNvidiaKey: (v: string) => void;
   clearNvidiaKey: () => void;
+  // Azure OpenAI (experimental)
+  hasAzureKey: boolean;
+  azureKeyInput: string;
+  setAzureKeyInput: (v: string) => void;
+  setAzureKey: (v: string) => void;
+  clearAzureKey: () => void;
+  azureBaseUrl: string;
+  azureBaseUrlInput: string;
+  setAzureBaseUrlInput: (v: string) => void;
+  setAzureBaseUrl: (v: string) => void;
+  clearAzureBaseUrl: () => void;
+  azureBaseUrlError: string | null;
+  azureModel: string;
+  azureModelInput: string;
+  setAzureModelInput: (v: string) => void;
+  setAzureModel: (v: string) => void;
+  clearAzureModel: () => void;
+  isAzureConfigured: boolean;
+  // AWS Bedrock (experimental)
+  hasBedrockKey: boolean;
+  bedrockKeyInput: string;
+  setBedrockKeyInput: (v: string) => void;
+  setBedrockKey: (v: string) => void;
+  clearBedrockKey: () => void;
+  bedrockBaseUrl: string;
+  bedrockBaseUrlInput: string;
+  setBedrockBaseUrlInput: (v: string) => void;
+  setBedrockBaseUrl: (v: string) => void;
+  clearBedrockBaseUrl: () => void;
+  bedrockBaseUrlError: string | null;
+  bedrockModel: string;
+  bedrockModelInput: string;
+  setBedrockModelInput: (v: string) => void;
+  setBedrockModel: (v: string) => void;
+  clearBedrockModel: () => void;
+  isBedrockConfigured: boolean;
+  // Google Vertex (experimental)
+  hasVertexKey: boolean;
+  vertexKeyInput: string;
+  setVertexKeyInput: (v: string) => void;
+  setVertexKey: (v: string) => void;
+  clearVertexKey: () => void;
+  vertexBaseUrl: string;
+  vertexBaseUrlInput: string;
+  setVertexBaseUrlInput: (v: string) => void;
+  setVertexBaseUrl: (v: string) => void;
+  clearVertexBaseUrl: () => void;
+  vertexBaseUrlError: string | null;
+  vertexModel: string;
+  vertexModelInput: string;
+  setVertexModelInput: (v: string) => void;
+  setVertexModel: (v: string) => void;
+  clearVertexModel: () => void;
+  isVertexConfigured: boolean;
   // Tavily
   hasTavilyKey: boolean;
   tavilyKeyInput: string;
@@ -204,6 +261,34 @@ interface ProviderKeySectionProps {
     error: string | null;
     updatedAt: number | null;
   };
+}
+
+interface ExperimentalProviderSectionProps {
+  label: string;
+  backendId: PreferredProvider;
+  activeBackend: PreferredProvider | null;
+  setActiveBackend: (v: PreferredProvider | null) => void;
+  clearPreferredProvider: () => void;
+  helperText: string;
+  configured: boolean;
+  hasKey: boolean;
+  keyInput: string;
+  setKeyInput: (value: string) => void;
+  setKey: (value: string) => void;
+  clearKey: () => void;
+  baseUrl: string;
+  baseUrlInput: string;
+  setBaseUrlInput: (value: string) => void;
+  setBaseUrl: (value: string) => void;
+  clearBaseUrl: () => void;
+  baseUrlError: string | null;
+  baseUrlPlaceholder: string;
+  model: string;
+  modelInput: string;
+  setModelInput: (value: string) => void;
+  setModel: (value: string) => void;
+  clearModel: () => void;
+  modelPlaceholder: string;
 }
 
 function ProviderKeySection({
@@ -334,6 +419,163 @@ function ProviderKeySection({
       <p className="text-xs text-push-fg-dim">
         {hint}
       </p>
+    </div>
+  );
+}
+
+function ExperimentalProviderSection({
+  label,
+  backendId,
+  activeBackend,
+  setActiveBackend,
+  clearPreferredProvider,
+  helperText,
+  configured,
+  hasKey,
+  keyInput,
+  setKeyInput,
+  setKey,
+  clearKey,
+  baseUrl,
+  baseUrlInput,
+  setBaseUrlInput,
+  setBaseUrl,
+  clearBaseUrl,
+  baseUrlError,
+  baseUrlPlaceholder,
+  model,
+  modelInput,
+  setModelInput,
+  setModel,
+  clearModel,
+  modelPlaceholder,
+}: ExperimentalProviderSectionProps) {
+  const clearAll = () => {
+    clearKey();
+    clearBaseUrl();
+    clearModel();
+    setKeyInput('');
+    setBaseUrlInput('');
+    setModelInput('');
+    if (activeBackend === backendId) {
+      clearPreferredProvider();
+      setActiveBackend(null);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-xl border border-push-edge bg-push-surface/60 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-push-fg">{label}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+              configured
+                ? 'bg-emerald-500/10 text-emerald-400'
+                : 'bg-amber-500/10 text-amber-300'
+            }`}>
+              {configured ? 'Ready' : 'Experimental'}
+            </span>
+          </div>
+          <p className="text-xs text-push-fg-dim">{helperText}</p>
+        </div>
+        <button
+          type="button"
+          onClick={clearAll}
+          className="text-push-fg-dim hover:text-red-400 transition-colors"
+          aria-label={`Reset ${label} connector`}
+          title="Reset connector"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-[11px] font-medium text-push-fg-secondary">Base URL</label>
+        <input
+          type="url"
+          value={baseUrlInput}
+          onChange={(e) => setBaseUrlInput(e.target.value)}
+          placeholder={baseUrl || baseUrlPlaceholder}
+          className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+        />
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const next = baseUrlInput.trim();
+              if (!next) return;
+              setBaseUrl(next);
+              setBaseUrlInput('');
+            }}
+            disabled={!baseUrlInput.trim()}
+            className="text-push-fg-secondary hover:text-push-fg"
+          >
+            Save URL
+          </Button>
+          {baseUrl && (
+            <span className="min-w-0 self-center truncate text-[11px] text-push-fg-dim">{baseUrl}</span>
+          )}
+        </div>
+        {baseUrlError && <p className="text-xs text-amber-400">{baseUrlError}</p>}
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-[11px] font-medium text-push-fg-secondary">Deployment / model</label>
+        <input
+          type="text"
+          value={modelInput}
+          onChange={(e) => setModelInput(e.target.value)}
+          placeholder={model || modelPlaceholder}
+          className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+        />
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const next = modelInput.trim();
+              if (!next) return;
+              setModel(next);
+              setModelInput('');
+            }}
+            disabled={!modelInput.trim()}
+            className="text-push-fg-secondary hover:text-push-fg"
+          >
+            Save model
+          </Button>
+          <span className="min-w-0 self-center truncate text-[11px] text-push-fg-dim">{model}</span>
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-[11px] font-medium text-push-fg-secondary">API key</label>
+        <input
+          type="password"
+          value={keyInput}
+          onChange={(e) => setKeyInput(e.target.value)}
+          placeholder={hasKey ? 'Key saved' : `${label} API key`}
+          className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+        />
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const next = keyInput.trim();
+              if (!next) return;
+              setKey(next);
+              setKeyInput('');
+            }}
+            disabled={!keyInput.trim()}
+            className="text-push-fg-secondary hover:text-push-fg"
+          >
+            Save key
+          </Button>
+          {hasKey && <span className="self-center text-[11px] text-push-fg-dim">Stored locally</span>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1174,6 +1416,100 @@ export function SettingsSheet({
               }}
             />
           </div>
+
+          <details className="space-y-3 rounded-xl border border-push-edge bg-push-surface/40 p-3">
+            <summary className="cursor-pointer list-none text-sm font-medium text-push-fg">
+              Private connectors (experimental)
+            </summary>
+            <p className="mt-2 text-xs text-push-fg-dim">
+              Direct Azure/Bedrock/Vertex deployments live here so they stay opt-in and out of Push&apos;s normal provider story.
+            </p>
+            <div className="mt-3 space-y-3">
+              <ExperimentalProviderSection
+                label="Azure OpenAI"
+                backendId="azure"
+                activeBackend={ai.activeBackend}
+                setActiveBackend={ai.setActiveBackend}
+                clearPreferredProvider={ai.clearPreferredProvider}
+                helperText="Use your Azure OpenAI /openai/v1 base URL plus the deployment/model name you want Push to target."
+                configured={ai.isAzureConfigured}
+                hasKey={ai.hasAzureKey}
+                keyInput={ai.azureKeyInput}
+                setKeyInput={ai.setAzureKeyInput}
+                setKey={ai.setAzureKey}
+                clearKey={ai.clearAzureKey}
+                baseUrl={ai.azureBaseUrl}
+                baseUrlInput={ai.azureBaseUrlInput}
+                setBaseUrlInput={ai.setAzureBaseUrlInput}
+                setBaseUrl={ai.setAzureBaseUrl}
+                clearBaseUrl={ai.clearAzureBaseUrl}
+                baseUrlError={ai.azureBaseUrlError}
+                baseUrlPlaceholder="https://your-resource.openai.azure.com/openai/v1"
+                model={ai.azureModel}
+                modelInput={ai.azureModelInput}
+                setModelInput={ai.setAzureModelInput}
+                setModel={ai.setAzureModel}
+                clearModel={ai.clearAzureModel}
+                modelPlaceholder="Deployment or model name"
+              />
+
+              <ExperimentalProviderSection
+                label="AWS Bedrock"
+                backendId="bedrock"
+                activeBackend={ai.activeBackend}
+                setActiveBackend={ai.setActiveBackend}
+                clearPreferredProvider={ai.clearPreferredProvider}
+                helperText="Use the Bedrock OpenAI-compatible /openai/v1 base URL for a specific region and the exact model id."
+                configured={ai.isBedrockConfigured}
+                hasKey={ai.hasBedrockKey}
+                keyInput={ai.bedrockKeyInput}
+                setKeyInput={ai.setBedrockKeyInput}
+                setKey={ai.setBedrockKey}
+                clearKey={ai.clearBedrockKey}
+                baseUrl={ai.bedrockBaseUrl}
+                baseUrlInput={ai.bedrockBaseUrlInput}
+                setBaseUrlInput={ai.setBedrockBaseUrlInput}
+                setBaseUrl={ai.setBedrockBaseUrl}
+                clearBaseUrl={ai.clearBedrockBaseUrl}
+                baseUrlError={ai.bedrockBaseUrlError}
+                baseUrlPlaceholder="https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"
+                model={ai.bedrockModel}
+                modelInput={ai.bedrockModelInput}
+                setModelInput={ai.setBedrockModelInput}
+                setModel={ai.setBedrockModel}
+                clearModel={ai.clearBedrockModel}
+                modelPlaceholder="Bedrock model id"
+              />
+
+              <ExperimentalProviderSection
+                label="Google Vertex"
+                backendId="vertex"
+                activeBackend={ai.activeBackend}
+                setActiveBackend={ai.setActiveBackend}
+                clearPreferredProvider={ai.clearPreferredProvider}
+                helperText="Use the Vertex AI OpenAI-compatible OpenAPI endpoint for your project/location and the model id you want."
+                configured={ai.isVertexConfigured}
+                hasKey={ai.hasVertexKey}
+                keyInput={ai.vertexKeyInput}
+                setKeyInput={ai.setVertexKeyInput}
+                setKey={ai.setVertexKey}
+                clearKey={ai.clearVertexKey}
+                baseUrl={ai.vertexBaseUrl}
+                baseUrlInput={ai.vertexBaseUrlInput}
+                setBaseUrlInput={ai.setVertexBaseUrlInput}
+                setBaseUrl={ai.setVertexBaseUrl}
+                clearBaseUrl={ai.clearVertexBaseUrl}
+                baseUrlError={ai.vertexBaseUrlError}
+                baseUrlPlaceholder="https://us-central1-aiplatform.googleapis.com/v1/projects/PROJECT/locations/us-central1/endpoints/openapi"
+                model={ai.vertexModel}
+                modelInput={ai.vertexModelInput}
+                setModelInput={ai.setVertexModelInput}
+                setModel={ai.setVertexModel}
+                clearModel={ai.clearVertexModel}
+                modelPlaceholder="Vertex model id"
+              />
+            </div>
+          </details>
 
           {/* Web Search (Tavily) */}
           <div className="space-y-3 pt-2 border-t border-push-edge">
