@@ -55,6 +55,9 @@ export const OPENROUTER_MODELS: string[] = [
   // Google Gemini
   'google/gemini-3.1-pro-preview:nitro',
   'google/gemini-3.1-flash-lite-preview:nitro',
+  'google/gemini-3-flash-preview:nitro',
+  'google/gemini-2.5-flash-lite:nitro',
+  'google/gemini-2.5-flash:nitro',
   // Mistral
   'mistralai/mistral-large-2512',
   'mistralai/devstral-2512',
@@ -72,6 +75,14 @@ export const OPENROUTER_MODELS: string[] = [
   'z-ai/glm-4.5-air:free',
   // DeepSeek
   'deepseek/deepseek-v3.2-exp:nitro',
+  'deepseek/deepseek-v3.2:nitro',
+  // Perplexity
+  'perplexity/sonar-reasoning-pro',
+  'perplexity/sonar-pro',
+  'perplexity/sonar',
+  // Arcee Trinity
+  'arcee-ai/trinity-large-preview:nitro',
+  'arcee-ai/trinity-large-preview:free',
   // Inception (Mercury diffusion LLMs)
   'inception/mercury-2',
   'inception/mercury-coder',
