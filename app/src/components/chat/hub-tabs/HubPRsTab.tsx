@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CircleSlash,
   ExternalLink,
   FileDiff,
   GitBranch,
@@ -11,6 +13,9 @@ import {
   Loader2,
   MessageSquareText,
   RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  XCircle,
 } from 'lucide-react';
 import { DiffLine } from '@/components/cards/DiffPreviewCard';
 import { parseDiffStats } from '@/lib/diff-utils';
@@ -35,7 +40,7 @@ interface HubPRsTabProps {
   onOpenReviewTab?: () => void;
 }
 
-type DetailSection = 'overview' | 'changes';
+type DetailSection = 'overview' | 'changes' | 'conversation';
 
 function stateBadge(pr: RepoPullRequestListItem | RepoPullRequestDetail) {
   if (pr.state === 'merged') {
@@ -45,6 +50,51 @@ function stateBadge(pr: RepoPullRequestListItem | RepoPullRequestDetail) {
     return 'bg-red-500/15 text-red-300';
   }
   return 'bg-emerald-500/15 text-emerald-300';
+}
+
+function checksTone(overall: RepoPullRequestDetail['status']['checksOverall']) {
+  switch (overall) {
+    case 'success':
+      return { label: 'Checks passing', className: 'bg-emerald-500/15 text-emerald-300', Icon: CheckCircle2 };
+    case 'failure':
+      return { label: 'Checks failing', className: 'bg-red-500/15 text-red-300', Icon: XCircle };
+    case 'pending':
+      return { label: 'Checks running', className: 'bg-amber-500/15 text-amber-300', Icon: Loader2 };
+    case 'neutral':
+      return { label: 'Checks neutral', className: 'bg-slate-500/15 text-slate-300', Icon: CircleSlash };
+    case 'no-checks':
+      return { label: 'No checks', className: 'bg-slate-500/15 text-slate-300', Icon: CircleSlash };
+    default:
+      return { label: 'Checks unknown', className: 'bg-slate-500/15 text-slate-300', Icon: CircleSlash };
+  }
+}
+
+function mergeTone(detail: RepoPullRequestDetail) {
+  if (detail.status.canMerge) {
+    return { label: 'Ready to merge', className: 'bg-emerald-500/15 text-emerald-300', Icon: ShieldCheck };
+  }
+  if (detail.status.mergeable === false || detail.status.checksOverall === 'failure') {
+    return { label: 'Blocked', className: 'bg-red-500/15 text-red-300', Icon: ShieldAlert };
+  }
+  if (detail.status.mergeable === null || detail.status.checksOverall === 'pending') {
+    return { label: 'In progress', className: 'bg-amber-500/15 text-amber-300', Icon: Loader2 };
+  }
+  return { label: 'Needs attention', className: 'bg-slate-500/15 text-slate-300', Icon: ShieldAlert };
+}
+
+function reviewStateBadge(state: RepoPullRequestDetail['reviews'][number]['state']) {
+  switch (state) {
+    case 'approved':
+      return 'bg-emerald-500/15 text-emerald-300';
+    case 'changes_requested':
+      return 'bg-red-500/15 text-red-300';
+    case 'dismissed':
+      return 'bg-slate-500/15 text-slate-300';
+    case 'pending':
+      return 'bg-amber-500/15 text-amber-300';
+    default:
+      return 'bg-sky-500/15 text-sky-300';
+  }
 }
 
 export function HubPRsTab({
@@ -283,6 +333,8 @@ export function HubPRsTab({
   const currentDetail = detail ?? selectedListItem;
   const commentCount = currentDetail ? currentDetail.comments + currentDetail.reviewComments : 0;
   const canUseReviewTab = Boolean(detail && activeBranch && detail.headRef === activeBranch && onOpenReviewTab);
+  const checksSummary = detail ? checksTone(detail.status.checksOverall) : null;
+  const mergeSummary = detail ? mergeTone(detail) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -389,6 +441,46 @@ export function HubPRsTab({
               </div>
             </div>
 
+            {detail && checksSummary && mergeSummary && (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
+                  <div className="flex items-center gap-2">
+                    <mergeSummary.Icon className={`h-4 w-4 ${mergeSummary.Icon === Loader2 ? 'animate-spin' : ''}`} />
+                    <p className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${mergeSummary.className}`}>
+                      {mergeSummary.label}
+                    </p>
+                  </div>
+                  <p className="mt-2 text-[12px] text-push-fg-secondary">
+                    Mergeable:{' '}
+                    <span className="text-push-fg">
+                      {detail.status.mergeable === null ? 'computing' : detail.status.mergeable ? 'yes' : 'no'}
+                    </span>
+                  </p>
+                  <p className="text-[11px] text-push-fg-dim">
+                    State: {detail.status.mergeableState}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
+                  <div className="flex items-center gap-2">
+                    <checksSummary.Icon className={`h-4 w-4 ${checksSummary.Icon === Loader2 ? 'animate-spin' : ''}`} />
+                    <p className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${checksSummary.className}`}>
+                      {checksSummary.label}
+                    </p>
+                  </div>
+                  <p className="mt-2 text-[12px] text-push-fg-secondary">
+                    {detail.status.checks.length} check{detail.status.checks.length !== 1 ? 's' : ''}
+                  </p>
+                  {(detail.status.requestedReviewers.length > 0 || detail.status.requestedTeams.length > 0) && (
+                    <p className="mt-1 text-[11px] text-push-fg-dim">
+                      Review requested from{' '}
+                      {[...detail.status.requestedReviewers, ...detail.status.requestedTeams].join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={handleOpenDiff}
@@ -435,6 +527,16 @@ export function HubPRsTab({
                 }`}
               >
                 Changes
+              </button>
+              <button
+                onClick={() => setDetailSection('conversation')}
+                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  detailSection === 'conversation'
+                    ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
+                    : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
+                }`}
+              >
+                Conversation
               </button>
             </div>
 
@@ -485,7 +587,7 @@ export function HubPRsTab({
                   </div>
                 </section>
               </div>
-            ) : (
+            ) : detailSection === 'changes' ? (
               <div className="overflow-hidden rounded-xl border border-push-edge bg-[#080d14]/90">
                 {detail.files.map((file) => {
                   const expanded = expandedFiles.has(file.filename);
@@ -526,6 +628,99 @@ export function HubPRsTab({
                     </div>
                   );
                 })}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {detail.reviews.length > 0 && (
+                  <section className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
+                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-push-fg-dim">Reviews</p>
+                    <div className="space-y-2">
+                      {detail.reviews.map((review) => (
+                        <div key={review.id} className="rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 p-2.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[12px] font-medium text-push-fg-secondary">{review.author}</span>
+                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${reviewStateBadge(review.state)}`}>
+                              {review.state.replace('_', ' ')}
+                            </span>
+                            <span className="text-[10px] text-push-fg-dim">
+                              {review.submittedAt ? timeAgo(review.submittedAt) : 'now'}
+                            </span>
+                          </div>
+                          {review.body && (
+                            <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-push-fg-secondary">
+                              {review.body}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {detail.issueComments.length > 0 && (
+                  <section className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
+                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-push-fg-dim">Comments</p>
+                    <div className="space-y-2">
+                      {detail.issueComments.map((comment) => (
+                        <div key={comment.id} className="rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 p-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[12px] font-medium text-push-fg-secondary">{comment.author}</span>
+                            <span className="text-[10px] text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
+                          </div>
+                          <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-push-fg-secondary">
+                            {comment.body}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {detail.reviewThreads.length > 0 && (
+                  <section className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
+                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-push-fg-dim">Review threads</p>
+                    <div className="space-y-2">
+                      {detail.reviewThreads.map((thread) => (
+                        <div key={thread.id} className="rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 p-2.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-[#101621] px-2 py-0.5 text-[10px] text-push-fg-dim">
+                              <GitBranch className="h-3 w-3" />
+                              {thread.file}
+                              {typeof thread.line === 'number' ? ` · L${thread.line}` : ''}
+                            </span>
+                            <span className="text-[10px] text-push-fg-dim">
+                              {thread.comments.length} comment{thread.comments.length !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          <div className="mt-2 space-y-2">
+                            {thread.comments.map((comment) => (
+                              <div key={comment.id} className="border-l border-push-edge pl-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[12px] font-medium text-push-fg-secondary">{comment.author}</span>
+                                  <span className="text-[10px] text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
+                                  {typeof comment.line === 'number' && (
+                                    <span className="rounded-full border border-push-edge px-1.5 py-0.5 text-[10px] text-push-fg-dim">
+                                      L{comment.line}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="mt-1 whitespace-pre-wrap text-[12px] leading-relaxed text-push-fg-secondary">
+                                  {comment.body}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {detail.reviews.length === 0 && detail.issueComments.length === 0 && detail.reviewThreads.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-push-edge px-3 py-4 text-center text-xs text-push-fg-dim">
+                    No review conversation yet.
+                  </div>
+                )}
               </div>
             )}
           </div>

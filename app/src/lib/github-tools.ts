@@ -6,7 +6,7 @@
  * result back into the conversation as a synthetic message.
  */
 
-import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData, ReviewResult } from '@/types';
+import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIOverallStatus, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData, ReviewResult } from '@/types';
 import { asRecord, detectToolFromText } from './utils';
 import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
 
@@ -941,20 +941,17 @@ async function executeListBranches(repo: string): Promise<ToolExecutionResult> {
   };
 }
 
-async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecutionResult> {
+async function fetchCIStatusSummary(repo: string, ref?: string): Promise<{ overall: CIOverallStatus; checks: CICheck[]; ref: string }> {
   const headers = getGitHubHeaders();
 
-  // Default ref to HEAD of default branch
   const commitRef = ref || 'HEAD';
-
-  // Try check runs API first (GitHub Actions, etc.)
   const checkRunsRes = await githubFetch(
     `https://api.github.com/repos/${repo}/commits/${commitRef}/check-runs?per_page=50`,
     { headers },
   );
 
   let checks: CICheck[] = [];
-  let overall: CIStatusCardData['overall'] = 'no-checks';
+  let overall: CIOverallStatus = 'no-checks';
 
   if (checkRunsRes.ok) {
     const data = await checkRunsRes.json() as { check_runs?: Array<{ name?: string; status?: string; conclusion?: string | null; html_url?: string; details_url?: string }> };
@@ -1007,6 +1004,12 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
   } else {
     overall = 'neutral';
   }
+
+  return { overall, checks, ref: commitRef };
+}
+
+async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecutionResult> {
+  const { overall, checks, ref: commitRef } = await fetchCIStatusSummary(repo, ref);
 
   const cardData: CIStatusCardData = {
     type: 'ci-status',
@@ -1698,38 +1701,14 @@ export async function executeCheckPRMergeable(repo: string, prNumber: number): P
   }
   const prData = await prRes.json();
 
-  // Fetch CI status for the head SHA
   const headSha = prData.head?.sha;
-  let ciOverall = 'unknown';
-  let ciChecks: { name: string; status: string; conclusion: string | null }[] = [];
-
+  let ciOverall: CIOverallStatus | 'unknown' = 'unknown';
+  let ciChecks: CICheck[] = [];
   if (headSha) {
     try {
-      const checkRunsRes = await githubFetch(
-        `https://api.github.com/repos/${repo}/commits/${headSha}/check-runs?per_page=50`,
-        { headers },
-      );
-      if (checkRunsRes.ok) {
-        const checkData = await checkRunsRes.json() as { check_runs?: Array<{ name?: string; status?: string; conclusion?: string | null }> };
-        const runs = checkData.check_runs || [];
-        ciChecks = runs.map((cr) => ({
-          name: cr.name || 'unknown-check',
-          status: cr.status || 'unknown',
-          conclusion: cr.conclusion ?? null,
-        }));
-
-        if (runs.length === 0) {
-          ciOverall = 'no-checks';
-        } else if (runs.some((c) => c.status !== 'completed')) {
-          ciOverall = 'pending';
-        } else if (runs.every((c) => c.conclusion === 'success' || c.conclusion === 'skipped' || c.conclusion === 'neutral')) {
-          ciOverall = 'success';
-        } else if (runs.some((c) => c.conclusion === 'failure')) {
-          ciOverall = 'failure';
-        } else {
-          ciOverall = 'neutral';
-        }
-      }
+      const ciStatus = await fetchCIStatusSummary(repo, headSha);
+      ciOverall = ciStatus.overall;
+      ciChecks = ciStatus.checks;
     } catch {
       // CI check fetch failed — continue with unknown
     }
@@ -1880,12 +1859,59 @@ export interface RepoPullRequestFile {
   patch?: string;
 }
 
+export interface RepoPullRequestReviewSummary {
+  id: number;
+  author: string;
+  state: 'approved' | 'changes_requested' | 'commented' | 'dismissed' | 'pending';
+  body: string;
+  submittedAt: string;
+  url: string;
+}
+
+export interface RepoPullRequestIssueComment {
+  id: number;
+  author: string;
+  body: string;
+  createdAt: string;
+  url: string;
+}
+
+export interface RepoPullRequestReviewThreadComment {
+  id: number;
+  author: string;
+  body: string;
+  createdAt: string;
+  url: string;
+  line?: number;
+}
+
+export interface RepoPullRequestReviewThread {
+  id: number;
+  file: string;
+  line?: number;
+  comments: RepoPullRequestReviewThreadComment[];
+}
+
+export interface RepoPullRequestStatusSummary {
+  mergeable: boolean | null;
+  mergeableState: string;
+  canMerge: boolean;
+  checksOverall: CIOverallStatus | 'unknown';
+  checks: CICheck[];
+  requestedReviewers: string[];
+  requestedTeams: string[];
+}
+
 export interface RepoPullRequestDetail extends RepoPullRequestListItem {
   body: string;
   mergedAt: string | null;
   files: RepoPullRequestFile[];
   commits: RepoPullRequestCommit[];
   diff: string;
+  status: RepoPullRequestStatusSummary;
+  reviews: RepoPullRequestReviewSummary[];
+  issueComments: RepoPullRequestIssueComment[];
+  reviewThreads: RepoPullRequestReviewThread[];
 }
 
 function normalizePullRequestState(pr: { merged_at?: string | null; merged?: boolean; state?: string }): 'open' | 'closed' | 'merged' {
@@ -1898,6 +1924,82 @@ function normalizePullRequestFileStatus(status: string): RepoPullRequestFile['st
     return status;
   }
   return 'modified';
+}
+
+function normalizeReviewState(state?: string | null): RepoPullRequestReviewSummary['state'] {
+  switch (state) {
+    case 'APPROVED':
+    case 'approved':
+      return 'approved';
+    case 'CHANGES_REQUESTED':
+    case 'changes_requested':
+      return 'changes_requested';
+    case 'DISMISSED':
+    case 'dismissed':
+      return 'dismissed';
+    case 'PENDING':
+    case 'pending':
+      return 'pending';
+    default:
+      return 'commented';
+  }
+}
+
+function buildReviewThreads(comments: Array<{
+  id: number;
+  path?: string;
+  line?: number | null;
+  in_reply_to_id?: number | null;
+  body?: string;
+  created_at?: string;
+  html_url?: string;
+  user?: { login?: string };
+}>): RepoPullRequestReviewThread[] {
+  const byId = new Map<number, typeof comments[number]>();
+  for (const comment of comments) byId.set(comment.id, comment);
+
+  const threadMap = new Map<number, RepoPullRequestReviewThread>();
+  for (const comment of comments) {
+    const rootId = comment.in_reply_to_id ?? comment.id;
+    const root = byId.get(rootId) ?? comment;
+    const existing = threadMap.get(rootId);
+    if (existing) {
+      existing.comments.push({
+        id: comment.id,
+        author: comment.user?.login || 'unknown',
+        body: comment.body || '',
+        createdAt: comment.created_at || '',
+        url: comment.html_url || '',
+        ...(typeof comment.line === 'number' ? { line: comment.line } : {}),
+      });
+      continue;
+    }
+
+    threadMap.set(rootId, {
+      id: rootId,
+      file: root.path || comment.path || 'unknown',
+      ...(typeof root.line === 'number' ? { line: root.line } : {}),
+      comments: [{
+        id: comment.id,
+        author: comment.user?.login || 'unknown',
+        body: comment.body || '',
+        createdAt: comment.created_at || '',
+        url: comment.html_url || '',
+        ...(typeof comment.line === 'number' ? { line: comment.line } : {}),
+      }],
+    });
+  }
+
+  return [...threadMap.values()]
+    .map((thread) => ({
+      ...thread,
+      comments: [...thread.comments].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+    }))
+    .sort((a, b) => {
+      const aTime = a.comments[0]?.createdAt ? new Date(a.comments[0].createdAt).getTime() : 0;
+      const bTime = b.comments[0]?.createdAt ? new Date(b.comments[0].createdAt).getTime() : 0;
+      return aTime - bTime;
+    });
 }
 
 export async function fetchRepoPullRequests(
@@ -1959,13 +2061,16 @@ export async function fetchPullRequestDetail(
 ): Promise<RepoPullRequestDetail> {
   const headers = getGitHubHeaders();
 
-  const [prRes, filesRes, commitsRes, diffRes] = await Promise.all([
+  const [prRes, filesRes, commitsRes, diffRes, reviewsRes, issueCommentsRes, reviewCommentsRes] = await Promise.all([
     githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, { headers }),
     githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/files?per_page=100`, { headers }),
     githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/commits?per_page=20`, { headers }),
     githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
       headers: { ...headers, Accept: 'application/vnd.github.v3.diff' },
     }),
+    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews?per_page=100`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}/issues/${prNumber}/comments?per_page=100`, { headers }),
+    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/comments?per_page=100`, { headers }),
   ]);
 
   if (!prRes.ok) {
@@ -1997,6 +2102,10 @@ export async function fetchPullRequestDetail(
     changed_files?: number;
     comments?: number;
     review_comments?: number;
+    mergeable?: boolean | null;
+    mergeable_state?: string;
+    requested_reviewers?: Array<{ login?: string }>;
+    requested_teams?: Array<{ name?: string }>;
     head?: { ref?: string; sha?: string };
     base?: { ref?: string };
     user?: { login?: string };
@@ -2013,6 +2122,51 @@ export async function fetchPullRequestDetail(
     commit?: { message?: string; author?: { name?: string; date?: string } };
     author?: { login?: string };
   }>;
+  const reviews = reviewsRes.ok
+    ? await reviewsRes.json() as Array<{
+        id: number;
+        state?: string;
+        body?: string;
+        submitted_at?: string;
+        html_url?: string;
+        user?: { login?: string };
+      }>
+    : [];
+  const issueComments = issueCommentsRes.ok
+    ? await issueCommentsRes.json() as Array<{
+        id: number;
+        body?: string;
+        created_at?: string;
+        html_url?: string;
+        user?: { login?: string };
+      }>
+    : [];
+  const reviewComments = reviewCommentsRes.ok
+    ? await reviewCommentsRes.json() as Array<{
+        id: number;
+        path?: string;
+        line?: number | null;
+        in_reply_to_id?: number | null;
+        body?: string;
+        created_at?: string;
+        html_url?: string;
+        user?: { login?: string };
+      }>
+    : [];
+  const checksStatus = pr.head?.sha
+    ? await fetchCIStatusSummary(repo, pr.head.sha).catch(() => ({ overall: 'unknown' as const, checks: [], ref: pr.head?.sha || '' }))
+    : { overall: 'unknown' as const, checks: [], ref: '' };
+  const mergeable = typeof pr.mergeable === 'boolean' ? pr.mergeable : null;
+  const mergeableState = pr.mergeable_state || 'unknown';
+  const status: RepoPullRequestStatusSummary = {
+    mergeable,
+    mergeableState,
+    canMerge: mergeable === true && pr.state === 'open' && checksStatus.overall !== 'failure',
+    checksOverall: checksStatus.overall,
+    checks: checksStatus.checks,
+    requestedReviewers: (pr.requested_reviewers || []).map((reviewer) => reviewer.login || 'unknown'),
+    requestedTeams: (pr.requested_teams || []).map((team) => team.name || 'team'),
+  };
 
   return {
     number: pr.number,
@@ -2047,6 +2201,25 @@ export async function fetchPullRequestDetail(
       date: commit.commit?.author?.date || '',
     })),
     diff: await diffRes.text(),
+    status,
+    reviews: reviews
+      .filter((review) => Boolean(review.submitted_at || review.body))
+      .map((review) => ({
+        id: review.id,
+        author: review.user?.login || 'unknown',
+        state: normalizeReviewState(review.state),
+        body: review.body || '',
+        submittedAt: review.submitted_at || '',
+        url: review.html_url || '',
+      })),
+    issueComments: issueComments.map((comment) => ({
+      id: comment.id,
+      author: comment.user?.login || 'unknown',
+      body: comment.body || '',
+      createdAt: comment.created_at || '',
+      url: comment.html_url || '',
+    })),
+    reviewThreads: buildReviewThreads(reviewComments),
   };
 }
 
