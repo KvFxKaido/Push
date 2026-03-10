@@ -32,9 +32,9 @@ export const EXPERIMENTAL_PROVIDER_DESCRIPTORS: Record<ExperimentalProviderType,
     label: 'Azure OpenAI',
     shortLabel: 'Azure',
     defaultModel: 'gpt-4.1',
-    baseUrlPlaceholder: 'https://your-resource.openai.azure.com/openai/v1',
+    baseUrlPlaceholder: 'https://your-resource.services.ai.azure.com/api/projects/PROJECT',
     modelPlaceholder: 'Deployment or model name',
-    helperText: 'Direct Azure OpenAI deployment. Uses the official OpenAI-compatible /openai/v1 base URL.',
+    helperText: 'Direct Azure connector. Accepts classic Azure OpenAI /openai/v1 URLs and Azure AI Foundry project URLs.',
   },
   bedrock: {
     type: 'bedrock',
@@ -74,6 +74,25 @@ function stripKnownSuffixes(pathname: string): string {
   return pathname;
 }
 
+function normalizeAzurePath(pathname: string): ExperimentalBaseUrlResult {
+  if (pathname === '/openai/v1') {
+    return { ok: true, normalized: pathname };
+  }
+
+  const foundryProjectMatch = pathname.match(/^\/api\/projects\/([^/]+)(?:\/openai\/v1)?$/i);
+  if (foundryProjectMatch) {
+    return {
+      ok: true,
+      normalized: `/api/projects/${foundryProjectMatch[1]}/openai/v1`,
+    };
+  }
+
+  return {
+    ok: false,
+    error: 'Azure Foundry URLs must look like /api/projects/<project> (Push adds /openai/v1) or end at /openai/v1.',
+  };
+}
+
 export function normalizeExperimentalBaseUrl(
   provider: ExperimentalProviderType,
   rawValue: string | null | undefined,
@@ -103,12 +122,28 @@ export function normalizeExperimentalBaseUrl(
 
   switch (provider) {
     case 'azure': {
-      if (!parsed.hostname.endsWith('.openai.azure.com')) {
-        return { ok: false, error: 'Azure OpenAI URLs must end with .openai.azure.com.' };
+      const isClassicAzureHost = parsed.hostname.endsWith('.openai.azure.com');
+      const isFoundryAzureHost = parsed.hostname.endsWith('.services.ai.azure.com');
+      if (!isClassicAzureHost && !isFoundryAzureHost) {
+        return {
+          ok: false,
+          error: 'Azure URLs must use either a <resource>.openai.azure.com or <resource>.services.ai.azure.com host.',
+        };
       }
-      if (pathname !== '/openai/v1') {
-        return { ok: false, error: 'Azure OpenAI base URL must end at /openai/v1.' };
+
+      const normalizedAzurePath = normalizeAzurePath(pathname);
+      if (!normalizedAzurePath.ok) {
+        return normalizedAzurePath;
       }
+
+      if (isClassicAzureHost && normalizedAzurePath.normalized !== '/openai/v1') {
+        return {
+          ok: false,
+          error: 'Classic Azure OpenAI resource URLs must end at /openai/v1.',
+        };
+      }
+
+      pathname = normalizedAzurePath.normalized;
       break;
     }
     case 'bedrock': {

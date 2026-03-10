@@ -1431,7 +1431,7 @@ export function SettingsSheet({
                 activeBackend={ai.activeBackend}
                 setActiveBackend={ai.setActiveBackend}
                 clearPreferredProvider={ai.clearPreferredProvider}
-                helperText="Use your Azure OpenAI /openai/v1 base URL plus the deployment/model name you want Push to target."
+                helperText="Use either your classic Azure OpenAI /openai/v1 base URL or an Azure AI Foundry project URL. Push normalizes Foundry project URLs to .../openai/v1."
                 configured={ai.isAzureConfigured}
                 hasKey={ai.hasAzureKey}
                 keyInput={ai.azureKeyInput}
@@ -1444,7 +1444,7 @@ export function SettingsSheet({
                 setBaseUrl={ai.setAzureBaseUrl}
                 clearBaseUrl={ai.clearAzureBaseUrl}
                 baseUrlError={ai.azureBaseUrlError}
-                baseUrlPlaceholder="https://your-resource.openai.azure.com/openai/v1"
+                baseUrlPlaceholder="https://your-resource.services.ai.azure.com/api/projects/PROJECT"
                 model={ai.azureModel}
                 modelInput={ai.azureModelInput}
                 setModelInput={ai.setAzureModelInput}

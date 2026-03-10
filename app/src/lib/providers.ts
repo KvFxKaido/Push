@@ -179,9 +179,9 @@ export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'azure',
     name: 'Azure OpenAI',
-    description: 'Experimental private connector for direct Azure OpenAI deployments',
+    description: 'Experimental private connector for direct Azure OpenAI and Azure AI Foundry deployments',
     envKey: 'VITE_AZURE_OPENAI_API_KEY',
-    envUrl: 'https://your-resource.openai.azure.com/openai/v1',
+    envUrl: 'https://your-resource.services.ai.azure.com/api/projects/PROJECT',
     models: makeRoleModels(AZURE_DEFAULT_MODEL, 'Azure OpenAI', 'azure', 200_000),
   },
   {
