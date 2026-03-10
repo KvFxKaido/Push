@@ -165,7 +165,8 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
   // --- Phase 2: Apply resolved edits with offset tracking ---
   // Each applied op records its original index and op type so later ops can
   // compute their adjusted index accounting for prior inserts/deletes.
-  const applied: { originalIndex: number; op: HashlineOp['op'] }[] = [];
+  const applied: { originalIndex: number; op: HashlineOp['op']; edit: HashlineOp }[] = [];
+  const deletedOriginalIndices = new Set<number>();
 
   for (const r of resolved) {
     if ('error' in r) {
@@ -174,11 +175,23 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
       continue;
     }
 
+    // Reject ops targeting a line that was already deleted in this batch
+    if (deletedOriginalIndices.has(r.index)) {
+      failedCount++;
+      errors.push(`Target line ${r.index + 1} was already deleted by a prior op in this batch.`);
+      continue;
+    }
+
     // Compute adjusted index based on line shifts from prior ops
     let adjustedIdx = r.index;
     for (const prior of applied) {
-      if (prior.op === 'insert_after' && r.index > prior.originalIndex) {
-        adjustedIdx++;
+      if (prior.op === 'insert_after') {
+        if (r.index > prior.originalIndex) {
+          adjustedIdx++;
+        } else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') {
+          // Same-line insert_after stacking: shift to preserve order
+          adjustedIdx++;
+        }
       } else if (prior.op === 'insert_before' && r.index >= prior.originalIndex) {
         adjustedIdx++;
       } else if (prior.op === 'delete_line' && r.index > prior.originalIndex) {
@@ -203,7 +216,10 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
         break;
     }
     appliedCount++;
-    applied.push({ originalIndex: r.index, op: edit.op });
+    if (edit.op === 'delete_line') {
+      deletedOriginalIndices.add(r.index);
+    }
+    applied.push({ originalIndex: r.index, op: edit.op, edit });
   }
 
   return {

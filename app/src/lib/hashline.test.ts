@@ -199,4 +199,60 @@ describe('batched edits: same-line replace + insert_after', () => {
     expect(result.failed).toBe(0);
     expect(result.content).toBe('before\nPRE\nREPLACED\nPOST\nafter');
   });
+
+  it('multiple insert_after on same line preserve order', async () => {
+    const content = 'A\nB\nC';
+    const ref = '2:' + await calculateLineHash('B', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'insert_after', ref, content: 'X' },
+      { op: 'insert_after', ref, content: 'Y' },
+      { op: 'insert_after', ref, content: 'Z' },
+    ]);
+    expect(result.applied).toBe(3);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('A\nB\nX\nY\nZ\nC');
+  });
+
+  it('rejects duplicate delete_line on the same line', async () => {
+    const content = 'A\nB\nC';
+    const ref = '2:' + await calculateLineHash('B', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'delete_line', ref },
+      { op: 'delete_line', ref },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('already deleted');
+    expect(result.content).toBe('A\nC');
+  });
+
+  it('rejects replace_line targeting a line deleted earlier in batch', async () => {
+    const content = 'A\nB\nC';
+    const ref = '2:' + await calculateLineHash('B', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'delete_line', ref },
+      { op: 'replace_line', ref, content: 'NEW' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('already deleted');
+    expect(result.content).toBe('A\nC');
+  });
+
+  it('rejects insert_after targeting a line deleted earlier in batch', async () => {
+    const content = 'A\nB\nC';
+    const ref = '2:' + await calculateLineHash('B', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'delete_line', ref },
+      { op: 'insert_after', ref, content: 'NEW' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('already deleted');
+    expect(result.content).toBe('A\nC');
+  });
 });
