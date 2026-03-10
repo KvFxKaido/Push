@@ -65,14 +65,14 @@ export function HomeScreen({
               </div>
               <div>
                 <h1 className="text-lg font-semibold tracking-tight text-push-fg">Push</h1>
-                <p className="text-[12px] text-[#788396]">Resume work or jump into a repo.</p>
+                <p className="text-push-sm text-[#788396]">Resume work or jump into a repo.</p>
               </div>
             </div>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-push-edge bg-push-surface text-push-fg-secondary shadow-push-sm spring-press transition-colors hover:border-[#31425a] hover:text-push-fg"
+                  className="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-push-edge bg-push-surface text-push-fg-secondary shadow-push-sm spring-press transition-colors hover:border-push-edge-hover hover:text-push-fg"
                   aria-label="Open account menu"
                 >
                   {user?.avatar_url ? (
@@ -108,8 +108,8 @@ export function HomeScreen({
                       </span>
                     )}
                     <div className="min-w-0">
-                      <p className="text-[11px] text-push-fg-secondary">GitHub connected</p>
-                      <p className="truncate text-[11px] text-push-fg-dim">
+                      <p className="text-push-xs text-push-fg-secondary">GitHub connected</p>
+                      <p className="truncate text-push-xs text-push-fg-dim">
                         {user ? `@${user.login}` : 'Connected account'}
                       </p>
                     </div>
@@ -118,7 +118,7 @@ export function HomeScreen({
                 <DropdownMenuSeparator className="bg-push-edge" />
                 <DropdownMenuItem
                   onSelect={() => onOpenSettings('you')}
-                  className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-secondary hover:bg-[#0d1119]"
+                  className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-secondary hover:bg-push-surface-hover"
                 >
                   <Settings className="h-3.5 w-3.5" />
                   Settings

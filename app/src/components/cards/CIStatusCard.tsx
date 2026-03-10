@@ -42,7 +42,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
         <span className={`text-sm font-medium ${overallColor(data.overall)}`}>
           CI Status
         </span>
-        <span className="ml-auto text-[11px] text-push-fg-dim">
+        <span className="ml-auto text-push-xs text-push-fg-dim">
           {data.overall === 'no-checks' ? 'No checks' : data.overall.toUpperCase()}
         </span>
       </div>
@@ -53,10 +53,10 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
           {data.checks.map((check, i) => (
             <div key={i} className="flex items-center gap-2 min-h-[24px]">
               {checkIcon(check)}
-              <span className="text-[12px] text-push-fg-secondary truncate flex-1">
+              <span className="text-push-sm text-push-fg-secondary truncate flex-1">
                 {check.name}
               </span>
-              <span className="text-[11px] text-push-fg-dim shrink-0">
+              <span className="text-push-xs text-push-fg-dim shrink-0">
                 {check.status !== 'completed'
                   ? check.status.replace('_', ' ')
                   : check.conclusion || '—'}
@@ -66,7 +66,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
         </div>
       ) : (
         <div className="px-3 py-3">
-          <p className="text-[12px] text-push-fg-dim">
+          <p className="text-push-sm text-push-fg-dim">
             No CI checks configured for this repo.
           </p>
         </div>
@@ -81,7 +81,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
               messageId,
               cardIndex,
             })}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-push-edge w-full px-4 py-2 text-[12px] font-medium text-push-fg-secondary transition-all duration-200 hover:bg-[#111624] hover:text-[#e4e4e7] active:scale-[0.98]"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-push-edge w-full px-4 py-2 text-push-sm font-medium text-push-fg-secondary transition-all duration-200 hover:bg-push-surface-active hover:text-push-fg active:scale-[0.98]"
             style={{ minHeight: '44px' }}
           >
             <RefreshCw className="h-3.5 w-3.5" />

@@ -72,11 +72,11 @@ export function renderCheckToneIcon(
 
   switch (tone) {
     case 'success':
-      return <CheckCircle2 className={`${sizeClasses} text-[#22c55e]`} />;
+      return <CheckCircle2 className={`${sizeClasses} text-push-status-success`} />;
     case 'failure':
-      return <XCircle className={`${sizeClasses} text-[#ef4444]`} />;
+      return <XCircle className={`${sizeClasses} text-push-status-error`} />;
     case 'pending':
-      return <Clock className={`${sizeClasses} text-[#f59e0b]`} />;
+      return <Clock className={`${sizeClasses} text-push-status-warning`} />;
     case 'neutral':
       return <MinusCircle className={`${sizeClasses} ${neutralClassName}`} />;
     case 'unknown':

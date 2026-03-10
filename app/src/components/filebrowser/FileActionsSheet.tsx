@@ -61,7 +61,7 @@ export function FileActionsSheet({
           <p className="text-xs text-[#52525b]">
             {isDirectory ? 'Folder' : formatFileSize(file.size)}
             {editability?.warning === 'large_file' && (
-              <span className="text-[#f59e0b] ml-1">• Large file</span>
+              <span className="text-push-status-warning ml-1">• Large file</span>
             )}
           </p>
         </SheetHeader>
@@ -81,7 +81,7 @@ export function FileActionsSheet({
           {/* Delete action */}
           <button
             onClick={handleDelete}
-            className="flex items-center gap-3 px-3 py-3 rounded-lg text-[#ef4444]/80 hover:text-[#ef4444] hover:bg-[#ef4444]/10 transition-colors text-left"
+            className="flex items-center gap-3 px-3 py-3 rounded-lg text-push-status-error/80 hover:text-push-status-error hover:bg-push-status-error/10 transition-colors text-left"
           >
             <Trash2 className="h-4 w-4 shrink-0" />
             <span className="text-sm">Delete</span>

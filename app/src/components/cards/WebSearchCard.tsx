@@ -8,7 +8,7 @@ export function WebSearchCard({ data }: { data: WebSearchCardData }) {
       {/* Header */}
       <div className="px-3 py-2 flex items-center gap-2 border-b border-push-edge">
         <Globe className="h-3.5 w-3.5 text-push-fg-secondary" />
-        <span className="text-[13px] font-medium text-push-fg">
+        <span className="text-push-base font-medium text-push-fg">
           {data.results.length} result{data.results.length !== 1 ? 's' : ''} for "{data.query}"
         </span>
       </div>
@@ -26,12 +26,12 @@ export function WebSearchCard({ data }: { data: WebSearchCardData }) {
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[13px] text-push-link font-medium truncate">
+                  <span className="text-push-base text-push-link font-medium truncate">
                     {result.title}
                   </span>
                   <ExternalLink className="h-3 w-3 text-push-fg-dim shrink-0" />
                 </div>
-                <p className="text-[12px] text-push-fg-dim mt-0.5 line-clamp-2">
+                <p className="text-push-sm text-push-fg-dim mt-0.5 line-clamp-2">
                   {result.content}
                 </p>
               </div>

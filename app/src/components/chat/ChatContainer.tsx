@@ -46,7 +46,7 @@ function ResumeBanner({
     <div className="mx-4 mt-2 mb-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-3 flex items-center justify-between gap-3 animate-fade-in">
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-amber-200">Session interrupted {phaseLabel(checkpoint.phase)}</p>
-        <p className="text-[11px] text-amber-200/60 mt-0.5">
+        <p className="text-push-xs text-amber-200/60 mt-0.5">
           Round {checkpoint.round + 1} &middot; {ageLabel}
           {checkpoint.coderDelegationActive ? ' &middot; Coder was active' : ''}
         </p>
@@ -168,7 +168,7 @@ function EmptyState({
             <button
               key={suggestion}
               onClick={() => onSuggestion?.(suggestion)}
-              className="cursor-pointer rounded-xl border border-push-edge bg-push-grad-card px-4 py-3 text-left text-sm text-push-fg-secondary shadow-push-card card-hover spring-press hover:border-[#31425a] hover:text-[#f0f4ff] hover:shadow-push-card-hover"
+              className="cursor-pointer rounded-xl border border-push-edge bg-push-grad-card px-4 py-3 text-left text-sm text-push-fg-secondary shadow-push-card card-hover spring-press hover:border-push-edge-hover hover:text-[#f0f4ff] hover:shadow-push-card-hover"
             >
               {suggestion}
             </button>
@@ -310,7 +310,7 @@ export function ChatContainer({
           text-push-fg-secondary
           shadow-push-lg backdrop-blur-sm
           transition-all duration-300 ease-out
-          hover:border-[#31425a] hover:text-[#f0f4ff] hover:shadow-push-xl
+          hover:border-push-edge-hover hover:text-[#f0f4ff] hover:shadow-push-xl
           spring-press
           ${showScrollButton ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-3 pointer-events-none'}
         `}

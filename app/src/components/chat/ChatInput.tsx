@@ -309,7 +309,7 @@ export function ChatInput({
             placeholder={repoName ? `Ask about ${repoName}...` : 'Ask about code...'}
             disabled={isStreaming}
             rows={1}
-            className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-[15px] leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-push-lg leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </div>
 
@@ -323,7 +323,7 @@ export function ChatInput({
               className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-200 spring-press ${
                 isStreaming
                   ? 'cursor-not-allowed border-[#1f2430] text-[#545c6e]'
-                  : 'border-push-edge bg-[#080b10]/95 text-[#8891a1] hover:border-push-edge-hover hover:bg-[#0d1119] hover:text-[#e2e8f0]'
+                  : 'border-push-edge bg-push-surface/95 text-[#8891a1] hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-[#e2e8f0]'
               }`}
               aria-label="Attach file"
               title="Attach file"
@@ -336,7 +336,7 @@ export function ChatInput({
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="flex h-9 max-w-[170px] items-center gap-1.5 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 text-[11px] text-[#a9b3c5] transition-colors hover:border-push-edge-hover hover:bg-[#0d1119] hover:text-[#e2e8f0]"
+                    className="flex h-9 max-w-[170px] items-center gap-1.5 rounded-xl border border-push-edge bg-push-surface/95 px-2.5 text-push-xs text-[#a9b3c5] transition-colors hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-[#e2e8f0]"
                     title={
                       isDisplayedProviderLocked
                         ? `${PROVIDER_LABELS[selectedProvider]} locked for this chat`
@@ -362,14 +362,14 @@ export function ChatInput({
                 >
                   <div className="space-y-2.5 px-1 py-1">
                     <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-1.5">
-                      <p className="text-[10px] text-[#8e99ad]">
+                      <p className="text-push-2xs text-[#8e99ad]">
                         {isDisplayedProviderLocked ? 'Current chat: locked' : 'This chat selection'}
                       </p>
                     </div>
                     <div className="space-y-1">
-                      <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-[#7c879b]">Backend</p>
+                      <p className="px-1 text-push-2xs font-medium uppercase tracking-wide text-[#7c879b]">Backend</p>
                       {providerControls.availableProviders.length === 0 ? (
-                        <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-2 text-[11px] text-[#7c879b]">
+                        <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-2 text-push-xs text-[#7c879b]">
                           No API keys configured yet.
                         </div>
                       ) : (
@@ -390,7 +390,7 @@ export function ChatInput({
 
                     <div className="space-y-1">
                       <div className="flex items-center justify-between px-1">
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-[#7c879b]">Model</p>
+                        <p className="text-push-2xs font-medium uppercase tracking-wide text-[#7c879b]">Model</p>
                         {canRefreshSelectedModelList && (
                           <button
                             type="button"
@@ -406,7 +406,7 @@ export function ChatInput({
                       </div>
 
                       {selectedProvider === 'demo' && (
-                        <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-2 text-[11px] text-[#9eabbe]">
+                        <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-2 text-push-xs text-[#9eabbe]">
                           Demo mode (no model selection)
                         </div>
                       )}
@@ -429,19 +429,19 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.ollamaModelsLoading && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Loading Ollama models...</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading Ollama models...</p>
                           )}
                           {!providerControls.ollamaModelsLoading && providerControls.ollamaModelOptions.length === 0 && !providerControls.ollamaModelsError && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
                           )}
                           {providerControls.ollamaModelsError && (
-                            <p className="px-1 text-[10px] text-amber-400">{providerControls.ollamaModelsError}</p>
+                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.ollamaModelsError}</p>
                           )}
                           {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isOllamaModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>
                       )}
@@ -461,7 +461,7 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.isOpenRouterModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>
                       )}
@@ -484,19 +484,19 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.zenModelsLoading && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Loading OpenCode Zen models...</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading OpenCode Zen models...</p>
                           )}
                           {!providerControls.zenModelsLoading && providerControls.zenModelOptions.length === 0 && !providerControls.zenModelsError && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
                           )}
                           {providerControls.zenModelsError && (
-                            <p className="px-1 text-[10px] text-amber-400">{providerControls.zenModelsError}</p>
+                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.zenModelsError}</p>
                           )}
                           {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isZenModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>
                       )}
@@ -519,19 +519,19 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.nvidiaModelsLoading && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Loading Nvidia NIM models...</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading Nvidia NIM models...</p>
                           )}
                           {!providerControls.nvidiaModelsLoading && providerControls.nvidiaModelOptions.length === 0 && !providerControls.nvidiaModelsError && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">No models returned. Try refresh.</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
                           )}
                           {providerControls.nvidiaModelsError && (
-                            <p className="px-1 text-[10px] text-amber-400">{providerControls.nvidiaModelsError}</p>
+                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.nvidiaModelsError}</p>
                           )}
                           {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-[10px] text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isNvidiaModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>
                       )}
@@ -546,7 +546,7 @@ export function ChatInput({
                             placeholder="Deployment or model"
                           />
                           {providerControls.isAzureModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a deployment starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a deployment starts a new chat.</p>
                           )}
                         </>
                       )}
@@ -561,7 +561,7 @@ export function ChatInput({
                             placeholder="Bedrock model id"
                           />
                           {providerControls.isBedrockModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>
                       )}
@@ -576,16 +576,16 @@ export function ChatInput({
                             placeholder="Vertex model id"
                           />
                           {providerControls.isVertexModelLocked && (
-                            <p className="px-1 text-[10px] text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>
                       )}
                     </div>
-                    <p className="px-1 text-[10px] text-[#7c879b]">
+                    <p className="px-1 text-push-2xs text-[#7c879b]">
                       Settings controls your defaults. This picker only changes the selected backend/model for this chat.
                     </p>
                     {isDisplayedProviderLocked && (
-                      <p className="px-1 text-[10px] text-amber-400">Changing backend/model here will start a new chat.</p>
+                      <p className="px-1 text-push-2xs text-amber-400">Changing backend/model here will start a new chat.</p>
                     )}
                   </div>
                 </PopoverContent>

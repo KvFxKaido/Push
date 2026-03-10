@@ -40,7 +40,7 @@ export function CIStatusBanner({ status, onDiagnose }: CIStatusBannerProps) {
           }`}>
             {isFailure ? 'Build failed on current branch' : 'CI is running...'}
           </p>
-          <p className={`text-[11px] mt-0.5 truncate ${
+          <p className={`text-push-xs mt-0.5 truncate ${
             isFailure ? 'text-red-200/60' : 'text-blue-200/60'
           }`}>
             {status.ref} &middot; {status.checks.length} checks

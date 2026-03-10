@@ -20,10 +20,10 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
       {/* Header */}
       <div className={`px-3 py-2 flex items-center gap-2 border-b border-push-edge ${statusBg}`}>
         <Icon className={`h-4 w-4 ${statusColor}`} />
-        <span className={`text-[13px] font-medium ${statusColor}`}>
+        <span className={`text-push-base font-medium ${statusColor}`}>
           {passed ? 'No Type Errors' : 'Type Errors Found'}
         </span>
-        <span className="text-[12px] text-push-fg-dim">{toolLabel}</span>
+        <span className="text-push-sm text-push-fg-dim">{toolLabel}</span>
       </div>
 
       {/* Stats */}
@@ -31,16 +31,16 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
         <div className="px-3 py-2 flex items-center gap-4 border-b border-push-edge">
           {data.errorCount > 0 && (
             <div className="flex items-center gap-1.5">
-              <XCircle className="h-3.5 w-3.5 text-[#ef4444]" />
-              <span className="text-[12px] text-[#e4e4e7]">
+              <XCircle className="h-3.5 w-3.5 text-push-status-error" />
+              <span className="text-push-sm text-push-fg">
                 {data.errorCount} error{data.errorCount !== 1 ? 's' : ''}
               </span>
             </div>
           )}
           {data.warningCount > 0 && (
             <div className="flex items-center gap-1.5">
-              <AlertTriangle className="h-3.5 w-3.5 text-[#f59e0b]" />
-              <span className="text-[12px] text-[#e4e4e7]">
+              <AlertTriangle className="h-3.5 w-3.5 text-push-status-warning" />
+              <span className="text-push-sm text-push-fg">
                 {data.warningCount} warning{data.warningCount !== 1 ? 's' : ''}
               </span>
             </div>
@@ -53,21 +53,21 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
         <div className={`${CARD_LIST_CLASS} max-h-[250px] overflow-y-auto`}>
           {data.errors.slice(0, 15).map((err, i) => (
             <div key={i} className="px-3 py-1.5">
-              <div className="flex items-center gap-2 text-[12px]">
+              <div className="flex items-center gap-2 text-push-sm">
                 <FileCode className="h-3 w-3 text-push-fg-dim shrink-0" />
                 <span className="text-push-link font-mono">
                   {err.file}:{err.line}
                   {err.column > 0 ? `:${err.column}` : ''}
                 </span>
                 {err.code && (
-                  <span className="text-push-fg-dim font-mono text-[11px]">{err.code}</span>
+                  <span className="text-push-fg-dim font-mono text-push-xs">{err.code}</span>
                 )}
               </div>
-              <p className="text-[11px] text-push-fg-secondary mt-0.5 ml-5 truncate">{err.message}</p>
+              <p className="text-push-xs text-push-fg-secondary mt-0.5 ml-5 truncate">{err.message}</p>
             </div>
           ))}
           {data.errors.length > 15 && (
-            <div className="px-3 py-1.5 text-[11px] text-push-fg-dim">
+            <div className="px-3 py-1.5 text-push-xs text-push-fg-dim">
               +{data.errors.length - 15} more errors
             </div>
           )}
@@ -75,7 +75,7 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
       )}
 
       {data.truncated && (
-        <div className="px-3 py-1.5 border-t border-push-edge text-[11px] text-[#f59e0b]">
+        <div className="px-3 py-1.5 border-t border-push-edge text-push-xs text-push-status-warning">
           Output truncated
         </div>
       )}

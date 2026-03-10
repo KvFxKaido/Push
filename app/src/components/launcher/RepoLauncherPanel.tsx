@@ -201,7 +201,7 @@ export function RepoLauncherPanel({
     return (
       <div
         key={repo.id}
-        className="rounded-xl border border-push-edge bg-push-grad-card p-3.5 shadow-push-card card-hover spring-press hover:border-[#31425a] hover:shadow-push-card-hover"
+        className="rounded-xl border border-push-edge bg-push-grad-card p-3.5 shadow-push-card card-hover spring-press hover:border-push-edge-hover hover:shadow-push-card-hover"
       >
         <button
           onClick={() => onSelectRepo(repo)}
@@ -220,7 +220,7 @@ export function RepoLauncherPanel({
           </div>
 
           {activeBranch && activeBranch !== repo.default_branch && (
-            <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[#1a1f2e] px-1.5 py-0.5 text-[11px] text-[#9db8df]">
+            <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[#1a1f2e] px-1.5 py-0.5 text-push-xs text-[#9db8df]">
               <GitBranch className="h-3 w-3" />
               <span className="max-w-[160px] truncate">{activeBranch}</span>
             </span>
@@ -232,7 +232,7 @@ export function RepoLauncherPanel({
             </p>
           )}
 
-          <div className="flex items-center gap-3 text-xs text-[#5f6b80]">
+          <div className="flex items-center gap-3 text-xs text-push-fg-dim">
             {repo.language && (
               <span className="flex items-center gap-1">
                 <span
@@ -267,9 +267,9 @@ export function RepoLauncherPanel({
         <div className="mt-2 flex items-center gap-2">
           <button
             onClick={() => setBranchCreateRepo(repo)}
-            className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#1b2230] bg-push-grad-input px-2.5 text-xs text-push-fg-secondary shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:text-push-fg hover:brightness-110"
+            className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-push-edge-subtle bg-push-grad-input px-2.5 text-xs text-push-fg-secondary shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
           >
-            <GitBranch className="h-3.5 w-3.5 text-[#5f6b80]" />
+            <GitBranch className="h-3.5 w-3.5 text-push-fg-dim" />
             Create branch
           </button>
 
@@ -283,12 +283,12 @@ export function RepoLauncherPanel({
             }}
           >
             <DropdownMenuTrigger asChild>
-              <button className="flex h-8 flex-1 items-center justify-between rounded-lg border border-[#1b2230] bg-push-grad-input px-2.5 text-xs text-[#9db8df] shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:brightness-110">
+              <button className="flex h-8 flex-1 items-center justify-between rounded-lg border border-push-edge-subtle bg-push-grad-input px-2.5 text-xs text-[#9db8df] shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:brightness-110">
                 <span className="inline-flex min-w-0 items-center gap-1">
-                  <GitBranch className="h-3 w-3 text-[#5f6b80]" />
+                  <GitBranch className="h-3 w-3 text-push-fg-dim" />
                   <span className="truncate">Open on branch</span>
                 </span>
-                <span className="truncate text-[11px] text-[#788396]">{repo.default_branch}</span>
+                <span className="truncate text-push-xs text-[#788396]">{repo.default_branch}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -296,7 +296,7 @@ export function RepoLauncherPanel({
               sideOffset={8}
               className="w-[240px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
             >
-              <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
+              <DropdownMenuLabel className="px-3 py-1.5 text-push-2xs font-medium uppercase tracking-wider text-push-fg-dim">
                 {repo.name} Branches
               </DropdownMenuLabel>
               <DropdownMenuSeparator className="bg-push-edge" />
@@ -318,7 +318,7 @@ export function RepoLauncherPanel({
                       event.preventDefault();
                       void loadBranchesForRepo(repo.full_name, true);
                     }}
-                    className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-[#0d1119]"
+                    className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-push-surface-hover"
                   >
                     Retry
                   </DropdownMenuItem>
@@ -335,18 +335,18 @@ export function RepoLauncherPanel({
                 <DropdownMenuItem
                   key={branch.name}
                   onSelect={() => onSelectRepo(repo, branch.name)}
-                  className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-[#0d1119]"
+                  className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-push-surface-hover"
                 >
                   <span className="min-w-0 flex-1 truncate text-xs text-push-fg-secondary">
                     {branch.name}
                   </span>
                   {branch.isDefault && (
-                    <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[10px] text-[#58a6ff]">
+                    <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-[#58a6ff]">
                       default
                     </span>
                   )}
                   {branch.isProtected && (
-                    <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-[10px] text-[#fca5a5]">
+                    <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-push-2xs text-[#fca5a5]">
                       protected
                     </span>
                   )}
@@ -392,7 +392,7 @@ export function RepoLauncherPanel({
               <p className="mt-0.5 truncate text-xs text-[#9ab4d4]">
                 {latestConversation.title}
               </p>
-              <p className="mt-1 flex items-center gap-1 text-[11px] text-[#6f88aa]">
+              <p className="mt-1 flex items-center gap-1 text-push-xs text-[#6f88aa]">
                 <span>{latestConversationRepo.name}</span>
                 {latestConversation.branch && (
                   <>
@@ -420,7 +420,7 @@ export function RepoLauncherPanel({
           )}
           <button
             onClick={() => setShowAllRepos((value) => !value)}
-            className="flex items-center gap-2 rounded-xl border border-[#1b2230] bg-push-grad-input px-3 py-2.5 text-sm font-medium text-[#9fb0c8] shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] hover:brightness-110"
+            className="flex items-center gap-2 rounded-xl border border-push-edge-subtle bg-push-grad-input px-3 py-2.5 text-sm font-medium text-[#9fb0c8] shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] hover:brightness-110"
           >
             <Search className="h-4 w-4" />
             {showAllRepos ? 'Hide All Repos' : 'Browse All Repos'}
@@ -456,7 +456,7 @@ export function RepoLauncherPanel({
                 placeholder="Search repositories..."
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                className="w-full rounded-xl border border-[#1b2230] bg-push-grad-input py-2.5 pl-10 pr-4 text-sm text-push-fg placeholder:text-[#4f596d] shadow-[0_10px_24px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all duration-200 focus:border-push-sky/50"
+                className="w-full rounded-xl border border-push-edge-subtle bg-push-grad-input py-2.5 pl-10 pr-4 text-sm text-push-fg placeholder:text-[#4f596d] shadow-[0_10px_24px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all duration-200 focus:border-push-sky/50"
               />
             </div>
             {filteredRepos.length === 0 ? (

@@ -214,7 +214,7 @@ export function OnboardingScreen({
               <button
                 onClick={onInstallApp}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] spring-press"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] spring-press"
               >
                 <Github className="h-4 w-4" />
                 Install GitHub App
@@ -223,7 +223,7 @@ export function OnboardingScreen({
               {/* PAT fallback */}
               <button
                 onClick={() => setShowPatInput(true)}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] spring-press"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] spring-press"
               >
                 <Key className="h-4 w-4" />
                 Use Personal Access Token
@@ -242,9 +242,9 @@ export function OnboardingScreen({
         {/* Divider + sandbox */}
         <div className="mt-8">
           <div className="flex items-center gap-3 mb-6">
-            <div className="flex-1 h-px bg-[#1b2230]" />
+            <div className="flex-1 h-px bg-push-edge-subtle" />
             <span className="text-xs text-[#4f596d]">or</span>
-            <div className="flex-1 h-px bg-[#1b2230]" />
+            <div className="flex-1 h-px bg-push-edge-subtle" />
           </div>
 
           <button

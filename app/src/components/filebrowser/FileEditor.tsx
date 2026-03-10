@@ -172,7 +172,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         <header className="flex items-center gap-2 px-3 py-3 border-b border-[#1a1a1a]">
           <button
             onClick={onBack}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#a1a1aa] transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d]"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d]"
           >
             <ArrowLeft className="h-4 w-4" />
           </button>
@@ -180,9 +180,9 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         </header>
         
         <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6 text-center">
-          <AlertCircle className="h-8 w-8 text-[#ef4444]/70" />
+          <AlertCircle className="h-8 w-8 text-push-status-error/70" />
           <div>
-            <p className="text-[#a1a1aa] text-sm mb-1">Cannot open file</p>
+            <p className="text-push-fg-secondary text-sm mb-1">Cannot open file</p>
             <p className="text-[#52525b] text-xs">{error}</p>
           </div>
           <button
@@ -203,7 +203,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         <button
           onClick={handleDiscard}
           disabled={saving}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-[#a1a1aa] transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d] disabled:opacity-40"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d] disabled:opacity-40"
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
@@ -213,10 +213,10 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
             <FileCode className="h-3.5 w-3.5 text-push-accent" />
             {file.name}
           </h1>
-          <p className="text-[10px] text-[#52525b]">
+          <p className="text-push-2xs text-[#52525b]">
             {language} • {formatFileSize(new Blob([content]).size)}
-            {isLargeFile && <span className="text-[#f59e0b] ml-1">large file</span>}
-            {hasChanges && <span className="text-[#f59e0b] ml-1">• unsaved</span>}
+            {isLargeFile && <span className="text-push-status-warning ml-1">large file</span>}
+            {hasChanges && <span className="text-push-status-warning ml-1">• unsaved</span>}
           </p>
         </div>
 
@@ -226,7 +226,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
             <button
               onClick={handleReset}
               disabled={saving}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#a1a1aa] transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d]"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d]"
               title="Revert changes"
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -239,7 +239,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
             className={`flex h-8 px-3 items-center gap-1.5 rounded-lg text-xs transition-colors ${
               showDiff 
                 ? 'bg-push-accent/20 text-push-accent' 
-                : 'text-[#a1a1aa] hover:text-[#fafafa] hover:bg-[#0d0d0d]'
+                : 'text-push-fg-secondary hover:text-[#fafafa] hover:bg-[#0d0d0d]'
             } disabled:opacity-40`}
           >
             <Check className="h-3.5 w-3.5" />
@@ -249,7 +249,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
           <button
             onClick={handleSave}
             disabled={saving || (!hasChanges && content === originalContent)}
-            className="flex h-8 px-3 items-center gap-1.5 rounded-lg bg-[#22c55e] text-white text-xs font-medium transition-colors hover:bg-[#16a34a] disabled:opacity-40"
+            className="flex h-8 px-3 items-center gap-1.5 rounded-lg bg-push-status-success text-white text-xs font-medium transition-colors hover:bg-push-status-success disabled:opacity-40"
           >
             {saving ? (
               <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -283,7 +283,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
       </div>
 
       {/* Footer - character count */}
-      <footer className="px-3 py-2 border-t border-[#1a1a1a] flex items-center justify-between text-[10px] text-[#52525b]">
+      <footer className="px-3 py-2 border-t border-[#1a1a1a] flex items-center justify-between text-push-2xs text-[#52525b]">
         <span>{content.length.toLocaleString()} chars</span>
         <span>{content.split('\n').length.toLocaleString()} lines</span>
       </footer>
@@ -310,7 +310,7 @@ function CodeEditor({ content, onChange, disabled }: CodeEditorProps) {
         {lines.map((_, i) => (
           <div 
             key={i} 
-            className="min-h-[1.5em] px-2 text-right text-[10px] text-[#52525b] leading-[1.5em] font-mono"
+            className="min-h-[1.5em] px-2 text-right text-push-2xs text-[#52525b] leading-[1.5em] font-mono"
           >
             {i + 1}
           </div>
@@ -352,14 +352,14 @@ function DiffView({ lines }: DiffViewProps) {
           <div
             key={i}
             className={`flex ${
-              line.type === 'added' ? 'bg-[#22c55e]/10' : 
-              line.type === 'removed' ? 'bg-[#ef4444]/10' : 
+              line.type === 'added' ? 'bg-push-status-success/10' : 
+              line.type === 'removed' ? 'bg-push-status-error/10' : 
               ''
             }`}
           >
             <span className={`w-6 shrink-0 text-right pr-2 select-none ${
-              line.type === 'added' ? 'text-[#22c55e]' : 
-              line.type === 'removed' ? 'text-[#ef4444]' : 
+              line.type === 'added' ? 'text-push-status-success' : 
+              line.type === 'removed' ? 'text-push-status-error' : 
               'text-[#52525b]'
             }`}>
               {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
@@ -367,7 +367,7 @@ function DiffView({ lines }: DiffViewProps) {
             <span className={`flex-1 whitespace-pre ${
               line.type === 'added' ? 'text-[#4ade80]' : 
               line.type === 'removed' ? 'text-[#f87171]' : 
-              'text-[#a1a1aa]'
+              'text-push-fg-secondary'
             }`}>
               {line.content || ' '}
             </span>

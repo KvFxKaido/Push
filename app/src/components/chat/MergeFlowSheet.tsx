@@ -125,9 +125,9 @@ function StepIndicator({ current }: { current: MergeStep }) {
             )}
             <div
               className={`
-                flex items-center justify-center rounded-full text-[10px] font-medium
+                flex items-center justify-center rounded-full text-push-2xs font-medium
                 h-6 px-2.5 transition-colors
-                ${isActive ? 'bg-white/10 text-[#e4e4e7]' : ''}
+                ${isActive ? 'bg-white/10 text-push-fg' : ''}
                 ${isDone ? 'bg-emerald-500/10 text-emerald-400' : ''}
                 ${!isActive && !isDone ? 'bg-transparent text-[#3f3f46]' : ''}
               `}
@@ -572,8 +572,8 @@ function MergeFlowSheet({
         className="bg-[#0d0d0d] border-t border-white/[0.06] rounded-t-2xl px-5 pb-8 pt-0 max-h-[85dvh] overflow-y-auto"
       >
         <SheetHeader className="pt-5 pb-1">
-          <SheetTitle className="text-sm font-semibold text-[#e4e4e7] flex items-center gap-2">
-            <GitMerge className="h-4 w-4 text-[#5f6b80]" />
+          <SheetTitle className="text-sm font-semibold text-push-fg flex items-center gap-2">
+            <GitMerge className="h-4 w-4 text-push-fg-dim" />
             Merge {currentBranch}
           </SheetTitle>
           <SheetDescription className="text-xs text-[#71717a]">
@@ -592,7 +592,7 @@ function MergeFlowSheet({
             <Button
               onClick={close}
               variant="outline"
-              className="w-full h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+              className="w-full h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
             >
               Close
             </Button>
@@ -606,8 +606,8 @@ function MergeFlowSheet({
               <div className="space-y-4">
                 {loading && (
                   <div className="flex items-center gap-2.5 py-4">
-                    <Loader2 className="h-4 w-4 animate-spin text-[#5f6b80]" />
-                    <span className="text-sm text-[#a1a1aa]">{statusText || 'Checking...'}</span>
+                    <Loader2 className="h-4 w-4 animate-spin text-push-fg-dim" />
+                    <span className="text-sm text-push-fg-secondary">{statusText || 'Checking...'}</span>
                   </div>
                 )}
 
@@ -634,7 +634,7 @@ function MergeFlowSheet({
                       <Button
                         onClick={close}
                         variant="outline"
-                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
                       >
                         Cancel
                       </Button>
@@ -653,16 +653,16 @@ function MergeFlowSheet({
               <div className="space-y-4">
                 {loading && (
                   <div className="flex items-center gap-2.5 py-4">
-                    <Loader2 className="h-4 w-4 animate-spin text-[#5f6b80]" />
-                    <span className="text-sm text-[#a1a1aa]">{statusText || 'Looking for PRs...'}</span>
+                    <Loader2 className="h-4 w-4 animate-spin text-push-fg-dim" />
+                    <span className="text-sm text-push-fg-secondary">{statusText || 'Looking for PRs...'}</span>
                   </div>
                 )}
 
                 {!loading && prFormMode === 'existing' && prInfo && (
                   <>
                     <div className="rounded-lg border border-white/[0.06] bg-[#141414] px-3 py-3 space-y-1.5">
-                      <p className="text-xs text-[#5f6b80]">Existing PR found</p>
-                      <p className="text-sm text-[#e4e4e7] font-medium">
+                      <p className="text-xs text-push-fg-dim">Existing PR found</p>
+                      <p className="text-sm text-push-fg font-medium">
                         #{prInfo.number} — {prInfo.title}
                       </p>
                       {prInfo.url && (
@@ -687,7 +687,7 @@ function MergeFlowSheet({
                       <Button
                         onClick={close}
                         variant="outline"
-                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
                       >
                         Cancel
                       </Button>
@@ -699,7 +699,7 @@ function MergeFlowSheet({
                   <>
                     <div className="space-y-3">
                       <div className="space-y-2">
-                        <Label htmlFor="pr-title" className="text-xs text-[#a1a1aa]">
+                        <Label htmlFor="pr-title" className="text-xs text-push-fg-secondary">
                           PR title
                         </Label>
                         <Input
@@ -708,14 +708,14 @@ function MergeFlowSheet({
                           value={prTitle}
                           onChange={(e) => { setPrTitle(e.target.value); setError(null); }}
                           autoFocus
-                          className="bg-[#141414] border-white/[0.08] text-[#e4e4e7] placeholder:text-[#3f3f46] h-11 text-sm"
+                          className="bg-[#141414] border-white/[0.08] text-push-fg placeholder:text-[#3f3f46] h-11 text-sm"
                           autoComplete="off"
                           autoCorrect="off"
                           spellCheck={false}
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="pr-body" className="text-xs text-[#a1a1aa]">
+                        <Label htmlFor="pr-body" className="text-xs text-push-fg-secondary">
                           Description <span className="text-[#3f3f46]">(optional)</span>
                         </Label>
                         <Textarea
@@ -724,10 +724,10 @@ function MergeFlowSheet({
                           value={prBody}
                           onChange={(e) => setPrBody(e.target.value)}
                           rows={3}
-                          className="bg-[#141414] border-white/[0.08] text-[#e4e4e7] placeholder:text-[#3f3f46] text-sm min-h-[72px] resize-none"
+                          className="bg-[#141414] border-white/[0.08] text-push-fg placeholder:text-[#3f3f46] text-sm min-h-[72px] resize-none"
                         />
                       </div>
-                      <p className="text-[11px] text-[#3f3f46]">
+                      <p className="text-push-xs text-[#3f3f46]">
                         {currentBranch} <ArrowRight className="h-3 w-3 inline" /> {defaultBranch}
                       </p>
                     </div>
@@ -750,7 +750,7 @@ function MergeFlowSheet({
                         onClick={close}
                         disabled={loading}
                         variant="outline"
-                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
                       >
                         Cancel
                       </Button>
@@ -769,8 +769,8 @@ function MergeFlowSheet({
               <div className="space-y-4">
                 {loading && (
                   <div className="flex items-center gap-2.5 py-4">
-                    <Loader2 className="h-4 w-4 animate-spin text-[#5f6b80]" />
-                    <span className="text-sm text-[#a1a1aa]">{statusText || 'Auditing...'}</span>
+                    <Loader2 className="h-4 w-4 animate-spin text-push-fg-dim" />
+                    <span className="text-sm text-push-fg-secondary">{statusText || 'Auditing...'}</span>
                   </div>
                 )}
 
@@ -787,15 +787,15 @@ function MergeFlowSheet({
                           {auditCard.risks.map((risk, i) => (
                             <div key={i} className="flex items-start gap-1.5">
                               <span
-                                className={`text-[10px] font-medium uppercase mt-0.5 ${
+                                className={`text-push-2xs font-medium uppercase mt-0.5 ${
                                   risk.level === 'high' ? 'text-red-400' :
                                   risk.level === 'medium' ? 'text-yellow-400' :
-                                  'text-[#5f6b80]'
+                                  'text-push-fg-dim'
                                 }`}
                               >
                                 {risk.level}
                               </span>
-                              <span className="text-xs text-[#a1a1aa]">{risk.description}</span>
+                              <span className="text-xs text-push-fg-secondary">{risk.description}</span>
                             </div>
                           ))}
                         </div>
@@ -811,7 +811,7 @@ function MergeFlowSheet({
                       <Button
                         onClick={close}
                         variant="outline"
-                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
                       >
                         Cancel
                       </Button>
@@ -848,8 +848,8 @@ function MergeFlowSheet({
 
                 {loading && !mergeStatus && (
                   <div className="flex items-center gap-2.5 py-4">
-                    <Loader2 className="h-4 w-4 animate-spin text-[#5f6b80]" />
-                    <span className="text-sm text-[#a1a1aa]">{statusText || 'Checking...'}</span>
+                    <Loader2 className="h-4 w-4 animate-spin text-push-fg-dim" />
+                    <span className="text-sm text-push-fg-secondary">{statusText || 'Checking...'}</span>
                   </div>
                 )}
 
@@ -869,13 +869,13 @@ function MergeFlowSheet({
                             </div>
                           </div>
                           {mergeStatus.ciOverall === 'PENDING' && (
-                            <p className="text-[11px] text-yellow-400/70 mt-2 flex items-center gap-1">
+                            <p className="text-push-xs text-yellow-400/70 mt-2 flex items-center gap-1">
                               <Loader2 className="h-3 w-3 animate-spin" />
                               CI checks still running (merge is allowed)
                             </p>
                           )}
                           {mergeStatus.ciOverall === 'NO-CHECKS' && (
-                            <p className="text-[11px] text-[#5f6b80] mt-2">No CI checks configured</p>
+                            <p className="text-push-xs text-push-fg-dim mt-2">No CI checks configured</p>
                           )}
                         </div>
                         <div className="flex gap-3">
@@ -900,7 +900,7 @@ function MergeFlowSheet({
                             onClick={close}
                             disabled={loading}
                             variant="outline"
-                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
                           >
                             Cancel
                           </Button>
@@ -937,7 +937,7 @@ function MergeFlowSheet({
                           <Button
                             onClick={close}
                             variant="outline"
-                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
                           >
                             Cancel
                           </Button>
@@ -969,7 +969,7 @@ function MergeFlowSheet({
                           <Button
                             onClick={close}
                             variant="outline"
-                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
                           >
                             Cancel
                           </Button>
@@ -1001,7 +1001,7 @@ function MergeFlowSheet({
                           <Button
                             onClick={close}
                             variant="outline"
-                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
                           >
                             Cancel
                           </Button>
@@ -1043,7 +1043,7 @@ function MergeFlowSheet({
                     onClick={handleSwitchAndDelete}
                     disabled={deletingBranch}
                     variant="outline"
-                    className="w-full h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+                    className="w-full h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
                   >
                     {deletingBranch ? (
                       <>
@@ -1093,7 +1093,7 @@ function ErrorDisplay({
         <Button
           onClick={onCancel}
           variant="outline"
-          className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+          className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
         >
           Cancel
         </Button>

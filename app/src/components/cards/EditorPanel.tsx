@@ -73,7 +73,7 @@ export function EditorPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="h-[92dvh] rounded-t-xl border-t border-push-edge bg-[#05080e] p-0 gap-0 [&>[data-slot=sheet-close]]:hidden"
+        className="h-[92dvh] rounded-t-xl border-t border-push-edge bg-push-surface-inset p-0 gap-0 [&>[data-slot=sheet-close]]:hidden"
       >
         {/* Accessible but visually hidden title/description */}
         <SheetTitle className="sr-only">{filename}</SheetTitle>
@@ -82,34 +82,34 @@ export function EditorPanel({
         </SheetDescription>
 
         {/* Custom header */}
-        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-push-edge bg-[#05080e] shrink-0">
+        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-push-edge bg-push-surface-inset shrink-0">
           <button
             onClick={() => onOpenChange(false)}
-            className="p-1 rounded hover:bg-[#111624] transition-colors"
+            className="p-1 rounded hover:bg-push-surface-active transition-colors"
           >
             <X className="h-4 w-4 text-push-fg-muted" />
           </button>
 
           <FileCode className="h-3.5 w-3.5 text-push-fg-secondary shrink-0" />
-          <span className="text-[13px] text-push-fg font-mono truncate flex-1">
+          <span className="text-push-base text-push-fg font-mono truncate flex-1">
             {data.path}
           </span>
 
           {/* Mode badge */}
           {editable ? (
-            <span className="flex items-center gap-1 text-[11px] text-[#86efac] bg-[#86efac12] px-1.5 py-0.5 rounded shrink-0">
+            <span className="flex items-center gap-1 text-push-xs text-[#86efac] bg-[#86efac12] px-1.5 py-0.5 rounded shrink-0">
               <Pencil className="h-2.5 w-2.5" />
               Edit
             </span>
           ) : (
-            <span className="flex items-center gap-1 text-[11px] text-push-fg-dim bg-[#111624] px-1.5 py-0.5 rounded shrink-0">
+            <span className="flex items-center gap-1 text-push-xs text-push-fg-dim bg-push-surface-active px-1.5 py-0.5 rounded shrink-0">
               <Lock className="h-2.5 w-2.5" />
               Read-only
             </span>
           )}
 
           {data.language && (
-            <span className="text-[11px] text-push-fg-dim bg-[#111624] px-1.5 py-0.5 rounded shrink-0">
+            <span className="text-push-xs text-push-fg-dim bg-push-surface-active px-1.5 py-0.5 rounded shrink-0">
               {data.language}
             </span>
           )}
@@ -119,10 +119,10 @@ export function EditorPanel({
             <button
               onClick={handleSave}
               disabled={!isDirty || saving}
-              className={`flex items-center gap-1 text-[12px] px-2 py-1 rounded transition-colors shrink-0 ${
+              className={`flex items-center gap-1 text-push-sm px-2 py-1 rounded transition-colors shrink-0 ${
                 isDirty && !saving
                   ? 'bg-[#a78bfa] text-[#0c0c0e] hover:bg-[#8b5cf6]'
-                  : 'bg-[#111624] text-[#5f6b80] cursor-not-allowed'
+                  : 'bg-push-surface-active text-push-fg-dim cursor-not-allowed'
               }`}
             >
               <Save className="h-3 w-3" />

@@ -230,12 +230,12 @@ export function HubPRsTab({
         <div className="flex items-center justify-between border-b border-push-edge px-3 py-2">
           <div>
             <p className="text-xs text-push-fg-dim">Pull requests</p>
-            <p className="text-[10px] text-push-fg-dim">{repoFullName}</p>
+            <p className="text-push-2xs text-push-fg-dim">{repoFullName}</p>
           </div>
           <button
             onClick={() => void refreshList()}
             disabled={listLoading}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
           >
             {listLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             Refresh
@@ -271,7 +271,7 @@ export function HubPRsTab({
                   <li key={pr.number}>
                     <button
                       onClick={() => setSelectedPrNumber(pr.number)}
-                      className="w-full px-3 py-3 text-left hover:bg-[#0d1119]"
+                      className="w-full px-3 py-3 text-left hover:bg-push-surface-hover"
                     >
                       <div className="flex items-start gap-2">
                         <GitPullRequest className="mt-0.5 h-4 w-4 shrink-0 text-push-accent" />
@@ -281,12 +281,12 @@ export function HubPRsTab({
                               {pr.title}
                             </p>
                             {pr.isDraft && (
-                              <span className="rounded-full border border-push-edge px-1.5 py-0.5 text-[10px] text-push-fg-dim">
+                              <span className="rounded-full border border-push-edge px-1.5 py-0.5 text-push-2xs text-push-fg-dim">
                                 Draft
                               </span>
                             )}
                           </div>
-                          <div className="mt-1 flex items-center gap-2 text-[11px] text-push-fg-dim">
+                          <div className="mt-1 flex items-center gap-2 text-push-xs text-push-fg-dim">
                             <span>#{pr.number}</span>
                             <span>{timeAgo(pr.updatedAt || pr.createdAt)}</span>
                             {isActiveBranchPr && (
@@ -295,7 +295,7 @@ export function HubPRsTab({
                               </span>
                             )}
                           </div>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-push-fg-dim">
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-push-xs text-push-fg-dim">
                             <span className={`rounded-full px-1.5 py-0.5 ${stateBadge(pr)}`}>
                               {pr.state}
                             </span>
@@ -305,8 +305,8 @@ export function HubPRsTab({
                             </span>
                             {(pr.additions > 0 || pr.deletions > 0) && (
                               <span className="font-mono">
-                                <span className="text-[#22c55e]">+{pr.additions}</span>{' '}
-                                <span className="text-[#ef4444]">-{pr.deletions}</span>
+                                <span className="text-push-status-success">+{pr.additions}</span>{' '}
+                                <span className="text-push-status-error">-{pr.deletions}</span>
                               </span>
                             )}
                             {commentCount > 0 && (
@@ -345,7 +345,7 @@ export function HubPRsTab({
             setDetail(null);
             setDetailError(null);
           }}
-          className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
+          className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           All PRs
@@ -358,7 +358,7 @@ export function HubPRsTab({
               if (selectedPrNumber) setDetailReloadNonce((value) => value + 1);
             }}
             disabled={listLoading || detailLoading}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-[#080b10]/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
             aria-label="Refresh pull requests"
           >
             {listLoading || detailLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
@@ -368,7 +368,7 @@ export function HubPRsTab({
               href={detail.url}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-[#080b10]/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
               aria-label="Open pull request on GitHub"
             >
               <ExternalLink className="h-3.5 w-3.5" />
@@ -397,22 +397,22 @@ export function HubPRsTab({
           <div className="space-y-4 p-3">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stateBadge(detail)}`}>
+                <span className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${stateBadge(detail)}`}>
                   {detail.state}
                 </span>
                 {detail.isDraft && (
-                  <span className="rounded-full border border-push-edge px-2 py-0.5 text-[11px] text-push-fg-dim">
+                  <span className="rounded-full border border-push-edge px-2 py-0.5 text-push-xs text-push-fg-dim">
                     Draft
                   </span>
                 )}
-                <span className="text-[11px] text-push-fg-dim">#{detail.number}</span>
+                <span className="text-push-xs text-push-fg-dim">#{detail.number}</span>
               </div>
 
               <h3 className="text-base font-semibold leading-tight text-push-fg">
                 {detail.title}
               </h3>
 
-              <div className="flex flex-wrap items-center gap-2 text-[11px] text-push-fg-dim">
+              <div className="flex flex-wrap items-center gap-2 text-push-xs text-push-fg-dim">
                 <span>{detail.author}</span>
                 <span>opened {timeAgo(detail.createdAt)}</span>
                 <span className="inline-flex items-center gap-1 rounded-full bg-[#101621] px-2 py-0.5">
@@ -423,56 +423,56 @@ export function HubPRsTab({
             </div>
 
             <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-push-edge bg-[#080d14]/90 p-2">
-                <p className="text-[10px] uppercase tracking-wide text-push-fg-dim">Changes</p>
+              <div className="rounded-xl border border-push-edge bg-push-surface/90 p-2">
+                <p className="text-push-2xs uppercase tracking-wide text-push-fg-dim">Changes</p>
                 <p className="mt-1 text-sm font-medium text-push-fg">{detail.changedFiles} files</p>
-                <p className="text-[11px] font-mono">
-                  <span className="text-[#22c55e]">+{detail.additions}</span>{' '}
-                  <span className="text-[#ef4444]">-{detail.deletions}</span>
+                <p className="text-push-xs font-mono">
+                  <span className="text-push-status-success">+{detail.additions}</span>{' '}
+                  <span className="text-push-status-error">-{detail.deletions}</span>
                 </p>
               </div>
-              <div className="rounded-xl border border-push-edge bg-[#080d14]/90 p-2">
-                <p className="text-[10px] uppercase tracking-wide text-push-fg-dim">Commits</p>
+              <div className="rounded-xl border border-push-edge bg-push-surface/90 p-2">
+                <p className="text-push-2xs uppercase tracking-wide text-push-fg-dim">Commits</p>
                 <p className="mt-1 text-sm font-medium text-push-fg">{detail.commits.length}</p>
               </div>
-              <div className="rounded-xl border border-push-edge bg-[#080d14]/90 p-2">
-                <p className="text-[10px] uppercase tracking-wide text-push-fg-dim">Discussion</p>
+              <div className="rounded-xl border border-push-edge bg-push-surface/90 p-2">
+                <p className="text-push-2xs uppercase tracking-wide text-push-fg-dim">Discussion</p>
                 <p className="mt-1 text-sm font-medium text-push-fg">{commentCount}</p>
               </div>
             </div>
 
             {detail && checksSummary && mergeSummary && (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <div className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
+                <div className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
                   <div className="flex items-center gap-2">
                     <mergeSummary.Icon className={`h-4 w-4 ${mergeSummary.Icon === Loader2 ? 'animate-spin' : ''}`} />
-                    <p className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${mergeSummary.className}`}>
+                    <p className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${mergeSummary.className}`}>
                       {mergeSummary.label}
                     </p>
                   </div>
-                  <p className="mt-2 text-[12px] text-push-fg-secondary">
+                  <p className="mt-2 text-push-sm text-push-fg-secondary">
                     Mergeable:{' '}
                     <span className="text-push-fg">
                       {detail.status.mergeable === null ? 'computing' : detail.status.mergeable ? 'yes' : 'no'}
                     </span>
                   </p>
-                  <p className="text-[11px] text-push-fg-dim">
+                  <p className="text-push-xs text-push-fg-dim">
                     State: {detail.status.mergeableState}
                   </p>
                 </div>
 
-                <div className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
+                <div className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
                   <div className="flex items-center gap-2">
                     <checksSummary.Icon className={`h-4 w-4 ${checksSummary.Icon === Loader2 ? 'animate-spin' : ''}`} />
-                    <p className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${checksSummary.className}`}>
+                    <p className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${checksSummary.className}`}>
                       {checksSummary.label}
                     </p>
                   </div>
-                  <p className="mt-2 text-[12px] text-push-fg-secondary">
+                  <p className="mt-2 text-push-sm text-push-fg-secondary">
                     {detail.status.checks.length} check{detail.status.checks.length !== 1 ? 's' : ''}
                   </p>
                   {(detail.status.requestedReviewers.length > 0 || detail.status.requestedTeams.length > 0) && (
-                    <p className="mt-1 text-[11px] text-push-fg-dim">
+                    <p className="mt-1 text-push-xs text-push-fg-dim">
                       Review requested from{' '}
                       {[...detail.status.requestedReviewers, ...detail.status.requestedTeams].join(', ')}
                     </p>
@@ -485,7 +485,7 @@ export function HubPRsTab({
               <button
                 onClick={handleOpenDiff}
                 disabled={!detail.diff}
-                className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-3 text-[11px] text-push-fg-secondary hover:border-push-edge-hover hover:text-push-fg disabled:opacity-50"
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-3 text-push-xs text-push-fg-secondary hover:border-push-edge-hover hover:text-push-fg disabled:opacity-50"
               >
                 <FileDiff className="h-3.5 w-3.5" />
                 Open in Diff
@@ -493,7 +493,7 @@ export function HubPRsTab({
               {canUseReviewTab && (
                 <button
                   onClick={onOpenReviewTab}
-                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-3 text-[11px] text-push-fg-secondary hover:border-push-edge-hover hover:text-push-fg"
+                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-3 text-push-xs text-push-fg-secondary hover:border-push-edge-hover hover:text-push-fg"
                 >
                   <GitPullRequest className="h-3.5 w-3.5" />
                   Review in Push
@@ -502,7 +502,7 @@ export function HubPRsTab({
             </div>
 
             {activeBranch && detail.headRef !== activeBranch && (
-              <p className="rounded-xl border border-push-edge bg-[#080d14]/90 px-3 py-2 text-[11px] text-push-fg-dim">
+              <p className="rounded-xl border border-push-edge bg-push-surface/90 px-3 py-2 text-push-xs text-push-fg-dim">
                 This PR targets <span className="text-push-fg-secondary">{detail.headRef}</span>. Switch to that branch if you want sandbox-backed fixes or branch-scoped review tools.
               </p>
             )}
@@ -510,7 +510,7 @@ export function HubPRsTab({
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => setDetailSection('overview')}
-                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                   detailSection === 'overview'
                     ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
                     : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
@@ -520,7 +520,7 @@ export function HubPRsTab({
               </button>
               <button
                 onClick={() => setDetailSection('changes')}
-                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                   detailSection === 'changes'
                     ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
                     : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
@@ -530,7 +530,7 @@ export function HubPRsTab({
               </button>
               <button
                 onClick={() => setDetailSection('conversation')}
-                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                   detailSection === 'conversation'
                     ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
                     : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
@@ -542,10 +542,10 @@ export function HubPRsTab({
 
             {detailSection === 'overview' ? (
               <div className="space-y-3">
-                <section className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
-                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-push-fg-dim">Description</p>
+                <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                  <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Description</p>
                   {detail.body ? (
-                    <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-push-fg-secondary">
+                    <p className="whitespace-pre-wrap text-push-base leading-relaxed text-push-fg-secondary">
                       {detail.body}
                     </p>
                   ) : (
@@ -554,15 +554,15 @@ export function HubPRsTab({
                 </section>
 
                 {detail.commits.length > 0 && (
-                  <section className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
-                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-push-fg-dim">Recent commits</p>
+                  <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Recent commits</p>
                     <div className="space-y-2">
                       {detail.commits.slice(0, 6).map((commit) => (
                         <div key={commit.sha} className="flex items-start gap-2">
                           <GitCommit className="mt-0.5 h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
                           <div className="min-w-0">
-                            <p className="truncate text-[12px] text-push-fg-secondary">{commit.message || commit.sha}</p>
-                            <p className="text-[10px] text-push-fg-dim">
+                            <p className="truncate text-push-sm text-push-fg-secondary">{commit.message || commit.sha}</p>
+                            <p className="text-push-2xs text-push-fg-dim">
                               <span className="font-mono">{commit.sha}</span> · {commit.author}
                             </p>
                           </div>
@@ -572,15 +572,15 @@ export function HubPRsTab({
                   </section>
                 )}
 
-                <section className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
-                  <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-push-fg-dim">Files</p>
+                <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                  <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Files</p>
                   <div className="space-y-1.5">
                     {detail.files.map((file) => (
                       <div key={file.filename} className="flex items-center justify-between gap-2 rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 px-2.5 py-2">
-                        <p className="min-w-0 truncate text-[12px] text-push-fg-secondary">{file.filename}</p>
-                        <span className="shrink-0 text-[11px] font-mono">
-                          <span className="text-[#22c55e]">+{file.additions}</span>{' '}
-                          <span className="text-[#ef4444]">-{file.deletions}</span>
+                        <p className="min-w-0 truncate text-push-sm text-push-fg-secondary">{file.filename}</p>
+                        <span className="shrink-0 text-push-xs font-mono">
+                          <span className="text-push-status-success">+{file.additions}</span>{' '}
+                          <span className="text-push-status-error">-{file.deletions}</span>
                         </span>
                       </div>
                     ))}
@@ -588,14 +588,14 @@ export function HubPRsTab({
                 </section>
               </div>
             ) : detailSection === 'changes' ? (
-              <div className="overflow-hidden rounded-xl border border-push-edge bg-[#080d14]/90">
+              <div className="overflow-hidden rounded-xl border border-push-edge bg-push-surface/90">
                 {detail.files.map((file) => {
                   const expanded = expandedFiles.has(file.filename);
                   return (
                     <div key={file.filename} className="border-b border-push-edge last:border-b-0">
                       <button
                         onClick={() => toggleFile(file.filename)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-[#0d1119]"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-push-surface-hover"
                       >
                         {expanded ? (
                           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
@@ -603,12 +603,12 @@ export function HubPRsTab({
                           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-[12px] text-push-fg-secondary">{file.filename}</p>
-                          <p className="text-[10px] text-push-fg-dim">{file.status}</p>
+                          <p className="truncate text-push-sm text-push-fg-secondary">{file.filename}</p>
+                          <p className="text-push-2xs text-push-fg-dim">{file.status}</p>
                         </div>
-                        <span className="shrink-0 text-[11px] font-mono">
-                          <span className="text-[#22c55e]">+{file.additions}</span>{' '}
-                          <span className="text-[#ef4444]">-{file.deletions}</span>
+                        <span className="shrink-0 text-push-xs font-mono">
+                          <span className="text-push-status-success">+{file.additions}</span>{' '}
+                          <span className="text-push-status-error">-{file.deletions}</span>
                         </span>
                       </button>
 
@@ -619,7 +619,7 @@ export function HubPRsTab({
                               <DiffLine key={`${file.filename}:${index}`} line={line} index={index} />
                             ))
                           ) : (
-                            <p className="px-3 py-2 text-[11px] text-push-fg-dim">
+                            <p className="px-3 py-2 text-push-xs text-push-fg-dim">
                               Patch preview unavailable for this file.
                             </p>
                           )}
@@ -632,22 +632,22 @@ export function HubPRsTab({
             ) : (
               <div className="space-y-3">
                 {detail.reviews.length > 0 && (
-                  <section className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
-                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-push-fg-dim">Reviews</p>
+                  <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Reviews</p>
                     <div className="space-y-2">
                       {detail.reviews.map((review) => (
                         <div key={review.id} className="rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 p-2.5">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[12px] font-medium text-push-fg-secondary">{review.author}</span>
-                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${reviewStateBadge(review.state)}`}>
+                            <span className="text-push-sm font-medium text-push-fg-secondary">{review.author}</span>
+                            <span className={`rounded-full px-1.5 py-0.5 text-push-2xs font-medium ${reviewStateBadge(review.state)}`}>
                               {review.state.replace('_', ' ')}
                             </span>
-                            <span className="text-[10px] text-push-fg-dim">
+                            <span className="text-push-2xs text-push-fg-dim">
                               {review.submittedAt ? timeAgo(review.submittedAt) : 'now'}
                             </span>
                           </div>
                           {review.body && (
-                            <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-push-fg-secondary">
+                            <p className="mt-1.5 whitespace-pre-wrap text-push-sm leading-relaxed text-push-fg-secondary">
                               {review.body}
                             </p>
                           )}
@@ -658,16 +658,16 @@ export function HubPRsTab({
                 )}
 
                 {detail.issueComments.length > 0 && (
-                  <section className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
-                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-push-fg-dim">Comments</p>
+                  <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Comments</p>
                     <div className="space-y-2">
                       {detail.issueComments.map((comment) => (
                         <div key={comment.id} className="rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 p-2.5">
                           <div className="flex items-center gap-2">
-                            <span className="text-[12px] font-medium text-push-fg-secondary">{comment.author}</span>
-                            <span className="text-[10px] text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
+                            <span className="text-push-sm font-medium text-push-fg-secondary">{comment.author}</span>
+                            <span className="text-push-2xs text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
                           </div>
-                          <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-push-fg-secondary">
+                          <p className="mt-1.5 whitespace-pre-wrap text-push-sm leading-relaxed text-push-fg-secondary">
                             {comment.body}
                           </p>
                         </div>
@@ -677,18 +677,18 @@ export function HubPRsTab({
                 )}
 
                 {detail.reviewThreads.length > 0 && (
-                  <section className="rounded-xl border border-push-edge bg-[#080d14]/90 p-3">
-                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-push-fg-dim">Review threads</p>
+                  <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Review threads</p>
                     <div className="space-y-2">
                       {detail.reviewThreads.map((thread) => (
                         <div key={thread.id} className="rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 p-2.5">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-[#101621] px-2 py-0.5 text-[10px] text-push-fg-dim">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-[#101621] px-2 py-0.5 text-push-2xs text-push-fg-dim">
                               <GitBranch className="h-3 w-3" />
                               {thread.file}
                               {typeof thread.line === 'number' ? ` · L${thread.line}` : ''}
                             </span>
-                            <span className="text-[10px] text-push-fg-dim">
+                            <span className="text-push-2xs text-push-fg-dim">
                               {thread.comments.length} comment{thread.comments.length !== 1 ? 's' : ''}
                             </span>
                           </div>
@@ -696,15 +696,15 @@ export function HubPRsTab({
                             {thread.comments.map((comment) => (
                               <div key={comment.id} className="border-l border-push-edge pl-3">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[12px] font-medium text-push-fg-secondary">{comment.author}</span>
-                                  <span className="text-[10px] text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
+                                  <span className="text-push-sm font-medium text-push-fg-secondary">{comment.author}</span>
+                                  <span className="text-push-2xs text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
                                   {typeof comment.line === 'number' && (
-                                    <span className="rounded-full border border-push-edge px-1.5 py-0.5 text-[10px] text-push-fg-dim">
+                                    <span className="rounded-full border border-push-edge px-1.5 py-0.5 text-push-2xs text-push-fg-dim">
                                       L{comment.line}
                                     </span>
                                   )}
                                 </div>
-                                <p className="mt-1 whitespace-pre-wrap text-[12px] leading-relaxed text-push-fg-secondary">
+                                <p className="mt-1 whitespace-pre-wrap text-push-sm leading-relaxed text-push-fg-secondary">
                                   {comment.body}
                                 </p>
                               </div>

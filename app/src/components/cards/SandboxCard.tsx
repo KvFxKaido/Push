@@ -41,10 +41,10 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
       {/* Header */}
       <button
         onClick={toggleExpanded}
-        className="w-full px-3.5 py-3 flex items-center gap-2.5 hover:bg-[#0d1119] transition-colors duration-200"
+        className="w-full px-3.5 py-3 flex items-center gap-2.5 hover:bg-push-surface-hover transition-colors duration-200"
       >
         <Terminal className="h-4 w-4 shrink-0 text-push-fg-secondary" />
-        <code className="flex-1 text-[13px] text-[#e4e4e7] font-mono text-left truncate">
+        <code className="flex-1 text-push-base text-push-fg font-mono text-left truncate">
           {data.command}
         </code>
         <div className="flex items-center gap-2 shrink-0">
@@ -67,17 +67,17 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
             </div>
           )}
           {data.durationMs !== undefined && (
-            <span className="text-[11px] text-push-fg-dim font-mono">
+            <span className="text-push-xs text-push-fg-dim font-mono">
               {data.durationMs < 1000 ? `${data.durationMs}ms` : `${(data.durationMs / 1000).toFixed(1)}s`}
             </span>
           )}
           {isSuccess ? (
-            <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_SUCCESS}`}>
+            <span className={`inline-flex items-center gap-1 text-push-xs font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_SUCCESS}`}>
               <CheckCircle2 className="h-3 w-3" />
               0
             </span>
           ) : (
-            <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_ERROR}`}>
+            <span className={`inline-flex items-center gap-1 text-push-xs font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_ERROR}`}>
               <XCircle className="h-3 w-3" />
               {data.exitCode}
             </span>
@@ -94,17 +94,17 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
           </CardCodeBlock>
         )}
         {data.stderr && (
-          <CardCodeBlock preClassName="bg-[#05080e]" codeClassName="text-[#ef4444]/70 whitespace-pre-wrap break-all">
+          <CardCodeBlock preClassName="bg-push-surface-inset" codeClassName="text-push-status-error/70 whitespace-pre-wrap break-all">
             {data.stderr}
           </CardCodeBlock>
         )}
         {data.truncated && (
-          <div className="px-3 py-1.5 text-[11px] text-push-fg-dim italic border-t border-push-edge">
+          <div className="px-3 py-1.5 text-push-xs text-push-fg-dim italic border-t border-push-edge">
             Output truncated
           </div>
         )}
         {!data.stdout && !data.stderr && (
-          <div className="px-3 py-2 text-[12px] text-push-fg-dim italic">
+          <div className="px-3 py-2 text-push-sm text-push-fg-dim italic">
             No output
           </div>
         )}

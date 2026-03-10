@@ -102,8 +102,8 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
         className="bg-[#0d0d0d] border-t border-white/[0.06] rounded-t-2xl px-5 pb-8 pt-0 max-h-[80dvh]"
       >
         <SheetHeader className="pt-5 pb-1">
-          <SheetTitle className="text-sm font-semibold text-[#e4e4e7] flex items-center gap-2">
-            <GitBranch className="h-4 w-4 text-[#5f6b80]" />
+          <SheetTitle className="text-sm font-semibold text-push-fg flex items-center gap-2">
+            <GitBranch className="h-4 w-4 text-push-fg-dim" />
             Create branch from {fromBranch}
           </SheetTitle>
           <SheetDescription className="text-xs text-[#71717a]">
@@ -114,7 +114,7 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
         <div className="mt-4 space-y-5">
           {/* Branch name input */}
           <div className="space-y-2">
-            <Label htmlFor="branch-name" className="text-xs text-[#a1a1aa]">
+            <Label htmlFor="branch-name" className="text-xs text-push-fg-secondary">
               Branch name
             </Label>
             <Input
@@ -127,7 +127,7 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
               }}
               autoFocus
               disabled={creating}
-              className="bg-[#141414] border-white/[0.08] text-[#e4e4e7] placeholder:text-[#3f3f46] h-11 text-sm"
+              className="bg-[#141414] border-white/[0.08] text-push-fg placeholder:text-[#3f3f46] h-11 text-sm"
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
@@ -135,12 +135,12 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
             />
             {/* Show sanitized preview if it differs from raw input */}
             {branchName && sanitized !== branchName.toLowerCase().trim() && sanitized.length > 0 && (
-              <p className="text-[11px] text-[#5f6b80]">
-                Will create: <span className="text-[#8b96aa] font-mono">{sanitized}</span>
+              <p className="text-push-xs text-push-fg-dim">
+                Will create: <span className="text-push-fg-muted font-mono">{sanitized}</span>
               </p>
             )}
             {branchName && sanitized.length === 0 && (
-              <p className="text-[11px] text-red-400">
+              <p className="text-push-xs text-red-400">
                 Branch name contains only invalid characters.
               </p>
             )}
@@ -148,7 +148,7 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
 
           {/* After-create behavior */}
           <div className="space-y-2.5">
-            <Label className="text-xs text-[#a1a1aa]">After creation</Label>
+            <Label className="text-xs text-push-fg-secondary">After creation</Label>
             <RadioGroup
               value={afterCreate}
               onValueChange={(v) => setAfterCreate(v as 'switch' | 'stay')}
@@ -156,11 +156,11 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
             >
               <label className="flex items-center gap-2.5 cursor-pointer">
                 <RadioGroupItem value="switch" className="border-[#3f3f46]" />
-                <span className="text-sm text-[#d4d4d8]">Switch to branch</span>
+                <span className="text-sm text-push-fg">Switch to branch</span>
               </label>
               <label className="flex items-center gap-2.5 cursor-pointer">
                 <RadioGroupItem value="stay" className="border-[#3f3f46]" />
-                <span className="text-sm text-[#d4d4d8]">Stay on {fromBranch}</span>
+                <span className="text-sm text-push-fg">Stay on {fromBranch}</span>
               </label>
             </RadioGroup>
           </div>
@@ -199,7 +199,7 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
               onClick={handleCancel}
               disabled={creating}
               variant="outline"
-              className="flex-1 h-11 border-white/[0.08] bg-transparent text-[#a1a1aa] hover:bg-[#141414] hover:text-[#d4d4d8] text-sm"
+              className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
             >
               Cancel
             </Button>

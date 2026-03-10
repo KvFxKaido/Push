@@ -614,7 +614,7 @@ export function ChatScreen(props: ChatScreenProps) {
       {/* Top bar */}
       <header className="relative z-10 flex items-center justify-between px-3 pt-3 pb-2">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <div className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-full border border-[#1b2230] bg-push-grad-input py-1.5 pl-1.5 pr-3 shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+          <div className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-full border border-push-edge-subtle bg-push-grad-input py-1.5 pl-1.5 pr-3 shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
             <RepoChatDrawer
               repos={repos}
@@ -652,10 +652,10 @@ export function ChatScreen(props: ChatScreenProps) {
           </div>
           {isSandboxMode && (
               <>
-                <span className="text-[10px] text-push-fg-dim">ephemeral</span>
+                <span className="text-push-2xs text-push-fg-dim">ephemeral</span>
                 {snapshots.latestSnapshot && (
                   <span
-                    className={`text-[10px] ${snapshotIsStale ? 'text-amber-400' : 'text-[#5f6b80]'}`}
+                    className={`text-push-2xs ${snapshotIsStale ? 'text-amber-400' : 'text-push-fg-dim'}`}
                     title={`Latest snapshot: ${new Date(snapshots.latestSnapshot.createdAt).toLocaleString()}`}
                   >
                     {snapshotIsStale ? `snapshot stale (${snapshotAgeLabel})` : `snapshot ${snapshotAgeLabel}`}
@@ -665,7 +665,7 @@ export function ChatScreen(props: ChatScreenProps) {
                   <button
                     onClick={() => snapshots.captureSnapshot('manual')}
                     disabled={snapshots.snapshotSaving || snapshots.snapshotRestoring}
-                    className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-push-fg-dim transition-colors hover:bg-[#0d1119] hover:text-emerald-400 active:scale-95 disabled:opacity-50"
+                    className="flex h-7 items-center gap-1 rounded-lg px-2 text-push-xs text-push-fg-dim transition-colors hover:bg-push-surface-hover hover:text-emerald-400 active:scale-95 disabled:opacity-50"
                     title="Save Snapshot Now"
                     aria-label="Save Snapshot Now"
                   >
@@ -677,7 +677,7 @@ export function ChatScreen(props: ChatScreenProps) {
                   <button
                     onClick={snapshots.handleRestoreFromSnapshot}
                     disabled={snapshots.snapshotSaving || snapshots.snapshotRestoring || sandbox.status === 'creating'}
-                    className="flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] text-push-fg-dim transition-colors hover:bg-[#0d1119] hover:text-emerald-400 active:scale-95 disabled:opacity-50"
+                    className="flex h-7 items-center gap-1 rounded-lg px-2 text-push-xs text-push-fg-dim transition-colors hover:bg-push-surface-hover hover:text-emerald-400 active:scale-95 disabled:opacity-50"
                     title="Restore from Last Snapshot"
                     aria-label="Restore from Last Snapshot"
                   >
@@ -689,7 +689,7 @@ export function ChatScreen(props: ChatScreenProps) {
                   <button
                     onClick={handleSandboxDownload}
                     disabled={sandboxDownloading}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg text-push-fg-dim transition-colors hover:bg-[#0d1119] hover:text-emerald-400 active:scale-95 disabled:opacity-50"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-push-fg-dim transition-colors hover:bg-push-surface-hover hover:text-emerald-400 active:scale-95 disabled:opacity-50"
                     title="Download workspace"
                     aria-label="Download workspace"
                   >
@@ -698,7 +698,7 @@ export function ChatScreen(props: ChatScreenProps) {
                 )}
                 {snapshots.snapshotRestoring && snapshots.snapshotRestoreProgress && (
                   <div className="flex min-w-[120px] flex-col gap-1">
-                    <span className="text-[10px] text-push-fg-muted">{snapshots.snapshotRestoreProgress.message}</span>
+                    <span className="text-push-2xs text-push-fg-muted">{snapshots.snapshotRestoreProgress.message}</span>
                     <div className="h-1 w-full overflow-hidden rounded bg-[#1a2130]">
                       <div
                         className="h-full bg-emerald-500 transition-all duration-300"
@@ -725,12 +725,12 @@ export function ChatScreen(props: ChatScreenProps) {
                 }
               }}
             >
-              <DropdownMenuTrigger className="pointer-events-auto flex items-center gap-1 rounded-full border border-[#1b2230] bg-push-grad-input px-2 py-1 shadow-[0_10px_28px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.25)] backdrop-blur-xl transition-all hover:border-[#31425a] hover:brightness-110">
-                <BranchWaveIcon className="h-3 w-3 text-[#5f6b80]" />
-                <span className="max-w-[100px] truncate text-[10px] font-medium text-[#8b96aa]">
+              <DropdownMenuTrigger className="pointer-events-auto flex items-center gap-1 rounded-full border border-push-edge-subtle bg-push-grad-input px-2 py-1 shadow-[0_10px_28px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.25)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:brightness-110">
+                <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
+                <span className="max-w-[100px] truncate text-push-2xs font-medium text-push-fg-muted">
                   {currentBranch}
                 </span>
-                <ChevronDown className={`h-3 w-3 text-[#5f6b80] transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`h-3 w-3 text-push-fg-dim transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`} />
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="center"
@@ -740,7 +740,7 @@ export function ChatScreen(props: ChatScreenProps) {
                 {isOnMain ? (
                   <DropdownMenuItem
                     onSelect={() => setShowBranchCreate(true)}
-                    className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-secondary hover:bg-[#0d1119]"
+                    className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-secondary hover:bg-push-surface-hover"
                   >
                     <GitBranch className="h-3.5 w-3.5" />
                     Create branch
@@ -748,14 +748,14 @@ export function ChatScreen(props: ChatScreenProps) {
                 ) : (
                   <DropdownMenuItem
                     onSelect={() => setShowMergeFlow(true)}
-                    className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-emerald-300 hover:bg-[#0d1119]"
+                    className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-emerald-300 hover:bg-push-surface-hover"
                   >
                     <GitMerge className="h-3.5 w-3.5" />
                     Merge into {activeRepo.default_branch}
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator className="bg-push-edge" />
-                <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
+                <DropdownMenuLabel className="px-3 py-1.5 text-push-2xs font-medium uppercase tracking-wider text-push-fg-dim">
                   Switch Branch
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator className="bg-push-edge" />
@@ -777,7 +777,7 @@ export function ChatScreen(props: ChatScreenProps) {
                         e.preventDefault();
                         void loadRepoBranches(activeRepo.full_name);
                       }}
-                      className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-[#0d1119]"
+                      className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-push-surface-hover"
                     >
                       Retry
                     </DropdownMenuItem>
@@ -807,19 +807,19 @@ export function ChatScreen(props: ChatScreenProps) {
                           setCurrentBranch(branch.name);
                         }}
                         className={`mx-1 flex items-center gap-2 rounded-lg px-3 py-2 ${
-                          isActiveBranch ? 'bg-[#101621]' : 'hover:bg-[#0d1119]'
+                          isActiveBranch ? 'bg-[#101621]' : 'hover:bg-push-surface-hover'
                         }`}
                       >
                         <span className={`min-w-0 flex-1 truncate text-xs ${isActiveBranch ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
                           {branch.name}
                         </span>
                         {branch.isDefault && (
-                          <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[10px] text-[#58a6ff]">
+                          <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-[#58a6ff]">
                             default
                           </span>
                         )}
                         {branch.isProtected && (
-                          <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-[10px] text-[#fca5a5]">
+                          <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-push-2xs text-[#fca5a5]">
                             protected
                           </span>
                         )}
@@ -836,10 +836,10 @@ export function ChatScreen(props: ChatScreenProps) {
                             }
                             void handleDeleteBranch(branch.name);
                           }}
-                          className={`mx-1 mb-1 flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] ${
+                          className={`mx-1 mb-1 flex items-center gap-2 rounded-lg px-3 py-1.5 text-push-xs ${
                             isDeletePending
                               ? 'bg-red-950/30 text-red-300 hover:bg-red-950/40'
-                              : 'text-push-fg-dim hover:bg-[#0d1119] hover:text-red-300'
+                              : 'text-push-fg-dim hover:bg-push-surface-hover hover:text-red-300'
                           }`}
                         >
                           {isDeletingThisBranch ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
@@ -861,7 +861,7 @@ export function ChatScreen(props: ChatScreenProps) {
           {!isSandboxMode && (
             <button
               onClick={() => setIsLauncherOpen(true)}
-              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-[#1b2230] bg-push-grad-input text-[#8891a1] shadow-[0_10px_26px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] hover:brightness-110 spring-press"
+              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-push-edge-subtle bg-push-grad-input text-[#8891a1] shadow-[0_10px_26px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] hover:brightness-110 spring-press"
               aria-label="Open launcher"
               title="Launcher"
             >
@@ -871,7 +871,7 @@ export function ChatScreen(props: ChatScreenProps) {
           {(activeRepo || isSandboxMode) && (
             <button
               onClick={() => setIsWorkspaceHubOpen(true)}
-              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-[#1b2230] bg-push-grad-input text-[#8891a1] shadow-[0_10px_26px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:text-[#e2e8f0] hover:brightness-110 spring-press"
+              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-push-edge-subtle bg-push-grad-input text-[#8891a1] shadow-[0_10px_26px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] hover:brightness-110 spring-press"
               aria-label="Open workspace hub"
               title="Workspace"
             >
@@ -929,8 +929,8 @@ export function ChatScreen(props: ChatScreenProps) {
         <div className="mx-4 mt-3 rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-3.5 shadow-push-card animate-fade-in">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-xs font-medium text-[#e4e4e7]">No AGENTS.md found</p>
-              <p className="text-[11px] text-push-fg-muted">Add project instructions so the agent understands your repo conventions.</p>
+              <p className="text-xs font-medium text-push-fg">No AGENTS.md found</p>
+              <p className="text-push-xs text-push-fg-muted">Add project instructions so the agent understands your repo conventions.</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <button

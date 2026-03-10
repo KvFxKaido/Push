@@ -115,14 +115,14 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
     <div className="flex flex-col h-full overflow-hidden">
       {/* Sticky Header */}
       <div className="sticky top-0 z-10 flex items-center justify-between border-b border-push-edge bg-push-bg-primary/80 px-3 py-2 backdrop-blur-md">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-push-fg-dim">
+        <span className="text-push-xs font-medium uppercase tracking-wider text-push-fg-dim">
           Agent Console
         </span>
         <div className="flex items-center gap-2">
           <button
             onClick={handleCopyAll}
             disabled={logs.length === 0}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-push-fg-secondary transition-colors hover:bg-white/5 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-push-xs text-push-fg-secondary transition-colors hover:bg-white/5 disabled:opacity-50"
             title="Copy all logs"
           >
             {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
@@ -131,7 +131,7 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
           <button
             onClick={handleDownloadLogs}
             disabled={logs.length === 0}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-push-fg-secondary transition-colors hover:bg-white/5 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-push-xs text-push-fg-secondary transition-colors hover:bg-white/5 disabled:opacity-50"
             title="Download logs as .txt"
           >
             <Download className="h-3 w-3" />

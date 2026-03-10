@@ -77,7 +77,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
             });
           }}
           disabled={startingSandbox || sandboxStatus === 'creating'}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#1b2230] bg-push-grad-input px-3 text-xs text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 disabled:opacity-50"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 text-xs text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 disabled:opacity-50"
         >
           {(startingSandbox || sandboxStatus === 'creating') && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {startingSandbox || sandboxStatus === 'creating' ? 'Starting sandbox...' : 'Start sandbox'}
@@ -96,7 +96,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
               setPreviewContent('');
               setPreviewTruncated(false);
             }}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
             Back
@@ -115,7 +115,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
             </pre>
           )}
           {previewTruncated && (
-            <p className="mt-2 text-[10px] text-push-fg-dim">File output truncated.</p>
+            <p className="mt-2 text-push-2xs text-push-fg-dim">File output truncated.</p>
           )}
         </div>
       </div>
@@ -126,12 +126,12 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
     <>
       <div className="flex items-center gap-2 border-b border-push-edge px-3 py-2">
         <nav className="min-w-0 flex-1 overflow-x-auto" aria-label="Path">
-          <ol className="flex items-center gap-1 whitespace-nowrap text-[11px] text-push-fg-dim">
+          <ol className="flex items-center gap-1 whitespace-nowrap text-push-xs text-push-fg-dim">
             {breadcrumbs.map((crumb, index) => {
               const isLast = index === breadcrumbs.length - 1;
               return (
                 <li key={crumb.path} className="flex items-center gap-1">
-                  {index > 0 && <ChevronRight className="h-3 w-3 text-[#5f6b80]" />}
+                  {index > 0 && <ChevronRight className="h-3 w-3 text-push-fg-dim" />}
                   <button
                     onClick={() => void loadDirectory(crumb.path)}
                     className={isLast ? 'text-push-fg-secondary' : 'hover:text-push-fg-secondary'}
@@ -146,7 +146,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
         <button
           onClick={() => void loadDirectory(currentPath)}
           disabled={fileStatus === 'loading'}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-[#080b10]/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
           aria-label="Refresh directory"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${fileStatus === 'loading' ? 'animate-spin' : ''}`} />
@@ -175,7 +175,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
               <li>
                 <button
                   onClick={navigateUp}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs text-push-fg-dim hover:bg-[#0d1119]"
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs text-push-fg-dim hover:bg-push-surface-hover"
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />
                   ..
@@ -192,7 +192,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
                       void loadFilePreview(file.path);
                     }
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-[#0d1119]"
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-push-surface-hover"
                 >
                   {file.type === 'directory' ? (
                     <Folder className="h-4 w-4 shrink-0 text-[#4fb6ff]" />
@@ -203,9 +203,9 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
                     {file.name}
                   </span>
                   {file.type === 'directory' ? (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#5f6b80]" />
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
                   ) : (
-                    <span className="shrink-0 text-[10px] text-push-fg-dim">
+                    <span className="shrink-0 text-push-2xs text-push-fg-dim">
                       {formatSize(file.size)}
                     </span>
                   )}

@@ -155,7 +155,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
       <header className="flex items-center gap-2 border-b border-[#151b26] bg-push-grad-panel px-3 py-3">
         <button
           onClick={onBack}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-secondary transition-colors hover:border-[#31425a] hover:bg-[#0d1119] hover:text-push-fg active:scale-95"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-push-fg active:scale-95"
           aria-label="Back to chat"
         >
           <MessageSquare className="h-4 w-4" />
@@ -180,7 +180,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
               const isLast = i === breadcrumbs.length - 2;
               return (
                 <li key={crumb.path} className="flex items-center gap-1">
-                  <ChevronRight className="h-3 w-3 shrink-0 text-[#5f6b80]" />
+                  <ChevronRight className="h-3 w-3 shrink-0 text-push-fg-dim" />
                   <button
                     onClick={() => loadDirectory(crumb.path)}
                     className={`px-1.5 py-0.5 rounded transition-colors ${
@@ -201,7 +201,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         <button
           onClick={() => loadDirectory(currentPath)}
           disabled={status === 'loading'}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-dim transition-colors hover:border-[#31425a] hover:bg-[#0d1119] hover:text-[#d1d8e6] active:scale-95 disabled:opacity-40"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-dim transition-colors hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-[#d1d8e6] active:scale-95 disabled:opacity-40"
           aria-label="Refresh directory"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${status === 'loading' ? 'animate-spin' : ''}`} />
@@ -217,7 +217,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
           </div>
         ) : status === 'error' ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center">
-            <AlertCircle className="h-5 w-5 text-[#ef4444]/70" />
+            <AlertCircle className="h-5 w-5 text-push-status-error/70" />
             <p className="text-sm text-push-fg-secondary">{error}</p>
             <button
               onClick={() => loadDirectory(currentPath)}
@@ -238,7 +238,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
               <li>
                 <button
                   onClick={navigateUp}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#0d1119] active:bg-[#121a29]"
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-push-surface-hover active:bg-[#121a29]"
                 >
                   <ChevronLeft className="h-4 w-4 shrink-0 text-push-fg-dim" />
                   <span className="text-sm text-push-fg-secondary">..</span>
@@ -262,7 +262,7 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
       <button
         onClick={() => setCommitSheetOpen(true)}
         disabled={status === 'loading'}
-        className="fixed bottom-6 right-[4.75rem] z-30 flex h-12 w-12 items-center justify-center rounded-full bg-[#22c55e] text-white shadow-lg shadow-[#22c55e]/25 transition-all duration-200 hover:bg-[#16a34a] active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+        className="fixed bottom-6 right-[4.75rem] z-30 flex h-12 w-12 items-center justify-center rounded-full bg-push-status-success text-white shadow-lg shadow-push-status-success/25 transition-all duration-200 hover:bg-push-status-success active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
         title="Commit & push"
         aria-label="Commit and push changes"
       >
@@ -346,13 +346,13 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerLeave}
-        className="flex w-full select-none items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#0d1119] active:bg-[#121a29]"
+        className="flex w-full select-none items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-push-surface-hover active:bg-[#121a29]"
       >
         {/* Icon */}
         {isDir ? (
           <Folder className="h-4 w-4 shrink-0 text-[#4fb6ff]" />
         ) : isEditable ? (
-          <FileEdit className="h-4 w-4 shrink-0 text-[#22c55e]" />
+          <FileEdit className="h-4 w-4 shrink-0 text-push-status-success" />
         ) : (
           <File className="h-4 w-4 shrink-0 text-push-fg-dim" />
         )}
@@ -363,15 +363,15 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
             {file.name}
           </span>
           {!isDir && editability?.warning === 'large_file' && (
-            <span className="text-[10px] text-[#f59e0b]">Large file</span>
+            <span className="text-push-2xs text-push-status-warning">Large file</span>
           )}
         </div>
 
         {/* Size (files only) + chevron (dirs only) */}
         {isDir ? (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#5f6b80]" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
         ) : (
-          <span className="shrink-0 font-mono text-[11px] text-push-fg-dim">
+          <span className="shrink-0 font-mono text-push-xs text-push-fg-dim">
             {formatSize(file.size)}
           </span>
         )}

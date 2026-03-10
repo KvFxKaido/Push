@@ -335,7 +335,7 @@ function ProviderKeySection({
   if (hasKey) {
     return (
       <div className="space-y-2">
-        <div className="flex items-center justify-between rounded-lg border border-[#1b2230] bg-push-surface px-3 py-2">
+        <div className="flex items-center justify-between rounded-lg border border-push-edge-subtle bg-push-surface px-3 py-2">
           <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
           <button
             type="button"
@@ -360,7 +360,7 @@ function ProviderKeySection({
               value={model.value}
               onChange={(e) => model.set(e.target.value)}
               disabled={model.options.length === 0 || (refresh?.loading ?? false)}
-              className="flex-1 rounded-md border border-[#1b2230] bg-push-grad-input px-2 py-1 text-xs text-push-fg font-mono shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 disabled:opacity-50"
+              className="flex-1 rounded-md border border-push-edge-subtle bg-push-grad-input px-2 py-1 text-xs text-push-fg font-mono shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 disabled:opacity-50"
             >
               {model.options.length === 0 ? (
                 <option value={model.value}>{model.labelTransform ? model.labelTransform(model.value) : model.value}</option>
@@ -417,7 +417,7 @@ function ProviderKeySection({
         value={keyInput}
         onChange={(e) => setKeyInput(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+        className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
         onKeyDown={(e) => {
           if (e.key === 'Enter' && keyInput.trim()) {
             saveKey();
@@ -504,7 +504,7 @@ function ExperimentalProviderSection({
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-push-fg">{label}</span>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+            <span className={`rounded-full px-2 py-0.5 text-push-2xs uppercase tracking-wide ${
               configured
                 ? 'bg-emerald-500/10 text-emerald-400'
                 : 'bg-amber-500/10 text-amber-300'
@@ -527,8 +527,8 @@ function ExperimentalProviderSection({
 
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-3">
-          <label className="text-[11px] font-medium text-push-fg-secondary">Deployments</label>
-          <span className="text-[10px] text-push-fg-dim">{deployments.length}/3 saved</span>
+          <label className="text-push-xs font-medium text-push-fg-secondary">Deployments</label>
+          <span className="text-push-2xs text-push-fg-dim">{deployments.length}/3 saved</span>
         </div>
         {deployments.length > 0 ? (
           <div className="space-y-2">
@@ -540,7 +540,7 @@ function ExperimentalProviderSection({
                   className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 ${
                     isActive
                       ? 'border-emerald-500/40 bg-emerald-500/10'
-                      : 'border-[#1b2230] bg-push-surface/60'
+                      : 'border-push-edge-subtle bg-push-surface/60'
                   }`}
                 >
                   <button
@@ -551,13 +551,13 @@ function ExperimentalProviderSection({
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm text-push-fg">{deployment.model}</span>
                       {isActive && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-emerald-400">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-push-2xs uppercase tracking-wide text-emerald-400">
                           <Check className="h-3 w-3" />
                           Active
                         </span>
                       )}
                     </div>
-                    <p className="truncate text-[11px] text-push-fg-dim">
+                    <p className="truncate text-push-xs text-push-fg-dim">
                       {formatExperimentalDeploymentTarget(deployment.baseUrl)}
                     </p>
                   </button>
@@ -587,7 +587,7 @@ function ExperimentalProviderSection({
       </div>
 
       <details
-        className="rounded-lg border border-[#1b2230] bg-push-surface/40 px-3 py-2.5"
+        className="rounded-lg border border-push-edge-subtle bg-push-surface/40 px-3 py-2.5"
         {...(deployments.length === 0 ? { open: true } : {})}
       >
         <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-push-fg-secondary">
@@ -596,25 +596,25 @@ function ExperimentalProviderSection({
         </summary>
         <div className="mt-3 space-y-3">
           <div className="space-y-1.5">
-            <label className="text-[11px] font-medium text-push-fg-secondary">Base URL</label>
+            <label className="text-push-xs font-medium text-push-fg-secondary">Base URL</label>
             <input
               type="url"
               value={baseUrlInput}
               onChange={(e) => setBaseUrlInput(e.target.value)}
               placeholder={baseUrl || baseUrlPlaceholder}
-              className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+              className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
             />
             {baseUrlError && <p className="text-xs text-amber-400">{baseUrlError}</p>}
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[11px] font-medium text-push-fg-secondary">Deployment / model</label>
+            <label className="text-push-xs font-medium text-push-fg-secondary">Deployment / model</label>
             <input
               type="text"
               value={modelInput}
               onChange={(e) => setModelInput(e.target.value)}
               placeholder={model || modelPlaceholder}
-              className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+              className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
             />
           </div>
 
@@ -631,23 +631,23 @@ function ExperimentalProviderSection({
       </details>
 
       {configured && (
-        <div className="rounded-lg border border-[#1b2230] bg-push-surface/40 px-3 py-2">
-          <p className="text-[11px] text-push-fg-secondary">Active now</p>
+        <div className="rounded-lg border border-push-edge-subtle bg-push-surface/40 px-3 py-2">
+          <p className="text-push-xs text-push-fg-secondary">Active now</p>
           <p className="truncate text-sm text-push-fg">{model}</p>
           {baseUrl && (
-            <p className="truncate text-[11px] text-push-fg-dim">{formatExperimentalDeploymentTarget(baseUrl)}</p>
+            <p className="truncate text-push-xs text-push-fg-dim">{formatExperimentalDeploymentTarget(baseUrl)}</p>
           )}
         </div>
       )}
 
       <div className="space-y-1.5">
-        <label className="text-[11px] font-medium text-push-fg-secondary">API key</label>
+        <label className="text-push-xs font-medium text-push-fg-secondary">API key</label>
         <input
           type="password"
           value={keyInput}
           onChange={(e) => setKeyInput(e.target.value)}
           placeholder={hasKey ? 'Key saved' : `${label} API key`}
-          className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
         />
         <div className="flex gap-2">
           <Button
@@ -664,7 +664,7 @@ function ExperimentalProviderSection({
           >
             Save key
           </Button>
-          {hasKey && <span className="self-center text-[11px] text-push-fg-dim">Stored locally</span>}
+          {hasKey && <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>}
         </div>
       </div>
     </div>
@@ -704,7 +704,7 @@ export function SettingsSheet({
         {/* Header */}
         <header className="border-b border-push-edge px-3 py-3 shrink-0">
           <p className="text-sm font-semibold text-push-fg">Settings</p>
-          <p className="text-[11px] text-push-fg-dim">Configure your workspace</p>
+          <p className="text-push-xs text-push-fg-dim">Configure your workspace</p>
         </header>
 
         {/* Tab bar */}
@@ -715,9 +715,9 @@ export function SettingsSheet({
                 key={key}
                 type="button"
                 onClick={() => setSettingsTab(key)}
-                className={`flex min-h-[42px] items-center justify-center gap-1.5 rounded-lg px-1 text-[11px] font-medium transition-all ${
+                className={`flex min-h-[42px] items-center justify-center gap-1.5 rounded-lg px-1 text-push-xs font-medium transition-all ${
                   settingsTab === key
-                    ? 'border border-[#31425a] bg-push-grad-input text-push-fg shadow-[0_8px_20px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl'
+                    ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_8px_20px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl'
                     : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
                 }`}
               >
@@ -758,7 +758,7 @@ export function SettingsSheet({
             {auth.isConnected && (
               <div className="space-y-2">
                 {!auth.isDemo && (
-                  <div className="rounded-lg border border-[#1b2230] bg-push-surface px-3 py-2">
+                  <div className="rounded-lg border border-push-edge-subtle bg-push-surface px-3 py-2">
                     <p className="text-sm text-push-fg-secondary font-mono">
                       {auth.isAppAuth ? (
                         <span className="text-emerald-400">GitHub App</span>
@@ -790,7 +790,7 @@ export function SettingsSheet({
                           value={auth.installIdInput}
                           onChange={(e) => auth.setInstallIdInput(e.target.value)}
                           placeholder="Installation ID (e.g., 12345678)"
-                          className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 font-mono"
+                          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 font-mono"
                           onKeyDown={async (e) => {
                             if (e.key === 'Enter' && auth.installIdInput.trim()) {
                               const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
@@ -870,14 +870,14 @@ export function SettingsSheet({
                       <div className="space-y-1">
                         <p className="text-xs text-red-400">{auth.appError}</p>
                         {auth.appError.includes('GITHUB_ALLOWED_INSTALLATION_IDS') && (
-                          <div className="text-[11px] text-push-fg-muted">
+                          <div className="text-push-xs text-push-fg-muted">
                             <p>Ask the deployment admin to run:</p>
                             <div className="mt-1 flex items-center gap-2">
                               <code className="font-mono text-push-fg-secondary">{auth.allowlistSecretCmd}</code>
                               <button
                                 type="button"
                                 onClick={auth.copyAllowlistCommand}
-                                className="rounded border border-push-edge px-2 py-0.5 text-[10px] text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover"
+                                className="rounded border border-push-edge px-2 py-0.5 text-push-2xs text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover"
                               >
                                 Copy
                               </button>
@@ -918,7 +918,7 @@ export function SettingsSheet({
                 onChange={(e) => profile.setDisplayNameDraft(e.target.value)}
                 onBlur={profile.onDisplayNameBlur}
                 placeholder="Your name"
-                className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+                className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
               />
             </div>
 
@@ -944,9 +944,9 @@ export function SettingsSheet({
                 rows={3}
                 maxLength={300}
                 placeholder="Anything you want the assistant to know about you"
-                className="w-full rounded-lg border border-[#1b2230] bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 resize-none"
+                className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 resize-none"
               />
-              <p className="text-[10px] text-push-fg-dim">
+              <p className="text-push-2xs text-push-fg-dim">
                 {profile.bioDraft.length}/300
               </p>
             </div>
@@ -1006,7 +1006,7 @@ export function SettingsSheet({
               </button>
             </div>
             {workspace.contextMode === 'none' && (
-              <p className="text-[11px] text-push-fg-secondary">
+              <p className="text-push-xs text-push-fg-secondary">
                 No trimming can hit model context limits on long chats and cause failures.
               </p>
             )}
@@ -1057,7 +1057,7 @@ export function SettingsSheet({
                 Always
               </button>
             </div>
-            <p className="text-[11px] text-push-fg-secondary">
+            <p className="text-push-xs text-push-fg-secondary">
               Smart prewarms sandbox for likely coding prompts. Always prewarms on every message.
             </p>
           </div>
@@ -1096,7 +1096,7 @@ export function SettingsSheet({
                 On
               </button>
             </div>
-            <p className="text-[11px] text-push-fg-secondary">
+            <p className="text-push-xs text-push-fg-secondary">
               Controls whether the Console tab appears in Workspace Hub. Tool execution is unchanged.
             </p>
           </div>
@@ -1135,7 +1135,7 @@ export function SettingsSheet({
                 On
               </button>
             </div>
-            <p className="text-[11px] text-push-fg-secondary">
+            <p className="text-push-xs text-push-fg-secondary">
               When enabled, commits and pushes to the main/default branch are blocked. Create a feature branch first.
             </p>
 
@@ -1179,7 +1179,7 @@ export function SettingsSheet({
                     Never
                   </button>
                 </div>
-                <p className="text-[11px] text-push-fg-dim">
+                <p className="text-push-xs text-push-fg-dim">
                   Inherit uses the global default. Always/Never overrides it for this repo only.
                 </p>
               </div>
@@ -1215,7 +1215,7 @@ export function SettingsSheet({
                       <span className="text-xs text-push-fg-secondary font-mono truncate">{workspace.sandboxState.branch}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${
+                      <span className={`text-push-xs px-1.5 py-0.5 rounded-full ${
                         workspace.sandboxState.changedFiles > 0
                           ? 'bg-amber-500/15 text-amber-500'
                           : 'bg-emerald-500/15 text-emerald-500'
@@ -1226,7 +1226,7 @@ export function SettingsSheet({
                         type="button"
                         onClick={() => workspace.sandboxId && workspace.fetchSandboxState(workspace.sandboxId)}
                         disabled={workspace.sandboxStateLoading}
-                        className="inline-flex items-center gap-1 rounded border border-push-edge px-1.5 py-0.5 text-[10px] text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded border border-push-edge px-1.5 py-0.5 text-push-2xs text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover disabled:opacity-50"
                         title="Refresh sandbox state"
                       >
                         {workspace.sandboxStateLoading ? (
@@ -1240,7 +1240,7 @@ export function SettingsSheet({
 
                   {workspace.sandboxState.changedFiles > 0 && (
                     <div className="px-3 pb-2 space-y-1.5">
-                      <div className="flex gap-3 text-[11px] text-push-fg-muted">
+                      <div className="flex gap-3 text-push-xs text-push-fg-muted">
                         <span>Staged: <span className="text-push-fg-secondary">{workspace.sandboxState.stagedFiles}</span></span>
                         <span>Unstaged: <span className="text-push-fg-secondary">{workspace.sandboxState.unstagedFiles}</span></span>
                         <span>Untracked: <span className="text-push-fg-secondary">{workspace.sandboxState.untrackedFiles}</span></span>
@@ -1248,7 +1248,7 @@ export function SettingsSheet({
                       {workspace.sandboxState.preview.length > 0 && (
                         <div className="rounded border border-push-edge bg-push-surface p-1.5 space-y-0.5">
                           {workspace.sandboxState.preview.map((line, idx) => (
-                            <div key={`${line}-${idx}`} className="text-[10px] text-push-fg-secondary font-mono truncate">
+                            <div key={`${line}-${idx}`} className="text-push-2xs text-push-fg-secondary font-mono truncate">
                               {line}
                             </div>
                           ))}
@@ -1257,7 +1257,7 @@ export function SettingsSheet({
                     </div>
                   )}
 
-                  <div className="px-3 pb-2 text-[10px] text-push-fg-dim">
+                  <div className="px-3 pb-2 text-push-2xs text-push-fg-dim">
                     {new Date(workspace.sandboxState.fetchedAt).toLocaleTimeString()}
                     <span className="font-mono ml-1.5">{workspace.sandboxState.sandboxId.slice(0, 12)}...</span>
                   </div>
@@ -1366,7 +1366,7 @@ export function SettingsSheet({
                   })
                 )}
               </div>
-              <p className="text-[11px] text-push-fg-dim">
+              <p className="text-push-xs text-push-fg-dim">
                 Sets your preferred provider for new chats. Auto prefers OpenCode Zen when available.
               </p>
             </div>
@@ -1666,24 +1666,24 @@ export function SettingsSheet({
                 {(guardMetrics.blockedTotal > 0 || guardMetrics.symbolWarningsSoftened > 0) && (
                   <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-push-fg-dim">Never read blocks</span>
-                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.blockedByNeverRead}</span>
+                      <span className="text-push-xs text-push-fg-dim">Never read blocks</span>
+                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.blockedByNeverRead}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-push-fg-dim">Stale blocks</span>
-                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.blockedByStale}</span>
+                      <span className="text-push-xs text-push-fg-dim">Stale blocks</span>
+                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.blockedByStale}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-push-fg-dim">Partial-read blocks</span>
-                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.blockedByPartialRead}</span>
+                      <span className="text-push-xs text-push-fg-dim">Partial-read blocks</span>
+                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.blockedByPartialRead}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-push-fg-dim">Unknown-symbol blocks</span>
-                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.blockedByUnknownSymbol}</span>
+                      <span className="text-push-xs text-push-fg-dim">Unknown-symbol blocks</span>
+                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.blockedByUnknownSymbol}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-push-fg-dim">Symbol auto-expands</span>
-                      <span className="text-[11px] text-push-fg-dim">{guardMetrics.symbolAutoExpands}</span>
+                      <span className="text-push-xs text-push-fg-dim">Symbol auto-expands</span>
+                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.symbolAutoExpands}</span>
                     </div>
                   </div>
                 )}
@@ -1714,21 +1714,21 @@ export function SettingsSheet({
                     {Object.entries(pm.byModel).map(([model, mm]) => (
                       <div key={model} className="space-y-0.5 pl-2 border-l border-push-edge">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] text-push-fg-dim truncate max-w-[160px]">{model}</span>
-                          <span className="text-[11px] text-push-fg-dim">{mm.count}</span>
+                          <span className="text-push-xs text-push-fg-dim truncate max-w-[160px]">{model}</span>
+                          <span className="text-push-xs text-push-fg-dim">{mm.count}</span>
                         </div>
                         {(Object.entries(mm.reasons) as [string, number][])
                           .filter(([, n]) => n > 0)
                           .map(([reason, n]) => (
                             <div key={reason} className="flex items-center justify-between pl-2">
-                              <span className="text-[10px] text-push-fg-dim">
+                              <span className="text-push-2xs text-push-fg-dim">
                                 {reason === 'truncated' ? 'Truncated' :
                                  reason === 'validation_failed' ? 'Invalid schema' :
                                  reason === 'malformed_json' ? 'Malformed JSON' :
                                  reason === 'natural_language_intent' ? 'NL intent' :
                                  reason}
                               </span>
-                              <span className="text-[10px] text-push-fg-dim">{n}</span>
+                              <span className="text-push-2xs text-push-fg-dim">{n}</span>
                             </div>
                           ))}
                       </div>
@@ -1766,8 +1766,8 @@ export function SettingsSheet({
                     ['Hard trim', ctxMetrics.hardTrim] as const,
                   ]).filter(([, p]) => p.count > 0).map(([label, p]) => (
                     <div key={label} className="flex items-center justify-between">
-                      <span className="text-[11px] text-push-fg-dim">{label}</span>
-                      <span className="text-[11px] text-push-fg-dim">
+                      <span className="text-push-xs text-push-fg-dim">{label}</span>
+                      <span className="text-push-xs text-push-fg-dim">
                         {p.count}× · {(p.totalBefore - p.totalAfter).toLocaleString()} saved
                         {p.messagesDropped > 0 ? ` · ${p.messagesDropped} msgs dropped` : ''}
                       </span>
@@ -1777,15 +1777,15 @@ export function SettingsSheet({
                 {/* Summarization causes */}
                 {Object.values(ctxMetrics.summarizationCauses).some(c => c > 0) && (
                   <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
-                    <span className="text-[11px] text-push-fg-secondary font-medium">Summarization causes</span>
+                    <span className="text-push-xs text-push-fg-secondary font-medium">Summarization causes</span>
                     {([
                       ['Tool output', ctxMetrics.summarizationCauses.tool_output] as const,
                       ['Long message', ctxMetrics.summarizationCauses.long_message] as const,
                       ['Mixed', ctxMetrics.summarizationCauses.mixed] as const,
                     ]).filter(([, c]) => c > 0).map(([label, count]) => (
                       <div key={label} className="flex items-center justify-between">
-                        <span className="text-[11px] text-push-fg-dim">{label}</span>
-                        <span className="text-[11px] text-push-fg-dim">{count}×</span>
+                        <span className="text-push-xs text-push-fg-dim">{label}</span>
+                        <span className="text-push-xs text-push-fg-dim">{count}×</span>
                       </div>
                     ))}
                   </div>
@@ -1795,10 +1795,10 @@ export function SettingsSheet({
                   <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
                     {Object.entries(ctxMetrics.byProvider).map(([prov, pm]) => (
                       <div key={prov} className="flex items-center justify-between">
-                        <span className="text-[11px] text-push-fg-dim">
+                        <span className="text-push-xs text-push-fg-dim">
                           {PROVIDER_LABELS[prov as AIProviderType] ?? prov}
                         </span>
-                        <span className="text-[11px] text-push-fg-dim">
+                        <span className="text-push-xs text-push-fg-dim">
                           {pm.count}× · {(pm.totalBefore - pm.totalAfter).toLocaleString()} saved
                         </span>
                       </div>

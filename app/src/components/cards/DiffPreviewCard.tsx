@@ -5,12 +5,12 @@ import { CARD_SHELL_CLASS } from '@/lib/utils';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 
 export function DiffLine({ line, index }: { line: string; index: number }) {
-  let className = 'font-mono text-[12px] leading-relaxed px-3 whitespace-pre-wrap break-all';
+  let className = 'font-mono text-push-sm leading-relaxed px-3 whitespace-pre-wrap break-all';
 
   if (line.startsWith('+') && !line.startsWith('+++')) {
-    className += ' text-[#22c55e] bg-[#22c55e]/5';
+    className += ' text-push-status-success bg-push-status-success/5';
   } else if (line.startsWith('-') && !line.startsWith('---')) {
-    className += ' text-[#ef4444] bg-[#ef4444]/5';
+    className += ' text-push-status-error bg-push-status-error/5';
   } else if (line.startsWith('@@')) {
     className += ' text-push-link bg-push-link/10';
   } else if (line.startsWith('diff --git')) {
@@ -35,15 +35,15 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
       {/* Header */}
       <button
         onClick={toggleExpanded}
-        className="w-full px-3.5 py-3 flex items-center gap-2.5 hover:bg-[#0d1119] transition-colors duration-200"
+        className="w-full px-3.5 py-3 flex items-center gap-2.5 hover:bg-push-surface-hover transition-colors duration-200"
       >
         <FileDiff className="h-4 w-4 shrink-0 text-push-fg-secondary" />
-        <span className="flex-1 text-[13px] text-[#e4e4e7] text-left">
+        <span className="flex-1 text-push-base text-push-fg text-left">
           {data.filesChanged} file{data.filesChanged !== 1 ? 's' : ''} changed
         </span>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[12px] text-[#22c55e] font-mono">+{data.additions}</span>
-          <span className="text-[12px] text-[#ef4444] font-mono">-{data.deletions}</span>
+          <span className="text-push-sm text-push-status-success font-mono">+{data.additions}</span>
+          <span className="text-push-sm text-push-status-error font-mono">-{data.deletions}</span>
           <ExpandChevron expanded={expanded} />
         </div>
       </button>
@@ -59,7 +59,7 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
           ))}
         </div>
         {data.truncated && (
-          <div className="px-3 py-1.5 text-[11px] text-push-fg-dim italic border-t border-push-edge">
+          <div className="px-3 py-1.5 text-push-xs text-push-fg-dim italic border-t border-push-edge">
             Diff truncated
           </div>
         )}

@@ -62,18 +62,18 @@ export const CARD_SHELL_CLASS = 'my-2.5 max-w-full overflow-hidden rounded-xl bo
 // Card status palette — shared across card components
 // ---------------------------------------------------------------------------
 
-export const CARD_TEXT_SUCCESS = 'text-[#22c55e]';
-export const CARD_TEXT_ERROR   = 'text-[#ef4444]';
-export const CARD_TEXT_WARNING = 'text-[#f59e0b]';
+export const CARD_TEXT_SUCCESS = 'text-push-status-success';
+export const CARD_TEXT_ERROR   = 'text-push-status-error';
+export const CARD_TEXT_WARNING = 'text-push-status-warning';
 
 /** Pill badge (opacity /15) — inline status tags e.g. "Open", "SAFE". */
-export const CARD_BADGE_SUCCESS = 'bg-[#22c55e]/15 text-[#22c55e]';
-export const CARD_BADGE_ERROR   = 'bg-[#ef4444]/15 text-[#ef4444]';
-export const CARD_BADGE_WARNING = 'bg-[#f59e0b]/15 text-[#f59e0b]';
+export const CARD_BADGE_SUCCESS = 'bg-push-status-success/15 text-push-status-success';
+export const CARD_BADGE_ERROR   = 'bg-push-status-error/15 text-push-status-error';
+export const CARD_BADGE_WARNING = 'bg-push-status-warning/15 text-push-status-warning';
 
 /** Header background band (opacity /10) — used for card header rows. */
-export const CARD_HEADER_BG_SUCCESS = 'bg-[#22c55e]/10';
-export const CARD_HEADER_BG_ERROR   = 'bg-[#ef4444]/10';
+export const CARD_HEADER_BG_SUCCESS = 'bg-push-status-success/10';
+export const CARD_HEADER_BG_ERROR   = 'bg-push-status-error/10';
 
 /** Divider list container — applies divide-y/border token in one constant. */
 export const CARD_LIST_CLASS = 'divide-y divide-push-edge';
@@ -112,18 +112,18 @@ export async function validateGitHubToken(token: string): Promise<{ login: strin
 
 export function ciStatusColor(status: string | null): string {
   switch (status) {
-    case 'success': return 'text-[#22c55e]';
-    case 'failure': return 'text-[#ef4444]';
-    case 'pending': return 'text-[#f59e0b]';
+    case 'success': return 'text-push-status-success';
+    case 'failure': return 'text-push-status-error';
+    case 'pending': return 'text-push-status-warning';
     default: return 'text-push-fg-secondary';
   }
 }
 
 export function ciStatusBg(status: string | null): string {
   switch (status) {
-    case 'success': return 'bg-[#22c55e]/5';
-    case 'failure': return 'bg-[#ef4444]/5';
-    case 'pending': return 'bg-[#f59e0b]/5';
+    case 'success': return 'bg-push-status-success/5';
+    case 'failure': return 'bg-push-status-error/5';
+    case 'pending': return 'bg-push-status-warning/5';
     default: return 'bg-push-fg-dim/10';
   }
 }

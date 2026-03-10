@@ -174,16 +174,16 @@ function severityIcon(severity: ReviewComment['severity']) {
     case 'critical': return <AlertTriangle className="h-3.5 w-3.5 text-red-400 flex-shrink-0 mt-0.5" />;
     case 'warning':  return <AlertTriangle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />;
     case 'suggestion': return <Sparkles className="h-3.5 w-3.5 text-sky-400 flex-shrink-0 mt-0.5" />;
-    case 'note':     return <Info className="h-3.5 w-3.5 text-[#5f6b80] flex-shrink-0 mt-0.5" />;
+    case 'note':     return <Info className="h-3.5 w-3.5 text-push-fg-dim flex-shrink-0 mt-0.5" />;
   }
 }
 
 function severityLabel(severity: ReviewComment['severity']) {
   switch (severity) {
-    case 'critical':   return <span className="text-[10px] font-medium uppercase tracking-wide text-red-400">Critical</span>;
-    case 'warning':    return <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400">Warning</span>;
-    case 'suggestion': return <span className="text-[10px] font-medium uppercase tracking-wide text-sky-400">Suggestion</span>;
-    case 'note':       return <span className="text-[10px] font-medium uppercase tracking-wide text-[#5f6b80]">Note</span>;
+    case 'critical':   return <span className="text-push-2xs font-medium uppercase tracking-wide text-red-400">Critical</span>;
+    case 'warning':    return <span className="text-push-2xs font-medium uppercase tracking-wide text-amber-400">Warning</span>;
+    case 'suggestion': return <span className="text-push-2xs font-medium uppercase tracking-wide text-sky-400">Suggestion</span>;
+    case 'note':       return <span className="text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Note</span>;
   }
 }
 
@@ -649,7 +649,7 @@ export function HubReviewTab({
       {/* Controls */}
       <div className="flex-shrink-0 border-b border-push-edge px-3 py-3 space-y-2.5">
         {providerOptions.length === 0 ? (
-          <p className="text-[11px] text-push-fg-dim">
+          <p className="text-push-xs text-push-fg-dim">
             No AI provider configured. Add an API key in Settings to use the Reviewer.
           </p>
         ) : (
@@ -660,7 +660,7 @@ export function HubReviewTab({
                   {hasGitHubSource && (
                     <button
                       onClick={() => handleSourceChange('github')}
-                      className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                         reviewSource === 'github'
                           ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
                           : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
@@ -672,7 +672,7 @@ export function HubReviewTab({
                   {hasCommitSource && (
                     <button
                       onClick={() => handleSourceChange('commit')}
-                      className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                         reviewSource === 'commit'
                           ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
                           : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
@@ -683,7 +683,7 @@ export function HubReviewTab({
                   )}
                   <button
                     onClick={() => handleSourceChange('sandbox')}
-                    className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                       reviewSource === 'sandbox'
                         ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
                         : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
@@ -692,7 +692,7 @@ export function HubReviewTab({
                     Working tree
                   </button>
                 </div>
-                <p className="text-[10px] text-push-fg-dim">
+                <p className="text-push-2xs text-push-fg-dim">
                   {reviewSource === 'github'
                     ? 'Reviews the pushed PR or branch diff against the default branch.'
                     : reviewSource === 'commit'
@@ -708,7 +708,7 @@ export function HubReviewTab({
                 <button
                   key={type}
                   onClick={() => handleProviderChange(type)}
-                  className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                     selectedProvider === type
                       ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
                       : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
@@ -726,19 +726,19 @@ export function HubReviewTab({
                 value={selectedReviewModelInput}
                 onChange={(e) => handleModelChange(e.target.value)}
                 placeholder={selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'}
-                className="min-w-0 flex-1 rounded-lg border border-push-edge bg-[#080d14] px-2.5 py-1.5 text-[11px] text-push-fg-secondary placeholder:text-push-fg-dim focus:border-push-accent/40 focus:outline-none"
+                className="min-w-0 flex-1 rounded-lg border border-push-edge bg-push-surface px-2.5 py-1.5 text-push-xs text-push-fg-secondary placeholder:text-push-fg-dim focus:border-push-accent/40 focus:outline-none"
               />
               <button
                 onClick={() => void handleRunReview()}
                 disabled={!canRunReview}
-                className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-push-accent/30 bg-push-accent/10 px-3 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15 active:scale-95 disabled:opacity-50"
+                className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-push-accent/30 bg-push-accent/10 px-3 py-1.5 text-push-xs font-medium text-push-accent transition-colors hover:bg-push-accent/15 active:scale-95 disabled:opacity-50"
               >
                 {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                 {running ? 'Reviewing…' : 'Run review'}
               </button>
             </div>
             {selectedDefaultModel && (
-              <p className="text-[10px] text-push-fg-dim">
+              <p className="text-push-2xs text-push-fg-dim">
                 Review model: <span className="text-push-fg-secondary">{selectedReviewModel}</span>
                 {selectedReviewModelInput.trim() ? '' : ' (using Settings default)'}
               </p>
@@ -748,14 +748,14 @@ export function HubReviewTab({
 
         {/* Status line */}
         {running && status && (
-          <p className="text-[11px] text-push-fg-dim">{status}</p>
+          <p className="text-push-xs text-push-fg-dim">{status}</p>
         )}
         {error && (
-          <p className="text-[11px] text-red-400">{error}</p>
+          <p className="text-push-xs text-red-400">{error}</p>
         )}
         {savedReviewNotice && (
           <p
-            className={`text-[11px] ${
+            className={`text-push-xs ${
               savedReviewNotice.tone === 'error'
                 ? 'text-red-400'
                 : savedReviewNotice.tone === 'success'
@@ -776,20 +776,20 @@ export function HubReviewTab({
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-xs font-medium text-push-fg">Saved review available</p>
-                  <p className="text-[11px] text-push-fg-dim">
+                  <p className="text-push-xs text-push-fg-dim">
                     {savedReview.reviewContext?.label || 'Saved review'} · {new Date(savedReview.savedAt).toLocaleString()}
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={handleLoadSavedReview}
-                    className="rounded-lg border border-push-accent/30 bg-push-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15"
+                    className="rounded-lg border border-push-accent/30 bg-push-accent/10 px-2.5 py-1.5 text-push-xs font-medium text-push-accent transition-colors hover:bg-push-accent/15"
                   >
                     Load saved
                   </button>
                   <button
                     onClick={handleClearSavedReview}
-                    className="rounded-lg border border-push-edge px-2.5 py-1.5 text-[11px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                    className="rounded-lg border border-push-edge px-2.5 py-1.5 text-push-xs text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
                   >
                     Clear
                   </button>
@@ -822,7 +822,7 @@ export function HubReviewTab({
                     Review complete{reviewContext ? ` · ${reviewContext.label}` : ''}
                   </span>
                 </div>
-                <span className="text-[10px] text-push-fg-dim">
+                <span className="text-push-2xs text-push-fg-dim">
                   {result.truncated
                     ? `${result.filesReviewed} of ${result.totalFiles} files`
                     : `${result.filesReviewed} file${result.filesReviewed !== 1 ? 's' : ''}`
@@ -832,23 +832,23 @@ export function HubReviewTab({
               {result.truncated && (
                 <div className="flex items-center gap-1.5 mb-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5">
                   <AlertTriangle className="h-3 w-3 text-amber-400 flex-shrink-0" />
-                  <p className="text-[10px] text-amber-400">
+                  <p className="text-push-2xs text-amber-400">
                     Diff too large — review covers {result.filesReviewed} of {result.totalFiles} files. Later files were not seen.
                   </p>
                 </div>
               )}
-              <p className="text-[11px] leading-relaxed text-push-fg-secondary">{result.summary}</p>
+              <p className="text-push-xs leading-relaxed text-push-fg-secondary">{result.summary}</p>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <button
                   onClick={handleSaveReview}
-                  className="rounded-lg border border-push-accent/30 bg-push-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15"
+                  className="rounded-lg border border-push-accent/30 bg-push-accent/10 px-2.5 py-1.5 text-push-xs font-medium text-push-accent transition-colors hover:bg-push-accent/15"
                 >
                   {isCurrentReviewSaved ? 'Saved locally' : savedReview ? 'Replace saved review' : 'Save locally'}
                 </button>
                 {savedReview && !isCurrentReviewSaved && (
                   <button
                     onClick={handleLoadSavedReview}
-                    className="rounded-lg border border-push-edge px-2.5 py-1.5 text-[11px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                    className="rounded-lg border border-push-edge px-2.5 py-1.5 text-push-xs text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
                   >
                     Load saved
                   </button>
@@ -856,20 +856,20 @@ export function HubReviewTab({
                 {savedReview && (
                   <button
                     onClick={handleClearSavedReview}
-                    className="rounded-lg border border-push-edge px-2.5 py-1.5 text-[11px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                    className="rounded-lg border border-push-edge px-2.5 py-1.5 text-push-xs text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
                   >
                     Clear saved
                   </button>
                 )}
                 {savedReview && (
-                  <span className="text-[10px] text-push-fg-dim">
+                  <span className="text-push-2xs text-push-fg-dim">
                     Saved {new Date(savedReview.savedAt).toLocaleString()}
                   </span>
                 )}
               </div>
               {loadedSavedReviewMeta?.diffStorageTruncated && (
-                <div className="mt-2 rounded-lg border border-push-edge bg-[#0d1119] px-2.5 py-2">
-                  <p className="text-[10px] text-push-fg-dim">
+                <div className="mt-2 rounded-lg border border-push-edge bg-push-surface-hover px-2.5 py-2">
+                  <p className="text-push-2xs text-push-fg-dim">
                     Loaded from local save. The stored diff snapshot was trimmed, so Diff jump targets may be incomplete.
                   </p>
                 </div>
@@ -880,7 +880,7 @@ export function HubReviewTab({
             {reviewContext?.kind === 'github-pr' && postState !== 'posted' && (
               <div className="flex items-center justify-between gap-2 rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-2.5">
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="text-[11px] text-push-fg-secondary truncate">
+                  <span className="text-push-xs text-push-fg-secondary truncate">
                     PR <a
                       href={reviewContext.pr.url}
                       target="_blank"
@@ -892,13 +892,13 @@ export function HubReviewTab({
                     {' '}open
                   </span>
                   {postState === 'error' && postError && (
-                    <span className="text-[10px] text-red-400 truncate">{postError}</span>
+                    <span className="text-push-2xs text-red-400 truncate">{postError}</span>
                   )}
                 </div>
                 <button
                   onClick={() => void handlePostToPR()}
                   disabled={postState === 'posting'}
-                  className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-push-accent/30 bg-push-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-push-accent transition-colors hover:bg-push-accent/15 active:scale-95 disabled:opacity-50"
+                  className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-push-accent/30 bg-push-accent/10 px-2.5 py-1.5 text-push-xs font-medium text-push-accent transition-colors hover:bg-push-accent/15 active:scale-95 disabled:opacity-50"
                 >
                   {postState === 'posting'
                     ? <><Loader2 className="h-3 w-3 animate-spin" /> Posting…</>
@@ -910,7 +910,7 @@ export function HubReviewTab({
             {postState === 'posted' && reviewContext?.kind === 'github-pr' && (
               <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2.5">
                 <CheckCircle className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
-                <span className="text-[11px] text-emerald-400">
+                <span className="text-push-xs text-emerald-400">
                   Review posted to{' '}
                   <a
                     href={reviewContext.pr.url}
@@ -925,26 +925,26 @@ export function HubReviewTab({
             )}
             {showSandboxPostingHint && (
               <div className="rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-2.5">
-                <p className="text-[11px] text-push-fg-dim">
+                <p className="text-push-xs text-push-fg-dim">
                   Working tree reviews stay in Push. Switch to <span className="text-push-fg-secondary">GitHub diff</span> to review the pushed branch or post findings back to a PR.
                 </p>
               </div>
             )}
             {reviewContext?.kind === 'github-branch' && (
               <div className="rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-2.5">
-                <p className="text-[11px] text-push-fg-dim">
+                <p className="text-push-xs text-push-fg-dim">
                   No open PR for this branch. This review covers the pushed branch diff against <span className="text-push-fg-secondary">{defaultBranch}</span>.
                 </p>
               </div>
             )}
             {reviewContext?.kind === 'github-commit' && (
               <div className="flex items-center gap-2 rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-2.5">
-                <span className="text-[11px] text-push-fg-dim">Commit</span>
+                <span className="text-push-xs text-push-fg-dim">Commit</span>
                 <a
                   href={reviewContext.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-0.5 font-mono text-[11px] text-push-accent hover:underline"
+                  className="inline-flex items-center gap-0.5 font-mono text-push-xs text-push-accent hover:underline"
                 >
                   {reviewContext.shortSha} <ExternalLink className="h-2.5 w-2.5" />
                 </a>
@@ -970,13 +970,13 @@ export function HubReviewTab({
                     <div key={file} className="rounded-xl border border-push-edge bg-push-grad-card overflow-hidden">
                       <button
                         onClick={() => toggleFile(file)}
-                        className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-[#0d1119] transition-colors"
+                        className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-push-surface-hover transition-colors"
                       >
-                        <span className={`min-w-0 flex-1 truncate text-left text-[11px] font-medium ${headerColor}`}>
+                        <span className={`min-w-0 flex-1 truncate text-left text-push-xs font-medium ${headerColor}`}>
                           {file}
                         </span>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-[10px] text-push-fg-dim">{comments.length}</span>
+                          <span className="text-push-2xs text-push-fg-dim">{comments.length}</span>
                           {expanded
                             ? <ChevronDown className="h-3 w-3 text-push-fg-dim" />
                             : <ChevronRight className="h-3 w-3 text-push-fg-dim" />}
@@ -995,19 +995,19 @@ export function HubReviewTab({
                                     <button
                                       onClick={() => handleOpenCommentInDiff(c.file, c.line)}
                                       disabled={!reviewDiffData}
-                                      className="rounded-full border border-push-accent/30 px-1.5 py-0.5 text-[10px] font-mono text-push-accent transition-colors hover:bg-push-accent/10"
+                                      className="rounded-full border border-push-accent/30 px-1.5 py-0.5 text-push-2xs font-mono text-push-accent transition-colors hover:bg-push-accent/10"
                                       title={`Open ${c.file} at line ${c.line} in Diff`}
                                     >
                                       L{c.line}
                                     </button>
                                   ) : null}
                                 </div>
-                                <p className="text-[11px] leading-relaxed text-push-fg-secondary">{c.comment}</p>
+                                <p className="text-push-xs leading-relaxed text-push-fg-secondary">{c.comment}</p>
                               </div>
                               <button
                                 onClick={() => handleOpenCommentInDiff(c.file, c.line)}
                                 disabled={!reviewDiffData}
-                                className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-push-edge px-2 py-1 text-[10px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+                                className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-push-edge px-2 py-1 text-push-2xs text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
                                 title={`Open ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} in Diff`}
                               >
                                 <FileDiff className="h-3 w-3" />
@@ -1021,7 +1021,7 @@ export function HubReviewTab({
                                     activeBranch,
                                     defaultBranch,
                                   }))}
-                                  className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-push-accent/30 px-2 py-1 text-[10px] text-push-accent transition-colors hover:bg-push-accent/10"
+                                  className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-push-accent/30 px-2 py-1 text-push-2xs text-push-accent transition-colors hover:bg-push-accent/10"
                                   title={`Send ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} to chat as a fix request`}
                                 >
                                   <Sparkles className="h-3 w-3" />

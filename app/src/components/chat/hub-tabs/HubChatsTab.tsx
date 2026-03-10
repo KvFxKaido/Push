@@ -121,7 +121,7 @@ export function HubChatsTab({
             onNewChat();
             onClose();
           }}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-[#080b10]/95 text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
           aria-label="New chat"
           title="New chat"
         >
@@ -152,10 +152,10 @@ export function HubChatsTab({
                   className="flex w-full items-center gap-1.5 px-3 pb-1 pt-3 text-left"
                 >
                   <GitBranch className={`h-3 w-3 shrink-0 ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`} />
-                  <span className={`truncate text-[10px] font-medium ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`}>
+                  <span className={`truncate text-push-2xs font-medium ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`}>
                     {group.name}
                   </span>
-                  <span className="text-[10px] text-push-fg-dim">
+                  <span className="text-push-2xs text-push-fg-dim">
                     ({group.chats.length})
                   </span>
                 </button>
@@ -192,7 +192,7 @@ export function HubChatsTab({
                               cancelRename();
                             }
                           }}
-                          className="h-7 w-full rounded-md border border-push-edge bg-push-surface px-2 text-[12px] text-push-fg outline-none placeholder:text-push-fg-dim focus:border-push-sky/50"
+                          className="h-7 w-full rounded-md border border-push-edge bg-push-surface px-2 text-push-sm text-push-fg outline-none placeholder:text-push-fg-dim focus:border-push-sky/50"
                           placeholder="Chat name"
                           aria-label="Rename chat"
                         />
@@ -224,10 +224,10 @@ export function HubChatsTab({
                           }}
                           className="min-w-0 flex-1 px-2.5 py-2 text-left"
                         >
-                          <p className={`truncate text-[12px] ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
+                          <p className={`truncate text-push-sm ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
                             {chat.title}
                           </p>
-                          <p className="mt-0.5 text-[10px] text-push-fg-muted">
+                          <p className="mt-0.5 text-push-2xs text-push-fg-muted">
                             {messageCount} msg{messageCount !== 1 ? 's' : ''} · {timeAgoCompact(chat.lastMessageAt)}
                           </p>
                         </button>

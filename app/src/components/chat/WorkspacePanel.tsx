@@ -196,7 +196,7 @@ export function WorkspacePanel({
             <button
               onClick={handleStartNaming}
               disabled={!content.trim() || isNamingMemory}
-              className="flex h-10 items-center gap-1 rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 text-xs font-medium text-push-fg-dim transition-all duration-200 hover:text-push-fg-secondary hover:border-push-edge-hover hover:bg-[#0d1119] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+              className="flex h-10 items-center gap-1 rounded-xl border border-push-edge bg-push-surface/95 px-2.5 text-xs font-medium text-push-fg-dim transition-all duration-200 hover:text-push-fg-secondary hover:border-push-edge-hover hover:bg-push-surface-hover active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
               aria-label="Save scratchpad memory"
               title="Save memory"
             >
@@ -206,7 +206,7 @@ export function WorkspacePanel({
             <button
               onClick={onClear}
               disabled={!content.trim()}
-              className="flex h-10 w-10 items-center justify-center rounded-xl border border-push-edge bg-[#080b10]/95 text-push-fg-dim transition-all duration-200 hover:text-push-fg-secondary hover:border-push-edge-hover hover:bg-[#0d1119] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-push-edge bg-push-surface/95 text-push-fg-dim transition-all duration-200 hover:text-push-fg-secondary hover:border-push-edge-hover hover:bg-push-surface-hover active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
               aria-label="Clear scratchpad"
               title="Clear"
             >
@@ -215,7 +215,7 @@ export function WorkspacePanel({
           </div>
           <button
             onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-push-edge bg-[#080b10]/95 text-push-fg-dim transition-all duration-200 hover:text-push-fg-secondary hover:border-push-edge-hover hover:bg-[#0d1119] active:scale-95"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-push-edge bg-push-surface/95 text-push-fg-dim transition-all duration-200 hover:text-push-fg-secondary hover:border-push-edge-hover hover:bg-push-surface-hover active:scale-95"
             aria-label="Close panel"
           >
             <X className="h-4 w-4" />
@@ -234,8 +234,8 @@ export function WorkspacePanel({
               onClick={() => setActiveTab(key)}
               className={`flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
                 activeTab === key
-                  ? 'border border-push-edge-hover bg-[#0d1119] text-push-fg shadow-push-sm'
-                  : 'border border-transparent text-push-fg-dim hover:text-push-fg-secondary hover:bg-[#080b10]/80'
+                  ? 'border border-push-edge-hover bg-push-surface-hover text-push-fg shadow-push-sm'
+                  : 'border border-transparent text-push-fg-dim hover:text-push-fg-secondary hover:bg-push-surface/80'
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -289,7 +289,7 @@ export function WorkspacePanel({
               </button>
               <button
                 onClick={handleCancelNaming}
-                className="flex h-10 w-10 items-center justify-center rounded-xl border border-push-edge bg-[#080b10]/95 text-push-fg-dim transition-all duration-200 hover:text-push-fg-secondary hover:border-push-edge-hover hover:bg-[#0d1119] active:scale-95"
+                className="flex h-10 w-10 items-center justify-center rounded-xl border border-push-edge bg-push-surface/95 text-push-fg-dim transition-all duration-200 hover:text-push-fg-secondary hover:border-push-edge-hover hover:bg-push-surface-hover active:scale-95"
                 aria-label="Cancel naming"
               >
                 <X className="h-4 w-4" />
@@ -315,7 +315,7 @@ export function WorkspacePanel({
             <button
               onClick={() => activeMemory && onDeleteMemory(activeMemory.id)}
               disabled={!activeMemory}
-              className="flex h-10 items-center rounded-xl border border-push-edge bg-[#080b10]/95 px-2.5 text-xs text-push-fg-dim transition-all duration-200 hover:text-[#f97316] hover:border-push-edge-hover hover:bg-[#0d1119] active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+              className="flex h-10 items-center rounded-xl border border-push-edge bg-push-surface/95 px-2.5 text-xs text-push-fg-dim transition-all duration-200 hover:text-[#f97316] hover:border-push-edge-hover hover:bg-push-surface-hover active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
               aria-label="Delete memory"
             >
               Delete

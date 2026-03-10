@@ -217,7 +217,7 @@ export function HubDiffTab({
             });
           }}
           disabled={startingSandbox || sandboxStatus === 'creating'}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#1b2230] bg-push-grad-input px-3 text-xs text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 disabled:opacity-50"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 text-xs text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 disabled:opacity-50"
         >
           {(startingSandbox || sandboxStatus === 'creating') && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {startingSandbox || sandboxStatus === 'creating' ? 'Starting sandbox...' : 'Start sandbox'}
@@ -232,14 +232,14 @@ export function HubDiffTab({
         <div className="min-w-0">
           <p className="truncate text-xs text-push-fg-dim">{diffLabel}</p>
           {showingReviewDiff && (
-            <p className="text-[10px] text-push-fg-dim">Reviewed diff snapshot</p>
+            <p className="text-push-2xs text-push-fg-dim">Reviewed diff snapshot</p>
           )}
         </div>
         {showingReviewDiff ? (
           <button
             onClick={onClearReviewDiff}
             disabled={!onClearReviewDiff}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
           >
             <CornerDownRight className="h-3.5 w-3.5" />
             Live diff
@@ -248,7 +248,7 @@ export function HubDiffTab({
           <button
             onClick={() => void refreshDiff()}
             disabled={diffLoading}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
           >
             {diffLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             Refresh
@@ -265,14 +265,14 @@ export function HubDiffTab({
               <button
                 key={fd.path}
                 onClick={() => scrollToFile(fd.path)}
-                className="flex shrink-0 items-center gap-1 rounded-full border border-push-edge bg-[#080b10]/80 px-2 py-1 text-[10px] text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                className="flex shrink-0 items-center gap-1 rounded-full border border-push-edge bg-push-surface/80 px-2 py-1 text-push-2xs text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
                 title={fd.path}
               >
                 <span className="max-w-[100px] truncate">{filename}</span>
                 {(fd.additions > 0 || fd.deletions > 0) && (
                   <span className="flex items-center gap-0.5">
-                    {fd.additions > 0 && <span className="font-mono text-[#22c55e]">+{fd.additions}</span>}
-                    {fd.deletions > 0 && <span className="font-mono text-[#ef4444]">-{fd.deletions}</span>}
+                    {fd.additions > 0 && <span className="font-mono text-push-status-success">+{fd.additions}</span>}
+                    {fd.deletions > 0 && <span className="font-mono text-push-status-error">-{fd.deletions}</span>}
                   </span>
                 )}
               </button>
@@ -317,9 +317,9 @@ export function HubDiffTab({
                     <span className="min-w-0 flex-1 truncate text-xs font-medium text-push-fg-secondary">
                       {fd.path}
                     </span>
-                    <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-mono">
-                      {fd.additions > 0 && <span className="text-[#22c55e]">+{fd.additions}</span>}
-                      {fd.deletions > 0 && <span className="text-[#ef4444]">-{fd.deletions}</span>}
+                    <span className="flex shrink-0 items-center gap-1.5 text-push-xs font-mono">
+                      {fd.additions > 0 && <span className="text-push-status-success">+{fd.additions}</span>}
+                      {fd.deletions > 0 && <span className="text-push-status-error">-{fd.deletions}</span>}
                     </span>
                   </button>
                   {/* Diff lines */}
@@ -343,7 +343,7 @@ export function HubDiffTab({
               );
             })}
             {diffData?.truncated && (
-              <div className="px-3 py-1.5 text-[11px] italic text-push-fg-dim border-t border-push-edge">
+              <div className="px-3 py-1.5 text-push-xs italic text-push-fg-dim border-t border-push-edge">
                 Diff truncated
               </div>
             )}

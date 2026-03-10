@@ -249,7 +249,7 @@ export function RepoChatDrawer({
                   cancelRename();
                 }
               }}
-              className="h-7 w-full rounded-md border border-push-edge bg-push-surface px-2 text-[12px] text-push-fg outline-none placeholder:text-push-fg-dim focus:border-push-sky/50"
+              className="h-7 w-full rounded-md border border-push-edge bg-push-surface px-2 text-push-sm text-push-fg outline-none placeholder:text-push-fg-dim focus:border-push-sky/50"
               placeholder="Chat name"
               aria-label="Rename chat"
             />
@@ -278,10 +278,10 @@ export function RepoChatDrawer({
               onClick={() => openChat(chat.id, repo, chat.branch)}
               className="min-w-0 flex-1 px-2.5 py-2 text-left"
             >
-              <p className={`truncate text-[12px] ${isActiveChat ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
+              <p className={`truncate text-push-sm ${isActiveChat ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
                 {chat.title}
               </p>
-              <p className="mt-0.5 text-[10px] text-push-fg-muted">
+              <p className="mt-0.5 text-push-2xs text-push-fg-muted">
                 {messageCount} msg{messageCount !== 1 ? 's' : ''} · {timeAgoCompact(chat.lastMessageAt)}
               </p>
             </button>
@@ -315,7 +315,7 @@ export function RepoChatDrawer({
     <>
       <button
         onClick={() => setOpen(true)}
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-[#1b2230] bg-push-grad-input text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.4),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all duration-200 hover:border-[#31425a] hover:text-push-fg hover:brightness-110 active:scale-95"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-push-edge-subtle bg-push-grad-input text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.4),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 active:scale-95"
         aria-label="Open chats and repos"
         title="Chats and repos"
       >
@@ -346,7 +346,7 @@ export function RepoChatDrawer({
                     onNewChat();
                     setOpen(false);
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#1b2230] bg-push-grad-input px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge-subtle bg-push-grad-input px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   New chat
@@ -357,7 +357,7 @@ export function RepoChatDrawer({
                       onBrowseRepos();
                       setOpen(false);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#1b2230] bg-push-grad-input px-2.5 py-1.5 text-xs font-medium text-push-link shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge-subtle bg-push-grad-input px-2.5 py-1.5 text-xs font-medium text-push-link shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
                   >
                     <House className="h-3.5 w-3.5" />
                     Home
@@ -381,7 +381,7 @@ export function RepoChatDrawer({
                       onExitSandboxMode();
                       setOpen(false);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#1b2230] bg-push-grad-input px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-push-edge-subtle bg-push-grad-input px-2.5 py-1.5 text-xs font-medium text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
                   >
                     <X className="h-3.5 w-3.5" />
                     Exit sandbox
@@ -394,7 +394,7 @@ export function RepoChatDrawer({
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search repos and chats"
-                  className="h-8 w-full rounded-xl border border-[#1b2230] bg-push-grad-input pl-8 pr-2.5 text-xs text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none placeholder:text-push-fg-dim/70 transition-all focus:border-push-sky/50"
+                  className="h-8 w-full rounded-xl border border-push-edge-subtle bg-push-grad-input pl-8 pr-2.5 text-xs text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none placeholder:text-push-fg-dim/70 transition-all focus:border-push-sky/50"
                 />
               </div>
             </SheetHeader>
@@ -405,7 +405,7 @@ export function RepoChatDrawer({
                   const isExpanded = isSearching || (expandedRepos[repo.full_name] ?? (activeRepo?.full_name === repo.full_name));
                   const isActiveRepo = activeRepo?.id === repo.id;
                   return (
-                    <div key={repo.id} className="rounded-xl border border-[#1b2230] bg-push-grad-input shadow-[0_10px_22px_rgba(0,0,0,0.32),0_2px_6px_rgba(0,0,0,0.2)] card-hover spring-press">
+                    <div key={repo.id} className="rounded-xl border border-push-edge-subtle bg-push-grad-input shadow-[0_10px_22px_rgba(0,0,0,0.32),0_2px_6px_rgba(0,0,0,0.2)] card-hover spring-press">
                       <button
                         onClick={() => toggleRepo(repo.full_name, isExpanded)}
                         className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors ${
@@ -417,11 +417,11 @@ export function RepoChatDrawer({
                         />
                         <FolderGit2 className={`h-3.5 w-3.5 shrink-0 ${isActiveRepo ? 'text-push-link' : 'text-push-fg-muted'}`} />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-[13px] font-medium text-push-fg">{repo.name}</p>
-                          <p className="text-[11px] text-push-fg-muted">{chats.length} chat{chats.length !== 1 ? 's' : ''}</p>
+                          <p className="truncate text-push-base font-medium text-push-fg">{repo.name}</p>
+                          <p className="text-push-xs text-push-fg-muted">{chats.length} chat{chats.length !== 1 ? 's' : ''}</p>
                         </div>
                         {isActiveRepo && (
-                          <span className="rounded-full bg-push-link/15 px-2 py-0.5 text-[10px] font-medium text-push-link">
+                          <span className="rounded-full bg-push-link/15 px-2 py-0.5 text-push-2xs font-medium text-push-link">
                             active
                           </span>
                         )}
@@ -443,7 +443,7 @@ export function RepoChatDrawer({
                                 }
                               }}
                             >
-                              <DropdownMenuTrigger className="mx-1 mb-1 flex h-8 w-[calc(100%-0.5rem)] items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2.5 text-left text-xs text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:bg-push-surface-raised">
+                              <DropdownMenuTrigger className="mx-1 mb-1 flex h-8 w-[calc(100%-0.5rem)] items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2.5 text-left text-xs text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:bg-push-surface-raised">
                                 <GitBranch className="h-3 w-3 text-push-fg-dim" />
                                 <span className="min-w-0 flex-1 truncate">{currentBranch || defaultBranch || 'main'}</span>
                                 <ChevronDown className={`h-3 w-3 text-push-fg-dim transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`} />
@@ -453,7 +453,7 @@ export function RepoChatDrawer({
                                 sideOffset={6}
                                 className="w-[230px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
                               >
-                                <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-push-fg-dim">
+                                <DropdownMenuLabel className="px-3 py-1.5 text-push-2xs font-medium uppercase tracking-wider text-push-fg-dim">
                                   Switch Branch
                                 </DropdownMenuLabel>
                                 <DropdownMenuSeparator className="bg-push-edge" />
@@ -476,7 +476,7 @@ export function RepoChatDrawer({
                                           e.preventDefault();
                                           onRefreshBranches();
                                         }}
-                                        className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-[#0d1119]"
+                                        className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-push-surface-hover"
                                       >
                                         Retry
                                       </DropdownMenuItem>
@@ -507,19 +507,19 @@ export function RepoChatDrawer({
                                           setCurrentBranch(branch.name);
                                         }}
                                         className={`mx-1 flex items-center gap-2 rounded-lg px-3 py-2 ${
-                                          isActiveBranch ? 'bg-[#101621]' : 'hover:bg-[#0d1119]'
+                                          isActiveBranch ? 'bg-[#101621]' : 'hover:bg-push-surface-hover'
                                         }`}
                                       >
                                         <span className={`min-w-0 flex-1 truncate text-xs ${isActiveBranch ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
                                           {branch.name}
                                         </span>
                                         {branch.isDefault && (
-                                          <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[10px] text-[#58a6ff]">
+                                          <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-[#58a6ff]">
                                             default
                                           </span>
                                         )}
                                         {branch.isProtected && (
-                                          <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-[10px] text-[#fca5a5]">
+                                          <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-push-2xs text-[#fca5a5]">
                                             protected
                                           </span>
                                         )}
@@ -532,10 +532,10 @@ export function RepoChatDrawer({
                                             if (isDeletingThisBranch || deletingBranch) return;
                                             void requestDeleteBranch(branch.name);
                                           }}
-                                          className={`mx-1 mb-1 flex items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] ${
+                                          className={`mx-1 mb-1 flex items-center gap-2 rounded-lg px-3 py-1.5 text-push-xs ${
                                             isDeletePending
                                               ? 'bg-red-950/30 text-red-300 hover:bg-red-950/40'
-                                              : 'text-push-fg-dim hover:bg-[#0d1119] hover:text-red-300'
+                                              : 'text-push-fg-dim hover:bg-push-surface-hover hover:text-red-300'
                                           }`}
                                         >
                                           {isDeletingThisBranch ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
@@ -554,7 +554,7 @@ export function RepoChatDrawer({
                           )}
 
                           {chats.length === 0 ? (
-                            <div className="rounded-lg border border-dashed border-push-edge px-2.5 py-2 text-[11px] text-push-fg-muted">
+                            <div className="rounded-lg border border-dashed border-push-edge px-2.5 py-2 text-push-xs text-push-fg-muted">
                               No chats yet
                             </div>
                           ) : (
@@ -603,10 +603,10 @@ export function RepoChatDrawer({
                                       className="flex w-full items-center gap-1.5 px-1.5 pb-0.5 pt-2 text-left"
                                     >
                                       <GitBranch className={`h-3 w-3 shrink-0 ${isActiveBranch ? 'text-push-link' : 'text-push-fg-dim'}`} />
-                                      <span className={`truncate text-[10px] font-medium ${isActiveBranch ? 'text-push-link' : 'text-push-fg-dim'}`}>
+                                      <span className={`truncate text-push-2xs font-medium ${isActiveBranch ? 'text-push-link' : 'text-push-fg-dim'}`}>
                                         {branchName}
                                       </span>
-                                      <span className="text-[10px] text-push-fg-dim">
+                                      <span className="text-push-2xs text-push-fg-dim">
                                         ({branchChats.length})
                                       </span>
                                     </button>
@@ -624,7 +624,7 @@ export function RepoChatDrawer({
 
                 {filteredUnscopedChats.length > 0 && (
                   <div className="rounded-xl border border-push-edge bg-push-surface">
-                    <div className="px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-push-fg-muted">
+                    <div className="px-3 py-2 text-push-xs font-medium uppercase tracking-wide text-push-fg-muted">
                       Unscoped
                     </div>
                     <div className="space-y-1 px-2 pb-2">
@@ -633,7 +633,7 @@ export function RepoChatDrawer({
                   </div>
                 )}
                 {filteredRepoRows.length === 0 && filteredUnscopedChats.length === 0 && (
-                  <div className="rounded-xl border border-dashed border-push-edge bg-push-surface px-3 py-4 text-center text-[12px] text-push-fg-muted">
+                  <div className="rounded-xl border border-dashed border-push-edge bg-push-surface px-3 py-4 text-center text-push-sm text-push-fg-muted">
                     No repos or chats match your search.
                   </div>
                 )}
@@ -642,14 +642,14 @@ export function RepoChatDrawer({
 
             {onOpenSettings && (
               <div className="flex items-center justify-between border-t border-push-edge bg-[linear-gradient(180deg,rgba(7,10,15,0.92)_0%,rgba(3,5,9,0.98)_100%)] px-3 py-2.5">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#1b2230] bg-push-grad-icon text-push-accent shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)]">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-push-edge-subtle bg-push-grad-icon text-push-accent shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)]">
                   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" className="text-push-accent">
                     <path d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
                   </svg>
                 </div>
                 <button
                   onClick={() => setPanel('settings')}
-                  className="inline-flex items-center gap-2 rounded-xl border border-[#1b2230] bg-push-grad-input px-3 py-1.5 text-xs font-medium text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
+                  className="inline-flex items-center gap-2 rounded-xl border border-push-edge-subtle bg-push-grad-input px-3 py-1.5 text-xs font-medium text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
                 >
                   <Settings className="h-3.5 w-3.5" />
                   Settings
@@ -683,8 +683,8 @@ export function RepoChatDrawer({
                 >
                   <UserRound className="h-4 w-4 text-push-link" />
                   <div className="min-w-0">
-                    <p className="text-[13px] font-medium text-push-fg">You</p>
-                    <p className="text-[11px] text-push-fg-muted">GitHub, profile, identity</p>
+                    <p className="text-push-base font-medium text-push-fg">You</p>
+                    <p className="text-push-xs text-push-fg-muted">GitHub, profile, identity</p>
                   </div>
                 </button>
 
@@ -694,8 +694,8 @@ export function RepoChatDrawer({
                 >
                   <FolderCog className="h-4 w-4 text-push-link" />
                   <div className="min-w-0">
-                    <p className="text-[13px] font-medium text-push-fg">Workspace</p>
-                    <p className="text-[11px] text-push-fg-muted">Context mode, sandbox controls</p>
+                    <p className="text-push-base font-medium text-push-fg">Workspace</p>
+                    <p className="text-push-xs text-push-fg-muted">Context mode, sandbox controls</p>
                   </div>
                 </button>
 
@@ -705,12 +705,12 @@ export function RepoChatDrawer({
                 >
                   <Cpu className="h-4 w-4 text-push-link" />
                   <div className="min-w-0">
-                    <p className="text-[13px] font-medium text-push-fg">AI</p>
-                    <p className="text-[11px] text-push-fg-muted">Keys, provider setup, models</p>
+                    <p className="text-push-base font-medium text-push-fg">AI</p>
+                    <p className="text-push-xs text-push-fg-muted">Keys, provider setup, models</p>
                   </div>
                 </button>
 
-                <div className="pt-2 text-[11px] text-push-fg-dim">
+                <div className="pt-2 text-push-xs text-push-fg-dim">
                   Backend and model switching now live in the bottom tray for faster access.
                 </div>
               </div>

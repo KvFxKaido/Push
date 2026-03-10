@@ -77,7 +77,7 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
           <Clock className="h-4 w-4 text-red-400 flex-shrink-0" />
           <div className="min-w-0">
             <p className="text-xs font-medium text-red-300">Sandbox expired</p>
-            <p className="text-[10px] text-red-400/70">Workspace contents are no longer available.</p>
+            <p className="text-push-2xs text-red-400/70">Workspace contents are no longer available.</p>
           </div>
         </div>
         <button
@@ -101,7 +101,7 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
             <p className="text-xs font-medium text-amber-300">
               {formatRemaining(remainingMs)} remaining
             </p>
-            <p className="text-[10px] text-amber-400/70">
+            <p className="text-push-2xs text-amber-400/70">
               Download your work before the sandbox expires.
             </p>
           </div>

@@ -241,7 +241,7 @@ export function CommitPushSheet({
           {isSpinnerPhase && (
             <div className="flex flex-col items-center justify-center gap-3 py-8">
               <Loader2 className="h-5 w-5 animate-spin text-push-accent" />
-              <span className="text-sm text-[#a1a1aa]">
+              <span className="text-sm text-push-fg-secondary">
                 {PHASE_LABELS[phase] || 'Working…'}
               </span>
             </div>
@@ -256,7 +256,7 @@ export function CommitPushSheet({
                 <div className="flex items-center justify-between">
                   <label
                     htmlFor="commit-message"
-                    className="text-xs text-[#a1a1aa] font-medium"
+                    className="text-xs text-push-fg-secondary font-medium"
                   >
                     Commit message
                   </label>
@@ -290,7 +290,7 @@ export function CommitPushSheet({
               <button
                 onClick={commitAndPush}
                 disabled={!commitMessage.trim()}
-                className="w-full rounded-lg bg-[#22c55e] py-2.5 text-sm font-medium text-white transition-all hover:bg-[#16a34a] active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+                className="w-full rounded-lg bg-push-status-success py-2.5 text-sm font-medium text-white transition-all hover:bg-push-status-success active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
               >
                 Commit &amp; Push
               </button>
@@ -301,11 +301,11 @@ export function CommitPushSheet({
           {phase === 'success' && (
             <div className="flex flex-col items-center gap-4 py-6">
               {auditVerdict && <AuditVerdictCard data={auditVerdict} />}
-              <CheckCircle2 className="h-8 w-8 text-[#22c55e]" />
-              <span className="text-sm text-[#e4e4e7] font-medium">Committed and pushed!</span>
+              <CheckCircle2 className="h-8 w-8 text-push-status-success" />
+              <span className="text-sm text-push-fg font-medium">Committed and pushed!</span>
               <button
                 onClick={handleDone}
-                className="w-full rounded-lg bg-[#22c55e] py-2.5 text-sm font-medium text-white transition-all hover:bg-[#16a34a] active:scale-[0.98]"
+                className="w-full rounded-lg bg-push-status-success py-2.5 text-sm font-medium text-white transition-all hover:bg-push-status-success active:scale-[0.98]"
               >
                 Done
               </button>
@@ -317,14 +317,14 @@ export function CommitPushSheet({
             <div className="flex flex-col gap-4 py-4">
               {auditVerdict && <AuditVerdictCard data={auditVerdict} />}
 
-              <div className="flex items-start gap-2.5 rounded-lg bg-[#ef4444]/5 border border-[#ef4444]/20 px-3 py-2.5">
-                <AlertCircle className="h-4 w-4 text-[#ef4444] shrink-0 mt-0.5" />
-                <p className="text-sm text-[#ef4444]/90 leading-relaxed">{error}</p>
+              <div className="flex items-start gap-2.5 rounded-lg bg-push-status-error/5 border border-push-status-error/20 px-3 py-2.5">
+                <AlertCircle className="h-4 w-4 text-push-status-error shrink-0 mt-0.5" />
+                <p className="text-sm text-push-status-error/90 leading-relaxed">{error}</p>
               </div>
 
               <button
                 onClick={handleRetry}
-                className="w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] py-2.5 text-sm font-medium text-[#a1a1aa] transition-all hover:bg-[#161618] hover:text-[#fafafa] active:scale-[0.98]"
+                className="w-full rounded-lg border border-[#1a1a1a] bg-[#0d0d0d] py-2.5 text-sm font-medium text-push-fg-secondary transition-all hover:bg-[#161618] hover:text-[#fafafa] active:scale-[0.98]"
               >
                 Try Again
               </button>

@@ -42,7 +42,7 @@ export function HubScratchpadTab({
             setMemoryName('');
           }}
           disabled={!scratchpadContent.trim() || !memoryName.trim()}
-          className="flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-[#080b10]/95 px-2 text-[11px] text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-40"
+          className="flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-40"
         >
           <Check className="h-3.5 w-3.5" />
           Save
@@ -50,7 +50,7 @@ export function HubScratchpadTab({
         <button
           onClick={onClear}
           disabled={!scratchpadContent.trim()}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-[#080b10]/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-40"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-40"
           aria-label="Clear scratchpad"
         >
           <Trash2 className="h-3.5 w-3.5" />
@@ -73,7 +73,7 @@ export function HubScratchpadTab({
         {activeMemoryId && (
           <button
             onClick={() => onDeleteMemory(activeMemoryId)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-[#080b10]/95 text-push-fg-dim hover:border-push-edge-hover hover:text-red-300"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-red-300"
             aria-label="Delete selected memory"
           >
             <Trash2 className="h-3.5 w-3.5" />

@@ -29,7 +29,7 @@ export function ContextMeter({ used, percent }: ContextMeterProps) {
           style={{ width: `${Math.min(100, percent)}%` }}
         />
       </div>
-      <span className={`text-[10px] tabular-nums ${textColor}`}>
+      <span className={`text-push-2xs tabular-nums ${textColor}`}>
         {label}
       </span>
     </div>

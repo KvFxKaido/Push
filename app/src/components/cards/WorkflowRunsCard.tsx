@@ -27,11 +27,11 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
           Workflow Runs
         </span>
         {data.workflow && (
-          <span className="text-[11px] text-push-fg-dim truncate">
+          <span className="text-push-xs text-push-fg-dim truncate">
             {data.workflow}
           </span>
         )}
-        <span className="ml-auto text-[11px] text-push-fg-dim">
+        <span className="ml-auto text-push-xs text-push-fg-dim">
           {data.runs.length} run{data.runs.length !== 1 ? 's' : ''}
         </span>
       </div>
@@ -44,11 +44,11 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
               <div className="mt-0.5">{renderCheckToneIcon(getCheckTone(run.status, run.conclusion), 'h-3.5 w-3.5 shrink-0')}</div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[13px] text-[#e4e4e7] truncate">
+                  <span className="text-push-base text-push-fg truncate">
                     #{run.runNumber} {run.name}
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5 text-[12px] text-push-fg-dim">
+                <div className="flex items-center gap-1.5 text-push-sm text-push-fg-dim">
                   <GitBranch className="h-3 w-3 shrink-0" />
                   <span className="truncate">{run.branch}</span>
                   <span>·</span>
@@ -64,14 +64,14 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
         </div>
       ) : (
         <div className="px-3 py-3">
-          <p className="text-[12px] text-push-fg-dim">No workflow runs found.</p>
+          <p className="text-push-sm text-push-fg-dim">No workflow runs found.</p>
         </div>
       )}
 
       {/* Truncated notice */}
       {data.truncated && (
         <div className="px-3 pb-2">
-          <p className="text-[11px] text-push-fg-dim text-center">
+          <p className="text-push-xs text-push-fg-dim text-center">
             More runs available — narrow with workflow or branch filter
           </p>
         </div>

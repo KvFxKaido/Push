@@ -69,7 +69,7 @@ export function RepoPicker({
         </div>
         <button
           onClick={onDisconnect}
-          className="flex items-center gap-1.5 rounded-lg border border-push-edge bg-push-surface px-2 py-1.5 text-xs text-[#788396] transition-colors duration-200 hover:border-[#31425a] hover:text-[#e2e8f0]"
+          className="flex items-center gap-1.5 rounded-lg border border-push-edge bg-push-surface px-2 py-1.5 text-xs text-[#788396] transition-colors duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0]"
         >
           <LogOut className="h-3.5 w-3.5" />
           Disconnect
@@ -139,7 +139,7 @@ export function RepoPicker({
               <button
                 key={repo.id}
                 onClick={() => onSelect(repo)}
-                className="flex w-full flex-col gap-1.5 rounded-xl border border-push-edge bg-push-grad-card p-3.5 text-left shadow-[0_10px_28px_rgba(0,0,0,0.38)] transition-all duration-200 hover:border-[#31425a] hover:bg-[#0d1119] active:scale-[0.99]"
+                className="flex w-full flex-col gap-1.5 rounded-xl border border-push-edge bg-push-grad-card p-3.5 text-left shadow-[0_10px_28px_rgba(0,0,0,0.38)] transition-all duration-200 hover:border-push-edge-hover hover:bg-push-surface-hover active:scale-[0.99]"
               >
                 {/* Name row */}
                 <div className="flex items-center gap-2">
@@ -162,7 +162,7 @@ export function RepoPicker({
                 )}
 
                 {/* Meta row */}
-                <div className="flex items-center gap-3 text-xs text-[#5f6b80]">
+                <div className="flex items-center gap-3 text-xs text-push-fg-dim">
                   {repo.language && (
                     <span className="flex items-center gap-1">
                       <span

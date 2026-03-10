@@ -155,7 +155,7 @@ function formatContent(content: string): React.ReactNode[] {
               key={`code-${codeKey++}`}
               className="my-2 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-3 py-2.5"
             >
-              <code className="font-mono text-[13px] text-[#e2e8f0] leading-relaxed">
+              <code className="font-mono text-push-base text-[#e2e8f0] leading-relaxed">
                 {fullCode}
               </code>
             </pre>,
@@ -190,7 +190,7 @@ function formatContent(content: string): React.ReactNode[] {
       const styles: Record<number, string> = {
         1: 'text-[18px] font-semibold text-push-fg mt-4 mb-1.5',
         2: 'text-[16px] font-semibold text-push-fg mt-3 mb-1',
-        3: 'text-[15px] font-medium text-[#e2e8f0] mt-2.5 mb-0.5',
+        3: 'text-push-lg font-medium text-[#e2e8f0] mt-2.5 mb-0.5',
         4: 'text-[14px] font-medium text-[#8891a1] mt-2 mb-0.5 uppercase tracking-wide',
       };
       parts.push(
@@ -245,7 +245,7 @@ function formatContent(content: string): React.ReactNode[] {
           className="flex items-start gap-2 my-0.5"
           style={{ paddingLeft: `${indent * 16 + 4}px` }}
         >
-          <span className="text-push-fg-dim text-[13px] font-mono shrink-0 min-w-[1.25rem] text-right mt-px">
+          <span className="text-push-fg-dim text-push-base font-mono shrink-0 min-w-[1.25rem] text-right mt-px">
             {num}.
           </span>
           <span className="flex-1 min-w-0">{formatInline(itemText)}</span>
@@ -277,7 +277,7 @@ function formatContent(content: string): React.ReactNode[] {
           key={`code-${codeKey}`}
           className="my-2 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-3 py-2.5"
         >
-          <code className="font-mono text-[13px] text-[#e2e8f0] leading-relaxed">
+          <code className="font-mono text-push-base text-[#e2e8f0] leading-relaxed">
             {fullCode}
           </code>
         </pre>,
@@ -317,7 +317,7 @@ function formatInline(text: string): React.ReactNode[] {
       result.push(
         <code
           key={key++}
-          className="rounded border border-push-edge bg-push-surface px-1.5 py-0.5 font-mono text-[13px] text-[#e2e8f0]"
+          className="rounded border border-push-edge bg-push-surface px-1.5 py-0.5 font-mono text-push-base text-[#e2e8f0]"
         >
           {match[6]}
         </code>,
@@ -354,7 +354,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
     <div className="mb-2">
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="flex items-center gap-1 text-[11px] text-push-fg-dim hover:text-[#8891a1] transition-colors duration-150 group"
+        className="flex items-center gap-1 text-push-xs text-push-fg-dim hover:text-[#8891a1] transition-colors duration-150 group"
       >
         <ChevronRight
           className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
@@ -368,14 +368,14 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
       </button>
 
       {!expanded && !isStreaming && (
-        <p className="text-[12px] text-[#4a5568] leading-relaxed mt-1 ml-4 line-clamp-2 italic">
+        <p className="text-push-sm text-[#4a5568] leading-relaxed mt-1 ml-4 line-clamp-2 italic">
           {preview}
         </p>
       )}
 
       {expanded && (
         <div className="mt-1.5 ml-4 pl-3 border-l border-push-edge max-h-[300px] overflow-y-auto expand-in">
-          <p className="text-[12px] text-push-fg-dim leading-relaxed whitespace-pre-wrap break-words">
+          <p className="text-push-sm text-push-fg-dim leading-relaxed whitespace-pre-wrap break-words">
             {thinking}
           </p>
         </div>
@@ -383,7 +383,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
 
       {isStreaming && !expanded && thinking && (
         <div className="mt-1.5 ml-4 pl-3 border-l border-push-edge">
-          <p className="text-[12px] text-[#4a5568] leading-relaxed whitespace-pre-wrap break-words line-clamp-3">
+          <p className="text-push-sm text-[#4a5568] leading-relaxed whitespace-pre-wrap break-words line-clamp-3">
             {thinking.slice(-200)}
           </p>
         </div>
@@ -428,7 +428,7 @@ function AttachmentBadge({ attachment }: { attachment: AttachmentData }) {
   return (
     <div className="flex items-center gap-1.5 rounded-lg bg-push-surface/50 border border-push-edge px-2 py-1">
       <Icon className="h-3.5 w-3.5 text-push-fg-muted" />
-      <span className="text-[12px] text-[#8891a1] truncate max-w-[120px]">
+      <span className="text-push-sm text-[#8891a1] truncate max-w-[120px]">
         {attachment.filename}
       </span>
     </div>
@@ -460,11 +460,11 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-[#111624] hover:text-[#d1d8e6]"
+      className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-[#d1d8e6]"
       title={copied ? 'Copied!' : 'Copy to clipboard'}
     >
       {copied ? (
-        <Check className="h-3.5 w-3.5 text-[#22c55e]" />
+        <Check className="h-3.5 w-3.5 text-push-status-success" />
       ) : (
         <Copy className="h-3.5 w-3.5" />
       )}
@@ -524,7 +524,7 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
         {hasContent && (
-          <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-push-fg">
+          <p className="whitespace-pre-wrap break-words text-push-lg leading-relaxed text-push-fg">
             {displayContentText}
           </p>
         )}
@@ -560,7 +560,7 @@ export const MessageBubble = memo(function MessageBubble({
         )}
         {hasContent && (
           <div
-            className={`text-[15px] leading-relaxed break-words ${
+            className={`text-push-lg leading-relaxed break-words ${
               isError ? 'text-red-400' : 'text-[#d1d8e6]'
             }`}
           >

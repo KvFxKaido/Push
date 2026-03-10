@@ -11,13 +11,13 @@ interface CardCodeBlockProps {
 /**
  * Shared pre/code wrapper used by cards that display raw text output.
  * Base styles: `px-3 py-2 overflow-x-auto` on <pre>,
- *              `font-mono text-[12px] leading-relaxed` on <code>.
+ *              `font-mono text-push-sm leading-relaxed` on <code>.
  * Pass `codeClassName` / `preClassName` to override color, whitespace, or height.
  */
 export function CardCodeBlock({ children, codeClassName, preClassName }: CardCodeBlockProps) {
   return (
     <pre className={cn('px-3 py-2 overflow-x-auto', preClassName)}>
-      <code className={cn('font-mono text-[12px] leading-relaxed', codeClassName)}>
+      <code className={cn('font-mono text-push-sm leading-relaxed', codeClassName)}>
         {children}
       </code>
     </pre>

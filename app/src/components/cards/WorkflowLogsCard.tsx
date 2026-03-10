@@ -46,11 +46,11 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
           <span className={`text-sm font-medium ${checkToneColorClass(headerTone)}`}>
             {data.runName}
           </span>
-          <span className="text-[11px] text-push-fg-dim ml-1.5">
+          <span className="text-push-xs text-push-fg-dim ml-1.5">
             #{data.runNumber}
           </span>
         </div>
-        <span className="text-[11px] text-push-fg-dim uppercase shrink-0">
+        <span className="text-push-xs text-push-fg-dim uppercase shrink-0">
           {data.conclusion || data.status}
         </span>
       </div>
@@ -62,14 +62,14 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
             {/* Job header — clickable */}
             <button
               onClick={() => toggleJob(idx)}
-              className="w-full px-3.5 py-3 flex items-center gap-2 text-left hover:bg-[#0d1119] transition-colors duration-200"
+              className="w-full px-3.5 py-3 flex items-center gap-2 text-left hover:bg-push-surface-hover transition-colors duration-200"
             >
               <ExpandChevron expanded={expanded.has(idx)} className="shrink-0" />
               {renderCheckToneIcon(getCheckTone(job.status, job.conclusion), 'h-3.5 w-3.5 shrink-0')}
-              <span className="text-[13px] text-[#e4e4e7] truncate flex-1">
+              <span className="text-push-base text-push-fg truncate flex-1">
                 {job.name}
               </span>
-              <span className="text-[11px] text-push-fg-dim shrink-0">
+              <span className="text-push-xs text-push-fg-dim shrink-0">
                 {job.conclusion || job.status}
               </span>
             </button>
@@ -87,10 +87,10 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
                     'h-3 w-3 shrink-0',
                     { neutralClassName: 'text-push-fg-dim' },
                   )}
-                  <span className="text-[12px] text-push-fg-muted">
+                  <span className="text-push-sm text-push-fg-muted">
                     {step.number}.
                   </span>
-                  <span className="text-[12px] text-push-fg-secondary truncate flex-1">
+                  <span className="text-push-sm text-push-fg-secondary truncate flex-1">
                     {step.name}
                   </span>
                 </div>
@@ -106,7 +106,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
           href={data.htmlUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1.5 text-[12px] text-push-link hover:text-[#86ccff] transition-colors"
+          className="flex items-center justify-center gap-1.5 text-push-sm text-push-link hover:text-[#86ccff] transition-colors"
         >
           <ExternalLink className="h-3 w-3" />
           View on GitHub

@@ -7,18 +7,35 @@ module.exports = {
       colors: {
         // ── Push design tokens ────────────────────────────
         // Single source of truth. Use these instead of [#hex].
+
+        // Text hierarchy (bright → dim)
         'push-fg':           '#f5f7ff',  // primary text
         'push-fg-secondary': '#b4becf',  // secondary text, labels
         'push-fg-muted':     '#8b96aa',  // muted text, subtle icons
         'push-fg-dim':       '#667086',  // dimmest text, placeholders
+
+        // Surfaces (light → dark)
+        'push-surface':        '#070a10',  // base background
+        'push-surface-raised': '#0c1018',  // elevated surface
+        'push-surface-hover':  '#0d1119',  // hover background
+        'push-surface-active': '#111624',  // pressed / badge background
+        'push-surface-inset':  '#05080e',  // recessed (editor, inputs)
+
+        // Borders (subtle → strong)
+        'push-edge-subtle':  '#1b2230',  // dividers, input borders
         'push-edge':         '#1f2531',  // primary border
         'push-edge-hover':   '#2f3949',  // hover border
-        'push-surface':      '#070a10',  // surface background
+
+        // Status
+        'push-status-success': '#22c55e',  // green
+        'push-status-error':   '#ef4444',  // red
+        'push-status-warning': '#f59e0b',  // amber
+
+        // Accent
         'push-accent':       '#0070f3',  // blue accent
         'push-sky':          '#38bdf8',  // cyan accent (focus rings, glow)
         'push-link':         '#5cb7ff',  // bright blue links, actions
         'push-glow':         '#0070f3',  // glow color for interactive elements
-        'push-surface-raised': '#0c1018', // slightly elevated surface
         // ──────────────────────────────────────────────────
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -63,6 +80,13 @@ module.exports = {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+      },
+      fontSize: {
+        'push-2xs': '10px',   // micro labels, badges
+        'push-xs':  '11px',   // labels, timestamps
+        'push-sm':  '12px',   // secondary body
+        'push-base': '13px',  // primary body
+        'push-lg':  '15px',   // section headings
       },
       borderRadius: {
         xl: "calc(var(--radius) + 4px)",
