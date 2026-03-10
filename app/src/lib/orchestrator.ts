@@ -551,14 +551,14 @@ Rules:
 
 Delegate to the Coder when the task requires:
 - Multiple files are involved
-- New abstractions are introduced or structural refactors are required
+- New abstractions are introduced or structural refactors (e.g., extracting functions, modifying interfaces) are required
 - Running commands — tests, type checks, builds, installs
 - An iterative read → edit → verify loop
 - Exploratory changes where the full scope is unclear upfront
 
 Handle directly (no delegation) when:
 - The request is read-only: explaining code, reviewing a PR diff, answering structure questions
-- The change is confined to a single file, introduces no new functions/exports, and is a small logic adjustment
+- The change is confined to a single file, modifies only existing function bodies, and is a small logic adjustment (under ~20 lines)
 - You only need one or two tool calls and have the relevant content in context`;
 
 const DEMO_WELCOME = `Welcome to **Push** — your AI coding agent with direct repo access.
