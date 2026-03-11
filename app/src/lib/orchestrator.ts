@@ -18,10 +18,14 @@ import {
   getBedrockBaseUrl,
   getBedrockKey,
   getBedrockModelName,
-  getVertexBaseUrl,
+} from '@/hooks/useExperimentalProviderConfig';
+import {
   getVertexKey,
   getVertexModelName,
-} from '@/hooks/useExperimentalProviderConfig';
+  getVertexBaseUrl,
+  getVertexMode,
+  getVertexRegion,
+} from '@/hooks/useVertexConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
 import {
@@ -35,6 +39,7 @@ import {
 import type { PreferredProvider } from './providers';
 import { buildExperimentalProxyHeaders, normalizeExperimentalBaseUrl } from './experimental-providers';
 import { extractProviderErrorDetail } from './provider-error-utils';
+import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -921,6 +926,7 @@ interface StreamProviderConfig {
   name: string;
   apiUrl: string;
   apiKey: string;
+  authHeader?: string | null;
   model: string;
   connectTimeoutMs: number;
   idleTimeoutMs: number;
@@ -1020,6 +1026,7 @@ async function streamSSEChatOnce(
     name,
     apiUrl,
     apiKey,
+    authHeader,
     model,
     connectTimeoutMs,
     idleTimeoutMs,
@@ -1092,16 +1099,20 @@ async function streamSSEChatOnce(
       requestBody = bodyTransform(requestBody);
     }
 
-    const response = await fetch(requestUrl, {
-      method: 'POST',
-      headers: {
+      const requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
         ...(extraHeaders ?? {}),
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
+      };
+      if (authHeader !== null) {
+        requestHeaders.Authorization = authHeader ?? `Bearer ${apiKey}`;
+      }
+
+      const response = await fetch(requestUrl, {
+        method: 'POST',
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
 
     clearTimeout(connectTimer);
     connectTimer = undefined;
@@ -1224,9 +1235,12 @@ async function streamSSEChatOnce(
             if (shouldResetStallOnReasoning) resetStallTimer();
           }
 
-          const token = choice.delta?.content;
-          if (token) {
-            parser.push(token);
+          const rawToken = choice.delta?.content;
+          if (rawToken) {
+            // Strip model chat-template control tokens (e.g. <|start|>, <|im_end|>,
+            // <|call|>) that some models leak into the content stream.
+            const token = rawToken.replace(/<\|[a-z_]+\|>/gi, '');
+            if (token) parser.push(token);
             if (stallTimeoutMs) resetStallTimer();
           }
 
@@ -1356,6 +1370,58 @@ function buildExperimentalStreamConfig(
     checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
     providerType: provider,
     extraHeaders: headers,
+    shouldResetStallOnReasoning: true,
+  };
+}
+
+function buildVertexStreamConfig(modelOverride?: string): StreamProviderConfig {
+  const mode = getVertexMode();
+  const model = modelOverride || getVertexModelName();
+
+  if (mode === 'legacy') {
+    const legacyKey = getVertexKey();
+    if (!legacyKey) {
+      throw new Error('Google Vertex credentials are missing');
+    }
+    return buildExperimentalStreamConfig(
+      'vertex',
+      'Google Vertex',
+      legacyKey,
+      getVertexBaseUrl(),
+      model,
+    );
+  }
+
+  const serviceAccount = getVertexKey();
+  if (!serviceAccount) {
+    throw new Error('Google Vertex service account is missing');
+  }
+  const encodedServiceAccount = encodeVertexServiceAccountHeader(serviceAccount);
+  if (!encodedServiceAccount) {
+    throw new Error('Google Vertex service account is invalid');
+  }
+
+  const region = getVertexRegion();
+  const normalizedRegion = normalizeVertexRegion(region);
+  if (!normalizedRegion.ok) {
+    throw new Error(normalizedRegion.error);
+  }
+
+  return {
+    name: 'Google Vertex',
+    apiUrl: PROVIDER_URLS.vertex.chat,
+    apiKey: '',
+    authHeader: null,
+    model,
+    ...STANDARD_TIMEOUTS,
+    errorMessages: buildErrorMessages('Google Vertex'),
+    parseError: (p, f) => parseProviderError(p, f, true),
+    checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+    providerType: 'vertex',
+    extraHeaders: {
+      'X-Push-Vertex-Service-Account': encodedServiceAccount,
+      'X-Push-Vertex-Region': normalizedRegion.normalized,
+    },
   };
 }
 
@@ -1442,13 +1508,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
   },
   vertex: {
     getKey: getVertexKey,
-    buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
-      'vertex',
-      'Google Vertex',
-      apiKey,
-      getVertexBaseUrl(),
-      modelOverride || getVertexModelName(),
-    ),
+    buildConfig: (_apiKey, modelOverride) => buildVertexStreamConfig(modelOverride),
   },
 };
 
@@ -1538,7 +1598,13 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   nvidia: () => Boolean(getNvidiaKey()),
   azure: () => Boolean(getAzureKey() && normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok && getAzureModelName()),
   bedrock: () => Boolean(getBedrockKey() && normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok && getBedrockModelName()),
-  vertex: () => Boolean(getVertexKey() && normalizeExperimentalBaseUrl('vertex', getVertexBaseUrl()).ok && getVertexModelName()),
+  vertex: () => {
+    const mode = getVertexMode();
+    if (mode === 'native') {
+      return Boolean(getVertexKey() && normalizeVertexRegion(getVertexRegion()).ok && getVertexModelName());
+    }
+    return Boolean(getVertexKey() && normalizeExperimentalBaseUrl('vertex', getVertexBaseUrl()).ok && getVertexModelName());
+  },
 };
 
 /**

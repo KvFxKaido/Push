@@ -138,3 +138,42 @@ export function formatExperimentalProviderHttpError(
 
   return `${providerLabel} API error ${status}: ${truncate(detail)}`;
 }
+
+export function formatVertexProviderHttpError(
+  status: number,
+  bodyText: string,
+  transport: 'openapi' | 'anthropic',
+): string {
+  const detail = extractProviderErrorDetailFromText(bodyText);
+  const lower = detail.toLowerCase();
+
+  if (status === 429 || lower.includes('quota') || lower.includes('rate') || lower.includes('throttle')) {
+    return `Google Vertex is rate limited or out of quota. Check Vertex quotas, region capacity, and billing.${buildDetailSuffix(detail)}`;
+  }
+
+  if (status === 401) {
+    return `Google Vertex rejected the request. Check the saved service account credentials.${buildDetailSuffix(detail)}`;
+  }
+
+  if (status === 403) {
+    return `Google Vertex denied access. Check that the service account has Vertex AI permissions and that this model is enabled for the selected region.${buildDetailSuffix(detail)}`;
+  }
+
+  if (status === 404) {
+    return transport === 'anthropic'
+      ? `Claude on Vertex was not found in this region. Check the Claude model id, region, and partner-model access.${buildDetailSuffix(detail)}`
+      : `Gemini on Vertex was not found in this region. Check the model id and region.${buildDetailSuffix(detail)}`;
+  }
+
+  if (status === 400) {
+    return transport === 'anthropic'
+      ? `Claude on Vertex rejected the request. Check the model id and partner-model availability.${buildDetailSuffix(detail)}`
+      : `Google Vertex rejected the request. Check the selected Gemini model and region.${buildDetailSuffix(detail)}`;
+  }
+
+  if (status >= 500) {
+    return `Google Vertex is unavailable or overloaded right now. Retry in a moment.${buildDetailSuffix(detail)}`;
+  }
+
+  return `Google Vertex API error ${status}: ${truncate(detail)}`;
+}

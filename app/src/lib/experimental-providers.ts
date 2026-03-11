@@ -57,7 +57,7 @@ export const EXPERIMENTAL_PROVIDER_DESCRIPTORS: Record<ExperimentalProviderType,
     label: 'Google Vertex',
     shortLabel: 'Vertex',
     defaultModel: 'google/gemini-2.5-pro',
-    baseUrlPlaceholder: 'https://us-central1-aiplatform.googleapis.com/v1/projects/PROJECT/locations/us-central1/endpoints/openapi',
+    baseUrlPlaceholder: 'https://aiplatform.googleapis.com/v1beta1/projects/PROJECT/locations/global/endpoints/openapi',
     modelPlaceholder: 'Vertex model id',
     helperText: 'Direct Vertex AI OpenAI-compatible endpoint. Use the OpenAPI endpoint base URL for your project/location.',
   },
@@ -181,12 +181,15 @@ export function normalizeExperimentalBaseUrl(
     }
     case 'vertex': {
       if (!/^[a-z0-9-]+-aiplatform\.googleapis\.com$/i.test(parsed.hostname)) {
-        return { ok: false, error: 'Vertex URLs must use a <location>-aiplatform.googleapis.com host.' };
+        const isGlobalHost = parsed.hostname === 'aiplatform.googleapis.com';
+        if (!isGlobalHost) {
+          return { ok: false, error: 'Vertex URLs must use aiplatform.googleapis.com or a <location>-aiplatform.googleapis.com host.' };
+        }
       }
-      if (!/^\/v1\/projects\/[^/]+\/locations\/[^/]+\/endpoints\/openapi$/i.test(pathname)) {
+      if (!/^\/v1(?:beta1)?\/projects\/[^/]+\/locations\/[^/]+\/endpoints\/openapi$/i.test(pathname)) {
         return {
           ok: false,
-          error: 'Vertex base URL must look like /v1/projects/<project>/locations/<location>/endpoints/openapi.',
+          error: 'Vertex base URL must look like /v1beta1/projects/<project>/locations/<location>/endpoints/openapi.',
         };
       }
       break;

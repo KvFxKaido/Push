@@ -19,9 +19,10 @@ import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
-import { useAzureConfig, useBedrockConfig, useVertexConfig } from '@/hooks/useExperimentalProviderConfig';
+import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProviderConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
+import { useVertexConfig, type VertexConfiguredMode } from '@/hooks/useVertexConfig';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,6 +72,32 @@ interface ExperimentalProviderConfig {
   isConfigured: boolean;
 }
 
+interface VertexProviderConfig {
+  keyInput: string;
+  setKeyInput: (value: string) => void;
+  setKey: (value: string) => void;
+  clearKey: () => void;
+  hasKey: boolean;
+  keyError: string | null;
+  regionInput: string;
+  setRegionInput: (value: string) => void;
+  region: string;
+  regionError: string | null;
+  setRegion: (value: string) => void;
+  clearRegion: () => void;
+  modelInput: string;
+  setModelInput: (value: string) => void;
+  model: string;
+  modelOptions: string[];
+  setModel: (value: string) => void;
+  clearModel: () => void;
+  mode: VertexConfiguredMode;
+  transport: 'openapi' | 'anthropic';
+  projectId: string | null;
+  hasLegacyConfig: boolean;
+  isConfigured: boolean;
+}
+
 interface TavilyKeyConfig {
   setKey: (k: string) => void;
   clearKey: () => void;
@@ -87,7 +114,7 @@ export interface ModelCatalog {
   nvidia: ProviderKeyConfig;
   azure: ExperimentalProviderConfig;
   bedrock: ExperimentalProviderConfig;
-  vertex: ExperimentalProviderConfig;
+  vertex: VertexProviderConfig;
   tavily: TavilyKeyConfig;
 
   // Active backend
@@ -155,7 +182,7 @@ export function useModelCatalog(): ModelCatalog {
   const [bedrockBaseUrlInput, setBedrockBaseUrlInput] = useState('');
   const [bedrockModelInput, setBedrockModelInput] = useState('');
   const [vertexKeyInput, setVertexKeyInput] = useState('');
-  const [vertexBaseUrlInput, setVertexBaseUrlInput] = useState('');
+  const [vertexRegionInput, setVertexRegionInput] = useState('');
   const [vertexModelInput, setVertexModelInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
 
@@ -283,6 +310,7 @@ export function useModelCatalog(): ModelCatalog {
   const ollamaModelOptions = useMemo(() => includeSelectedModel(ollamaModelList, ollamaCfg.model), [ollamaModelList, ollamaCfg.model]);
   const zenModelOptions = useMemo(() => includeSelectedModel(zenModelList, zenCfg.model), [zenModelList, zenCfg.model]);
   const nvidiaModelOptions = useMemo(() => includeSelectedModel(nvidiaModelList, nvidiaCfg.model), [nvidiaModelList, nvidiaCfg.model]);
+  const vertexModelOptions = useMemo(() => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model), [vertexCfg.modelOptions, vertexCfg.model]);
 
   return {
     ollama: { setKey: ollamaCfg.setKey, clearKey: ollamaCfg.clearKey, hasKey: ollamaCfg.hasKey, model: ollamaCfg.model, setModel: ollamaCfg.setModel, keyInput: ollamaKeyInput, setKeyInput: setOllamaKeyInput },
@@ -347,24 +375,23 @@ export function useModelCatalog(): ModelCatalog {
       setKey: vertexCfg.setKey,
       clearKey: vertexCfg.clearKey,
       hasKey: vertexCfg.hasKey,
-      baseUrlInput: vertexBaseUrlInput,
-      setBaseUrlInput: setVertexBaseUrlInput,
-      baseUrl: vertexCfg.baseUrl,
-      baseUrlError: vertexCfg.baseUrlError,
-      setBaseUrl: vertexCfg.setBaseUrl,
-      clearBaseUrl: vertexCfg.clearBaseUrl,
+      keyError: vertexCfg.keyError,
+      regionInput: vertexRegionInput,
+      setRegionInput: setVertexRegionInput,
+      region: vertexCfg.region,
+      regionError: vertexCfg.regionError,
+      setRegion: vertexCfg.setRegion,
+      clearRegion: vertexCfg.clearRegion,
       modelInput: vertexModelInput,
       setModelInput: setVertexModelInput,
       model: vertexCfg.model,
+      modelOptions: vertexModelOptions,
       setModel: vertexCfg.setModel,
       clearModel: vertexCfg.clearModel,
-      deployments: vertexCfg.deployments,
-      activeDeploymentId: vertexCfg.activeDeploymentId,
-      saveDeployment: vertexCfg.saveDeployment,
-      selectDeployment: vertexCfg.selectDeployment,
-      removeDeployment: vertexCfg.removeDeployment,
-      clearDeployments: vertexCfg.clearDeployments,
-      deploymentLimitReached: vertexCfg.deploymentLimitReached,
+      mode: vertexCfg.mode,
+      transport: vertexCfg.transport,
+      projectId: vertexCfg.projectId,
+      hasLegacyConfig: vertexCfg.hasLegacyConfig,
       isConfigured: vertexCfg.isConfigured,
     },
     tavily: { setKey: tavilyCfg.setKey, clearKey: tavilyCfg.clearKey, hasKey: tavilyCfg.hasKey, keyInput: tavilyKeyInput, setKeyInput: setTavilyKeyInput },

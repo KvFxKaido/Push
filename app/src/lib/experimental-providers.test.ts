@@ -64,11 +64,11 @@ describe('normalizeExperimentalBaseUrl', () => {
     expect(
       normalizeExperimentalBaseUrl(
         'vertex',
-        'https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/endpoints/openapi/models',
+        'https://aiplatform.googleapis.com/v1beta1/projects/demo/locations/global/endpoints/openapi/models',
       ),
     ).toEqual({
       ok: true,
-      normalized: 'https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/endpoints/openapi',
+      normalized: 'https://aiplatform.googleapis.com/v1beta1/projects/demo/locations/global/endpoints/openapi',
     });
   });
 });

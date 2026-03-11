@@ -10,7 +10,18 @@ import {
   normalizeExperimentalBaseUrl,
   type ExperimentalProviderType,
 } from './src/lib/experimental-providers';
-import { formatExperimentalProviderHttpError } from './src/lib/provider-error-utils';
+import {
+  formatExperimentalProviderHttpError,
+  formatVertexProviderHttpError,
+} from './src/lib/provider-error-utils';
+import {
+  buildVertexAnthropicEndpoint,
+  buildVertexOpenApiBaseUrl,
+  decodeVertexServiceAccountHeader,
+  getVertexModelTransport,
+  normalizeVertexRegion,
+  VERTEX_MODEL_OPTIONS,
+} from './src/lib/vertex-provider';
 
 interface Env {
   OLLAMA_API_KEY?: string;
@@ -32,6 +43,116 @@ interface Env {
 
 const MAX_BODY_SIZE_BYTES = 5 * 1024 * 1024; // 5MB default (bumped from 1MB — models need headroom for large file writes)
 const RESTORE_MAX_BODY_SIZE_BYTES = 12 * 1024 * 1024; // 12MB for snapshot restore payloads
+const GOOGLE_OAUTH_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
+const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
+
+interface CachedGoogleAccessToken {
+  token: string;
+  expiresAt: number;
+}
+
+const googleAccessTokenCache = new Map<string, CachedGoogleAccessToken>();
+
+function base64UrlEncodeString(value: string): string {
+  return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlEncodeBytes(bytes: ArrayBuffer): string {
+  let binary = '';
+  const view = new Uint8Array(bytes);
+  for (let i = 0; i < view.length; i += 1) {
+    binary += String.fromCharCode(view[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function pemToArrayBuffer(pem: string): ArrayBuffer {
+  const normalized = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+    .replace(/-----END PRIVATE KEY-----/g, '')
+    .replace(/\s+/g, '');
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+async function createGoogleJwtAssertion(serviceAccount: {
+  clientEmail: string;
+  privateKey: string;
+}): Promise<string> {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const header = base64UrlEncodeString(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const payload = base64UrlEncodeString(JSON.stringify({
+    iss: serviceAccount.clientEmail,
+    scope: GOOGLE_OAUTH_SCOPE,
+    aud: GOOGLE_TOKEN_ENDPOINT,
+    exp: nowSeconds + 3600,
+    iat: nowSeconds,
+  }));
+  const signingInput = `${header}.${payload}`;
+  const key = await crypto.subtle.importKey(
+    'pkcs8',
+    pemToArrayBuffer(serviceAccount.privateKey),
+    {
+      name: 'RSASSA-PKCS1-v1_5',
+      hash: 'SHA-256',
+    },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    key,
+    new TextEncoder().encode(signingInput),
+  );
+  return `${signingInput}.${base64UrlEncodeBytes(signature)}`;
+}
+
+async function getGoogleAccessToken(serviceAccount: {
+  projectId: string;
+  clientEmail: string;
+  privateKey: string;
+}): Promise<string> {
+  const cacheKey = `${serviceAccount.projectId}:${serviceAccount.clientEmail}`;
+  const cached = googleAccessTokenCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    return cached.token;
+  }
+
+  const assertion = await createGoogleJwtAssertion(serviceAccount);
+  const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Google OAuth token exchange failed (${response.status}): ${detail.slice(0, 200)}`);
+  }
+
+  const payload = await response.json() as {
+    access_token?: string;
+    expires_in?: number;
+  };
+  if (!payload.access_token) {
+    throw new Error('Google OAuth token exchange returned no access token');
+  }
+
+  googleAccessTokenCache.set(cacheKey, {
+    token: payload.access_token,
+    expiresAt: Date.now() + Math.max(0, (payload.expires_in ?? 3600) - 120) * 1000,
+  });
+  return payload.access_token;
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -312,6 +433,305 @@ function standardAuth(envKey: keyof Env): AuthBuilder {
 
 function passthroughAuth(_env: Env, request: Request): string | null {
   return request.headers.get('Authorization');
+}
+
+function hasVertexNativeCredentials(request: Request): boolean {
+  return Boolean(request.headers.get('X-Push-Vertex-Service-Account'));
+}
+
+function buildVertexPreambleAuth(_env: Env, request: Request): string | null {
+  if (hasVertexNativeCredentials(request)) {
+    return 'VertexNative';
+  }
+  return request.headers.get('Authorization');
+}
+
+function parseJsonBody<T>(bodyText: string, errorPrefix: string): { ok: true; parsed: T } | { ok: false; response: Response } {
+  try {
+    return { ok: true, parsed: JSON.parse(bodyText) as T };
+  } catch {
+    return {
+      ok: false,
+      response: Response.json({ error: `${errorPrefix}: invalid JSON body` }, { status: 400 }),
+    };
+  }
+}
+
+interface VertexNativeConfig {
+  serviceAccount: {
+    projectId: string;
+    clientEmail: string;
+    privateKey: string;
+  };
+  region: string;
+}
+
+function getVertexNativeConfig(request: Request): { ok: true; config: VertexNativeConfig } | { ok: false; response: Response } {
+  const decoded = decodeVertexServiceAccountHeader(request.headers.get('X-Push-Vertex-Service-Account'));
+  if (!decoded.ok) {
+    return {
+      ok: false,
+      response: Response.json({ error: decoded.error }, { status: 400 }),
+    };
+  }
+
+  const region = normalizeVertexRegion(request.headers.get('X-Push-Vertex-Region'));
+  if (!region.ok) {
+    return {
+      ok: false,
+      response: Response.json({ error: region.error }, { status: 400 }),
+    };
+  }
+
+  return {
+    ok: true,
+    config: {
+      serviceAccount: decoded.parsed,
+      region: region.normalized,
+    },
+  };
+}
+
+type OpenAIContentPart =
+  | { type: 'text'; text?: string }
+  | { type: 'image_url'; image_url?: { url?: string } };
+
+type OpenAIMessage = {
+  role?: string;
+  content?: string | OpenAIContentPart[];
+};
+
+interface OpenAIChatRequest {
+  model?: string;
+  messages?: OpenAIMessage[];
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  stream?: boolean;
+}
+
+function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!match) return null;
+  return {
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: match[1],
+      data: match[2],
+    },
+  };
+}
+
+function convertOpenAIContentToAnthropic(content: string | OpenAIContentPart[] | undefined): Array<Record<string, unknown>> {
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }];
+  }
+
+  if (!Array.isArray(content)) {
+    return [{ type: 'text', text: '' }];
+  }
+
+  const parts: Array<Record<string, unknown>> = [];
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue;
+    if (part.type === 'text' && typeof part.text === 'string') {
+      parts.push({ type: 'text', text: part.text });
+      continue;
+    }
+    if (part.type === 'image_url' && typeof part.image_url?.url === 'string') {
+      const imagePart = dataUrlToAnthropicImagePart(part.image_url.url);
+      if (imagePart) parts.push(imagePart);
+    }
+  }
+
+  return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
+}
+
+function buildAnthropicVertexRequest(request: OpenAIChatRequest): Record<string, unknown> {
+  const messages = Array.isArray(request.messages) ? request.messages : [];
+
+  const systemSegments: string[] = [];
+  const anthropicMessages: Array<Record<string, unknown>> = [];
+
+  for (const message of messages) {
+    const role = typeof message.role === 'string' ? message.role : 'user';
+    if (role === 'system') {
+      const systemParts = convertOpenAIContentToAnthropic(message.content)
+        .map((part) => typeof part.text === 'string' ? part.text : '')
+        .filter(Boolean);
+      if (systemParts.length > 0) {
+        systemSegments.push(systemParts.join('\n\n'));
+      }
+      continue;
+    }
+
+    anthropicMessages.push({
+      role,
+      content: convertOpenAIContentToAnthropic(message.content),
+    });
+  }
+
+  const body: Record<string, unknown> = {
+    anthropic_version: 'vertex-2023-10-16',
+    messages: anthropicMessages,
+    max_tokens: typeof request.max_tokens === 'number' ? request.max_tokens : 8192,
+    stream: Boolean(request.stream),
+  };
+
+  if (systemSegments.length > 0) {
+    body.system = systemSegments.join('\n\n');
+  }
+  if (typeof request.temperature === 'number') {
+    body.temperature = request.temperature;
+  }
+  if (typeof request.top_p === 'number') {
+    body.top_p = request.top_p;
+  }
+
+  return body;
+}
+
+function buildOpenAISseChunk(params: {
+  model: string;
+  content?: string;
+  finishReason?: string | null;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+}): string {
+  const payload: Record<string, unknown> = {
+    id: `chatcmpl-${crypto.randomUUID()}`,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model: params.model,
+    choices: [
+      {
+        index: 0,
+        delta: params.content ? { content: params.content } : {},
+        finish_reason: params.finishReason ?? null,
+      },
+    ],
+  };
+
+  if (params.usage) {
+    payload.usage = {
+      prompt_tokens: params.usage.prompt_tokens ?? 0,
+      completion_tokens: params.usage.completion_tokens ?? 0,
+      total_tokens: params.usage.total_tokens ?? 0,
+    };
+  }
+
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+function mapAnthropicStopReason(stopReason: string | null | undefined): string {
+  switch (stopReason) {
+    case 'max_tokens':
+      return 'length';
+    case 'tool_use':
+      return 'tool_calls';
+    default:
+      return 'stop';
+  }
+}
+
+function createVertexTranslatedStream(upstream: Response, model: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = upstream.body?.getReader();
+      if (!reader) {
+        controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, finishReason: 'stop' })));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+        return;
+      }
+
+      let buffer = '';
+      let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line.startsWith('data:')) continue;
+            const jsonStr = line[5] === ' ' ? line.slice(6) : line.slice(5);
+            if (jsonStr === '[DONE]') {
+              controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+              controller.close();
+              return;
+            }
+
+            let parsed: Record<string, unknown>;
+            try {
+              parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+            } catch {
+              continue;
+            }
+
+            const eventType = typeof parsed.type === 'string' ? parsed.type : '';
+            if (eventType === 'content_block_delta') {
+              const delta = parsed.delta as Record<string, unknown> | undefined;
+              if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
+                controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, content: delta.text })));
+              }
+              continue;
+            }
+
+            if (eventType === 'message_start' || eventType === 'message_delta' || eventType === 'message_stop') {
+              const message = parsed.message as Record<string, unknown> | undefined;
+              const delta = parsed.delta as Record<string, unknown> | undefined;
+              const usageRec = (parsed.usage as Record<string, unknown> | undefined)
+                || (message?.usage as Record<string, unknown> | undefined)
+                || (delta?.usage as Record<string, unknown> | undefined);
+              if (usageRec) {
+                const promptTokens = typeof usageRec.input_tokens === 'number' ? usageRec.input_tokens : usage?.prompt_tokens ?? 0;
+                const completionTokens = typeof usageRec.output_tokens === 'number' ? usageRec.output_tokens : usage?.completion_tokens ?? 0;
+                usage = {
+                  prompt_tokens: promptTokens,
+                  completion_tokens: completionTokens,
+                  total_tokens: promptTokens + completionTokens,
+                };
+              }
+
+              if (eventType === 'message_delta' || eventType === 'message_stop') {
+                const stopReason = typeof delta?.stop_reason === 'string'
+                  ? delta.stop_reason
+                  : (typeof message?.stop_reason === 'string' ? message.stop_reason : null);
+                if (stopReason || eventType === 'message_stop') {
+                  controller.enqueue(encoder.encode(buildOpenAISseChunk({
+                    model,
+                    finishReason: mapAnthropicStopReason(stopReason),
+                    usage,
+                  })));
+                  controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+                  controller.close();
+                  return;
+                }
+              }
+            }
+          }
+        }
+
+        controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, finishReason: 'stop', usage })));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
 }
 
 function getExperimentalUpstreamUrl(
@@ -922,8 +1342,149 @@ const handleAzureChat = createExperimentalStreamProxyHandler('azure', 'Azure Ope
 const handleAzureModels = createExperimentalModelsHandler('azure', 'Azure OpenAI', 'api/azure/models');
 const handleBedrockChat = createExperimentalStreamProxyHandler('bedrock', 'AWS Bedrock', 'api/bedrock/chat');
 const handleBedrockModels = createExperimentalModelsHandler('bedrock', 'AWS Bedrock', 'api/bedrock/models');
-const handleVertexChat = createExperimentalStreamProxyHandler('vertex', 'Google Vertex', 'api/vertex/chat');
-const handleVertexModels = createExperimentalModelsHandler('vertex', 'Google Vertex', 'api/vertex/models');
+const handleLegacyVertexChat = createExperimentalStreamProxyHandler('vertex', 'Google Vertex', 'api/vertex/chat');
+const handleLegacyVertexModels = createExperimentalModelsHandler('vertex', 'Google Vertex', 'api/vertex/models');
+
+async function handleVertexChat(request: Request, env: Env): Promise<Response> {
+  if (!hasVertexNativeCredentials(request)) {
+    return handleLegacyVertexChat(request, env);
+  }
+
+  const preamble = await runPreamble(request, env, {
+    buildAuth: buildVertexPreambleAuth,
+    keyMissingError: 'Google Vertex service account not configured. Add it in Advanced AI settings.',
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { bodyText } = preamble;
+
+  const parsedRequest = parseJsonBody<OpenAIChatRequest>(bodyText, 'Google Vertex request');
+  if (!parsedRequest.ok) return parsedRequest.response;
+
+  const model = typeof parsedRequest.parsed.model === 'string' ? parsedRequest.parsed.model.trim() : '';
+  if (!model) {
+    return Response.json({ error: 'Google Vertex request is missing "model".' }, { status: 400 });
+  }
+
+  const nativeConfig = getVertexNativeConfig(request);
+  if (!nativeConfig.ok) return nativeConfig.response;
+
+  const transport = getVertexModelTransport(model);
+  const upstreamUrl = transport === 'anthropic'
+    ? buildVertexAnthropicEndpoint(
+      nativeConfig.config.serviceAccount.projectId,
+      nativeConfig.config.region,
+      model,
+    )
+    : `${buildVertexOpenApiBaseUrl(nativeConfig.config.serviceAccount.projectId, nativeConfig.config.region)}/chat/completions`;
+  const upstreamBody = transport === 'anthropic'
+    ? JSON.stringify(buildAnthropicVertexRequest(parsedRequest.parsed))
+    : bodyText;
+
+  wlog('info', 'request', {
+    route: 'api/vertex/chat',
+    mode: 'native',
+    transport,
+    model,
+    region: nativeConfig.config.region,
+  });
+
+  try {
+    const accessToken = await getGoogleAccessToken(nativeConfig.config.serviceAccount);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180_000);
+    let upstream: Response;
+
+    try {
+      upstream = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: upstreamBody,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      wlog('error', 'upstream_error', {
+        route: 'api/vertex/chat',
+        mode: 'native',
+        transport,
+        status: upstream.status,
+        body: errBody.slice(0, 500),
+      });
+      return Response.json(
+        {
+          error: formatVertexProviderHttpError(upstream.status, errBody, transport),
+          code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+        },
+        { status: upstream.status },
+      );
+    }
+
+    if (transport === 'anthropic') {
+      return new Response(createVertexTranslatedStream(upstream, model), {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: {
+        'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('error', 'unhandled', {
+      route: 'api/vertex/chat',
+      mode: 'native',
+      transport,
+      message,
+      timeout: isTimeout,
+    });
+    return Response.json(
+      { error: isTimeout ? 'Google Vertex request timed out after 180 seconds' : message },
+      { status: isTimeout ? 504 : 502 },
+    );
+  }
+}
+
+async function handleVertexModels(request: Request, env: Env): Promise<Response> {
+  if (!hasVertexNativeCredentials(request)) {
+    return handleLegacyVertexModels(request, env);
+  }
+
+  const preamble = await runPreamble(request, env, {
+    buildAuth: buildVertexPreambleAuth,
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+
+  return Response.json({
+    object: 'list',
+    data: VERTEX_MODEL_OPTIONS.map((model) => ({
+      id: model.id,
+      name: model.label,
+      transport: model.transport,
+      family: model.family,
+    })),
+  });
+}
 
 // --- Ollama Web Search proxy ---
 

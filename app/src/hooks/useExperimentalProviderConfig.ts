@@ -332,12 +332,6 @@ const bedrockConfig = createExperimentalProviderConfig('bedrock', {
   model: import.meta.env.VITE_BEDROCK_MODEL,
 });
 
-const vertexConfig = createExperimentalProviderConfig('vertex', {
-  key: import.meta.env.VITE_VERTEX_API_KEY,
-  baseUrl: import.meta.env.VITE_VERTEX_BASE_URL,
-  model: import.meta.env.VITE_VERTEX_MODEL,
-});
-
 export const getAzureKey = azureConfig.getKey;
 export const getAzureBaseUrl = azureConfig.getBaseUrl;
 export const getAzureModelName = azureConfig.getModel;
@@ -350,11 +344,4 @@ export const getBedrockBaseUrl = bedrockConfig.getBaseUrl;
 export const getBedrockModelName = bedrockConfig.getModel;
 export function useBedrockConfig() {
   return bedrockConfig.useConfig();
-}
-
-export const getVertexKey = vertexConfig.getKey;
-export const getVertexBaseUrl = vertexConfig.getBaseUrl;
-export const getVertexModelName = vertexConfig.getModel;
-export function useVertexConfig() {
-  return vertexConfig.useConfig();
 }

@@ -428,13 +428,6 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSelectBedrockModelFromChat(dep.model);
   }, [catalog.bedrock, handleSelectBedrockModelFromChat]);
 
-  const handleSelectVertexDeploymentFromChat = useCallback((id: string) => {
-    const dep = catalog.vertex.deployments.find(d => d.id === id);
-    if (!dep) return;
-    catalog.vertex.selectDeployment(id);
-    handleSelectVertexModelFromChat(dep.model);
-  }, [catalog.vertex, handleSelectVertexModelFromChat]);
-
   // Settings sheet (lazy-loaded)
   const settingsSheet = (
     <Suspense fallback={null}>
@@ -583,20 +576,23 @@ export function ChatScreen(props: ChatScreenProps) {
         setVertexKeyInput: catalog.vertex.setKeyInput,
         setVertexKey: catalog.vertex.setKey,
         clearVertexKey: catalog.vertex.clearKey,
-        vertexBaseUrl: catalog.vertex.baseUrl,
-        vertexBaseUrlInput: catalog.vertex.baseUrlInput,
-        setVertexBaseUrlInput: catalog.vertex.setBaseUrlInput,
-        vertexBaseUrlError: catalog.vertex.baseUrlError,
+        vertexKeyError: catalog.vertex.keyError,
+        vertexRegion: catalog.vertex.region,
+        vertexRegionInput: catalog.vertex.regionInput,
+        setVertexRegionInput: catalog.vertex.setRegionInput,
+        vertexRegionError: catalog.vertex.regionError,
         vertexModel: catalog.vertex.model,
         vertexModelInput: catalog.vertex.modelInput,
         setVertexModelInput: catalog.vertex.setModelInput,
-        vertexDeployments: catalog.vertex.deployments,
-        vertexActiveDeploymentId: catalog.vertex.activeDeploymentId,
-        saveVertexDeployment: catalog.vertex.saveDeployment,
-        selectVertexDeployment: catalog.vertex.selectDeployment,
-        removeVertexDeployment: catalog.vertex.removeDeployment,
-        clearVertexDeployments: catalog.vertex.clearDeployments,
-        isVertexDeploymentLimitReached: catalog.vertex.deploymentLimitReached,
+        vertexModelOptions: catalog.vertex.modelOptions,
+        setVertexRegion: catalog.vertex.setRegion,
+        clearVertexRegion: catalog.vertex.clearRegion,
+        setVertexModel: catalog.vertex.setModel,
+        clearVertexModel: catalog.vertex.clearModel,
+        vertexMode: catalog.vertex.mode,
+        vertexTransport: catalog.vertex.transport,
+        vertexProjectId: catalog.vertex.projectId,
+        hasLegacyVertexConfig: catalog.vertex.hasLegacyConfig,
         isVertexConfigured: catalog.vertex.isConfigured,
         hasTavilyKey: catalog.tavily.hasKey,
         tavilyKeyInput: catalog.tavily.keyInput,
@@ -1044,11 +1040,9 @@ export function ChatScreen(props: ChatScreenProps) {
           onSelectBedrockModel: handleSelectBedrockModelFromChat,
           onSelectBedrockDeployment: handleSelectBedrockDeploymentFromChat,
           vertexModel: selectedChatModels.vertex,
-          vertexDeployments: catalog.vertex.deployments,
-          vertexActiveDeploymentId: catalog.vertex.activeDeploymentId,
+          vertexModelOptions: catalog.vertex.modelOptions,
           isVertexModelLocked,
           onSelectVertexModel: handleSelectVertexModelFromChat,
-          onSelectVertexDeployment: handleSelectVertexDeploymentFromChat,
         }}
       />
 

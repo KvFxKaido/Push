@@ -2,9 +2,10 @@ import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/typ
 import {
   getAzureModelName,
   getBedrockModelName,
-  getVertexModelName,
 } from '@/hooks/useExperimentalProviderConfig';
+import { getVertexModelName } from '@/hooks/useVertexConfig';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
+import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-provider';
 
 // ---------------------------------------------------------------------------
 // Provider URL registry — single source of truth for dev/prod endpoints
@@ -39,7 +40,7 @@ export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
 // configures a concrete deployment/model.
 export const AZURE_DEFAULT_MODEL = 'gpt-4.1';
 export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0';
-export const VERTEX_DEFAULT_MODEL = 'google/gemini-2.5-pro';
+export const VERTEX_DEFAULT_MODEL = SHARED_VERTEX_DEFAULT_MODEL;
 
 export const OPENROUTER_MODELS: string[] = [
   // Claude 4 series
@@ -195,9 +196,9 @@ export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'vertex',
     name: 'Google Vertex',
-    description: 'Experimental private connector for direct Vertex AI OpenAI-compatible endpoints',
-    envKey: 'VITE_VERTEX_API_KEY',
-    envUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/PROJECT/locations/us-central1/endpoints/openapi',
+    description: 'Experimental private connector for Google Vertex using service-account auth with Gemini OpenAPI and Claude partner-model routing',
+    envKey: 'VITE_VERTEX_SERVICE_ACCOUNT_JSON',
+    envUrl: 'global',
     models: makeRoleModels(VERTEX_DEFAULT_MODEL, 'Google Vertex', 'vertex', 1_000_000),
   },
 ];

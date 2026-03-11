@@ -16,6 +16,7 @@ import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
 import type { RepoOverride } from '@/hooks/useProtectMain';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
+import type { VertexConfiguredMode } from '@/hooks/useVertexConfig';
 
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
@@ -178,20 +179,23 @@ export interface SettingsAIProps {
   setVertexKeyInput: (v: string) => void;
   setVertexKey: (v: string) => void;
   clearVertexKey: () => void;
-  vertexBaseUrl: string;
-  vertexBaseUrlInput: string;
-  setVertexBaseUrlInput: (v: string) => void;
-  vertexBaseUrlError: string | null;
+  vertexKeyError: string | null;
+  vertexRegion: string;
+  vertexRegionInput: string;
+  setVertexRegionInput: (v: string) => void;
+  vertexRegionError: string | null;
   vertexModel: string;
   vertexModelInput: string;
   setVertexModelInput: (v: string) => void;
-  vertexDeployments: ExperimentalDeployment[];
-  vertexActiveDeploymentId: string | null;
-  saveVertexDeployment: (baseUrl: string, model: string) => boolean;
-  selectVertexDeployment: (id: string) => void;
-  removeVertexDeployment: (id: string) => void;
-  clearVertexDeployments: () => void;
-  isVertexDeploymentLimitReached: boolean;
+  vertexModelOptions: string[];
+  setVertexRegion: (v: string) => void;
+  clearVertexRegion: () => void;
+  setVertexModel: (v: string) => void;
+  clearVertexModel: () => void;
+  vertexMode: VertexConfiguredMode;
+  vertexTransport: 'openapi' | 'anthropic';
+  vertexProjectId: string | null;
+  hasLegacyVertexConfig: boolean;
   isVertexConfigured: boolean;
   // Tavily
   hasTavilyKey: boolean;
@@ -302,6 +306,35 @@ interface ExperimentalProviderSectionProps {
   clearDeployments: () => void;
   deploymentLimitReached: boolean;
   modelPlaceholder: string;
+}
+
+interface VertexProviderSectionProps {
+  activeBackend: PreferredProvider | null;
+  setActiveBackend: (v: PreferredProvider | null) => void;
+  clearPreferredProvider: () => void;
+  configured: boolean;
+  hasKey: boolean;
+  keyInput: string;
+  setKeyInput: (value: string) => void;
+  keyError: string | null;
+  setKey: (value: string) => void;
+  clearKey: () => void;
+  region: string;
+  regionInput: string;
+  setRegionInput: (value: string) => void;
+  regionError: string | null;
+  setRegion: (value: string) => void;
+  clearRegion: () => void;
+  model: string;
+  modelInput: string;
+  setModelInput: (value: string) => void;
+  modelOptions: string[];
+  setModel: (value: string) => void;
+  clearModel: () => void;
+  mode: VertexConfiguredMode;
+  transport: 'openapi' | 'anthropic';
+  projectId: string | null;
+  hasLegacyConfig: boolean;
 }
 
 function formatExperimentalDeploymentTarget(baseUrl: string): string {
@@ -666,6 +699,204 @@ function ExperimentalProviderSection({
           </Button>
           {hasKey && <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function VertexProviderSection({
+  activeBackend,
+  setActiveBackend,
+  clearPreferredProvider,
+  configured,
+  hasKey,
+  keyInput,
+  setKeyInput,
+  keyError,
+  setKey,
+  clearKey,
+  region,
+  regionInput,
+  setRegionInput,
+  regionError,
+  setRegion,
+  clearRegion,
+  model,
+  modelInput,
+  setModelInput,
+  modelOptions,
+  setModel,
+  clearModel,
+  mode,
+  transport,
+  projectId,
+  hasLegacyConfig,
+}: VertexProviderSectionProps) {
+  const clearAll = () => {
+    clearKey();
+    clearRegion();
+    clearModel();
+    setKeyInput('');
+    setRegionInput('');
+    setModelInput('');
+    if (activeBackend === 'vertex') {
+      clearPreferredProvider();
+      setActiveBackend(null);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-xl border border-push-edge bg-push-surface/60 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-push-fg">Google Vertex</span>
+            <span className={`rounded-full px-2 py-0.5 text-push-2xs uppercase tracking-wide ${
+              configured
+                ? 'bg-emerald-500/10 text-emerald-400'
+                : 'bg-amber-500/10 text-amber-300'
+            }`}>
+              {configured ? 'Ready' : 'Experimental'}
+            </span>
+          </div>
+          <p className="text-xs text-push-fg-dim">
+            OpenRouter-style setup: save a Google service account JSON, choose a region, and Push routes Gemini through Vertex&apos;s OpenAI-compatible API while Claude uses the native Anthropic partner-model API.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={clearAll}
+          className="text-push-fg-dim hover:text-red-400 transition-colors"
+          aria-label="Reset Google Vertex connector"
+          title="Reset connector"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-push-xs font-medium text-push-fg-secondary">Service account JSON</label>
+        <textarea
+          rows={6}
+          value={keyInput}
+          onChange={(e) => setKeyInput(e.target.value)}
+          placeholder={hasKey ? 'Service account JSON saved locally' : 'Paste the full Google service account JSON'}
+          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 font-mono resize-y"
+        />
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const next = keyInput.trim();
+              if (!next) return;
+              setKey(next);
+            }}
+            disabled={!keyInput.trim()}
+            className="text-push-fg-secondary hover:text-push-fg"
+          >
+            Save service account
+          </Button>
+          {hasKey && <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>}
+        </div>
+        {keyError && <p className="text-xs text-amber-400">{keyError}</p>}
+        {projectId && (
+          <p className="text-xs text-push-fg-dim">
+            Project detected: <span className="font-mono text-push-fg-secondary">{projectId}</span>
+          </p>
+        )}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <label className="text-push-xs font-medium text-push-fg-secondary">Region</label>
+          <input
+            type="text"
+            value={regionInput}
+            onChange={(e) => setRegionInput(e.target.value)}
+            placeholder={region || 'global'}
+            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+          />
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setRegion((regionInput || region).trim())}
+              disabled={!((regionInput || region).trim())}
+              className="text-push-fg-secondary hover:text-push-fg"
+            >
+              Save region
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearRegion}
+              className="text-push-fg-dim hover:text-push-fg-secondary"
+            >
+              Reset
+            </Button>
+          </div>
+          {regionError ? (
+            <p className="text-xs text-amber-400">{regionError}</p>
+          ) : (
+            <p className="text-xs text-push-fg-dim">Use <span className="font-mono">global</span> unless you need a region-specific deployment.</p>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-push-xs font-medium text-push-fg-secondary">Default model</label>
+          <select
+            value={model}
+            onChange={(e) => {
+              setModel(e.target.value);
+              setModelInput(e.target.value);
+            }}
+            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+          >
+            {modelOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={modelInput}
+            onChange={(e) => setModelInput(e.target.value)}
+            placeholder={model}
+            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+          />
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setModel((modelInput || model).trim())}
+              disabled={!((modelInput || model).trim())}
+              className="text-push-fg-secondary hover:text-push-fg"
+            >
+              Save model
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearModel}
+              className="text-push-fg-dim hover:text-push-fg-secondary"
+            >
+              Reset
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-push-edge-subtle bg-push-surface/40 px-3 py-2">
+        <p className="text-push-xs text-push-fg-secondary">Active now</p>
+        <p className="truncate text-sm text-push-fg">{model}</p>
+        <p className="truncate text-push-xs text-push-fg-dim">
+          Mode: {mode} · Transport: {transport} · Region: {region}
+        </p>
+        {hasLegacyConfig && (
+          <p className="mt-1 text-push-2xs text-amber-400">
+            Legacy raw-endpoint Vertex config is still present and will be used only if no service account is saved.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -1513,7 +1744,7 @@ export function SettingsSheet({
               Private connectors (experimental)
             </summary>
             <p className="mt-2 text-xs text-push-fg-dim">
-              Direct Azure/Bedrock/Vertex deployments live here so they stay opt-in and out of Push&apos;s normal provider story.
+              Direct Azure/Bedrock connectors still live here, and Vertex now uses a Google-native service-account setup so Gemini and Claude can share one provider entry.
             </p>
             <div className="mt-3 space-y-3">
               <ExperimentalProviderSection
@@ -1578,35 +1809,33 @@ export function SettingsSheet({
                 modelPlaceholder="Bedrock model id"
               />
 
-              <ExperimentalProviderSection
-                label="Google Vertex"
-                backendId="vertex"
+              <VertexProviderSection
                 activeBackend={ai.activeBackend}
                 setActiveBackend={ai.setActiveBackend}
                 clearPreferredProvider={ai.clearPreferredProvider}
-                helperText="Use the Vertex AI OpenAI-compatible OpenAPI endpoint for your project/location and the model id you want."
                 configured={ai.isVertexConfigured}
                 hasKey={ai.hasVertexKey}
                 keyInput={ai.vertexKeyInput}
                 setKeyInput={ai.setVertexKeyInput}
+                keyError={ai.vertexKeyError}
                 setKey={ai.setVertexKey}
                 clearKey={ai.clearVertexKey}
-                baseUrl={ai.vertexBaseUrl}
-                baseUrlInput={ai.vertexBaseUrlInput}
-                setBaseUrlInput={ai.setVertexBaseUrlInput}
-                baseUrlError={ai.vertexBaseUrlError}
-                baseUrlPlaceholder="https://us-central1-aiplatform.googleapis.com/v1/projects/PROJECT/locations/us-central1/endpoints/openapi"
+                region={ai.vertexRegion}
+                regionInput={ai.vertexRegionInput}
+                setRegionInput={ai.setVertexRegionInput}
+                regionError={ai.vertexRegionError}
+                setRegion={ai.setVertexRegion}
+                clearRegion={ai.clearVertexRegion}
                 model={ai.vertexModel}
                 modelInput={ai.vertexModelInput}
                 setModelInput={ai.setVertexModelInput}
-                deployments={ai.vertexDeployments}
-                activeDeploymentId={ai.vertexActiveDeploymentId}
-                saveDeployment={ai.saveVertexDeployment}
-                selectDeployment={ai.selectVertexDeployment}
-                removeDeployment={ai.removeVertexDeployment}
-                clearDeployments={ai.clearVertexDeployments}
-                deploymentLimitReached={ai.isVertexDeploymentLimitReached}
-                modelPlaceholder="Vertex model id"
+                modelOptions={ai.vertexModelOptions}
+                setModel={ai.setVertexModel}
+                clearModel={ai.clearVertexModel}
+                mode={ai.vertexMode}
+                transport={ai.vertexTransport}
+                projectId={ai.vertexProjectId}
+                hasLegacyConfig={ai.hasLegacyVertexConfig}
               />
             </div>
           </details>
