@@ -107,13 +107,17 @@ export function useProjectInstructions(
         const content = result.content || '';
         if (!content.trim()) continue;
         applyEffectiveInstructions(content);
+        // Keep instruction filename in sync with which file was actually loaded
+        const filename = path.replace('/workspace/', '');
+        setInstructionFilenameState(filename);
+        setInstructionFilename(filename);
         return content;
       } catch {
         continue;
       }
     }
     return null;
-  }, [applyEffectiveInstructions]);
+  }, [applyEffectiveInstructions, setInstructionFilename]);
 
   const autoCommitAgentsMdInSandbox = useCallback(async (sandboxId: string): Promise<{ ok: boolean; message: string }> => {
     const commitResult = await execInSandbox(

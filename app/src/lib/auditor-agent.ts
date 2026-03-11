@@ -90,8 +90,9 @@ export async function runAuditor(
   const DIFF_LIMIT = 30_000;
   const chunkedDiff = chunkDiffByFile(diff, DIFF_LIMIT, classifyFilePath);
 
-  // Build [FILE HINTS] block from the diff headers
-  const fileHintPaths = [...diff.matchAll(/^diff --git a\/.+ b\/(.+)$/gm)].map((m) => m[1]);
+  // Build [FILE HINTS] block from the chunked diff (not the raw diff) so the
+  // model only sees classifications for files whose hunks are actually included.
+  const fileHintPaths = [...chunkedDiff.matchAll(/^diff --git a\/.+ b\/(.+)$/gm)].map((m) => m[1]);
   const fileHintsBlock = fileHintPaths.length > 0
     ? `[FILE HINTS]\n${fileHintPaths.map((p) => `- ${p}: ${classifyFilePath(p)}`).join('\n')}\n[/FILE HINTS]\n\n`
     : '';

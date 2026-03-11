@@ -140,11 +140,19 @@ export function chunkDiffByFile(
   const included: string[] = [];
   const omitted: string[] = [];
   let budget = charLimit;
+  let truncatedFirstOversized = false;
 
   for (const entry of entries) {
     if (entry.section.length <= budget) {
       included.push(entry.section);
       budget -= entry.section.length;
+    } else if (included.length === 0 && !truncatedFirstOversized) {
+      // First file exceeds entire budget — include a truncated prefix rather
+      // than dropping the highest-priority file entirely (regression vs old
+      // raw .slice() behavior).
+      included.push(entry.section.slice(0, budget));
+      budget = 0;
+      truncatedFirstOversized = true;
     } else {
       omitted.push(entry.path);
     }
@@ -152,9 +160,15 @@ export function chunkDiffByFile(
 
   let result = included.join('');
 
+  const notes: string[] = [];
+  if (truncatedFirstOversized) {
+    notes.push('[Largest file truncated to fit budget]');
+  }
   if (omitted.length > 0) {
-    const omitLine = `\n[${omitted.length} file(s) omitted due to size limit: ${omitted.join(', ')}]`;
-    result += omitLine;
+    notes.push(`[${omitted.length} file(s) omitted due to size limit: ${omitted.join(', ')}]`);
+  }
+  if (notes.length > 0) {
+    result += '\n' + notes.join('\n');
   }
 
   return result;
