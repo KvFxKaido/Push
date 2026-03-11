@@ -1483,6 +1483,7 @@ export function useChat(
                     isMainProtectedRef.current,
                     branchInfoRef.current?.defaultBranch,
                     lockedProviderForChat,
+                    resolvedModelForChat,
                   );
                 }
                 return {
@@ -1605,6 +1606,7 @@ export function useChat(
                 isMainProtectedRef.current,
                 branchInfoRef.current?.defaultBranch,
                 lockedProviderForChat,
+                resolvedModelForChat,
               );
               const mutDuration = Date.now() - mutStart;
 
@@ -2231,6 +2233,7 @@ export function useChat(
                 isMainProtectedRef.current,
                 branchInfoRef.current?.defaultBranch,
                 lockedProviderForChat,
+                resolvedModelForChat,
               );
             }
           }

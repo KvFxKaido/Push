@@ -26,13 +26,15 @@ import {
 import { DiffPreviewCard } from '@/components/cards/DiffPreviewCard';
 import { AuditVerdictCard } from '@/components/cards/AuditVerdictCard';
 import { useCommitPush } from '@/hooks/useCommitPush';
-import type { DiffPreviewCardData } from '@/types';
+import type { AIProviderType, DiffPreviewCardData } from '@/types';
 
 interface CommitPushSheetProps {
   sandboxId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  lockedProvider?: AIProviderType | null;
+  lockedModel?: string | null;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -150,6 +152,8 @@ export function CommitPushSheet({
   open,
   onOpenChange,
   onSuccess,
+  lockedProvider,
+  lockedModel,
 }: CommitPushSheetProps) {
   const {
     phase,
@@ -161,7 +165,7 @@ export function CommitPushSheet({
     fetchDiff,
     commitAndPush,
     reset,
-  } = useCommitPush(sandboxId);
+  } = useCommitPush(sandboxId, lockedProvider, lockedModel);
 
   const keyboardHeight = useKeyboardHeight();
 

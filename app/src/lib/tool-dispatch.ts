@@ -283,6 +283,7 @@ export async function executeAnyToolCall(
   isMainProtected?: boolean,
   defaultBranch?: string,
   activeProvider?: ActiveProvider,
+  activeModel?: string,
 ): Promise<ToolExecutionResult> {
   // Enforce Protect Main: block commit/push tools when on the default branch
   if (isMainProtected && toolCall.source === 'sandbox' && PROTECTED_MAIN_TOOLS.has(toolCall.call.tool) && sandboxId) {
@@ -314,7 +315,10 @@ export async function executeAnyToolCall(
           structuredError: err,
         };
       }
-      return executeSandboxToolCall(toolCall.call, sandboxId);
+      return executeSandboxToolCall(toolCall.call, sandboxId, {
+        auditorProviderOverride: activeProvider,
+        auditorModelOverride: activeModel,
+      });
 
     case 'delegate':
       // Delegation is handled at a higher level (useChat), not here.

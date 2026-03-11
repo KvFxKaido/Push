@@ -27,16 +27,18 @@ import { CommitPushSheet } from '@/components/filebrowser/CommitPushSheet';
 import { FileEditor } from '@/components/filebrowser/FileEditor';
 import { getFileEditability } from '@/lib/file-utils';
 import { writeToSandbox } from '@/lib/sandbox-client';
-import type { FileEntry } from '@/types';
+import type { AIProviderType, FileEntry } from '@/types';
 import { formatSize } from '@/lib/diff-utils';
 
 interface FileBrowserProps {
   sandboxId: string;
   repoName: string;
   onBack: () => void;
+  lockedProvider?: AIProviderType | null;
+  lockedModel?: string | null;
 }
 
-export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
+export function FileBrowser({ sandboxId, repoName, onBack, lockedProvider, lockedModel }: FileBrowserProps) {
   const {
     currentPath,
     files,
@@ -289,6 +291,8 @@ export function FileBrowser({ sandboxId, repoName, onBack }: FileBrowserProps) {
         sandboxId={sandboxId}
         open={commitSheetOpen}
         onOpenChange={setCommitSheetOpen}
+        lockedProvider={lockedProvider}
+        lockedModel={lockedModel}
         onSuccess={() => {
           toast.success('Committed and pushed!');
           loadDirectory(currentPath);

@@ -22,6 +22,7 @@ vi.mock('./edit-metrics', () => ({
 
 import { detectAnyToolCall, executeAnyToolCall } from './tool-dispatch';
 import * as sandboxClient from './sandbox-client';
+import { runAuditor } from './auditor-agent';
 import { fileLedger } from './file-awareness-ledger';
 
 describe('tool-dispatch smoke -- sandbox_search_replace', () => {
@@ -29,6 +30,8 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
     vi.mocked(sandboxClient.readFromSandbox).mockReset();
     vi.mocked(sandboxClient.writeToSandbox).mockReset();
     vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.getSandboxDiff).mockReset();
+    vi.mocked(runAuditor).mockReset();
     fileLedger.reset();
   });
 
@@ -90,5 +93,58 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
       'v1',
     );
   });
-});
 
+  it('passes the chat-locked provider/model into sandbox_prepare_commit audits', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n',
+      truncated: false,
+    });
+    vi.mocked(runAuditor).mockResolvedValue({
+      verdict: 'safe',
+      card: {
+        verdict: 'safe',
+        summary: 'No issues found.',
+        risks: [],
+        filesReviewed: 1,
+      },
+    });
+
+    const callText = [
+      '```json',
+      JSON.stringify({
+        tool: 'sandbox_prepare_commit',
+        args: { message: 'test commit' },
+      }),
+      '```',
+    ].join('\n');
+
+    const detected = detectAnyToolCall(callText);
+    expect(detected).not.toBeNull();
+    expect(detected?.source).toBe('sandbox');
+    if (!detected || detected.source !== 'sandbox') {
+      throw new Error('Expected a sandbox tool call');
+    }
+
+    await executeAnyToolCall(
+      detected,
+      'KvFxKaido/Push',
+      'sb-123',
+      false,
+      'main',
+      'openrouter',
+      'anthropic/claude-sonnet-4.6:nitro',
+    );
+
+    expect(runAuditor).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Function),
+      expect.objectContaining({
+        source: 'sandbox-prepare-commit',
+      }),
+      expect.objectContaining({
+        providerOverride: 'openrouter',
+        modelOverride: 'anthropic/claude-sonnet-4.6:nitro',
+      }),
+    );
+  });
+});

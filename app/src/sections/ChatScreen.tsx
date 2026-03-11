@@ -1081,6 +1081,8 @@ export function ChatScreen(props: ChatScreenProps) {
           bedrock: catalog.bedrock.model,
           vertex: catalog.vertex.model,
         }}
+        lockedProvider={lockedProvider}
+        lockedModel={lockedModel}
         repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
         repoFullName={activeRepo?.full_name}
         projectInstructions={instructions.agentsMdContent}
@@ -1149,6 +1151,8 @@ export function ChatScreen(props: ChatScreenProps) {
           sandboxId={sandbox.sandboxId}
           projectInstructions={instructions.agentsMdContent}
           setCurrentBranch={setCurrentBranch}
+          lockedProvider={lockedProvider}
+          lockedModel={lockedModel}
         />
       )}
     </div>

@@ -1,16 +1,17 @@
 /**
  * Auditor Agent — reviews diffs for safety before allowing commits.
  *
- * Uses the active provider (Ollama / Mistral / OpenRouter) with the role-specific
- * model resolved via providers.ts. This ensures the Auditor works with
- * whichever backend the user has configured.
+ * Uses either an explicit provider/model override (for chat-locked conversations)
+ * or the active provider with the role-specific model resolved via providers.ts.
+ * This keeps the Auditor aligned with the current chat selection when available,
+ * while preserving the global-backend fallback for non-chat flows.
  *
  * Design: fail-safe. If the Auditor returns invalid JSON or errors,
  * the verdict defaults to UNSAFE (blocking the commit).
  */
 
 import type { ChatMessage, AuditVerdictCardData } from '@/types';
-import { getActiveProvider, getProviderStreamFn } from './orchestrator';
+import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
 import { buildAuditorContextBlock, type AuditorPromptContext } from './role-context';
 
@@ -18,6 +19,11 @@ import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats } from './diff-utils';
 
 const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
+
+export interface AuditorRunOptions {
+  providerOverride?: ActiveProvider;
+  modelOverride?: string | null;
+}
 
 const AUDITOR_SYSTEM_PROMPT = `You are the Auditor agent for Push, a mobile AI coding assistant. Your sole job is to review code diffs for safety.
 
@@ -50,11 +56,12 @@ export async function runAuditor(
   diff: string,
   onStatus: (phase: string) => void,
   context?: AuditorPromptContext,
+  options?: AuditorRunOptions,
 ): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
   const filesReviewed = parseDiffStats(diff).filesChanged;
 
   // Fail-safe: require an active AI provider with a valid key
-  const activeProvider = getActiveProvider();
+  const activeProvider = options?.providerOverride || getActiveProvider();
   if (activeProvider === 'demo') {
     return {
       verdict: 'unsafe',
@@ -69,7 +76,7 @@ export async function runAuditor(
 
   const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'auditor');
-  const auditorModelId = roleModel?.id; // undefined falls back to provider default
+  const auditorModelId = options?.modelOverride?.trim() || roleModel?.id; // undefined falls back to provider default
   const runtimeContext = buildAuditorContextBlock(context);
   const systemPrompt = runtimeContext
     ? `${AUDITOR_SYSTEM_PROMPT}\n\n${runtimeContext}`

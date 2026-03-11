@@ -31,7 +31,7 @@ import { getModelForRole, type PreferredProvider } from '@/lib/providers';
 import { streamWithTimeout } from '@/lib/utils';
 import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab } from './hub-tabs';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
-import type { AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types';
+import type { AIProviderType, AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -87,6 +87,8 @@ interface WorkspaceHubSheetProps {
   reviewProviders: readonly (readonly [PreferredProvider, string, boolean])[];
   reviewActiveProvider: ReturnType<typeof getActiveProvider>;
   reviewProviderModels: Record<PreferredProvider, string>;
+  lockedProvider?: AIProviderType | null;
+  lockedModel?: string | null;
   repoName?: string;
   /** owner/name format — passed to Review tab for PR detection */
   repoFullName?: string;
@@ -241,6 +243,8 @@ export function WorkspaceHubSheet({
   reviewProviders,
   reviewActiveProvider,
   reviewProviderModels,
+  lockedProvider,
+  lockedModel,
   repoName,
   repoFullName,
   projectInstructions,
@@ -439,6 +443,9 @@ export function WorkspaceHubSheet({
           ? `Working tree commit after branching to ${targetBranchName}`
           : `Working tree commit on ${targetBranchName}`,
         projectInstructions,
+      }, {
+        providerOverride: lockedProvider || undefined,
+        modelOverride: lockedModel || undefined,
       });
       if (auditResult.verdict === 'unsafe') {
         setCommitPhase('error');

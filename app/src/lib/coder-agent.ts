@@ -628,7 +628,14 @@ export async function runCoderAgent(
       // Execute read-only calls in parallel
       const parallelResults = await Promise.all(
         parallelCalls.map(async (call) => {
-          const result = await executeSandboxToolCall(call.call as Parameters<typeof executeSandboxToolCall>[0], sandboxId);
+          const result = await executeSandboxToolCall(
+            call.call as Parameters<typeof executeSandboxToolCall>[0],
+            sandboxId,
+            {
+              auditorProviderOverride: activeProvider,
+              auditorModelOverride: coderModelId,
+            },
+          );
           if (result.card) allCards.push(result.card);
           return result;
         }),
@@ -660,7 +667,10 @@ ${truncatedResult}
       }
       if (trailingMutation) {
         const mutCall = trailingMutation.call as Parameters<typeof executeSandboxToolCall>[0];
-        const mutResult = await executeSandboxToolCall(mutCall, sandboxId);
+        const mutResult = await executeSandboxToolCall(mutCall, sandboxId, {
+          auditorProviderOverride: activeProvider,
+          auditorModelOverride: coderModelId,
+        });
         if (mutResult.card) allCards.push(mutResult.card);
 
         // Always inject TOOL_RESULT first so the model sees what happened
@@ -949,7 +959,10 @@ ${truncatedResult}
     consecutiveDriftRounds = 0;
 
     onStatus('Coder executing...', toolCall.tool);
-    const result = await executeSandboxToolCall(toolCall, sandboxId);
+    const result = await executeSandboxToolCall(toolCall, sandboxId, {
+      auditorProviderOverride: activeProvider,
+      auditorModelOverride: coderModelId,
+    });
 
     // Collect cards
     if (result.card) {

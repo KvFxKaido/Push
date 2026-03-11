@@ -932,6 +932,8 @@ function App() {
             sandboxId={sandbox.sandboxId}
             repoName={activeRepo?.name || 'Sandbox'}
             onBack={() => setShowFileBrowser(false)}
+            lockedProvider={lockedProvider}
+            lockedModel={lockedModel}
           />
           <Toaster position="bottom-center" />
         </div>

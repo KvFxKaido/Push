@@ -10,7 +10,7 @@
 import { useState, useCallback } from 'react';
 import { getSandboxDiff, execInSandbox } from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
-import { getActiveProvider } from '@/lib/orchestrator';
+import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { parseDiffStats } from '@/lib/diff-utils';
 import type { DiffPreviewCardData, AuditVerdictCardData } from '@/types';
 
@@ -32,7 +32,11 @@ interface CommitPushState {
   commitMessage: string;
 }
 
-export function useCommitPush(sandboxId: string) {
+export function useCommitPush(
+  sandboxId: string,
+  providerOverride?: ActiveProvider | null,
+  modelOverride?: string | null,
+) {
   const [state, setState] = useState<CommitPushState>({
     phase: 'idle',
     diff: null,
@@ -90,8 +94,11 @@ export function useCommitPush(sandboxId: string) {
     }
     const safeCommitMessage = message.replace(/'/g, `'"'"'`);
 
+    const effectiveAuditorProvider = providerOverride || getActiveProvider();
+    const effectiveAuditorModel = modelOverride?.trim() || undefined;
+
     // Require an active AI provider — runAuditor handles its own fail-safe
-    if (getActiveProvider() === 'demo') {
+    if (effectiveAuditorProvider === 'demo') {
       setState((s) => ({
         ...s,
         phase: 'error',
@@ -113,6 +120,9 @@ export function useCommitPush(sandboxId: string) {
       const auditResult = await runAuditor(diffText, () => {}, {
         source: 'working-tree-commit',
         sourceLabel: 'Working tree diff before commit/push',
+      }, {
+        providerOverride: effectiveAuditorProvider,
+        modelOverride: effectiveAuditorModel,
       });
 
       setState((s) => ({ ...s, auditVerdict: auditResult.card }));
@@ -173,7 +183,7 @@ export function useCommitPush(sandboxId: string) {
       const msg = err instanceof Error ? err.message : String(err);
       setState((s) => ({ ...s, phase: 'error', error: msg }));
     }
-  }, [sandboxId, state.commitMessage, state.diff]);
+  }, [sandboxId, state.commitMessage, state.diff, providerOverride, modelOverride]);
 
   return {
     phase: state.phase,

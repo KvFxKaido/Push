@@ -33,7 +33,7 @@ import {
 } from '@/lib/github-tools';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
-import type { ActiveRepo, AuditVerdictCardData } from '@/types';
+import type { AIProviderType, ActiveRepo, AuditVerdictCardData } from '@/types';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -63,6 +63,8 @@ export interface MergeFlowSheetProps {
   sandboxId: string | null;
   projectInstructions?: string | null;
   setCurrentBranch: (branch: string) => void;
+  lockedProvider?: AIProviderType | null;
+  lockedModel?: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -151,6 +153,8 @@ function MergeFlowSheet({
   sandboxId,
   projectInstructions,
   setCurrentBranch,
+  lockedProvider,
+  lockedModel,
 }: MergeFlowSheetProps) {
   const currentBranch = activeRepo.current_branch || activeRepo.default_branch;
   const defaultBranch = activeRepo.default_branch;
@@ -419,6 +423,9 @@ function MergeFlowSheet({
           prNumber: pr.number,
           sourceLabel: `PR #${pr.number}: ${pr.title}`,
           projectInstructions,
+        }, {
+          providerOverride: lockedProvider || undefined,
+          modelOverride: lockedModel || undefined,
         });
         if (cancelled || abortRef.current) return;
 

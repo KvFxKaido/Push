@@ -49,6 +49,7 @@ import {
   executeSandboxToolCall,
 } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
+import { runAuditor } from './auditor-agent';
 import { fileLedger } from './file-awareness-ledger';
 import { calculateLineHash } from './hashline';
 
@@ -229,6 +230,50 @@ describe('executeSandboxToolCall -- stale write handling', () => {
       errorCode: 'WORKSPACE_CHANGED',
       durationMs: expect.any(Number),
     }));
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockReset();
+    vi.mocked(runAuditor).mockReset();
+  });
+
+  it('passes explicit provider/model overrides to the Auditor', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n',
+      truncated: false,
+    });
+    vi.mocked(runAuditor).mockResolvedValue({
+      verdict: 'safe',
+      card: {
+        verdict: 'safe',
+        summary: 'No issues found.',
+        risks: [],
+        filesReviewed: 1,
+      },
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'test commit' } },
+      'sb-123',
+      {
+        auditorProviderOverride: 'vertex',
+        auditorModelOverride: 'google/gemini-2.5-pro',
+      },
+    );
+
+    expect(runAuditor).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Function),
+      expect.objectContaining({
+        source: 'sandbox-prepare-commit',
+      }),
+      expect.objectContaining({
+        providerOverride: 'vertex',
+        modelOverride: 'google/gemini-2.5-pro',
+      }),
+    );
   });
 });
 

@@ -20,6 +20,7 @@ import type {
   TypeCheckCardData,
 } from '@/types';
 import { detectToolFromText, asRecord } from './utils';
+import type { ActiveProvider } from './orchestrator';
 import {
   execInSandbox,
   readFromSandbox,
@@ -53,6 +54,11 @@ import {
 
 // Re-export so existing consumers don't break
 export { clearFileVersionCache } from './sandbox-file-version-cache';
+
+export interface SandboxExecutionOptions {
+  auditorProviderOverride?: ActiveProvider;
+  auditorModelOverride?: string | null;
+}
 
 interface PrefetchedEditFileState {
   content: string;
@@ -1014,6 +1020,7 @@ async function readFullFileByChunks(
 export async function executeSandboxToolCall(
   call: SandboxToolCall,
   sandboxId: string,
+  options?: SandboxExecutionOptions,
 ): Promise<ToolExecutionResult> {
   if (!sandboxId) {
     const err = classifyError('Sandbox unreachable — no active sandbox', 'executeSandboxToolCall');
@@ -1773,6 +1780,7 @@ export async function executeSandboxToolCall(
               },
             },
             sandboxId,
+            options,
           );
         } catch (rangeErr) {
           const msg = rangeErr instanceof Error ? rangeErr.message : String(rangeErr);
@@ -1905,6 +1913,7 @@ export async function executeSandboxToolCall(
         return executeSandboxToolCall(
           { tool: 'sandbox_edit_file', args: { path, edits: ops, expected_version: expected_version ?? hydrated.version ?? undefined } },
           sandboxId,
+          options,
         );
       }
 
@@ -2211,6 +2220,10 @@ export async function executeSandboxToolCall(
           {
             source: 'sandbox-prepare-commit',
             sourceLabel: 'sandbox_prepare_commit preflight',
+          },
+          {
+            providerOverride: options?.auditorProviderOverride,
+            modelOverride: options?.auditorModelOverride,
           },
         );
 
