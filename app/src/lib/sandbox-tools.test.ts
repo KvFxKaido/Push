@@ -1837,6 +1837,100 @@ describe('sandbox_apply_patchset symbolic guard', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// sandbox_apply_patchset — batch write fallback/ambiguous-state regression
+// ---------------------------------------------------------------------------
+
+describe('sandbox_apply_patchset batch write fallback', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockReset();
+    fileLedger.reset();
+  });
+
+  it('falls back to sequential writes on HTTP 404 without workspace revision guard', async () => {
+    const fileContent = 'const a = 1;\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+
+    // Batch endpoint returns 404 — endpoint not available
+    const err404 = new Error('Not Found') as Error & { statusCode?: number };
+    err404.statusCode = 404;
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockRejectedValue(err404);
+
+    // Sequential fallback should succeed — no workspace revision passed
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 14,
+      workspace_revision: 5,
+    });
+
+    const ref = await calculateLineHash('const a = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path: '/workspace/src/a.ts',
+            ops: [{ op: 'replace_line', ref, content: 'const a = 2;' }],
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('patched successfully');
+    // Verify sequential write was called WITHOUT workspace revision (4th arg = version, no 5th arg)
+    const writeCalls = vi.mocked(sandboxClient.writeToSandbox).mock.calls;
+    expect(writeCalls.length).toBe(1);
+    expect(writeCalls[0][4]).toBeUndefined(); // no expectedWorkspaceRevision
+  });
+
+  it('returns ambiguous-state error on timeout without replaying writes', async () => {
+    const fileContent = 'const b = 1;\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+
+    // Batch endpoint times out — no statusCode (timeout throws plain Error)
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockRejectedValue(
+      new Error('Sandbox batch-write timed out after 60s'),
+    );
+
+    const ref = await calculateLineHash('const b = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path: '/workspace/src/a.ts',
+            ops: [{ op: 'replace_line', ref, content: 'const b = 2;' }],
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    // Should return structured error, NOT fall back to sequential writes
+    expect(result.text).toContain('ambiguous state');
+    expect(result.text).toContain('error_type: WRITE_FAILED');
+    expect(result.structuredError?.type).toBe('WRITE_FAILED');
+    expect(result.structuredError?.retryable).toBe(false);
+    // Sequential write should NOT have been called
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+    // Ledger should be fully invalidated (all entries stale)
+    // — verified indirectly: file was read, so ledger had an entry; after invalidation it should be stale
+  });
+});
+
 describe('sandbox_search_replace', () => {
   beforeEach(() => {
     vi.mocked(sandboxClient.readFromSandbox).mockReset();

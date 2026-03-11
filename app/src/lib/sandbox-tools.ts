@@ -3396,32 +3396,41 @@ export async function executeSandboxToolCall(
             }
           }
         } catch (batchErr) {
-          // Fallback to sequential writes if batch endpoint is unavailable.
-          // Invalidate version cache for ALL files first — sequential writes may
-          // partially succeed, leaving the cache inconsistent with sandbox truth.
-          console.warn('[sandbox-tools] batch write failed, falling back to sequential writes:', batchErr);
+          // Only fall back to sequential writes for "endpoint not available" errors
+          // (HTTP 404/405). Timeout/network errors may mean the batch partially or
+          // fully succeeded server-side — replaying would risk STALE_FILE /
+          // WORKSPACE_CHANGED conflicts against already-written content.
+          const statusCode = (batchErr as { statusCode?: number }).statusCode;
+          if (statusCode !== 404 && statusCode !== 405) {
+            // Ambiguous state — batch may have partially succeeded.
+            // Full invalidation: version cache, prefetch cache, and file-awareness
+            // ledger so the agent must re-read before any follow-up write.
+            invalidateWorkspaceSnapshots(sandboxId);
+            const errMsg = batchErr instanceof Error ? batchErr.message : String(batchErr);
+            const err: StructuredToolError = {
+              type: 'WRITE_FAILED',
+              retryable: false,
+              message: `Batch write failed with ambiguous state (${statusCode ? `HTTP ${statusCode}` : 'timeout/network'}). Some files may have been written. Re-read affected files before retrying.`,
+              detail: errMsg,
+            };
+            return {
+              text: formatStructuredError(err, `[Tool Error — sandbox_apply_patchset] ${err.message}`),
+              structuredError: err,
+            };
+          }
+
+          // HTTP 404/405 — batch endpoint unavailable, safe to retry sequentially.
+          // Drop workspace revision guard: each sequential write bumps the revision,
+          // so passing the original would cause WORKSPACE_CHANGED on file 2+.
+          // Per-file expected_version still guards content integrity.
+          console.warn('[sandbox-tools] batch endpoint unavailable (404/405), falling back to sequential writes');
           for (const r of editResults) {
             versionCacheDeletePath(sandboxId, r.path);
           }
           for (const r of editResults) {
             try {
-              const writeResult = patchsetWorkspaceRevision === undefined
-                ? await writeToSandbox(sandboxId, r.path, r.content, r.version)
-                : await writeToSandbox(sandboxId, r.path, r.content, r.version, patchsetWorkspaceRevision);
+              const writeResult = await writeToSandbox(sandboxId, r.path, r.content, r.version);
               if (!writeResult.ok) {
-                if (writeResult.code === 'WORKSPACE_CHANGED') {
-                  const expected = writeResult.expected_workspace_revision ?? patchsetWorkspaceRevision ?? 'unknown';
-                  const current = writeResult.current_workspace_revision ?? writeResult.workspace_revision ?? 'unknown';
-                  const staleMarked = invalidateWorkspaceSnapshots(
-                    sandboxId,
-                    writeResult.current_workspace_revision ?? writeResult.workspace_revision,
-                  );
-                  writeFailures.push([
-                    `${r.path}: workspace changed before write (expected_revision=${expected} current_revision=${current})`,
-                    staleMarked > 0 ? `marked ${staleMarked} file(s) stale` : null,
-                  ].filter(Boolean).join('; '));
-                  break;
-                }
                 if (writeResult.code === 'STALE_FILE') {
                   staleFailureCount += 1;
                   writeFailures.push(recordPatchsetStaleConflict(
@@ -3554,8 +3563,11 @@ export async function executeSandboxToolCall(
             }
           }
 
+          const rollbackLabel = rollbackErrors.length > 0
+            ? `(partial rollback — ${rollbackErrors.length} file(s) failed to restore)`
+            : '(rolled back)';
           const rollbackLines: string[] = [
-            `[Tool Result — sandbox_apply_patchset] (rolled back)`,
+            `[Tool Result — sandbox_apply_patchset] ${rollbackLabel}`,
             `All ${editResults.length} file(s) were patched, but a post-write check failed:`,
             '',
           ];
