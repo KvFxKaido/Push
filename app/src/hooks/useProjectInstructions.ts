@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import { readFromSandbox, execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
 import { fetchProjectInstructions } from '@/lib/github-tools';
+import { syncProjectInstructionsFromSandbox } from '@/lib/project-instructions-utils';
 import { buildEffectiveProjectInstructions } from '@/lib/push-built-in-context';
 import { buildWorkspaceContext, sanitizeProjectInstructions } from '@/lib/workspace-context';
 import type { ActiveRepo, RepoWithActivity } from '@/types';
@@ -43,12 +44,6 @@ const AGENTS_MD_TEMPLATE = `# AGENTS.md
 - Files/components to read first:
 - Things to avoid:
 `;
-
-const PROJECT_INSTRUCTION_PATHS = [
-  '/workspace/AGENTS.md',
-  '/workspace/CLAUDE.md',
-  '/workspace/GEMINI.md',
-] as const;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -101,22 +96,11 @@ export function useProjectInstructions(
 
   // Helpers
   const refreshProjectInstructionsFromSandbox = useCallback(async (sandboxId: string): Promise<string | null> => {
-    for (const path of PROJECT_INSTRUCTION_PATHS) {
-      try {
-        const result = await readFromSandbox(sandboxId, path);
-        const content = result.content || '';
-        if (!content.trim()) continue;
-        applyEffectiveInstructions(content);
-        // Keep instruction filename in sync with which file was actually loaded
-        const filename = path.replace('/workspace/', '');
-        setInstructionFilenameState(filename);
-        setInstructionFilename(filename);
-        return content;
-      } catch {
-        continue;
-      }
-    }
-    return null;
+    return syncProjectInstructionsFromSandbox(sandboxId, {
+      applyEffectiveInstructions,
+      setInstructionFilenameState,
+      setInstructionFilename,
+    });
   }, [applyEffectiveInstructions, setInstructionFilename]);
 
   const autoCommitAgentsMdInSandbox = useCallback(async (sandboxId: string): Promise<{ ok: boolean; message: string }> => {
@@ -170,7 +154,7 @@ export function useProjectInstructions(
         setProjectInstructionsCheckFailed(true);
       });
     return () => { cancelled = true; };
-  }, [activeRepo, applyEffectiveInstructions]);
+  }, [activeRepo, applyEffectiveInstructions, setAgentsMd, setInstructionFilename]);
 
   // Phase B — Sandbox upgrade (overrides Phase A when sandbox is ready)
   useEffect(() => {
@@ -188,7 +172,7 @@ export function useProjectInstructions(
         // Sandbox read failed — keep Phase A content
       });
     return () => { cancelled = true; };
-  }, [sandbox.status, sandbox.sandboxId, applyEffectiveInstructions]);
+  }, [sandbox.status, sandbox.sandboxId, applyEffectiveInstructions, setInstructionFilename]);
 
   // Build workspace context
   useEffect(() => {

@@ -27,6 +27,17 @@ vi.mock('./role-context', () => ({
 
 import { runAuditor } from './auditor-agent';
 
+function makeAddedFileDiff(path: string, addedContent: string): string {
+  return [
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    '@@ -0,0 +1 @@',
+    `+${addedContent}`,
+    '',
+  ].join('\n');
+}
+
 describe('runAuditor', () => {
   beforeEach(() => {
     mockStreamFn.mockReset();
@@ -66,5 +77,23 @@ describe('runAuditor', () => {
     expect(mockGetProviderStreamFn).toHaveBeenCalledWith('vertex');
     expect(mockStreamFn).toHaveBeenCalled();
     expect(mockStreamFn.mock.calls[0]?.[7]).toBe('google/gemini-2.5-pro');
+  });
+
+  it('builds file hints from the chunked diff only', async () => {
+    const hugeProductionDiff = makeAddedFileDiff('src/huge.ts', 'x'.repeat(31_000));
+    const omittedTestDiff = makeAddedFileDiff('src/ignored.test.ts', 'test');
+
+    await runAuditor(
+      hugeProductionDiff + omittedTestDiff,
+      () => {},
+    );
+
+    const messages = mockStreamFn.mock.calls[0]?.[0] as Array<{ content: string }>;
+    const prompt = messages[0]?.content ?? '';
+    const fileHints = prompt.match(/\[FILE HINTS\]\n([\s\S]*?)\n\[\/FILE HINTS\]/)?.[1] ?? '';
+
+    expect(fileHints).toContain('- src/huge.ts: production');
+    expect(fileHints).not.toContain('src/ignored.test.ts');
+    expect(prompt).toContain('[1 file(s) omitted due to size limit: src/ignored.test.ts]');
   });
 });
