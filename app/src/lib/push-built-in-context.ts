@@ -25,7 +25,7 @@ Backend routing:
 - Chat locks the Orchestrator to a per-chat provider/model on first send
 - Delegated Coder runs inherit that chat-locked provider/model
 - Reviewer keeps its own sticky provider/model selection
-- Auditor still follows the app's active backend selection
+- Auditor follows the current chat's locked provider/model when available, otherwise the active backend
 
 Repo/session model:
 - Exactly one active branch per repo session
