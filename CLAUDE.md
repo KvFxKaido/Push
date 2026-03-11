@@ -34,7 +34,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 - **Reviewer** — On-demand advisory diff review in the Workspace Hub. Can review branch diffs, last commits, or local working-tree changes, produces structured findings, can hand findings off to chat, and can post PR-backed reviews to GitHub.
 - **Auditor** — Risk specialist, pre-commit gate, binary verdict. Required for standard commit flow (`sandbox_prepare_commit` path).
 
-**AI backends:** The web app ships with four built-in providers — **Ollama Cloud** (`ollama.com`), **OpenRouter** (`openrouter.ai`), **OpenCode Zen** (`opencode.ai/zen`), and **Nvidia NIM** (`integrate.api.nvidia.com`) — plus opt-in private connectors for **Azure OpenAI**, **AWS Bedrock**, and **Google Vertex** in advanced Settings. All use OpenAI-compatible SSE streaming. API keys are configurable at runtime via Settings UI; the private connectors additionally require a validated base URL and model/deployment value, and each can save up to three deployment presets. Backend/model routing is currently split: the chat composer owns the current chat selection and the Orchestrator locks to that provider/model after the first user message, delegated Coder runs inherit that chat-locked provider/model, Reviewer keeps its own sticky provider/model selection, and Auditor still resolves through the app's active backend (`getActiveProvider()`), not the chat lock. For new web chats, Auto backend mode prefers OpenCode Zen when available. Default Ollama model is `gemini-3-flash-preview`. Default OpenRouter model is `claude-sonnet-4.6:nitro`. Default Zen model is `big-pickle`. Default Nvidia model is `nvidia/llama-3.1-nemotron-70b-instruct`. OpenRouter provides access to 50+ models through a single API, and Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-4o/GPT-5.4, Codex, Cohere Command-R, Gemini, Mistral, MiniMax, Qwen, GLM, DeepSeek, Perplexity Sonar, Arcee Trinity, Mercury, Xiaomi MiMo, Grok, and Kimi.
+**AI backends:** The web app ships with four built-in providers — **Ollama Cloud** (`ollama.com`), **OpenRouter** (`openrouter.ai`), **OpenCode Zen** (`opencode.ai/zen`), and **Nvidia NIM** (`integrate.api.nvidia.com`) — plus opt-in private connectors for **Azure OpenAI**, **AWS Bedrock**, and **Google Vertex** in advanced Settings. The built-ins, Azure, and Bedrock use OpenAI-compatible SSE streaming. Azure and Bedrock use validated base URLs plus model/deployment values and can each save up to three deployment presets. Vertex now uses a Google service account JSON plus region and model in the normal path; the Worker mints Google access tokens server-side, routes Gemini through Vertex OpenAPI, routes Claude through Vertex's Anthropic partner-model API, and translates responses back into OpenAI-style SSE for the app. Legacy raw Vertex OpenAPI config still works as a fallback. Backend/model routing is currently split: the chat composer owns the current chat selection and the Orchestrator locks to that provider/model after the first user message, delegated Coder runs inherit that chat-locked provider/model, Reviewer keeps its own sticky provider/model selection, and Auditor still resolves through the app's active backend (`getActiveProvider()`), not the chat lock. For new web chats, Auto backend mode prefers OpenCode Zen when available. Default Ollama model is `gemini-3-flash-preview`. Default OpenRouter model is `claude-sonnet-4.6:nitro`. Default Zen model is `big-pickle`. Default Nvidia model is `nvidia/llama-3.1-nemotron-70b-instruct`. OpenRouter provides access to 50+ models through a single API, and Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-4o/GPT-5.4, Codex, Cohere Command-R, Gemini, Mistral, MiniMax, Qwen, GLM, DeepSeek, Perplexity Sonar, Arcee Trinity, Mercury, Xiaomi MiMo, Grok, and Kimi.
 
 **Onboarding & state machine:** Users connect with GitHub App (recommended) or GitHub PAT, then select an active repo before chatting. Sandbox Mode lets users start an ephemeral workspace without any GitHub auth. The codebase still contains demo/mock fallbacks: GitHub repo and PR views fall back to mock data when no GitHub token is configured, and local development uses a demo-provider path when no AI keys are configured. State machine: `onboarding → home → chat` (plus `file-browser` when sandbox files are open). The `isSandboxMode` flag bypasses auth and repo selection.
 
@@ -84,12 +84,12 @@ app/src/
   components/cards/       # Rich inline cards (PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, SandboxDownloadCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, EditorPanel, FileCard, FileListCard, BranchListCard, CIStatusCard, CommitListCard, CommitFilesCard, PRListCard, TypeCheckCard, WorkflowRunsCard, WorkflowLogsCard, SandboxStateCard, CardRenderer)
   components/filebrowser/ # File browser UI (FileActionsSheet, CommitPushSheet, FileEditor, UploadButton)
   components/ui/          # shadcn/ui component library
-  hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useOllamaConfig, useOpenRouterConfig, useZenConfig, useNvidiaConfig, useTavilyConfig, useModelCatalog, useSnapshotManager, useBranchManager, useProjectInstructions, useUsageTracking, use-mobile)
+  hooks/                  # React hooks (useChat, useGitHubAuth, useGitHubAppAuth, useGitHub, useRepos, useActiveRepo, useSandbox, useScratchpad, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useOllamaConfig, useOpenRouterConfig, useZenConfig, useNvidiaConfig, useVertexConfig, useTavilyConfig, useModelCatalog, useSnapshotManager, useBranchManager, useProjectInstructions, useUsageTracking, use-mobile)
   lib/                    # Orchestrator, tool protocol, sandbox client, agent modules, workspace context, web search, model catalog, prompts, snapshot manager
   sections/               # Screen components (OnboardingScreen, RepoPicker, FileBrowser, HomeScreen, ChatScreen)
   types/                  # TypeScript type definitions
   App.tsx                 # Root component, screen state machine, wires extracted hooks
-app/worker.ts        # Cloudflare Worker — streaming proxy to providers (Ollama/OpenRouter/Zen/Nvidia) + sandbox proxy to Modal
+app/worker.ts        # Cloudflare Worker — provider proxies, native Vertex adapter, and sandbox proxy to Modal
 cli/                 # Push CLI — local coding agent
   cli.mjs            # Entrypoint (arg parsing, interactive/headless modes, Ctrl+C abort)
   engine.mjs         # Assistant/tool loop, working memory dedup, context budget tracking
@@ -113,7 +113,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 ## Key Files
 
-- `lib/orchestrator.ts` — System prompt, multi-backend streaming (Ollama + OpenRouter + Zen + Nvidia SSE), think-token parsing, provider routing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
+- `lib/orchestrator.ts` — System prompt, multi-backend streaming, provider routing (including native Vertex headers), think-token parsing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)
 - `lib/github-tools.ts` — GitHub tool protocol (prompt-engineered function calling via JSON blocks), `delegate_coder`, `fetchProjectInstructions` (reads AGENTS.md/CLAUDE.md/GEMINI.md from repos via API), branch/merge/PR operations (`executeCreateBranch`, `executeCreatePR`, `executeMergePR`, `executeDeleteBranch`, `executeCheckPRMergeable`, `executeFindExistingPR`, `findOpenPRForBranch`, `fetchGitHubReviewDiff`, `executePostPRReview`)
 - `lib/sandbox-tools.ts` — Sandbox tool definitions, detection, execution, `SANDBOX_TOOL_PROTOCOL` prompt; includes `sandbox_edit_file` (hashline-based edits with diff output), `sandbox_edit_range`, `sandbox_search_replace`, `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (multi-file transactional edits), `classifyError()` (structured error taxonomy), `formatStructuredError()`
 - `lib/hashline.ts` — Hashline edit protocol: `calculateLineHash()` (default 7-char content hash per line, extendable to 12-char for disambiguation), `applyHashlineEdits()`, `HashlineOp` type; underpins `sandbox_edit_file` and eliminates line-number drift
@@ -125,7 +125,8 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `lib/reviewer-agent.ts` — Reviewer advisory diff review, added-line annotation for line anchors, structured `ReviewResult` parsing
 - `lib/auditor-agent.ts` — Auditor review + verdict (fail-safe to UNSAFE, uses active backend)
 - `lib/workspace-context.ts` — Builds active repo context for system prompt injection
-- `lib/providers.ts` — AI provider configs (Ollama + OpenRouter + Zen + Nvidia), role-to-model mapping, backend preference
+- `lib/providers.ts` — AI provider configs (built-ins + advanced connectors), role-to-model mapping, backend preference
+- `lib/vertex-provider.ts` — Google Vertex model catalog, service-account validation, region normalization, and native endpoint helpers
 - `lib/web-search-tools.ts` — Web search tool definitions (Tavily, Ollama native search, DuckDuckGo fallback; prompt-engineered JSON format, client-side dispatch)
 - `lib/model-catalog.ts` — Manages provider model lists and selection
 - `lib/prompts.ts` — Prompt building utilities
@@ -157,11 +158,12 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 - `hooks/useOpenRouterConfig.ts` — OpenRouter backend configuration and model selection
 - `hooks/useZenConfig.ts` — OpenCode Zen backend configuration and model selection
 - `hooks/useNvidiaConfig.ts` — Nvidia NIM backend configuration and model selection
+- `hooks/useVertexConfig.ts` — Google Vertex configuration (service account JSON, region, model, native/legacy mode)
 - `hooks/useTavilyConfig.ts` — Tavily web search API key management
 - `hooks/useApiKeyConfig.ts` — Factory for provider API key hooks (shared skeleton: localStorage getter + env var fallback + React hook)
 - `hooks/useExpandable.ts` — Generic expandable/collapsible UI state hook
 - `hooks/useUsageTracking.ts` — Usage analytics tracking
-- `hooks/useModelCatalog.ts` — 4-provider model catalog management (model lists, refresh, auto-fetch on key availability, key input state for Settings UI, active backend)
+- `hooks/useModelCatalog.ts` — Provider catalog and advanced connector state (model lists, refresh, auto-fetch on key availability, key input state for Settings UI, active backend)
 - `hooks/useSnapshotManager.ts` — Workspace snapshot auto-save/restore, idle detection, 4-hour hard cap, heartbeat tracking
 - `hooks/useBranchManager.ts` — Branch loading, display (with current branch injection), delete with confirmation, menu state
 - `hooks/useProjectInstructions.ts` — Two-phase AGENTS.md loading (GitHub API → sandbox filesystem upgrade), workspace context building, template/AI creation
@@ -173,7 +175,7 @@ wrangler.jsonc       # Cloudflare Workers config (repo root)
 
 Environment variables are defined in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI at runtime. When no GitHub token is configured, repo and PR views fall back to mock/demo data. In local development, with no AI keys configured, the app uses the demo-provider path. Live AI runs require a configured provider key.
 
-Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth).
+Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_VERTEX_SERVICE_ACCOUNT_JSON` / `VITE_VERTEX_REGION` / `VITE_VERTEX_MODEL` (Google Vertex native config), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth).
 
 ## Design Principles
 

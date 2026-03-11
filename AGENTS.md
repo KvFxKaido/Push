@@ -39,7 +39,7 @@ Backend/model routing is currently split. Settings stores default backend/model 
 
 ### AI Backends
 
-The web app has four built-in providers, all using OpenAI-compatible SSE streaming: Ollama, OpenRouter, OpenCode Zen, and Nvidia NIM. It also exposes opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex in advanced Settings. Any single built-in provider key is sufficient; private connectors additionally require a base URL plus a model/deployment value, and can each save up to three deployment presets. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Settings stores default backend/model picks, the chat composer keeps a per-chat selection, delegated Coder runs inherit that chat-locked provider/model, Reviewer keeps its own sticky provider/model selection, and Auditor still follows the active backend/default-provider path. Once a chat sends its first message, that chat's provider/model are locked and changing either starts a new chat. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, `/api/nvidia/chat`, and the opt-in private-connector routes `/api/azure/chat`, `/api/bedrock/chat`, and `/api/vertex/chat`.
+The web app has four built-in providers, all using OpenAI-compatible SSE streaming: Ollama, OpenRouter, OpenCode Zen, and Nvidia NIM. It also exposes opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex in advanced Settings. Any single built-in provider key is sufficient. Azure and Bedrock use the existing base URL + model/deployment setup and can each save up to three deployment presets. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex's OpenAPI surface, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into OpenAI-style SSE for the app; legacy raw Vertex OpenAPI config still works as a fallback. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Settings stores default backend/model picks, the chat composer keeps a per-chat selection, delegated Coder runs inherit that chat-locked provider/model, Reviewer keeps its own sticky provider/model selection, and Auditor still follows the active backend/default-provider path. Once a chat sends its first message, that chat's provider/model are locked and changing either starts a new chat. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, `/api/nvidia/chat`, and the opt-in private-connector routes `/api/azure/chat`, `/api/bedrock/chat`, and `/api/vertex/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
@@ -247,6 +247,7 @@ Push/
 | `lib/auditor-agent.ts` | Auditor review + verdict (fail-safe, uses active backend) |
 | `lib/workspace-context.ts` | Active repo context builder |
 | `lib/providers.ts` | AI provider config and role model mapping |
+| `lib/vertex-provider.ts` | Google Vertex model catalog, service-account validation, region normalization, and native endpoint helpers |
 | `lib/web-search-tools.ts` | Web search tools (Tavily, Ollama native, DuckDuckGo fallback) |
 | `lib/model-catalog.ts` | Provider model lists and selection |
 | `lib/prompts.ts` | Prompt building utilities |
@@ -281,7 +282,8 @@ Push/
 | `hooks/useNvidiaConfig.ts` | Nvidia NIM backend configuration and model selection |
 | `hooks/useTavilyConfig.ts` | Tavily web search API key management |
 | `hooks/useApiKeyConfig.ts` | Factory for provider API key hooks (shared localStorage getter + env var fallback + React hook) |
-| `hooks/useModelCatalog.ts` | 4-provider model catalog (model lists, refresh, key input state, active backend) |
+| `hooks/useVertexConfig.ts` | Google Vertex configuration (service account JSON, region, model, native/legacy mode) |
+| `hooks/useModelCatalog.ts` | Provider catalog and advanced connector state (model lists, refresh, key input state, active backend) |
 | `hooks/useSnapshotManager.ts` | Workspace snapshot auto-save/restore, idle detection, 4-hour hard cap |
 | `hooks/useBranchManager.ts` | Branch loading, display, delete with confirmation, menu state |
 | `hooks/useProjectInstructions.ts` | Two-phase AGENTS.md loading, workspace context, template/AI creation |
@@ -318,6 +320,7 @@ Push/
 ## Security Notes
 
 - API keys never exposed to client in production (Worker proxies all AI calls)
+- Google Vertex service-account JSON is currently stored locally when configured in the web app
 - Auditor gate is fail-safe for standard commits (`sandbox_prepare_commit` path); draft checkpoints via `sandbox_save_draft` are explicitly unaudited
 - Auditor defaults to UNSAFE on any error (fail-safe design)
 - Repo context is hard-locked — Orchestrator only sees selected repo

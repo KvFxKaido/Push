@@ -9,7 +9,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Type:** AI Coding Agent — Mobile PWA + Local CLI
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** The web app ships with four built-in providers (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) plus opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex. All use OpenAI-compatible SSE streaming. Settings stores default backend/model picks and the app's active backend preference, chat keeps its own current selection, delegated Coder runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor still follows the active backend rather than the chat lock. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
+*   **AI Backend:** The web app ships with four built-in providers (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) plus opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex. The built-ins, Azure, and Bedrock use OpenAI-compatible SSE streaming. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex OpenAPI, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into the app's OpenAI-style SSE stream; legacy raw Vertex OpenAPI config still works as a fallback. Settings stores default backend/model picks and the app's active backend preference, chat keeps its own current selection, delegated Coder runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor still follows the active backend rather than the chat lock. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
 *   **Current Product Focus:** CLI/TUI terminal UX improvements (CLI-first, transcript-first; no full-screen TUI rewrite).
 
 ## Tech Stack
@@ -20,7 +20,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 | **Styling** | Tailwind CSS 3, shadcn/ui (Radix primitives) |
 | **Backend** | Cloudflare Workers (TypeScript) |
 | **Sandbox** | Modal (Serverless Python Containers) |
-| **AI Integration** | OpenAI-compatible streaming (built-ins: Ollama, OpenRouter, OpenCode Zen, Nvidia NIM; opt-in private connectors: Azure, Bedrock, Vertex) |
+| **AI Integration** | OpenAI-compatible streaming for built-ins plus Azure/Bedrock private connectors; native Google Vertex service-account flow for Gemini and Claude |
 | **APIs** | GitHub REST API |
 
 ## Architecture
@@ -118,7 +118,7 @@ Push/
 │   │   │   ├── cards/     # PRCard, SandboxCard, DiffPreviewCard, AuditVerdictCard, FileSearchCard, CommitReviewCard, TestResultsCard, EditorCard, and more
 │   │   │   ├── filebrowser/ # FileActionsSheet, CommitPushSheet, FileEditor, UploadButton
 │   │   │   └── ui/        # shadcn/ui library
-│   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useTavilyConfig, useUsageTracking, etc.)
+│   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useVertexConfig, useTavilyConfig, useUsageTracking, etc.)
 │   │   ├── lib/           # Core Logic
 │   │   │   ├── orchestrator.ts    # Agent coordination & streaming
 │   │   │   ├── coder-agent.ts     # Coder sub-agent loop, working memory, acceptance criteria, onWorkingMemoryUpdate
@@ -130,6 +130,7 @@ Push/
 │   │   │   ├── tool-dispatch.ts   # Unified dispatch, detectAllToolCalls(), multi-tool support
 │   │   │   ├── web-search-tools.ts # Web search (Tavily, Ollama native, DuckDuckGo)
 │   │   │   ├── model-catalog.ts   # Provider model lists and selection
+│   │   │   ├── vertex-provider.ts # Google Vertex model catalog, service-account helpers, native endpoints
 │   │   │   ├── prompts.ts         # Prompt building utilities
 │   │   │   ├── snapshot-manager.ts # Workspace snapshot management
 │   │   │   └── ...                # file-processing, file-utils, codemirror-*, utils
@@ -137,7 +138,7 @@ Push/
 │   │   ├── types/         # Shared TypeScript definitions
 │   │   ├── App.tsx        # Main entry & routing
 │   │   └── main.tsx       # React root
-│   ├── worker.ts          # Cloudflare Worker (AI & Sandbox Proxy)
+│   ├── worker.ts          # Cloudflare Worker (AI, native Vertex adapter, and Sandbox Proxy)
 │   ├── package.json       # Frontend dependencies & scripts
 │   ├── tsconfig.json      # TypeScript configuration
 │   └── vite.config.ts     # Vite configuration
@@ -171,7 +172,7 @@ Push/
 ### Prerequisites
 *   Node.js & npm
 *   Python (for Modal sandbox deployment)
-*   API Keys: Ollama/OpenRouter/Zen/Nvidia (AI), GitHub (Auth/API)
+*   API Keys: Ollama/OpenRouter/Zen/Nvidia (AI), optional Google Vertex service account JSON, GitHub (Auth/API)
 
 ### Setup & Run
 1.  **Install Frontend Dependencies:**
@@ -195,7 +196,7 @@ Push/
 ### Environment
 Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI. When no GitHub token is configured, repo and PR views fall back to mock/demo data. In local development, with no AI keys configured, the app uses the demo-provider path.
 
-Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
+Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_VERTEX_SERVICE_ACCOUNT_JSON` / `VITE_VERTEX_REGION` / `VITE_VERTEX_MODEL` (Google Vertex native config), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
 
 ## Coding Conventions
 *   **TypeScript:** Strict mode enabled. Explicit return types required on exported functions.
