@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import { readFromSandbox, execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
 import { fetchProjectInstructions } from '@/lib/github-tools';
+import { buildEffectiveProjectInstructions } from '@/lib/push-built-in-context';
 import { buildWorkspaceContext, sanitizeProjectInstructions } from '@/lib/workspace-context';
 import type { ActiveRepo, RepoWithActivity } from '@/types';
 import type { SandboxStatus } from '@/hooks/useSandbox';
@@ -89,6 +90,12 @@ export function useProjectInstructions(
   const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
   const [creatingAgentsMdWithAI, setCreatingAgentsMdWithAI] = useState(false);
 
+  const applyEffectiveInstructions = useCallback((rawContent: string | null) => {
+    const effective = buildEffectiveProjectInstructions(activeRepo?.full_name, rawContent);
+    setAgentsMdContent(effective);
+    setAgentsMd(effective);
+  }, [activeRepo?.full_name, setAgentsMd]);
+
   // Helpers
   const refreshProjectInstructionsFromSandbox = useCallback(async (sandboxId: string): Promise<string | null> => {
     for (const path of PROJECT_INSTRUCTION_PATHS) {
@@ -96,15 +103,14 @@ export function useProjectInstructions(
         const result = await readFromSandbox(sandboxId, path);
         const content = result.content || '';
         if (!content.trim()) continue;
-        setAgentsMdContent(content);
-        setAgentsMd(content);
+        applyEffectiveInstructions(content);
         return content;
       } catch {
         continue;
       }
     }
     return null;
-  }, [setAgentsMd]);
+  }, [applyEffectiveInstructions]);
 
   const autoCommitAgentsMdInSandbox = useCallback(async (sandboxId: string): Promise<{ ok: boolean; message: string }> => {
     const commitResult = await execInSandbox(
@@ -140,19 +146,17 @@ export function useProjectInstructions(
     fetchProjectInstructions(activeRepo.full_name)
       .then((result) => {
         if (cancelled) return;
-        setAgentsMdContent(result?.content ?? null);
-        setAgentsMd(result?.content ?? null);
+        applyEffectiveInstructions(result?.content ?? null);
         setProjectInstructionsChecked(true);
       })
       .catch(() => {
         if (cancelled) return;
-        setAgentsMdContent(null);
-        setAgentsMd(null);
+        applyEffectiveInstructions(null);
         setProjectInstructionsChecked(true);
         setProjectInstructionsCheckFailed(true);
       });
     return () => { cancelled = true; };
-  }, [activeRepo, setAgentsMd]);
+  }, [activeRepo, applyEffectiveInstructions, setAgentsMd]);
 
   // Phase B — Sandbox upgrade (overrides Phase A when sandbox is ready)
   useEffect(() => {
@@ -161,14 +165,13 @@ export function useProjectInstructions(
     readFromSandbox(sandbox.sandboxId, '/workspace/AGENTS.md')
       .then((result) => {
         if (cancelled) return;
-        setAgentsMdContent(result.content);
-        setAgentsMd(result.content);
+        applyEffectiveInstructions(result.content);
       })
       .catch(() => {
         // Sandbox read failed — keep Phase A content
       });
     return () => { cancelled = true; };
-  }, [sandbox.status, sandbox.sandboxId, setAgentsMd]);
+  }, [sandbox.status, sandbox.sandboxId, applyEffectiveInstructions]);
 
   // Build workspace context
   useEffect(() => {

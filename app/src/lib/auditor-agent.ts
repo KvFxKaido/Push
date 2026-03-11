@@ -12,6 +12,7 @@
 import type { ChatMessage, AuditVerdictCardData } from '@/types';
 import { getActiveProvider, getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
+import { buildAuditorContextBlock, type AuditorPromptContext } from './role-context';
 
 import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats } from './diff-utils';
@@ -41,13 +42,14 @@ Review criteria:
 - Dead code or debug artifacts (console.log) → SAFE but note as low risk
 - Normal code changes with no security implications → SAFE
 
-Context limitation: You only see the diff, not the full codebase. Where your assessment depends on broader context you cannot see, note the uncertainty explicitly in the risk description rather than defaulting to UNSAFE.
+Context limitation: You only see the diff plus any runtime context block appended below, not the full codebase. Where your assessment depends on broader context you cannot see, note the uncertainty explicitly in the risk description rather than defaulting to UNSAFE.
 
 Be strict. When in doubt, lean toward UNSAFE. False positives are acceptable; false negatives are not.`;
 
 export async function runAuditor(
   diff: string,
   onStatus: (phase: string) => void,
+  context?: AuditorPromptContext,
 ): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
   const filesReviewed = parseDiffStats(diff).filesChanged;
 
@@ -68,6 +70,10 @@ export async function runAuditor(
   const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'auditor');
   const auditorModelId = roleModel?.id; // undefined falls back to provider default
+  const runtimeContext = buildAuditorContextBlock(context);
+  const systemPrompt = runtimeContext
+    ? `${AUDITOR_SYSTEM_PROMPT}\n\n${runtimeContext}`
+    : AUDITOR_SYSTEM_PROMPT;
 
   onStatus('Auditor reviewing...');
 
@@ -93,7 +99,7 @@ export async function runAuditor(
         undefined, // no workspace context
         false,     // no sandbox
         auditorModelId,
-        AUDITOR_SYSTEM_PROMPT,
+        systemPrompt,
       );
     },
   );

@@ -22,6 +22,8 @@ interface HubReviewTabProps {
   activeBranch?: string;
   /** default branch name — used for GitHub branch-vs-default review */
   defaultBranch?: string;
+  /** project instructions loaded for this repo, if available */
+  projectInstructions?: string | null;
   onOpenDiff: (payload: {
     diffData: DiffPreviewCardData;
     label: string;
@@ -263,6 +265,7 @@ export function HubReviewTab({
   repoFullName,
   activeBranch,
   defaultBranch,
+  projectInstructions,
   onOpenDiff,
   onFixFinding,
 }: HubReviewTabProps) {
@@ -600,7 +603,22 @@ export function HubReviewTab({
 
       const reviewResult = await runReviewer(
         diff,
-        { provider: selectedProvider, model: selectedReviewModel || undefined },
+        {
+          provider: selectedProvider,
+          model: selectedReviewModel || undefined,
+          context: {
+            repoFullName,
+            activeBranch,
+            defaultBranch,
+            source:
+              nextContext?.kind === 'github-pr' ? 'pr-diff' :
+              nextContext?.kind === 'github-branch' ? 'branch-diff' :
+              nextContext?.kind === 'github-commit' ? 'last-commit' :
+              'working-tree',
+            sourceLabel: nextContext?.label,
+            projectInstructions,
+          },
+        },
         (phase) => setStatus(phase),
       );
       const stats = parseDiffStats(diff);
@@ -631,6 +649,7 @@ export function HubReviewTab({
     sandboxId,
     selectedProvider,
     selectedReviewModel,
+    projectInstructions,
   ]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);

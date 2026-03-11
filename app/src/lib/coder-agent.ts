@@ -503,15 +503,16 @@ export async function runCoderAgent(
   const roleModel = getModelForRole(activeProvider, 'coder');
   const coderModelId = modelOverride || roleModel?.id; // undefined falls back to provider default
 
-  // Build system prompt, optionally including user identity and AGENTS.md
+  // Build system prompt, optionally including user identity and effective
+  // project instructions (repo file plus any built-in app context).
   let systemPrompt = buildCoderSystemPrompt();
   const identityBlock = buildUserIdentityBlock(getUserProfile());
   if (identityBlock) {
     systemPrompt += '\n\n' + identityBlock;
   }
   if (agentsMd) {
-    const truncatedAgentsMd = truncateContent(agentsMd, MAX_AGENTS_MD_SIZE, 'AGENTS.md');
-    systemPrompt += `\n\nAGENTS.MD — Project instructions from the repository:\n${truncatedAgentsMd}`;
+    const truncatedAgentsMd = truncateContent(agentsMd, MAX_AGENTS_MD_SIZE, 'project instructions');
+    systemPrompt += `\n\nPROJECT INSTRUCTIONS — Repository instructions and built-in app context:\n${truncatedAgentsMd}`;
   }
   // Web search tool — prompt-engineered, all providers use client-side dispatch
   systemPrompt += '\n' + WEB_SEARCH_TOOL_PROTOCOL;

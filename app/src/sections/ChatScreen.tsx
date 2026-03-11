@@ -1058,6 +1058,7 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
         repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
         repoFullName={activeRepo?.full_name}
+        projectInstructions={instructions.agentsMdContent}
         protectMainEnabled={protectMain.isProtected}
         showToolActivity={showToolActivity}
         scratchpadContent={scratchpad.content}
@@ -1121,6 +1122,7 @@ export function ChatScreen(props: ChatScreenProps) {
           onOpenChange={setShowMergeFlow}
           activeRepo={activeRepo}
           sandboxId={sandbox.sandboxId}
+          projectInstructions={instructions.agentsMdContent}
           setCurrentBranch={setCurrentBranch}
         />
       )}

@@ -972,7 +972,7 @@ export function useChat(
     ensureSandboxRef.current = fn;
   }, []);
 
-  // --- AGENTS.md content (set from App.tsx when sandbox is ready) ---
+  // --- Effective project instructions (repo file + built-in app context) ---
 
   const agentsMdRef = useRef<string | null>(null);
 

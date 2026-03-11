@@ -11,6 +11,7 @@ import type { ChatMessage, ReviewComment, ReviewResult } from '@/types';
 import type { AIProviderType } from '@/types';
 import { getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
+import { buildReviewerContextBlock, type ReviewerPromptContext } from './role-context';
 import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats } from './diff-utils';
 
@@ -102,6 +103,7 @@ Keep comments specific and actionable. Prefer 0-5 high-signal comments total. Us
 export interface ReviewerOptions {
   provider: AIProviderType;
   model?: string; // explicit override; falls back to role default
+  context?: ReviewerPromptContext;
 }
 
 export async function runReviewer(
@@ -115,11 +117,15 @@ export async function runReviewer(
   const truncated = slicedDiff.length < annotatedDiff.length;
   const totalFiles = parseDiffStats(diff).filesChanged;
   const filesReviewed = truncated ? parseDiffStats(slicedDiff).filesChanged : totalFiles;
-  const { provider, model: modelOverride } = options;
+  const { provider, model: modelOverride, context } = options;
 
   const { streamFn } = getProviderStreamFn(provider);
   const roleModel = getModelForRole(provider, 'reviewer');
   const modelId = modelOverride || roleModel?.id;
+  const runtimeContext = buildReviewerContextBlock(context);
+  const systemPrompt = runtimeContext
+    ? `${REVIEWER_SYSTEM_PROMPT}\n\n${runtimeContext}`
+    : REVIEWER_SYSTEM_PROMPT;
 
   onStatus('Reviewer reading diff…');
 
@@ -145,7 +151,7 @@ export async function runReviewer(
         undefined,
         false,
         modelId,
-        REVIEWER_SYSTEM_PROMPT,
+        systemPrompt,
       );
     },
   );

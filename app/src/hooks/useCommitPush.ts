@@ -110,7 +110,10 @@ export function useCommitPush(sandboxId: string) {
         return;
       }
 
-      const auditResult = await runAuditor(diffText, () => {});
+      const auditResult = await runAuditor(diffText, () => {}, {
+        source: 'working-tree-commit',
+        sourceLabel: 'Working tree diff before commit/push',
+      });
 
       setState((s) => ({ ...s, auditVerdict: auditResult.card }));
 

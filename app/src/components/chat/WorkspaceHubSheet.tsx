@@ -90,6 +90,7 @@ interface WorkspaceHubSheetProps {
   repoName?: string;
   /** owner/name format — passed to Review tab for PR detection */
   repoFullName?: string;
+  projectInstructions?: string | null;
   protectMainEnabled: boolean;
   showToolActivity: boolean;
   // Scratchpad
@@ -242,6 +243,7 @@ export function WorkspaceHubSheet({
   reviewProviderModels,
   repoName,
   repoFullName,
+  projectInstructions,
   protectMainEnabled,
   showToolActivity,
   scratchpadContent,
@@ -428,7 +430,16 @@ export function WorkspaceHubSheet({
 
       // Phase: Auditing
       setCommitPhase('auditing');
-      const auditResult = await runAuditor(diffResult.diff, () => {});
+      const auditResult = await runAuditor(diffResult.diff, () => {}, {
+        repoFullName,
+        activeBranch: targetBranchName,
+        defaultBranch: branchProps.defaultBranch,
+        source: 'working-tree-commit',
+        sourceLabel: target.mode === 'new'
+          ? `Working tree commit after branching to ${targetBranchName}`
+          : `Working tree commit on ${targetBranchName}`,
+        projectInstructions,
+      });
       if (auditResult.verdict === 'unsafe') {
         setCommitPhase('error');
         setCommitError(`Commit blocked by Auditor: ${auditResult.card.summary}`);
@@ -511,6 +522,8 @@ export function WorkspaceHubSheet({
     branchProps,
     currentBranchName,
     onSandboxBranchSwitch,
+    projectInstructions,
+    repoFullName,
   ]);
 
   const suggestCommitMessage = useCallback(async () => {
@@ -1193,6 +1206,7 @@ export function WorkspaceHubSheet({
                   repoFullName={repoFullName}
                   activeBranch={branchProps.currentBranch}
                   defaultBranch={branchProps.defaultBranch}
+                  projectInstructions={projectInstructions}
                   onOpenDiff={handleOpenReviewDiff}
                   onFixFinding={onFixReviewFinding}
                 />

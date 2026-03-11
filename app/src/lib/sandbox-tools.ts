@@ -2208,6 +2208,10 @@ export async function executeSandboxToolCall(
         const auditResult = await runAuditor(
           diffResult.diff,
           (phase) => console.log(`[Push] Auditor: ${phase}`),
+          {
+            source: 'sandbox-prepare-commit',
+            sourceLabel: 'sandbox_prepare_commit preflight',
+          },
         );
 
         if (auditResult.verdict === 'unsafe') {

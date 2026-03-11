@@ -61,6 +61,7 @@ export interface MergeFlowSheetProps {
   onOpenChange: (open: boolean) => void;
   activeRepo: ActiveRepo;
   sandboxId: string | null;
+  projectInstructions?: string | null;
   setCurrentBranch: (branch: string) => void;
 }
 
@@ -148,6 +149,7 @@ function MergeFlowSheet({
   onOpenChange,
   activeRepo,
   sandboxId,
+  projectInstructions,
   setCurrentBranch,
 }: MergeFlowSheetProps) {
   const currentBranch = activeRepo.current_branch || activeRepo.default_branch;
@@ -409,6 +411,14 @@ function MergeFlowSheet({
         setStatusText('Auditor reviewing...');
         const result = await runAuditor(diff, (phase) => {
           if (!cancelled && !abortRef.current) setStatusText(phase);
+        }, {
+          repoFullName: repo,
+          activeBranch: currentBranch,
+          defaultBranch,
+          source: 'pr-merge',
+          prNumber: pr.number,
+          sourceLabel: `PR #${pr.number}: ${pr.title}`,
+          projectInstructions,
         });
         if (cancelled || abortRef.current) return;
 
@@ -433,7 +443,7 @@ function MergeFlowSheet({
 
     runAudit();
     return () => { cancelled = true; };
-  }, [open, step, prInfo, repo]);
+  }, [open, step, prInfo, repo, currentBranch, defaultBranch, projectInstructions]);
 
   // ── Step 4: Check mergeability ─────────────────────────────────────
 
