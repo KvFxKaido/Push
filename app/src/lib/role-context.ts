@@ -1,5 +1,7 @@
 import { sanitizeProjectInstructions } from './workspace-context';
 
+// Keep role-level policy hints compact so Reviewer/Auditor get the essentials
+// without crowding out the diff itself.
 const MAX_ROLE_PROJECT_HINTS_CHARS = 2500;
 
 export type ReviewerPromptSource = 'branch-diff' | 'pr-diff' | 'last-commit' | 'working-tree';
@@ -88,6 +90,8 @@ export function buildReviewerContextBlock(context?: ReviewerPromptContext): stri
 }
 
 export function buildAuditorContextBlock(context?: AuditorPromptContext): string {
+  // Unlike Reviewer, Auditor always gets the trust-boundary reminder even when no
+  // repo-specific context is available. That keeps the fail-safe policy explicit.
   const lines = ['## Audit Run Context'];
   const common = formatCommonContext(context);
   if (common.length > 0) lines.push(...common);

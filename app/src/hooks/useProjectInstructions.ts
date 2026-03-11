@@ -156,7 +156,7 @@ export function useProjectInstructions(
         setProjectInstructionsCheckFailed(true);
       });
     return () => { cancelled = true; };
-  }, [activeRepo, applyEffectiveInstructions, setAgentsMd]);
+  }, [activeRepo, applyEffectiveInstructions]);
 
   // Phase B — Sandbox upgrade (overrides Phase A when sandbox is ready)
   useEffect(() => {

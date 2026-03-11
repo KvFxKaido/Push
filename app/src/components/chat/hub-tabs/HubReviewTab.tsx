@@ -601,6 +601,12 @@ export function HubReviewTab({
         return;
       }
 
+      const reviewSourceForPrompt =
+        nextContext.kind === 'github-pr' ? 'pr-diff'
+          : nextContext.kind === 'github-branch' ? 'branch-diff'
+            : nextContext.kind === 'github-commit' ? 'last-commit'
+              : 'working-tree';
+
       const reviewResult = await runReviewer(
         diff,
         {
@@ -610,12 +616,8 @@ export function HubReviewTab({
             repoFullName,
             activeBranch,
             defaultBranch,
-            source:
-              nextContext?.kind === 'github-pr' ? 'pr-diff' :
-              nextContext?.kind === 'github-branch' ? 'branch-diff' :
-              nextContext?.kind === 'github-commit' ? 'last-commit' :
-              'working-tree',
-            sourceLabel: nextContext?.label,
+            source: reviewSourceForPrompt,
+            sourceLabel: nextContext.label,
             projectInstructions,
           },
         },

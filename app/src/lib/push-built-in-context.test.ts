@@ -6,9 +6,9 @@ import {
 } from './push-built-in-context';
 
 describe('push built-in project context', () => {
-  it('recognizes the Push repo by full name suffix', () => {
+  it('recognizes only the canonical Push repo', () => {
     expect(isPushRepo('KvFxKaido/Push')).toBe(true);
-    expect(isPushRepo('someone-else/Push')).toBe(true);
+    expect(isPushRepo('someone-else/Push')).toBe(false);
     expect(isPushRepo('someone-else/not-push')).toBe(false);
   });
 

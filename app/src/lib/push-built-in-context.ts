@@ -4,7 +4,12 @@
  * Push supports repo-authored instruction files, but the app should not depend
  * on this repository's root markdown to understand its own core architecture.
  * This block keeps the highest-signal operational context close to the runtime.
+ *
+ * Keep this high-level summary in sync with major architecture/policy changes
+ * documented in the root repo docs. It is intentionally condensed, not generated.
  */
+
+const CANONICAL_PUSH_REPO = 'kvfxkaido/push';
 
 const PUSH_REPO_CONTEXT = `# Push Built-In Project Context
 
@@ -46,7 +51,7 @@ Sandbox:
 
 export function isPushRepo(repoFullName?: string | null): boolean {
   const value = (repoFullName || '').trim().toLowerCase();
-  return value.endsWith('/push');
+  return value === CANONICAL_PUSH_REPO;
 }
 
 export function getBuiltInProjectInstructions(repoFullName?: string | null): string | null {
