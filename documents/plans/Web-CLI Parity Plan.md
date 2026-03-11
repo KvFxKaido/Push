@@ -94,6 +94,7 @@ Wrap `git_commit` with an LLM-driven diff review that produces a SAFE/UNSAFE ver
 - [ ] Add `--no-audit` flag for explicit bypass (headless mode only)
 - [ ] Configurable in `config-store.mjs`: `auditCommits: true|false` (default: `true`)
 - [ ] Test: SAFE passes, UNSAFE blocks, LLM timeout blocks, `--no-audit` bypasses, unstage-on-UNSAFE works cleanly
+- [ ] **TUI:** Emit a color-coded verdict event (`[SAFE]` green / `[UNSAFE]` red) in the transcript via the existing `tool_result` event stream
 
 **Reference:** `lib/auditor-agent.ts` (verdict parsing, fail-safe logic), `lib/diff-utils.ts` (diff stat parsing for auditor context).
 
@@ -127,6 +128,7 @@ Session-scoped notepad the agent can read/write, distinct from cross-session `sa
 - [ ] Escape content to prevent prompt injection (zero-width space at delimiters, matching web approach)
 - [ ] Size cap: 50KB (matching web)
 - [ ] Test: set/append/read round-trip, injection escaping, size cap enforcement
+- [ ] **TUI:** Add `/scratchpad` command to view current content in a scrollable panel; show scratchpad byte size in the status bar when non-empty
 
 **Reference:** `lib/scratchpad-tools.ts`, `hooks/useScratchpad.ts`.
 
@@ -147,6 +149,7 @@ Local diff review with structured findings. No sandbox or GitHub API required â€
 - [ ] Provider/model selection: inherit active provider or `--provider`/`--model` override
 - [ ] 90s timeout (matching web)
 - [ ] Test: structured output parsing, severity levels, diff source selection, exit codes
+- [ ] **TUI:** Add `/review [working|staged|branch]` as an in-session command; render findings as color-coded transcript entries (critical=red, warning=yellow, suggestion=cyan, note=dim)
 
 **Reference:** `lib/reviewer-agent.ts` (prompt, `ReviewComment` parsing, severity enum).
 

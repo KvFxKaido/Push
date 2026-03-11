@@ -1,12 +1,13 @@
 # Push CLI
 
-Local coding agent for your terminal. Reads files, runs commands, writes code — backed by the same role-based agent architecture as the Push mobile app, but operating directly on your filesystem.
+Local coding agent for your terminal. The terminal surface is moving toward a full-screen TUI, with the classic REPL and headless runs still supported. It uses the same role-based agent architecture as the Push mobile app, but operates directly on your filesystem.
 
 ## Quick start
 
 ```bash
 # From repo root
-./push
+PUSH_TUI_ENABLED=1 ./push
+./push run --task "Implement X and run tests"
 
 # Or with Node directly
 node cli/cli.mjs
@@ -22,7 +23,17 @@ This walks you through provider, model, API key, and sandbox settings using numb
 
 ## Modes
 
-### Interactive (default fallback)
+### TUI (current terminal focus)
+
+```bash
+PUSH_TUI_ENABLED=1 ./push
+PUSH_TUI_ENABLED=1 ./push --session sess_abc123
+PUSH_TUI_ENABLED=1 ./push tui
+```
+
+Starts the full-screen TUI. This is where most current terminal UX work is landing. When `PUSH_TUI_ENABLED=1`, bare `./push` and `./push --session` open the TUI by default.
+
+### Interactive REPL (default fallback)
 
 ```bash
 ./push
@@ -30,11 +41,11 @@ This walks you through provider, model, API key, and sandbox settings using numb
 ./push --session sess_abc123   # resume a previous session
 ```
 
-Starts a REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (rm -rf, sudo, force-push, etc.) prompt for approval before running, with one-shot, session-trust, and saved-prefix trust options.
+With TUI disabled, this starts the classic REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (rm -rf, sudo, force-push, etc.) prompt for approval before running, with one-shot, session-trust, and saved-prefix trust options.
 
 If `PUSH_TUI_ENABLED=1`, bare `./push` launches the full-screen TUI by default. Use `./push tui` explicitly to force TUI mode, or unset the flag to use the classic REPL as default.
 
-In-session commands:
+Shared in-session commands:
 
 - `/help` — show commands
 - `/new` — start a fresh session in the same workspace/provider/model

@@ -125,16 +125,17 @@ Provider keys can also be pasted into Settings at runtime. Azure OpenAI and Bedr
 
 ## Push CLI
 
-Push also ships with a local terminal agent that uses the same role-based architecture on your filesystem.
+Push also ships with a local terminal agent that uses the same role-based architecture on your filesystem. Current terminal work is going into the full-screen TUI, while the classic REPL and headless `push run` flow remain supported.
 
 ```bash
 # from repo root
 ./push config init
-./push
+PUSH_TUI_ENABLED=1 ./push
 ./push run --task "Implement X and run tests"
 ```
 
-- **Interactive mode** (`./push`) streams responses and supports in-session `/model` + `/provider` switching.
+- **TUI** is the current terminal focus. Enable it with `PUSH_TUI_ENABLED=1`; then bare `./push` opens the full-screen interface.
+- **Interactive fallback** (`./push` with TUI disabled) keeps the classic REPL with live streaming and in-session `/model` + `/provider` switching.
 - **Headless mode** (`./push run --task "..."`) runs one task and exits, with optional `--accept` checks.
 
 Full CLI docs and command reference: `cli/README.md`.

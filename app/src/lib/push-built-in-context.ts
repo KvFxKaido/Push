@@ -13,7 +13,9 @@ const CANONICAL_PUSH_REPO = 'kvfxkaido/push';
 
 const PUSH_REPO_CONTEXT = `# Push Built-In Project Context
 
-Push is a mobile-first AI coding agent with a web app plus local CLI.
+Push is an AI coding agent with a web app plus a local CLI/TUI.
+
+Current terminal work is focused on the CLI's full-screen TUI, while classic REPL and headless runs remain supported.
 
 Core roles:
 - Orchestrator: primary conversational lead

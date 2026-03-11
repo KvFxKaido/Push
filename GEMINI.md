@@ -10,7 +10,7 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
 *   **AI Backend:** The web app ships with four built-in providers (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) plus opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex. The built-ins, Azure, and Bedrock use OpenAI-compatible SSE streaming. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex OpenAPI, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into the app's OpenAI-style SSE stream; legacy raw Vertex OpenAPI config still works as a fallback. Settings stores default backend/model picks and the app's active backend preference, chat keeps its own current selection, delegated Coder runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor now follows the same chat lock when available. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
-*   **Current Product Focus:** CLI/TUI terminal UX improvements (CLI-first, transcript-first; no full-screen TUI rewrite).
+*   **Current Product Focus:** CLI/TUI terminal UX improvements, with most active terminal work going into the full-screen TUI while REPL and headless flows remain supported.
 
 ## Tech Stack
 
@@ -53,17 +53,18 @@ Push is a personal chat interface backed by role-based AI agents (Orchestrator, 
 
 Local coding agent for the terminal. Same role-based agent architecture as the web app, operating directly on the filesystem.
 
-Current roadmap focus is improving terminal ergonomics around the transcript-first CLI flow (`push`) and daemon attach/event streaming (`pushd`), not building a full-screen TUI.
+Current roadmap focus is the full-screen TUI and surrounding terminal/session ergonomics around `push`, while keeping the classic REPL and `push run` flow working.
 
 ### Quick Start
 ```bash
-./push                              # interactive session
+PUSH_TUI_ENABLED=1 ./push           # TUI
 ./push run --task "Fix the bug"     # headless (single task, no interaction)
 ./push config init                  # configure provider/model/API key
 ```
 
 ### Modes
-*   **Interactive:** REPL with streaming responses, tool execution, and Ctrl+C per-prompt cancellation. High-risk commands prompt for approval, with one-shot, session-trust, and saved-prefix trust options.
+*   **TUI:** Full-screen terminal UI. Bare `./push` opens it when `PUSH_TUI_ENABLED=1`.
+*   **Interactive fallback:** REPL when TUI is disabled; same streaming tool loop and approval flow.
 *   **Headless:** Single task, exits when done. `--accept <cmd>` runs post-task acceptance checks. `--json` for structured output. Exit code 130 on SIGINT.
 
 ### Tools
