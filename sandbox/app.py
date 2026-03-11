@@ -695,6 +695,74 @@ def _truncate_read_content(content: str, start_line: int, max_chars: int) -> dic
     }
 
 
+def _run_environment_probe(sb):
+    """Quick post-create environment validation. Single exec, typically <500ms."""
+    script = (
+        'echo "---VERSIONS---";'
+        'echo "node:$(node -v 2>/dev/null || echo MISSING)";'
+        'echo "npm:$(npm -v 2>/dev/null || echo MISSING)";'
+        'echo "git:$(git --version 2>/dev/null | head -c 40 || echo MISSING)";'
+        'echo "python:$(python3 -V 2>/dev/null || echo MISSING)";'
+        'echo "---DISK---";'
+        'df -BM /workspace 2>/dev/null | tail -1 | awk \'{print $4}\';'
+        'echo "---MARKERS---";'
+        'cd /workspace 2>/dev/null && for f in package.json package-lock.json yarn.lock pnpm-lock.yaml'
+        ' requirements.txt pyproject.toml setup.py Cargo.toml go.mod pom.xml Gemfile Makefile; do'
+        ' [ -f "$f" ] && echo "$f"; done;'
+        'echo "---END---"'
+    )
+    try:
+        p = sb.exec("sh", "-c", script)
+        p.wait()
+        stdout = p.stdout.read()
+    except Exception:
+        return None
+    if not stdout:
+        return None
+
+    sections = {}
+    current = None
+    for line in stdout.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('---') and stripped.endswith('---') and len(stripped) > 6:
+            current = stripped.strip('-')
+            sections[current] = []
+        elif current and stripped:
+            sections[current].append(stripped)
+
+    tools = {}
+    warnings = []
+    for item in sections.get('VERSIONS', []):
+        if ':' not in item:
+            continue
+        name, version = item.split(':', 1)
+        if version == 'MISSING':
+            warnings.append(f'{name} not available')
+        else:
+            tools[name] = version
+
+    disk_lines = sections.get('DISK', [])
+    disk_free = disk_lines[0] if disk_lines else None
+    if disk_free:
+        try:
+            mb = int(disk_free.rstrip('M'))
+            if mb < 500:
+                warnings.append(f'Low disk space: {disk_free}')
+        except ValueError:
+            pass
+
+    markers = sections.get('MARKERS', [])
+
+    result = {"tools": tools}
+    if markers:
+        result["project_markers"] = markers
+    if warnings:
+        result["warnings"] = warnings
+    if disk_free:
+        result["disk_free"] = disk_free
+    return result
+
+
 @app.function(image=endpoint_image)
 @modal.fastapi_endpoint(method="POST")
 def create(data: dict):
@@ -752,7 +820,10 @@ def create(data: dict):
         sb.terminate()
         return {"error": revision_error, "sandbox_id": None}
 
-    return {"sandbox_id": sb.object_id, "owner_token": owner_token, "status": "ready", "workspace_revision": 0}
+    # Best-effort environment probe — failures don't block sandbox creation
+    environment = _run_environment_probe(sb)
+
+    return {"sandbox_id": sb.object_id, "owner_token": owner_token, "status": "ready", "workspace_revision": 0, "environment": environment}
 
 
 @app.function(image=endpoint_image)

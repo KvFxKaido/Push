@@ -29,6 +29,7 @@ import {
   getSandboxDiff,
   listDirectory,
   downloadFromSandbox,
+  getSandboxEnvironment,
   type FileReadResult,
   type BatchWriteEntry,
   type BatchWriteResultEntry,
@@ -3474,3 +3475,30 @@ Sandbox rules:
 - Search strategy: Start with short, distinctive substrings. If no results, broaden the term or drop the path filter. Use sandbox_list_dir to verify paths exist. Use sandbox_read_symbols(path) to discover function/class names in a specific file without reading the whole file. Regex patterns can sharpen results: "^export function" (definitions only), "class \\w+Card" (class declarations), "^import.*from" (imports). Use anchors (^, $) to avoid matching comments or strings.
 - Use sandbox_run_tests BEFORE committing to catch regressions early. It's faster than sandbox_exec("npm test") and gives structured results.
 - Use sandbox_check_types to validate TypeScript/Python code before committing. Catches type errors that tests might miss.`;
+
+/**
+ * Returns SANDBOX_TOOL_PROTOCOL with an appended [SANDBOX_ENVIRONMENT] block
+ * when environment probe data is available. Use this instead of the raw constant
+ * so both Orchestrator and Coder get environment context.
+ */
+export function getSandboxToolProtocol(): string {
+  const env = getSandboxEnvironment();
+  if (!env) return SANDBOX_TOOL_PROTOCOL;
+
+  const parts: string[] = [];
+
+  const toolEntries = Object.entries(env.tools || {});
+  if (toolEntries.length) {
+    parts.push('Available: ' + toolEntries.map(([k, v]) => `${k} ${v}`).join(', '));
+  }
+  if (env.project_markers?.length) {
+    parts.push('Project files: ' + env.project_markers.join(', '));
+  }
+  if (env.warnings?.length) {
+    for (const w of env.warnings) parts.push(`WARNING: ${w}`);
+  }
+
+  if (!parts.length) return SANDBOX_TOOL_PROTOCOL;
+
+  return SANDBOX_TOOL_PROTOCOL + '\n\n[SANDBOX_ENVIRONMENT]\n' + parts.join('\n') + '\n[/SANDBOX_ENVIRONMENT]';
+}

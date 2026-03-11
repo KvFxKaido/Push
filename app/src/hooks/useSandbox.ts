@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { createSandbox, cleanupSandbox, execInSandbox, setSandboxOwnerToken, getSandboxOwnerToken } from '@/lib/sandbox-client';
+import { createSandbox, cleanupSandbox, execInSandbox, setSandboxOwnerToken, getSandboxOwnerToken, setSandboxEnvironment, probeSandboxEnvironment } from '@/lib/sandbox-client';
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -131,6 +131,8 @@ export function useSandbox(activeRepoFullName?: string | null) {
           setSandboxId(saved.sandboxId);
           sandboxIdRef.current = saved.sandboxId;
           setStatus('ready');
+          // Fire-and-forget environment probe on reconnect
+          probeSandboxEnvironment(saved.sandboxId).catch(() => {});
           console.log('[useSandbox] Reconnected to saved sandbox:', saved.sandboxId);
           return saved.sandboxId;
         }
@@ -167,10 +169,11 @@ export function useSandbox(activeRepoFullName?: string | null) {
     const saved = loadSession();
     if (saved && saved.repoFullName !== activeRepoFullName) {
       clearSession(saved.sandboxId);
-      // Reset file awareness ledger and version cache — different repo = different files
+      // Reset file awareness ledger, version cache, and environment — different repo = different files
       fileLedger.reset();
       clearFileVersionCache(saved.sandboxId);
       clearSandboxWorkspaceRevision(saved.sandboxId);
+      setSandboxEnvironment(null);
       if (sandboxIdRef.current && status === 'ready') {
         sandboxIdRef.current = null;
         setSandboxId(null);
@@ -249,10 +252,11 @@ export function useSandbox(activeRepoFullName?: string | null) {
       clearSession(id);
     }
 
-    // Reset file awareness ledger and version cache — new sandbox = clean slate
+    // Reset file awareness ledger, version cache, and environment — new sandbox = clean slate
     fileLedger.reset();
     clearFileVersionCache(id);
     clearSandboxWorkspaceRevision(id);
+    setSandboxEnvironment(null);
 
     setSandboxId(null);
     setStatus('idle');

@@ -1,6 +1,6 @@
 import type { AIProviderType, ChatMessage } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
-import { SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
+import { SANDBOX_TOOL_PROTOCOL, getSandboxToolProtocol } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
@@ -666,7 +666,7 @@ function toLLMMessages(
     if (workspaceContext) {
       systemContent += '\n\n' + workspaceContext + '\n' + TOOL_PROTOCOL;
       if (hasSandbox) {
-        systemContent += '\n' + SANDBOX_TOOL_PROTOCOL;
+        systemContent += '\n' + getSandboxToolProtocol();
       }
     } else if (hasSandbox) {
       // Sandbox mode (no repo): include sandbox tools with ephemeral preamble, no GitHub tools
@@ -674,7 +674,7 @@ function toLLMMessages(
         + ' You have full access to the sandbox filesystem and can create, edit, and run files freely.'
         + ' Nothing is saved or committed unless the user explicitly downloads their work.'
         + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.'
-        + '\n' + SANDBOX_TOOL_PROTOCOL;
+        + '\n' + getSandboxToolProtocol();
     }
 
     // Scratchpad context and tools

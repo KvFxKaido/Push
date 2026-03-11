@@ -15,12 +15,20 @@ import {
 
 // --- Types ---
 
+export interface SandboxEnvironment {
+  tools: Record<string, string>;    // e.g. { node: "v20.18.1", npm: "10.8.2" }
+  project_markers?: string[];       // e.g. ["package.json", "requirements.txt"]
+  warnings?: string[];              // e.g. ["Low disk space: 450M"]
+  disk_free?: string;               // e.g. "45000M"
+}
+
 export interface SandboxSession {
   sandboxId: string;
   ownerToken?: string;
   status: 'ready' | 'error';
   error?: string;
   workspaceRevision?: number;
+  environment?: SandboxEnvironment;
 }
 
 export interface GitCommitIdentity {
@@ -151,6 +159,101 @@ export function setSandboxOwnerToken(token: string | null, sandboxId?: string): 
 export function getSandboxOwnerToken(sandboxId?: string): string | null {
   if (sandboxId) return sandboxOwnerTokensById.get(sandboxId) || null;
   return sandboxOwnerToken;
+}
+
+// --- Sandbox environment (module-level, same pattern as owner token) ---
+
+let _sandboxEnvironment: SandboxEnvironment | null = null;
+
+export function getSandboxEnvironment(): SandboxEnvironment | null {
+  return _sandboxEnvironment;
+}
+
+export function setSandboxEnvironment(env: SandboxEnvironment | null): void {
+  _sandboxEnvironment = env;
+}
+
+/**
+ * Parse raw stdout from the environment probe shell script.
+ * Used for client-side re-probing on reconnect.
+ */
+function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null {
+  if (!stdout) return null;
+
+  const sections: Record<string, string[]> = {};
+  let current: string | null = null;
+
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('---') && trimmed.endsWith('---') && trimmed.length > 6) {
+      current = trimmed.replace(/^-+|-+$/g, '');
+      sections[current] = [];
+    } else if (current && trimmed) {
+      sections[current].push(trimmed);
+    }
+  }
+
+  const tools: Record<string, string> = {};
+  const warnings: string[] = [];
+
+  for (const item of sections['VERSIONS'] || []) {
+    const colonIdx = item.indexOf(':');
+    if (colonIdx < 0) continue;
+    const name = item.slice(0, colonIdx);
+    const version = item.slice(colonIdx + 1);
+    if (version === 'MISSING') {
+      warnings.push(`${name} not available`);
+    } else {
+      tools[name] = version;
+    }
+  }
+
+  const diskLines = sections['DISK'] || [];
+  const diskFree = diskLines[0] || undefined;
+  if (diskFree) {
+    const mb = parseInt(diskFree.replace(/M$/, ''), 10);
+    if (!isNaN(mb) && mb < 500) {
+      warnings.push(`Low disk space: ${diskFree}`);
+    }
+  }
+
+  const markers = sections['MARKERS'] || [];
+
+  const result: SandboxEnvironment = { tools };
+  if (markers.length) result.project_markers = markers;
+  if (warnings.length) result.warnings = warnings;
+  if (diskFree) result.disk_free = diskFree;
+  return result;
+}
+
+/** Probe script — mirrors _run_environment_probe() in app.py */
+const ENVIRONMENT_PROBE_SCRIPT =
+  'echo "---VERSIONS---";' +
+  'echo "node:$(node -v 2>/dev/null || echo MISSING)";' +
+  'echo "npm:$(npm -v 2>/dev/null || echo MISSING)";' +
+  'echo "git:$(git --version 2>/dev/null | head -c 40 || echo MISSING)";' +
+  'echo "python:$(python3 -V 2>/dev/null || echo MISSING)";' +
+  'echo "---DISK---";' +
+  "df -BM /workspace 2>/dev/null | tail -1 | awk '{print $4}';" +
+  'echo "---MARKERS---";' +
+  'cd /workspace 2>/dev/null && for f in package.json package-lock.json yarn.lock pnpm-lock.yaml' +
+  ' requirements.txt pyproject.toml setup.py Cargo.toml go.mod pom.xml Gemfile Makefile; do' +
+  ' [ -f "$f" ] && echo "$f"; done;' +
+  'echo "---END---"';
+
+/**
+ * Run environment probe on an existing sandbox (used on reconnect).
+ * Best-effort — returns null on any failure.
+ */
+export async function probeSandboxEnvironment(sandboxId: string): Promise<SandboxEnvironment | null> {
+  try {
+    const result = await execInSandbox(sandboxId, ENVIRONMENT_PROBE_SCRIPT);
+    const env = parseEnvironmentProbe(result.stdout);
+    if (env) _sandboxEnvironment = env;
+    return env;
+  } catch {
+    return null;
+  }
 }
 
 function withOwnerToken(body: Record<string, unknown>, sandboxId?: string): Record<string, unknown> {
@@ -304,7 +407,7 @@ export async function createSandbox(
   githubToken?: string,
   githubIdentity?: GitCommitIdentity,
 ): Promise<SandboxSession> {
-  const data = await sandboxFetch<{ sandbox_id: string | null; owner_token?: string; status?: string; error?: string; workspace_revision?: number }>(
+  const data = await sandboxFetch<{ sandbox_id: string | null; owner_token?: string; status?: string; error?: string; workspace_revision?: number; environment?: SandboxEnvironment | null }>(
     'create',
     {
       repo,
@@ -323,7 +426,12 @@ export async function createSandbox(
   if (typeof data.workspace_revision === 'number') {
     setSandboxWorkspaceRevision(data.sandbox_id, data.workspace_revision);
   }
-  return { sandboxId: data.sandbox_id, ownerToken: data.owner_token, status: 'ready', workspaceRevision: data.workspace_revision };
+
+  // Capture environment probe results
+  const environment = data.environment || undefined;
+  if (environment) _sandboxEnvironment = environment;
+
+  return { sandboxId: data.sandbox_id, ownerToken: data.owner_token, status: 'ready', workspaceRevision: data.workspace_revision, environment };
 }
 
 export async function execInSandbox(

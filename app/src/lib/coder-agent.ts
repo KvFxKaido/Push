@@ -16,7 +16,7 @@ import { parseDiffStats } from './diff-utils';
 import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
-import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL } from './sandbox-tools';
+import { detectSandboxToolCall, executeSandboxToolCall, SANDBOX_TOOL_PROTOCOL, getSandboxToolProtocol } from './sandbox-tools';
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { detectAllToolCalls } from './tool-dispatch';
 import { fileLedger } from './file-awareness-ledger';
@@ -439,7 +439,7 @@ async function fetchSandboxStateSummary(sandboxId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 function buildCoderSystemPrompt(): string {
-  const sandboxBlock = SANDBOX_TOOL_PROTOCOL;
+  const sandboxBlock = getSandboxToolProtocol();
   return `You are the Coder agent for Push, a mobile AI coding assistant. Your job is to implement coding tasks.
 
 Rules:
