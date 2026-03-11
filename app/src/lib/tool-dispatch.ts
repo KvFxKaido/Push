@@ -207,7 +207,7 @@ function normalizeJsonValue(value: unknown): unknown {
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
-  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[]; acceptanceCriteria?: AcceptanceCriterion[] } } }
+  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[]; acceptanceCriteria?: AcceptanceCriterion[]; intent?: string; constraints?: string[] } } }
   | { source: 'scratchpad'; call: ScratchpadToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall };
@@ -878,6 +878,8 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
     const task = typeof args?.task === 'string' ? args.task : undefined;
     const tasks = Array.isArray(args?.tasks) ? args.tasks.filter((v): v is string => typeof v === 'string') : undefined;
     const files = Array.isArray(args?.files) ? args.files.filter((v): v is string => typeof v === 'string') : undefined;
+    const intent = typeof args?.intent === 'string' ? args.intent : undefined;
+    const constraints = Array.isArray(args?.constraints) ? args.constraints.filter((v): v is string => typeof v === 'string') : undefined;
     // Parse acceptance criteria if provided
     let acceptanceCriteria: AcceptanceCriterion[] | undefined;
     if (Array.isArray(args?.acceptanceCriteria)) {
@@ -895,7 +897,7 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
     if (parsedObj?.tool === 'delegate_coder' && (task || (tasks && tasks.length > 0))) {
       return {
         source: 'delegate',
-        call: { tool: 'delegate_coder', args: { task, tasks, files, acceptanceCriteria } },
+        call: { tool: 'delegate_coder', args: { task, tasks, files, acceptanceCriteria, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } },
       };
     }
     return null;

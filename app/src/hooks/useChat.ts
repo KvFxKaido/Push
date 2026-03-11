@@ -975,9 +975,14 @@ export function useChat(
   // --- Effective project instructions (repo file + built-in app context) ---
 
   const agentsMdRef = useRef<string | null>(null);
+  const instructionFilenameRef = useRef<string | null>(null);
 
   const setAgentsMd = useCallback((md: string | null) => {
     agentsMdRef.current = md;
+  }, []);
+
+  const setInstructionFilename = useCallback((filename: string | null) => {
+    instructionFilenameRef.current = filename;
   }, []);
 
   // --- Abort stream ---
@@ -2069,6 +2074,7 @@ export function useChat(
 
                           // Pass acceptance criteria to the last task (by index), matching sequential behavior
                           const isLastTask = taskIndex === taskList.length - 1;
+                          const bi = branchInfoRef.current;
                           const coderResult = await runCoderAgent(
                             task,
                             workerSandboxId,
@@ -2086,6 +2092,16 @@ export function useChat(
                             (state) => { lastCoderStateRef.current = state; },
                             lockedProviderForChat,
                             resolvedModelForChat || undefined,
+                            {
+                              intent: delegateArgs.intent,
+                              constraints: delegateArgs.constraints,
+                              branchContext: bi?.currentBranch ? {
+                                activeBranch: bi.currentBranch,
+                                defaultBranch: bi.defaultBranch || 'main',
+                                protectMain: isMainProtectedRef.current,
+                              } : undefined,
+                              instructionFilename: instructionFilenameRef.current || undefined,
+                            },
                           );
 
                           return { taskIndex, coderResult };
@@ -2149,6 +2165,7 @@ export function useChat(
 
                       // Pass acceptance criteria to the last task in the list
                       const isLastTask = taskIndex === taskList.length - 1;
+                      const seqBi = branchInfoRef.current;
                       const coderResult = await runCoderAgent(
                         task,
                         currentSandboxId,
@@ -2167,6 +2184,16 @@ export function useChat(
                         (state) => { lastCoderStateRef.current = state; },
                         lockedProviderForChat,
                         resolvedModelForChat || undefined,
+                        {
+                          intent: delegateArgs.intent,
+                          constraints: delegateArgs.constraints,
+                          branchContext: seqBi?.currentBranch ? {
+                            activeBranch: seqBi.currentBranch,
+                            defaultBranch: seqBi.defaultBranch || 'main',
+                            protectMain: isMainProtectedRef.current,
+                          } : undefined,
+                          instructionFilename: instructionFilenameRef.current || undefined,
+                        },
                       );
                       totalRounds += coderResult.rounds;
                       totalCheckpoints += coderResult.checkpoints;
@@ -2792,6 +2819,7 @@ export function useChat(
 
     // AGENTS.md
     setAgentsMd,
+    setInstructionFilename,
     injectAssistantCardMessage,
 
     // Card actions (Phase 4)
