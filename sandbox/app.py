@@ -701,7 +701,7 @@ def _run_environment_probe(sb):
         'echo "---VERSIONS---";'
         'echo "node:$(node -v 2>/dev/null || echo MISSING)";'
         'echo "npm:$(npm -v 2>/dev/null || echo MISSING)";'
-        'echo "git:$(git --version 2>/dev/null | head -c 40 || echo MISSING)";'
+        'echo "git:$(command -v git >/dev/null 2>&1 && git --version 2>/dev/null | head -c 40 || echo MISSING)";'
         'echo "python:$(python3 -V 2>/dev/null || echo MISSING)";'
         'echo "---DISK---";'
         'df -BM /workspace 2>/dev/null | tail -1 | awk \'{print $4}\';'
@@ -713,8 +713,9 @@ def _run_environment_probe(sb):
         'cd /workspace 2>/dev/null && if [ -f package.json ]; then'
         ' python3 -c "import json,sys;'
         " d=json.load(open('package.json'));"
-        " s=d.get('scripts',{});"
-        " [print(f'{k}:{v}') for k,v in s.items()"
+        " s=d.get('scripts');"
+        " s=s if isinstance(s,dict) else {};"
+        " [print(f\"{k}:{str(v).replace(chr(10),' ')}\") for k,v in s.items()"
         " if k in ('test','lint','typecheck','build','dev','start','check','format')]"
         '" 2>/dev/null; fi;'
         'echo "---END---"'

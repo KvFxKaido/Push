@@ -3291,6 +3291,17 @@ export async function executeSandboxToolCall(
           return { text: lines.join('\n') };
         }
 
+        // Snapshot ledger state before Phase 2 writes (for rollback)
+        const ledgerSnapshots = new Map<string, { state: ReturnType<typeof fileLedger.getState>; provenance: ReturnType<typeof fileLedger.getProvenance> }>();
+        if (checks?.length && rollbackOnFailure) {
+          for (const edit of edits) {
+            ledgerSnapshots.set(edit.path, {
+              state: fileLedger.getState(edit.path),
+              provenance: fileLedger.getProvenance(edit.path),
+            });
+          }
+        }
+
         // Phase 2: Batch write all files in a single HTTP request
         const writeResults: string[] = [];
         const writeFailures: string[] = [];
@@ -3485,7 +3496,9 @@ export async function executeSandboxToolCall(
             const expectedExit = check.exitCode ?? 0;
             try {
               const timeoutSec = Math.ceil(timeoutMs / 1000);
-              const wrappedCommand = `timeout ${timeoutSec} sh -c ${JSON.stringify(check.command)} 2>&1`;
+              // Single-quote the command to prevent shell expansion ($VAR, $(cmd), backticks)
+              const escaped = check.command.replace(/'/g, "'\\''");
+              const wrappedCommand = `timeout ${timeoutSec} sh -c '${escaped}' 2>&1`;
               const result = await execInSandbox(sandboxId, wrappedCommand);
               const output = (result.stdout || '').slice(0, 4000) + (result.stderr ? '\n' + result.stderr.slice(0, 1000) : '');
               const passed = result.exitCode === expectedExit;
@@ -3525,6 +3538,19 @@ export async function executeSandboxToolCall(
               }
             } catch (rollbackErr) {
               rollbackErrors.push(`${edit.path}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+            }
+          }
+
+          // Restore file-awareness ledger state (undo recordCreation/recordMutation from Phase 2)
+          for (const edit of edits) {
+            const snapshot = ledgerSnapshots.get(edit.path);
+            if (snapshot) {
+              fileLedger.restoreState(edit.path, snapshot.state);
+              if (snapshot.provenance) {
+                fileLedger.recordMutation(edit.path, snapshot.provenance.modifiedBy);
+              } else {
+                fileLedger.clearProvenance(edit.path);
+              }
             }
           }
 

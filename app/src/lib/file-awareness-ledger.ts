@@ -614,6 +614,27 @@ export class FileAwarenessLedger {
     }
   }
 
+  /**
+   * Restore a file's ledger state to a previous snapshot.
+   * Used by patchset rollback to undo recordCreation/recordMutation from Phase 2.
+   */
+  restoreState(path: string, state: FileState | undefined): void {
+    const key = this.normalizePath(path);
+    if (state) {
+      this.entries.set(key, state);
+    } else {
+      this.entries.delete(key);
+    }
+  }
+
+  /**
+   * Clear mutation provenance for a file.
+   * Used by patchset rollback to undo recordMutation from Phase 2.
+   */
+  clearProvenance(path: string): void {
+    this.provenance.delete(this.normalizePath(path));
+  }
+
   // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
