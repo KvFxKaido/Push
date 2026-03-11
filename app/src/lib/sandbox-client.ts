@@ -76,6 +76,18 @@ export interface DiffResult {
   error?: string;
 }
 
+export interface SandboxSymbol {
+  name: string;
+  kind: string;
+  line: number;
+  signature: string;
+}
+
+export interface SandboxReadSymbolsResult {
+  symbols: SandboxSymbol[];
+  totalLines: number;
+}
+
 // --- Error types ---
 
 export interface SandboxError {
@@ -144,6 +156,78 @@ const DEFAULT_TIMEOUT_MS = 30_000; // 30s for most operations
 const EXEC_TIMEOUT_MS = 120_000;   // 120s for command execution
 let sandboxOwnerToken: string | null = null;
 const sandboxOwnerTokensById = new Map<string, string>();
+
+function shellEscape(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+const SANDBOX_READ_SYMBOLS_SCRIPT = `
+import sys, json, os
+
+path = sys.argv[1]
+ext = os.path.splitext(path)[1].lower()
+symbols = []
+
+try:
+    with open(path, 'r', errors='replace') as f:
+        content = f.read()
+        lines = content.split('\\n')
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+    sys.exit(0)
+
+if ext == '.py':
+    import ast
+    try:
+        tree = ast.parse(content, filename=path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
+                args = ', '.join(a.arg for a in node.args.args)
+                prefix = 'async ' if isinstance(node, ast.AsyncFunctionDef) else ''
+                symbols.append({"name": node.name, "kind": "function", "line": node.lineno, "signature": f"{prefix}def {node.name}({args})"})
+            elif isinstance(node, ast.ClassDef):
+                bases = ', '.join(getattr(b, 'id', '?') if hasattr(b, 'id') else '?' for b in node.bases)
+                symbols.append({"name": node.name, "kind": "class", "line": node.lineno, "signature": f"class {node.name}({bases})" if bases else f"class {node.name}"})
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.ImportFrom):
+                    names = ', '.join(a.name for a in node.names)
+                    symbols.append({"name": node.module or '', "kind": "import", "line": node.lineno, "signature": f"from {node.module} import {names}"})
+                else:
+                    for alias in node.names:
+                        symbols.append({"name": alias.name, "kind": "import", "line": node.lineno, "signature": f"import {alias.name}"})
+    except SyntaxError as e:
+        symbols.append({"name": "PARSE_ERROR", "kind": "error", "line": e.lineno or 0, "signature": str(e)})
+else:
+    import re
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        m = re.match(r'^export\\s+(default\\s+)?(async\\s+)?function\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(3), "kind": "function", "line": i, "signature": stripped.split('{')[0].strip().rstrip(':')})
+            continue
+        m = re.match(r'^(?:export\\s+(?:default\\s+)?)?(?:abstract\\s+)?class\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(1), "kind": "class", "line": i, "signature": stripped.split('{')[0].strip()})
+            continue
+        m = re.match(r'^(?:export\\s+)?interface\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(1), "kind": "interface", "line": i, "signature": stripped.split('{')[0].strip()})
+            continue
+        m = re.match(r'^(?:export\\s+)?type\\s+(\\w+)\\s*[=<]', stripped)
+        if m:
+            symbols.append({"name": m.group(1), "kind": "type", "line": i, "signature": stripped.split('=')[0].strip()})
+            continue
+        m = re.match(r'^(?:export\\s+)?(const|let|var)\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(2), "kind": "variable", "line": i, "signature": stripped.split('=')[0].strip().rstrip(':')})
+            continue
+        m = re.match(r'^(async\\s+)?function\\s+(\\w+)', stripped)
+        if m:
+            symbols.append({"name": m.group(2), "kind": "function", "line": i, "signature": stripped.split('{')[0].strip().rstrip(':')})
+            continue
+
+print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
+`.trim();
 
 export function setSandboxOwnerToken(token: string | null, sandboxId?: string): void {
   const normalized = token && token.trim() ? token.trim() : null;
@@ -486,6 +570,60 @@ export async function execInSandbox(
     truncated: raw.truncated,
     error: raw.error,
     workspaceRevision: raw.workspace_revision,
+  };
+}
+
+export async function readSymbolsFromSandbox(
+  sandboxId: string,
+  path: string,
+): Promise<SandboxReadSymbolsResult> {
+  const result = await execInSandbox(
+    sandboxId,
+    `python3 -c ${shellEscape(SANDBOX_READ_SYMBOLS_SCRIPT)} ${shellEscape(path)}`,
+  );
+
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.error || 'Failed to extract symbols');
+  }
+
+  let parsed: {
+    error?: string;
+    symbols?: Array<{ name?: string; kind?: string; line?: number; signature?: string }>;
+    total_lines?: number;
+  };
+
+  try {
+    parsed = JSON.parse(result.stdout.trim());
+  } catch {
+    throw new Error(`Failed to parse symbol output: ${result.stdout.slice(0, 500)}`);
+  }
+
+  if (parsed.error) {
+    throw new Error(parsed.error);
+  }
+
+  const symbols = Array.isArray(parsed.symbols)
+    ? parsed.symbols
+      .filter((symbol): symbol is { name: string; kind: string; line: number; signature: string } => (
+        typeof symbol?.name === 'string'
+        && typeof symbol.kind === 'string'
+        && typeof symbol.line === 'number'
+        && Number.isFinite(symbol.line)
+        && typeof symbol.signature === 'string'
+      ))
+      .map((symbol) => ({
+        name: symbol.name,
+        kind: symbol.kind,
+        line: symbol.line,
+        signature: symbol.signature,
+      }))
+    : [];
+
+  return {
+    symbols,
+    totalLines: typeof parsed.total_lines === 'number' && Number.isFinite(parsed.total_lines)
+      ? parsed.total_lines
+      : 0,
   };
 }
 

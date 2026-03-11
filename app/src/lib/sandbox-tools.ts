@@ -24,6 +24,7 @@ import type { ActiveProvider } from './orchestrator';
 import {
   execInSandbox,
   readFromSandbox,
+  readSymbolsFromSandbox,
   writeToSandbox,
   batchWriteToSandbox,
   getSandboxDiff,
@@ -2795,102 +2796,8 @@ export async function executeSandboxToolCall(
         const filePath = call.args.path;
         const ext = filePath.split('.').pop()?.toLowerCase() || '';
 
-        // Inline Python script that handles both Python (ast) and TS/JS (regex)
-        const pythonScript = `
-import sys, json, os
-
-path = sys.argv[1]
-ext = os.path.splitext(path)[1].lower()
-symbols = []
-
-try:
-    with open(path, 'r', errors='replace') as f:
-        content = f.read()
-        lines = content.split('\\n')
-except Exception as e:
-    print(json.dumps({"error": str(e)}))
-    sys.exit(0)
-
-if ext == '.py':
-    import ast
-    try:
-        tree = ast.parse(content, filename=path)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
-                args = ', '.join(a.arg for a in node.args.args)
-                prefix = 'async ' if isinstance(node, ast.AsyncFunctionDef) else ''
-                symbols.append({"name": node.name, "kind": "function", "line": node.lineno, "signature": f"{prefix}def {node.name}({args})"})
-            elif isinstance(node, ast.ClassDef):
-                bases = ', '.join(getattr(b, 'id', '?') if hasattr(b, 'id') else '?' for b in node.bases)
-                symbols.append({"name": node.name, "kind": "class", "line": node.lineno, "signature": f"class {node.name}({bases})" if bases else f"class {node.name}"})
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                if isinstance(node, ast.ImportFrom):
-                    names = ', '.join(a.name for a in node.names)
-                    symbols.append({"name": node.module or '', "kind": "import", "line": node.lineno, "signature": f"from {node.module} import {names}"})
-                else:
-                    for alias in node.names:
-                        symbols.append({"name": alias.name, "kind": "import", "line": node.lineno, "signature": f"import {alias.name}"})
-    except SyntaxError as e:
-        symbols.append({"name": "PARSE_ERROR", "kind": "error", "line": e.lineno or 0, "signature": str(e)})
-else:
-    import re
-    for i, line in enumerate(lines, 1):
-        stripped = line.strip()
-        # export/function/class/interface/type/const patterns
-        m = re.match(r'^export\\s+(default\\s+)?(async\\s+)?function\\s+(\\w+)', stripped)
-        if m:
-            symbols.append({"name": m.group(3), "kind": "function", "line": i, "signature": stripped.split('{')[0].strip().rstrip(':')})
-            continue
-        m = re.match(r'^(?:export\\s+(?:default\\s+)?)?(?:abstract\\s+)?class\\s+(\\w+)', stripped)
-        if m:
-            symbols.append({"name": m.group(1), "kind": "class", "line": i, "signature": stripped.split('{')[0].strip()})
-            continue
-        m = re.match(r'^(?:export\\s+)?interface\\s+(\\w+)', stripped)
-        if m:
-            symbols.append({"name": m.group(1), "kind": "interface", "line": i, "signature": stripped.split('{')[0].strip()})
-            continue
-        m = re.match(r'^(?:export\\s+)?type\\s+(\\w+)\\s*[=<]', stripped)
-        if m:
-            symbols.append({"name": m.group(1), "kind": "type", "line": i, "signature": stripped.split('=')[0].strip()})
-            continue
-        m = re.match(r'^(?:export\\s+)?(const|let|var)\\s+(\\w+)', stripped)
-        if m:
-            symbols.append({"name": m.group(2), "kind": "variable", "line": i, "signature": stripped.split('=')[0].strip().rstrip(':')})
-            continue
-        # Standalone function (no export)
-        m = re.match(r'^(async\\s+)?function\\s+(\\w+)', stripped)
-        if m:
-            symbols.append({"name": m.group(2), "kind": "function", "line": i, "signature": stripped.split('{')[0].strip().rstrip(':')})
-            continue
-
-print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
-`.trim();
-
-        const escapedFilePath = shellEscape(filePath);
-        const result = await execInSandbox(
-          sandboxId,
-          `python3 -c ${shellEscape(pythonScript)} ${escapedFilePath}`,
-        );
-
-        if (result.exitCode !== 0) {
-          const err = classifyError(result.stderr || 'Symbol extraction failed', filePath);
-          return { text: formatStructuredError(err, `[Tool Error — sandbox_read_symbols]\n${result.stderr || 'Failed to extract symbols'}`), structuredError: err };
-        }
-
         try {
-          const parsed = JSON.parse(result.stdout.trim()) as {
-            error?: string;
-            symbols?: Array<{ name: string; kind: string; line: number; signature: string }>;
-            total_lines?: number;
-          };
-
-          if (parsed.error) {
-            const err = classifyError(parsed.error, filePath);
-            return { text: formatStructuredError(err, `[Tool Error — sandbox_read_symbols]\n${parsed.error}`), structuredError: err };
-          }
-
-          const symbols = parsed.symbols || [];
-          const totalLines = parsed.total_lines || 0;
+          const { symbols, totalLines } = await readSymbolsFromSandbox(sandboxId, filePath);
           const lang = ['py'].includes(ext) ? 'Python' : ['ts', 'tsx', 'js', 'jsx'].includes(ext) ? 'TypeScript/JavaScript' : ext;
 
           // Record symbol reads in the ledger so edit guards can verify coverage
@@ -2943,8 +2850,10 @@ print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
           }
 
           return { text: lines.join('\n') };
-        } catch {
-          return { text: `[Tool Error — sandbox_read_symbols]\nFailed to parse symbol output: ${result.stdout.slice(0, 500)}` };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to extract symbols';
+          const err = classifyError(message, filePath);
+          return { text: formatStructuredError(err, `[Tool Error — sandbox_read_symbols]\n${message}`), structuredError: err };
         }
       }
 

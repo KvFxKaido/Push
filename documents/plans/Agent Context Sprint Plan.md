@@ -13,10 +13,10 @@ Core outcomes:
 ## Status
 
 - Last updated: 2026-03-11
-- State: Tier 0 and Tier 1 shipped; Tier 2 pending follow-up
+- State: Tier 0, Tier 1, and Tier 2 shipped; deferred follow-ups remain optional
 - Intent: Improve agent decision quality by upgrading context injection, not adding capabilities
-- Completed: 0A, 0B, 0C, 1A, 1B, 1C, 1D
-- Remaining: 2A (file-local Reviewer context), plus deferred deletion-anchor / two-phase review follow-ups if dogfooding justifies them
+- Completed: 0A, 0B, 0C, 1A, 1B, 1C, 1D, 2A
+- Remaining: Deferred deletion-anchor / two-phase review follow-ups only if dogfooding justifies them
 - Post-review follow-up landed: oversized diff fallback, Auditor file-hint alignment, instruction filename sync on sandbox refresh, and regression coverage for all three
 
 ## Why
@@ -265,6 +265,8 @@ These fetch additional context before the single-shot LLM call. Cost is HTTP lat
 
 ### 2A. File-local context for Reviewer
 
+**Status:** Shipped.
+
 **Problem:** Reviewer sees only the diff. Can't check surrounding code structure to validate whether a change is safe.
 
 **Fix:** Before the Reviewer LLM call, pre-fetch structural context from changed files:
@@ -350,7 +352,7 @@ These are valid improvements but should wait until earlier tiers prove out. Each
 - **Validation:** Verify prompt sizes stay within 15% of Tier 0 baselines. Verify `intent`/`constraints` survive round-trip through tool detection → coder execution. Dogfood 5+ delegations with structured briefs.
 
 ### Phase 3 — Pre-computation (Tier 2)
-- **Status:** Next up
+- **Status:** Completed
 - **Scope:** 2A (file-local Reviewer context)
 - **Risk:** Medium — adds sandbox HTTP calls before review LLM call. Must degrade gracefully when sandbox unavailable.
 - **Validation:** Dogfood 5+ reviews with file structure context. Compare review signal quality vs. Phase 2 baseline. Verify p90 pre-fetch latency stays under 3 seconds.

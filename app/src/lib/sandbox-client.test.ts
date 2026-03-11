@@ -229,3 +229,70 @@ describe('readFromSandbox', () => {
     expect(result.remaining_bytes).toBe(42);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 5. readSymbolsFromSandbox helper
+// ---------------------------------------------------------------------------
+
+describe('readSymbolsFromSandbox', () => {
+  it('executes the symbol extractor and parses structured output', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        stdout: JSON.stringify({
+          symbols: [
+            {
+              name: 'validateToken',
+              kind: 'function',
+              line: 12,
+              signature: 'export function validateToken(token: string)',
+            },
+          ],
+          total_lines: 120,
+        }),
+        stderr: '',
+        exit_code: 0,
+        truncated: false,
+      }),
+    });
+
+    const { readSymbolsFromSandbox } = await import('./sandbox-client');
+    const result = await readSymbolsFromSandbox('sb-123', '/workspace/src/auth.ts');
+
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/sandbox/exec');
+    expect(options.method).toBe('POST');
+
+    const body = JSON.parse(options.body);
+    expect(body.sandbox_id).toBe('sb-123');
+    expect(body.command).toContain("python3 -c");
+    expect(body.command).toContain('/workspace/src/auth.ts');
+
+    expect(result.totalLines).toBe(120);
+    expect(result.symbols).toEqual([
+      {
+        name: 'validateToken',
+        kind: 'function',
+        line: 12,
+        signature: 'export function validateToken(token: string)',
+      },
+    ]);
+  });
+
+  it('surfaces structured extractor errors', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        stdout: JSON.stringify({ error: 'No such file or directory' }),
+        stderr: '',
+        exit_code: 0,
+        truncated: false,
+      }),
+    });
+
+    const { readSymbolsFromSandbox } = await import('./sandbox-client');
+    await expect(
+      readSymbolsFromSandbox('sb-123', '/workspace/src/missing.ts'),
+    ).rejects.toThrow('No such file or directory');
+  });
+});

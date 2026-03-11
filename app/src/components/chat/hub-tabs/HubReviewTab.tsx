@@ -606,12 +606,18 @@ export function HubReviewTab({
           : nextContext.kind === 'github-branch' ? 'branch-diff'
             : nextContext.kind === 'github-commit' ? 'last-commit'
               : 'working-tree';
+      const reviewerSandboxId = nextContext.kind === 'sandbox'
+        ? sandboxId || undefined
+        : sandboxStatus === 'ready'
+          ? sandboxId || undefined
+          : undefined;
 
       const reviewResult = await runReviewer(
         diff,
         {
           provider: selectedProvider,
           model: selectedReviewModel || undefined,
+          sandboxId: reviewerSandboxId,
           context: {
             repoFullName,
             activeBranch,
@@ -649,6 +655,7 @@ export function HubReviewTab({
     reviewSource,
     running,
     sandboxId,
+    sandboxStatus,
     selectedProvider,
     selectedReviewModel,
     projectInstructions,

@@ -12,10 +12,13 @@ import type { AIProviderType } from '@/types';
 import { getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
 import { buildReviewerContextBlock, type ReviewerPromptContext } from './role-context';
+import { readSymbolsFromSandbox, type SandboxSymbol } from './sandbox-client';
 import { asRecord, streamWithTimeout } from './utils';
-import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
+import { parseDiffStats, parseDiffIntoFiles, chunkDiffByFile, classifyFilePath } from './diff-utils';
 
 const REVIEWER_TIMEOUT_MS = 90_000; // 90s — reviews can be thorough
+const REVIEWER_FILE_STRUCTURE_LIMIT = 2_000;
+const REVIEWER_FILE_STRUCTURE_MAX_FILES = 3;
 
 /**
  * Annotate added lines in a unified diff with [Lxxx] line-number markers.
@@ -100,10 +103,77 @@ Review for:
 
 Keep comments specific and actionable. Prefer 0-5 high-signal comments total. Use "note" sparingly, and skip low-value style nits unless they materially affect maintainability or correctness. If the diff does not give you enough context to assess something, skip it rather than guessing. One precise comment is worth more than three vague ones.`;
 
+const REVIEWER_FILE_STRUCTURE_NOTE = "File structure is auto-fetched and shows the outline of changed files. Use it for orientation but don't assume it's complete.";
+
+function toSandboxWorkspacePath(path: string): string {
+  if (path.startsWith('/workspace/')) return path;
+  return `/workspace/${path.replace(/^\/+/, '')}`;
+}
+
+function buildFileStructureBlock(entries: Array<{ path: string; symbols: SandboxSymbol[] }>): string | null {
+  const lines = ['[FILE STRUCTURE — auto-fetched from changed files]'];
+  let totalChars = lines[0].length;
+  let includedEntries = 0;
+
+  for (const entry of entries) {
+    if (entry.symbols.length === 0) continue;
+
+    const sectionLines = [
+      `--- ${entry.path} ---`,
+      ...entry.symbols.map((symbol) => `${symbol.signature} [L${symbol.line}]`),
+    ];
+
+    let sectionChars = 0;
+    const acceptedSectionLines: string[] = [];
+
+    for (const line of sectionLines) {
+      const lineChars = line.length + 1;
+      if (totalChars + sectionChars + lineChars > REVIEWER_FILE_STRUCTURE_LIMIT) {
+        break;
+      }
+      acceptedSectionLines.push(line);
+      sectionChars += lineChars;
+    }
+
+    if (acceptedSectionLines.length === 0) break;
+
+    lines.push(...acceptedSectionLines);
+    totalChars += sectionChars;
+    includedEntries++;
+  }
+
+  return includedEntries > 0 ? lines.join('\n') : null;
+}
+
+async function fetchFileStructure(
+  diff: string,
+  sandboxId: string,
+): Promise<string | null> {
+  const filePaths = parseDiffIntoFiles(diff)
+    .map((file) => file.path)
+    .slice(0, REVIEWER_FILE_STRUCTURE_MAX_FILES);
+
+  if (filePaths.length === 0) return null;
+
+  const settled = await Promise.allSettled(
+    filePaths.map(async (path) => ({
+      path,
+      ...(await readSymbolsFromSandbox(sandboxId, toSandboxWorkspacePath(path))),
+    })),
+  );
+
+  const entries = settled
+    .filter((result): result is PromiseFulfilledResult<{ path: string; symbols: SandboxSymbol[]; totalLines: number }> => result.status === 'fulfilled')
+    .map((result) => ({ path: result.value.path, symbols: result.value.symbols }));
+
+  return buildFileStructureBlock(entries);
+}
+
 export interface ReviewerOptions {
   provider: AIProviderType;
   model?: string; // explicit override; falls back to role default
   context?: ReviewerPromptContext;
+  sandboxId?: string;
 }
 
 export async function runReviewer(
@@ -117,23 +187,31 @@ export async function runReviewer(
   const totalFiles = parseDiffStats(diff).filesChanged;
   const filesReviewed = parseDiffStats(chunkedDiff).filesChanged;
   const truncated = filesReviewed < totalFiles;
-  const { provider, model: modelOverride, context } = options;
+  const { provider, model: modelOverride, context, sandboxId } = options;
 
   const { streamFn } = getProviderStreamFn(provider);
   const roleModel = getModelForRole(provider, 'reviewer');
   const modelId = modelOverride || roleModel?.id;
   const runtimeContext = buildReviewerContextBlock(context);
-  const systemPrompt = runtimeContext
-    ? `${REVIEWER_SYSTEM_PROMPT}\n\n${runtimeContext}`
-    : REVIEWER_SYSTEM_PROMPT;
+  let fileStructureBlock: string | null = null;
+  if (sandboxId) {
+    onStatus('Preparing review...');
+    fileStructureBlock = await fetchFileStructure(chunkedDiff, sandboxId);
+  }
+
+  const systemPromptParts = [REVIEWER_SYSTEM_PROMPT];
+  if (runtimeContext) systemPromptParts.push(runtimeContext);
+  if (fileStructureBlock) systemPromptParts.push(REVIEWER_FILE_STRUCTURE_NOTE);
+  const systemPrompt = systemPromptParts.join('\n\n');
 
   onStatus('Reviewer reading diff…');
+  const reviewPreamble = fileStructureBlock ? `${fileStructureBlock}\n\n` : '';
 
   const messages: ChatMessage[] = [
     {
       id: 'review-request',
       role: 'user',
-      content: `Review this diff:\n\n\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\``,
+      content: `${reviewPreamble}Review this diff:\n\n\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\``,
       timestamp: Date.now(),
     },
   ];
