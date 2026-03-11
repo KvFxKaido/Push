@@ -61,6 +61,9 @@ export function HubDiffTab({
   const lineRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
   const showingReviewDiff = diffMode !== 'working-tree';
+  const jumpTargetPath = jumpTarget?.path ?? null;
+  const jumpTargetLine = jumpTarget?.line;
+  const jumpTargetRequestKey = jumpTarget?.requestKey ?? null;
 
   const ensureHubSandbox = useCallback(async (): Promise<string | null> => {
     if (sandboxId) return sandboxId;
@@ -173,29 +176,29 @@ export function HubDiffTab({
   };
 
   useEffect(() => {
-    if (!jumpTarget) {
+    if (!jumpTargetPath) {
       setHighlightedFile(null);
       setHighlightedLineKey(null);
       return;
     }
 
-    const file = parsedFileDiffs.find((fd) => fd.path === jumpTarget.path);
+    const file = parsedFileDiffs.find((fd) => fd.path === jumpTargetPath);
     if (!file) return;
 
     setCollapsedFiles((prev) => {
       const next = new Set(prev);
-      next.delete(jumpTarget.path);
+      next.delete(jumpTargetPath);
       return next;
     });
 
     let rafB: number | null = null;
     const rafA = requestAnimationFrame(() => {
       rafB = requestAnimationFrame(() => {
-        const lineKey = jumpTarget.line !== undefined ? file.lineKeyByNewLine.get(jumpTarget.line) ?? null : null;
+        const lineKey = jumpTargetLine !== undefined ? file.lineKeyByNewLine.get(jumpTargetLine) ?? null : null;
         const targetEl = lineKey ? lineRefs.current.get(lineKey) : null;
-        const fallbackEl = sectionRefs.current.get(jumpTarget.path) ?? null;
+        const fallbackEl = sectionRefs.current.get(jumpTargetPath) ?? null;
         (targetEl ?? fallbackEl)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        setHighlightedFile(jumpTarget.path);
+        setHighlightedFile(jumpTargetPath);
         setHighlightedLineKey(lineKey);
       });
     });
@@ -204,7 +207,7 @@ export function HubDiffTab({
       cancelAnimationFrame(rafA);
       if (rafB !== null) cancelAnimationFrame(rafB);
     };
-  }, [jumpTarget?.requestKey, jumpTarget?.path, jumpTarget?.line, parsedFileDiffs]);
+  }, [jumpTargetPath, jumpTargetLine, jumpTargetRequestKey, parsedFileDiffs]);
 
   if (!diffData && !sandboxReady) {
     return (

@@ -450,7 +450,7 @@ function MergeFlowSheet({
 
     runAudit();
     return () => { cancelled = true; };
-  }, [open, step, prInfo, repo, currentBranch, defaultBranch, projectInstructions]);
+  }, [open, step, prInfo, repo, currentBranch, defaultBranch, projectInstructions, lockedProvider, lockedModel]);
 
   // ── Step 4: Check mergeability ─────────────────────────────────────
 

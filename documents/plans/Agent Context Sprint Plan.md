@@ -13,8 +13,11 @@ Core outcomes:
 ## Status
 
 - Last updated: 2026-03-11
-- State: Draft (post-council review)
+- State: Tier 0 and Tier 1 shipped; Tier 2 pending follow-up
 - Intent: Improve agent decision quality by upgrading context injection, not adding capabilities
+- Completed: 0A, 0B, 0C, 1A, 1B, 1C, 1D
+- Remaining: 2A (file-local Reviewer context), plus deferred deletion-anchor / two-phase review follow-ups if dogfooding justifies them
+- Post-review follow-up landed: oversized diff fallback, Auditor file-hint alignment, instruction filename sync on sandbox refresh, and regression coverage for all three
 
 ## Why
 
@@ -64,9 +67,11 @@ External review by Gemini and Codex. Key corrections and feedback incorporated:
 
 ---
 
-## Tier 0: Instrumentation (prerequisite for everything else)
+## Tier 0: Instrumentation (shipped)
 
 ### 0A. Prompt-size telemetry
+
+**Status:** Shipped (dev-mode prompt-size breakdown is live).
 
 **Problem:** No visibility into how much context budget each injected block consumes. Can't manage what isn't measured.
 
@@ -91,6 +96,8 @@ Log to console in dev; emit to `recordContextMetric()` (already exists at `orche
 - Baseline numbers captured before any Tier 1 changes.
 
 ### 0B. Diff chunking for Reviewer and Auditor
+
+**Status:** Shipped, with post-review fix for oversized first-file truncation.
 
 **Problem:** Reviewer hard-slices diffs at 40k chars, Auditor at 30k chars (`reviewer-agent.ts:114`, `auditor-agent.ts:91`). Later files in the diff silently vanish. This is the single biggest quality gap — Codex correctly identified that fixing callers/imports before fixing "the diff is getting chopped arbitrarily" is backward.
 
@@ -117,6 +124,8 @@ Log to console in dev; emit to `recordContextMetric()` (already exists at `orche
 
 ### 0C. Instruction source tracking
 
+**Status:** Shipped, with post-review fix for sandbox create/refresh sync.
+
 **Problem:** The app fetches AGENTS.md, CLAUDE.md, or GEMINI.md but discards which filename was loaded (`fetchProjectInstructions` in `github-tools.ts:2412` returns content + filename, but downstream consumers don't propagate the filename). The Coder's self-serve hint (1D) needs to name the correct file.
 
 **Fix:** Propagate the instruction filename through the data flow:
@@ -135,11 +144,13 @@ Log to console in dev; emit to `recordContextMetric()` (already exists at `orche
 
 ---
 
-## Tier 1: Prompt Assembly (zero new round-trips)
+## Tier 1: Prompt Assembly (shipped)
 
 Changes to how context blocks are built before the first LLM call. No additional latency.
 
 ### 1A. Coder branch metadata
+
+**Status:** Shipped.
 
 **Problem:** The Coder doesn't know the active branch, default branch, or protect-main status. Burns a round on `sandbox_exec('git branch --show-current')` to orient itself. (The Orchestrator already has this via `workspace-context.ts:98-103`; Reviewer/Auditor get it via `role-context.ts:38-55`.)
 
@@ -160,6 +171,8 @@ Protect main: on
 - Values match the UI state at delegation time.
 
 ### 1B. Structured delegation brief
+
+**Status:** Shipped.
 
 **Problem:** Orchestrator→Coder handoff loses intent. The `task` string is a lossy compression of a rich conversation. The runtime (`tool-dispatch.ts:874`, `coder-agent.ts:483`) currently only accepts `task`, `files`, and `acceptanceCriteria` — any other fields are silently dropped.
 
@@ -192,6 +205,8 @@ Protect main: on
 
 ### 1C. Project instructions self-serve hint for Coder
 
+**Status:** Shipped.
+
 **Problem:** Coder's project instructions are truncated at ~2500 chars. Large instruction files lose important details.
 
 **Fix:** Append a hint after the truncated block:
@@ -213,6 +228,8 @@ Full file available at /workspace/AGENTS.md — use sandbox_read_file if you nee
 - Hint names the correct filename (AGENTS.md, CLAUDE.md, or GEMINI.md — whichever was loaded).
 
 ### 1D. File classification hints for Auditor
+
+**Status:** Shipped, with post-review fix to build hints from the chunked diff actually sent to the model.
 
 **Problem:** Auditor can't distinguish test fixtures with hardcoded values from production files with leaked secrets. This is the single biggest source of false UNSAFE verdicts.
 
@@ -320,17 +337,20 @@ These are valid improvements but should wait until earlier tiers prove out. Each
 ## Sequencing
 
 ### Phase 1 — Instrumentation (Tier 0)
+- **Status:** Completed
 - **Scope:** 0A (prompt telemetry), 0B (diff chunking), 0C (instruction filename tracking)
 - **Risk:** Low for 0A/0C (pure data plumbing). Medium for 0B (changes diff presentation to Reviewer/Auditor — must preserve existing truncation stats and fail-safe behavior).
 - **Validation:** Capture baseline prompt sizes. Verify diff chunking never splits files mid-hunk. Run `npm run lint && npm run test && npm run build`.
 - **Gate:** Baseline prompt-size numbers must be captured before proceeding to Phase 2.
 
 ### Phase 2 — Prompt assembly (Tier 1)
+- **Status:** Completed
 - **Scope:** 1A (Coder branch metadata), 1B (structured delegation brief), 1C (Coder instruction hint), 1D (Auditor file hints)
 - **Risk:** Low for 1A/1C/1D (prompt string additions). Medium for 1B (runtime changes across 4 files — tool-dispatch, coder-agent, github-tools, useChat).
 - **Validation:** Verify prompt sizes stay within 15% of Tier 0 baselines. Verify `intent`/`constraints` survive round-trip through tool detection → coder execution. Dogfood 5+ delegations with structured briefs.
 
 ### Phase 3 — Pre-computation (Tier 2)
+- **Status:** Next up
 - **Scope:** 2A (file-local Reviewer context)
 - **Risk:** Medium — adds sandbox HTTP calls before review LLM call. Must degrade gracefully when sandbox unavailable.
 - **Validation:** Dogfood 5+ reviews with file structure context. Compare review signal quality vs. Phase 2 baseline. Verify p90 pre-fetch latency stays under 3 seconds.

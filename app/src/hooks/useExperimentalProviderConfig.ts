@@ -132,7 +132,7 @@ function createExperimentalProviderConfig(
           safeStorageRemove(activeDeploymentStorageKey);
         }
         setActiveDeploymentIdState(matchingId);
-      }, [activeDeploymentStorageKey]);
+      }, []);
 
       const persistDeployments = useCallback((nextDeployments: ExperimentalDeployment[]) => {
         const limited = nextDeployments.slice(0, MAX_EXPERIMENTAL_DEPLOYMENTS);
@@ -143,26 +143,26 @@ function createExperimentalProviderConfig(
         }
         setDeploymentsState(limited);
         return limited;
-      }, [deploymentsStorageKey]);
+      }, []);
 
       const resetCurrentDeployment = useCallback(() => {
         safeStorageRemove(baseUrlStorageKey);
         safeStorageRemove(modelStorageKey);
         setBaseUrlState(getBaseUrl());
         setModelState(env.model?.trim() || descriptor.defaultModel);
-      }, [baseUrlStorageKey, modelStorageKey]);
+      }, []);
 
       const setKey = useCallback((value: string) => {
         const trimmed = value.trim();
         if (!trimmed) return;
         safeStorageSet(keyStorageKey, trimmed);
         setKeyState(trimmed);
-      }, [keyStorageKey]);
+      }, []);
 
       const clearKey = useCallback(() => {
         safeStorageRemove(keyStorageKey);
         setKeyState(env.key?.trim() || null);
-      }, [keyStorageKey]);
+      }, []);
 
       const setBaseUrl = useCallback((value: string) => {
         const normalized = normalizeExperimentalBaseUrl(provider, value);
@@ -171,13 +171,13 @@ function createExperimentalProviderConfig(
         safeStorageSet(baseUrlStorageKey, toStore);
         setBaseUrlState(toStore);
         syncActiveDeployment(toStore, model, deployments);
-      }, [baseUrlStorageKey, deployments, model, syncActiveDeployment]);
+      }, [deployments, model, syncActiveDeployment]);
 
       const clearBaseUrl = useCallback(() => {
         safeStorageRemove(baseUrlStorageKey);
         setBaseUrlState(getBaseUrl());
         syncActiveDeployment(getBaseUrl(), model, deployments);
-      }, [baseUrlStorageKey, deployments, model, syncActiveDeployment]);
+      }, [deployments, model, syncActiveDeployment]);
 
       const setModel = useCallback((value: string) => {
         const trimmed = value.trim();
@@ -185,13 +185,13 @@ function createExperimentalProviderConfig(
         safeStorageSet(modelStorageKey, trimmed);
         setModelState(trimmed);
         syncActiveDeployment(baseUrl, trimmed, deployments);
-      }, [baseUrl, deployments, modelStorageKey, syncActiveDeployment]);
+      }, [baseUrl, deployments, syncActiveDeployment]);
 
       const clearModel = useCallback(() => {
         safeStorageRemove(modelStorageKey);
         setModelState(env.model?.trim() || descriptor.defaultModel);
         syncActiveDeployment(baseUrl, env.model?.trim() || descriptor.defaultModel, deployments);
-      }, [baseUrl, deployments, modelStorageKey, syncActiveDeployment]);
+      }, [baseUrl, deployments, syncActiveDeployment]);
 
       const saveDeployment = useCallback((rawBaseUrl: string, rawModel: string) => {
         const normalized = normalizeExperimentalDeployment(provider, {
@@ -223,13 +223,7 @@ function createExperimentalProviderConfig(
           setDeploymentsState(nextDeployments);
         }
         return true;
-      }, [
-        activeDeploymentStorageKey,
-        baseUrlStorageKey,
-        deployments,
-        modelStorageKey,
-        persistDeployments,
-      ]);
+      }, [deployments, persistDeployments]);
 
       const selectDeployment = useCallback((id: string) => {
         const selected = deployments.find((deployment) => deployment.id === id);
@@ -240,7 +234,7 @@ function createExperimentalProviderConfig(
         setBaseUrlState(selected.baseUrl);
         setModelState(selected.model);
         setActiveDeploymentIdState(selected.id);
-      }, [activeDeploymentStorageKey, baseUrlStorageKey, deployments, modelStorageKey]);
+      }, [deployments]);
 
       const removeDeployment = useCallback((id: string) => {
         const nextDeployments = persistDeployments(deployments.filter((deployment) => deployment.id !== id));
@@ -265,12 +259,9 @@ function createExperimentalProviderConfig(
         resetCurrentDeployment();
       }, [
         activeDeploymentId,
-        activeDeploymentStorageKey,
         baseUrl,
-        baseUrlStorageKey,
         deployments,
         model,
-        modelStorageKey,
         persistDeployments,
         resetCurrentDeployment,
         syncActiveDeployment,
@@ -282,7 +273,7 @@ function createExperimentalProviderConfig(
         setDeploymentsState([]);
         setActiveDeploymentIdState(null);
         resetCurrentDeployment();
-      }, [activeDeploymentStorageKey, deploymentsStorageKey, resetCurrentDeployment]);
+      }, [resetCurrentDeployment]);
 
       const baseUrlValidation = useMemo(
         () => normalizeExperimentalBaseUrl(provider, baseUrl),

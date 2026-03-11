@@ -528,6 +528,8 @@ export function WorkspaceHubSheet({
     blockedByProtectMain,
     branchProps,
     currentBranchName,
+    lockedModel,
+    lockedProvider,
     onSandboxBranchSwitch,
     projectInstructions,
     repoFullName,
