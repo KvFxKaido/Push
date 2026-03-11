@@ -16,7 +16,7 @@ import { getModelForRole } from './providers';
 import { buildAuditorContextBlock, type AuditorPromptContext } from './role-context';
 
 import { asRecord, streamWithTimeout } from './utils';
-import { parseDiffStats } from './diff-utils';
+import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
 
 const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
 
@@ -49,6 +49,8 @@ Review criteria:
 - Normal code changes with no security implications → SAFE
 
 Context limitation: You only see the diff plus any runtime context block appended below, not the full codebase. Where your assessment depends on broader context you cannot see, note the uncertainty explicitly in the risk description rather than defaulting to UNSAFE.
+
+Use [FILE HINTS] to calibrate risk — hardcoded values in test/fixture files are lower risk than in production files.
 
 Be strict. When in doubt, lean toward UNSAFE. False positives are acceptable; false negatives are not.`;
 
@@ -84,11 +86,21 @@ export async function runAuditor(
 
   onStatus('Auditor reviewing...');
 
+  // Chunk diff by file, prioritizing production files
+  const DIFF_LIMIT = 30_000;
+  const chunkedDiff = chunkDiffByFile(diff, DIFF_LIMIT, classifyFilePath);
+
+  // Build [FILE HINTS] block from the diff headers
+  const fileHintPaths = [...diff.matchAll(/^diff --git a\/.+ b\/(.+)$/gm)].map((m) => m[1]);
+  const fileHintsBlock = fileHintPaths.length > 0
+    ? `[FILE HINTS]\n${fileHintPaths.map((p) => `- ${p}: ${classifyFilePath(p)}`).join('\n')}\n[/FILE HINTS]\n\n`
+    : '';
+
   const messages: ChatMessage[] = [
     {
       id: 'audit-request',
       role: 'user',
-          content: `Review this diff for security issues:\n\n\`\`\`diff\n${diff.slice(0, 30_000).replace(/`/g, '\\`')}\n\`\`\``,
+      content: `Review this diff for security issues:\n\n${fileHintsBlock}\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\``,
       timestamp: Date.now(),
     },
   ];

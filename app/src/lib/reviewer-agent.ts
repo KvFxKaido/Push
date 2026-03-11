@@ -13,7 +13,7 @@ import { getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
 import { buildReviewerContextBlock, type ReviewerPromptContext } from './role-context';
 import { asRecord, streamWithTimeout } from './utils';
-import { parseDiffStats } from './diff-utils';
+import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
 
 const REVIEWER_TIMEOUT_MS = 90_000; // 90s — reviews can be thorough
 
@@ -113,10 +113,10 @@ export async function runReviewer(
 ): Promise<ReviewResult> {
   const DIFF_LIMIT = 40_000;
   const annotatedDiff = annotateDiffWithLineNumbers(diff);
-  const slicedDiff = annotatedDiff.length > DIFF_LIMIT ? annotatedDiff.slice(0, DIFF_LIMIT) : annotatedDiff;
-  const truncated = slicedDiff.length < annotatedDiff.length;
+  const chunkedDiff = chunkDiffByFile(annotatedDiff, DIFF_LIMIT, classifyFilePath);
   const totalFiles = parseDiffStats(diff).filesChanged;
-  const filesReviewed = truncated ? parseDiffStats(slicedDiff).filesChanged : totalFiles;
+  const filesReviewed = parseDiffStats(chunkedDiff).filesChanged;
+  const truncated = filesReviewed < totalFiles;
   const { provider, model: modelOverride, context } = options;
 
   const { streamFn } = getProviderStreamFn(provider);
@@ -133,7 +133,7 @@ export async function runReviewer(
     {
       id: 'review-request',
       role: 'user',
-      content: `Review this diff:\n\n\`\`\`diff\n${slicedDiff.replace(/`/g, '\\`')}\n\`\`\``,
+      content: `Review this diff:\n\n\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\``,
       timestamp: Date.now(),
     },
   ];
