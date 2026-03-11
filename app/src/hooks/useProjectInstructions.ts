@@ -56,6 +56,7 @@ const PROJECT_INSTRUCTION_PATHS = [
 
 export interface ProjectInstructionsManager {
   agentsMdContent: string | null;
+  instructionFilename: string | null;
   projectInstructionsChecked: boolean;
   projectInstructionsCheckFailed: boolean;
   creatingAgentsMd: boolean;
@@ -78,6 +79,7 @@ export function useProjectInstructions(
     start: (repo: string, branch: string) => Promise<string | null>;
   },
   setAgentsMd: (content: string | null) => void,
+  setInstructionFilename: (filename: string | null) => void,
   setWorkspaceContext: (ctx: string | null) => void,
   sendMessage: (message: string) => void,
   isStreaming: boolean,
@@ -85,6 +87,7 @@ export function useProjectInstructions(
   markSnapshotActivity: () => void,
 ): ProjectInstructionsManager {
   const [agentsMdContent, setAgentsMdContent] = useState<string | null>(null);
+  const [instructionFilename, setInstructionFilenameState] = useState<string | null>(null);
   const [projectInstructionsChecked, setProjectInstructionsChecked] = useState(false);
   const [projectInstructionsCheckFailed, setProjectInstructionsCheckFailed] = useState(false);
   const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
@@ -137,6 +140,8 @@ export function useProjectInstructions(
     if (!activeRepo) {
       setAgentsMdContent(null);
       setAgentsMd(null);
+      setInstructionFilenameState(null);
+      setInstructionFilename(null);
       setProjectInstructionsChecked(false);
       return;
     }
@@ -147,11 +152,16 @@ export function useProjectInstructions(
       .then((result) => {
         if (cancelled) return;
         applyEffectiveInstructions(result?.content ?? null);
+        const filename = result?.filename ?? null;
+        setInstructionFilenameState(filename);
+        setInstructionFilename(filename);
         setProjectInstructionsChecked(true);
       })
       .catch(() => {
         if (cancelled) return;
         applyEffectiveInstructions(null);
+        setInstructionFilenameState(null);
+        setInstructionFilename(null);
         setProjectInstructionsChecked(true);
         setProjectInstructionsCheckFailed(true);
       });
@@ -166,6 +176,9 @@ export function useProjectInstructions(
       .then((result) => {
         if (cancelled) return;
         applyEffectiveInstructions(result.content);
+        // Sandbox upgrade only reads AGENTS.md per design
+        setInstructionFilenameState('AGENTS.md');
+        setInstructionFilename('AGENTS.md');
       })
       .catch(() => {
         // Sandbox read failed — keep Phase A content
@@ -282,6 +295,7 @@ export function useProjectInstructions(
 
   return {
     agentsMdContent,
+    instructionFilename,
     projectInstructionsChecked,
     projectInstructionsCheckFailed,
     creatingAgentsMd,

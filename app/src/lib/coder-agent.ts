@@ -492,6 +492,12 @@ export async function runCoderAgent(
   onWorkingMemoryUpdate?: (state: CoderWorkingMemory) => void,
   providerOverride?: ActiveProvider,
   modelOverride?: string,
+  delegationContext?: {
+    intent?: string;
+    constraints?: string[];
+    branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
+    instructionFilename?: string;
+  },
 ): Promise<{ summary: string; cards: ChatCard[]; rounds: number; checkpoints: number; criteriaResults?: CriterionResult[] }> {
   // Resolve provider/model for the Coder. Delegated chat tasks can pin the
   // Coder to the chat-locked provider/model instead of the app-global default.
@@ -521,6 +527,16 @@ export async function runCoderAgent(
     const truncatedAgentsMd = truncateContent(agentsMd, MAX_AGENTS_MD_SIZE, 'project instructions');
     systemPrompt += `\n\nPROJECT INSTRUCTIONS — Repository instructions and built-in app context:\n${truncatedAgentsMd}`;
     if (import.meta.env.DEV) _promptSizes.instructions = truncatedAgentsMd.length;
+    // Item 1C: If content was truncated, tell the Coder where to find the full file
+    if (agentsMd.length > MAX_AGENTS_MD_SIZE) {
+      const filename = delegationContext?.instructionFilename || 'AGENTS.md';
+      systemPrompt += `\n\nFull file available at /workspace/${filename} — use sandbox_read_file if you need details not shown above.`;
+    }
+  }
+  // Item 1A: Inject branch metadata when available
+  if (delegationContext?.branchContext) {
+    const bc = delegationContext.branchContext;
+    systemPrompt += `\n\n[WORKSPACE CONTEXT]\nActive branch: ${bc.activeBranch}\nDefault branch: ${bc.defaultBranch}\nProtect main: ${bc.protectMain ? 'on' : 'off'}`;
   }
   // Web search tool — prompt-engineered, all providers use client-side dispatch
   systemPrompt += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
@@ -548,12 +564,22 @@ export async function runCoderAgent(
   const mutationFailures = new Map<string, MutationFailureEntry>(); // track consecutive failures per tool+file
   let consecutiveDriftRounds = 0; // count rounds of cognitive drift
 
-  // Build initial messages
+  // Build initial messages — include intent/constraints from structured delegation brief (Item 1B)
+  let taskPreamble = `Task: ${task}`;
+  if (delegationContext?.intent) {
+    taskPreamble += `\n\nIntent: ${delegationContext.intent}`;
+  }
+  if (delegationContext?.constraints && delegationContext.constraints.length > 0) {
+    taskPreamble += `\n\nConstraints:\n${delegationContext.constraints.map(c => `- ${c}`).join('\n')}`;
+  }
+  if (files.length > 0) {
+    taskPreamble += `\n\nRelevant files: ${files.join(', ')}`;
+  }
   const messages: ChatMessage[] = [
     {
       id: 'coder-task',
       role: 'user',
-      content: `Task: ${task}${files.length > 0 ? `\n\nRelevant files: ${files.join(', ')}` : ''}`,
+      content: taskPreamble,
       timestamp: Date.now(),
     },
   ];
