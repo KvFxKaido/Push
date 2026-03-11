@@ -23,7 +23,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 // We need to set the owner token before each test since the client
 // checks for it on every request.
-import { setSandboxOwnerToken } from './sandbox-client';
+import { setSandboxOwnerToken, parseEnvironmentProbe } from './sandbox-client';
 
 beforeEach(() => {
   mockFetch.mockReset();
@@ -372,5 +372,73 @@ describe('findReferencesInSandbox', () => {
     await expect(
       findReferencesInSandbox('sb-123', 'getActiveProvider', '/workspace/src'),
     ).rejects.toThrow('rg exited with code 2');
+  });
+});
+
+describe('parseEnvironmentProbe', () => {
+  it('parses scripts section from environment probe output', () => {
+    const stdout = [
+      '---VERSIONS---',
+      'node:v20.18.1',
+      'npm:10.8.2',
+      'git:git version 2.39.5',
+      'python:Python 3.11.6',
+      '---DISK---',
+      '45000M',
+      '---MARKERS---',
+      'package.json',
+      'package-lock.json',
+      '---SCRIPTS---',
+      'test:vitest run',
+      'lint:eslint .',
+      'typecheck:tsc -b',
+      'build:vite build',
+      '---END---',
+    ].join('\n');
+
+    const env = parseEnvironmentProbe(stdout);
+    expect(env).not.toBeNull();
+    expect(env!.scripts).toEqual({
+      test: 'vitest run',
+      lint: 'eslint .',
+      typecheck: 'tsc -b',
+      build: 'vite build',
+    });
+    expect(env!.git_available).toBe(true);
+    expect(env!.container_ttl).toBe('30m');
+    expect(env!.writable_root).toBe('/workspace');
+  });
+
+  it('sets git_available to false when git is missing', () => {
+    const stdout = [
+      '---VERSIONS---',
+      'node:v20.18.1',
+      'git:MISSING',
+      '---DISK---',
+      '45000M',
+      '---MARKERS---',
+      '---END---',
+    ].join('\n');
+
+    const env = parseEnvironmentProbe(stdout);
+    expect(env).not.toBeNull();
+    expect(env!.git_available).toBe(false);
+    expect(env!.scripts).toBeUndefined();
+  });
+
+  it('omits scripts when no package.json scripts match', () => {
+    const stdout = [
+      '---VERSIONS---',
+      'node:v20.18.1',
+      '---DISK---',
+      '45000M',
+      '---MARKERS---',
+      '---SCRIPTS---',
+      '---END---',
+    ].join('\n');
+
+    const env = parseEnvironmentProbe(stdout);
+    expect(env).not.toBeNull();
+    expect(env!.scripts).toBeUndefined();
   });
 });

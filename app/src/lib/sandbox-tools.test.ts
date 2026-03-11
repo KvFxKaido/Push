@@ -685,6 +685,77 @@ describe('sandbox path normalization', () => {
     expect(result).toBeNull();
   });
 
+  it('parses checks and rollbackOnFailure on sandbox_apply_patchset', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_apply_patchset',
+      args: {
+        edits: [
+          { path: 'src/foo.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'x' }] },
+        ],
+        checks: [
+          { command: 'npm test', exitCode: 0, timeoutMs: 5000 },
+          { command: 'npx tsc --noEmit' },
+        ],
+        rollbackOnFailure: true,
+      },
+    });
+    expect(result).not.toBeNull();
+    if (!result || result.tool !== 'sandbox_apply_patchset') throw new Error('Expected patchset');
+    expect(result.args.checks).toHaveLength(2);
+    expect(result.args.checks![0]).toEqual({ command: 'npm test', exitCode: 0, timeoutMs: 5000 });
+    expect(result.args.checks![1]).toEqual({ command: 'npx tsc --noEmit', exitCode: undefined, timeoutMs: undefined });
+    expect(result.args.rollbackOnFailure).toBe(true);
+  });
+
+  it('clamps check timeoutMs to 1000-30000 range', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_apply_patchset',
+      args: {
+        edits: [
+          { path: 'src/foo.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'x' }] },
+        ],
+        checks: [
+          { command: 'npm test', timeoutMs: 100 },    // below min
+          { command: 'npm build', timeoutMs: 99999 },  // above max
+        ],
+      },
+    });
+    if (!result || result.tool !== 'sandbox_apply_patchset') throw new Error('Expected patchset');
+    expect(result.args.checks![0].timeoutMs).toBe(1000);
+    expect(result.args.checks![1].timeoutMs).toBe(30000);
+  });
+
+  it('accepts snake_case aliases for check fields', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_apply_patchset',
+      args: {
+        edits: [
+          { path: 'src/foo.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'x' }] },
+        ],
+        checks: [{ command: 'npm test', exit_code: 1, timeout_ms: 8000 }],
+        rollback_on_failure: true,
+      },
+    });
+    if (!result || result.tool !== 'sandbox_apply_patchset') throw new Error('Expected patchset');
+    expect(result.args.checks![0].exitCode).toBe(1);
+    expect(result.args.checks![0].timeoutMs).toBe(8000);
+    expect(result.args.rollbackOnFailure).toBe(true);
+  });
+
+  it('drops checks with empty commands', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_apply_patchset',
+      args: {
+        edits: [
+          { path: 'src/foo.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'x' }] },
+        ],
+        checks: [{ command: '' }, { command: '  ' }],
+      },
+    });
+    if (!result || result.tool !== 'sandbox_apply_patchset') throw new Error('Expected patchset');
+    expect(result.args.checks).toBeUndefined();
+  });
+
   it('normalizes relative path in sandbox_read_symbols', () => {
     const result = validateSandboxToolCall({
       tool: 'sandbox_read_symbols',

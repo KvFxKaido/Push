@@ -13,7 +13,7 @@ Core outcomes:
 ## Status
 
 - Last updated: 2026-03-11
-- State: **Sprint 1 complete** — all four items implemented, council-reviewed, fixes applied, tests passing
+- State: **Sprint 2 complete** — all six items implemented, council-reviewed (Sprint 1), tests passing
 - Origin: Cross-agent self-report (`documents/analysis/Harness Friction — Agent Self-Report.md`). Gripes sourced from Claude Code (Opus 4.6), Gemini, and Codex (GPT-5.4) during real sessions.
 
 ## Why
@@ -249,34 +249,25 @@ Sprint 2 (deferred):
 
 ### 2A. Guarded apply-check-rollback
 
-**Source:** Codex #6 (demoted from Tier 1 by council — requires backend endpoint work)
+**Source:** Codex #6 (demoted from Tier 1 by council — originally thought to require backend endpoint work)
 **Problem:** `sandbox_apply_patchset` and `acceptanceCriteria[]` are separate primitives. The agent can't say "apply these edits, run these checks, and rollback if they fail" in one atomic operation.
 
 **Design:** Extend `sandbox_apply_patchset` with optional `checks[]` and `rollbackOnFailure: true`.
 
-**Implementation sketch:**
-- `sandbox_apply_patchset` args gain:
-  ```json
-  {
-    "edits": [...],
-    "checks": [
-      { "command": "npx tsc --noEmit", "exitCode": 0, "timeoutMs": 10000 }
-    ],
-    "rollbackOnFailure": true
-  }
-  ```
-- `sandbox/app.py`: Before applying edits, snapshot affected files to `/tmp/patchset_backup_<id>/` (including "file did not exist" state for new files). Apply edits. Run checks sequentially with per-check timeout (default 10s, max 30s). If any check fails and `rollbackOnFailure` is true, restore snapshots and return failure with check output.
-- Return shape includes `checksResults[]` with pass/fail + output per check.
-- Rollback uses `/tmp` file snapshots, NOT git. Rationale (council): `git checkout` reverts to HEAD not pre-patchset dirty state; `git stash` bundles pre-existing dirty files; Sandbox Mode may have no git baseline.
-
 **Acceptance criteria:**
-- [ ] Patchset with passing checks applies normally.
-- [ ] Patchset with failing check rolls back all edits and returns check output.
-- [ ] Rollback restores exact file contents (verified by hash comparison).
-- [ ] New files created by the patchset are deleted on rollback.
-- [ ] Per-check timeout enforced (hard cap 30s).
+- [x] Patchset with passing checks applies normally.
+- [x] Patchset with failing check rolls back all edits and returns check output.
+- [x] Rollback restores exact file contents (verified by hash comparison).
+- [~] New files created by the patchset are deleted on rollback. *(N/A — patchset only edits existing files; new file creation uses `sandbox_write_file`)*
+- [x] Per-check timeout enforced (hard cap 30s).
 
-**Risk:** Snapshot storage for large files. Mitigation: `/tmp` is ephemeral per sandbox session; cap total snapshot size at 5MB.
+**Implementation notes (Sprint 2):**
+- Implemented entirely client-side — no backend endpoint needed. Phase 1 already reads all file contents into `fileContents` map (originals). Phase 3 runs checks via `execInSandbox()` with `timeout` wrapper. Phase 4 writes back originals via `writeToSandbox()` (no version check on restore).
+- Validation clamps `timeoutMs` to 1000-30000 range, accepts snake_case aliases (`exit_code`, `timeout_ms`, `rollback_on_failure`).
+- On rollback: version cache is updated with restored versions, success output shows which files were rolled back and check output (truncated to 800 chars, 15 lines per check).
+- Checks run sequentially, stop on first failure.
+
+**Risk:** Rollback is not atomic — if the client crashes between write and rollback, files remain in the new state. Acceptable because the sandbox is ephemeral (30 min).
 
 ---
 
@@ -293,9 +284,16 @@ Sprint 2 (deferred):
 - Inject into the Coder's first tool result via existing `[SANDBOX_ENVIRONMENT]` path.
 
 **Acceptance criteria:**
-- [ ] Extended capability block is present in the Coder's first tool result.
-- [ ] Block includes detected test/lint commands.
-- [ ] Block reflects actual sandbox configuration.
+- [x] Extended capability block is present in the Coder's first tool result.
+- [x] Block includes detected test/lint commands.
+- [x] Block reflects actual sandbox configuration.
+
+**Implementation notes (Sprint 2):**
+- Extended both `_run_environment_probe()` (Python, server-side) and `ENVIRONMENT_PROBE_SCRIPT` + `parseEnvironmentProbe()` (TypeScript, client-side) with a `---SCRIPTS---` section that reads `package.json` scripts via `python3 -c`.
+- Detects 8 script keys: test, lint, typecheck, build, dev, start, check, format.
+- `SandboxEnvironment` type extended with `scripts`, `git_available`, `container_ttl` ("30m"), `writable_root` ("/workspace").
+- `getSandboxToolProtocol()` renders all new fields in `[SANDBOX_ENVIRONMENT]` block: detected commands, git availability, container lifetime, writable root.
+- `parseEnvironmentProbe` exported for testing.
 
 ---
 

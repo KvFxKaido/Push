@@ -525,7 +525,13 @@ export type SandboxToolCall =
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
   | { tool: 'promote_to_github'; args: { repo_name: string; description?: string; private?: boolean } }
   | { tool: 'sandbox_read_symbols'; args: { path: string } }
-  | { tool: 'sandbox_apply_patchset'; args: { dryRun?: boolean; diagnostics?: boolean; edits: Array<{ path: string; ops: HashlineOp[] }> } }
+  | { tool: 'sandbox_apply_patchset'; args: {
+      dryRun?: boolean;
+      diagnostics?: boolean;
+      edits: Array<{ path: string; ops: HashlineOp[] }>;
+      checks?: Array<{ command: string; exitCode?: number; timeoutMs?: number }>;
+      rollbackOnFailure?: boolean;
+    } }
 
 // --- Validation ---
 
@@ -669,12 +675,33 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
         path: normalizeSandboxPath(edit.path),
       }));
     if (validEdits.length === 0) return null;
+    // Parse checks array
+    let validChecks: Array<{ command: string; exitCode?: number; timeoutMs?: number }> | undefined;
+    if (Array.isArray(args.checks)) {
+      validChecks = (args.checks as unknown[])
+        .filter((check): check is { command: string } => {
+          const rec = asRecord(check);
+          return rec !== null && typeof rec.command === 'string' && rec.command.trim().length > 0;
+        })
+        .map(check => {
+          const rec = check as Record<string, unknown>;
+          const timeoutRaw = typeof rec.timeoutMs === 'number' ? rec.timeoutMs : typeof rec.timeout_ms === 'number' ? rec.timeout_ms : undefined;
+          return {
+            command: (rec.command as string).trim(),
+            exitCode: typeof rec.exitCode === 'number' ? rec.exitCode : (typeof rec.exit_code === 'number' ? rec.exit_code : undefined),
+            timeoutMs: timeoutRaw !== undefined ? Math.min(Math.max(timeoutRaw, 1000), 30000) : undefined,
+          };
+        });
+      if (validChecks.length === 0) validChecks = undefined;
+    }
     return {
       tool: 'sandbox_apply_patchset',
       args: {
         dryRun: typeof args.dryRun === 'boolean' ? args.dryRun : (args.dry_run === true ? true : undefined),
         diagnostics: args.diagnostics === false ? false : undefined,
         edits: validEdits,
+        checks: validChecks,
+        rollbackOnFailure: (args.rollbackOnFailure === true || args.rollback_on_failure === true) ? true : undefined,
       },
     };
   }
@@ -3000,7 +3027,7 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_apply_patchset': {
-        const { edits, dryRun } = call.args;
+        const { edits, dryRun, checks, rollbackOnFailure } = call.args;
 
         if (!edits || edits.length === 0) {
           return { text: '[Tool Error — sandbox_apply_patchset] No edits provided.' };
@@ -3449,6 +3476,83 @@ export async function executeSandboxToolCall(
           };
         }
 
+        // Phase 3: Run post-write checks (if provided)
+        const checksResults: Array<{ command: string; passed: boolean; exitCode: number; output: string }> = [];
+        let checksFailed = false;
+        if (checks?.length) {
+          for (const check of checks) {
+            const timeoutMs = check.timeoutMs ?? 10000;
+            const expectedExit = check.exitCode ?? 0;
+            try {
+              const timeoutSec = Math.ceil(timeoutMs / 1000);
+              const wrappedCommand = `timeout ${timeoutSec} sh -c ${JSON.stringify(check.command)} 2>&1`;
+              const result = await execInSandbox(sandboxId, wrappedCommand);
+              const output = (result.stdout || '').slice(0, 4000) + (result.stderr ? '\n' + result.stderr.slice(0, 1000) : '');
+              const passed = result.exitCode === expectedExit;
+              checksResults.push({ command: check.command, passed, exitCode: result.exitCode, output: output.trim() });
+              if (!passed) { checksFailed = true; break; }
+            } catch (checkErr) {
+              const errMsg = checkErr instanceof Error ? checkErr.message : String(checkErr);
+              checksResults.push({ command: check.command, passed: false, exitCode: -1, output: errMsg });
+              checksFailed = true;
+              break;
+            }
+          }
+        }
+
+        // Phase 4: Rollback if checks failed and rollbackOnFailure is set
+        if (checksFailed && rollbackOnFailure) {
+          const rollbackResults: string[] = [];
+          const rollbackErrors: string[] = [];
+          for (const edit of edits) {
+            const original = fileContents.get(edit.path);
+            if (!original) {
+              rollbackErrors.push(`${edit.path}: no snapshot available`);
+              continue;
+            }
+            try {
+              // Write back original content without version check (force restore)
+              const restoreResult = await writeToSandbox(sandboxId, edit.path, original.content);
+              if (restoreResult.ok) {
+                // Update version cache with restored version
+                const cacheKey = fileVersionKey(sandboxId, edit.path);
+                if (typeof restoreResult.new_version === 'string' && restoreResult.new_version) {
+                  versionCacheSet(cacheKey, restoreResult.new_version);
+                }
+                rollbackResults.push(edit.path);
+              } else {
+                rollbackErrors.push(`${edit.path}: ${restoreResult.error || 'restore failed'}`);
+              }
+            } catch (rollbackErr) {
+              rollbackErrors.push(`${edit.path}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+            }
+          }
+
+          const rollbackLines: string[] = [
+            `[Tool Result — sandbox_apply_patchset] (rolled back)`,
+            `All ${editResults.length} file(s) were patched, but a post-write check failed:`,
+            '',
+          ];
+          for (const cr of checksResults) {
+            rollbackLines.push(`  ${cr.passed ? '✓' : '✗'} ${cr.command} (exit ${cr.exitCode})`);
+            if (cr.output) {
+              const truncOutput = cr.output.length > 800 ? cr.output.slice(0, 800) + '…' : cr.output;
+              for (const line of truncOutput.split('\n').slice(0, 15)) {
+                rollbackLines.push(`    ${line}`);
+              }
+            }
+          }
+          rollbackLines.push('');
+          if (rollbackResults.length > 0) {
+            rollbackLines.push(`Rolled back ${rollbackResults.length} file(s): ${rollbackResults.join(', ')}`);
+          }
+          if (rollbackErrors.length > 0) {
+            rollbackLines.push(`Rollback errors: ${rollbackErrors.join('; ')}`);
+          }
+          rollbackLines.push('Fix the issue and retry the patchset.');
+          return { text: rollbackLines.join('\n') };
+        }
+
         const lines: string[] = [
           `[Tool Result — sandbox_apply_patchset]`,
           `All ${editResults.length} file(s) patched successfully:`,
@@ -3457,6 +3561,14 @@ export async function executeSandboxToolCall(
         if (guardWarnings.length > 0) {
           lines.push('Guard warnings:');
           lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
+        }
+
+        // Append check results if checks passed
+        if (checksResults.length > 0) {
+          lines.push('', 'Post-write checks:');
+          for (const cr of checksResults) {
+            lines.push(`  ✓ ${cr.command} (exit ${cr.exitCode})`);
+          }
         }
 
         // Tier 2 ambient diagnostics: full project typecheck after patchset (1A)
@@ -3505,7 +3617,7 @@ Additional tools available when sandbox is active:
 - sandbox_download(path?) — Download workspace files as a compressed archive (tar.gz). Path defaults to /workspace. Returns a download card the user can save.
 - sandbox_read_symbols(path) — Extract a symbol index from a source file (functions, classes, interfaces, types, imports with line numbers). Works on .py (via ast), .ts/.tsx/.js/.jsx (via regex). Use this to understand file structure before editing — cheaper than reading the whole file.
 - sandbox_find_references(symbol, scope?) — Find all references to a symbol name (imports, call sites). Returns file, line, context, and classification (import/call). Scope defaults to /workspace/. Use after sandbox_read_symbols to understand what depends on a symbol.
-- sandbox_apply_patchset(edits, dryRun?, diagnostics?) — Apply hashline edits to multiple files with all-or-nothing validation. edits is an array of { path, ops: HashlineOp[] } (each path must appear once). Phase 1 reads all files and validates all ops — if any fail, nothing is written. Phase 2 writes sequentially (partial failure possible if a write fails mid-way). Use dryRun=true to validate without writing. On success, runs a full project typecheck (tsc --noEmit, 2s cap) and appends [DIAGNOSTICS] with errors for changed files only. Pass diagnostics=false to skip. Prefer this over multiple sandbox_edit_file calls when editing 2+ files together.
+- sandbox_apply_patchset(edits, dryRun?, diagnostics?, checks?, rollbackOnFailure?) — Apply hashline edits to multiple files with all-or-nothing validation. edits is an array of { path, ops: HashlineOp[] } (each path must appear once). Phase 1 reads all files and validates all ops — if any fail, nothing is written. Phase 2 writes all files. On success, runs a full project typecheck (tsc --noEmit, 2s cap) and appends [DIAGNOSTICS] with errors for changed files only. Pass diagnostics=false to skip. Use dryRun=true to validate without writing. Use checks to run post-write verification: checks is an array of { command: string, exitCode?: number (default 0), timeoutMs?: number (default 10000, max 30000) }. Each check runs sequentially after writes succeed. If any check fails and rollbackOnFailure=true, all files are restored to their pre-edit content and the failing check output is returned. Prefer this over multiple sandbox_edit_file calls when editing 2+ files together.
 - promote_to_github(repo_name, description?, private?) — Create a new GitHub repo under the authenticated user, set the sandbox git remote, and push current branch. Defaults to private=true.
 
 Compatibility aliases also work:
@@ -3565,6 +3677,19 @@ export function getSandboxToolProtocol(): string {
   }
   if (env.project_markers?.length) {
     parts.push('Project files: ' + env.project_markers.map((marker) => sanitizeSandboxEnvironmentValue(marker)).join(', '));
+  }
+  const scriptEntries = Object.entries(env.scripts || {});
+  if (scriptEntries.length) {
+    parts.push('Detected commands: ' + scriptEntries.map(([k, v]) => `${sanitizeSandboxEnvironmentValue(k)}="${sanitizeSandboxEnvironmentValue(v)}"`).join(', '));
+  }
+  if (env.git_available !== undefined) {
+    parts.push(`Git: ${env.git_available ? 'available' : 'not available'}`);
+  }
+  if (env.container_ttl) {
+    parts.push(`Container lifetime: ${sanitizeSandboxEnvironmentValue(env.container_ttl)}`);
+  }
+  if (env.writable_root) {
+    parts.push(`Writable root: ${sanitizeSandboxEnvironmentValue(env.writable_root)}`);
   }
   if (env.warnings?.length) {
     for (const w of env.warnings) parts.push(`WARNING: ${sanitizeSandboxEnvironmentValue(w)}`);

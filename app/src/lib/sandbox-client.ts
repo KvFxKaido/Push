@@ -20,6 +20,10 @@ export interface SandboxEnvironment {
   project_markers?: string[];       // e.g. ["package.json", "requirements.txt"]
   warnings?: string[];              // e.g. ["Low disk space: 450M"]
   disk_free?: string;               // e.g. "45000M"
+  scripts?: Record<string, string>; // e.g. { test: "vitest run", lint: "eslint ." }
+  git_available?: boolean;          // whether git works in the sandbox
+  container_ttl?: string;           // e.g. "30m"
+  writable_root?: string;           // e.g. "/workspace"
 }
 
 export interface SandboxSession {
@@ -382,7 +386,7 @@ export function clearSandboxEnvironment(sandboxId?: string): void {
  * Parse raw stdout from the environment probe shell script.
  * Used for client-side re-probing on reconnect.
  */
-function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null {
+export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null {
   if (!stdout) return null;
 
   const sections: Record<string, string[]> = {};
@@ -424,10 +428,25 @@ function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null {
 
   const markers = sections['MARKERS'] || [];
 
+  const scripts: Record<string, string> = {};
+  for (const item of sections['SCRIPTS'] || []) {
+    const colonIdx = item.indexOf(':');
+    if (colonIdx < 0) continue;
+    const name = item.slice(0, colonIdx).trim();
+    const cmd = item.slice(colonIdx + 1).trim();
+    if (name && cmd) scripts[name] = cmd;
+  }
+
+  const gitAvailable = 'git' in tools;
+
   const result: SandboxEnvironment = { tools };
   if (markers.length) result.project_markers = markers;
   if (warnings.length) result.warnings = warnings;
   if (diskFree) result.disk_free = diskFree;
+  if (Object.keys(scripts).length) result.scripts = scripts;
+  result.git_available = gitAvailable;
+  result.container_ttl = '30m';
+  result.writable_root = '/workspace';
   return result;
 }
 
@@ -444,6 +463,14 @@ const ENVIRONMENT_PROBE_SCRIPT =
   'cd /workspace 2>/dev/null && for f in package.json package-lock.json yarn.lock pnpm-lock.yaml' +
   ' requirements.txt pyproject.toml setup.py Cargo.toml go.mod pom.xml Gemfile Makefile; do' +
   ' [ -f "$f" ] && echo "$f"; done;' +
+  'echo "---SCRIPTS---";' +
+  'cd /workspace 2>/dev/null && if [ -f package.json ]; then' +
+  " python3 -c \"import json,sys;" +
+  " d=json.load(open('package.json'));" +
+  " s=d.get('scripts',{});" +
+  " [print(f'{k}:{v}') for k,v in s.items()" +
+  " if k in ('test','lint','typecheck','build','dev','start','check','format')]" +
+  '" 2>/dev/null; fi;' +
   'echo "---END---"';
 
 /**

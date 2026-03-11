@@ -709,6 +709,14 @@ def _run_environment_probe(sb):
         'cd /workspace 2>/dev/null && for f in package.json package-lock.json yarn.lock pnpm-lock.yaml'
         ' requirements.txt pyproject.toml setup.py Cargo.toml go.mod pom.xml Gemfile Makefile; do'
         ' [ -f "$f" ] && echo "$f"; done;'
+        'echo "---SCRIPTS---";'
+        'cd /workspace 2>/dev/null && if [ -f package.json ]; then'
+        ' python3 -c "import json,sys;'
+        " d=json.load(open('package.json'));"
+        " s=d.get('scripts',{});"
+        " [print(f'{k}:{v}') for k,v in s.items()"
+        " if k in ('test','lint','typecheck','build','dev','start','check','format')]"
+        '" 2>/dev/null; fi;'
         'echo "---END---"'
     )
     try:
@@ -753,6 +761,16 @@ def _run_environment_probe(sb):
 
     markers = sections.get('MARKERS', [])
 
+    scripts = {}
+    for item in sections.get('SCRIPTS', []):
+        if ':' not in item:
+            continue
+        name, cmd = item.split(':', 1)
+        if name and cmd:
+            scripts[name.strip()] = cmd.strip()
+
+    git_available = 'git' in tools
+
     result = {"tools": tools}
     if markers:
         result["project_markers"] = markers
@@ -760,6 +778,11 @@ def _run_environment_probe(sb):
         result["warnings"] = warnings
     if disk_free:
         result["disk_free"] = disk_free
+    if scripts:
+        result["scripts"] = scripts
+    result["git_available"] = git_available
+    result["container_ttl"] = "30m"
+    result["writable_root"] = "/workspace"
     return result
 
 
