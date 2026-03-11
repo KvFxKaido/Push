@@ -506,16 +506,34 @@ export async function runCoderAgent(
   // Build system prompt, optionally including user identity and effective
   // project instructions (repo file plus any built-in app context).
   let systemPrompt = buildCoderSystemPrompt();
+
+  // --- Prompt-size telemetry (dev only) ---
+  const _promptSizes: Record<string, number> = import.meta.env.DEV
+    ? { base: systemPrompt.length }
+    : {};
+
   const identityBlock = buildUserIdentityBlock(getUserProfile());
   if (identityBlock) {
     systemPrompt += '\n\n' + identityBlock;
+    if (import.meta.env.DEV) _promptSizes.identity = identityBlock.length;
   }
   if (agentsMd) {
     const truncatedAgentsMd = truncateContent(agentsMd, MAX_AGENTS_MD_SIZE, 'project instructions');
     systemPrompt += `\n\nPROJECT INSTRUCTIONS — Repository instructions and built-in app context:\n${truncatedAgentsMd}`;
+    if (import.meta.env.DEV) _promptSizes.instructions = truncatedAgentsMd.length;
   }
   // Web search tool — prompt-engineered, all providers use client-side dispatch
   systemPrompt += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
+  if (import.meta.env.DEV) _promptSizes.websearch = WEB_SEARCH_TOOL_PROTOCOL.length;
+
+  // --- Log prompt-size breakdown (dev only) ---
+  if (import.meta.env.DEV) {
+    const fmt = (n: number) => n.toLocaleString();
+    const parts = Object.entries(_promptSizes)
+      .map(([k, v]) => `${k}=${fmt(v)}`)
+      .join(' ');
+    console.log(`[Context Budget] Coder prompt: ${fmt(systemPrompt.length)} chars (${parts})`);
+  }
 
   const allCards: ChatCard[] = [];
   let rounds = 0;

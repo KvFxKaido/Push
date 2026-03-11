@@ -657,37 +657,65 @@ function toLLMMessages(
   } else {
     systemContent = ORCHESTRATOR_SYSTEM_PROMPT;
 
+    // --- Prompt-size telemetry (dev only) ---
+    const _promptSizes: Record<string, number> = import.meta.env.DEV
+      ? { base: ORCHESTRATOR_SYSTEM_PROMPT.length }
+      : {};
+
     // Inject user identity (name, bio) when configured
     const identityBlock = buildUserIdentityBlock(getUserProfile());
     if (identityBlock) {
       systemContent += '\n\n' + identityBlock;
+      if (import.meta.env.DEV) _promptSizes.identity = identityBlock.length;
     }
 
     if (workspaceContext) {
       systemContent += '\n\n' + workspaceContext + '\n' + TOOL_PROTOCOL;
+      if (import.meta.env.DEV) {
+        _promptSizes.workspace = workspaceContext.length;
+        _promptSizes.tools = TOOL_PROTOCOL.length;
+      }
       if (hasSandbox) {
-        systemContent += '\n' + getSandboxToolProtocol();
+        const sandboxProto = getSandboxToolProtocol();
+        systemContent += '\n' + sandboxProto;
+        if (import.meta.env.DEV) _promptSizes.sandbox = sandboxProto.length;
       }
     } else if (hasSandbox) {
       // Sandbox mode (no repo): include sandbox tools with ephemeral preamble, no GitHub tools
-      systemContent += '\n\nYou are in **Sandbox Mode** — an ephemeral Linux workspace with no GitHub repo connected.'
+      const sandboxPreamble = 'You are in **Sandbox Mode** — an ephemeral Linux workspace with no GitHub repo connected.'
         + ' You have full access to the sandbox filesystem and can create, edit, and run files freely.'
         + ' Nothing is saved or committed unless the user explicitly downloads their work.'
-        + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.'
-        + '\n' + getSandboxToolProtocol();
+        + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.';
+      const sandboxProto = getSandboxToolProtocol();
+      systemContent += '\n\n' + sandboxPreamble + '\n' + sandboxProto;
+      if (import.meta.env.DEV) _promptSizes.sandbox = sandboxPreamble.length + sandboxProto.length;
     }
 
     // Scratchpad context and tools
     systemContent += '\n' + SCRATCHPAD_TOOL_PROTOCOL;
+    if (import.meta.env.DEV) _promptSizes.scratchpad = SCRATCHPAD_TOOL_PROTOCOL.length;
     if (scratchpadContent !== undefined) {
-      systemContent += '\n\n' + buildScratchpadContext(scratchpadContent);
+      const scratchpadCtx = buildScratchpadContext(scratchpadContent);
+      systemContent += '\n\n' + scratchpadCtx;
+      if (import.meta.env.DEV) _promptSizes.scratchpad = (_promptSizes.scratchpad || 0) + scratchpadCtx.length;
     }
 
     // Web search tool — prompt-engineered, all providers use client-side dispatch
     systemContent += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
+    if (import.meta.env.DEV) _promptSizes.websearch = WEB_SEARCH_TOOL_PROTOCOL.length;
 
     // Ask-user tool — structured questions with tap-friendly options
     systemContent += '\n' + ASK_USER_TOOL_PROTOCOL;
+    if (import.meta.env.DEV) _promptSizes.askuser = ASK_USER_TOOL_PROTOCOL.length;
+
+    // --- Log prompt-size breakdown (dev only) ---
+    if (import.meta.env.DEV) {
+      const fmt = (n: number) => n.toLocaleString();
+      const parts = Object.entries(_promptSizes)
+        .map(([k, v]) => `${k}=${fmt(v)}`)
+        .join(' ');
+      console.log(`[Context Budget] System prompt: ${fmt(systemContent.length)} chars (${parts})`);
+    }
   }
 
   // Prompt caching: wrap the system message as a content-array with cache_control
