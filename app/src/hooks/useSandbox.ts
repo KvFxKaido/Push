@@ -12,7 +12,16 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { createSandbox, cleanupSandbox, execInSandbox, setSandboxOwnerToken, getSandboxOwnerToken, setSandboxEnvironment, probeSandboxEnvironment } from '@/lib/sandbox-client';
+import {
+  createSandbox,
+  cleanupSandbox,
+  execInSandbox,
+  setSandboxOwnerToken,
+  getSandboxOwnerToken,
+  setActiveSandboxEnvironment,
+  clearSandboxEnvironment,
+  probeSandboxEnvironment,
+} from '@/lib/sandbox-client';
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -121,6 +130,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
     let cancelled = false;
     reconnectingRef.current = true;
     setStatus('reconnecting');
+    setActiveSandboxEnvironment(null);
     setSandboxOwnerToken(saved.ownerToken);
     setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
 
@@ -130,6 +140,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
         if (result.exitCode === 0) {
           setSandboxId(saved.sandboxId);
           sandboxIdRef.current = saved.sandboxId;
+          setActiveSandboxEnvironment(saved.sandboxId);
           setStatus('ready');
           // Fire-and-forget environment probe on reconnect
           probeSandboxEnvironment(saved.sandboxId).catch(() => {});
@@ -173,7 +184,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
       fileLedger.reset();
       clearFileVersionCache(saved.sandboxId);
       clearSandboxWorkspaceRevision(saved.sandboxId);
-      setSandboxEnvironment(null);
+      clearSandboxEnvironment(saved.sandboxId);
       if (sandboxIdRef.current && status === 'ready') {
         sandboxIdRef.current = null;
         setSandboxId(null);
@@ -197,6 +208,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
 
       setStatus('creating');
       setError(null);
+      setActiveSandboxEnvironment(null);
       setSandboxOwnerToken(null);
 
       try {
@@ -212,6 +224,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
 
         setSandboxId(session.sandboxId);
         setStatus('ready');
+        setActiveSandboxEnvironment(session.sandboxId);
         setSandboxOwnerToken(session.ownerToken || null);
 
         saveSession({
@@ -256,7 +269,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
     fileLedger.reset();
     clearFileVersionCache(id);
     clearSandboxWorkspaceRevision(id);
-    setSandboxEnvironment(null);
+    clearSandboxEnvironment(id);
 
     setSandboxId(null);
     setStatus('idle');

@@ -1,6 +1,6 @@
 import type { AIProviderType, ChatMessage } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
-import { SANDBOX_TOOL_PROTOCOL, getSandboxToolProtocol } from './sandbox-tools';
+import { getSandboxToolProtocol } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';

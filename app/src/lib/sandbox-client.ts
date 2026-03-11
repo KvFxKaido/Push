@@ -161,16 +161,39 @@ export function getSandboxOwnerToken(sandboxId?: string): string | null {
   return sandboxOwnerToken;
 }
 
-// --- Sandbox environment (module-level, same pattern as owner token) ---
+// --- Sandbox environment (module-level cache keyed by sandbox id) ---
 
-let _sandboxEnvironment: SandboxEnvironment | null = null;
+const sandboxEnvironmentsById = new Map<string, SandboxEnvironment>();
+let activeSandboxEnvironmentId: string | null = null;
 
-export function getSandboxEnvironment(): SandboxEnvironment | null {
-  return _sandboxEnvironment;
+export function getSandboxEnvironment(sandboxId?: string): SandboxEnvironment | null {
+  const targetId = sandboxId ?? activeSandboxEnvironmentId;
+  if (!targetId) return null;
+  return sandboxEnvironmentsById.get(targetId) || null;
 }
 
-export function setSandboxEnvironment(env: SandboxEnvironment | null): void {
-  _sandboxEnvironment = env;
+export function setSandboxEnvironment(sandboxId: string, env: SandboxEnvironment | null): void {
+  if (env) sandboxEnvironmentsById.set(sandboxId, env);
+  else sandboxEnvironmentsById.delete(sandboxId);
+}
+
+export function setActiveSandboxEnvironment(sandboxId: string | null): void {
+  activeSandboxEnvironmentId = sandboxId;
+}
+
+export function clearSandboxEnvironment(sandboxId?: string): void {
+  if (sandboxId) {
+    sandboxEnvironmentsById.delete(sandboxId);
+    if (activeSandboxEnvironmentId === sandboxId) {
+      activeSandboxEnvironmentId = null;
+    }
+    return;
+  }
+
+  if (activeSandboxEnvironmentId) {
+    sandboxEnvironmentsById.delete(activeSandboxEnvironmentId);
+    activeSandboxEnvironmentId = null;
+  }
 }
 
 /**
@@ -249,7 +272,7 @@ export async function probeSandboxEnvironment(sandboxId: string): Promise<Sandbo
   try {
     const result = await execInSandbox(sandboxId, ENVIRONMENT_PROBE_SCRIPT);
     const env = parseEnvironmentProbe(result.stdout);
-    if (env) _sandboxEnvironment = env;
+    if (env) setSandboxEnvironment(sandboxId, env);
     return env;
   } catch {
     return null;
@@ -429,7 +452,7 @@ export async function createSandbox(
 
   // Capture environment probe results
   const environment = data.environment || undefined;
-  if (environment) _sandboxEnvironment = environment;
+  if (environment) setSandboxEnvironment(data.sandbox_id, environment);
 
   return { sandboxId: data.sandbox_id, ownerToken: data.owner_token, status: 'ready', workspaceRevision: data.workspace_revision, environment };
 }
@@ -623,6 +646,7 @@ export async function cleanupSandbox(
   if (tokenForSandbox && sandboxOwnerToken === tokenForSandbox) {
     setSandboxOwnerToken(null);
   }
+  clearSandboxEnvironment(sandboxId);
   return result;
 }
 
