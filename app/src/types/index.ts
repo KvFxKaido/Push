@@ -219,6 +219,23 @@ export type ChatCard =
 
 // --- Coder working memory ---
 
+export interface CoderObservation {
+  /** Agent-assigned stable identifier, e.g. "adapter-pattern". */
+  id: string;
+  /** The conclusion being tracked. */
+  text: string;
+  /** File-level dependencies used for harness-driven invalidation. */
+  dependsOn?: string[];
+  /** Set by the harness when dependencies are mutated. */
+  stale?: boolean;
+  /** Human-readable invalidation reason, set by the harness. */
+  staleReason?: string;
+  /** Round when the observation was first added. */
+  addedAtRound?: number;
+  /** Round when the observation became stale — used for 5-round auto-expiry. */
+  staleAtRound?: number;
+}
+
 /** Agent-internal working memory for the Coder. Resets per task. */
 export interface CoderWorkingMemory {
   plan?: string;
@@ -230,6 +247,7 @@ export interface CoderWorkingMemory {
   currentPhase?: string;
   /** List of phases that have been completed (optional retroactive progress tracking) */
   completedPhases?: string[];
+  observations?: CoderObservation[];
 }
 
 // --- Acceptance criteria for Coder delegation ---

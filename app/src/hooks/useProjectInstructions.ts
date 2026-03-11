@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import { readFromSandbox, execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
+import { fileLedger } from '@/lib/file-awareness-ledger';
 import { fetchProjectInstructions } from '@/lib/github-tools';
 import { syncProjectInstructionsFromSandbox } from '@/lib/project-instructions-utils';
 import { buildEffectiveProjectInstructions } from '@/lib/push-built-in-context';
@@ -213,6 +214,7 @@ export function useProjectInstructions(
       }
 
       const writeResult = await writeToSandbox(id, '/workspace/AGENTS.md', AGENTS_MD_TEMPLATE);
+      if (writeResult.ok) fileLedger.recordMutation('/workspace/AGENTS.md', 'user');
       if (!writeResult.ok) {
         toast.error(writeResult.error || 'Failed to create AGENTS.md');
         return;

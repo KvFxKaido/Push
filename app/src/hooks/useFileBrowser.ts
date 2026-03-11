@@ -13,6 +13,7 @@ import {
   renameInSandbox,
 } from '@/lib/sandbox-client';
 import type { FileEntry } from '@/lib/sandbox-client';
+import { fileLedger } from '@/lib/file-awareness-ledger';
 
 export type FileBrowserStatus = 'idle' | 'loading' | 'error';
 
@@ -80,6 +81,7 @@ export function useFileBrowser(sandboxId: string | null) {
       try {
         const content = await file.text();
         await writeToSandbox(sandboxId, targetPath, content);
+        fileLedger.recordMutation(targetPath, 'user');
         addOperation({ type: 'upload', path: targetPath, status: 'success', message: `Uploaded ${file.name}` });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -98,6 +100,7 @@ export function useFileBrowser(sandboxId: string | null) {
 
     try {
       await deleteFromSandbox(sandboxId, path);
+      fileLedger.recordMutation(path, 'user');
       addOperation({ type: 'delete', path, status: 'success', message: `Deleted ${name}` });
       loadDirectory(currentPath);
     } catch (err) {
@@ -115,6 +118,7 @@ export function useFileBrowser(sandboxId: string | null) {
 
     try {
       await renameInSandbox(sandboxId, oldPath, newPath);
+      fileLedger.recordMutation(newPath, 'user');
       addOperation({ type: 'rename', path: newPath, status: 'success', message: `Renamed ${oldName} → ${newName}` });
       loadDirectory(currentPath);
     } catch (err) {

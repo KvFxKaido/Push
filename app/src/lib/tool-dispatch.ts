@@ -31,7 +31,7 @@ export const PARALLEL_READ_ONLY_GITHUB_TOOLS = new Set([
 ]);
 
 export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set([
-  'sandbox_read_file', 'sandbox_search', 'sandbox_list_dir', 'sandbox_diff', 'sandbox_read_symbols',
+  'sandbox_read_file', 'sandbox_search', 'sandbox_list_dir', 'sandbox_diff', 'sandbox_read_symbols', 'sandbox_find_references',
 ]);
 
 export const MAX_PARALLEL_TOOL_CALLS = 6;

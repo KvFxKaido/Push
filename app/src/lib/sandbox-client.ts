@@ -88,6 +88,18 @@ export interface SandboxReadSymbolsResult {
   totalLines: number;
 }
 
+export interface SandboxReference {
+  file: string;
+  line: number;
+  context: string;
+  kind: 'import' | 'call';
+}
+
+export interface SandboxFindReferencesResult {
+  references: SandboxReference[];
+  truncated: boolean;
+}
+
 // --- Error types ---
 
 export interface SandboxError {
@@ -227,6 +239,92 @@ else:
             continue
 
 print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
+`.trim();
+
+const SANDBOX_FIND_REFERENCES_SCRIPT = `
+import sys, json, os, subprocess
+
+symbol = sys.argv[1]
+scope = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else '/workspace'
+
+try:
+    max_results = int(sys.argv[3]) if len(sys.argv) > 3 else 30
+except Exception:
+    max_results = 30
+
+if max_results < 1:
+    max_results = 30
+
+workspace_root = '/workspace'
+search_scope = scope
+
+if scope == workspace_root:
+    search_scope = '.'
+elif scope.startswith(workspace_root + '/'):
+    search_scope = os.path.relpath(scope, workspace_root)
+
+proc = subprocess.Popen(
+    ['rg', '-rnw', '--json', symbol, search_scope],
+    cwd=workspace_root,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    errors='replace',
+)
+
+references = []
+truncated = False
+skip_remaining = False
+
+for raw in proc.stdout or []:
+    if skip_remaining:
+        continue
+
+    try:
+        message = json.loads(raw)
+    except Exception:
+        continue
+
+    if message.get('type') != 'match':
+        continue
+
+    data = message.get('data') or {}
+    path = ((data.get('path') or {}).get('text')) or ''
+    line_number = data.get('line_number')
+    context = (((data.get('lines') or {}).get('text')) or '').rstrip('\\r\\n')
+    context_lower = context.lower()
+    kind = 'import' if ('import' in context_lower or 'require' in context_lower) else 'call'
+
+    if len(references) >= max_results:
+        truncated = True
+        proc.kill()
+        break
+
+    references.append({
+        'file': path,
+        'line': line_number,
+        'context': context,
+        'kind': kind,
+    })
+
+try:
+    proc.wait(timeout=2)
+except Exception:
+    proc.kill()
+    proc.wait()
+exit_code = proc.returncode or 0
+
+stderr = ''
+try:
+    stderr = (proc.stderr.read().strip() if proc.stderr else '') or ''
+except Exception:
+    pass
+
+if exit_code not in (0, 1, -9):
+    print(json.dumps({'error': stderr or f'rg exited with code {exit_code}'}))
+    sys.exit(0)
+
+print(json.dumps({'references': references, 'truncated': truncated}))
 `.trim();
 
 export function setSandboxOwnerToken(token: string | null, sandboxId?: string): void {
@@ -624,6 +722,60 @@ export async function readSymbolsFromSandbox(
     totalLines: typeof parsed.total_lines === 'number' && Number.isFinite(parsed.total_lines)
       ? parsed.total_lines
       : 0,
+  };
+}
+
+export async function findReferencesInSandbox(
+  sandboxId: string,
+  symbol: string,
+  scope: string = '/workspace',
+  maxResults: number = 30,
+): Promise<SandboxFindReferencesResult> {
+  const result = await execInSandbox(
+    sandboxId,
+    `python3 -c ${shellEscape(SANDBOX_FIND_REFERENCES_SCRIPT)} ${shellEscape(symbol)} ${shellEscape(scope)} ${shellEscape(String(maxResults))}`,
+  );
+
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.error || 'Failed to find references');
+  }
+
+  let parsed: {
+    error?: string;
+    truncated?: boolean;
+    references?: Array<{ file?: string; line?: number; context?: string; kind?: string }>;
+  };
+
+  try {
+    parsed = JSON.parse(result.stdout.trim() || '{}');
+  } catch {
+    throw new Error(`Failed to parse reference output: ${result.stdout.slice(0, 500)}`);
+  }
+
+  if (parsed.error) {
+    throw new Error(parsed.error);
+  }
+
+  const references = Array.isArray(parsed.references)
+    ? parsed.references
+      .filter((reference): reference is SandboxReference => (
+        typeof reference?.file === 'string'
+        && typeof reference.line === 'number'
+        && Number.isFinite(reference.line)
+        && typeof reference.context === 'string'
+        && (reference.kind === 'import' || reference.kind === 'call')
+      ))
+      .map((reference) => ({
+        file: reference.file,
+        line: reference.line,
+        context: reference.context,
+        kind: reference.kind,
+      }))
+    : [];
+
+  return {
+    references,
+    truncated: parsed.truncated === true,
   };
 }
 

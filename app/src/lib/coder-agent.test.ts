@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatMessage } from '@/types';
-import { normalizeTrimmedRoleAlternation } from './coder-agent';
+import type { ChatMessage, CoderObservation } from '@/types';
+import {
+  applyObservationUpdates,
+  detectUpdateStateCall,
+  formatCoderState,
+  formatCoderStateDiff,
+  invalidateObservationDependencies,
+  normalizeTrimmedRoleAlternation,
+} from './coder-agent';
 
 function msg(
   id: string,
@@ -88,5 +95,169 @@ describe('normalizeTrimmedRoleAlternation', () => {
     expect(messages.some((m) => m.isToolResult)).toBe(false);
     expect(messages[0].content).toBe('Task: do work');
     expect(hasConsecutiveUsers(messages)).toBe(false);
+  });
+});
+
+describe('coder working memory observations', () => {
+  it('parses observation updates and removals from coder_update_state calls', () => {
+    const parsed = detectUpdateStateCall(`{"tool":"coder_update_state","args":{"observations":[{"id":"adapter-pattern","text":"The adapter lives in lib/adapter.ts","dependsOn":["app/src/lib/adapter.ts"]},{"id":"legacy-note","remove":true}]}}`);
+
+    expect(parsed).toEqual({
+      observations: [
+        {
+          id: 'adapter-pattern',
+          text: 'The adapter lives in lib/adapter.ts',
+          dependsOn: ['app/src/lib/adapter.ts'],
+        },
+        {
+          id: 'legacy-note',
+          remove: true,
+        },
+      ],
+    });
+  });
+
+  it('merges observations by id, clears stale flags, and removes entries', () => {
+    const existing: CoderObservation[] = [
+      {
+        id: 'adapter-pattern',
+        text: 'Old location',
+        dependsOn: ['app/src/old.ts'],
+        stale: true,
+        staleReason: 'app/src/old.ts was modified at round 2',
+        addedAtRound: 1,
+      },
+      {
+        id: 'legacy-note',
+        text: 'Delete me',
+        addedAtRound: 2,
+      },
+    ];
+
+    const next = applyObservationUpdates(existing, [
+      {
+        id: 'adapter-pattern',
+        text: 'New location',
+        dependsOn: ['app/src/new.ts'],
+      },
+      {
+        id: 'legacy-note',
+        remove: true,
+      },
+      {
+        id: 'routing',
+        text: 'Routing is centralized',
+      },
+    ], 4);
+
+    expect(next).toEqual([
+      {
+        id: 'adapter-pattern',
+        text: 'New location',
+        dependsOn: ['app/src/new.ts'],
+        addedAtRound: 1,
+      },
+      {
+        id: 'routing',
+        text: 'Routing is centralized',
+        addedAtRound: 4,
+      },
+    ]);
+  });
+
+  it('marks matching observations stale when a dependency is mutated (normalizes paths)', () => {
+    const observations: CoderObservation[] = [
+      {
+        id: 'adapter-pattern',
+        text: 'Adapter lives in app/src/foo.ts',
+        dependsOn: ['app/src/foo.ts'],  // agent uses relative path
+        addedAtRound: 1,
+      },
+      {
+        id: 'unrelated',
+        text: 'Other note',
+        dependsOn: ['app/src/bar.ts'],
+        addedAtRound: 1,
+      },
+    ];
+
+    // Harness fires with /workspace/-prefixed path — should still match
+    const next = invalidateObservationDependencies(observations, '/workspace/app/src/foo.ts', 5);
+
+    expect(next?.[0]).toEqual({
+      id: 'adapter-pattern',
+      text: 'Adapter lives in app/src/foo.ts',
+      dependsOn: ['app/src/foo.ts'],
+      stale: true,
+      staleReason: '/workspace/app/src/foo.ts was modified at round 5',
+      staleAtRound: 5,
+      addedAtRound: 1,
+    });
+    expect(next?.[1]).toEqual(observations[1]);
+  });
+
+  it('formats fresh and stale observations while auto-expiring old stale entries', () => {
+    const formatted = formatCoderState({
+      plan: 'Check the adapter flow',
+      observations: [
+        {
+          id: 'adapter-pattern',
+          text: 'Adapter lives in app/src/foo.ts',
+          dependsOn: ['app/src/foo.ts'],
+          addedAtRound: 2,
+        },
+        {
+          id: 'stale-note',
+          text: 'This needs re-validation',
+          stale: true,
+          staleReason: 'app/src/foo.ts was modified at round 6',
+          staleAtRound: 6,
+          addedAtRound: 2,
+        },
+        {
+          id: 'expired-note',
+          text: 'Drop this one',
+          stale: true,
+          staleReason: 'app/src/old.ts was modified at round 1',
+          staleAtRound: 1,
+          addedAtRound: 0,
+        },
+      ],
+    }, 7);
+
+    expect(formatted).toContain('adapter-pattern: Adapter lives in app/src/foo.ts');
+    expect(formatted).toContain('[STALE — app/src/foo.ts was modified at round 6] stale-note: This needs re-validation');
+    expect(formatted).not.toContain('expired-note');
+  });
+
+  it('includes observations in coder state diffs when they become stale', () => {
+    const previous = {
+      observations: [
+        {
+          id: 'adapter-pattern',
+          text: 'Adapter lives in app/src/foo.ts',
+          dependsOn: ['app/src/foo.ts'],
+          addedAtRound: 1,
+        },
+      ],
+    };
+
+    const current = {
+      observations: [
+        {
+          id: 'adapter-pattern',
+          text: 'Adapter lives in app/src/foo.ts',
+          dependsOn: ['app/src/foo.ts'],
+          stale: true,
+          staleReason: 'app/src/foo.ts was modified at round 3',
+          staleAtRound: 3,
+          addedAtRound: 1,
+        },
+      ],
+    };
+
+    const diff = formatCoderStateDiff(current, previous, 3);
+
+    expect(diff).toContain('[STALE — app/src/foo.ts was modified at round 3] adapter-pattern: Adapter lives in app/src/foo.ts');
   });
 });

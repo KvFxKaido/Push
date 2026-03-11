@@ -23,6 +23,7 @@ import { detectToolFromText, asRecord } from './utils';
 import type { ActiveProvider } from './orchestrator';
 import {
   execInSandbox,
+  findReferencesInSandbox,
   readFromSandbox,
   readSymbolsFromSandbox,
   writeToSandbox,
@@ -86,6 +87,17 @@ function normalizeSandboxPath(path: string): string {
 function normalizeSandboxWorkdir(workdir?: string): string | undefined {
   if (typeof workdir !== 'string') return undefined;
   return normalizeSandboxPath(workdir);
+}
+
+function formatSandboxDisplayPath(path: string): string {
+  if (path === '/workspace') return '/workspace';
+  return path.replace(/^\/workspace\//, '').replace(/^\.\//, '');
+}
+
+function formatSandboxDisplayScope(path: string): string {
+  if (path === '/workspace') return '/workspace/';
+  const formatted = formatSandboxDisplayPath(path);
+  return formatted.endsWith('/') ? formatted : `${formatted}/`;
 }
 
 function prefetchedEditFileKey(sandboxId: string, path: string): string {
@@ -498,6 +510,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_exec'; args: { command: string; workdir?: string } }
   | { tool: 'sandbox_read_file'; args: { path: string; start_line?: number; end_line?: number } }
   | { tool: 'sandbox_search'; args: { query: string; path?: string } }
+  | { tool: 'sandbox_find_references'; args: { symbol: string; scope?: string } }
   | { tool: 'sandbox_edit_range'; args: { path: string; start_line: number; end_line: number; content: string; expected_version?: string } }
   | { tool: 'sandbox_search_replace'; args: { path: string; search: string; replace: string; expected_version?: string } }
   | { tool: 'sandbox_edit_file'; args: { path: string; edits: HashlineOp[]; expected_version?: string } }
@@ -512,7 +525,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
   | { tool: 'promote_to_github'; args: { repo_name: string; description?: string; private?: boolean } }
   | { tool: 'sandbox_read_symbols'; args: { path: string } }
-  | { tool: 'sandbox_apply_patchset'; args: { dryRun?: boolean; edits: Array<{ path: string; ops: HashlineOp[] }> } }
+  | { tool: 'sandbox_apply_patchset'; args: { dryRun?: boolean; diagnostics?: boolean; edits: Array<{ path: string; ops: HashlineOp[] }> } }
 
 // --- Validation ---
 
@@ -551,6 +564,17 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
   }
   if ((tool === 'sandbox_search' || tool === 'search_sandbox') && typeof args.query === 'string') {
     return { tool: 'sandbox_search', args: { query: args.query, path: typeof args.path === 'string' ? normalizeSandboxPath(args.path) : undefined } };
+  }
+  if (tool === 'sandbox_find_references' && typeof args.symbol === 'string') {
+    const symbol = args.symbol.trim();
+    if (!symbol) return null;
+    return {
+      tool: 'sandbox_find_references',
+      args: {
+        symbol,
+        scope: typeof args.scope === 'string' ? normalizeSandboxPath(args.scope) : undefined,
+      },
+    };
   }
   if (tool === 'sandbox_edit_range' && typeof args.path === 'string' && typeof args.content === 'string') {
     const startLine = parsePositiveIntegerArg(args.start_line);
@@ -649,6 +673,7 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
       tool: 'sandbox_apply_patchset',
       args: {
         dryRun: typeof args.dryRun === 'boolean' ? args.dryRun : (args.dry_run === true ? true : undefined),
+        diagnostics: args.diagnostics === false ? false : undefined,
         edits: validEdits,
       },
     };
@@ -673,6 +698,7 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
 /** The set of tool names that are actually implemented and wired up. */
 export const IMPLEMENTED_SANDBOX_TOOLS = new Set([
   'sandbox_exec', 'sandbox_read_file', 'sandbox_search', 'sandbox_write_file',
+  'sandbox_find_references',
   'sandbox_edit_range', 'sandbox_search_replace',
   "sandbox_edit_file",
   'sandbox_list_dir', 'sandbox_diff', 'sandbox_prepare_commit', 'sandbox_push',
@@ -1016,6 +1042,76 @@ async function readFullFileByChunks(
   };
 }
 // --- Diff parsing (shared via diff-utils) ---
+
+// --- Ambient diagnostics (Harness Ergonomics 1A) ---
+
+/** Per-edit fast syntax check. Returns diagnostic text or null if clean/unsupported/timeout. */
+async function runPerEditDiagnostics(sandboxId: string, filePath: string): Promise<string | null> {
+  const ext = filePath.split('.').pop()?.toLowerCase();
+  let cmd: string;
+
+  if (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx') {
+    // transpileModule: fast single-file syntax check (~50ms), no project resolution.
+    // Catches syntax errors and JSX issues, NOT type errors (that's Tier 2).
+    // Uses single-quoted shell string to avoid $-interpolation; file path passed via env var.
+    const escaped = shellEscape(filePath);
+    cmd = `timeout 3 env __DIAG_FILE=${escaped} node -e 'try{var ts=require("typescript")}catch(e){process.exit(0)}var fs=require("fs");var f=process.env.__DIAG_FILE;var src=fs.readFileSync(f,"utf8");var r=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ESNext,module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX},reportDiagnostics:true});if(r.diagnostics&&r.diagnostics.length>0){r.diagnostics.forEach(function(d){var m=ts.flattenDiagnosticMessageText(d.messageText,"\\n");var loc="";if(d.start!==undefined)loc=":"+(src.substring(0,d.start).split("\\n").length);console.error(f+loc+" - error: "+m)});process.exit(1)}' 2>&1`;
+  } else if (ext === 'py') {
+    cmd = `timeout 3 python3 -m py_compile ${shellEscape(filePath)} 2>&1`;
+  } else {
+    return null;
+  }
+
+  try {
+    const result = await execInSandbox(sandboxId, cmd);
+    if (result.exitCode === 124) return null; // timeout — silently skip
+    if (result.exitCode !== 0) {
+      const output = (result.stderr || result.stdout || '').trim();
+      // Filter out harness/runtime noise (MODULE_NOT_FOUND, permission errors)
+      if (output && !output.includes('MODULE_NOT_FOUND') && !output.includes('Cannot find module')) {
+        return output.slice(0, 1500);
+      }
+    }
+    return null; // clean
+  } catch {
+    return null; // exec error — silently skip
+  }
+}
+
+/** Patchset-level full project typecheck. Returns diagnostic text filtered to changed files, or null. */
+async function runPatchsetDiagnostics(sandboxId: string, changedFiles: string[]): Promise<string | null> {
+  if (changedFiles.length === 0) return null;
+
+  // Only run if any changed files are TypeScript
+  const hasTs = changedFiles.some(f => /\.(ts|tsx)$/.test(f));
+  if (!hasTs) return null;
+
+  try {
+    const result = await execInSandbox(sandboxId, 'timeout 2 npx tsc --noEmit --pretty false 2>&1');
+    if (result.exitCode === 124) return null; // timeout — silently skip
+    if (result.exitCode === 0) return null; // clean
+
+    const output = (result.stdout || result.stderr || '').trim();
+    if (!output) return null;
+
+    // Filter to only diagnostics referencing changed files
+    const normalizedChanged = new Set(changedFiles.map(f =>
+      f.replace(/^\/workspace\//, '').replace(/^\.\//, ''),
+    ));
+    const filtered = output.split('\n').filter(line => {
+      // tsc output format: "src/lib/foo.ts(42,5): error TS1234: ..."
+      for (const cf of normalizedChanged) {
+        if (line.includes(cf)) return true;
+      }
+      return false;
+    });
+
+    if (filtered.length === 0) return null; // no diagnostics for changed files
+    return filtered.slice(0, 20).join('\n').slice(0, 2000); // cap at 20 lines / 2k chars
+  } catch {
+    return null;
+  }
+}
 
 // --- Execution ---
 
@@ -1680,6 +1776,7 @@ export async function executeSandboxToolCall(
           versionCacheSet(editCacheKey, editWriteResult.new_version);
         }
         fileLedger.recordCreation(path);
+        fileLedger.recordMutation(path, 'agent');
 
         // 4. Get the diff hunks for this file
         const escapedPath = path.replace(/'/g, "'\\''");
@@ -1706,6 +1803,12 @@ export async function executeSandboxToolCall(
           editLines.push('', 'Diff:', truncatedDiff);
         } else {
           editLines.push('', 'No diff hunks (file may be outside git or content identical).');
+        }
+
+        // Tier 1 ambient diagnostics: fast per-edit syntax check (1A)
+        const diagnostics = await runPerEditDiagnostics(sandboxId, path);
+        if (diagnostics) {
+          editLines.push('', '[DIAGNOSTICS]', diagnostics);
         }
 
         return { text: editLines.join('\n') };
@@ -1982,6 +2085,7 @@ export async function executeSandboxToolCall(
               const errMsg = typeof autoReadResult.error === 'string' ? autoReadResult.error.toLowerCase() : '';
               if (errMsg.includes('no such file') || errMsg.includes('not found') || errMsg.includes('does not exist')) {
                 fileLedger.recordCreation(call.args.path);
+                fileLedger.recordMutation(call.args.path, 'agent');
                 fileLedger.recordAutoExpandSuccess();
                 console.debug(`[edit-guard] File "${call.args.path}" does not exist — allowing new file creation.`);
               } else {
@@ -2137,6 +2241,7 @@ export async function executeSandboxToolCall(
 
           // Record successful write — model now "owns" this file content
           fileLedger.recordCreation(call.args.path);
+          fileLedger.recordMutation(call.args.path, 'agent');
 
           recordWriteFileMetric({
             durationMs: Date.now() - writeStart,
@@ -2857,6 +2962,43 @@ export async function executeSandboxToolCall(
         }
       }
 
+      case 'sandbox_find_references': {
+        const symbol = call.args.symbol;
+        const scope = normalizeSandboxPath(call.args.scope || '/workspace');
+
+        try {
+          const { references, truncated } = await findReferencesInSandbox(sandboxId, symbol, scope, 30);
+          const shownCount = references.length;
+          const fileWidth = Math.max(
+            ...references.map((reference) => formatSandboxDisplayPath(reference.file).length),
+            0,
+          );
+          const lines: string[] = [
+            `[Tool Result — sandbox_find_references]`,
+            `Symbol: ${symbol}`,
+            `Scope: ${formatSandboxDisplayScope(scope)}`,
+            `References: ${shownCount}${truncated ? '+' : ''} (showing ${shownCount})`,
+            '',
+          ];
+
+          if (references.length === 0) {
+            lines.push('  (no references found)');
+          } else {
+            for (const reference of references) {
+              lines.push(
+                `  ${reference.kind.padEnd(6)}  L ${String(reference.line).padStart(3)}  ${formatSandboxDisplayPath(reference.file).padEnd(fileWidth)}  ${reference.context}`,
+              );
+            }
+          }
+
+          return { text: lines.join('\n') };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to find references';
+          const err = classifyError(message, symbol);
+          return { text: formatStructuredError(err, `[Tool Error — sandbox_find_references]\n${message}`), structuredError: err };
+        }
+      }
+
       case 'sandbox_apply_patchset': {
         const { edits, dryRun } = call.args;
 
@@ -3198,6 +3340,7 @@ export async function executeSandboxToolCall(
                 setWorkspaceRevisionByKey(cacheKey, batchResult.workspace_revision);
               }
               fileLedger.recordCreation(entry.path);
+              fileLedger.recordMutation(entry.path, 'agent');
               writeResults.push(`${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`);
             } else {
               if (entry.code === 'STALE_FILE') {
@@ -3262,6 +3405,7 @@ export async function executeSandboxToolCall(
                   setWorkspaceRevisionByKey(cacheKey, writeResult.workspace_revision);
                 }
                 fileLedger.recordCreation(r.path);
+                fileLedger.recordMutation(r.path, 'agent');
                 writeResults.push(`${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`);
               }
             } catch (e) {
@@ -3314,6 +3458,16 @@ export async function executeSandboxToolCall(
           lines.push('Guard warnings:');
           lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
         }
+
+        // Tier 2 ambient diagnostics: full project typecheck after patchset (1A)
+        if (call.args.diagnostics !== false) {
+          const changedPaths = editResults.map(r => r.path);
+          const patchDiagnostics = await runPatchsetDiagnostics(sandboxId, changedPaths);
+          if (patchDiagnostics) {
+            lines.push('', '[DIAGNOSTICS — project typecheck]', patchDiagnostics);
+          }
+        }
+
         return { text: lines.join('\n') };
       }
 
@@ -3341,7 +3495,7 @@ Additional tools available when sandbox is active:
 - sandbox_write_file(path, content, expected_version?) — Write or overwrite a file in the sandbox. If expected_version is provided, stale writes are rejected.
 - sandbox_edit_range(path, start_line, end_line, content, expected_version?) — Replace a contiguous line range using human-friendly line numbers. This compiles to hashline ops under the hood, then runs through sandbox_edit_file safety/guard checks. Best for "replace lines X-Y with this block" edits.
 - sandbox_search_replace(path, search, replace, expected_version?) — Find the unique line in path containing search (case-sensitive substring) and replace that substring with replace. Errors if search matches zero lines (not found) or multiple lines (ambiguous — add more context). replace may contain newlines to expand one line into several. Best for targeted one-line edits when you can name a distinctive string without knowing the hash.
-- sandbox_edit_file(path, edits, expected_version?) — Edit a file using content hashes as line references. edits is an array of HashlineOp: { op: "replace_line" | "insert_after" | "insert_before" | "delete_line", ref: string, content: string }. The ref can be a bare hash ("abc1234", 7-12 hex chars) or a line-qualified ref ("42:abc1234" — 1-indexed line number + colon + hash). Read results show "[hash] lineNo" per line; use those in refs. For unique lines, bare hashes work fine. When lines have duplicate content (same hash), use a line-qualified ref to target the exact line — this always resolves unambiguously. If an edit fails with an ambiguity error, the error shows matching line numbers — retry with a line-qualified ref.
+- sandbox_edit_file(path, edits, expected_version?) — Edit a file using content hashes as line references. edits is an array of HashlineOp: { op: "replace_line" | "insert_after" | "insert_before" | "delete_line", ref: string, content: string }. The ref can be a bare hash ("abc1234", 7-12 hex chars) or a line-qualified ref ("42:abc1234" — 1-indexed line number + colon + hash). Read results show "[hash] lineNo" per line; use those in refs. For unique lines, bare hashes work fine. When lines have duplicate content (same hash), use a line-qualified ref to target the exact line — this always resolves unambiguously. If an edit fails with an ambiguity error, the error shows matching line numbers — retry with a line-qualified ref. After a successful edit, a fast syntax check runs automatically and appends [DIAGNOSTICS] if errors are found (syntax only, not type errors).
 - sandbox_diff() — Get the git diff of all uncommitted changes
 - sandbox_prepare_commit(message) — Prepare a commit for review. Gets diff, runs Auditor. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
 - sandbox_push() — Retry a failed push. Use this only if a push failed after approval. No Auditor needed (commit was already audited).
@@ -3350,7 +3504,8 @@ Additional tools available when sandbox is active:
 - sandbox_save_draft(message?, branch_name?) — Quick-save all uncommitted changes to a draft branch. Stages everything, commits with the message (default: "WIP: draft save"), and pushes. Skips Auditor review (drafts are WIP). If not already on a draft/ branch, creates one automatically. Use this for checkpoints, WIP saves, or before sandbox expiry.
 - sandbox_download(path?) — Download workspace files as a compressed archive (tar.gz). Path defaults to /workspace. Returns a download card the user can save.
 - sandbox_read_symbols(path) — Extract a symbol index from a source file (functions, classes, interfaces, types, imports with line numbers). Works on .py (via ast), .ts/.tsx/.js/.jsx (via regex). Use this to understand file structure before editing — cheaper than reading the whole file.
-- sandbox_apply_patchset(edits, dryRun?) — Apply hashline edits to multiple files with all-or-nothing validation. edits is an array of { path, ops: HashlineOp[] } (each path must appear once). Phase 1 reads all files and validates all ops — if any fail, nothing is written. Phase 2 writes sequentially (partial failure possible if a write fails mid-way). Use dryRun=true to validate without writing. Prefer this over multiple sandbox_edit_file calls when editing 2+ files together.
+- sandbox_find_references(symbol, scope?) — Find all references to a symbol name (imports, call sites). Returns file, line, context, and classification (import/call). Scope defaults to /workspace/. Use after sandbox_read_symbols to understand what depends on a symbol.
+- sandbox_apply_patchset(edits, dryRun?, diagnostics?) — Apply hashline edits to multiple files with all-or-nothing validation. edits is an array of { path, ops: HashlineOp[] } (each path must appear once). Phase 1 reads all files and validates all ops — if any fail, nothing is written. Phase 2 writes sequentially (partial failure possible if a write fails mid-way). Use dryRun=true to validate without writing. On success, runs a full project typecheck (tsc --noEmit, 2s cap) and appends [DIAGNOSTICS] with errors for changed files only. Pass diagnostics=false to skip. Prefer this over multiple sandbox_edit_file calls when editing 2+ files together.
 - promote_to_github(repo_name, description?, private?) — Create a new GitHub repo under the authenticated user, set the sandbox git remote, and push current branch. Defaults to private=true.
 
 Compatibility aliases also work:

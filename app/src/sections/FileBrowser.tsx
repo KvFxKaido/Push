@@ -27,6 +27,7 @@ import { CommitPushSheet } from '@/components/filebrowser/CommitPushSheet';
 import { FileEditor } from '@/components/filebrowser/FileEditor';
 import { getFileEditability } from '@/lib/file-utils';
 import { writeToSandbox } from '@/lib/sandbox-client';
+import { fileLedger } from '@/lib/file-awareness-ledger';
 import type { AIProviderType, FileEntry } from '@/types';
 import { formatSize } from '@/lib/diff-utils';
 
@@ -113,6 +114,7 @@ export function FileBrowser({ sandboxId, repoName, onBack, lockedProvider, locke
     expectedWorkspaceRevision?: number,
   ) => {
     const result = await writeToSandbox(sandboxId, path, content, expectedVersion, expectedWorkspaceRevision);
+    if (result.ok) fileLedger.recordMutation(path, 'user');
     if (!result.ok) {
       if (result.code === 'WORKSPACE_CHANGED') {
         const expected = result.expected_workspace_revision ?? expectedWorkspaceRevision ?? 'unknown';

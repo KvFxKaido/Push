@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Mock networked/tool side-effect modules before importing dispatch.
 vi.mock('./sandbox-client', () => ({
   execInSandbox: vi.fn(),
+  findReferencesInSandbox: vi.fn(),
   readFromSandbox: vi.fn(),
   writeToSandbox: vi.fn(),
   batchWriteToSandbox: vi.fn(),

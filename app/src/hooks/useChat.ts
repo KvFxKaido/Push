@@ -474,6 +474,18 @@ function buildMetaLine(
   ];
   if (sandboxStatusCache) {
     parts.push(`dirty=${sandboxStatusCache.dirty} files=${sandboxStatusCache.files}`);
+    // Append mutation provenance counts when available (Harness Ergonomics 1D)
+    const prov = fileLedger.getDirtyFilesWithProvenance();
+    if (prov.length > 0) {
+      const agentCount = prov.filter(p => p.modifiedBy === 'agent').length;
+      const userCount = prov.filter(p => p.modifiedBy === 'user').length;
+      const unknownCount = prov.filter(p => p.modifiedBy === 'unknown').length;
+      const provParts: string[] = [];
+      if (agentCount) provParts.push(`agent=${agentCount}`);
+      if (userCount) provParts.push(`user=${userCount}`);
+      if (unknownCount) provParts.push(`unknown=${unknownCount}`);
+      if (provParts.length) parts.push(`by:[${provParts.join(',')}]`);
+    }
   }
   return parts.join(' ');
 }
@@ -2759,6 +2771,7 @@ export function useChat(
               break;
             }
 
+            fileLedger.recordMutation(action.path, 'user');
             updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
               if (card.type !== 'editor') return card;
               return {

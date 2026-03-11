@@ -38,12 +38,21 @@ export interface SymbolRead {
   lineRange: LineRange;
 }
 
+/** Who last modified a file — used for dirty state provenance (Harness Ergonomics 1D). */
+export type ModifiedBy = 'agent' | 'user' | 'unknown';
+
 export type FileState =
   | { kind: 'never_read' }
   | { kind: 'partial_read'; ranges: LineRange[]; symbols: SymbolRead[] }
   | { kind: 'fully_read'; readAtRound: number; symbols?: SymbolRead[] }
   | { kind: 'model_authored'; createdAtRound: number }
   | { kind: 'stale'; previousState: Exclude<FileState, { kind: 'stale' }>; staleSinceRound: number };
+
+/** Per-file mutation provenance, tracked separately from read/stale state. */
+export interface MutationProvenance {
+  modifiedBy: ModifiedBy;
+  modifiedAtRound: number;
+}
 
 export type EditGuardVerdict =
   | { allowed: true }
@@ -219,6 +228,7 @@ function deduplicateSymbols(symbols: SymbolRead[]): SymbolRead[] {
 
 export class FileAwarenessLedger {
   private entries = new Map<string, FileState>();
+  private provenance = new Map<string, MutationProvenance>();
   private currentRound = 0;
   private _metrics: EditGuardMetrics = emptyMetrics();
 
@@ -336,6 +346,39 @@ export class FileAwarenessLedger {
       previousState: existing as Exclude<FileState, { kind: 'stale' }>,
       staleSinceRound: this.currentRound,
     });
+  }
+
+  /**
+   * Record a file mutation with provenance (who modified it).
+   * Separate from read/stale tracking — provenance persists across stale cures.
+   */
+  recordMutation(path: string, by: ModifiedBy): void {
+    const key = this.normalizePath(path);
+    this.provenance.set(key, { modifiedBy: by, modifiedAtRound: this.currentRound });
+  }
+
+  /**
+   * Get mutation provenance for a file, if recorded.
+   */
+  getProvenance(path: string): MutationProvenance | undefined {
+    return this.provenance.get(this.normalizePath(path));
+  }
+
+  /**
+   * Get files with recorded mutation provenance that are still tracked as modified.
+   * Only includes files whose ledger state indicates they were written (model_authored or stale),
+   * so provenance doesn't persist after git reset or when git reports dirty=false.
+   */
+  getDirtyFilesWithProvenance(): Array<{ path: string; modifiedBy: ModifiedBy; modifiedAtRound: number }> {
+    const result: Array<{ path: string; modifiedBy: ModifiedBy; modifiedAtRound: number }> = [];
+    for (const [path, prov] of this.provenance.entries()) {
+      const state = this.entries.get(path);
+      // Only report provenance for files the ledger knows were modified
+      if (state && (state.kind === 'model_authored' || state.kind === 'stale')) {
+        result.push({ path, ...prov });
+      }
+    }
+    return result;
   }
 
   /**
@@ -578,6 +621,7 @@ export class FileAwarenessLedger {
   /** Reset the ledger (on branch switch, sandbox teardown, etc.). */
   reset(): void {
     this.entries.clear();
+    this.provenance.clear();
     this.currentRound = 0;
     this._metrics = emptyMetrics();
   }

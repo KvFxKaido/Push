@@ -17,6 +17,7 @@ const {
 // Mock sandbox-client so no real HTTP calls are made.
 vi.mock('./sandbox-client', () => ({
   execInSandbox: vi.fn(),
+  findReferencesInSandbox: vi.fn(),
   readFromSandbox: vi.fn(),
   writeToSandbox: vi.fn(),
   batchWriteToSandbox: vi.fn(),
@@ -697,6 +698,28 @@ describe('sandbox path normalization', () => {
     expect(result.args.path).toBe('/workspace/app/src/lib/utils.ts');
   });
 
+  it('normalizes scope and trims symbol in sandbox_find_references', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_find_references',
+      args: { symbol: '  getActiveProvider  ', scope: 'app/src/lib' },
+    });
+    expect(result).not.toBeNull();
+    expect(result?.tool).toBe('sandbox_find_references');
+    if (!result || result.tool !== 'sandbox_find_references') {
+      throw new Error('Expected sandbox_find_references tool result');
+    }
+    expect(result.args.symbol).toBe('getActiveProvider');
+    expect(result.args.scope).toBe('/workspace/app/src/lib');
+  });
+
+  it('rejects sandbox_find_references with an empty symbol', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_find_references',
+      args: { symbol: '   ' },
+    });
+    expect(result).toBeNull();
+  });
+
   it('normalizes workspace-prefixed exec workdir', async () => {
     vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
 
@@ -710,6 +733,45 @@ describe('sandbox path normalization', () => {
       'pwd',
       '/workspace/app',
     );
+  });
+
+  it('formats sandbox_find_references results with relative paths', async () => {
+    vi.mocked(sandboxClient.findReferencesInSandbox).mockReset();
+    vi.mocked(sandboxClient.findReferencesInSandbox).mockResolvedValue({
+      references: [
+        {
+          file: 'src/lib/auditor-agent.ts',
+          line: 14,
+          context: "import { getActiveProvider } from './orchestrator'",
+          kind: 'import',
+        },
+        {
+          file: '/workspace/src/lib/orchestrator.ts',
+          line: 156,
+          context: 'const provider = getActiveProvider();',
+          kind: 'call',
+        },
+      ],
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_find_references', args: { symbol: 'getActiveProvider', scope: 'src' } },
+      'sb-123',
+    );
+
+    expect(sandboxClient.findReferencesInSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      'getActiveProvider',
+      '/workspace/src',
+      30,
+    );
+    expect(result.text).toContain('[Tool Result — sandbox_find_references]');
+    expect(result.text).toContain('Symbol: getActiveProvider');
+    expect(result.text).toContain('Scope: src/');
+    expect(result.text).toContain('References: 2 (showing 2)');
+    expect(result.text).toContain("import  L  14  src/lib/auditor-agent.ts");
+    expect(result.text).toContain('call    L 156  src/lib/orchestrator.ts');
   });
 
   it('marks previously-read files stale after mutating sandbox_exec', async () => {

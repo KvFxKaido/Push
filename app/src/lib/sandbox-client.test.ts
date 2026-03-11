@@ -296,3 +296,81 @@ describe('readSymbolsFromSandbox', () => {
     ).rejects.toThrow('No such file or directory');
   });
 });
+
+describe('findReferencesInSandbox', () => {
+  it('executes the ripgrep helper and parses structured output', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        stdout: JSON.stringify({
+          references: [
+            {
+              file: 'src/lib/auditor-agent.ts',
+              line: 14,
+              context: "import { getActiveProvider } from './orchestrator'",
+              kind: 'import',
+            },
+            {
+              file: 'src/lib/orchestrator.ts',
+              line: 156,
+              context: 'const provider = getActiveProvider();',
+              kind: 'call',
+            },
+          ],
+          truncated: true,
+        }),
+        stderr: '',
+        exit_code: 0,
+        truncated: false,
+      }),
+    });
+
+    const { findReferencesInSandbox } = await import('./sandbox-client');
+    const result = await findReferencesInSandbox('sb-123', 'getActiveProvider', '/workspace/src', 30);
+
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/sandbox/exec');
+    expect(options.method).toBe('POST');
+
+    const body = JSON.parse(options.body);
+    expect(body.sandbox_id).toBe('sb-123');
+    expect(body.command).toContain("python3 -c");
+    expect(body.command).toContain('rg');
+    expect(body.command).toContain('getActiveProvider');
+    expect(body.command).toContain('/workspace/src');
+    expect(body.command).toContain('30');
+
+    expect(result.truncated).toBe(true);
+    expect(result.references).toEqual([
+      {
+        file: 'src/lib/auditor-agent.ts',
+        line: 14,
+        context: "import { getActiveProvider } from './orchestrator'",
+        kind: 'import',
+      },
+      {
+        file: 'src/lib/orchestrator.ts',
+        line: 156,
+        context: 'const provider = getActiveProvider();',
+        kind: 'call',
+      },
+    ]);
+  });
+
+  it('surfaces structured ripgrep helper errors', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        stdout: JSON.stringify({ error: 'rg exited with code 2' }),
+        stderr: '',
+        exit_code: 0,
+        truncated: false,
+      }),
+    });
+
+    const { findReferencesInSandbox } = await import('./sandbox-client');
+    await expect(
+      findReferencesInSandbox('sb-123', 'getActiveProvider', '/workspace/src'),
+    ).rejects.toThrow('rg exited with code 2');
+  });
+});
