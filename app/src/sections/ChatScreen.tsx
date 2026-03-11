@@ -413,6 +413,28 @@ export function ChatScreen(props: ChatScreenProps) {
   const isBedrockModelLocked = isModelLocked && lockedProvider === 'bedrock';
   const isVertexModelLocked = isModelLocked && lockedProvider === 'vertex';
 
+  // Combined deployment selection handlers — update both global config and chat draft
+  const handleSelectAzureDeploymentFromChat = useCallback((id: string) => {
+    const dep = catalog.azure.deployments.find(d => d.id === id);
+    if (!dep) return;
+    catalog.azure.selectDeployment(id);
+    handleSelectAzureModelFromChat(dep.model);
+  }, [catalog.azure, handleSelectAzureModelFromChat]);
+
+  const handleSelectBedrockDeploymentFromChat = useCallback((id: string) => {
+    const dep = catalog.bedrock.deployments.find(d => d.id === id);
+    if (!dep) return;
+    catalog.bedrock.selectDeployment(id);
+    handleSelectBedrockModelFromChat(dep.model);
+  }, [catalog.bedrock, handleSelectBedrockModelFromChat]);
+
+  const handleSelectVertexDeploymentFromChat = useCallback((id: string) => {
+    const dep = catalog.vertex.deployments.find(d => d.id === id);
+    if (!dep) return;
+    catalog.vertex.selectDeployment(id);
+    handleSelectVertexModelFromChat(dep.model);
+  }, [catalog.vertex, handleSelectVertexModelFromChat]);
+
   // Settings sheet (lazy-loaded)
   const settingsSheet = (
     <Suspense fallback={null}>
@@ -1010,14 +1032,23 @@ export function ChatScreen(props: ChatScreenProps) {
           refreshNvidiaModels: catalog.refreshNvidiaModels,
           onSelectNvidiaModel: handleSelectNvidiaModelFromChat,
           azureModel: selectedChatModels.azure,
+          azureDeployments: catalog.azure.deployments,
+          azureActiveDeploymentId: catalog.azure.activeDeploymentId,
           isAzureModelLocked,
           onSelectAzureModel: handleSelectAzureModelFromChat,
+          onSelectAzureDeployment: handleSelectAzureDeploymentFromChat,
           bedrockModel: selectedChatModels.bedrock,
+          bedrockDeployments: catalog.bedrock.deployments,
+          bedrockActiveDeploymentId: catalog.bedrock.activeDeploymentId,
           isBedrockModelLocked,
           onSelectBedrockModel: handleSelectBedrockModelFromChat,
+          onSelectBedrockDeployment: handleSelectBedrockDeploymentFromChat,
           vertexModel: selectedChatModels.vertex,
+          vertexDeployments: catalog.vertex.deployments,
+          vertexActiveDeploymentId: catalog.vertex.activeDeploymentId,
           isVertexModelLocked,
           onSelectVertexModel: handleSelectVertexModelFromChat,
+          onSelectVertexDeployment: handleSelectVertexDeploymentFromChat,
         }}
       />
 

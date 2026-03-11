@@ -9,6 +9,7 @@ import { processFile, getTotalAttachmentSize } from '@/lib/file-processing';
 import type { StagedAttachment } from '@/lib/file-processing';
 import type { AIProviderType, AttachmentData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
+import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 
 interface ChatInputProps {
   onSend: (message: string, attachments?: AttachmentData[]) => void;
@@ -52,15 +53,36 @@ interface ChatInputProps {
     refreshNvidiaModels: () => void;
     onSelectNvidiaModel: (model: string) => void;
     azureModel: string;
+    azureDeployments: ExperimentalDeployment[];
+    azureActiveDeploymentId: string | null;
     isAzureModelLocked: boolean;
     onSelectAzureModel: (model: string) => void;
+    onSelectAzureDeployment: (id: string) => void;
     bedrockModel: string;
+    bedrockDeployments: ExperimentalDeployment[];
+    bedrockActiveDeploymentId: string | null;
     isBedrockModelLocked: boolean;
     onSelectBedrockModel: (model: string) => void;
+    onSelectBedrockDeployment: (id: string) => void;
     vertexModel: string;
+    vertexDeployments: ExperimentalDeployment[];
+    vertexActiveDeploymentId: string | null;
     isVertexModelLocked: boolean;
     onSelectVertexModel: (model: string) => void;
+    onSelectVertexDeployment: (id: string) => void;
   };
+}
+
+/** Show model name, adding an endpoint hint when multiple deployments share the same model. */
+function formatDeploymentLabel(dep: ExperimentalDeployment, all: ExperimentalDeployment[]): string {
+  const hasDuplicate = all.some(d => d.id !== dep.id && d.model === dep.model);
+  if (!hasDuplicate) return dep.model;
+  try {
+    const host = new URL(dep.baseUrl).hostname.split('.')[0];
+    return `${dep.model} (${host})`;
+  } catch {
+    return `${dep.model} (${dep.baseUrl.slice(0, 20)}…)`;
+  }
 }
 
 const ACCEPTED_FILES = 'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
@@ -538,13 +560,28 @@ export function ChatInput({
 
                       {selectedProvider === 'azure' && (
                         <>
-                          <input
-                            type="text"
-                            value={providerControls.azureModel}
-                            onChange={(e) => providerControls.onSelectAzureModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
-                            placeholder="Deployment or model"
-                          />
+                          {providerControls.azureDeployments.length > 0 ? (
+                            <select
+                              value={providerControls.azureActiveDeploymentId ?? ''}
+                              disabled={!canChangeModel}
+                              onChange={(e) => providerControls.onSelectAzureDeployment(e.target.value)}
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                            >
+                              {providerControls.azureDeployments.map((dep) => (
+                                <option key={dep.id} value={dep.id}>
+                                  {formatDeploymentLabel(dep, providerControls.azureDeployments)}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={providerControls.azureModel}
+                              onChange={(e) => providerControls.onSelectAzureModel(e.target.value)}
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
+                              placeholder="Deployment or model"
+                            />
+                          )}
                           {providerControls.isAzureModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a deployment starts a new chat.</p>
                           )}
@@ -553,13 +590,28 @@ export function ChatInput({
 
                       {selectedProvider === 'bedrock' && (
                         <>
-                          <input
-                            type="text"
-                            value={providerControls.bedrockModel}
-                            onChange={(e) => providerControls.onSelectBedrockModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
-                            placeholder="Bedrock model id"
-                          />
+                          {providerControls.bedrockDeployments.length > 0 ? (
+                            <select
+                              value={providerControls.bedrockActiveDeploymentId ?? ''}
+                              disabled={!canChangeModel}
+                              onChange={(e) => providerControls.onSelectBedrockDeployment(e.target.value)}
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                            >
+                              {providerControls.bedrockDeployments.map((dep) => (
+                                <option key={dep.id} value={dep.id}>
+                                  {formatDeploymentLabel(dep, providerControls.bedrockDeployments)}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={providerControls.bedrockModel}
+                              onChange={(e) => providerControls.onSelectBedrockModel(e.target.value)}
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
+                              placeholder="Bedrock model id"
+                            />
+                          )}
                           {providerControls.isBedrockModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
@@ -568,13 +620,28 @@ export function ChatInput({
 
                       {selectedProvider === 'vertex' && (
                         <>
-                          <input
-                            type="text"
-                            value={providerControls.vertexModel}
-                            onChange={(e) => providerControls.onSelectVertexModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
-                            placeholder="Vertex model id"
-                          />
+                          {providerControls.vertexDeployments.length > 0 ? (
+                            <select
+                              value={providerControls.vertexActiveDeploymentId ?? ''}
+                              disabled={!canChangeModel}
+                              onChange={(e) => providerControls.onSelectVertexDeployment(e.target.value)}
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                            >
+                              {providerControls.vertexDeployments.map((dep) => (
+                                <option key={dep.id} value={dep.id}>
+                                  {formatDeploymentLabel(dep, providerControls.vertexDeployments)}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={providerControls.vertexModel}
+                              onChange={(e) => providerControls.onSelectVertexModel(e.target.value)}
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
+                              placeholder="Vertex model id"
+                            />
+                          )}
                           {providerControls.isVertexModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
