@@ -100,6 +100,7 @@ Review for:
 - Code quality: readability, maintainability, appropriate abstractions, dead code
 - Conventions: consistency with surrounding code patterns visible in the diff
 - Performance: obvious inefficiencies, unnecessary re-renders, expensive operations in hot paths
+- Documentation: README/doc changes that contradict the code diff, outdated examples, missing docs for new public APIs or changed behavior, unclear or misleading prose in comments or markdown files
 
 Keep comments specific and actionable. Prefer 0-5 high-signal comments total. Use "note" sparingly, and skip low-value style nits unless they materially affect maintainability or correctness. If the diff does not give you enough context to assess something, skip it rather than guessing. One precise comment is worth more than three vague ones.`;
 

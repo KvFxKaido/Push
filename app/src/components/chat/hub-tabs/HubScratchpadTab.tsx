@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, Trash2 } from 'lucide-react';
+import { Check, Download, Trash2 } from 'lucide-react';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import {
   HUB_MATERIAL_INPUT_CLASS,
@@ -18,6 +18,8 @@ interface HubScratchpadTabProps {
   onSaveMemory: (name: string) => void;
   onLoadMemory: (id: string | null) => void;
   onDeleteMemory: (id: string) => void;
+  onExportToRepo?: () => void;
+  sandboxId: string | null;
 }
 
 export function HubScratchpadTab({
@@ -29,6 +31,8 @@ export function HubScratchpadTab({
   onSaveMemory,
   onLoadMemory,
   onDeleteMemory,
+  onExportToRepo,
+  sandboxId,
 }: HubScratchpadTabProps) {
   const [memoryName, setMemoryName] = useState('');
 
@@ -63,6 +67,16 @@ export function HubScratchpadTab({
         >
           <HubControlGlow />
           <Trash2 className="relative z-10 h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={onExportToRepo}
+          disabled={!scratchpadContent.trim() || !sandboxId}
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
+          aria-label="Save scratchpad to repo"
+        >
+          <HubControlGlow />
+          <Download className="relative z-10 h-3.5 w-3.5" />
+          <span className="relative z-10">Save to repo</span>
         </button>
       </div>
 

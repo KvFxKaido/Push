@@ -1,11 +1,12 @@
 import { memo, useMemo, useState, useCallback } from 'react';
-import { ChevronRight, FileCode, FileText, Copy, Check } from 'lucide-react';
+import { ChevronRight, FileCode, FileText, Copy, Check, Pin } from 'lucide-react';
 import type { ChatMessage, CardAction, AttachmentData } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 
 interface MessageBubbleProps {
   message: ChatMessage;
   onCardAction?: (action: CardAction) => void;
+  onPin?: (content: string, messageId: string) => void;
 }
 
 function isToolCallObject(value: unknown): boolean {
@@ -475,6 +476,7 @@ function CopyButton({ text }: { text: string }) {
 export const MessageBubble = memo(function MessageBubble({
   message,
   onCardAction,
+  onPin,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isError = message.status === 'error';
@@ -571,8 +573,17 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
         {hasContent && !isStreaming && (
-          <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-200 mt-1.5">
+          <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-200 mt-1.5 flex items-center gap-0.5">
             <CopyButton text={displayContentText} />
+            {onPin && (
+              <button
+                onClick={() => onPin(displayContentText, message.id)}
+                className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-[#d1d8e6]"
+                title="Pin to Kept"
+              >
+                <Pin className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         )}
         {visibleCards.length > 0 && (

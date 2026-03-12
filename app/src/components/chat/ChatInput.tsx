@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { ArrowUp, ChevronsUpDown, Loader2, Lock, Paperclip, RefreshCw, Square } from 'lucide-react';
+import { ArrowUp, ChevronsUpDown, Loader2, Lock, Mic, Paperclip, RefreshCw, Square } from 'lucide-react';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ContextMeter } from './ContextMeter';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -117,9 +117,45 @@ export function ChatInput({
 }: ChatInputProps) {
   const [value, setValue] = useState('');
   const [stagedAttachments, setStagedAttachments] = useState<StagedAttachment[]>([]);
+  const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
   const isMobile = useIsMobile();
+
+  const speechSupported = typeof window !== 'undefined' &&
+    ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+
+  const toggleListening = useCallback(() => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      const transcript = Array.from(event.results)
+        .filter(r => r.isFinal)
+        .map(r => r[0].transcript)
+        .join(' ');
+      if (transcript) {
+        setValue(prev => prev ? prev + ' ' + transcript : transcript);
+      }
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
+  }, [isListening]);
+
+  useEffect(() => {
+    return () => { recognitionRef.current?.stop(); };
+  }, []);
 
   const hasAttachments = stagedAttachments.length > 0;
   const readyAttachments = stagedAttachments.filter((a) => a.status === 'ready');
@@ -350,6 +386,31 @@ export function ChatInput({
               )}
               <Paperclip className="relative z-10 h-4 w-4" />
             </button>
+
+            {speechSupported && (
+              <button
+                type="button"
+                onClick={toggleListening}
+                disabled={isStreaming}
+                className={`flex h-10 w-10 items-center justify-center ${
+                  isStreaming
+                    ? 'cursor-not-allowed border-[#1f2430] bg-[#151a22] text-[#545c6e] shadow-none'
+                    : isListening
+                      ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 text-red-400 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
+                      : `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
+                }`}
+                aria-label={isListening ? 'Stop listening' : 'Voice input'}
+                title={isListening ? 'Stop listening' : 'Voice input'}
+              >
+                {!isStreaming && (
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+                )}
+                <Mic className="relative z-10 h-4 w-4" />
+                {isListening && (
+                  <span className="absolute top-1.5 right-1.5 z-20 h-2 w-2 rounded-full bg-red-400 animate-pulse" />
+                )}
+              </button>
+            )}
 
             {providerControls && (
               <Popover>

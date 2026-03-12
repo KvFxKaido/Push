@@ -9,6 +9,7 @@ import {
   GitMerge,
   GitPullRequest,
   Loader2,
+  Pin,
   Plus,
   RefreshCw,
   Sparkles,
@@ -21,7 +22,7 @@ import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { runAuditor } from '@/lib/auditor-agent';
-import { execInSandbox, getSandboxDiff } from '@/lib/sandbox-client';
+import { execInSandbox, getSandboxDiff, writeToSandbox } from '@/lib/sandbox-client';
 import { deriveBranchNameFromCommitMessage, getBranchSuggestionPrefix, normalizeSuggestedBranchName, sanitizeBranchName } from '@/lib/branch-names';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { getActiveProvider, getProviderStreamFn } from '@/lib/orchestrator';
@@ -37,7 +38,7 @@ import {
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import { NotebookPadIcon, ReviewLensIcon, SettingsCellsIcon } from '@/components/icons/push-custom-icons';
-import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab, HubSettingsTab } from './hub-tabs';
+import { HubScratchpadTab, HubKeptTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab, HubSettingsTab } from './hub-tabs';
 import type {
   SettingsAIProps,
   SettingsAuthProps,
@@ -46,13 +47,14 @@ import type {
   SettingsWorkspaceProps,
 } from '@/components/SettingsSheet';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
+import type { PinnedArtifact } from '@/hooks/usePinnedArtifacts';
 import type { AIProviderType, AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type HubTab = 'scratchpad' | 'console' | 'files' | 'diff' | 'prs' | 'review' | 'settings';
+type HubTab = 'scratchpad' | 'kept' | 'console' | 'files' | 'diff' | 'prs' | 'review' | 'settings';
 
 type CommitPhase = 'idle' | 'fetching-diff' | 'branching' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
 type CommitTargetMode = 'current' | 'new';
@@ -129,6 +131,10 @@ interface WorkspaceHubSheetProps {
   branchProps: HubBranchProps;
   onSandboxBranchSwitch: (branch: string) => void;
   onFixReviewFinding: (prompt: string) => void;
+  // Pinned artifacts (Kept)
+  pinnedArtifacts: PinnedArtifact[];
+  onUnpinArtifact: (id: string) => void;
+  onUpdateArtifactLabel: (id: string, label: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +143,7 @@ interface WorkspaceHubSheetProps {
 
 const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: ComponentType<SVGProps<SVGSVGElement>> }> = [
   { key: 'scratchpad', label: 'Pad', icon: NotebookPadIcon },
+  { key: 'kept', label: 'Kept', icon: Pin },
   { key: 'console', label: 'Console', icon: TerminalSquare },
   { key: 'files', label: 'Files', icon: Files },
   { key: 'diff', label: 'Diff', icon: FileDiff },
@@ -290,6 +297,9 @@ export function WorkspaceHubSheet({
   branchProps,
   onSandboxBranchSwitch,
   onFixReviewFinding,
+  pinnedArtifacts,
+  onUnpinArtifact,
+  onUpdateArtifactLabel,
 }: WorkspaceHubSheetProps) {
   const [activeTab, setActiveTab] = useState<HubTab>('files');
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -406,6 +416,23 @@ export function WorkspaceHubSheet({
     branchSuggestionAttemptedRef.current = false;
     setCommitTargetSheetOpen(true);
   }, [sandboxReady, blockedByProtectMain, fallbackBranchName]);
+
+  const handleExportScratchpadToRepo = useCallback(async () => {
+    if (!sandboxId) {
+      toast.error('Sandbox is not ready.');
+      return;
+    }
+    try {
+      const result = await writeToSandbox(sandboxId, '/workspace/SCRATCHPAD.md', scratchpadContent);
+      if (result.ok) {
+        toast.success('Saved to /workspace/SCRATCHPAD.md');
+      } else {
+        toast.error(result.error ?? 'Failed to save scratchpad to repo.');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save scratchpad to repo.');
+    }
+  }, [sandboxId, scratchpadContent]);
 
   const runCommitAndPush = useCallback(async (target: CommitPushTarget) => {
     if (!sandboxId) {
@@ -1223,6 +1250,16 @@ export function WorkspaceHubSheet({
                 onSaveMemory={onScratchpadSaveMemory}
                 onLoadMemory={onScratchpadLoadMemory}
                 onDeleteMemory={onScratchpadDeleteMemory}
+                onExportToRepo={handleExportScratchpadToRepo}
+                sandboxId={sandboxId}
+              />
+            )}
+
+            {activeTab === 'kept' && (
+              <HubKeptTab
+                artifacts={pinnedArtifacts}
+                onUnpin={onUnpinArtifact}
+                onUpdateLabel={onUpdateArtifactLabel}
               />
             )}
 

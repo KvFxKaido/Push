@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowLeft, Save, RotateCcw, AlertCircle, Check, FileCode } from 'lucide-react';
+import { ArrowLeft, Save, RotateCcw, AlertCircle, Check, FileCode, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { getFileEditability, isBinaryContent, formatFileSize } from '@/lib/file-utils';
 import { readFromSandbox, type WriteResult } from '@/lib/sandbox-client';
@@ -33,11 +33,13 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [fileVersion, setFileVersion] = useState<string | undefined>(undefined);
   const [workspaceRevision, setWorkspaceRevision] = useState<number | undefined>(undefined);
 
   const editability = useMemo(() => getFileEditability(file.path, file.size), [file]);
   const language = editability.language || 'text';
+  const isMarkdown = /\.mdx?$/i.test(file.path);
   const isLargeFile = file.size > WARNING_SIZE;
 
   const loadFile = useCallback(async () => {
@@ -233,12 +235,27 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
             </button>
           )}
           
+          {isMarkdown && (
+            <button
+              onClick={() => { setShowPreview(!showPreview); if (!showPreview) setShowDiff(false); }}
+              disabled={saving}
+              className={`flex h-8 px-3 items-center gap-1.5 rounded-lg text-xs transition-colors ${
+                showPreview
+                  ? 'bg-push-accent/20 text-push-accent'
+                  : 'text-push-fg-secondary hover:text-[#fafafa] hover:bg-[#0d0d0d]'
+              } disabled:opacity-40`}
+            >
+              <Eye className="h-3.5 w-3.5" />
+              Preview
+            </button>
+          )}
+
           <button
-            onClick={() => setShowDiff(!showDiff)}
+            onClick={() => { setShowDiff(!showDiff); if (!showDiff) setShowPreview(false); }}
             disabled={saving}
             className={`flex h-8 px-3 items-center gap-1.5 rounded-lg text-xs transition-colors ${
-              showDiff 
-                ? 'bg-push-accent/20 text-push-accent' 
+              showDiff
+                ? 'bg-push-accent/20 text-push-accent'
                 : 'text-push-fg-secondary hover:text-[#fafafa] hover:bg-[#0d0d0d]'
             } disabled:opacity-40`}
           >
@@ -270,6 +287,8 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
               <span className="text-xs">Loading...</span>
             </div>
           </div>
+        ) : showPreview ? (
+          <MarkdownPreview content={content} />
         ) : showDiff ? (
           <DiffView lines={diffLines} />
         ) : (
@@ -352,21 +371,21 @@ function DiffView({ lines }: DiffViewProps) {
           <div
             key={i}
             className={`flex ${
-              line.type === 'added' ? 'bg-push-status-success/10' : 
-              line.type === 'removed' ? 'bg-push-status-error/10' : 
+              line.type === 'added' ? 'bg-push-status-success/10' :
+              line.type === 'removed' ? 'bg-push-status-error/10' :
               ''
             }`}
           >
             <span className={`w-6 shrink-0 text-right pr-2 select-none ${
-              line.type === 'added' ? 'text-push-status-success' : 
-              line.type === 'removed' ? 'text-push-status-error' : 
+              line.type === 'added' ? 'text-push-status-success' :
+              line.type === 'removed' ? 'text-push-status-error' :
               'text-[#52525b]'
             }`}>
               {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
             </span>
             <span className={`flex-1 whitespace-pre ${
-              line.type === 'added' ? 'text-[#4ade80]' : 
-              line.type === 'removed' ? 'text-[#f87171]' : 
+              line.type === 'added' ? 'text-[#4ade80]' :
+              line.type === 'removed' ? 'text-[#f87171]' :
               'text-push-fg-secondary'
             }`}>
               {line.content || ' '}
@@ -374,6 +393,153 @@ function DiffView({ lines }: DiffViewProps) {
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+// --- Markdown preview ---
+
+function mdInline(text: string): React.ReactNode[] {
+  const result: React.ReactNode[] = [];
+  const regex = /(\*\*(.+?)\*\*)|(\*([^*]+?)\*)|(`([^`]+?)`)|(\[([^\]]+)]\(([^)]+)\))|([^*`[]+|[*`[])/g;
+  let m: RegExpExecArray | null;
+  let k = 0;
+
+  while ((m = regex.exec(text)) !== null) {
+    if (m[2]) {
+      result.push(<strong key={k++} className="font-semibold text-[#fafafa]">{m[2]}</strong>);
+    } else if (m[4]) {
+      result.push(<em key={k++} className="italic text-[#d1d8e6]">{m[4]}</em>);
+    } else if (m[6]) {
+      result.push(
+        <code key={k++} className="rounded border border-push-edge bg-push-surface px-1.5 py-0.5 font-mono text-xs text-[#e2e8f0]">
+          {m[6]}
+        </code>,
+      );
+    } else if (m[8]) {
+      result.push(
+        <a key={k++} href={m[9]} target="_blank" rel="noopener noreferrer" className="text-push-accent underline underline-offset-2 decoration-push-accent/30">
+          {m[8]}
+        </a>,
+      );
+    } else if (m[10]) {
+      result.push(<span key={k++}>{m[10]}</span>);
+    }
+  }
+  return result;
+}
+
+function MarkdownPreview({ content }: { content: string }) {
+  const parts = useMemo(() => {
+    const nodes: React.ReactNode[] = [];
+    const lines = content.split('\n');
+    let inCode = false;
+    let codeLines: string[] = [];
+    let codeLang = '';
+    let codeKey = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      if (line.startsWith('```')) {
+        if (inCode) {
+          nodes.push(
+            <pre key={`code-${codeKey++}`} className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-[#0a0a0a] px-4 py-3">
+              {codeLang && <div className="mb-1.5 text-push-2xs text-[#52525b] font-mono">{codeLang}</div>}
+              <code className="font-mono text-xs text-[#e2e8f0] leading-relaxed">{codeLines.join('\n')}</code>
+            </pre>,
+          );
+          codeLines = [];
+          codeLang = '';
+          inCode = false;
+        } else {
+          codeLang = line.slice(3).trim();
+          inCode = true;
+        }
+        continue;
+      }
+
+      if (inCode) { codeLines.push(line); continue; }
+
+      // Horizontal rule
+      if (/^(\s*[-*_]\s*){3,}$/.test(line) && line.trim().length >= 3) {
+        nodes.push(<hr key={`hr-${i}`} className="my-4 border-0 border-t border-push-edge" />);
+        continue;
+      }
+
+      // Headings
+      const hm = line.match(/^(#{1,4})\s+(.+)$/);
+      if (hm) {
+        const lvl = hm[1].length;
+        const styles: Record<number, string> = {
+          1: 'text-xl font-bold text-[#fafafa] mt-6 mb-2',
+          2: 'text-lg font-semibold text-[#fafafa] mt-5 mb-1.5',
+          3: 'text-base font-semibold text-[#e2e8f0] mt-4 mb-1',
+          4: 'text-sm font-medium text-[#8891a1] mt-3 mb-1 uppercase tracking-wide',
+        };
+        nodes.push(<div key={`h-${i}`} className={styles[lvl]}>{mdInline(hm[2])}</div>);
+        continue;
+      }
+
+      // Blockquote
+      if (line.startsWith('> ') || line === '>') {
+        const qt = line.startsWith('> ') ? line.slice(2) : '';
+        nodes.push(
+          <div key={`bq-${i}`} className="border-l-2 border-push-edge pl-3 my-1.5 text-[#8891a1] italic text-sm">
+            {qt ? mdInline(qt) : '\u00A0'}
+          </div>,
+        );
+        continue;
+      }
+
+      // Unordered list
+      const ulm = line.match(/^(\s*)[-*]\s+(.+)$/);
+      if (ulm) {
+        const indent = Math.min(Math.floor(ulm[1].length / 2), 3);
+        nodes.push(
+          <div key={`ul-${i}`} className="flex items-start gap-2 my-0.5 text-sm" style={{ paddingLeft: `${indent * 16 + 4}px` }}>
+            <span className="shrink-0 mt-[9px] block w-1 h-1 rounded-full bg-[#52525b]" />
+            <span className="flex-1 min-w-0 text-[#d1d8e6]">{mdInline(ulm[2])}</span>
+          </div>,
+        );
+        continue;
+      }
+
+      // Ordered list
+      const olm = line.match(/^(\s*)(\d+)\.\s+(.+)$/);
+      if (olm) {
+        const indent = Math.min(Math.floor(olm[1].length / 2), 3);
+        nodes.push(
+          <div key={`ol-${i}`} className="flex items-start gap-2 my-0.5 text-sm" style={{ paddingLeft: `${indent * 16 + 4}px` }}>
+            <span className="text-[#52525b] font-mono shrink-0 min-w-[1.25rem] text-right mt-px">{olm[2]}.</span>
+            <span className="flex-1 min-w-0 text-[#d1d8e6]">{mdInline(olm[3])}</span>
+          </div>,
+        );
+        continue;
+      }
+
+      // Empty line
+      if (line.trim() === '') { nodes.push(<div key={`e-${i}`} className="h-3" />); continue; }
+
+      // Plain text
+      nodes.push(<div key={`p-${i}`} className="text-sm text-[#d1d8e6] leading-relaxed">{mdInline(line)}</div>);
+    }
+
+    // Unclosed code block
+    if (inCode && codeLines.length > 0) {
+      nodes.push(
+        <pre key={`code-${codeKey}`} className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-[#0a0a0a] px-4 py-3">
+          <code className="font-mono text-xs text-[#e2e8f0] leading-relaxed">{codeLines.join('\n')}</code>
+        </pre>,
+      );
+    }
+
+    return nodes;
+  }, [content]);
+
+  return (
+    <div className="h-full overflow-auto bg-[#000] px-5 py-4">
+      {parts}
     </div>
   );
 }

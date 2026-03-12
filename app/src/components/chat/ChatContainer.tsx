@@ -86,6 +86,7 @@ interface ChatContainerProps {
   isSandboxMode?: boolean;
   onSuggestion?: (text: string) => void;
   onCardAction?: (action: CardAction) => void;
+  onPin?: (content: string, messageId: string) => void;
   interruptedCheckpoint?: RunCheckpoint | null;
   onResumeRun?: () => void;
   onDismissResume?: () => void;
@@ -194,6 +195,7 @@ export function ChatContainer({
   isSandboxMode,
   onSuggestion,
   onCardAction,
+  onPin,
   interruptedCheckpoint,
   onResumeRun,
   onDismissResume,
@@ -297,7 +299,7 @@ export function ChatContainer({
         <div className="flex-1" />
         <div className="py-4 space-y-1.5">
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} onCardAction={onCardAction} />
+            <MessageBubble key={msg.id} message={msg} onCardAction={onCardAction} onPin={onPin} />
           ))}
           <AgentStatusBar status={agentStatus} />
         </div>

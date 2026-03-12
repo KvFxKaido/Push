@@ -29,6 +29,7 @@ import type { BranchManager } from '@/hooks/useBranchManager';
 import type { ProjectInstructionsManager } from '@/hooks/useProjectInstructions';
 import type { RepoOverride } from '@/hooks/useProtectMain';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
+import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import type {
   ActiveRepo,
   RepoWithActivity,
@@ -326,6 +327,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleBioBlur,
     ensureSandbox,
   } = props;
+  const pinnedArtifacts = usePinnedArtifacts(activeRepo?.full_name ?? null);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
   const [newChatSheetOpen, setNewChatSheetOpen] = useState(false);
@@ -1023,6 +1025,7 @@ export function ChatScreen(props: ChatScreenProps) {
         isSandboxMode={isSandboxMode}
         onSuggestion={sendMessageWithSnapshotHeartbeat}
         onCardAction={handleCardActionWithSnapshotHeartbeat}
+        onPin={pinnedArtifacts.pin}
         interruptedCheckpoint={interruptedCheckpoint}
         onResumeRun={resumeInterruptedRun}
         onDismissResume={dismissResume}
@@ -1163,6 +1166,9 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
         onSandboxBranchSwitch={onSandboxBranchSwitch}
         onFixReviewFinding={handleFixReviewFinding}
+        pinnedArtifacts={pinnedArtifacts.artifacts}
+        onUnpinArtifact={pinnedArtifacts.unpin}
+        onUpdateArtifactLabel={pinnedArtifacts.updateLabel}
       />
       <NewChatWorkspaceSheet
         open={newChatSheetOpen}
