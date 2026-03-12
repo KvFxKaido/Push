@@ -1,5 +1,10 @@
 import { ShieldAlert, ShieldCheck, Loader2, Wrench } from 'lucide-react';
 import type { CIStatus } from '@/types';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 
 interface CIStatusBannerProps {
   status: CIStatus;
@@ -16,24 +21,20 @@ export function CIStatusBanner({ status, onDiagnose }: CIStatusBannerProps) {
 
   return (
     <div 
-      className={`mx-4 mt-2 mb-1 rounded-xl border px-3.5 py-3 flex items-center justify-between gap-3 animate-fade-in ${
+      className={`mx-4 mt-2 mb-1 flex items-center justify-between gap-3 px-3.5 py-3 animate-fade-in ${
         isFailure 
-          ? 'border-red-500/20 bg-red-500/5' 
-          : 'border-blue-500/20 bg-blue-500/5'
+          ? 'rounded-[18px] border border-red-500/20 bg-red-500/5' 
+          : `${HUB_PANEL_SUBTLE_SURFACE_CLASS}`
       }`}
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">
-        <div className={`shrink-0 flex h-8 w-8 items-center justify-center rounded-lg ${
-          isFailure ? 'bg-red-500/10 text-red-400' : 'bg-blue-500/10 text-blue-400'
-        }`}>
-          {isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : isFailure ? (
-            <ShieldAlert className="h-4 w-4" />
-          ) : (
-            <ShieldCheck className="h-4 w-4" />
-          )}
-        </div>
+        {isPending ? (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-400" />
+        ) : isFailure ? (
+          <ShieldAlert className="h-4 w-4 shrink-0 text-red-400" />
+        ) : (
+          <ShieldCheck className="h-4 w-4 shrink-0 text-blue-400" />
+        )}
         <div className="min-w-0">
           <p className={`text-xs font-medium ${
             isFailure ? 'text-red-200' : 'text-blue-200'
@@ -51,10 +52,11 @@ export function CIStatusBanner({ status, onDiagnose }: CIStatusBannerProps) {
       {isFailure && (
         <button
           onClick={onDiagnose}
-          className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-900/20 px-3 py-1.5 text-xs font-medium text-red-100 transition-colors hover:bg-red-900/30 active:scale-95"
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1.5 px-3 text-red-100`}
         >
-          <Wrench className="h-3 w-3" />
-          Diagnose & Fix
+          <HubControlGlow />
+          <Wrench className="relative z-10 h-3 w-3" />
+          <span className="relative z-10">Diagnose & Fix</span>
         </button>
       )}
     </div>

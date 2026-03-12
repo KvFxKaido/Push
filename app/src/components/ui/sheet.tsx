@@ -47,13 +47,22 @@ function SheetContent({
   children,
   side = "right",
   forceMount,
+  overlayClassName,
+  hideOverlay = false,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "right" | "bottom" | "left"
+  overlayClassName?: string
+  hideOverlay?: boolean
 }) {
   return (
     <SheetPortal forceMount={forceMount ? true : undefined}>
-      <SheetOverlay forceMount={forceMount ? true : undefined} />
+      {!hideOverlay ? (
+        <SheetOverlay
+          forceMount={forceMount ? true : undefined}
+          className={overlayClassName}
+        />
+      ) : null}
       <SheetPrimitive.Content
         data-slot="sheet-content"
         forceMount={forceMount ? true : undefined}

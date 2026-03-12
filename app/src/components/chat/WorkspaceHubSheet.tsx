@@ -12,6 +12,7 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Settings,
   Sparkles,
   StickyNote,
   Terminal,
@@ -29,7 +30,23 @@ import { parseDiffStats } from '@/lib/diff-utils';
 import { getActiveProvider, getProviderStreamFn } from '@/lib/orchestrator';
 import { getModelForRole, type PreferredProvider } from '@/lib/providers';
 import { streamWithTimeout } from '@/lib/utils';
-import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab } from './hub-tabs';
+import {
+  HUB_MATERIAL_BUTTON_CLASS,
+  HUB_MATERIAL_INPUT_CLASS,
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HUB_PANEL_SURFACE_CLASS,
+  HUB_TAG_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
+import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab, HubSettingsTab } from './hub-tabs';
+import type {
+  SettingsAIProps,
+  SettingsAuthProps,
+  SettingsDataProps,
+  SettingsProfileProps,
+  SettingsWorkspaceProps,
+} from '@/components/SettingsSheet';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import type { AIProviderType, AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types';
 
@@ -37,7 +54,7 @@ import type { AIProviderType, AgentStatusEvent, ChatMessage, DiffPreviewCardData
 // Types
 // ---------------------------------------------------------------------------
 
-type HubTab = 'scratchpad' | 'console' | 'files' | 'diff' | 'prs' | 'review';
+type HubTab = 'scratchpad' | 'console' | 'files' | 'diff' | 'prs' | 'review' | 'settings';
 
 type CommitPhase = 'idle' | 'fetching-diff' | 'branching' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
 type CommitTargetMode = 'current' | 'new';
@@ -95,6 +112,11 @@ interface WorkspaceHubSheetProps {
   projectInstructions?: string | null;
   protectMainEnabled: boolean;
   showToolActivity: boolean;
+  settingsAuth: SettingsAuthProps;
+  settingsProfile: SettingsProfileProps;
+  settingsAI: SettingsAIProps;
+  settingsWorkspace: SettingsWorkspaceProps;
+  settingsData: SettingsDataProps;
   // Scratchpad
   scratchpadContent: string;
   scratchpadMemories: ScratchpadMemory[];
@@ -121,6 +143,7 @@ const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: typeof Files 
   { key: 'diff', label: 'Diff', icon: FileDiff },
   { key: 'prs', label: 'PRs', icon: GitPullRequest },
   { key: 'review', label: 'Review', icon: Eye },
+  { key: 'settings', label: 'Settings', icon: Settings },
 ];
 
 const TABS_WITHOUT_CONSOLE = TABS_WITH_CONSOLE.filter((tab) => tab.key !== 'console');
@@ -138,6 +161,7 @@ const PHASE_LABELS: Record<CommitPhase, string> = {
 
 const COMMIT_MESSAGE_SUGGEST_TIMEOUT_MS = 30_000;
 const BRANCH_NAME_SUGGEST_TIMEOUT_MS = 30_000;
+const HUB_CONTROL_TEXT_CLASS = 'relative z-10';
 
 const COMMIT_MESSAGE_SUGGEST_SYSTEM_PROMPT = `You generate git commit messages.
 
@@ -250,6 +274,11 @@ export function WorkspaceHubSheet({
   projectInstructions,
   protectMainEnabled,
   showToolActivity,
+  settingsAuth,
+  settingsProfile,
+  settingsAI,
+  settingsWorkspace,
+  settingsData,
   scratchpadContent,
   scratchpadMemories,
   activeMemoryId,
@@ -835,6 +864,7 @@ export function WorkspaceHubSheet({
       <SheetContent
         forceMount
         side="right"
+        overlayClassName="bg-transparent"
         className="w-[94vw] rounded-l-2xl border-l border-[#151b26] bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden"
       >
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tl-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
@@ -843,11 +873,11 @@ export function WorkspaceHubSheet({
           <header className="border-b border-push-edge px-3 py-3">
             <div className="flex items-center justify-between gap-2">
               {/* Repo + Branch dropdown */}
-              <div className="min-w-0">
+              <div className="min-w-0 space-y-1">
                 <p className="truncate text-sm font-semibold text-push-fg">
                   Workspace
                 </p>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1.5">
                   <span className="truncate text-push-xs text-push-fg-dim">
                     {repoName || 'Sandbox'}
                   </span>
@@ -860,23 +890,26 @@ export function WorkspaceHubSheet({
                             branchProps.onRefreshBranches();
                           }
                         }}
-                        className="flex items-center gap-0.5 rounded-md px-1 py-0.5 text-push-xs text-push-fg-dim transition-colors hover:bg-push-surface-hover hover:text-push-fg-secondary"
+                        className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-push-2xs`}
                       >
-                        <GitBranch className="h-2.5 w-2.5" />
-                        <span className="max-w-[90px] truncate">{branchProps.currentBranch}</span>
-                        <ChevronDown className={`h-2.5 w-2.5 transition-transform ${branchDropdownOpen ? 'rotate-180' : ''}`} />
+                        <HubControlGlow />
+                        <GitBranch className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
+                        <span className={`${HUB_CONTROL_TEXT_CLASS} max-w-[92px] truncate`}>
+                          {branchProps.currentBranch}
+                        </span>
+                        <ChevronDown className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3 transition-transform ${branchDropdownOpen ? 'rotate-180' : ''}`} />
                       </button>
 
                       {/* Branch dropdown */}
                       {branchDropdownOpen && (
                         <>
                           <div className="fixed inset-0 z-40" onClick={() => { setBranchDropdownOpen(false); setPendingDeleteBranch(null); setSwitchConfirmBranch(null); }} />
-                          <div className="absolute left-0 top-full z-50 mt-1 w-[220px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]">
+                          <div className={`absolute left-0 top-full z-50 mt-2 w-[248px] overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}>
                             {/* Branch actions */}
                             {isOnMain ? (
                               <button
                                 onClick={() => { setBranchDropdownOpen(false); branchProps.onShowBranchCreate(); }}
-                                className="flex w-full items-center gap-2 rounded-t-xl px-3 py-2.5 text-xs text-push-fg-secondary hover:bg-push-surface-hover"
+                                className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-push-fg-secondary transition-colors hover:bg-white/[0.04]"
                               >
                                 <GitBranch className="h-3.5 w-3.5" />
                                 Create branch
@@ -884,27 +917,27 @@ export function WorkspaceHubSheet({
                             ) : (
                               <button
                                 onClick={() => { setBranchDropdownOpen(false); branchProps.onShowMergeFlow(); }}
-                                className="flex w-full items-center gap-2 rounded-t-xl px-3 py-2.5 text-xs text-emerald-300 hover:bg-push-surface-hover"
+                                className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-emerald-300 transition-colors hover:bg-white/[0.04]"
                               >
                                 <GitMerge className="h-3.5 w-3.5" />
                                 Merge into {branchProps.defaultBranch}
                               </button>
                             )}
-                            <div className="border-t border-push-edge" />
+                            <div className="border-t border-push-edge/80" />
 
                             {/* Refresh */}
                             <button
                               onClick={() => branchProps.onRefreshBranches()}
                               disabled={branchProps.branchesLoading}
-                              className="flex w-full items-center gap-2 px-3 py-2 text-push-xs text-push-fg-dim hover:bg-push-surface-hover hover:text-push-fg-secondary disabled:opacity-50"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-push-xs text-push-fg-dim transition-colors hover:bg-white/[0.04] hover:text-push-fg-secondary disabled:opacity-50"
                             >
                               <RefreshCw className={`h-3 w-3 ${branchProps.branchesLoading ? 'animate-spin' : ''}`} />
                               Refresh branches
                             </button>
-                            <div className="border-t border-push-edge" />
+                            <div className="border-t border-push-edge/80" />
 
                             {/* Branch list */}
-                            <div className="max-h-[240px] overflow-y-auto py-1">
+                            <div className="max-h-[260px] overflow-y-auto py-1">
                               {branchProps.branchesLoading && branchProps.availableBranches.length === 0 && (
                                 <div className="flex items-center gap-2 px-3 py-2 text-xs text-push-fg-dim">
                                   <Loader2 className="h-3 w-3 animate-spin" /> Loading...
@@ -921,13 +954,15 @@ export function WorkspaceHubSheet({
                                       onClick={() => {
                                         if (!isActive) handleBranchSwitch(branch.name);
                                       }}
-                                      className={`flex w-full items-center gap-2 px-3 py-2 text-left ${isActive ? 'bg-[#101621]' : 'hover:bg-push-surface-hover'}`}
+                                      className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${
+                                        isActive ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'
+                                      }`}
                                     >
                                       <span className={`min-w-0 flex-1 truncate text-xs ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
                                         {branch.name}
                                       </span>
                                       {branch.isDefault && (
-                                        <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-[#58a6ff]">default</span>
+                                        <span className={HUB_TAG_CLASS}>default</span>
                                       )}
                                       {isActive && <Check className="h-3.5 w-3.5 text-push-link" />}
                                     </button>
@@ -941,8 +976,8 @@ export function WorkspaceHubSheet({
                                         }}
                                         className={`flex w-full items-center gap-2 px-3 py-1.5 text-push-xs ${
                                           isDeletePending
-                                            ? 'bg-red-950/30 text-red-300 hover:bg-red-950/40'
-                                            : 'text-push-fg-dim hover:bg-push-surface-hover hover:text-red-300'
+                                            ? 'bg-red-950/25 text-red-300 hover:bg-red-950/35'
+                                            : 'text-push-fg-dim transition-colors hover:bg-white/[0.03] hover:text-red-300'
                                         }`}
                                       >
                                         {isDeletingThis ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
@@ -965,7 +1000,7 @@ export function WorkspaceHubSheet({
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => onOpenChange(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge-subtle bg-push-grad-input text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg-secondary hover:brightness-110"
+                  className="flex items-center justify-center p-1 text-push-fg-dim transition-colors hover:text-push-fg-secondary"
                   aria-label="Close workspace hub"
                 >
                   <X className="h-4 w-4" />
@@ -977,16 +1012,16 @@ export function WorkspaceHubSheet({
 
           {/* Sandbox status strip */}
           {sandboxStatus !== 'ready' && (
-            <div className="border-b border-push-edge px-3 py-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center justify-between gap-2 border-b border-push-edge px-3 py-2">
+              <div className="min-w-0 flex items-center gap-2">
                 {(sandboxStatus === 'creating' || sandboxStatus === 'reconnecting') ? (
-                  <Loader2 className="h-3 w-3 animate-spin text-push-fg-dim flex-shrink-0" />
+                  <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin text-push-fg-dim" />
                 ) : sandboxStatus === 'error' ? (
-                  <span className="h-1.5 w-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                  <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-400" />
                 ) : (
-                  <Terminal className="h-3 w-3 text-push-fg-dim flex-shrink-0" />
+                  <Terminal className="h-3 w-3 flex-shrink-0 text-push-fg-dim" />
                 )}
-                <span className="text-push-xs truncate min-w-0">
+                <span className="min-w-0 truncate text-push-xs">
                   {sandboxStatus === 'reconnecting' && <span className="text-push-fg-dim">Reconnecting…</span>}
                   {sandboxStatus === 'creating' && <span className="text-push-fg-dim">Starting sandbox…</span>}
                   {sandboxStatus === 'idle' && <span className="text-push-fg-dim">Sandbox not running</span>}
@@ -998,21 +1033,30 @@ export function WorkspaceHubSheet({
                 </span>
               </div>
               {(sandboxStatus === 'idle' || sandboxStatus === 'error') && (
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex shrink-0 items-center gap-1.5">
                   {sandboxStatus === 'error' && sandboxId && (
                     <button
                       onClick={onRetrySandbox}
-                      className="flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1 text-push-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/15 active:scale-95"
+                      className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-amber-300`}
                     >
-                      <RefreshCw className="h-2.5 w-2.5" />
-                      Retry
+                      <HubControlGlow />
+                      <RefreshCw className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
+                      <span className={HUB_CONTROL_TEXT_CLASS}>Retry</span>
                     </button>
                   )}
                   <button
                     onClick={sandboxStatus === 'error' ? onNewSandbox : onStartSandbox}
-                    className="flex items-center gap-1 rounded-md border border-[#243148] bg-[#0b1220] px-2 py-1 text-push-xs font-medium text-[#8ad4ff] transition-colors hover:bg-[#0d1526] active:scale-95"
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-[#8ad4ff]`}
                   >
-                    {sandboxStatus === 'error' ? <><Plus className="h-2.5 w-2.5" />New</> : 'Start'}
+                    <HubControlGlow />
+                    {sandboxStatus === 'error' ? (
+                      <>
+                        <Plus className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
+                        <span className={HUB_CONTROL_TEXT_CLASS}>New</span>
+                      </>
+                    ) : (
+                      <span className={HUB_CONTROL_TEXT_CLASS}>Start</span>
+                    )}
                   </button>
                 </div>
               )}
@@ -1021,30 +1065,34 @@ export function WorkspaceHubSheet({
 
           {/* Branch switch confirmation overlay */}
           {switchConfirmBranch && (
-            <div className="border-b border-push-edge bg-[#0d1526] px-3 py-2.5">
-              <p className="text-xs text-push-fg-secondary">
-                Switch to <span className="font-medium text-push-fg">{switchConfirmBranch}</span>? This will restart your sandbox.
-              </p>
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  onClick={confirmBranchSwitch}
-                  className="rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-1.5 text-xs text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
-                >
-                  Switch
-                </button>
-                <button
-                  onClick={() => setSwitchConfirmBranch(null)}
-                  className="rounded-lg px-3 py-1.5 text-xs text-push-fg-dim transition-colors hover:text-push-fg-secondary"
-                >
-                  Cancel
-                </button>
+            <div className="border-b border-push-edge px-3 py-2.5">
+              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3`}>
+                <p className="text-xs text-push-fg-secondary">
+                  Switch to <span className="font-medium text-push-fg">{switchConfirmBranch}</span>? This will restart your sandbox.
+                </p>
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    onClick={confirmBranchSwitch}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
+                  >
+                    <HubControlGlow />
+                    <span className={HUB_CONTROL_TEXT_CLASS}>Switch</span>
+                  </button>
+                  <button
+                    onClick={() => setSwitchConfirmBranch(null)}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
+                  >
+                    <HubControlGlow />
+                    <span className={HUB_CONTROL_TEXT_CLASS}>Cancel</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
           {/* Tab bar */}
           <div className="border-b border-push-edge px-2 py-2">
-            <div className={`grid gap-1 ${tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+            <div className={`grid gap-1 ${tabs.length >= 7 || tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const active = tab.key === activeTab;
@@ -1052,14 +1100,15 @@ export function WorkspaceHubSheet({
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
-                    className={`flex min-h-[42px] items-center justify-center gap-1 rounded-lg px-1 text-push-xs transition-all ${
+                    className={`relative flex min-h-[42px] items-center justify-center gap-1 rounded-[18px] px-1.5 text-push-xs transition-all ${
                       active
-                        ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_8px_20px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl'
-                        : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
+                        ? `${HUB_MATERIAL_BUTTON_CLASS} text-push-fg`
+                        : 'border border-transparent text-push-fg-dim hover:border-push-edge/70 hover:bg-white/[0.03] hover:text-push-fg-secondary'
                     }`}
                   >
-                    <Icon className="h-3.5 w-3.5" />
-                    {tab.label}
+                    {active && <HubControlGlow />}
+                    <Icon className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                    <span className={HUB_CONTROL_TEXT_CLASS}>{tab.label}</span>
                   </button>
                 );
               })}
@@ -1075,7 +1124,7 @@ export function WorkspaceHubSheet({
                   onChange={(e) => setCommitMessage(e.target.value)}
                   placeholder="Commit message"
                   disabled={commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error'}
-                  className="h-8 min-w-0 flex-1 rounded-lg border border-push-edge-subtle bg-push-grad-input px-2.5 text-xs text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all placeholder:text-push-fg-dim focus:border-push-sky/50 disabled:opacity-50"
+                  className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1`}
                 />
                 <button
                   onClick={() => void suggestCommitMessage()}
@@ -1085,14 +1134,15 @@ export function WorkspaceHubSheet({
                     !sandboxReady
                   }
                   title="Suggest commit message from current diff"
-                  className="flex h-8 items-center gap-1 rounded-lg border border-push-edge-subtle bg-push-grad-input px-2 text-push-xs text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg-secondary hover:brightness-110 disabled:opacity-50"
+                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
                 >
+                  <HubControlGlow />
                   {suggestingCommitMessage ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
                   ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
+                    <Sparkles className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
                   )}
-                  AI
+                  <span className={HUB_CONTROL_TEXT_CLASS}>AI</span>
                 </button>
                 <button
                   onClick={() => {
@@ -1107,26 +1157,29 @@ export function WorkspaceHubSheet({
                     (commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error') ||
                     !sandboxReady
                   }
-                  className={`flex h-8 items-center gap-1 rounded-lg border px-2 text-push-xs transition-colors disabled:opacity-50 ${
+                  className={`relative flex h-8 items-center gap-1.5 rounded-full border px-3 text-push-xs transition-all disabled:opacity-50 ${
                     commitPhase === 'success'
-                      ? 'border-emerald-500/50 bg-emerald-950/35 text-emerald-300'
+                      ? 'border-emerald-500/35 bg-[linear-gradient(180deg,rgba(18,64,48,0.78)_0%,rgba(10,34,27,0.9)_100%)] text-emerald-300 shadow-[0_12px_30px_rgba(0,0,0,0.32),0_2px_8px_rgba(0,0,0,0.18)]'
                       : commitPhase === 'error'
-                      ? 'border-red-500/40 bg-red-950/20 text-red-300'
-                      : 'border-push-edge-subtle bg-push-grad-input text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl hover:border-push-edge-hover hover:text-push-fg-secondary hover:brightness-110'
+                      ? 'border-red-500/35 bg-[linear-gradient(180deg,rgba(78,24,24,0.72)_0%,rgba(36,12,12,0.88)_100%)] text-red-300 shadow-[0_12px_30px_rgba(0,0,0,0.32),0_2px_8px_rgba(0,0,0,0.18)]'
+                      : `${HUB_MATERIAL_BUTTON_CLASS} text-push-fg-dim`
                   }`}
                 >
+                  <HubControlGlow />
                   {commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error' ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
                   ) : commitPhase === 'success' ? (
-                    <Check className="h-3.5 w-3.5" />
+                    <Check className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
                   ) : (
-                    <GitCommitHorizontal className="h-3.5 w-3.5" />
+                    <GitCommitHorizontal className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
                   )}
-                  {commitPhase === 'idle'
-                    ? 'Commit & Push…'
-                    : commitPhase === 'success' || commitPhase === 'error'
-                    ? 'Reset'
-                    : PHASE_LABELS[commitPhase]}
+                  <span className={HUB_CONTROL_TEXT_CLASS}>
+                    {commitPhase === 'idle'
+                      ? 'Commit & Push…'
+                      : commitPhase === 'success' || commitPhase === 'error'
+                      ? 'Reset'
+                      : PHASE_LABELS[commitPhase]}
+                  </span>
                 </button>
               </div>
               {blockedByProtectMain && (
@@ -1221,6 +1274,20 @@ export function WorkspaceHubSheet({
                 />
               </div>
             )}
+
+            {activeTab === 'settings' && (
+              <div className="flex h-full min-h-0 flex-col">
+                <HubSettingsTab
+                  key={`settings-${open ? 'open' : 'closed'}`}
+                  auth={settingsAuth}
+                  profile={settingsProfile}
+                  ai={settingsAI}
+                  workspace={settingsWorkspace}
+                  data={settingsData}
+                  onCloseHub={() => onOpenChange(false)}
+                />
+              </div>
+            )}
           </div>
 
           <Sheet
@@ -1235,7 +1302,7 @@ export function WorkspaceHubSheet({
           >
             <SheetContent
               side="bottom"
-              className="border-t border-[#151b26] bg-[#0d0d0d] px-0 pb-6 pt-0 text-push-fg"
+              className="border-t border-[#151b26] bg-push-grad-panel px-0 pb-6 pt-0 text-push-fg"
             >
               <SheetHeader className="border-b border-push-edge px-4 py-4">
                 <SheetTitle className="text-sm font-semibold text-push-fg">Push target</SheetTitle>
@@ -1245,43 +1312,41 @@ export function WorkspaceHubSheet({
               </SheetHeader>
 
               <div className="space-y-4 px-4 pt-4">
-                <div className="rounded-xl border border-push-edge bg-[#0b1018]/90 p-3">
-                  <div className="flex items-start gap-2">
-                    <button
-                      onClick={() => {
-                        if (blockedByProtectMain) return;
-                        setCommitTargetMode('current');
-                        setCommitTargetError(null);
-                      }}
-                      disabled={blockedByProtectMain}
-                      className={`mt-0.5 h-4 w-4 rounded-full border ${
-                        commitTargetMode === 'current'
-                          ? 'border-push-link bg-push-link'
-                          : 'border-push-edge-hover bg-transparent'
-                      } ${blockedByProtectMain ? 'opacity-40' : ''}`}
-                      aria-label="Push to current branch"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-push-fg">Current branch</p>
-                        <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-[#58a6ff]">
-                          {currentBranchName}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-push-fg-dim">
-                        Commit and push directly to the active branch.
-                      </p>
-                      {blockedByProtectMain && (
-                        <p className="mt-2 text-push-xs text-amber-300">
-                          Protect Main blocks direct pushes to {branchProps.defaultBranch}.
+                <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3 ${commitTargetMode === 'current' ? 'border-push-edge-hover' : ''}`}>
+                  <button
+                    onClick={() => {
+                      if (blockedByProtectMain) return;
+                      setCommitTargetMode('current');
+                      setCommitTargetError(null);
+                    }}
+                    disabled={blockedByProtectMain}
+                    className={`w-full text-left ${blockedByProtectMain ? 'opacity-50' : ''}`}
+                    aria-label="Push to current branch"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium text-push-fg">Current branch</p>
+                          <span className={HUB_TAG_CLASS}>{currentBranchName}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-push-fg-dim">
+                          Commit and push directly to the active branch.
                         </p>
-                      )}
+                      </div>
+                      <span className={HUB_TAG_CLASS}>
+                        {commitTargetMode === 'current' ? 'selected' : 'available'}
+                      </span>
                     </div>
-                  </div>
+                  </button>
+                  {blockedByProtectMain && (
+                    <p className="mt-2 text-push-xs text-amber-300">
+                      Protect Main blocks direct pushes to {branchProps.defaultBranch}.
+                    </p>
+                  )}
                 </div>
 
-                <div className="rounded-xl border border-push-edge bg-[#0b1018]/90 p-3">
-                  <div className="flex items-start gap-2">
+                <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3 ${commitTargetMode === 'new' ? 'border-push-edge-hover' : ''}`}>
+                  <div className="flex items-start justify-between gap-3">
                     <button
                       onClick={() => {
                         setCommitTargetMode('new');
@@ -1292,66 +1357,63 @@ export function WorkspaceHubSheet({
                           void suggestBranchName();
                         }
                       }}
-                      className={`mt-0.5 h-4 w-4 rounded-full border ${
-                        commitTargetMode === 'new'
-                          ? 'border-push-link bg-push-link'
-                          : 'border-push-edge-hover bg-transparent'
-                      }`}
+                      className="min-w-0 flex-1 text-left"
                       aria-label="Push to a new branch"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-medium text-push-fg">New branch</p>
-                        <span className="rounded-full bg-[#131a27] px-1.5 py-0.5 text-push-2xs text-push-fg-dim">
-                          from {currentBranchName}
-                        </span>
+                        <span className={HUB_TAG_CLASS}>from {currentBranchName}</span>
                       </div>
                       <p className="mt-1 text-xs text-push-fg-dim">
                         Create a new branch from the current working tree, then commit and push there.
                       </p>
-
-                      <div className="mt-3 flex items-center gap-2">
-                        <input
-                          value={newBranchName}
-                          onChange={(event) => {
-                            setNewBranchName(event.target.value);
-                            setCommitTargetMode('new');
-                            setCommitTargetError(null);
-                          }}
-                          placeholder={`${branchSuggestionPrefix}/update-workspace`}
-                          autoCapitalize="off"
-                          autoCorrect="off"
-                          spellCheck={false}
-                          className="h-10 min-w-0 flex-1 rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 text-sm text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all placeholder:text-push-fg-dim focus:border-push-sky/50"
-                        />
-                        <button
-                          onClick={() => {
-                            setCommitTargetMode('new');
-                            branchSuggestionAttemptedRef.current = true;
-                            void suggestBranchName();
-                          }}
-                          disabled={suggestingBranchName}
-                          className="flex h-10 items-center gap-1 rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 text-xs text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg-secondary hover:brightness-110 disabled:opacity-50"
-                        >
-                          {suggestingBranchName ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Sparkles className="h-3.5 w-3.5" />
-                          )}
-                          AI
-                        </button>
-                      </div>
-
-                      {newBranchName && sanitizedNewBranchName !== newBranchName.toLowerCase().trim() && (
-                        <p className="mt-2 text-push-xs text-push-fg-dim">
-                          Will create: <span className="font-mono text-push-fg-secondary">{sanitizedNewBranchName || `${branchSuggestionPrefix}/update-workspace`}</span>
-                        </p>
-                      )}
-                    </div>
+                    </button>
+                    <span className={HUB_TAG_CLASS}>
+                      {commitTargetMode === 'new' ? 'selected' : 'available'}
+                    </span>
                   </div>
+
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      value={newBranchName}
+                      onChange={(event) => {
+                        setNewBranchName(event.target.value);
+                        setCommitTargetMode('new');
+                        setCommitTargetError(null);
+                      }}
+                      placeholder={`${branchSuggestionPrefix}/update-workspace`}
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      className={`${HUB_MATERIAL_INPUT_CLASS} h-10 min-w-0 flex-1 px-3 text-sm`}
+                    />
+                    <button
+                      onClick={() => {
+                        setCommitTargetMode('new');
+                        branchSuggestionAttemptedRef.current = true;
+                        void suggestBranchName();
+                      }}
+                      disabled={suggestingBranchName}
+                      className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-10 px-3`}
+                    >
+                      <HubControlGlow />
+                      {suggestingBranchName ? (
+                        <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                      ) : (
+                        <Sparkles className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                      )}
+                      <span className={HUB_CONTROL_TEXT_CLASS}>AI</span>
+                    </button>
+                  </div>
+
+                  {newBranchName && sanitizedNewBranchName !== newBranchName.toLowerCase().trim() && (
+                    <p className="mt-2 text-push-xs text-push-fg-dim">
+                      Will create: <span className="font-mono text-push-fg-secondary">{sanitizedNewBranchName || `${branchSuggestionPrefix}/update-workspace`}</span>
+                    </p>
+                  )}
                 </div>
 
-                <div className="rounded-xl border border-push-edge-subtle bg-push-grad-input px-3 py-2">
+                <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-2.5`}>
                   <p className="text-push-xs text-push-fg-dim">
                     Commit message
                   </p>
@@ -1361,7 +1423,7 @@ export function WorkspaceHubSheet({
                 </div>
 
                 {commitTargetError && (
-                  <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+                  <div className="rounded-[18px] border border-red-500/20 bg-red-500/5 px-3 py-2.5">
                     <p className="text-xs text-red-300">{commitTargetError}</p>
                   </div>
                 )}
@@ -1370,15 +1432,17 @@ export function WorkspaceHubSheet({
                   <button
                     onClick={handleCommitTargetConfirm}
                     disabled={suggestingBranchName}
-                    className="flex-1 rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2.5 text-sm text-push-fg-secondary shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 disabled:opacity-50"
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-10 flex-1 justify-center px-4 text-sm text-push-fg-secondary`}
                   >
-                    Commit &amp; Push
+                    <HubControlGlow />
+                    <span className={HUB_CONTROL_TEXT_CLASS}>Commit &amp; Push</span>
                   </button>
                   <button
                     onClick={() => setCommitTargetSheetOpen(false)}
-                    className="rounded-lg px-3 py-2.5 text-sm text-push-fg-dim transition-colors hover:text-push-fg-secondary"
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-10 px-4 text-sm`}
                   >
-                    Cancel
+                    <HubControlGlow />
+                    <span className={HUB_CONTROL_TEXT_CLASS}>Cancel</span>
                   </button>
                 </div>
               </div>

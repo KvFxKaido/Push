@@ -6,7 +6,7 @@ export function WebSearchCard({ data }: { data: WebSearchCardData }) {
   return (
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-push-edge">
+      <div className="flex items-center gap-2 border-b border-push-edge/80 px-3.5 py-3">
         <Globe className="h-3.5 w-3.5 text-push-fg-secondary" />
         <span className="text-push-base font-medium text-push-fg">
           {data.results.length} result{data.results.length !== 1 ? 's' : ''} for "{data.query}"
@@ -21,7 +21,7 @@ export function WebSearchCard({ data }: { data: WebSearchCardData }) {
             href={result.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="block px-3 py-2 hover:bg-push-surface/50 transition-colors"
+            className="block px-3.5 py-2.5 transition-colors hover:bg-white/[0.02]"
           >
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">

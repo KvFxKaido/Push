@@ -1,7 +1,7 @@
 import { FileCode } from 'lucide-react';
 import type { FileCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_BADGE_INFO } from '@/lib/utils';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 import { CardCodeBlock } from './card-code-block';
 
@@ -14,7 +14,7 @@ export function FileCard({ data }: { data: FileCardData }) {
       {/* Header */}
       <button
         onClick={toggleExpanded}
-        className="w-full px-3.5 py-3 flex items-center gap-2 hover:bg-push-surface-hover transition-colors duration-200"
+        className="flex w-full items-center gap-2 px-3.5 py-3 transition-colors duration-200 hover:bg-white/[0.02]"
       >
         <ExpandChevron expanded={expanded} className="shrink-0" />
         <FileCode className="h-3.5 w-3.5 text-push-fg-secondary shrink-0" />
@@ -22,7 +22,7 @@ export function FileCard({ data }: { data: FileCardData }) {
           {data.path}
         </span>
         {data.language && (
-          <span className="text-push-xs text-push-fg-dim bg-push-surface-active px-1.5 py-0.5 rounded shrink-0">
+          <span className={`${CARD_BADGE_INFO} shrink-0 px-1.5 py-0.5 text-push-xs`}>
             {data.language}
           </span>
         )}

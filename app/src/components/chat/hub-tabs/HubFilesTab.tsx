@@ -11,6 +11,12 @@ import { toast } from 'sonner';
 import { readFromSandbox } from '@/lib/sandbox-client';
 import { formatSize } from '@/lib/diff-utils';
 import { useFileBrowser } from '@/hooks/useFileBrowser';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_MATERIAL_ROUND_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 
 interface HubFilesTabProps {
   sandboxId: string | null;
@@ -77,10 +83,13 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
             });
           }}
           disabled={startingSandbox || sandboxStatus === 'creating'}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 text-xs text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 disabled:opacity-50"
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-9 px-3 text-push-fg-secondary`}
         >
-          {(startingSandbox || sandboxStatus === 'creating') && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {startingSandbox || sandboxStatus === 'creating' ? 'Starting sandbox...' : 'Start sandbox'}
+          <HubControlGlow />
+          {(startingSandbox || sandboxStatus === 'creating') && <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />}
+          <span className="relative z-10">
+            {startingSandbox || sandboxStatus === 'creating' ? 'Starting sandbox...' : 'Start sandbox'}
+          </span>
         </button>
       </div>
     );
@@ -96,10 +105,11 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
               setPreviewContent('');
               setPreviewTruncated(false);
             }}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
-            <ChevronLeft className="h-3.5 w-3.5" />
-            Back
+            <HubControlGlow />
+            <ChevronLeft className="relative z-10 h-3.5 w-3.5" />
+            <span className="relative z-10">Back</span>
           </button>
           <p className="truncate text-xs text-push-fg-secondary">{previewPath}</p>
         </div>
@@ -110,7 +120,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
               Loading file...
             </div>
           ) : (
-            <pre className="whitespace-pre-wrap break-words rounded-lg border border-push-edge bg-push-surface p-3 font-mono text-xs text-push-fg-secondary">
+            <pre className={`whitespace-pre-wrap break-words p-3 font-mono text-xs text-push-fg-secondary ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
               {previewContent}
             </pre>
           )}
@@ -146,10 +156,11 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
         <button
           onClick={() => void loadDirectory(currentPath)}
           disabled={fileStatus === 'loading'}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+          className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
           aria-label="Refresh directory"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${fileStatus === 'loading' ? 'animate-spin' : ''}`} />
+          <HubControlGlow />
+          <RefreshCw className={`relative z-10 h-3.5 w-3.5 ${fileStatus === 'loading' ? 'animate-spin' : ''}`} />
         </button>
       </div>
 

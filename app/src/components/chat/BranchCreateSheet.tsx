@@ -13,6 +13,12 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { executeCreateBranch } from '@/lib/github-tools';
 import { sanitizeBranchName } from '@/lib/branch-names';
+import {
+  HUB_MATERIAL_INPUT_CLASS,
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 import type { ActiveRepo } from '@/types';
 
 interface BranchCreateSheetProps {
@@ -21,6 +27,18 @@ interface BranchCreateSheetProps {
   activeRepo: ActiveRepo;
   setCurrentBranch: (branch: string) => void;
 }
+
+const BRANCH_ACTION_BUTTON_CLASS =
+  `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-1 text-sm text-push-fg-secondary`;
+
+const BRANCH_OPTION_CLASS =
+  `${HUB_PANEL_SUBTLE_SURFACE_CLASS} flex cursor-pointer items-start gap-3 px-3.5 py-3 transition-all duration-200`;
+
+const BRANCH_SUCCESS_PANEL_CLASS =
+  'rounded-[18px] border border-emerald-500/20 bg-[linear-gradient(180deg,rgba(17,61,42,0.18)_0%,rgba(8,28,20,0.34)_100%)] px-3.5 py-3';
+
+const BRANCH_DANGER_PANEL_CLASS =
+  'rounded-[18px] border border-red-500/20 bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)] px-3.5 py-3';
 
 function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }: BranchCreateSheetProps) {
   const [branchName, setBranchName] = useState('');
@@ -99,15 +117,15 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="bottom"
-        className="bg-[#0d0d0d] border-t border-white/[0.06] rounded-t-2xl px-5 pb-8 pt-0 max-h-[80dvh]"
+        className="max-h-[80dvh] overflow-y-auto rounded-t-2xl border-t border-push-edge bg-push-grad-panel px-5 pb-8 pt-0"
       >
         <SheetHeader className="pt-5 pb-1">
           <SheetTitle className="text-sm font-semibold text-push-fg flex items-center gap-2">
             <GitBranch className="h-4 w-4 text-push-fg-dim" />
-            Create branch from {fromBranch}
+            Create branch
           </SheetTitle>
-          <SheetDescription className="text-xs text-[#71717a]">
-            A new branch will be created on GitHub from the current ref.
+          <SheetDescription className="text-xs text-push-fg-dim">
+            From {fromBranch}. The new branch will be created on GitHub from the current ref.
           </SheetDescription>
         </SheetHeader>
 
@@ -127,7 +145,7 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
               }}
               autoFocus
               disabled={creating}
-              className="bg-[#141414] border-white/[0.08] text-push-fg placeholder:text-[#3f3f46] h-11 text-sm"
+              className={`${HUB_MATERIAL_INPUT_CLASS} h-11 rounded-[18px] text-sm`}
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
@@ -154,27 +172,49 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
               onValueChange={(v) => setAfterCreate(v as 'switch' | 'stay')}
               className="gap-3"
             >
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <RadioGroupItem value="switch" className="border-[#3f3f46]" />
-                <span className="text-sm text-push-fg">Switch to branch</span>
+              <label
+                className={`${BRANCH_OPTION_CLASS} ${
+                  afterCreate === 'switch'
+                    ? 'border-push-edge-hover bg-push-grad-input shadow-[0_10px_24px_rgba(0,0,0,0.22)]'
+                    : 'hover:border-push-edge-hover/80'
+                }`}
+              >
+                <RadioGroupItem value="switch" className="mt-0.5 border-[#3f3f46] text-push-sky" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm text-push-fg">Switch to branch</span>
+                  <span className="mt-0.5 block text-push-xs text-push-fg-dim">
+                    Open the new branch right away.
+                  </span>
+                </span>
               </label>
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <RadioGroupItem value="stay" className="border-[#3f3f46]" />
-                <span className="text-sm text-push-fg">Stay on {fromBranch}</span>
+              <label
+                className={`${BRANCH_OPTION_CLASS} ${
+                  afterCreate === 'stay'
+                    ? 'border-push-edge-hover bg-push-grad-input shadow-[0_10px_24px_rgba(0,0,0,0.22)]'
+                    : 'hover:border-push-edge-hover/80'
+                }`}
+              >
+                <RadioGroupItem value="stay" className="mt-0.5 border-[#3f3f46] text-push-sky" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm text-push-fg">Stay on {fromBranch}</span>
+                  <span className="mt-0.5 block text-push-xs text-push-fg-dim">
+                    Keep the current branch active after creation.
+                  </span>
+                </span>
               </label>
             </RadioGroup>
           </div>
 
           {/* Error display */}
           {error && (
-            <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+            <div className={BRANCH_DANGER_PANEL_CLASS}>
               <p className="text-xs text-red-400">{error}</p>
             </div>
           )}
 
           {/* Success display */}
           {success && (
-            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5">
+            <div className={BRANCH_SUCCESS_PANEL_CLASS}>
               <p className="text-xs text-emerald-400">{success}</p>
             </div>
           )}
@@ -184,24 +224,26 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
             <Button
               onClick={handleCreate}
               disabled={!isValid || creating}
-              className="flex-1 h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm disabled:opacity-40"
+              className={BRANCH_ACTION_BUTTON_CLASS}
             >
+              <HubControlGlow />
               {creating ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Creating...
+                  <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
+                  <span className="relative z-10">Creating...</span>
                 </>
               ) : (
-                'Create'
+                <span className="relative z-10">Create</span>
               )}
             </Button>
             <Button
               onClick={handleCancel}
               disabled={creating}
               variant="outline"
-              className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+              className={BRANCH_ACTION_BUTTON_CLASS}
             >
-              Cancel
+              <HubControlGlow />
+              <span className="relative z-10">Cancel</span>
             </Button>
           </div>
         </div>

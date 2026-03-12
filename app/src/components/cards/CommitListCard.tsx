@@ -6,7 +6,7 @@ export function CommitListCard({ data }: { data: CommitListCardData }) {
   return (
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
-      <div className="px-3.5 py-2.5 flex items-center gap-2 border-b border-push-edge">
+      <div className="flex items-center gap-2 border-b border-push-edge/80 px-3.5 py-3">
         <GitCommit className="h-3.5 w-3.5 text-push-fg-secondary" />
         <span className="text-push-base font-medium text-push-fg">
           {data.commits.length} recent commit{data.commits.length !== 1 ? 's' : ''}
@@ -17,7 +17,7 @@ export function CommitListCard({ data }: { data: CommitListCardData }) {
       {/* Commit list */}
       <div className={CARD_LIST_CLASS}>
         {data.commits.map((commit) => (
-          <div key={commit.sha} className="px-3 py-2 flex items-start gap-2">
+          <div key={commit.sha} className="flex items-start gap-2 px-3.5 py-2.5">
             <span className="text-push-sm text-push-link font-mono shrink-0 mt-0.5">
               {commit.sha.slice(0, 7)}
             </span>

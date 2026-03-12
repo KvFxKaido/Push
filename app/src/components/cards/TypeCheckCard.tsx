@@ -1,6 +1,14 @@
 import { FileCode, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import type { TypeCheckCardData } from '@/types';
-import { CARD_SHELL_CLASS, CARD_TEXT_SUCCESS, CARD_TEXT_ERROR, CARD_HEADER_BG_SUCCESS, CARD_HEADER_BG_ERROR, CARD_LIST_CLASS } from '@/lib/utils';
+import {
+  CARD_SHELL_CLASS,
+  CARD_TEXT_SUCCESS,
+  CARD_TEXT_ERROR,
+  CARD_HEADER_BG_SUCCESS,
+  CARD_HEADER_BG_ERROR,
+  CARD_LIST_CLASS,
+  CARD_PANEL_SUBTLE_CLASS,
+} from '@/lib/utils';
 
 export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
   const passed = data.exitCode === 0;
@@ -28,7 +36,7 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
 
       {/* Stats */}
       {(data.errorCount > 0 || data.warningCount > 0) && (
-        <div className="px-3 py-2 flex items-center gap-4 border-b border-push-edge">
+        <div className="flex items-center gap-4 border-b border-push-edge/80 px-3 py-2">
           {data.errorCount > 0 && (
             <div className="flex items-center gap-1.5">
               <XCircle className="h-3.5 w-3.5 text-push-status-error" />
@@ -52,7 +60,8 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
       {data.errors.length > 0 && (
         <div className={`${CARD_LIST_CLASS} max-h-[250px] overflow-y-auto`}>
           {data.errors.slice(0, 15).map((err, i) => (
-            <div key={i} className="px-3 py-1.5">
+            <div key={i} className="px-3 py-2">
+              <div className={`${CARD_PANEL_SUBTLE_CLASS} px-2.5 py-2`}>
               <div className="flex items-center gap-2 text-push-sm">
                 <FileCode className="h-3 w-3 text-push-fg-dim shrink-0" />
                 <span className="text-push-link font-mono">
@@ -64,6 +73,7 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
                 )}
               </div>
               <p className="text-push-xs text-push-fg-secondary mt-0.5 ml-5 truncate">{err.message}</p>
+              </div>
             </div>
           ))}
           {data.errors.length > 15 && (

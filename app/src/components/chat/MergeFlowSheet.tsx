@@ -23,6 +23,12 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import {
+  HUB_MATERIAL_INPUT_CLASS,
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
+import {
   executeFindExistingPR,
   executeCreatePR,
   executeCheckPRMergeable,
@@ -112,27 +118,35 @@ const STEPS: { key: MergeStep; label: string }[] = [
   { key: 'done', label: 'Done' },
 ];
 
+const MERGE_PANEL_CLASS = `${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-3`;
+const MERGE_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 text-sm text-push-fg-secondary`;
+const MERGE_SUCCESS_PANEL_CLASS =
+  'rounded-[18px] border border-emerald-500/20 bg-[linear-gradient(180deg,rgba(17,61,42,0.18)_0%,rgba(8,28,20,0.34)_100%)] px-3.5 py-3';
+const MERGE_WARNING_PANEL_CLASS =
+  'rounded-[18px] border border-yellow-500/20 bg-[linear-gradient(180deg,rgba(68,52,16,0.18)_0%,rgba(31,23,8,0.34)_100%)] px-3.5 py-3';
+const MERGE_DANGER_PANEL_CLASS =
+  'rounded-[18px] border border-red-500/20 bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)] px-3.5 py-3';
+
 function StepIndicator({ current }: { current: MergeStep }) {
   const currentIdx = STEPS.findIndex((s) => s.key === current);
   return (
-    <div className="flex items-center gap-1 mb-4">
+    <div className="mb-4 flex items-center gap-1.5 overflow-x-auto pb-1">
       {STEPS.map((step, i) => {
         const isActive = i === currentIdx;
         const isDone = i < currentIdx;
         return (
-          <div key={step.key} className="flex items-center gap-1">
+          <div key={step.key} className="flex items-center gap-1.5">
             {i > 0 && (
               <div
-                className={`h-px w-4 ${isDone ? 'bg-emerald-500/50' : 'bg-white/[0.06]'}`}
+                className={`h-px w-3 rounded-full ${isDone ? 'bg-emerald-500/45' : 'bg-push-edge/80'}`}
               />
             )}
             <div
               className={`
-                flex items-center justify-center rounded-full text-push-2xs font-medium
-                h-6 px-2.5 transition-colors
-                ${isActive ? 'bg-white/10 text-push-fg' : ''}
-                ${isDone ? 'bg-emerald-500/10 text-emerald-400' : ''}
-                ${!isActive && !isDone ? 'bg-transparent text-[#3f3f46]' : ''}
+                inline-flex h-7 items-center justify-center rounded-full border px-2.5 text-push-2xs font-medium transition-colors
+                ${isActive ? 'border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_10px_24px_rgba(0,0,0,0.22)]' : ''}
+                ${isDone ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : ''}
+                ${!isActive && !isDone ? 'border-push-edge/70 bg-black/10 text-push-fg-dim' : ''}
               `}
             >
               {isDone ? <CheckCircle2 className="h-3 w-3" /> : step.label}
@@ -586,14 +600,14 @@ function MergeFlowSheet({
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="bottom"
-        className="bg-[#0d0d0d] border-t border-white/[0.06] rounded-t-2xl px-5 pb-8 pt-0 max-h-[85dvh] overflow-y-auto"
+        className="max-h-[85dvh] overflow-y-auto rounded-t-2xl border-t border-push-edge bg-push-grad-panel px-5 pb-8 pt-0"
       >
-        <SheetHeader className="pt-5 pb-1">
+        <SheetHeader className="pb-1 pt-5">
           <SheetTitle className="text-sm font-semibold text-push-fg flex items-center gap-2">
             <GitMerge className="h-4 w-4 text-push-fg-dim" />
             Merge {currentBranch}
           </SheetTitle>
-          <SheetDescription className="text-xs text-[#71717a]">
+          <SheetDescription className="text-xs text-push-fg-dim">
             {currentBranch} into {defaultBranch}
           </SheetDescription>
         </SheetHeader>
@@ -601,7 +615,7 @@ function MergeFlowSheet({
         {/* Edge case: on default branch */}
         {isOnDefault ? (
           <div className="mt-4 space-y-4">
-            <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-3 py-2.5">
+            <div className={MERGE_WARNING_PANEL_CLASS}>
               <p className="text-xs text-yellow-400">
                 You are on the default branch ({defaultBranch}). Switch to a feature branch to merge.
               </p>
@@ -609,9 +623,10 @@ function MergeFlowSheet({
             <Button
               onClick={close}
               variant="outline"
-              className="w-full h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+              className={`${MERGE_BUTTON_CLASS} w-full`}
             >
-              Close
+              <HubControlGlow />
+              <span className="relative z-10">Close</span>
             </Button>
           </div>
         ) : (
@@ -630,7 +645,7 @@ function MergeFlowSheet({
 
                 {error === 'uncommitted' && (
                   <>
-                    <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-3 py-2.5">
+                    <div className={MERGE_WARNING_PANEL_CLASS}>
                       <div className="flex items-start gap-2">
                         <AlertTriangle className="h-4 w-4 text-yellow-400 mt-0.5 shrink-0" />
                         <div>
@@ -644,16 +659,18 @@ function MergeFlowSheet({
                     <div className="flex gap-3">
                       <Button
                         onClick={close}
-                        className="flex-1 h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm"
+                        className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        Commit & push first
+                        <HubControlGlow />
+                        <span className="relative z-10">Commit & push first</span>
                       </Button>
                       <Button
                         onClick={close}
                         variant="outline"
-                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+                        className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        Cancel
+                        <HubControlGlow />
+                        <span className="relative z-10">Cancel</span>
                       </Button>
                     </div>
                   </>
@@ -677,7 +694,7 @@ function MergeFlowSheet({
 
                 {!loading && prFormMode === 'existing' && prInfo && (
                   <>
-                    <div className="rounded-lg border border-white/[0.06] bg-[#141414] px-3 py-3 space-y-1.5">
+                    <div className={`${MERGE_PANEL_CLASS} space-y-1.5`}>
                       <p className="text-xs text-push-fg-dim">Existing PR found</p>
                       <p className="text-sm text-push-fg font-medium">
                         #{prInfo.number} — {prInfo.title}
@@ -696,17 +713,19 @@ function MergeFlowSheet({
                     <div className="flex gap-3">
                       <Button
                         onClick={handleProceedWithExisting}
-                        className="flex-1 h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm"
+                        className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        <ArrowRight className="h-4 w-4" />
-                        Continue with this PR
+                        <HubControlGlow />
+                        <ArrowRight className="relative z-10 h-4 w-4" />
+                        <span className="relative z-10">Continue with this PR</span>
                       </Button>
                       <Button
                         onClick={close}
                         variant="outline"
-                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+                        className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        Cancel
+                        <HubControlGlow />
+                        <span className="relative z-10">Cancel</span>
                       </Button>
                     </div>
                   </>
@@ -725,7 +744,7 @@ function MergeFlowSheet({
                           value={prTitle}
                           onChange={(e) => { setPrTitle(e.target.value); setError(null); }}
                           autoFocus
-                          className="bg-[#141414] border-white/[0.08] text-push-fg placeholder:text-[#3f3f46] h-11 text-sm"
+                          className={`${HUB_MATERIAL_INPUT_CLASS} h-11 rounded-[18px] text-sm`}
                           autoComplete="off"
                           autoCorrect="off"
                           spellCheck={false}
@@ -741,7 +760,7 @@ function MergeFlowSheet({
                           value={prBody}
                           onChange={(e) => setPrBody(e.target.value)}
                           rows={3}
-                          className="bg-[#141414] border-white/[0.08] text-push-fg placeholder:text-[#3f3f46] text-sm min-h-[72px] resize-none"
+                          className={`${HUB_MATERIAL_INPUT_CLASS} min-h-[72px] rounded-[18px] text-sm resize-none`}
                         />
                       </div>
                       <p className="text-push-xs text-[#3f3f46]">
@@ -752,24 +771,26 @@ function MergeFlowSheet({
                       <Button
                         onClick={handleCreatePR}
                         disabled={!prTitle.trim() || loading}
-                        className="flex-1 h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm disabled:opacity-40"
+                        className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
+                        <HubControlGlow />
                         {loading ? (
                           <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Creating...
+                            <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
+                            <span className="relative z-10">Creating...</span>
                           </>
                         ) : (
-                          'Create PR'
+                          <span className="relative z-10">Create PR</span>
                         )}
                       </Button>
                       <Button
                         onClick={close}
                         disabled={loading}
                         variant="outline"
-                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+                        className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        Cancel
+                        <HubControlGlow />
+                        <span className="relative z-10">Cancel</span>
                       </Button>
                     </div>
                   </>
@@ -793,7 +814,7 @@ function MergeFlowSheet({
 
                 {!loading && auditVerdict === 'unsafe' && auditCard && (
                   <>
-                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-3 space-y-2">
+                    <div className={`${MERGE_DANGER_PANEL_CLASS} space-y-2`}>
                       <div className="flex items-center gap-2">
                         <ShieldAlert className="h-4 w-4 text-red-400 shrink-0" />
                         <p className="text-xs font-medium text-red-400">Blocked by Auditor</p>
@@ -821,23 +842,25 @@ function MergeFlowSheet({
                     <div className="flex gap-3">
                       <Button
                         onClick={handleRetryAudit}
-                        className="flex-1 h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm"
+                        className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        Fix and retry
+                        <HubControlGlow />
+                        <span className="relative z-10">Fix and retry</span>
                       </Button>
                       <Button
                         onClick={close}
                         variant="outline"
-                        className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+                        className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        Cancel
+                        <HubControlGlow />
+                        <span className="relative z-10">Cancel</span>
                       </Button>
                     </div>
                   </>
                 )}
 
                 {!loading && auditVerdict === 'safe' && auditCard && (
-                  <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-3">
+                  <div className={MERGE_SUCCESS_PANEL_CLASS}>
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
                       <p className="text-xs font-medium text-emerald-400">Auditor: SAFE</p>
@@ -875,7 +898,7 @@ function MergeFlowSheet({
                     {/* Mergeable */}
                     {mergeStatus.mergeable === true && mergeStatus.ciOverall !== 'FAILURE' && (
                       <>
-                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-3">
+                        <div className={MERGE_SUCCESS_PANEL_CLASS}>
                           <div className="flex items-center gap-2">
                             <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
                             <div>
@@ -899,17 +922,18 @@ function MergeFlowSheet({
                           <Button
                             onClick={handleMerge}
                             disabled={loading}
-                            className="flex-1 h-11 bg-emerald-600 text-white hover:bg-emerald-500 font-medium text-sm disabled:opacity-40"
+                            className={`${MERGE_BUTTON_CLASS} flex-1 text-emerald-300`}
                           >
+                            <HubControlGlow />
                             {loading ? (
                               <>
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Merging...
+                                <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
+                                <span className="relative z-10">Merging...</span>
                               </>
                             ) : (
                               <>
-                                <GitMerge className="h-4 w-4" />
-                                Merge
+                                <GitMerge className="relative z-10 h-4 w-4" />
+                                <span className="relative z-10">Merge</span>
                               </>
                             )}
                           </Button>
@@ -917,9 +941,10 @@ function MergeFlowSheet({
                             onClick={close}
                             disabled={loading}
                             variant="outline"
-                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+                            className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            Cancel
+                            <HubControlGlow />
+                            <span className="relative z-10">Cancel</span>
                           </Button>
                         </div>
                       </>
@@ -928,7 +953,7 @@ function MergeFlowSheet({
                     {/* Conflicts */}
                     {mergeStatus.hasConflicts && (
                       <>
-                        <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-3">
+                        <div className={MERGE_DANGER_PANEL_CLASS}>
                           <div className="flex items-center gap-2">
                             <XCircle className="h-4 w-4 text-red-400 shrink-0" />
                             <div>
@@ -946,17 +971,19 @@ function MergeFlowSheet({
                             rel="noopener noreferrer"
                             className="flex-1"
                           >
-                            <Button className="w-full h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm">
-                              <ExternalLink className="h-4 w-4" />
-                              Resolve on GitHub
+                            <Button className={`${MERGE_BUTTON_CLASS} w-full`}>
+                              <HubControlGlow />
+                              <ExternalLink className="relative z-10 h-4 w-4" />
+                              <span className="relative z-10">Resolve on GitHub</span>
                             </Button>
                           </a>
                           <Button
                             onClick={close}
                             variant="outline"
-                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+                            className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            Cancel
+                            <HubControlGlow />
+                            <span className="relative z-10">Cancel</span>
                           </Button>
                         </div>
                       </>
@@ -965,7 +992,7 @@ function MergeFlowSheet({
                     {/* CI failing */}
                     {mergeStatus.ciOverall === 'FAILURE' && !mergeStatus.hasConflicts && (
                       <>
-                        <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-3">
+                        <div className={MERGE_DANGER_PANEL_CLASS}>
                           <div className="flex items-center gap-2">
                             <XCircle className="h-4 w-4 text-red-400 shrink-0" />
                             <div>
@@ -979,16 +1006,18 @@ function MergeFlowSheet({
                         <div className="flex gap-3">
                           <Button
                             onClick={handleRecheck}
-                            className="flex-1 h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm"
+                            className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            Check again
+                            <HubControlGlow />
+                            <span className="relative z-10">Check again</span>
                           </Button>
                           <Button
                             onClick={close}
                             variant="outline"
-                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+                            className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            Cancel
+                            <HubControlGlow />
+                            <span className="relative z-10">Cancel</span>
                           </Button>
                         </div>
                       </>
@@ -997,7 +1026,7 @@ function MergeFlowSheet({
                     {/* Mergeable is null — GitHub still computing */}
                     {mergeStatus.mergeable === null && !mergeStatus.hasConflicts && (
                       <>
-                        <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-3 py-3">
+                        <div className={MERGE_WARNING_PANEL_CLASS}>
                           <div className="flex items-center gap-2">
                             <Loader2 className="h-4 w-4 text-yellow-400 animate-spin shrink-0" />
                             <div>
@@ -1011,16 +1040,18 @@ function MergeFlowSheet({
                         <div className="flex gap-3">
                           <Button
                             onClick={handleRecheck}
-                            className="flex-1 h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm"
+                            className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            Check again
+                            <HubControlGlow />
+                            <span className="relative z-10">Check again</span>
                           </Button>
                           <Button
                             onClick={close}
                             variant="outline"
-                            className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+                            className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            Cancel
+                            <HubControlGlow />
+                            <span className="relative z-10">Cancel</span>
                           </Button>
                         </div>
                       </>
@@ -1037,7 +1068,7 @@ function MergeFlowSheet({
             {/* ── Step 5: Post-merge ─────────────────────────────── */}
             {step === 'done' && (
               <div className="space-y-4">
-                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-4">
+                <div className={`${MERGE_SUCCESS_PANEL_CLASS} px-4 py-4`}>
                   <div className="flex items-center gap-2.5">
                     <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
                     <div>
@@ -1052,25 +1083,27 @@ function MergeFlowSheet({
                 <div className="flex flex-col gap-2.5">
                   <Button
                     onClick={handleSwitchToMain}
-                    className="w-full h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm"
+                    className={`${MERGE_BUTTON_CLASS} w-full`}
                   >
-                    Switch to {defaultBranch}
+                    <HubControlGlow />
+                    <span className="relative z-10">Switch to {defaultBranch}</span>
                   </Button>
                   <Button
                     onClick={handleSwitchAndDelete}
                     disabled={deletingBranch}
                     variant="outline"
-                    className="w-full h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+                    className={`${MERGE_BUTTON_CLASS} w-full`}
                   >
+                    <HubControlGlow />
                     {deletingBranch ? (
                       <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Deleting branch...
+                        <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
+                        <span className="relative z-10">Deleting branch...</span>
                       </>
                     ) : (
                       <>
-                        <Trash2 className="h-4 w-4" />
-                        Switch to {defaultBranch} + delete {currentBranch}
+                        <Trash2 className="relative z-10 h-4 w-4" />
+                        <span className="relative z-10">Switch to {defaultBranch} + delete {currentBranch}</span>
                       </>
                     )}
                   </Button>
@@ -1097,22 +1130,24 @@ function ErrorDisplay({
 }) {
   return (
     <>
-      <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+      <div className={MERGE_DANGER_PANEL_CLASS}>
         <p className="text-xs text-red-400">{message}</p>
       </div>
       <div className="flex gap-3">
         <Button
           onClick={onRetry}
-          className="flex-1 h-11 bg-[#e4e4e7] text-[#0d0d0d] hover:bg-[#d4d4d8] font-medium text-sm"
+          className={`${MERGE_BUTTON_CLASS} flex-1`}
         >
-          Retry
+          <HubControlGlow />
+          <span className="relative z-10">Retry</span>
         </Button>
         <Button
           onClick={onCancel}
           variant="outline"
-          className="flex-1 h-11 border-white/[0.08] bg-transparent text-push-fg-secondary hover:bg-[#141414] hover:text-push-fg text-sm"
+          className={`${MERGE_BUTTON_CLASS} flex-1`}
         >
-          Cancel
+          <HubControlGlow />
+          <span className="relative z-10">Cancel</span>
         </Button>
       </div>
     </>

@@ -1,6 +1,11 @@
 import { Loader2, RefreshCw, Plus, Terminal } from 'lucide-react';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 
 interface SandboxStatusBannerProps {
   status: SandboxStatus;
@@ -27,12 +32,14 @@ export function SandboxStatusBanner({
   onNewSandbox,
   onExitSandboxMode,
 }: SandboxStatusBannerProps) {
+  const bannerBaseClass = `mx-4 mt-2 animate-fade-in px-3.5 py-3 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`;
+
   // Idle after a confirmed cold session (reconnect already failed or never attempted)
   if (status === 'idle' && hasMessages && !isStreaming) {
     return (
-      <div className="mx-4 mt-2 rounded-xl border border-push-edge-subtle bg-push-surface px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Terminal className="h-3.5 w-3.5 text-push-fg-dim flex-shrink-0" />
+      <div className={`${bannerBaseClass} flex items-center justify-between gap-2`}>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Terminal className="h-3.5 w-3.5 flex-shrink-0 text-push-fg-dim" />
           <div>
             <p className="text-xs font-medium text-push-fg-muted">Sandbox not running</p>
             <p className="text-push-2xs text-push-fg-dim">Start to enable code tools for this session.</p>
@@ -40,9 +47,10 @@ export function SandboxStatusBanner({
         </div>
         <button
           onClick={onStart}
-          className="flex-shrink-0 rounded-lg border border-[#243148] bg-[#0b1220] px-3 py-1.5 text-xs font-medium text-[#8ad4ff] transition-colors hover:bg-[#0d1526] active:scale-95"
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 px-3 text-[#8ad4ff]`}
         >
-          Start
+          <HubControlGlow />
+          <span className="relative z-10">Start</span>
         </button>
       </div>
     );
@@ -51,8 +59,8 @@ export function SandboxStatusBanner({
   // Creating (user-initiated, not driven by the agent — agent has AgentStatusBar)
   if (status === 'creating' && !isStreaming) {
     return (
-      <div className="mx-4 mt-2 rounded-xl border border-push-edge-subtle bg-push-surface px-3.5 py-3 flex items-center gap-2.5 animate-fade-in">
-        <Loader2 className="h-3.5 w-3.5 text-push-accent animate-spin flex-shrink-0" />
+      <div className={`${bannerBaseClass} flex items-center gap-2.5`}>
+        <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0 text-push-accent" />
         <p className="text-xs text-push-fg-muted">Starting sandbox…</p>
       </div>
     );
@@ -62,32 +70,34 @@ export function SandboxStatusBanner({
   if (status === 'error' && error) {
     const { title, detail } = categorizeSandboxError(error);
     return (
-      <div className="mx-4 mt-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3.5 py-3 flex items-center justify-between gap-2 animate-fade-in">
+      <div className={`mx-4 mt-2 flex items-center justify-between gap-2 animate-fade-in rounded-[18px] border border-red-500/20 bg-red-500/5 px-3.5 py-3`}>
         <div className="min-w-0">
           <p className="text-xs font-medium text-red-300">{title}</p>
           <p className="text-push-2xs text-red-400/70">{detail}</p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex shrink-0 items-center gap-2">
           {sandboxId && (
             <button
               onClick={onRetry}
-              className="flex items-center gap-1 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/15 active:scale-95"
+              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1 px-2.5 text-amber-300`}
             >
-              <RefreshCw className="h-3 w-3" />
-              Retry
+              <HubControlGlow />
+              <RefreshCw className="relative z-10 h-3 w-3" />
+              <span className="relative z-10">Retry</span>
             </button>
           )}
           <button
             onClick={onNewSandbox}
-            className="flex items-center gap-1 rounded-lg border border-red-500/25 bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20 active:scale-95"
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1 px-2.5 text-red-300`}
           >
-            <Plus className="h-3 w-3" />
-            New sandbox
+            <HubControlGlow />
+            <Plus className="relative z-10 h-3 w-3" />
+            <span className="relative z-10">New sandbox</span>
           </button>
           {isSandboxMode && onExitSandboxMode && (
             <button
               onClick={onExitSandboxMode}
-              className="text-xs font-medium text-[#71717a] hover:text-push-fg-secondary transition-colors"
+              className="text-xs font-medium text-[#71717a] transition-colors hover:text-push-fg-secondary"
             >
               Exit
             </button>

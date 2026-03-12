@@ -1,6 +1,6 @@
 import { GitBranch, Play } from 'lucide-react';
 import type { WorkflowRunsCardData } from '@/types';
-import { timeAgo, CARD_SHELL_CLASS } from '@/lib/utils';
+import { timeAgo, CARD_SHELL_CLASS, CARD_PANEL_SUBTLE_CLASS } from '@/lib/utils';
 import {
   checkToneBgClass,
   checkToneColorClass,
@@ -40,7 +40,7 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
       {data.runs.length > 0 ? (
         <div className="px-3 py-2 space-y-1.5">
           {data.runs.map((run) => (
-            <div key={run.id} className="flex items-start gap-2 min-h-[28px]">
+            <div key={run.id} className={`${CARD_PANEL_SUBTLE_CLASS} flex min-h-[28px] items-start gap-2 px-2.5 py-2`}>
               <div className="mt-0.5">{renderCheckToneIcon(getCheckTone(run.status, run.conclusion), 'h-3.5 w-3.5 shrink-0')}</div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
@@ -64,7 +64,9 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
         </div>
       ) : (
         <div className="px-3 py-3">
-          <p className="text-push-sm text-push-fg-dim">No workflow runs found.</p>
+          <div className={`${CARD_PANEL_SUBTLE_CLASS} px-3 py-3`}>
+            <p className="text-push-sm text-push-fg-dim">No workflow runs found.</p>
+          </div>
         </div>
       )}
 

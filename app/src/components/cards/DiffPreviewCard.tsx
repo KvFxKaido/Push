@@ -35,7 +35,7 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
       {/* Header */}
       <button
         onClick={toggleExpanded}
-        className="w-full px-3.5 py-3 flex items-center gap-2.5 hover:bg-push-surface-hover transition-colors duration-200"
+        className="flex w-full items-center gap-2.5 px-3.5 py-3 transition-colors duration-200 hover:bg-white/[0.02]"
       >
         <FileDiff className="h-4 w-4 shrink-0 text-push-fg-secondary" />
         <span className="flex-1 text-push-base text-push-fg text-left">

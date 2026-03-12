@@ -1,5 +1,6 @@
 import { Component, Suspense, type ComponentType, type ReactNode } from 'react';
 import type { ChatCard, CardAction } from '@/types';
+import { CARD_PANEL_CLASS } from '@/lib/utils';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 
 // --- Lazy-loaded card components (code-split) ---
@@ -61,7 +62,7 @@ class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBound
   render() {
     if (this.state.hasError) {
       return (
-        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">
+        <div className={`${CARD_PANEL_CLASS} border-amber-500/20 bg-[linear-gradient(180deg,rgba(52,40,15,0.2)_0%,rgba(24,18,7,0.4)_100%)] px-3 py-2 text-xs text-amber-300`}>
           Card failed to load. Refresh Push to fetch the latest assets.
         </div>
       );
@@ -119,7 +120,7 @@ function renderCard(card: ChatCard, messageId?: string, cardIndex?: number, onAc
   // Unknown card type — show a tombstone so older persisted chats degrade
   // visibly rather than silently losing content.
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-xs text-zinc-500">
+    <div className={`${CARD_PANEL_CLASS} border-push-edge/70 px-3 py-2 text-xs text-zinc-500`}>
       [{card.type}] — card type no longer supported
     </div>
   );
@@ -130,7 +131,7 @@ export function CardRenderer({ card, messageId, cardIndex, onAction }: CardRende
   if (!inner) return null;
   return (
     <CardErrorBoundary>
-      <Suspense fallback={<div className="h-16 animate-pulse rounded-lg bg-zinc-900/50" />}>
+      <Suspense fallback={<div className={`${CARD_PANEL_CLASS} h-16 animate-pulse`} />}>
         <div className="animate-fade-in-up">{inner}</div>
       </Suspense>
     </CardErrorBoundary>

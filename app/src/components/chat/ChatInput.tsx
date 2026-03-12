@@ -110,6 +110,11 @@ function formatTimeAgo(timestamp: number | null): string | null {
   return `${days}d ago`;
 }
 
+const COMPOSER_CONTROL_SURFACE_CLASS =
+  'relative overflow-hidden rounded-full border border-push-edge-subtle bg-push-grad-input shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl';
+const COMPOSER_CONTROL_INTERACTIVE_CLASS =
+  'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 spring-press';
+
 export function ChatInput({
   onSend,
   onStop,
@@ -333,22 +338,25 @@ export function ChatInput({
           />
         </div>
 
-        <div className="flex items-center gap-2 px-2 pb-2.5 pt-1.5">
-          <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex items-center gap-2.5 px-2.5 pb-2.5 pt-1.5">
+          <div className="flex shrink-0 items-center gap-2">
             {/* File attachment button */}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
-              className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-200 spring-press ${
+              className={`flex h-10 w-10 items-center justify-center text-push-fg-secondary ${
                 isStreaming
-                  ? 'cursor-not-allowed border-[#1f2430] text-[#545c6e]'
-                  : 'border-push-edge bg-push-surface/95 text-[#8891a1] hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-[#e2e8f0]'
+                  ? 'cursor-not-allowed border-[#1f2430] bg-[#151a22] text-[#545c6e] shadow-none'
+                  : `${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
               }`}
               aria-label="Attach file"
               title="Attach file"
             >
-              <Paperclip className="h-4 w-4" />
+              {!isStreaming && (
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+              )}
+              <Paperclip className="relative z-10 h-4 w-4" />
             </button>
 
             {providerControls && (
@@ -356,21 +364,22 @@ export function ChatInput({
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="flex h-9 max-w-[170px] items-center gap-1.5 rounded-xl border border-push-edge bg-push-surface/95 px-2.5 text-push-xs text-[#a9b3c5] transition-colors hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-[#e2e8f0]"
+                    className={`flex h-10 max-w-[188px] items-center gap-2 px-3 text-push-xs text-push-fg-secondary ${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`}
                     title={
                       isDisplayedProviderLocked
                         ? `${PROVIDER_LABELS[selectedProvider]} locked for this chat`
                         : 'Backend and model'
                     }
                   >
-                    <ProviderIcon provider={selectedProvider} size={14} className="shrink-0" />
-                    <span className="truncate">
+                    <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+                    <ProviderIcon provider={selectedProvider} size={14} className="relative z-10 shrink-0" />
+                    <span className="relative z-10 truncate">
                       {PROVIDER_LABELS[selectedProvider]} · {selectedModel}
                     </span>
                     {isDisplayedProviderLocked ? (
-                      <Lock className="h-3 w-3 shrink-0" />
+                      <Lock className="relative z-10 h-3 w-3 shrink-0" />
                     ) : (
-                      <ChevronsUpDown className="h-3 w-3 shrink-0" />
+                      <ChevronsUpDown className="relative z-10 h-3 w-3 shrink-0" />
                     )}
                   </button>
                 </PopoverTrigger>
@@ -675,20 +684,23 @@ export function ChatInput({
             type="button"
             onClick={handleButtonClick}
             disabled={!isStreaming && !canSend}
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-all duration-200 spring-press ${
+            className={`flex h-10 w-10 shrink-0 items-center justify-center ${
               isStreaming
-                ? 'border-red-400/50 bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 bg-[linear-gradient(180deg,rgba(55,12,18,0.96)_0%,rgba(28,7,11,0.98)_100%)] text-red-300 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
                 : canSend
-                  ? 'border-push-sky/60 bg-push-sky/15 text-[#7dd3fc] shadow-[0_0_20px_rgba(56,189,248,0.2)] hover:bg-push-sky/25 hover:text-[#bae6fd] hover:shadow-[0_0_28px_rgba(56,189,248,0.3)]'
-                  : 'cursor-not-allowed border-[#262c38] bg-[#151a22] text-[#576176]'
+                  ? `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
+                  : 'cursor-not-allowed rounded-full border border-[#262c38] bg-[#151a22] text-[#576176] shadow-none'
             }`}
             aria-label={isStreaming ? 'Stop generating' : 'Send message'}
             title={isStreaming ? 'Stop generating' : 'Send message'}
           >
+            {(isStreaming || canSend) && (
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+            )}
             {isStreaming ? (
-              <Square className="h-4 w-4 fill-current" />
+              <Square className="relative z-10 h-4 w-4 fill-current" />
             ) : (
-              <ArrowUp className="h-4 w-4" />
+              <ArrowUp className="relative z-10 h-4 w-4" />
             )}
           </button>
         </div>

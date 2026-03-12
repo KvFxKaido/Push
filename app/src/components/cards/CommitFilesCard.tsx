@@ -14,7 +14,7 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
   return (
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
-      <div className="px-3 py-2 border-b border-push-edge">
+      <div className="border-b border-push-edge/80 px-3.5 py-3">
         <div className="flex items-center gap-2">
           <GitCommit className="h-3.5 w-3.5 text-push-fg-secondary" />
           <span className="text-push-sm text-push-link font-mono">{data.sha.slice(0, 7)}</span>
@@ -34,7 +34,7 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
       {/* File list */}
       <div className={`${CARD_LIST_CLASS} max-h-[250px] overflow-y-auto`}>
         {data.files.map((file) => (
-          <div key={file.filename} className="px-3 py-1.5 flex items-center gap-2">
+          <div key={file.filename} className="flex items-center gap-2 px-3.5 py-2">
             {statusIcon(file.status)}
             <span className="text-push-sm text-push-fg font-mono truncate flex-1">
               {file.filename}
@@ -49,7 +49,7 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
       </div>
 
       {/* Footer with count */}
-      <div className="px-3 py-1.5 border-t border-push-edge text-push-xs text-push-fg-dim">
+      <div className="border-t border-push-edge/80 px-3.5 py-2 text-push-xs text-push-fg-dim">
         {data.files.length} file{data.files.length !== 1 ? 's' : ''} changed
       </div>
     </div>

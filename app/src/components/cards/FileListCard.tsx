@@ -10,7 +10,7 @@ export function FileListCard({ data }: { data: FileListCardData }) {
   return (
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-push-edge">
+      <div className="flex items-center gap-2 border-b border-push-edge/80 px-3.5 py-3">
         <Folder className="h-3.5 w-3.5 text-push-fg-secondary" />
         <span className="text-push-base font-medium text-push-fg truncate">
           {data.path}
@@ -28,7 +28,7 @@ export function FileListCard({ data }: { data: FileListCardData }) {
       {/* Entry list */}
       <div className={CARD_LIST_CLASS}>
         {dirs.map((entry) => (
-          <div key={entry.name} className="px-3 py-1.5 flex items-center gap-2">
+          <div key={entry.name} className="flex items-center gap-2 px-3.5 py-2">
             <Folder className="h-3.5 w-3.5 text-push-link shrink-0" />
             <span className="text-push-base text-push-fg font-mono truncate">
               {entry.name}/
@@ -36,7 +36,7 @@ export function FileListCard({ data }: { data: FileListCardData }) {
           </div>
         ))}
         {files.map((entry) => (
-          <div key={entry.name} className="px-3 py-1.5 flex items-center gap-2">
+          <div key={entry.name} className="flex items-center gap-2 px-3.5 py-2">
             <FileText className="h-3.5 w-3.5 text-push-fg-dim shrink-0" />
             <span className="text-push-base text-push-fg font-mono truncate">
               {entry.name}

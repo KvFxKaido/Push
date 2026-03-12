@@ -21,12 +21,10 @@ import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestr
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
-import { LazySettingsSheet } from '@/components/LazySettingsSheet';
 import type { AppScreen, AttachmentData, RepoWithActivity, SandboxStateCardData } from '@/types';
 import './App.css';
 
 // --- Lazy-loaded screen & settings components (code-split) ---
-const SettingsSheet = LazySettingsSheet;
 const OnboardingScreen = lazyWithRecovery(
   toDefaultExport(() => import('@/sections/OnboardingScreen'), (module) => module.OnboardingScreen),
 );
@@ -306,8 +304,6 @@ function App() {
   );
 
   // --- Settings UI ---
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('you');
   const [showToolActivity, setShowToolActivityState] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem(TOOL_ACTIVITY_STORAGE_KEY) === '1';
@@ -430,16 +426,6 @@ function App() {
     handleSelectRepo(repo, branch);
   }, [isSandboxMode, sandbox, handleSelectRepo]);
 
-  const handleBrowseRepos = useCallback(() => {
-    if (isSandboxMode) {
-      if (isStreaming) abortStream();
-      setIsSandboxMode(false);
-      void sandbox.stop();
-      createNewChat();
-    }
-    clearActiveRepo();
-  }, [isSandboxMode, isStreaming, abortStream, sandbox, createNewChat, clearActiveRepo]);
-
   const handleResumeConversationFromHome = useCallback((chatId: string) => {
     const conv = conversations[chatId];
     if (!conv?.repoFullName) return;
@@ -453,12 +439,6 @@ function App() {
       switchChat(chatId);
     });
   }, [conversations, repos, handleSelectRepo, switchChat, setCurrentBranch]);
-
-  // --- Settings & provider selection ---
-  const handleOpenSettingsFromDrawer = useCallback((tab: 'you' | 'workspace' | 'ai') => {
-    setSettingsTab(tab);
-    setSettingsOpen(true);
-  }, []);
 
   const handleSelectBackend = useCallback((provider: PreferredProvider) => {
     const chatId = ensureDraftChatForComposerChange();
@@ -676,207 +656,6 @@ function App() {
     }
   }, [sandbox.sandboxId, sandboxDownloading]);
 
-  // ----- Settings sheet (shared across screens) -----
-  const isConnected = Boolean(token) || isDemo || isSandboxMode;
-
-  const settingsSheet = (
-    <Suspense fallback={null}>
-    <SettingsSheet
-      open={settingsOpen}
-      onOpenChange={setSettingsOpen}
-      side="left"
-      settingsTab={settingsTab}
-      setSettingsTab={setSettingsTab}
-      auth={{
-        isConnected,
-        isDemo,
-        isAppAuth,
-        installationId: installationId ?? '',
-        token: token ?? '',
-        patToken: patToken ?? '',
-        validatedUser,
-        appLoading,
-        appError,
-        connectApp,
-        installApp,
-        showInstallIdInput,
-        setShowInstallIdInput,
-        installIdInput,
-        setInstallIdInput,
-        setInstallationIdManually,
-        allowlistSecretCmd,
-        copyAllowlistCommand,
-        onDisconnect: handleDisconnect,
-      }}
-      profile={{
-        displayNameDraft,
-        setDisplayNameDraft,
-        onDisplayNameBlur: handleDisplayNameBlur,
-        bioDraft,
-        setBioDraft,
-        onBioBlur: handleBioBlur,
-        profile,
-        clearProfile,
-        validatedUser,
-      }}
-      ai={{
-        activeProviderLabel: catalog.activeProviderLabel,
-        activeBackend: catalog.activeBackend,
-        setActiveBackend: catalog.setActiveBackend,
-        isProviderLocked,
-        lockedProvider,
-        lockedModel,
-        availableProviders: catalog.availableProviders,
-        setPreferredProvider: catalog.setPreferredProvider,
-        clearPreferredProvider: catalog.clearPreferredProvider,
-        hasOllamaKey: catalog.ollama.hasKey,
-        ollamaModel: catalog.ollama.model,
-        setOllamaModel: catalog.ollama.setModel,
-        ollamaModelOptions: catalog.ollamaModelOptions,
-        ollamaModelsLoading: catalog.ollamaModels.loading,
-        ollamaModelsError: catalog.ollamaModels.error,
-        ollamaModelsUpdatedAt: catalog.ollamaModels.updatedAt,
-        isOllamaModelLocked: isModelLocked && lockedProvider === 'ollama',
-        refreshOllamaModels: catalog.refreshOllamaModels,
-        ollamaKeyInput: catalog.ollama.keyInput,
-        setOllamaKeyInput: catalog.ollama.setKeyInput,
-        setOllamaKey: catalog.ollama.setKey,
-        clearOllamaKey: catalog.ollama.clearKey,
-        hasOpenRouterKey: catalog.openRouter.hasKey,
-        openRouterModel: catalog.openRouter.model,
-        setOpenRouterModel: catalog.openRouter.setModel,
-        openRouterModelOptions: catalog.openRouterModelOptions,
-        openRouterModelsLoading: catalog.openRouterModels.loading,
-        openRouterModelsError: catalog.openRouterModels.error,
-        openRouterModelsUpdatedAt: catalog.openRouterModels.updatedAt,
-        isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
-        refreshOpenRouterModels: catalog.refreshOpenRouterModels,
-        openRouterKeyInput: catalog.openRouter.keyInput,
-        setOpenRouterKeyInput: catalog.openRouter.setKeyInput,
-        setOpenRouterKey: catalog.openRouter.setKey,
-        clearOpenRouterKey: catalog.openRouter.clearKey,
-        hasZenKey: catalog.zen.hasKey,
-        zenModel: catalog.zen.model,
-        setZenModel: catalog.zen.setModel,
-        zenModelOptions: catalog.zenModelOptions,
-        zenModelsLoading: catalog.zenModels.loading,
-        zenModelsError: catalog.zenModels.error,
-        zenModelsUpdatedAt: catalog.zenModels.updatedAt,
-        isZenModelLocked: isModelLocked && lockedProvider === 'zen',
-        refreshZenModels: catalog.refreshZenModels,
-        zenKeyInput: catalog.zen.keyInput,
-        setZenKeyInput: catalog.zen.setKeyInput,
-        setZenKey: catalog.zen.setKey,
-        clearZenKey: catalog.zen.clearKey,
-        hasNvidiaKey: catalog.nvidia.hasKey,
-        nvidiaModel: catalog.nvidia.model,
-        setNvidiaModel: catalog.nvidia.setModel,
-        nvidiaModelOptions: catalog.nvidiaModelOptions,
-        nvidiaModelsLoading: catalog.nvidiaModels.loading,
-        nvidiaModelsError: catalog.nvidiaModels.error,
-        nvidiaModelsUpdatedAt: catalog.nvidiaModels.updatedAt,
-        isNvidiaModelLocked: isModelLocked && lockedProvider === 'nvidia',
-        refreshNvidiaModels: catalog.refreshNvidiaModels,
-        nvidiaKeyInput: catalog.nvidia.keyInput,
-        setNvidiaKeyInput: catalog.nvidia.setKeyInput,
-        setNvidiaKey: catalog.nvidia.setKey,
-        clearNvidiaKey: catalog.nvidia.clearKey,
-        hasAzureKey: catalog.azure.hasKey,
-        azureKeyInput: catalog.azure.keyInput,
-        setAzureKeyInput: catalog.azure.setKeyInput,
-        setAzureKey: catalog.azure.setKey,
-        clearAzureKey: catalog.azure.clearKey,
-        azureBaseUrl: catalog.azure.baseUrl,
-        azureBaseUrlInput: catalog.azure.baseUrlInput,
-        setAzureBaseUrlInput: catalog.azure.setBaseUrlInput,
-        azureBaseUrlError: catalog.azure.baseUrlError,
-        azureModel: catalog.azure.model,
-        azureModelInput: catalog.azure.modelInput,
-        setAzureModelInput: catalog.azure.setModelInput,
-        azureDeployments: catalog.azure.deployments,
-        azureActiveDeploymentId: catalog.azure.activeDeploymentId,
-        saveAzureDeployment: catalog.azure.saveDeployment,
-        selectAzureDeployment: catalog.azure.selectDeployment,
-        removeAzureDeployment: catalog.azure.removeDeployment,
-        clearAzureDeployments: catalog.azure.clearDeployments,
-        isAzureDeploymentLimitReached: catalog.azure.deploymentLimitReached,
-        isAzureConfigured: catalog.azure.isConfigured,
-        hasBedrockKey: catalog.bedrock.hasKey,
-        bedrockKeyInput: catalog.bedrock.keyInput,
-        setBedrockKeyInput: catalog.bedrock.setKeyInput,
-        setBedrockKey: catalog.bedrock.setKey,
-        clearBedrockKey: catalog.bedrock.clearKey,
-        bedrockBaseUrl: catalog.bedrock.baseUrl,
-        bedrockBaseUrlInput: catalog.bedrock.baseUrlInput,
-        setBedrockBaseUrlInput: catalog.bedrock.setBaseUrlInput,
-        bedrockBaseUrlError: catalog.bedrock.baseUrlError,
-        bedrockModel: catalog.bedrock.model,
-        bedrockModelInput: catalog.bedrock.modelInput,
-        setBedrockModelInput: catalog.bedrock.setModelInput,
-        bedrockDeployments: catalog.bedrock.deployments,
-        bedrockActiveDeploymentId: catalog.bedrock.activeDeploymentId,
-        saveBedrockDeployment: catalog.bedrock.saveDeployment,
-        selectBedrockDeployment: catalog.bedrock.selectDeployment,
-        removeBedrockDeployment: catalog.bedrock.removeDeployment,
-        clearBedrockDeployments: catalog.bedrock.clearDeployments,
-        isBedrockDeploymentLimitReached: catalog.bedrock.deploymentLimitReached,
-        isBedrockConfigured: catalog.bedrock.isConfigured,
-        hasVertexKey: catalog.vertex.hasKey,
-        vertexKeyInput: catalog.vertex.keyInput,
-        setVertexKeyInput: catalog.vertex.setKeyInput,
-        setVertexKey: catalog.vertex.setKey,
-        clearVertexKey: catalog.vertex.clearKey,
-        vertexKeyError: catalog.vertex.keyError,
-        vertexRegion: catalog.vertex.region,
-        vertexRegionInput: catalog.vertex.regionInput,
-        setVertexRegionInput: catalog.vertex.setRegionInput,
-        vertexRegionError: catalog.vertex.regionError,
-        vertexModel: catalog.vertex.model,
-        vertexModelInput: catalog.vertex.modelInput,
-        setVertexModelInput: catalog.vertex.setModelInput,
-        vertexModelOptions: catalog.vertex.modelOptions,
-        setVertexRegion: catalog.vertex.setRegion,
-        clearVertexRegion: catalog.vertex.clearRegion,
-        setVertexModel: catalog.vertex.setModel,
-        clearVertexModel: catalog.vertex.clearModel,
-        vertexMode: catalog.vertex.mode,
-        vertexTransport: catalog.vertex.transport,
-        vertexProjectId: catalog.vertex.projectId,
-        hasLegacyVertexConfig: catalog.vertex.hasLegacyConfig,
-        isVertexConfigured: catalog.vertex.isConfigured,
-        hasTavilyKey: catalog.tavily.hasKey,
-        tavilyKeyInput: catalog.tavily.keyInput,
-        setTavilyKeyInput: catalog.tavily.setKeyInput,
-        setTavilyKey: catalog.tavily.setKey,
-        clearTavilyKey: catalog.tavily.clearKey,
-      }}
-      workspace={{
-        contextMode,
-        updateContextMode,
-        sandboxStartMode,
-        updateSandboxStartMode,
-        sandboxStatus: sandbox.status,
-        sandboxId: sandbox.sandboxId,
-        sandboxError: sandbox.error,
-        sandboxState,
-        sandboxStateLoading,
-        fetchSandboxState,
-        protectMainGlobal: protectMain.globalDefault,
-        setProtectMainGlobal: protectMain.setGlobalDefault,
-        protectMainRepoOverride: protectMain.repoOverride,
-        setProtectMainRepoOverride: protectMain.setRepoOverride,
-        showToolActivity,
-        setShowToolActivity: updateShowToolActivity,
-        activeRepoFullName: activeRepo?.full_name ?? null,
-      }}
-      data={{
-        activeRepo,
-        deleteAllChats,
-      }}
-    />
-    </Suspense>
-  );
-
   // ----- Screen routing -----
 
   const suspenseFallback = <div className="h-dvh bg-[#000]" />;
@@ -903,26 +682,22 @@ function App() {
 
   if (screen === 'home') {
     return (
-      <>
-        <Suspense fallback={suspenseFallback}>
-          <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
-            <HomeScreen
-              repos={repos}
-              loading={reposLoading}
-              error={reposError}
-              conversations={conversations}
-              activeRepo={activeRepo}
-              onSelectRepo={handleSelectRepo}
-              onResumeConversation={handleResumeConversationFromHome}
-              onOpenSettings={handleOpenSettingsFromDrawer}
-              onDisconnect={handleDisconnect}
-              onSandboxMode={handleSandboxMode}
-              user={validatedUser}
-            />
-          </div>
-        </Suspense>
-        {settingsSheet}
-      </>
+      <Suspense fallback={suspenseFallback}>
+        <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+          <HomeScreen
+            repos={repos}
+            loading={reposLoading}
+            error={reposError}
+            conversations={conversations}
+            activeRepo={activeRepo}
+            onSelectRepo={handleSelectRepo}
+            onResumeConversation={handleResumeConversationFromHome}
+            onDisconnect={handleDisconnect}
+            onSandboxMode={handleSandboxMode}
+            user={validatedUser}
+          />
+        </div>
+      </Suspense>
     );
   }
 
@@ -1002,11 +777,6 @@ function App() {
       handleSandboxMode={isSandboxMode ? undefined : handleSandboxMode}
       handleExitSandboxMode={handleExitSandboxMode}
       handleCreateNewChat={handleCreateNewChat}
-      settingsOpen={settingsOpen}
-      setSettingsOpen={setSettingsOpen}
-      settingsTab={settingsTab}
-      setSettingsTab={setSettingsTab}
-      handleOpenSettingsFromDrawer={handleOpenSettingsFromDrawer}
       handleDisconnect={handleDisconnect}
       handleSandboxRestart={handleSandboxRestart}
       handleSandboxDownload={handleSandboxDownload}
@@ -1022,7 +792,6 @@ function App() {
       handleSelectBedrockModelFromChat={handleSelectBedrockModelFromChat}
       handleSelectVertexModelFromChat={handleSelectVertexModelFromChat}
       handleSelectRepoFromDrawer={handleSelectRepoFromDrawer}
-      handleBrowseRepos={handleBrowseRepos}
       setCurrentBranch={setCurrentBranch}
       onSandboxBranchSwitch={handleSandboxBranchSwitch}
       sandboxState={sandboxState}

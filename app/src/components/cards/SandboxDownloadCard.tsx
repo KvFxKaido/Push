@@ -1,7 +1,7 @@
 import { Download } from 'lucide-react';
 import type { SandboxDownloadCardData } from '@/types';
 import { formatSize } from '@/lib/diff-utils';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_BUTTON_CLASS } from '@/lib/utils';
 
 interface SandboxDownloadCardProps {
   data: SandboxDownloadCardData;
@@ -37,7 +37,7 @@ export function SandboxDownloadCard({ data }: SandboxDownloadCardProps) {
         </div>
         <button
           onClick={() => triggerDownload(data.archiveBase64, `workspace-${Date.now()}.tar.gz`)}
-          className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 active:scale-95"
+          className={`${CARD_BUTTON_CLASS} h-9 text-emerald-300`}
         >
           <Download className="h-3 w-3" />
           Download

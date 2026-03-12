@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { Terminal, CheckCircle2, XCircle, Copy, Download, Check } from 'lucide-react';
 import type { SandboxCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
-import { CARD_SHELL_CLASS, CARD_BADGE_SUCCESS, CARD_BADGE_ERROR } from '@/lib/utils';
+import {
+  CARD_SHELL_CLASS,
+  CARD_BADGE_SUCCESS,
+  CARD_BADGE_ERROR,
+  CARD_ICON_BUTTON_CLASS,
+} from '@/lib/utils';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 import { CardCodeBlock } from './card-code-block';
 
@@ -41,7 +46,7 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
       {/* Header */}
       <button
         onClick={toggleExpanded}
-        className="w-full px-3.5 py-3 flex items-center gap-2.5 hover:bg-push-surface-hover transition-colors duration-200"
+        className="flex w-full items-center gap-2.5 px-3.5 py-3 transition-colors duration-200 hover:bg-white/[0.02]"
       >
         <Terminal className="h-4 w-4 shrink-0 text-push-fg-secondary" />
         <code className="flex-1 text-push-base text-push-fg font-mono text-left truncate">
@@ -52,14 +57,14 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
             <div className="flex items-center gap-1 mr-1">
               <button
                 onClick={handleCopy}
-                className="p-1 rounded-md text-push-fg-dim hover:text-push-fg-secondary hover:bg-white/5 transition-colors"
+                className={`${CARD_ICON_BUTTON_CLASS} h-7 w-7`}
                 title="Copy output"
               >
                 {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
               </button>
               <button
                 onClick={handleDownload}
-                className="p-1 rounded-md text-push-fg-dim hover:text-push-fg-secondary hover:bg-white/5 transition-colors"
+                className={`${CARD_ICON_BUTTON_CLASS} h-7 w-7`}
                 title="Download output"
               >
                 <Download className="h-3 w-3" />

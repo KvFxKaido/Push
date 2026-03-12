@@ -1,5 +1,12 @@
 import { FolderGit2, GitBranch, Files, Clock3, RefreshCw } from 'lucide-react';
 import type { SandboxStateCardData, CardAction } from '@/types';
+import {
+  CARD_SHELL_CLASS,
+  CARD_BADGE_SUCCESS,
+  CARD_BADGE_WARNING,
+  CARD_BUTTON_CLASS,
+  CARD_PANEL_SUBTLE_CLASS,
+} from '@/lib/utils';
 
 interface SandboxStateCardProps {
   data: SandboxStateCardData;
@@ -12,21 +19,21 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
   const hasChanges = data.changedFiles > 0;
 
   return (
-    <div className="my-2.5 overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
-      <div className="px-3 py-2.5 border-b border-push-edge flex items-center justify-between gap-2">
+    <div className={CARD_SHELL_CLASS}>
+      <div className="flex items-center justify-between gap-2 border-b border-push-edge/80 px-3 py-2.5">
         <div className="flex items-center gap-2 min-w-0">
           <FolderGit2 className="h-4 w-4 text-push-status-success shrink-0" />
           <span className="text-push-base text-push-fg font-medium truncate">Sandbox State</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className={`text-push-xs px-1.5 py-0.5 rounded-full ${hasChanges ? 'bg-push-status-warning/15 text-push-status-warning' : 'bg-push-status-success/15 text-push-status-success'}`}>
+          <span className={`text-push-xs px-1.5 py-0.5 rounded-full ${hasChanges ? CARD_BADGE_WARNING : CARD_BADGE_SUCCESS}`}>
             {hasChanges ? `${data.changedFiles} changed` : 'clean'}
           </span>
           {onAction && messageId && typeof cardIndex === 'number' && (
             <button
               type="button"
               onClick={() => onAction({ type: 'sandbox-state-refresh', messageId, cardIndex, sandboxId: data.sandboxId })}
-              className="inline-flex items-center gap-1 rounded border border-[#2a3447] px-2 py-0.5 text-push-2xs text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover"
+              className={`${CARD_BUTTON_CLASS} h-7 px-2.5 text-push-2xs`}
               title="Refresh sandbox state"
             >
               <RefreshCw className="h-3 w-3" />
@@ -45,19 +52,19 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
           <div className="text-push-xs text-push-fg-muted font-mono truncate">{data.statusLine}</div>
         )}
         <div className="grid grid-cols-2 gap-2 text-push-sm">
-          <div className="rounded border border-[#1f1f23] px-2 py-1 text-push-fg-secondary">
+          <div className={`${CARD_PANEL_SUBTLE_CLASS} px-2.5 py-1.5 text-push-fg-secondary`}>
             <span className="text-push-fg-muted">Staged:</span> {data.stagedFiles}
           </div>
-          <div className="rounded border border-[#1f1f23] px-2 py-1 text-push-fg-secondary">
+          <div className={`${CARD_PANEL_SUBTLE_CLASS} px-2.5 py-1.5 text-push-fg-secondary`}>
             <span className="text-push-fg-muted">Unstaged:</span> {data.unstagedFiles}
           </div>
-          <div className="rounded border border-[#1f1f23] px-2 py-1 text-push-fg-secondary col-span-2">
+          <div className={`${CARD_PANEL_SUBTLE_CLASS} col-span-2 px-2.5 py-1.5 text-push-fg-secondary`}>
             <span className="text-push-fg-muted">Untracked:</span> {data.untrackedFiles}
           </div>
         </div>
 
         {data.preview.length > 0 && (
-          <div className="rounded border border-[#1f1f23] bg-push-surface-inset p-2">
+          <div className={`${CARD_PANEL_SUBTLE_CLASS} p-2.5`}>
             <div className="flex items-center gap-1.5 text-push-xs text-push-fg-muted mb-1">
               <Files className="h-3 w-3" />
               <span>Preview</span>

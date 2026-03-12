@@ -1,6 +1,16 @@
 import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import type { AuditVerdictCardData } from '@/types';
-import { CARD_SHELL_CLASS, CARD_TEXT_SUCCESS, CARD_TEXT_ERROR, CARD_BADGE_SUCCESS, CARD_BADGE_WARNING, CARD_BADGE_ERROR } from '@/lib/utils';
+import {
+  CARD_SHELL_CLASS,
+  CARD_TEXT_SUCCESS,
+  CARD_TEXT_ERROR,
+  CARD_BADGE_SUCCESS,
+  CARD_BADGE_WARNING,
+  CARD_BADGE_ERROR,
+  CARD_HEADER_BG_SUCCESS,
+  CARD_HEADER_BG_ERROR,
+  CARD_PANEL_SUBTLE_CLASS,
+} from '@/lib/utils';
 
 const riskColors = {
   low: CARD_BADGE_SUCCESS,
@@ -14,7 +24,7 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
   return (
     <div className={CARD_SHELL_CLASS}>
       {/* Verdict header */}
-      <div className={`px-3.5 py-3 flex items-center gap-2.5 ${isSafe ? 'bg-push-status-success/5' : 'bg-push-status-error/5'}`}>
+      <div className={`px-3.5 py-3 flex items-center gap-2.5 ${isSafe ? CARD_HEADER_BG_SUCCESS : CARD_HEADER_BG_ERROR}`}>
         {isSafe ? (
           <ShieldCheck className={`h-4 w-4 shrink-0 ${CARD_TEXT_SUCCESS}`} />
         ) : (
@@ -37,9 +47,9 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
 
       {/* Risks */}
       {data.risks.length > 0 && (
-        <div className="px-3 pb-2 space-y-1">
+        <div className="px-3 pb-2 space-y-1.5">
           {data.risks.map((risk, i) => (
-            <div key={i} className="flex items-start gap-2">
+            <div key={i} className={`${CARD_PANEL_SUBTLE_CLASS} flex items-start gap-2 px-2.5 py-2`}>
               <span className={`inline-flex items-center text-push-2xs font-medium px-1.5 py-0.5 rounded-full mt-0.5 shrink-0 uppercase ${riskColors[risk.level]}`}>
                 {risk.level}
               </span>

@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { Check, Trash2 } from 'lucide-react';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
+import {
+  HUB_MATERIAL_INPUT_CLASS,
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_MATERIAL_ROUND_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 
 interface HubScratchpadTabProps {
   scratchpadContent: string;
@@ -32,7 +39,7 @@ export function HubScratchpadTab({
           value={memoryName}
           onChange={(event) => setMemoryName(event.target.value)}
           placeholder="Memory name"
-          className="h-8 min-w-[140px] flex-1 rounded-lg border border-push-edge bg-push-surface px-2.5 text-xs text-push-fg-secondary outline-none transition-colors placeholder:text-push-fg-dim focus:border-push-sky/50"
+          className={`${HUB_MATERIAL_INPUT_CLASS} min-w-[140px] flex-1`}
         />
         <button
           onClick={() => {
@@ -42,18 +49,20 @@ export function HubScratchpadTab({
             setMemoryName('');
           }}
           disabled={!scratchpadContent.trim() || !memoryName.trim()}
-          className="flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-40"
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
         >
-          <Check className="h-3.5 w-3.5" />
-          Save
+          <HubControlGlow />
+          <Check className="relative z-10 h-3.5 w-3.5" />
+          <span className="relative z-10">Save</span>
         </button>
         <button
           onClick={onClear}
           disabled={!scratchpadContent.trim()}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-40"
+          className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
           aria-label="Clear scratchpad"
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <HubControlGlow />
+          <Trash2 className="relative z-10 h-3.5 w-3.5" />
         </button>
       </div>
 
@@ -61,7 +70,7 @@ export function HubScratchpadTab({
         <select
           value={activeMemoryId ?? ''}
           onChange={(event) => onLoadMemory(event.target.value || null)}
-          className="h-8 min-w-[160px] flex-1 rounded-lg border border-push-edge bg-push-surface px-2 text-xs text-push-fg-secondary outline-none transition-colors focus:border-push-sky/50"
+          className={`${HUB_MATERIAL_INPUT_CLASS} min-w-[160px] flex-1 pr-8`}
         >
           <option value="">Current scratchpad</option>
           {scratchpadMemories.map((memory) => (
@@ -73,10 +82,11 @@ export function HubScratchpadTab({
         {activeMemoryId && (
           <button
             onClick={() => onDeleteMemory(activeMemoryId)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-red-300"
+            className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
             aria-label="Delete selected memory"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <HubControlGlow />
+            <Trash2 className="relative z-10 h-3.5 w-3.5" />
           </button>
         )}
       </div>
@@ -86,7 +96,7 @@ export function HubScratchpadTab({
           value={scratchpadContent}
           onChange={(event) => onContentChange(event.target.value)}
           placeholder="Write notes, requirements, and scratch ideas..."
-          className="h-full w-full resize-none rounded-xl border border-push-edge bg-push-surface px-3 py-2 text-sm leading-relaxed text-push-fg outline-none transition-colors placeholder:text-push-fg-dim/70 focus:border-push-sky/50"
+          className={`h-full w-full resize-none px-3 py-2 text-sm leading-relaxed text-push-fg outline-none transition-colors placeholder:text-push-fg-dim/70 focus:border-push-sky/50 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
         />
       </div>
     </div>

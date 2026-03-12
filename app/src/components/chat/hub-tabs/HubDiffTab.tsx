@@ -4,6 +4,11 @@ import { toast } from 'sonner';
 import { DiffLine } from '@/components/cards/DiffPreviewCard';
 import { parseDiffStats, parseDiffIntoFiles, type FileDiff } from '@/lib/diff-utils';
 import { getSandboxDiff } from '@/lib/sandbox-client';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_TAG_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData } from '@/types';
 
 interface DiffJumpTarget {
@@ -220,10 +225,13 @@ export function HubDiffTab({
             });
           }}
           disabled={startingSandbox || sandboxStatus === 'creating'}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 text-xs text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 disabled:opacity-50"
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-9 px-3 text-push-fg-secondary`}
         >
-          {(startingSandbox || sandboxStatus === 'creating') && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {startingSandbox || sandboxStatus === 'creating' ? 'Starting sandbox...' : 'Start sandbox'}
+          <HubControlGlow />
+          {(startingSandbox || sandboxStatus === 'creating') && <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />}
+          <span className="relative z-10">
+            {startingSandbox || sandboxStatus === 'creating' ? 'Starting sandbox...' : 'Start sandbox'}
+          </span>
         </button>
       </div>
     );
@@ -242,19 +250,25 @@ export function HubDiffTab({
           <button
             onClick={onClearReviewDiff}
             disabled={!onClearReviewDiff}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
-            <CornerDownRight className="h-3.5 w-3.5" />
-            Live diff
+            <HubControlGlow />
+            <CornerDownRight className="relative z-10 h-3.5 w-3.5" />
+            <span className="relative z-10">Live diff</span>
           </button>
         ) : (
           <button
             onClick={() => void refreshDiff()}
             disabled={diffLoading}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
-            {diffLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Refresh
+            <HubControlGlow />
+            {diffLoading ? (
+              <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="relative z-10 h-3.5 w-3.5" />
+            )}
+            <span className="relative z-10">Refresh</span>
           </button>
         )}
       </div>
@@ -268,7 +282,7 @@ export function HubDiffTab({
               <button
                 key={fd.path}
                 onClick={() => scrollToFile(fd.path)}
-                className="flex shrink-0 items-center gap-1 rounded-full border border-push-edge bg-push-surface/80 px-2 py-1 text-push-2xs text-push-fg-dim transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary"
+                className={`${HUB_TAG_CLASS} gap-1 transition-colors hover:border-push-edge-hover hover:text-push-fg-secondary`}
                 title={fd.path}
               >
                 <span className="max-w-[100px] truncate">{filename}</span>

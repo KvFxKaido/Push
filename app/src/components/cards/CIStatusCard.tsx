@@ -1,6 +1,6 @@
 import { RefreshCw, Activity } from 'lucide-react';
 import type { CIStatusCardData, CICheck, CardAction } from '@/types';
-import { CARD_SHELL_CLASS, ciStatusColor, ciStatusBg } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_BUTTON_CLASS, CARD_PANEL_SUBTLE_CLASS, ciStatusColor, ciStatusBg } from '@/lib/utils';
 import { getCheckTone, renderCheckToneIcon } from './ci-status-helpers';
 
 interface CIStatusCardProps {
@@ -51,7 +51,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
       {data.checks.length > 0 ? (
         <div className="px-3 py-2 space-y-1">
           {data.checks.map((check, i) => (
-            <div key={i} className="flex items-center gap-2 min-h-[24px]">
+            <div key={i} className={`${CARD_PANEL_SUBTLE_CLASS} flex min-h-[24px] items-center gap-2 px-2.5 py-2`}>
               {checkIcon(check)}
               <span className="text-push-sm text-push-fg-secondary truncate flex-1">
                 {check.name}
@@ -66,9 +66,11 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
         </div>
       ) : (
         <div className="px-3 py-3">
-          <p className="text-push-sm text-push-fg-dim">
-            No CI checks configured for this repo.
-          </p>
+          <div className={`${CARD_PANEL_SUBTLE_CLASS} px-3 py-3`}>
+            <p className="text-push-sm text-push-fg-dim">
+              No CI checks configured for this repo.
+            </p>
+          </div>
         </div>
       )}
 
@@ -81,7 +83,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
               messageId,
               cardIndex,
             })}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-push-edge w-full px-4 py-2 text-push-sm font-medium text-push-fg-secondary transition-all duration-200 hover:bg-push-surface-active hover:text-push-fg active:scale-[0.98]"
+            className={`${CARD_BUTTON_CLASS} h-11 w-full`}
             style={{ minHeight: '44px' }}
           >
             <RefreshCw className="h-3.5 w-3.5" />

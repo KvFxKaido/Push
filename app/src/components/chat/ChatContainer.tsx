@@ -4,6 +4,11 @@ import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, L
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 
 
 // --- Resume Banner (Resumable Sessions Phase 2) ---
@@ -43,7 +48,9 @@ function ResumeBanner({
   }, [checkpoint.savedAt]);
 
   return (
-    <div className="mx-4 mt-2 mb-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3.5 py-3 flex items-center justify-between gap-3 animate-fade-in">
+    <div
+      className={`mx-4 mt-2 mb-1 flex items-center justify-between gap-3 px-3.5 py-3 animate-fade-in ${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-amber-500/20 bg-[linear-gradient(180deg,rgba(52,40,15,0.22)_0%,rgba(24,18,7,0.42)_100%)]`}
+    >
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-amber-200">Session interrupted {phaseLabel(checkpoint.phase)}</p>
         <p className="text-push-xs text-amber-200/60 mt-0.5">
@@ -54,14 +61,15 @@ function ResumeBanner({
       <div className="flex items-center gap-2 shrink-0">
         <button
           onClick={onResume}
-          className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-900/20 px-3 py-1.5 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-900/30 active:scale-95"
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1.5 px-3 text-amber-200`}
         >
-          <RotateCcw className="h-3 w-3" />
-          Resume
+          <HubControlGlow />
+          <RotateCcw className="relative z-10 h-3 w-3" />
+          <span className="relative z-10">Resume</span>
         </button>
         <button
           onClick={onDismiss}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-amber-200/40 transition-colors hover:text-amber-200/70 hover:bg-amber-900/20 active:scale-95"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-amber-200/40 transition-colors hover:bg-amber-900/20 hover:text-amber-200/70 active:scale-95"
           aria-label="Dismiss"
         >
           <X className="h-3.5 w-3.5" />

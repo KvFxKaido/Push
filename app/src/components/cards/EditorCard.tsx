@@ -14,7 +14,7 @@ import type { EditorCardData, CardAction } from '@/types';
 import { useCodeMirror } from '@/hooks/useCodeMirror';
 import { useExpandable } from '@/hooks/useExpandable';
 import { EditorPanel } from './EditorPanel';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_BADGE_INFO, CARD_ICON_BUTTON_CLASS } from '@/lib/utils';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 
 interface EditorCardProps {
@@ -36,7 +36,7 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
         <div className="flex items-center">
           <button
             onClick={toggleExpanded}
-            className="flex-1 px-3.5 py-3 flex items-center gap-2 hover:bg-push-surface-hover transition-colors duration-200 min-w-0"
+            className="flex min-w-0 flex-1 items-center gap-2 px-3.5 py-3 transition-colors duration-200 hover:bg-white/[0.02]"
           >
             <ExpandChevron expanded={expanded} className="shrink-0" />
             <FileCode className="h-3.5 w-3.5 text-push-fg-secondary shrink-0" />
@@ -44,7 +44,7 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
               {data.path}
             </span>
             {data.language && (
-              <span className="text-push-xs text-push-fg-dim bg-push-surface-active px-1.5 py-0.5 rounded shrink-0">
+              <span className={`${CARD_BADGE_INFO} shrink-0 px-1.5 py-0.5 text-push-xs`}>
                 {data.language}
               </span>
             )}
@@ -56,10 +56,10 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
           {/* Open in Editor button */}
           <button
             onClick={() => setPanelOpen(true)}
-            className="px-2 py-2 hover:bg-push-surface-hover transition-colors border-l border-push-edge"
+            className={`m-2 h-8 w-8 ${CARD_ICON_BUTTON_CLASS}`}
             title="Open in Editor"
           >
-            <Maximize2 className="h-3.5 w-3.5 text-push-fg-dim hover:text-push-fg-secondary" />
+            <Maximize2 className="h-3.5 w-3.5" />
           </button>
         </div>
 

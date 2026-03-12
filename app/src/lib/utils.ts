@@ -56,7 +56,23 @@ export function timeAgoCompact(timestamp: number): string {
 // Card shell — shared class string for all inline cards
 // ---------------------------------------------------------------------------
 
-export const CARD_SHELL_CLASS = 'my-2.5 max-w-full overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card';
+export const CARD_SHELL_CLASS =
+  'my-2.5 max-w-full overflow-hidden rounded-[20px] border border-push-edge/80 bg-[linear-gradient(180deg,rgba(11,15,22,0.96)_0%,rgba(6,9,14,0.98)_100%)] shadow-[0_16px_36px_rgba(0,0,0,0.4),0_3px_10px_rgba(0,0,0,0.2)] backdrop-blur-xl';
+
+export const CARD_PANEL_CLASS =
+  'rounded-[18px] border border-push-edge/70 bg-[linear-gradient(180deg,rgba(9,13,19,0.88)_0%,rgba(5,8,13,0.94)_100%)] shadow-[0_12px_26px_rgba(0,0,0,0.26),0_2px_8px_rgba(0,0,0,0.14)]';
+
+export const CARD_PANEL_SUBTLE_CLASS =
+  'rounded-[16px] border border-push-edge/70 bg-black/10';
+
+export const CARD_BUTTON_CLASS =
+  'inline-flex items-center justify-center gap-1.5 rounded-full border border-push-edge-subtle bg-push-grad-input px-3 text-push-sm font-medium text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.26),0_2px_8px_rgba(0,0,0,0.14)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50';
+
+export const CARD_ICON_BUTTON_CLASS =
+  'inline-flex items-center justify-center rounded-full border border-push-edge-subtle bg-push-grad-input text-push-fg-dim shadow-[0_10px_24px_rgba(0,0,0,0.24),0_2px_8px_rgba(0,0,0,0.12)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50';
+
+export const CARD_INPUT_CLASS =
+  'w-full rounded-[18px] border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-push-base text-push-fg font-mono placeholder:text-push-fg-dim shadow-[0_10px_24px_rgba(0,0,0,0.22)] outline-none transition-all focus:border-push-sky/50';
 
 // ---------------------------------------------------------------------------
 // Card status palette — shared across card components
@@ -67,16 +83,23 @@ export const CARD_TEXT_ERROR   = 'text-push-status-error';
 export const CARD_TEXT_WARNING = 'text-push-status-warning';
 
 /** Pill badge (opacity /15) — inline status tags e.g. "Open", "SAFE". */
-export const CARD_BADGE_SUCCESS = 'bg-push-status-success/15 text-push-status-success';
-export const CARD_BADGE_ERROR   = 'bg-push-status-error/15 text-push-status-error';
-export const CARD_BADGE_WARNING = 'bg-push-status-warning/15 text-push-status-warning';
+export const CARD_BADGE_SUCCESS = 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-300';
+export const CARD_BADGE_ERROR   = 'border border-red-500/20 bg-red-500/10 text-red-300';
+export const CARD_BADGE_WARNING = 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-300';
+export const CARD_BADGE_INFO    = 'border border-push-edge/70 bg-black/10 text-[#9db8df]';
 
 /** Header background band (opacity /10) — used for card header rows. */
-export const CARD_HEADER_BG_SUCCESS = 'bg-push-status-success/10';
-export const CARD_HEADER_BG_ERROR   = 'bg-push-status-error/10';
+export const CARD_HEADER_BG_SUCCESS =
+  'bg-[linear-gradient(180deg,rgba(17,61,42,0.18)_0%,rgba(8,28,20,0.34)_100%)]';
+export const CARD_HEADER_BG_ERROR =
+  'bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)]';
+export const CARD_HEADER_BG_WARNING =
+  'bg-[linear-gradient(180deg,rgba(68,52,16,0.18)_0%,rgba(31,23,8,0.34)_100%)]';
+export const CARD_HEADER_BG_INFO =
+  'bg-[linear-gradient(180deg,rgba(20,34,52,0.18)_0%,rgba(9,18,31,0.34)_100%)]';
 
 /** Divider list container — applies divide-y/border token in one constant. */
-export const CARD_LIST_CLASS = 'divide-y divide-push-edge';
+export const CARD_LIST_CLASS = 'divide-y divide-push-edge/80';
 
 // ---------------------------------------------------------------------------
 // Network error detection (previously duplicated in auth hooks)
@@ -121,10 +144,10 @@ export function ciStatusColor(status: string | null): string {
 
 export function ciStatusBg(status: string | null): string {
   switch (status) {
-    case 'success': return 'bg-push-status-success/5';
-    case 'failure': return 'bg-push-status-error/5';
-    case 'pending': return 'bg-push-status-warning/5';
-    default: return 'bg-push-fg-dim/10';
+    case 'success': return CARD_HEADER_BG_SUCCESS;
+    case 'failure': return CARD_HEADER_BG_ERROR;
+    case 'pending': return CARD_HEADER_BG_WARNING;
+    default: return CARD_HEADER_BG_INFO;
   }
 }
 

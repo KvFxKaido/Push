@@ -1,5 +1,6 @@
 import { ListTodo, FileCode, CheckCircle2, CircleDashed, ClipboardList } from 'lucide-react';
 import type { CoderWorkingMemory } from '@/types';
+import { CARD_SHELL_CLASS, CARD_PANEL_SUBTLE_CLASS, CARD_BADGE_INFO } from '@/lib/utils';
 
 interface CoderProgressCardProps {
   data: CoderWorkingMemory;
@@ -11,8 +12,8 @@ export function CoderProgressCard({ data }: CoderProgressCardProps) {
   const hasFiles = !!(data.filesTouched && data.filesTouched.length > 0);
 
   return (
-    <div className="my-2.5 overflow-hidden rounded-xl border border-push-edge bg-push-grad-card shadow-push-card">
-      <div className="px-3 py-2.5 border-b border-push-edge flex items-center justify-between gap-2">
+    <div className={CARD_SHELL_CLASS}>
+      <div className="flex items-center justify-between gap-2 border-b border-push-edge/80 px-3 py-2.5">
         <div className="flex items-center gap-2 min-w-0">
           <ClipboardList className="h-4 w-4 text-push-accent shrink-0" />
           <span className="text-push-base text-push-fg font-medium truncate">Coder Progress</span>
@@ -23,7 +24,7 @@ export function CoderProgressCard({ data }: CoderProgressCardProps) {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-push-accent opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-push-accent"></span>
             </span>
-            <span className="text-push-xs text-push-accent font-medium truncate max-w-[120px]">
+            <span className={`${CARD_BADGE_INFO} truncate px-2 py-0.5 text-push-2xs font-medium max-w-[120px]`}>
               {data.currentPhase}
             </span>
           </div>
@@ -46,7 +47,7 @@ export function CoderProgressCard({ data }: CoderProgressCardProps) {
             </div>
             <div className="space-y-1.5">
               {data.openTasks?.map((task, idx) => (
-                <div key={idx} className="flex items-start gap-2 text-push-sm text-push-fg-secondary bg-white/5 border border-white/5 rounded-lg px-2.5 py-1.5">
+                <div key={idx} className={`${CARD_PANEL_SUBTLE_CLASS} flex items-start gap-2 px-2.5 py-2 text-push-sm text-push-fg-secondary`}>
                   <CircleDashed className="h-3.5 w-3.5 mt-0.5 text-push-fg-dim shrink-0" />
                   <span>{task}</span>
                 </div>

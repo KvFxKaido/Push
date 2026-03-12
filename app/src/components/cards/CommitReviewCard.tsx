@@ -3,7 +3,15 @@ import { Check, X, Loader2, AlertCircle, GitCommit } from 'lucide-react';
 import type { CommitReviewCardData, CardAction } from '@/types';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import {
+  CARD_SHELL_CLASS,
+  CARD_BUTTON_CLASS,
+  CARD_INPUT_CLASS,
+  CARD_PANEL_CLASS,
+  CARD_HEADER_BG_SUCCESS,
+  CARD_HEADER_BG_ERROR,
+  CARD_HEADER_BG_INFO,
+} from '@/lib/utils';
 
 interface CommitReviewCardProps {
   data: CommitReviewCardData;
@@ -27,10 +35,10 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${
-        isCommitted ? 'bg-push-status-success/5' :
-        isRejected ? 'bg-push-fg-dim/10' :
-        isError ? 'bg-push-status-error/5' :
-        'bg-push-link/10'
+        isCommitted ? CARD_HEADER_BG_SUCCESS :
+        isRejected ? CARD_HEADER_BG_INFO :
+        isError ? CARD_HEADER_BG_ERROR :
+        CARD_HEADER_BG_INFO
       }`}>
         {isCommitted ? (
           <Check className="h-4 w-4 shrink-0 text-push-status-success" />
@@ -86,7 +94,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
             onChange={(e) => setEditedMessage(e.target.value)}
             rows={1}
             placeholder="Enter commit message..."
-            className="w-full rounded-lg border border-push-edge bg-push-surface-inset px-3 py-2 text-push-base text-push-fg font-mono placeholder:text-push-fg-dim focus:outline-none focus:border-push-sky/50 resize-none leading-relaxed"
+            className={`${CARD_INPUT_CLASS} resize-none leading-relaxed`}
             style={{ minHeight: '38px', maxHeight: '80px' }}
             onInput={(e) => {
               const target = e.target as HTMLTextAreaElement;
@@ -95,7 +103,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
             }}
           />
         ) : (
-          <div className="rounded-lg border border-push-edge bg-push-surface-inset px-3 py-2">
+          <div className={`${CARD_PANEL_CLASS} px-3 py-2`}>
             <p className="text-push-base text-push-fg-secondary font-mono">
               {data.commitMessage}
             </p>
@@ -106,7 +114,9 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
       {/* Error message */}
       {isError && data.error && (
         <div className="px-3 pb-3">
-          <p className="text-push-sm text-push-status-error">{data.error}</p>
+          <div className="rounded-[16px] border border-red-500/20 bg-red-500/10 px-3 py-2">
+            <p className="text-push-sm text-push-status-error">{data.error}</p>
+          </div>
         </div>
       )}
 
@@ -121,7 +131,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
               commitMessage: editedMessage.trim() || data.commitMessage,
             })}
             disabled={!editedMessage.trim()}
-            className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-push-status-success px-4 py-2.5 text-push-base font-medium text-[#0a0a0c] transition-all duration-200 hover:bg-push-status-success active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`${CARD_BUTTON_CLASS} h-11 flex-1 text-emerald-300`}
             style={{ minHeight: '44px' }}
           >
             <Check className="h-4 w-4" />
@@ -134,7 +144,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
                 messageId,
                 cardIndex,
               })}
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-push-edge px-4 py-2.5 text-push-base font-medium text-push-fg-secondary transition-all duration-200 hover:bg-push-surface-active hover:text-push-fg active:scale-[0.98]"
+              className={`${CARD_BUTTON_CLASS} h-11`}
               style={{ minHeight: '44px' }}
             >
               <X className="h-4 w-4" />
@@ -147,7 +157,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
       {/* Busy state */}
       {isBusy && (
         <div className="flex items-center gap-2 px-3 pb-3">
-          <div className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-push-status-success/20 px-4 py-2.5 text-push-base font-medium text-push-status-success opacity-60" style={{ minHeight: '44px' }}>
+          <div className={`${CARD_PANEL_CLASS} flex flex-1 items-center justify-center gap-1.5 px-4 py-2.5 text-push-base font-medium text-push-status-success opacity-70`} style={{ minHeight: '44px' }}>
             <Loader2 className="h-4 w-4 animate-spin" />
             {isPushing ? 'Pushing…' : 'Committing…'}
           </div>

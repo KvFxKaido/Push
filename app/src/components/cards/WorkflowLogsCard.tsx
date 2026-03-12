@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { WorkflowLogsCardData, WorkflowJob } from '@/types';
-import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { CARD_SHELL_CLASS, CARD_PANEL_SUBTLE_CLASS } from '@/lib/utils';
 import {
   checkToneBgClass,
   checkToneColorClass,
@@ -62,7 +62,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
             {/* Job header — clickable */}
             <button
               onClick={() => toggleJob(idx)}
-              className="w-full px-3.5 py-3 flex items-center gap-2 text-left hover:bg-push-surface-hover transition-colors duration-200"
+              className="flex w-full items-center gap-2 px-3.5 py-3 text-left transition-colors duration-200 hover:bg-white/[0.02]"
             >
               <ExpandChevron expanded={expanded.has(idx)} className="shrink-0" />
               {renderCheckToneIcon(getCheckTone(job.status, job.conclusion), 'h-3.5 w-3.5 shrink-0')}
@@ -81,7 +81,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
               className="px-3 pb-2 pl-10 space-y-0.5"
             >
               {job.steps.map((step) => (
-                <div key={step.number} className="flex items-center gap-2 min-h-[22px]">
+                <div key={step.number} className={`${CARD_PANEL_SUBTLE_CLASS} flex min-h-[22px] items-center gap-2 px-2.5 py-2`}>
                   {renderCheckToneIcon(
                     getCheckTone(step.status, step.conclusion),
                     'h-3 w-3 shrink-0',

@@ -17,6 +17,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  HUB_MATERIAL_INPUT_CLASS,
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HUB_PANEL_SURFACE_CLASS,
+  HUB_TAG_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 import { fetchRepoBranches } from '@/lib/github-tools';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import { timeAgo, timeAgoCompact } from '@/lib/utils';
@@ -51,6 +59,12 @@ type RepoBranchOption = {
   isDefault: boolean;
   isProtected: boolean;
 };
+
+const LAUNCHER_CARD_CLASS =
+  `${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3.5 transition-all duration-200 hover:border-push-edge-hover`;
+
+const LAUNCHER_ACTION_BUTTON_CLASS =
+  `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-8 flex-1 justify-center px-2.5`;
 
 function timeAgoWithAgo(timestamp: number): string {
   const compact = timeAgoCompact(timestamp);
@@ -201,7 +215,7 @@ export function RepoLauncherPanel({
     return (
       <div
         key={repo.id}
-        className="rounded-xl border border-push-edge bg-push-grad-card p-3.5 shadow-push-card card-hover spring-press hover:border-push-edge-hover hover:shadow-push-card-hover"
+        className={LAUNCHER_CARD_CLASS}
       >
         <button
           onClick={() => onSelectRepo(repo)}
@@ -220,7 +234,7 @@ export function RepoLauncherPanel({
           </div>
 
           {activeBranch && activeBranch !== repo.default_branch && (
-            <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[#1a1f2e] px-1.5 py-0.5 text-push-xs text-[#9db8df]">
+            <span className={`${HUB_TAG_CLASS} w-fit gap-1 text-push-xs text-[#9db8df]`}>
               <GitBranch className="h-3 w-3" />
               <span className="max-w-[160px] truncate">{activeBranch}</span>
             </span>
@@ -243,7 +257,7 @@ export function RepoLauncherPanel({
               </span>
             )}
             {repo.activity.open_prs > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-[#0d2847] px-1.5 py-0.5 text-[#58a6ff]">
+              <span className={`${HUB_TAG_CLASS} gap-1 text-[#58a6ff]`}>
                 <GitPullRequest className="h-3 w-3" />
                 {repo.activity.open_prs}
               </span>
@@ -255,7 +269,7 @@ export function RepoLauncherPanel({
               </span>
             )}
             {chatMeta && (
-              <span className="flex items-center gap-1 text-[#84bfff]">
+              <span className={`${HUB_TAG_CLASS} gap-1 text-[#84bfff]`}>
                 <History className="h-3 w-3" />
                 {chatMeta.chatCount}
               </span>
@@ -267,10 +281,11 @@ export function RepoLauncherPanel({
         <div className="mt-2 flex items-center gap-2">
           <button
             onClick={() => setBranchCreateRepo(repo)}
-            className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-push-edge-subtle bg-push-grad-input px-2.5 text-xs text-push-fg-secondary shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110"
+            className={LAUNCHER_ACTION_BUTTON_CLASS}
           >
-            <GitBranch className="h-3.5 w-3.5 text-push-fg-dim" />
-            Create branch
+            <HubControlGlow />
+            <GitBranch className="relative z-10 h-3.5 w-3.5 text-push-fg-dim" />
+            <span className="relative z-10">Create branch</span>
           </button>
 
           <DropdownMenu
@@ -283,18 +298,19 @@ export function RepoLauncherPanel({
             }}
           >
             <DropdownMenuTrigger asChild>
-              <button className="flex h-8 flex-1 items-center justify-between rounded-lg border border-push-edge-subtle bg-push-grad-input px-2.5 text-xs text-[#9db8df] shadow-[0_8px_20px_rgba(0,0,0,0.42),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:brightness-110">
-                <span className="inline-flex min-w-0 items-center gap-1">
+              <button className={`${LAUNCHER_ACTION_BUTTON_CLASS} justify-between text-[#9db8df]`}>
+                <HubControlGlow />
+                <span className="relative z-10 inline-flex min-w-0 items-center gap-1">
                   <GitBranch className="h-3 w-3 text-push-fg-dim" />
                   <span className="truncate">Open on branch</span>
                 </span>
-                <span className="truncate text-push-xs text-[#788396]">{repo.default_branch}</span>
+                <span className="relative z-10 truncate text-push-xs text-[#788396]">{repo.default_branch}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
               sideOffset={8}
-              className="w-[240px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
+              className={`w-[240px] ${HUB_PANEL_SURFACE_CLASS}`}
             >
               <DropdownMenuLabel className="px-3 py-1.5 text-push-2xs font-medium uppercase tracking-wider text-push-fg-dim">
                 {repo.name} Branches
@@ -302,7 +318,7 @@ export function RepoLauncherPanel({
               <DropdownMenuSeparator className="bg-push-edge" />
 
               {branchesLoading && (
-                <DropdownMenuItem disabled className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
+                <DropdownMenuItem disabled className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 text-xs text-push-fg-dim">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Loading branches...
                 </DropdownMenuItem>
@@ -310,7 +326,7 @@ export function RepoLauncherPanel({
 
               {!branchesLoading && branchesError && (
                 <>
-                  <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400">
+                  <DropdownMenuItem disabled className="mx-1 rounded-full px-3 py-2 text-xs text-red-400">
                     Failed to load branches
                   </DropdownMenuItem>
                   <DropdownMenuItem
@@ -318,7 +334,7 @@ export function RepoLauncherPanel({
                       event.preventDefault();
                       void loadBranchesForRepo(repo.full_name, true);
                     }}
-                    className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-push-surface-hover"
+                    className="mx-1 rounded-full px-3 py-2 text-xs text-push-link focus:bg-white/[0.04]"
                   >
                     Retry
                   </DropdownMenuItem>
@@ -326,7 +342,7 @@ export function RepoLauncherPanel({
               )}
 
               {!branchesLoading && !branchesError && branchOptions.length === 0 && (
-                <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
+                <DropdownMenuItem disabled className="mx-1 rounded-full px-3 py-2 text-xs text-push-fg-dim">
                   No branches found
                 </DropdownMenuItem>
               )}
@@ -335,18 +351,18 @@ export function RepoLauncherPanel({
                 <DropdownMenuItem
                   key={branch.name}
                   onSelect={() => onSelectRepo(repo, branch.name)}
-                  className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-push-surface-hover"
+                  className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 focus:bg-white/[0.04]"
                 >
                   <span className="min-w-0 flex-1 truncate text-xs text-push-fg-secondary">
                     {branch.name}
                   </span>
                   {branch.isDefault && (
-                    <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-[#58a6ff]">
+                    <span className={`${HUB_TAG_CLASS} text-[#58a6ff]`}>
                       default
                     </span>
                   )}
                   {branch.isProtected && (
-                    <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-push-2xs text-[#fca5a5]">
+                    <span className={`${HUB_TAG_CLASS} text-[#fca5a5]`}>
                       protected
                     </span>
                   )}
@@ -372,7 +388,7 @@ export function RepoLauncherPanel({
     <>
       <div className="space-y-4">
         {error && (
-          <div className="rounded-xl border border-red-500/30 bg-red-950/30 px-3 py-2">
+          <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-red-500/20 bg-red-500/5 px-3 py-2`}>
             <p className="text-xs text-red-200">
               Couldn&apos;t load repositories from GitHub: {error}
             </p>
@@ -382,26 +398,24 @@ export function RepoLauncherPanel({
         {latestConversation && latestConversationRepo && (
           <button
             onClick={() => onResumeConversation(latestConversation.id)}
-            className="flex w-full items-start gap-3 rounded-xl border border-[#31507d] bg-[linear-gradient(180deg,#0b1423_0%,#08101d_100%)] p-3.5 text-left shadow-push-card card-hover spring-press hover:border-[#3f659c] hover:shadow-push-card-hover"
+            className={`${HUB_PANEL_SURFACE_CLASS} flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-push-edge-hover`}
           >
-            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#163055]">
-              <PushOrbitIcon className="h-4 w-4 text-[#8ad4ff]" />
-            </div>
+            <PushOrbitIcon className="mt-0.5 h-4 w-4 shrink-0 text-[#8ad4ff]" />
             <div className="min-w-0">
-              <p className="text-sm font-medium text-[#d7ecff]">Resume latest chat</p>
-              <p className="mt-0.5 truncate text-xs text-[#9ab4d4]">
+              <p className="text-sm font-medium text-push-fg">Resume latest chat</p>
+              <p className="mt-0.5 truncate text-xs text-push-fg-secondary">
                 {latestConversation.title}
               </p>
-              <p className="mt-1 flex items-center gap-1 text-push-xs text-[#6f88aa]">
+              <p className="mt-1 flex items-center gap-1 text-push-xs text-push-fg-dim">
                 <span>{latestConversationRepo.name}</span>
                 {latestConversation.branch && (
                   <>
-                    <span className="text-[#4a6080]">/</span>
+                    <span className="text-push-fg-dim/60">/</span>
                     <GitBranch className="h-2.5 w-2.5 shrink-0" />
                     <span className="max-w-[120px] truncate">{latestConversation.branch}</span>
                   </>
                 )}
-                <span className="text-[#4a6080]">·</span>
+                <span className="text-push-fg-dim/60">·</span>
                 <span>{timeAgoWithAgo(latestConversation.lastMessageAt)}</span>
               </p>
             </div>
@@ -412,18 +426,20 @@ export function RepoLauncherPanel({
           {onSandboxMode && (
             <button
               onClick={onSandboxMode}
-              className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-[linear-gradient(180deg,rgba(9,25,18,0.95)_0%,rgba(4,10,7,0.98)_100%)] px-3 py-2.5 text-sm font-medium text-emerald-300 shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] spring-press transition-all duration-200 hover:border-emerald-500/45 hover:brightness-110"
+              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-emerald-300`}
             >
-              <SandboxCubeIcon className="h-4 w-4" />
-              New Sandbox
+              <HubControlGlow />
+              <SandboxCubeIcon className="relative z-10 h-4 w-4" />
+              <span className="relative z-10">New Sandbox</span>
             </button>
           )}
           <button
             onClick={() => setShowAllRepos((value) => !value)}
-            className="flex items-center gap-2 rounded-xl border border-push-edge-subtle bg-push-grad-input px-3 py-2.5 text-sm font-medium text-[#9fb0c8] shadow-[0_10px_24px_rgba(0,0,0,0.42),0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl spring-press transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] hover:brightness-110"
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-[#9fb0c8]`}
           >
-            <Search className="h-4 w-4" />
-            {showAllRepos ? 'Hide All Repos' : 'Browse All Repos'}
+            <HubControlGlow />
+            <Search className="relative z-10 h-4 w-4" />
+            <span className="relative z-10">{showAllRepos ? 'Hide All Repos' : 'Browse All Repos'}</span>
           </button>
         </div>
 
@@ -437,7 +453,7 @@ export function RepoLauncherPanel({
               <Loader2 className="h-5 w-5 animate-spin text-[#52525b]" />
             </div>
           ) : recentRepos.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-push-edge px-3 py-4 text-center text-xs text-[#788396]">
+            <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-dashed px-3 py-4 text-center text-xs text-[#788396]`}>
               No repositories yet.
             </div>
           ) : (
@@ -456,11 +472,11 @@ export function RepoLauncherPanel({
                 placeholder="Search repositories..."
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                className="w-full rounded-xl border border-push-edge-subtle bg-push-grad-input py-2.5 pl-10 pr-4 text-sm text-push-fg placeholder:text-[#4f596d] shadow-[0_10px_24px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all duration-200 focus:border-push-sky/50"
+                className={`${HUB_MATERIAL_INPUT_CLASS} w-full py-2.5 pl-10 pr-4 text-sm`}
               />
             </div>
             {filteredRepos.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-push-edge px-3 py-4 text-center text-xs text-[#788396]">
+              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-dashed px-3 py-4 text-center text-xs text-[#788396]`}>
                 No repos match your search.
               </div>
             ) : (

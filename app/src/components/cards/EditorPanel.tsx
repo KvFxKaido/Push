@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/sheet';
 import { useCodeMirror } from '@/hooks/useCodeMirror';
 import type { EditorCardData, CardAction } from '@/types';
+import { CARD_BADGE_INFO, CARD_BUTTON_CLASS, CARD_ICON_BUTTON_CLASS } from '@/lib/utils';
 
 interface EditorPanelProps {
   data: EditorCardData;
@@ -73,7 +74,7 @@ export function EditorPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="h-[92dvh] rounded-t-xl border-t border-push-edge bg-push-surface-inset p-0 gap-0 [&>[data-slot=sheet-close]]:hidden"
+        className="h-[92dvh] rounded-t-xl border-t border-push-edge bg-push-grad-panel p-0 gap-0 [&>[data-slot=sheet-close]]:hidden"
       >
         {/* Accessible but visually hidden title/description */}
         <SheetTitle className="sr-only">{filename}</SheetTitle>
@@ -82,12 +83,12 @@ export function EditorPanel({
         </SheetDescription>
 
         {/* Custom header */}
-        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-push-edge bg-push-surface-inset shrink-0">
+        <div className="flex shrink-0 items-center gap-2 border-b border-push-edge/80 bg-[linear-gradient(180deg,rgba(10,13,20,0.84)_0%,rgba(6,8,13,0.92)_100%)] px-3 py-2.5 backdrop-blur-xl">
           <button
             onClick={() => onOpenChange(false)}
-            className="p-1 rounded hover:bg-push-surface-active transition-colors"
+            className={`${CARD_ICON_BUTTON_CLASS} h-8 w-8`}
           >
-            <X className="h-4 w-4 text-push-fg-muted" />
+            <X className="h-4 w-4" />
           </button>
 
           <FileCode className="h-3.5 w-3.5 text-push-fg-secondary shrink-0" />
@@ -97,19 +98,19 @@ export function EditorPanel({
 
           {/* Mode badge */}
           {editable ? (
-            <span className="flex items-center gap-1 text-push-xs text-[#86efac] bg-[#86efac12] px-1.5 py-0.5 rounded shrink-0">
+            <span className="flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-push-xs text-emerald-300">
               <Pencil className="h-2.5 w-2.5" />
               Edit
             </span>
           ) : (
-            <span className="flex items-center gap-1 text-push-xs text-push-fg-dim bg-push-surface-active px-1.5 py-0.5 rounded shrink-0">
+            <span className={`${CARD_BADGE_INFO} flex shrink-0 items-center gap-1 px-2 py-0.5 text-push-xs`}>
               <Lock className="h-2.5 w-2.5" />
               Read-only
             </span>
           )}
 
           {data.language && (
-            <span className="text-push-xs text-push-fg-dim bg-push-surface-active px-1.5 py-0.5 rounded shrink-0">
+            <span className={`${CARD_BADGE_INFO} shrink-0 px-2 py-0.5 text-push-xs`}>
               {data.language}
             </span>
           )}
@@ -119,11 +120,7 @@ export function EditorPanel({
             <button
               onClick={handleSave}
               disabled={!isDirty || saving}
-              className={`flex items-center gap-1 text-push-sm px-2 py-1 rounded transition-colors shrink-0 ${
-                isDirty && !saving
-                  ? 'bg-[#a78bfa] text-[#0c0c0e] hover:bg-[#8b5cf6]'
-                  : 'bg-push-surface-active text-push-fg-dim cursor-not-allowed'
-              }`}
+              className={`${CARD_BUTTON_CLASS} h-9 shrink-0 ${isDirty && !saving ? 'text-emerald-300' : ''}`}
             >
               <Save className="h-3 w-3" />
               {saving ? 'Saving...' : 'Save'}

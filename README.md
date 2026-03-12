@@ -224,6 +224,10 @@ Push/
 └── README.md
 ```
 
+## Credits
+
+Model icons courtesy of [models.dev](https://models.dev/) ([GitHub](https://github.com/anomalyco/models.dev)).
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.

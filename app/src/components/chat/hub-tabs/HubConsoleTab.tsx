@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Copy, Download, Check } from 'lucide-react';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 import type { AgentStatusEvent, AgentStatusSource, ChatMessage } from '@/types';
 
 interface HubConsoleTabProps {
@@ -122,20 +126,26 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
           <button
             onClick={handleCopyAll}
             disabled={logs.length === 0}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-push-xs text-push-fg-secondary transition-colors hover:bg-white/5 disabled:opacity-50"
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-secondary`}
             title="Copy all logs"
           >
-            {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
-            Copy All
+            <HubControlGlow />
+            {copied ? (
+              <Check className="relative z-10 h-3 w-3 text-green-500" />
+            ) : (
+              <Copy className="relative z-10 h-3 w-3" />
+            )}
+            <span className="relative z-10">Copy All</span>
           </button>
           <button
             onClick={handleDownloadLogs}
             disabled={logs.length === 0}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-push-xs text-push-fg-secondary transition-colors hover:bg-white/5 disabled:opacity-50"
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-secondary`}
             title="Download logs as .txt"
           >
-            <Download className="h-3 w-3" />
-            Download
+            <HubControlGlow />
+            <Download className="relative z-10 h-3 w-3" />
+            <span className="relative z-10">Download</span>
           </button>
         </div>
       </div>

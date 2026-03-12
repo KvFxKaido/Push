@@ -26,6 +26,13 @@ import {
   type RepoPullRequestListItem,
 } from '@/lib/github-tools';
 import { timeAgo } from '@/lib/utils';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_MATERIAL_ROUND_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HUB_TAG_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData } from '@/types';
 
 interface HubPRsTabProps {
@@ -235,10 +242,15 @@ export function HubPRsTab({
           <button
             onClick={() => void refreshList()}
             disabled={listLoading}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
-            {listLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Refresh
+            <HubControlGlow />
+            {listLoading ? (
+              <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="relative z-10 h-3.5 w-3.5" />
+            )}
+            <span className="relative z-10">Refresh</span>
           </button>
         </div>
 
@@ -281,7 +293,7 @@ export function HubPRsTab({
                               {pr.title}
                             </p>
                             {pr.isDraft && (
-                              <span className="rounded-full border border-push-edge px-1.5 py-0.5 text-push-2xs text-push-fg-dim">
+                              <span className={HUB_TAG_CLASS}>
                                 Draft
                               </span>
                             )}
@@ -290,13 +302,13 @@ export function HubPRsTab({
                             <span>#{pr.number}</span>
                             <span>{timeAgo(pr.updatedAt || pr.createdAt)}</span>
                             {isActiveBranchPr && (
-                              <span className="rounded-full bg-push-accent/10 px-1.5 py-0.5 text-push-accent">
+                              <span className={HUB_TAG_CLASS}>
                                 active branch
                               </span>
                             )}
                           </div>
                           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-push-xs text-push-fg-dim">
-                            <span className={`rounded-full px-1.5 py-0.5 ${stateBadge(pr)}`}>
+                            <span className={`${HUB_TAG_CLASS} ${stateBadge(pr)}`}>
                               {pr.state}
                             </span>
                             <span className="inline-flex items-center gap-1">
@@ -345,10 +357,11 @@ export function HubPRsTab({
             setDetail(null);
             setDetailError(null);
           }}
-          className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-2 text-push-xs text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
         >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          All PRs
+          <HubControlGlow />
+          <ArrowLeft className="relative z-10 h-3.5 w-3.5" />
+          <span className="relative z-10">All PRs</span>
         </button>
 
         <div className="flex items-center gap-1.5">
@@ -358,20 +371,26 @@ export function HubPRsTab({
               if (selectedPrNumber) setDetailReloadNonce((value) => value + 1);
             }}
             disabled={listLoading || detailLoading}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary disabled:opacity-50"
+            className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
             aria-label="Refresh pull requests"
           >
-            {listLoading || detailLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            <HubControlGlow />
+            {listLoading || detailLoading ? (
+              <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="relative z-10 h-3.5 w-3.5" />
+            )}
           </button>
           {detail?.url && (
             <a
               href={detail.url}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-push-edge bg-push-surface/95 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
+              className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
               aria-label="Open pull request on GitHub"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
+              <HubControlGlow />
+              <ExternalLink className="relative z-10 h-3.5 w-3.5" />
             </a>
           )}
         </div>
@@ -397,11 +416,11 @@ export function HubPRsTab({
           <div className="space-y-4 p-3">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${stateBadge(detail)}`}>
+                <span className={`${HUB_TAG_CLASS} text-push-xs font-medium ${stateBadge(detail)}`}>
                   {detail.state}
                 </span>
                 {detail.isDraft && (
-                  <span className="rounded-full border border-push-edge px-2 py-0.5 text-push-xs text-push-fg-dim">
+                  <span className={HUB_TAG_CLASS}>
                     Draft
                   </span>
                 )}
@@ -415,7 +434,7 @@ export function HubPRsTab({
               <div className="flex flex-wrap items-center gap-2 text-push-xs text-push-fg-dim">
                 <span>{detail.author}</span>
                 <span>opened {timeAgo(detail.createdAt)}</span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-[#101621] px-2 py-0.5">
+                <span className={`${HUB_TAG_CLASS} gap-1`}>
                   <GitBranch className="h-3 w-3" />
                   {detail.headRef} → {detail.baseRef}
                 </span>
@@ -423,7 +442,7 @@ export function HubPRsTab({
             </div>
 
             <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-push-edge bg-push-surface/90 p-2">
+              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-2`}>
                 <p className="text-push-2xs uppercase tracking-wide text-push-fg-dim">Changes</p>
                 <p className="mt-1 text-sm font-medium text-push-fg">{detail.changedFiles} files</p>
                 <p className="text-push-xs font-mono">
@@ -431,11 +450,11 @@ export function HubPRsTab({
                   <span className="text-push-status-error">-{detail.deletions}</span>
                 </p>
               </div>
-              <div className="rounded-xl border border-push-edge bg-push-surface/90 p-2">
+              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-2`}>
                 <p className="text-push-2xs uppercase tracking-wide text-push-fg-dim">Commits</p>
                 <p className="mt-1 text-sm font-medium text-push-fg">{detail.commits.length}</p>
               </div>
-              <div className="rounded-xl border border-push-edge bg-push-surface/90 p-2">
+              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-2`}>
                 <p className="text-push-2xs uppercase tracking-wide text-push-fg-dim">Discussion</p>
                 <p className="mt-1 text-sm font-medium text-push-fg">{commentCount}</p>
               </div>
@@ -443,7 +462,7 @@ export function HubPRsTab({
 
             {detail && checksSummary && mergeSummary && (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <div className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                   <div className="flex items-center gap-2">
                     <mergeSummary.Icon className={`h-4 w-4 ${mergeSummary.Icon === Loader2 ? 'animate-spin' : ''}`} />
                     <p className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${mergeSummary.className}`}>
@@ -461,7 +480,7 @@ export function HubPRsTab({
                   </p>
                 </div>
 
-                <div className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                   <div className="flex items-center gap-2">
                     <checksSummary.Icon className={`h-4 w-4 ${checksSummary.Icon === Loader2 ? 'animate-spin' : ''}`} />
                     <p className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${checksSummary.className}`}>
@@ -485,24 +504,26 @@ export function HubPRsTab({
               <button
                 onClick={handleOpenDiff}
                 disabled={!detail.diff}
-                className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-3 text-push-xs text-push-fg-secondary hover:border-push-edge-hover hover:text-push-fg disabled:opacity-50"
+                className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
               >
-                <FileDiff className="h-3.5 w-3.5" />
-                Open in Diff
+                <HubControlGlow />
+                <FileDiff className="relative z-10 h-3.5 w-3.5" />
+                <span className="relative z-10">Open in Diff</span>
               </button>
               {canUseReviewTab && (
                 <button
                   onClick={onOpenReviewTab}
-                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-push-edge bg-push-surface/95 px-3 text-push-xs text-push-fg-secondary hover:border-push-edge-hover hover:text-push-fg"
+                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
                 >
-                  <GitPullRequest className="h-3.5 w-3.5" />
-                  Review in Push
+                  <HubControlGlow />
+                  <GitPullRequest className="relative z-10 h-3.5 w-3.5" />
+                  <span className="relative z-10">Review in Push</span>
                 </button>
               )}
             </div>
 
             {activeBranch && detail.headRef !== activeBranch && (
-              <p className="rounded-xl border border-push-edge bg-push-surface/90 px-3 py-2 text-push-xs text-push-fg-dim">
+              <p className={`px-3 py-2 text-push-xs text-push-fg-dim ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
                 This PR targets <span className="text-push-fg-secondary">{detail.headRef}</span>. Switch to that branch if you want sandbox-backed fixes or branch-scoped review tools.
               </p>
             )}
@@ -512,7 +533,7 @@ export function HubPRsTab({
                 onClick={() => setDetailSection('overview')}
                 className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                   detailSection === 'overview'
-                    ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
+                    ? `${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-push-edge-hover text-push-fg`
                     : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
                 }`}
               >
@@ -522,7 +543,7 @@ export function HubPRsTab({
                 onClick={() => setDetailSection('changes')}
                 className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                   detailSection === 'changes'
-                    ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
+                    ? `${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-push-edge-hover text-push-fg`
                     : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
                 }`}
               >
@@ -532,7 +553,7 @@ export function HubPRsTab({
                 onClick={() => setDetailSection('conversation')}
                 className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
                   detailSection === 'conversation'
-                    ? 'border-push-accent/40 bg-push-accent/10 text-push-accent'
+                    ? `${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-push-edge-hover text-push-fg`
                     : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
                 }`}
               >
@@ -542,7 +563,7 @@ export function HubPRsTab({
 
             {detailSection === 'overview' ? (
               <div className="space-y-3">
-                <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                   <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Description</p>
                   {detail.body ? (
                     <p className="whitespace-pre-wrap text-push-base leading-relaxed text-push-fg-secondary">
@@ -554,7 +575,7 @@ export function HubPRsTab({
                 </section>
 
                 {detail.commits.length > 0 && (
-                  <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                  <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                     <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Recent commits</p>
                     <div className="space-y-2">
                       {detail.commits.slice(0, 6).map((commit) => (
@@ -572,11 +593,11 @@ export function HubPRsTab({
                   </section>
                 )}
 
-                <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                   <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Files</p>
                   <div className="space-y-1.5">
                     {detail.files.map((file) => (
-                      <div key={file.filename} className="flex items-center justify-between gap-2 rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 px-2.5 py-2">
+                      <div key={file.filename} className="flex items-center justify-between gap-2 border-b border-push-edge/70 px-1 py-2 last:border-b-0">
                         <p className="min-w-0 truncate text-push-sm text-push-fg-secondary">{file.filename}</p>
                         <span className="shrink-0 text-push-xs font-mono">
                           <span className="text-push-status-success">+{file.additions}</span>{' '}
@@ -588,7 +609,7 @@ export function HubPRsTab({
                 </section>
               </div>
             ) : detailSection === 'changes' ? (
-              <div className="overflow-hidden rounded-xl border border-push-edge bg-push-surface/90">
+              <div className={`overflow-hidden ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
                 {detail.files.map((file) => {
                   const expanded = expandedFiles.has(file.filename);
                   return (
@@ -613,7 +634,7 @@ export function HubPRsTab({
                       </button>
 
                       {expanded && (
-                        <div className="border-t border-push-edge bg-[#060a10] px-1 py-1">
+                        <div className="border-t border-push-edge bg-black/10 px-1 py-1">
                           {file.patch ? (
                             file.patch.split('\n').map((line, index) => (
                               <DiffLine key={`${file.filename}:${index}`} line={line} index={index} />
@@ -632,14 +653,14 @@ export function HubPRsTab({
             ) : (
               <div className="space-y-3">
                 {detail.reviews.length > 0 && (
-                  <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                  <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                     <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Reviews</p>
                     <div className="space-y-2">
                       {detail.reviews.map((review) => (
-                        <div key={review.id} className="rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 p-2.5">
+                        <div key={review.id} className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-push-sm font-medium text-push-fg-secondary">{review.author}</span>
-                            <span className={`rounded-full px-1.5 py-0.5 text-push-2xs font-medium ${reviewStateBadge(review.state)}`}>
+                            <span className={`${HUB_TAG_CLASS} text-push-2xs font-medium ${reviewStateBadge(review.state)}`}>
                               {review.state.replace('_', ' ')}
                             </span>
                             <span className="text-push-2xs text-push-fg-dim">
@@ -658,11 +679,11 @@ export function HubPRsTab({
                 )}
 
                 {detail.issueComments.length > 0 && (
-                  <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                  <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                     <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Comments</p>
                     <div className="space-y-2">
                       {detail.issueComments.map((comment) => (
-                        <div key={comment.id} className="rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 p-2.5">
+                        <div key={comment.id} className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0">
                           <div className="flex items-center gap-2">
                             <span className="text-push-sm font-medium text-push-fg-secondary">{comment.author}</span>
                             <span className="text-push-2xs text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
@@ -677,13 +698,13 @@ export function HubPRsTab({
                 )}
 
                 {detail.reviewThreads.length > 0 && (
-                  <section className="rounded-xl border border-push-edge bg-push-surface/90 p-3">
+                  <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                     <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Review threads</p>
                     <div className="space-y-2">
                       {detail.reviewThreads.map((thread) => (
-                        <div key={thread.id} className="rounded-lg border border-push-edge/70 bg-[#0a0f17]/80 p-2.5">
+                        <div key={thread.id} className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-[#101621] px-2 py-0.5 text-push-2xs text-push-fg-dim">
+                            <span className={`${HUB_TAG_CLASS} gap-1 text-push-2xs`}>
                               <GitBranch className="h-3 w-3" />
                               {thread.file}
                               {typeof thread.line === 'number' ? ` · L${thread.line}` : ''}
@@ -699,7 +720,7 @@ export function HubPRsTab({
                                   <span className="text-push-sm font-medium text-push-fg-secondary">{comment.author}</span>
                                   <span className="text-push-2xs text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
                                   {typeof comment.line === 'number' && (
-                                    <span className="rounded-full border border-push-edge px-1.5 py-0.5 text-push-2xs text-push-fg-dim">
+                                    <span className={HUB_TAG_CLASS}>
                                       L{comment.line}
                                     </span>
                                   )}
@@ -717,7 +738,7 @@ export function HubPRsTab({
                 )}
 
                 {detail.reviews.length === 0 && detail.issueComments.length === 0 && detail.reviewThreads.length === 0 && (
-                  <div className="rounded-xl border border-dashed border-push-edge px-3 py-4 text-center text-xs text-push-fg-dim">
+                  <div className={`border border-dashed border-push-edge px-3 py-4 text-center text-xs text-push-fg-dim ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
                     No review conversation yet.
                   </div>
                 )}

@@ -1,4 +1,4 @@
-import { useCallback, Suspense, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight, House } from 'lucide-react';
 import { toast } from 'sonner';
 import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
@@ -11,8 +11,12 @@ import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import { MergeFlowSheet } from '@/components/chat/MergeFlowSheet';
-import { LazySettingsSheet as SettingsSheet } from '@/components/LazySettingsSheet';
 import { RepoLauncherSheet } from '@/components/launcher/RepoLauncherSheet';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -164,12 +168,6 @@ interface ChatScreenProps {
   // Chat creation
   handleCreateNewChat: () => void;
 
-  // Settings
-  settingsOpen: boolean;
-  setSettingsOpen: (open: boolean) => void;
-  settingsTab: 'you' | 'workspace' | 'ai';
-  setSettingsTab: (tab: 'you' | 'workspace' | 'ai') => void;
-  handleOpenSettingsFromDrawer: (tab: 'you' | 'workspace' | 'ai') => void;
   handleDisconnect: () => void;
 
   // Sandbox controls
@@ -191,7 +189,6 @@ interface ChatScreenProps {
 
   // Repo selection
   handleSelectRepoFromDrawer: (repo: RepoWithActivity, branch?: string) => void;
-  handleBrowseRepos: () => void;
   setCurrentBranch: (branch: string) => void;
   onSandboxBranchSwitch: (branch: string) => void;
 
@@ -285,11 +282,6 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSandboxMode,
     handleExitSandboxMode,
     handleCreateNewChat,
-    settingsOpen,
-    setSettingsOpen,
-    settingsTab,
-    setSettingsTab,
-    handleOpenSettingsFromDrawer,
     handleDisconnect,
     handleSandboxRestart,
     handleSandboxDownload,
@@ -305,7 +297,6 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSelectBedrockModelFromChat,
     handleSelectVertexModelFromChat,
     handleSelectRepoFromDrawer,
-    handleBrowseRepos,
     setCurrentBranch,
     onSandboxBranchSwitch,
     sandboxState,
@@ -332,6 +323,7 @@ export function ChatScreen(props: ChatScreenProps) {
     ensureSandbox,
   } = props;
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
 
   const {
     currentBranch,
@@ -353,6 +345,26 @@ export function ChatScreen(props: ChatScreenProps) {
   } = branches;
 
   const isConnected = Boolean(token) || isDemo || isSandboxMode;
+  const historyDrawerOffset = 'min(86vw, 24rem)';
+  const workspaceHubOffset = '94vw';
+  const chatShellTransform = isHistoryDrawerOpen
+    ? `translateX(${historyDrawerOffset})`
+    : isWorkspaceHubOpen
+    ? `translateX(-${workspaceHubOffset})`
+    : 'translateX(0px)';
+  const chatShellShadow = isHistoryDrawerOpen
+    ? 'shadow-[-24px_0_56px_rgba(0,0,0,0.42)]'
+    : isWorkspaceHubOpen
+    ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
+    : '';
+  const headerSurfaceClass =
+    'relative overflow-hidden rounded-full border border-push-edge-subtle bg-push-grad-input shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl';
+  const headerInteractiveClass =
+    'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 spring-press';
+  const headerRoundButtonClass =
+    `relative flex h-9 w-9 items-center justify-center text-push-fg-secondary ${headerSurfaceClass} ${headerInteractiveClass}`;
+  const headerPillButtonClass =
+    `pointer-events-auto flex h-9 items-center gap-2 px-3 text-push-fg-secondary ${headerSurfaceClass} ${headerInteractiveClass}`;
 
   // Destructure stable function refs to avoid depending on the whole object
   const { markSnapshotActivity } = snapshots;
@@ -363,6 +375,18 @@ export function ChatScreen(props: ChatScreenProps) {
     return sendMessage(message, attachments);
   }, [markSnapshotActivity, sendMessage]);
 
+  const handleWorkspaceHubOpenChange = useCallback((open: boolean) => {
+    if (open) {
+      setIsHistoryDrawerOpen(false);
+    }
+    setIsWorkspaceHubOpen(open);
+  }, [setIsWorkspaceHubOpen]);
+
+  const openWorkspaceHub = useCallback(() => {
+    setIsHistoryDrawerOpen(false);
+    setIsWorkspaceHubOpen(true);
+  }, [setIsWorkspaceHubOpen]);
+
   const handleFixReviewFinding = useCallback(async (prompt: string) => {
     if (isStreaming) {
       toast.error('Wait for the current response to finish before sending a fix request.');
@@ -370,7 +394,7 @@ export function ChatScreen(props: ChatScreenProps) {
     }
 
     markSnapshotActivity();
-    setIsWorkspaceHubOpen(false);
+    handleWorkspaceHubOpenChange(false);
 
     if (!sandbox.sandboxId) {
       try {
@@ -381,7 +405,7 @@ export function ChatScreen(props: ChatScreenProps) {
     }
 
     await sendMessage(prompt);
-  }, [isStreaming, markSnapshotActivity, sandbox.sandboxId, ensureSandbox, sendMessage, setIsWorkspaceHubOpen]);
+  }, [handleWorkspaceHubOpenChange, isStreaming, markSnapshotActivity, sandbox.sandboxId, ensureSandbox, sendMessage]);
 
   const handleResumeConversationFromLauncher = useCallback((chatId: string) => {
     const conversation = conversations[chatId];
@@ -428,16 +452,8 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSelectBedrockModelFromChat(dep.model);
   }, [catalog.bedrock, handleSelectBedrockModelFromChat]);
 
-  // Settings sheet (lazy-loaded)
-  const settingsSheet = (
-    <Suspense fallback={null}>
-    <SettingsSheet
-      open={settingsOpen}
-      onOpenChange={setSettingsOpen}
-      side="left"
-      settingsTab={settingsTab}
-      setSettingsTab={setSettingsTab}
-      auth={{
+  const settingsAuth = {
+
         isConnected,
         isDemo,
         isAppAuth,
@@ -457,8 +473,10 @@ export function ChatScreen(props: ChatScreenProps) {
         allowlistSecretCmd,
         copyAllowlistCommand,
         onDisconnect: handleDisconnect,
-      }}
-      profile={{
+  };
+
+  const settingsProfile = {
+
         displayNameDraft,
         setDisplayNameDraft,
         onDisplayNameBlur: handleDisplayNameBlur,
@@ -468,8 +486,10 @@ export function ChatScreen(props: ChatScreenProps) {
         profile,
         clearProfile,
         validatedUser,
-      }}
-      ai={{
+  };
+
+  const settingsAI = {
+
         activeProviderLabel: catalog.activeProviderLabel,
         activeBackend: catalog.activeBackend,
         setActiveBackend: catalog.setActiveBackend,
@@ -599,8 +619,10 @@ export function ChatScreen(props: ChatScreenProps) {
         setTavilyKeyInput: catalog.tavily.setKeyInput,
         setTavilyKey: catalog.tavily.setKey,
         clearTavilyKey: catalog.tavily.clearKey,
-      }}
-      workspace={{
+  };
+
+  const settingsWorkspace = {
+
         contextMode,
         updateContextMode,
         sandboxStartMode,
@@ -618,23 +640,30 @@ export function ChatScreen(props: ChatScreenProps) {
         showToolActivity,
         setShowToolActivity: updateShowToolActivity,
         activeRepoFullName: activeRepo?.full_name ?? null,
-      }}
-      data={{
+  };
+
+  const settingsData = {
+
         activeRepo,
         deleteAllChats,
-      }}
-    />
-    </Suspense>
-  );
+  };
 
   return (
-    <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+    <div className="relative flex h-dvh flex-col overflow-hidden bg-[#000] safe-area-top safe-area-bottom">
+      <div
+        className={`relative z-10 flex min-h-0 flex-1 flex-col bg-[#000] transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
+        style={{
+          transform: chatShellTransform,
+        }}
+      >
       {/* Top bar */}
       <header className="relative z-10 flex items-center justify-between px-3 pt-3 pb-2">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <div className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-full border border-push-edge-subtle bg-push-grad-input py-1.5 pl-1.5 pr-3 shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+          <div className={`flex h-9 min-w-0 items-center gap-1 pl-1 pr-3 ${headerSurfaceClass}`}>
             <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
             <RepoChatDrawer
+              open={isHistoryDrawerOpen}
+              onOpenChange={setIsHistoryDrawerOpen}
               repos={repos}
               activeRepo={activeRepo}
               conversations={conversations}
@@ -644,11 +673,6 @@ export function ChatScreen(props: ChatScreenProps) {
               onNewChat={handleCreateNewChat}
               onDeleteChat={deleteChat}
               onRenameChat={renameChat}
-              onOpenSettings={handleOpenSettingsFromDrawer}
-              onBrowseRepos={handleBrowseRepos}
-              onSandboxMode={isSandboxMode ? undefined : handleSandboxMode}
-              isSandboxMode={isSandboxMode}
-              onExitSandboxMode={handleExitSandboxMode}
               currentBranch={activeRepo?.current_branch || activeRepo?.default_branch}
               defaultBranch={activeRepo?.default_branch}
               setCurrentBranch={setCurrentBranch}
@@ -662,8 +686,8 @@ export function ChatScreen(props: ChatScreenProps) {
               }
               onDeleteBranch={handleDeleteBranch}
             />
-            <div className="min-w-0">
-              <p className="truncate text-xs font-semibold text-[#f5f7ff]">
+            <div className="-ml-1.5 flex min-w-0 items-center self-stretch">
+              <p className="-translate-y-[2px] truncate text-sm font-medium leading-none text-[#f5f7ff]">
                 {isSandboxMode ? 'Sandbox' : activeRepo?.name || 'Push'}
               </p>
             </div>
@@ -743,12 +767,13 @@ export function ChatScreen(props: ChatScreenProps) {
                 }
               }}
             >
-              <DropdownMenuTrigger className="pointer-events-auto flex items-center gap-1 rounded-full border border-push-edge-subtle bg-push-grad-input px-2 py-1 shadow-[0_10px_28px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.25)] backdrop-blur-xl transition-all hover:border-push-edge-hover hover:brightness-110">
-                <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
-                <span className="max-w-[100px] truncate text-push-2xs font-medium text-push-fg-muted">
+              <DropdownMenuTrigger className={`${headerPillButtonClass} group`}>
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+                <BranchWaveIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-colors group-hover:text-push-fg" />
+                <span className="relative z-10 max-w-[108px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg">
                   {currentBranch}
                 </span>
-                <ChevronDown className={`h-3 w-3 text-push-fg-dim transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-[transform,color] group-hover:text-push-fg ${branchMenuOpen ? 'rotate-180' : ''}`} />
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="center"
@@ -878,22 +903,27 @@ export function ChatScreen(props: ChatScreenProps) {
         <div className="flex items-center gap-2">
           {!isSandboxMode && (
             <button
-              onClick={() => setIsLauncherOpen(true)}
-              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-push-edge-subtle bg-push-grad-input text-[#8891a1] shadow-[0_10px_26px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] hover:brightness-110 spring-press"
+              onClick={() => {
+                setIsHistoryDrawerOpen(false);
+                setIsLauncherOpen(true);
+              }}
+              className={headerRoundButtonClass}
               aria-label="Open launcher"
               title="Launcher"
             >
-              <House className="h-4 w-4" />
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+              <House className="relative z-10 h-3.5 w-3.5" />
             </button>
           )}
           {(activeRepo || isSandboxMode) && (
             <button
-              onClick={() => setIsWorkspaceHubOpen(true)}
-              className="relative flex h-8 w-8 items-center justify-center rounded-full border border-push-edge-subtle bg-push-grad-input text-[#8891a1] shadow-[0_10px_26px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] hover:brightness-110 spring-press"
+              onClick={() => openWorkspaceHub()}
+              className={headerRoundButtonClass}
               aria-label="Open workspace hub"
               title="Workspace"
             >
-              <PanelRight className="h-4 w-4" />
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+              <PanelRight className="relative z-10 h-3.5 w-3.5" />
               {(scratchpad.hasContent || agentStatus.active) && (
                 <span
                   className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-push-sky ${
@@ -944,7 +974,7 @@ export function ChatScreen(props: ChatScreenProps) {
       )}
 
       {!isSandboxMode && activeRepo && instructions.projectInstructionsChecked && !instructions.projectInstructionsCheckFailed && !instructions.agentsMdContent && (
-        <div className="mx-4 mt-3 rounded-xl border border-push-edge bg-push-grad-card px-3.5 py-3.5 shadow-push-card animate-fade-in">
+        <div className={`mx-4 mt-3 animate-fade-in px-3.5 py-3.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-medium text-push-fg">No AGENTS.md found</p>
@@ -954,16 +984,22 @@ export function ChatScreen(props: ChatScreenProps) {
               <button
                 onClick={instructions.handleCreateAgentsMdWithAI}
                 disabled={instructions.creatingAgentsMdWithAI || isStreaming}
-                className="rounded-lg border border-emerald-600/35 bg-emerald-900/20 px-3 py-1.5 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-900/30 disabled:opacity-50"
+                className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-emerald-300`}
               >
-                {instructions.creatingAgentsMdWithAI ? 'Drafting...' : 'Create with AI'}
+                <HubControlGlow />
+                <span className="relative z-10">
+                  {instructions.creatingAgentsMdWithAI ? 'Drafting...' : 'Create with AI'}
+                </span>
               </button>
               <button
                 onClick={instructions.handleCreateAgentsMd}
                 disabled={instructions.creatingAgentsMd || instructions.creatingAgentsMdWithAI}
-                className="rounded-lg border border-[#243148] bg-[#0b1220] px-3 py-1.5 text-xs font-medium text-[#8ad4ff] transition-colors hover:bg-[#0d1526] disabled:opacity-50"
+                className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-[#8ad4ff]`}
               >
-                {instructions.creatingAgentsMd ? 'Creating...' : 'Create Template'}
+                <HubControlGlow />
+                <span className="relative z-10">
+                  {instructions.creatingAgentsMd ? 'Creating...' : 'Create Template'}
+                </span>
               </button>
             </div>
           </div>
@@ -1045,10 +1081,11 @@ export function ChatScreen(props: ChatScreenProps) {
           onSelectVertexModel: handleSelectVertexModelFromChat,
         }}
       />
+      </div>
 
       <WorkspaceHubSheet
         open={isWorkspaceHubOpen}
-        onOpenChange={setIsWorkspaceHubOpen}
+        onOpenChange={handleWorkspaceHubOpenChange}
         messages={messages}
         agentEvents={agentEvents}
         sandboxId={sandbox.sandboxId}
@@ -1088,6 +1125,11 @@ export function ChatScreen(props: ChatScreenProps) {
         projectInstructions={instructions.agentsMdContent}
         protectMainEnabled={protectMain.isProtected}
         showToolActivity={showToolActivity}
+        settingsAuth={settingsAuth}
+        settingsProfile={settingsProfile}
+        settingsAI={settingsAI}
+        settingsWorkspace={settingsWorkspace}
+        settingsData={settingsData}
         scratchpadContent={scratchpad.content}
         scratchpadMemories={scratchpad.memories}
         activeMemoryId={scratchpad.activeMemoryId}
@@ -1128,9 +1170,6 @@ export function ChatScreen(props: ChatScreenProps) {
 
       {/* Toast notifications */}
       <Toaster position="bottom-center" />
-
-      {/* Settings Sheet */}
-      {settingsSheet}
 
       {/* Branch creation sheet */}
       {activeRepo && (

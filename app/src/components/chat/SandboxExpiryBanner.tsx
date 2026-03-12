@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Clock, Download, RefreshCw } from 'lucide-react';
 import { downloadFromSandbox } from '@/lib/sandbox-client';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 
 const SANDBOX_LIFETIME_MS = 30 * 60 * 1000; // 30 min (Modal container policy)
 const WARNING_THRESHOLD_MS = 5 * 60 * 1000;  // Warn at 5 min remaining
@@ -72,9 +77,9 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
   // Expired
   if (remainingMs <= 0) {
     return (
-      <div className="mx-3 mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <Clock className="h-4 w-4 text-red-400 flex-shrink-0" />
+      <div className="mx-3 mt-2 flex items-center justify-between gap-3 rounded-[18px] border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <Clock className="h-4 w-4 flex-shrink-0 text-red-400" />
           <div className="min-w-0">
             <p className="text-xs font-medium text-red-300">Sandbox expired</p>
             <p className="text-push-2xs text-red-400/70">Workspace contents are no longer available.</p>
@@ -82,10 +87,11 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
         </div>
         <button
           onClick={onRestart}
-          className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20 active:scale-95 flex-shrink-0"
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 gap-1.5 px-3 text-red-300`}
         >
-          <RefreshCw className="h-3 w-3" />
-          New sandbox
+          <HubControlGlow />
+          <RefreshCw className="relative z-10 h-3 w-3" />
+          <span className="relative z-10">New sandbox</span>
         </button>
       </div>
     );
@@ -94,9 +100,9 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
   // Warning zone (5 min remaining)
   if (remainingMs <= WARNING_THRESHOLD_MS) {
     return (
-      <div className="mx-3 mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <Clock className="h-4 w-4 text-amber-400 flex-shrink-0" />
+      <div className={`mx-3 mt-2 flex items-center justify-between gap-3 px-3 py-2 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
+        <div className="flex min-w-0 items-center gap-2">
+          <Clock className="h-4 w-4 flex-shrink-0 text-amber-400" />
           <div className="min-w-0">
             <p className="text-xs font-medium text-amber-300">
               {formatRemaining(remainingMs)} remaining
@@ -109,10 +115,11 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
         <button
           onClick={handleDownload}
           disabled={downloading}
-          className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 active:scale-95 disabled:opacity-50 flex-shrink-0"
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 gap-1.5 px-3 text-emerald-400`}
         >
-          <Download className="h-3 w-3" />
-          {downloading ? 'Downloading...' : 'Download'}
+          <HubControlGlow />
+          <Download className="relative z-10 h-3 w-3" />
+          <span className="relative z-10">{downloading ? 'Downloading...' : 'Download'}</span>
         </button>
       </div>
     );

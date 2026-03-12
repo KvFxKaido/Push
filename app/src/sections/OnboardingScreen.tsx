@@ -1,5 +1,13 @@
 import { useState } from 'react';
 import { Loader2, Github, Key } from 'lucide-react';
+import {
+  HUB_MATERIAL_BUTTON_CLASS,
+  HUB_MATERIAL_INPUT_CLASS,
+  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HUB_PANEL_SURFACE_CLASS,
+  HUB_TAG_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
 import type { GitHubUser } from '@/types';
 
 interface OnboardingScreenProps {
@@ -30,6 +38,11 @@ export function OnboardingScreen({
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
   const [installationId, setInstallationId] = useState('');
 
+  const onboardingButtonClass =
+    `${HUB_MATERIAL_BUTTON_CLASS} relative flex w-full items-center justify-center gap-2 rounded-[18px] px-4 py-3 text-sm text-push-fg-secondary transition-all duration-200 disabled:pointer-events-none disabled:opacity-40`;
+  const onboardingInputClass =
+    `${HUB_MATERIAL_INPUT_CLASS} w-full rounded-[18px] px-4 py-3 text-sm text-push-fg font-mono placeholder:text-[#4f596d]`;
+
   const handleConnect = async () => {
     if (!pat.trim() || loading) return;
     const success = await onConnect(pat.trim());
@@ -47,11 +60,12 @@ export function OnboardingScreen({
   };
 
   return (
-    <div className="flex h-dvh flex-col items-center justify-center bg-[#000] px-6 safe-area-top">
-      <div className="w-full max-w-sm">
+    <div className="relative flex h-dvh flex-col items-center justify-center bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] px-6 safe-area-top">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/[0.03] to-transparent" />
+      <div className="w-full max-w-sm space-y-6">
         {/* Logo + tagline */}
-        <div className="text-center mb-10">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[#1e2634] bg-push-grad-icon shadow-push-lg animate-fade-in-up">
+        <div className="text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center text-push-accent animate-fade-in-up">
             <svg
               width="22"
               height="22"
@@ -75,15 +89,17 @@ export function OnboardingScreen({
           </p>
         </div>
 
-        {/* Auth section */}
-        <div className="space-y-3 stagger-in">
+        <div className={`${HUB_PANEL_SURFACE_CLASS} stagger-in px-4 py-4`}>
+          <div className="space-y-3">
           {validatedUser && !error ? (
-            <div className="flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+            <div className={`flex items-center gap-3 px-4 py-3 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
               <div className="h-2 w-2 rounded-full bg-emerald-500" />
               <span className="text-sm text-emerald-400">
                 Connected as <span className="font-medium">{validatedUser.login}</span>
                 {isAppAuth && (
-                  <span className="ml-1 text-emerald-500/60">(GitHub App)</span>
+                  <span className={`ml-2 align-middle ${HUB_TAG_CLASS} text-emerald-400`}>
+                    GitHub App
+                  </span>
                 )}
               </span>
             </div>
@@ -97,28 +113,32 @@ export function OnboardingScreen({
                 onChange={(e) => setPat(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
                 disabled={loading}
-                className="w-full rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-push-fg font-mono placeholder:text-[#4f596d] outline-none transition-colors duration-200 focus:border-push-sky/50 disabled:opacity-50"
+                className={onboardingInputClass}
                 autoFocus
               />
 
               <button
                 onClick={handleConnect}
                 disabled={!pat.trim() || loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] disabled:opacity-40 disabled:pointer-events-none spring-press"
+                className={onboardingButtonClass}
               >
+                <HubControlGlow />
                 {loading ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Validating…
+                    <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
+                    <span className="relative z-10">Validating…</span>
                   </>
                 ) : (
-                  'Connect with PAT'
+                  <>
+                    <Key className="relative z-10 h-4 w-4" />
+                    <span className="relative z-10">Connect with PAT</span>
+                  </>
                 )}
               </button>
 
               <button
                 onClick={() => setShowPatInput(false)}
-                className="w-full text-xs text-push-fg-dim hover:text-[#8e99ad] transition-colors"
+                className="w-full text-xs text-push-fg-dim transition-colors hover:text-[#8e99ad]"
               >
                 ← Back to GitHub App
               </button>
@@ -139,22 +159,26 @@ export function OnboardingScreen({
                 onChange={(e) => setInstallationId(e.target.value.replace(/\D/g, ''))}
                 onKeyDown={(e) => e.key === 'Enter' && handleConnectInstallation()}
                 disabled={loading}
-                className="w-full rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-push-fg font-mono placeholder:text-[#4f596d] outline-none transition-colors duration-200 focus:border-push-sky/50 disabled:opacity-50"
+                className={onboardingInputClass}
                 autoFocus
               />
 
               <button
                 onClick={handleConnectInstallation}
                 disabled={!installationId.replace(/\D/g, '') || loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] disabled:opacity-40 disabled:pointer-events-none spring-press"
+                className={onboardingButtonClass}
               >
+                <HubControlGlow />
                 {loading ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Connecting…
+                    <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
+                    <span className="relative z-10">Connecting…</span>
                   </>
                 ) : (
-                  'Connect Existing Install'
+                  <>
+                    <Github className="relative z-10 h-4 w-4" />
+                    <span className="relative z-10">Connect Existing Install</span>
+                  </>
                 )}
               </button>
 
@@ -183,17 +207,18 @@ export function OnboardingScreen({
               <button
                 onClick={onConnectOAuth}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#1b80d8] bg-[#0b74e8] px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-[#0a67cf] disabled:opacity-40 disabled:pointer-events-none spring-press"
+                className={onboardingButtonClass}
               >
+                <HubControlGlow />
                 {loading ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Connecting…
+                    <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
+                    <span className="relative z-10">Connecting…</span>
                   </>
                 ) : (
                   <>
-                    <Github className="h-4 w-4" />
-                    Connect with GitHub
+                    <Github className="relative z-10 h-4 w-4" />
+                    <span className="relative z-10">Connect with GitHub</span>
                   </>
                 )}
               </button>
@@ -201,7 +226,8 @@ export function OnboardingScreen({
               <p className="text-xs text-push-fg-dim text-center leading-relaxed">
                 One click for returning users.
                 <br />
-                <span className="text-emerald-400">Recommended</span> — auto-detects your installation.
+                <span className={`${HUB_TAG_CLASS} text-emerald-400`}>Recommended</span>{' '}
+                <span>auto-detects your installation.</span>
               </p>
 
               {error && (
@@ -214,19 +240,21 @@ export function OnboardingScreen({
               <button
                 onClick={onInstallApp}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] spring-press"
+                className={onboardingButtonClass}
               >
-                <Github className="h-4 w-4" />
-                Install GitHub App
+                <HubControlGlow />
+                <Github className="relative z-10 h-4 w-4" />
+                <span className="relative z-10">Install GitHub App</span>
               </button>
 
               {/* PAT fallback */}
               <button
                 onClick={() => setShowPatInput(true)}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-push-edge bg-push-surface px-4 py-3 text-sm text-[#9ca6b9] transition-all duration-200 hover:border-push-edge-hover hover:text-[#e2e8f0] spring-press"
+                className={onboardingButtonClass}
               >
-                <Key className="h-4 w-4" />
-                Use Personal Access Token
+                <HubControlGlow />
+                <Key className="relative z-10 h-4 w-4" />
+                <span className="relative z-10">Use Personal Access Token</span>
               </button>
 
               <button
@@ -237,25 +265,27 @@ export function OnboardingScreen({
               </button>
             </>
           )}
-        </div>
+          </div>
 
-        {/* Divider + sandbox */}
-        <div className="mt-8">
-          <div className="flex items-center gap-3 mb-6">
+          {/* Divider + sandbox */}
+          <div className="mt-8">
+            <div className="mb-6 flex items-center gap-3">
             <div className="flex-1 h-px bg-push-edge-subtle" />
             <span className="text-xs text-[#4f596d]">or</span>
             <div className="flex-1 h-px bg-push-edge-subtle" />
-          </div>
+            </div>
 
-          <button
-            onClick={onSandboxMode}
-            className="w-full rounded-xl border border-emerald-500/25 bg-emerald-900/10 px-4 py-3 text-sm font-medium text-emerald-300 transition-all duration-200 hover:border-emerald-500/45 hover:bg-emerald-800/20 spring-press"
-          >
-            Try it now — no account needed
-          </button>
-          <p className="text-xs text-push-fg-dim text-center mt-2">
-            Ephemeral sandbox. Nothing is saved unless you choose.
-          </p>
+            <button
+              onClick={onSandboxMode}
+              className={`${onboardingButtonClass} text-emerald-300`}
+            >
+              <HubControlGlow />
+              <span className="relative z-10">Try it now — no account needed</span>
+            </button>
+            <p className="mt-2 text-center text-xs text-push-fg-dim">
+              Ephemeral sandbox. Nothing is saved unless you choose.
+            </p>
+          </div>
         </div>
       </div>
     </div>
