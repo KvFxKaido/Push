@@ -981,6 +981,16 @@ export interface ArchiveResult {
   error?: string;
 }
 
+export interface FileDownloadResult {
+  ok: boolean;
+  fileBase64?: string;
+  filename?: string;
+  contentType?: string;
+  sizeBytes?: number;
+  format?: string;
+  error?: string;
+}
+
 export async function downloadFromSandbox(
   sandboxId: string,
   path: string = '/workspace',
@@ -1001,6 +1011,36 @@ export async function downloadFromSandbox(
   return {
     ok: raw.ok,
     archiveBase64: raw.archive_base64,
+    sizeBytes: raw.size_bytes,
+    format: raw.format,
+    error: raw.error,
+  };
+}
+
+export async function downloadFileFromSandbox(
+  sandboxId: string,
+  path: string,
+): Promise<FileDownloadResult> {
+  const raw = await sandboxFetch<{
+    ok: boolean;
+    file_base64?: string;
+    filename?: string;
+    content_type?: string;
+    size_bytes?: number;
+    format?: string;
+    error?: string;
+  }>('download', {
+    ...withOwnerToken({}, sandboxId),
+    sandbox_id: sandboxId,
+    path,
+    format: 'raw',
+  }, ARCHIVE_TIMEOUT_MS);
+
+  return {
+    ok: raw.ok,
+    fileBase64: raw.file_base64,
+    filename: raw.filename,
+    contentType: raw.content_type,
     sizeBytes: raw.size_bytes,
     format: raw.format,
     error: raw.error,

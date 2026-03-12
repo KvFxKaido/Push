@@ -72,6 +72,46 @@ except Exception as exc:
     print(json.dumps({"ok": False, "error": str(exc)}))
 """
 
+DOWNLOAD_TARGET_INFO_SCRIPT = """
+import json
+import os
+import sys
+
+target = sys.argv[1]
+
+if os.path.isfile(target):
+    print(json.dumps({"ok": True, "kind": "file", "name": os.path.basename(target), "parent": os.path.dirname(target) or "/"}))
+elif os.path.isdir(target):
+    print(json.dumps({"ok": True, "kind": "directory", "name": os.path.basename(target.rstrip('/')) or "workspace", "parent": target}))
+else:
+    print(json.dumps({"ok": False, "error": "Path not found"}))
+"""
+
+RAW_FILE_DOWNLOAD_SCRIPT = """
+import base64
+import json
+import mimetypes
+import pathlib
+import sys
+
+target = pathlib.Path(sys.argv[1])
+
+try:
+    payload = target.read_bytes()
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": str(exc)}))
+    sys.exit(0)
+
+content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+print(json.dumps({
+    "ok": True,
+    "filename": target.name,
+    "content_type": content_type,
+    "size_bytes": len(payload),
+    "file_base64": base64.b64encode(payload).decode("ascii"),
+}))
+"""
+
 FILE_VERSION_SCRIPT = """
 import hashlib
 import pathlib
@@ -1399,7 +1439,7 @@ def cleanup(data: dict):
 @app.function(image=endpoint_image)
 @modal.fastapi_endpoint(method="POST")
 def create_archive(data: dict):
-    """Create a base64-encoded tar.gz archive from a workspace path."""
+    """Create a base64-encoded tar.gz archive or raw file download from a workspace path."""
     sandbox_id = data.get("sandbox_id")
     owner_token = data.get("owner_token", "")
     path = str(data.get("path", "/workspace") or "/workspace")
@@ -1407,7 +1447,7 @@ def create_archive(data: dict):
 
     if not sandbox_id:
         return {"ok": False, "error": "Missing sandbox_id"}
-    if archive_format != "tar.gz":
+    if archive_format not in ("tar.gz", "raw"):
         return {"ok": False, "error": "Unsupported format"}
     if not path.startswith("/"):
         return {"ok": False, "error": "Path must be absolute"}
@@ -1423,20 +1463,73 @@ def create_archive(data: dict):
         return {"ok": False, "error": "Unauthorized sandbox access"}
 
     try:
-        p = sb.exec(
-            "tar",
-            "czf",
-            "/tmp/archive.tar.gz",
-            "--exclude=.git",
-            "--exclude=node_modules",
-            "--exclude=__pycache__",
-            "--exclude=.venv",
-            "--exclude=dist",
-            "--exclude=build",
-            "-C",
-            resolved_path,
-            ".",
-        )
+        p = sb.exec("python3", "-c", DOWNLOAD_TARGET_INFO_SCRIPT, resolved_path)
+        p.wait()
+        if p.returncode != 0:
+            stderr = p.stderr.read()
+            return {"ok": False, "error": f"Download inspection failed: {stderr}"}
+
+        target_info_raw = p.stdout.read().strip()
+        try:
+            target_info = json.loads(target_info_raw) if target_info_raw else {"ok": False, "error": "Empty response"}
+        except Exception:
+            target_info = {"ok": False, "error": f"Invalid inspection response: {target_info_raw[:160]}"}
+
+        if not target_info.get("ok"):
+            return {"ok": False, "error": target_info.get("error") or "Path not found"}
+
+        target_kind = target_info.get("kind")
+        target_name = str(target_info.get("name") or "")
+
+        if archive_format == "raw":
+            if target_kind != "file":
+                return {"ok": False, "error": "Raw download is only supported for files"}
+
+            p = sb.exec("python3", "-c", RAW_FILE_DOWNLOAD_SCRIPT, resolved_path)
+            p.wait()
+            if p.returncode != 0:
+                stderr = p.stderr.read()
+                return {"ok": False, "error": f"Raw file download failed: {stderr}"}
+
+            raw_info = p.stdout.read().strip()
+            try:
+                raw_payload = json.loads(raw_info) if raw_info else {"ok": False, "error": "Empty response"}
+            except Exception:
+                raw_payload = {"ok": False, "error": f"Invalid raw download response: {raw_info[:160]}"}
+
+            size_bytes = int(raw_payload.get("size_bytes") or 0)
+            if size_bytes > MAX_ARCHIVE_BYTES:
+                return {"ok": False, "error": f"File exceeds max size of {MAX_ARCHIVE_BYTES} bytes"}
+
+            return raw_payload
+
+        if target_kind == "file":
+            target_parent = str(target_info.get("parent") or "/workspace")
+            tar_args = [
+                "tar",
+                "czf",
+                "/tmp/archive.tar.gz",
+                "-C",
+                target_parent,
+                target_name,
+            ]
+        else:
+            tar_args = [
+                "tar",
+                "czf",
+                "/tmp/archive.tar.gz",
+                "--exclude=.git",
+                "--exclude=node_modules",
+                "--exclude=__pycache__",
+                "--exclude=.venv",
+                "--exclude=dist",
+                "--exclude=build",
+                "-C",
+                resolved_path,
+                ".",
+            ]
+
+        p = sb.exec(*tar_args)
         p.wait()
         if p.returncode != 0:
             stderr = p.stderr.read()

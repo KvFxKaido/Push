@@ -2,13 +2,14 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  Download,
   File,
   Folder,
   Loader2,
   RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { readFromSandbox } from '@/lib/sandbox-client';
+import { downloadFileFromSandbox, readFromSandbox } from '@/lib/sandbox-client';
 import { formatSize } from '@/lib/diff-utils';
 import { getFileEditability } from '@/lib/file-utils';
 import { useFileBrowser } from '@/hooks/useFileBrowser';
@@ -34,6 +35,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
   const [previewContent, setPreviewContent] = useState('');
   const [previewTruncated, setPreviewTruncated] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewDownloading, setPreviewDownloading] = useState(false);
   const previewLanguage = useMemo(
     () => (previewPath ? getFileEditability(previewPath, 0).language : 'text'),
     [previewPath],
@@ -88,6 +90,36 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
     }
   }, [ensureHubSandbox]);
 
+  const handleDownloadPreview = useCallback(async () => {
+    if (!previewPath || previewLoading || previewDownloading) return;
+    const id = await ensureHubSandbox();
+    if (!id) return;
+
+    setPreviewDownloading(true);
+    try {
+      const result = await downloadFileFromSandbox(id, previewPath);
+      if (!result.ok || !result.fileBase64 || !result.filename) {
+        throw new Error(result.error || 'Failed to download file');
+      }
+
+      const raw = atob(result.fileBase64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+
+      const blob = new Blob([bytes], { type: result.contentType || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = result.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to download file');
+    } finally {
+      setPreviewDownloading(false);
+    }
+  }, [ensureHubSandbox, previewDownloading, previewLoading, previewPath]);
+
   if (!sandboxReady) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
@@ -133,6 +165,21 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
               <p className="truncate text-sm font-medium text-push-fg">{previewName}</p>
               <p className="truncate font-mono text-push-2xs text-push-fg-dim">{previewPath}</p>
             </div>
+            <button
+              onClick={() => { void handleDownloadPreview(); }}
+              disabled={previewDownloading || previewLoading}
+              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} shrink-0 px-2.5`}
+              aria-label="Download file"
+              title="Download file"
+            >
+              <HubControlGlow />
+              {previewDownloading ? (
+                <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="relative z-10 h-3.5 w-3.5" />
+              )}
+              <span className="relative z-10">Download</span>
+            </button>
           </div>
 
           <div className="relative min-h-0 flex-1 overflow-hidden p-3">
