@@ -822,7 +822,7 @@ export function SettingsSectionContent({
             />
           </div>
 
-          <details className="space-y-3 rounded-xl border border-push-edge bg-push-surface/40 p-3">
+          <details className="min-w-0 space-y-3 overflow-hidden rounded-xl border border-push-edge bg-push-surface/40 p-3">
             <summary className="cursor-pointer list-none text-sm font-medium text-push-fg">
               Private connectors (experimental)
             </summary>

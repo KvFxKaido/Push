@@ -556,7 +556,7 @@ export function ExperimentalProviderSection({
   };
 
   return (
-    <div className="space-y-2 rounded-xl border border-push-edge bg-push-surface/60 p-3">
+    <div className="min-w-0 space-y-2 overflow-hidden rounded-xl border border-push-edge bg-push-surface/60 p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
@@ -788,7 +788,7 @@ export function VertexProviderSection({
   };
 
   return (
-    <div className="space-y-2 rounded-xl border border-push-edge bg-push-surface/60 p-3">
+    <div className="min-w-0 space-y-2 overflow-hidden rounded-xl border border-push-edge bg-push-surface/60 p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
