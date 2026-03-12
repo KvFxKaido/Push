@@ -1,4 +1,5 @@
-import { Trash2, RefreshCw, Loader2, User, FolderCog, Cpu, Check, Plus } from 'lucide-react';
+import { useState } from 'react';
+import { Trash2, RefreshCw, Loader2, User, FolderCog, Cpu, Check, Plus, ChevronDown } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -12,7 +13,12 @@ import type { PreferredProvider } from '@/lib/providers';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
 import type { RepoOverride } from '@/hooks/useProtectMain';
-import type { ExperimentalDeployment } from '@/lib/experimental-providers';
+import {
+  MAX_EXPERIMENTAL_DEPLOYMENTS,
+  normalizeExperimentalBaseUrl,
+  type ExperimentalDeployment,
+  type ExperimentalProviderType,
+} from '@/lib/experimental-providers';
 import type { VertexConfiguredMode } from '@/hooks/useVertexConfig';
 
 export type SettingsTabKey = 'you' | 'workspace' | 'ai';
@@ -129,12 +135,16 @@ export interface SettingsAIProps {
   azureBaseUrlInput: string;
   setAzureBaseUrlInput: (v: string) => void;
   azureBaseUrlError: string | null;
+  setAzureBaseUrl: (v: string) => void;
+  clearAzureBaseUrl: () => void;
   azureModel: string;
   azureModelInput: string;
   setAzureModelInput: (v: string) => void;
+  setAzureModel: (v: string) => void;
+  clearAzureModel: () => void;
   azureDeployments: ExperimentalDeployment[];
   azureActiveDeploymentId: string | null;
-  saveAzureDeployment: (baseUrl: string, model: string) => boolean;
+  saveAzureDeployment: (model: string) => boolean;
   selectAzureDeployment: (id: string) => void;
   removeAzureDeployment: (id: string) => void;
   clearAzureDeployments: () => void;
@@ -150,12 +160,16 @@ export interface SettingsAIProps {
   bedrockBaseUrlInput: string;
   setBedrockBaseUrlInput: (v: string) => void;
   bedrockBaseUrlError: string | null;
+  setBedrockBaseUrl: (v: string) => void;
+  clearBedrockBaseUrl: () => void;
   bedrockModel: string;
   bedrockModelInput: string;
   setBedrockModelInput: (v: string) => void;
+  setBedrockModel: (v: string) => void;
+  clearBedrockModel: () => void;
   bedrockDeployments: ExperimentalDeployment[];
   bedrockActiveDeploymentId: string | null;
-  saveBedrockDeployment: (baseUrl: string, model: string) => boolean;
+  saveBedrockDeployment: (model: string) => boolean;
   selectBedrockDeployment: (id: string) => void;
   removeBedrockDeployment: (id: string) => void;
   clearBedrockDeployments: () => void;
@@ -267,7 +281,7 @@ interface ProviderKeySectionProps {
 
 interface ExperimentalProviderSectionProps {
   label: string;
-  backendId: PreferredProvider;
+  backendId: ExperimentalProviderType;
   activeBackend: PreferredProvider | null;
   setActiveBackend: (v: PreferredProvider | null) => void;
   clearPreferredProvider: () => void;
@@ -282,17 +296,19 @@ interface ExperimentalProviderSectionProps {
   baseUrlInput: string;
   setBaseUrlInput: (value: string) => void;
   baseUrlError: string | null;
+  setBaseUrl: (value: string) => void;
+  clearBaseUrl: () => void;
   baseUrlPlaceholder: string;
   model: string;
   modelInput: string;
   setModelInput: (value: string) => void;
+  clearModel: () => void;
   deployments: ExperimentalDeployment[];
   activeDeploymentId: string | null;
-  saveDeployment: (baseUrl: string, model: string) => boolean;
+  saveDeployment: (model: string) => boolean;
   selectDeployment: (id: string) => void;
   removeDeployment: (id: string) => void;
   clearDeployments: () => void;
-  deploymentLimitReached: boolean;
   modelPlaceholder: string;
 }
 
@@ -484,35 +500,55 @@ export function ExperimentalProviderSection({
   baseUrlInput,
   setBaseUrlInput,
   baseUrlError,
+  setBaseUrl,
+  clearBaseUrl,
   baseUrlPlaceholder,
   model,
   modelInput,
   setModelInput,
+  clearModel,
   deployments,
   activeDeploymentId,
   saveDeployment,
   selectDeployment,
   removeDeployment,
   clearDeployments,
-  deploymentLimitReached,
   modelPlaceholder,
 }: ExperimentalProviderSectionProps) {
-  const saveCurrentDeployment = () => {
-    const nextBaseUrl = baseUrlInput.trim();
-    const nextModel = modelInput.trim();
-    if (!nextBaseUrl || !nextModel) return;
-    const saved = saveDeployment(nextBaseUrl, nextModel);
-    if (!saved) return;
+  const nextBaseUrl = baseUrlInput.trim();
+  const nextModel = modelInput.trim();
+  const isAtDeploymentLimit = deployments.length >= MAX_EXPERIMENTAL_DEPLOYMENTS;
+  const resolvedBaseUrlValidation = nextBaseUrl
+    ? normalizeExperimentalBaseUrl(backendId, nextBaseUrl)
+    : null;
+  const draftBaseUrlError = nextBaseUrl
+    ? (resolvedBaseUrlValidation && !resolvedBaseUrlValidation.ok ? resolvedBaseUrlValidation.error : null)
+    : baseUrlError;
+  const [isAddDeploymentExpanded, setIsAddDeploymentExpanded] = useState(() => deployments.length === 0);
+  const isAddDeploymentOpen = deployments.length === 0 || isAddDeploymentExpanded;
+  const saveCurrentBaseUrl = () => {
+    if (!nextBaseUrl || draftBaseUrlError) return;
+    setBaseUrl(nextBaseUrl);
     setBaseUrlInput('');
+  };
+
+  const saveCurrentDeployment = () => {
+    if (!nextModel) return;
+    const saved = saveDeployment(nextModel);
+    if (!saved) return;
     setModelInput('');
+    setIsAddDeploymentExpanded(false);
   };
 
   const clearAll = () => {
     clearKey();
+    clearBaseUrl();
+    clearModel();
     clearDeployments();
     setKeyInput('');
     setBaseUrlInput('');
     setModelInput('');
+    setIsAddDeploymentExpanded(true);
     if (activeBackend === backendId) {
       clearPreferredProvider();
       setActiveBackend(null);
@@ -547,6 +583,34 @@ export function ExperimentalProviderSection({
       </div>
 
       <div className="space-y-1.5">
+        <label className="text-push-xs font-medium text-push-fg-secondary">API key</label>
+        <input
+          type="password"
+          value={keyInput}
+          onChange={(e) => setKeyInput(e.target.value)}
+          placeholder={hasKey ? 'Key saved' : `${label} API key`}
+          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+        />
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const next = keyInput.trim();
+              if (!next) return;
+              setKey(next);
+              setKeyInput('');
+            }}
+            disabled={!keyInput.trim()}
+            className="text-push-fg-secondary hover:text-push-fg"
+          >
+            Save key
+          </Button>
+          {hasKey && <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>}
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-3">
           <label className="text-push-xs font-medium text-push-fg-secondary">Deployments</label>
           <span className="text-push-2xs text-push-fg-dim">{deployments.length}/3 saved</span>
@@ -578,9 +642,6 @@ export function ExperimentalProviderSection({
                         </span>
                       )}
                     </div>
-                    <p className="truncate text-push-xs text-push-fg-dim">
-                      {formatExperimentalDeploymentTarget(deployment.baseUrl)}
-                    </p>
                   </button>
                   <button
                     type="button"
@@ -600,56 +661,77 @@ export function ExperimentalProviderSection({
         ) : (
           <p className="text-xs text-push-fg-dim">No saved deployments yet.</p>
         )}
-        {deploymentLimitReached && (
+        {isAtDeploymentLimit && (
           <p className="text-xs text-amber-400">
-            Max 3 saved deployments. Remove one before adding another.
+            Max {MAX_EXPERIMENTAL_DEPLOYMENTS} saved deployments. Remove one before adding another.
           </p>
         )}
       </div>
 
-      <details
-        className="rounded-lg border border-push-edge-subtle bg-push-surface/40 px-3 py-2.5"
-        {...(deployments.length === 0 ? { open: true } : {})}
-      >
-        <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-push-fg-secondary">
-          <Plus className="h-3.5 w-3.5" />
-          Add deployment
-        </summary>
-        <div className="mt-3 space-y-3">
-          <div className="space-y-1.5">
-            <label className="text-push-xs font-medium text-push-fg-secondary">Base URL</label>
-            <input
-              type="url"
-              value={baseUrlInput}
-              onChange={(e) => setBaseUrlInput(e.target.value)}
-              placeholder={baseUrl || baseUrlPlaceholder}
-              className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
-            />
-            {baseUrlError && <p className="text-xs text-amber-400">{baseUrlError}</p>}
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-push-xs font-medium text-push-fg-secondary">Deployment / model</label>
-            <input
-              type="text"
-              value={modelInput}
-              onChange={(e) => setModelInput(e.target.value)}
-              placeholder={model || modelPlaceholder}
-              className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
-            />
-          </div>
-
+      <div className="space-y-1.5">
+        <label className="text-push-xs font-medium text-push-fg-secondary">Base URL</label>
+        <input
+          type="url"
+          value={baseUrlInput}
+          onChange={(e) => setBaseUrlInput(e.target.value)}
+          placeholder={baseUrl || baseUrlPlaceholder}
+          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+        />
+        {draftBaseUrlError && <p className="text-xs text-amber-400">{draftBaseUrlError}</p>}
+        <div className="flex gap-2">
           <Button
             variant="ghost"
             size="sm"
-            onClick={saveCurrentDeployment}
-            disabled={!baseUrlInput.trim() || !modelInput.trim() || Boolean(baseUrlError)}
+            onClick={saveCurrentBaseUrl}
+            disabled={!nextBaseUrl || Boolean(draftBaseUrlError)}
             className="text-push-fg-secondary hover:text-push-fg"
           >
-            Add deployment
+            Save base URL
           </Button>
+          {baseUrl && <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>}
         </div>
-      </details>
+      </div>
+
+      {!isAtDeploymentLimit && (
+        <div className="rounded-lg border border-push-edge-subtle bg-push-surface/40 px-3 py-2.5">
+          <button
+            type="button"
+            onClick={() => setIsAddDeploymentExpanded((prev) => !prev)}
+            className="flex w-full items-center justify-between gap-2 text-left text-sm text-push-fg-secondary"
+            aria-expanded={isAddDeploymentOpen}
+          >
+            <span className="flex items-center gap-2">
+              <Plus className="h-3.5 w-3.5" />
+              Add deployment
+            </span>
+            <ChevronDown className={`h-4 w-4 transition-transform ${isAddDeploymentOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {isAddDeploymentOpen && (
+            <div className="mt-3 space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-push-xs font-medium text-push-fg-secondary">Deployment / model</label>
+                <input
+                  type="text"
+                  value={modelInput}
+                  onChange={(e) => setModelInput(e.target.value)}
+                  placeholder={model || modelPlaceholder}
+                  className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+                />
+              </div>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={saveCurrentDeployment}
+                disabled={!nextModel}
+                className="text-push-fg-secondary hover:text-push-fg"
+              >
+                Add deployment
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
 
       {configured && (
         <div className="rounded-lg border border-push-edge-subtle bg-push-surface/40 px-3 py-2">
@@ -660,34 +742,6 @@ export function ExperimentalProviderSection({
           )}
         </div>
       )}
-
-      <div className="space-y-1.5">
-        <label className="text-push-xs font-medium text-push-fg-secondary">API key</label>
-        <input
-          type="password"
-          value={keyInput}
-          onChange={(e) => setKeyInput(e.target.value)}
-          placeholder={hasKey ? 'Key saved' : `${label} API key`}
-          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
-        />
-        <div className="flex gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              const next = keyInput.trim();
-              if (!next) return;
-              setKey(next);
-              setKeyInput('');
-            }}
-            disabled={!keyInput.trim()}
-            className="text-push-fg-secondary hover:text-push-fg"
-          >
-            Save key
-          </Button>
-          {hasKey && <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>}
-        </div>
-      </div>
     </div>
   );
 }

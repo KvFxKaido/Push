@@ -64,7 +64,7 @@ interface ExperimentalProviderConfig {
   clearModel: () => void;
   deployments: ExperimentalDeployment[];
   activeDeploymentId: string | null;
-  saveDeployment: (baseUrl: string, model: string) => boolean;
+  saveDeployment: (model: string) => boolean;
   selectDeployment: (id: string) => void;
   removeDeployment: (id: string) => void;
   clearDeployments: () => void;

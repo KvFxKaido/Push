@@ -5,8 +5,8 @@ export const MAX_EXPERIMENTAL_DEPLOYMENTS = 3;
 
 export interface ExperimentalDeployment {
   id: string;
-  baseUrl: string;
   model: string;
+  baseUrl?: string;
 }
 
 export interface ExperimentalProviderDescriptor {
@@ -80,12 +80,12 @@ function hashDeploymentKey(value: string): string {
   return Math.abs(hash >>> 0).toString(36);
 }
 
-export function buildExperimentalDeploymentId(baseUrl: string, model: string): string {
-  return `dep_${hashDeploymentKey(`${baseUrl}\n${model}`)}`;
+export function buildExperimentalDeploymentId(model: string): string {
+  return `dep_${hashDeploymentKey(model)}`;
 }
 
-function deploymentFingerprint(baseUrl: string, model: string): string {
-  return `${baseUrl}@@${model}`;
+function deploymentFingerprint(model: string): string {
+  return model;
 }
 
 function stripKnownSuffixes(pathname: string): string {
@@ -207,16 +207,17 @@ export function normalizeExperimentalDeployment(
     model?: string | null;
   },
 ): ExperimentalDeployment | null {
-  const normalizedBaseUrl = normalizeExperimentalBaseUrl(provider, raw.baseUrl);
-  if (!normalizedBaseUrl.ok) return null;
-
   const model = (raw.model || '').trim();
   if (!model) return null;
 
+  const normalizedBaseUrl = raw.baseUrl
+    ? normalizeExperimentalBaseUrl(provider, raw.baseUrl)
+    : null;
+
   return {
-    id: (raw.id || '').trim() || buildExperimentalDeploymentId(normalizedBaseUrl.normalized, model),
-    baseUrl: normalizedBaseUrl.normalized,
+    id: (raw.id || '').trim() || buildExperimentalDeploymentId(model),
     model,
+    ...(normalizedBaseUrl?.ok ? { baseUrl: normalizedBaseUrl.normalized } : {}),
   };
 }
 
@@ -247,7 +248,7 @@ export function parseStoredExperimentalDeployments(
     );
     if (!normalized) continue;
 
-    const fingerprint = deploymentFingerprint(normalized.baseUrl, normalized.model);
+    const fingerprint = deploymentFingerprint(normalized.model);
     if (seen.has(fingerprint)) continue;
     seen.add(fingerprint);
     deployments.push(normalized);

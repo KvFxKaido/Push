@@ -574,16 +574,15 @@ export function ChatScreen(props: ChatScreenProps) {
   const isBedrockModelLocked = isModelLocked && lockedProvider === 'bedrock';
   const isVertexModelLocked = isModelLocked && lockedProvider === 'vertex';
 
-  // Combined deployment selection handlers — update both global config and chat draft
   const handleSelectAzureDeploymentFromChat = useCallback((id: string) => {
-    const dep = catalog.azure.deployments.find(d => d.id === id);
+    const dep = catalog.azure.deployments.find((deployment) => deployment.id === id);
     if (!dep) return;
     catalog.azure.selectDeployment(id);
     handleSelectAzureModelFromChat(dep.model);
   }, [catalog.azure, handleSelectAzureModelFromChat]);
 
   const handleSelectBedrockDeploymentFromChat = useCallback((id: string) => {
-    const dep = catalog.bedrock.deployments.find(d => d.id === id);
+    const dep = catalog.bedrock.deployments.find((deployment) => deployment.id === id);
     if (!dep) return;
     catalog.bedrock.selectDeployment(id);
     handleSelectBedrockModelFromChat(dep.model);
@@ -697,9 +696,13 @@ export function ChatScreen(props: ChatScreenProps) {
         azureBaseUrlInput: catalog.azure.baseUrlInput,
         setAzureBaseUrlInput: catalog.azure.setBaseUrlInput,
         azureBaseUrlError: catalog.azure.baseUrlError,
+        setAzureBaseUrl: catalog.azure.setBaseUrl,
+        clearAzureBaseUrl: catalog.azure.clearBaseUrl,
         azureModel: catalog.azure.model,
         azureModelInput: catalog.azure.modelInput,
         setAzureModelInput: catalog.azure.setModelInput,
+        setAzureModel: catalog.azure.setModel,
+        clearAzureModel: catalog.azure.clearModel,
         azureDeployments: catalog.azure.deployments,
         azureActiveDeploymentId: catalog.azure.activeDeploymentId,
         saveAzureDeployment: catalog.azure.saveDeployment,
@@ -717,9 +720,13 @@ export function ChatScreen(props: ChatScreenProps) {
         bedrockBaseUrlInput: catalog.bedrock.baseUrlInput,
         setBedrockBaseUrlInput: catalog.bedrock.setBaseUrlInput,
         bedrockBaseUrlError: catalog.bedrock.baseUrlError,
+        setBedrockBaseUrl: catalog.bedrock.setBaseUrl,
+        clearBedrockBaseUrl: catalog.bedrock.clearBaseUrl,
         bedrockModel: catalog.bedrock.model,
         bedrockModelInput: catalog.bedrock.modelInput,
         setBedrockModelInput: catalog.bedrock.setModelInput,
+        setBedrockModel: catalog.bedrock.setModel,
+        clearBedrockModel: catalog.bedrock.clearModel,
         bedrockDeployments: catalog.bedrock.deployments,
         bedrockActiveDeploymentId: catalog.bedrock.activeDeploymentId,
         saveBedrockDeployment: catalog.bedrock.saveDeployment,

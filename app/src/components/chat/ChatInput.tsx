@@ -71,16 +71,8 @@ interface ChatInputProps {
   };
 }
 
-/** Show model name, adding an endpoint hint when multiple deployments share the same model. */
-function formatDeploymentLabel(dep: ExperimentalDeployment, all: ExperimentalDeployment[]): string {
-  const hasDuplicate = all.some(d => d.id !== dep.id && d.model === dep.model);
-  if (!hasDuplicate) return dep.model;
-  try {
-    const host = new URL(dep.baseUrl).hostname.split('.')[0];
-    return `${dep.model} (${host})`;
-  } catch {
-    return `${dep.model} (${dep.baseUrl.slice(0, 20)}…)`;
-  }
+function formatDeploymentLabel(dep: ExperimentalDeployment): string {
+  return dep.model;
 }
 
 const ACCEPTED_FILES = 'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
@@ -576,7 +568,7 @@ export function ChatInput({
                             >
                               {providerControls.azureDeployments.map((dep) => (
                                 <option key={dep.id} value={dep.id}>
-                                  {formatDeploymentLabel(dep, providerControls.azureDeployments)}
+                                  {formatDeploymentLabel(dep)}
                                 </option>
                               ))}
                             </select>
@@ -606,7 +598,7 @@ export function ChatInput({
                             >
                               {providerControls.bedrockDeployments.map((dep) => (
                                 <option key={dep.id} value={dep.id}>
-                                  {formatDeploymentLabel(dep, providerControls.bedrockDeployments)}
+                                  {formatDeploymentLabel(dep)}
                                 </option>
                               ))}
                             </select>

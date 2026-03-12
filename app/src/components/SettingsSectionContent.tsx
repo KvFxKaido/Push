@@ -827,7 +827,7 @@ export function SettingsSectionContent({
               Private connectors (experimental)
             </summary>
             <p className="mt-2 text-xs text-push-fg-dim">
-              Direct Azure/Bedrock connectors still live here, and Vertex now uses a Google-native service-account setup so Gemini and Claude can share one provider entry.
+              Direct Azure/Bedrock connectors use one shared API key and base URL per provider, plus saved deployment/model entries on top. Vertex still uses a Google-native service-account setup so Gemini and Claude can share one provider entry.
             </p>
             <div className="mt-3 space-y-3">
               <ExperimentalProviderSection
@@ -847,17 +847,19 @@ export function SettingsSectionContent({
                 baseUrlInput={ai.azureBaseUrlInput}
                 setBaseUrlInput={ai.setAzureBaseUrlInput}
                 baseUrlError={ai.azureBaseUrlError}
+                setBaseUrl={ai.setAzureBaseUrl}
+                clearBaseUrl={ai.clearAzureBaseUrl}
                 baseUrlPlaceholder="https://your-resource.services.ai.azure.com/api/projects/PROJECT"
                 model={ai.azureModel}
                 modelInput={ai.azureModelInput}
                 setModelInput={ai.setAzureModelInput}
+                clearModel={ai.clearAzureModel}
                 deployments={ai.azureDeployments}
                 activeDeploymentId={ai.azureActiveDeploymentId}
                 saveDeployment={ai.saveAzureDeployment}
                 selectDeployment={ai.selectAzureDeployment}
                 removeDeployment={ai.removeAzureDeployment}
                 clearDeployments={ai.clearAzureDeployments}
-                deploymentLimitReached={ai.isAzureDeploymentLimitReached}
                 modelPlaceholder="Deployment or model name"
               />
 
@@ -878,17 +880,19 @@ export function SettingsSectionContent({
                 baseUrlInput={ai.bedrockBaseUrlInput}
                 setBaseUrlInput={ai.setBedrockBaseUrlInput}
                 baseUrlError={ai.bedrockBaseUrlError}
+                setBaseUrl={ai.setBedrockBaseUrl}
+                clearBaseUrl={ai.clearBedrockBaseUrl}
                 baseUrlPlaceholder="https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"
                 model={ai.bedrockModel}
                 modelInput={ai.bedrockModelInput}
                 setModelInput={ai.setBedrockModelInput}
+                clearModel={ai.clearBedrockModel}
                 deployments={ai.bedrockDeployments}
                 activeDeploymentId={ai.bedrockActiveDeploymentId}
                 saveDeployment={ai.saveBedrockDeployment}
                 selectDeployment={ai.selectBedrockDeployment}
                 removeDeployment={ai.removeBedrockDeployment}
                 clearDeployments={ai.clearBedrockDeployments}
-                deploymentLimitReached={ai.isBedrockDeploymentLimitReached}
                 modelPlaceholder="Bedrock model id"
               />
 
