@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
-import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2, PanelRight, House } from 'lucide-react';
+import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
+import { BranchWaveIcon, LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import { Toaster } from '@/components/ui/sonner';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
@@ -912,7 +912,7 @@ export function ChatScreen(props: ChatScreenProps) {
               title="Launcher"
             >
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-              <House className="relative z-10 h-3.5 w-3.5" />
+              <LauncherGridIcon className="relative z-10 h-3.5 w-3.5" />
             </button>
           )}
           {(activeRepo || isSandboxMode) && (
@@ -923,7 +923,7 @@ export function ChatScreen(props: ChatScreenProps) {
               title="Workspace"
             >
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-              <PanelRight className="relative z-10 h-3.5 w-3.5" />
+              <WorkspaceDockIcon className="relative z-10 h-3.5 w-3.5" />
               {(scratchpad.hasContent || agentStatus.active) && (
                 <span
                   className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-push-sky ${

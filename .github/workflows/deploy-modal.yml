@@ -21,25 +21,32 @@ jobs:
       - name: Install Modal CLI
         run: pip install modal
 
+      - name: Validate sandbox app syntax
+        run: python -m py_compile sandbox/app.py
+
       - name: Verify Modal credentials
+        id: modal_creds
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
-            echo "::error::Modal credentials not configured. Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET in GitHub Secrets."
+            echo "::warning::Modal credentials not configured — skipping sandbox deploy."
             echo ""
-            echo "To fix this:"
+            echo "To enable deployment:"
             echo "1. Go to https://modal.com/settings and create a new API token"
             echo "2. In GitHub repo Settings → Secrets → Actions, add:"
             echo "   - MODAL_TOKEN_ID: your token ID"
             echo "   - MODAL_TOKEN_SECRET: your token secret"
-            exit 1
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
           echo "✓ Modal credentials are configured"
 
       - name: Deploy to Modal
         id: deploy
+        if: steps.modal_creds.outputs.configured == 'true'
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -61,7 +68,7 @@ jobs:
           fi
 
       - name: Remind about Cloudflare secret
-        if: success()
+        if: steps.modal_creds.outputs.configured == 'true' && success()
         run: |
           echo ""
           echo "=========================================="

@@ -99,3 +99,103 @@ export function LivePipelineIcon({ strokeWidth = 2, ...props }: IconProps) {
     </svg>
   );
 }
+
+export function LauncherGridIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      <path d="M6 6.5h1" />
+    </svg>
+  );
+}
+
+export function WorkspaceDockIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M14 3v18" />
+      <rect x="16" y="5" width="3" height="6" rx="1" />
+      <rect x="16" y="13" width="3" height="6" rx="1" />
+      <path d="M7 7h3" />
+    </svg>
+  );
+}
+
+export function NotebookPadIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <line x1="8" y1="3" x2="8" y2="21" />
+      <line x1="12" y1="10" x2="16" y2="10" />
+      <line x1="12" y1="14" x2="15" y2="14" />
+    </svg>
+  );
+}
+
+export function ReviewLensIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="10" cy="10" r="7" />
+      <path d="M14.95 14.95L21 21" />
+      <path d="M7 10.5l2 2 4-4" />
+      <path d="M17 5l2-2" />
+      <path d="M20 8l2-2" />
+    </svg>
+  );
+}
+
+export function SettingsCellsIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="3" y="3" width="18" height="4" rx="1" />
+      <rect x="3" y="10" width="18" height="4" rx="1" />
+      <rect x="3" y="17" width="18" height="4" rx="1" />
+      <line x1="7" y1="2" x2="7" y2="22" />
+      <circle cx="7" cy="12" r="2.5" />
+      <path d="M11 5h6M11 12h4M11 19h7" />
+    </svg>
+  );
+}

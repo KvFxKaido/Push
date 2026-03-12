@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from 'react';
 import {
   Check,
   ChevronDown,
-  Eye,
   FileDiff,
   Files,
   GitBranch,
@@ -12,9 +11,7 @@ import {
   Loader2,
   Plus,
   RefreshCw,
-  Settings,
   Sparkles,
-  StickyNote,
   Terminal,
   TerminalSquare,
   Trash2,
@@ -39,6 +36,7 @@ import {
   HUB_TAG_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
+import { NotebookPadIcon, ReviewLensIcon, SettingsCellsIcon } from '@/components/icons/push-custom-icons';
 import { HubScratchpadTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab, HubSettingsTab } from './hub-tabs';
 import type {
   SettingsAIProps,
@@ -136,14 +134,14 @@ interface WorkspaceHubSheetProps {
 // Constants
 // ---------------------------------------------------------------------------
 
-const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: typeof Files }> = [
-  { key: 'scratchpad', label: 'Pad', icon: StickyNote },
+const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: ComponentType<SVGProps<SVGSVGElement>> }> = [
+  { key: 'scratchpad', label: 'Pad', icon: NotebookPadIcon },
   { key: 'console', label: 'Console', icon: TerminalSquare },
   { key: 'files', label: 'Files', icon: Files },
   { key: 'diff', label: 'Diff', icon: FileDiff },
   { key: 'prs', label: 'PRs', icon: GitPullRequest },
-  { key: 'review', label: 'Review', icon: Eye },
-  { key: 'settings', label: 'Settings', icon: Settings },
+  { key: 'review', label: 'Review', icon: ReviewLensIcon },
+  { key: 'settings', label: 'Settings', icon: SettingsCellsIcon },
 ];
 
 const TABS_WITHOUT_CONSOLE = TABS_WITH_CONSOLE.filter((tab) => tab.key !== 'console');
