@@ -25,6 +25,7 @@ import {
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import { RepoLauncherPanel } from '@/components/launcher/RepoLauncherPanel';
+import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { ActiveRepo, Conversation, GitHubUser, RepoWithActivity } from '@/types';
 
 interface HomeScreenProps {
@@ -33,6 +34,9 @@ interface HomeScreenProps {
   error?: string | null;
   conversations: Record<string, Conversation>;
   activeRepo: ActiveRepo | null;
+  resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
+  setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
+  clearRepoAppearance: (repoFullName: string) => void;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
   onDisconnect: () => void;
@@ -46,6 +50,9 @@ export function HomeScreen({
   error,
   conversations,
   activeRepo,
+  resolveRepoAppearance,
+  setRepoAppearance,
+  clearRepoAppearance,
   onSelectRepo,
   onResumeConversation,
   onDisconnect,
@@ -138,6 +145,9 @@ export function HomeScreen({
             error={error}
             conversations={conversations}
             activeRepo={activeRepo}
+            resolveRepoAppearance={resolveRepoAppearance}
+            setRepoAppearance={setRepoAppearance}
+            clearRepoAppearance={clearRepoAppearance}
             onSelectRepo={onSelectRepo}
             onResumeConversation={onResumeConversation}
             onSandboxMode={onSandboxMode}

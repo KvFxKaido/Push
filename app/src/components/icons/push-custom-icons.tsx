@@ -286,3 +286,106 @@ export function RepoLedgerIcon({ strokeWidth = 2, ...props }: IconProps) {
     </svg>
   );
 }
+
+export function RobotBotIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M12 3.5v2" />
+      <rect x="5" y="6" width="14" height="10" rx="3" />
+      <circle cx="9.5" cy="11" r="1" fill="currentColor" stroke="none" />
+      <circle cx="14.5" cy="11" r="1" fill="currentColor" stroke="none" />
+      <path d="M9 14.5h6" />
+      <path d="M3.5 9.5v3" />
+      <path d="M20.5 9.5v3" />
+      <path d="M8 19v-3" />
+      <path d="M16 19v-3" />
+    </svg>
+  );
+}
+
+export function MobileSlabIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="7" y="3" width="10" height="18" rx="2.5" />
+      <path d="M10.5 6h3" />
+      <path d="M11 18h2" />
+      <path d="M6 8h1" />
+    </svg>
+  );
+}
+
+export function TerminalCrateIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M4 8h16" />
+      <path d="M8 10l2 2-2 2" />
+      <path d="M12 14h4" />
+    </svg>
+  );
+}
+
+export function ApiNodesIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="7" cy="6" r="2" />
+      <circle cx="17" cy="8" r="2" />
+      <circle cx="7" cy="18" r="2" />
+      <circle cx="17" cy="16" r="2" />
+      <path d="M8.5 7.2l6 1.6" />
+      <path d="M8.5 16.8l6-1.6" />
+      <path d="M7 8v8" />
+    </svg>
+  );
+}
+
+export function DocsLeafIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M8 3.5h7l4 4V19a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5.5a2 2 0 0 1 2-2Z" />
+      <path d="M15 3.5V8h4" />
+      <path d="M10 13c0-2.5 2.5-4 5-4-.2 2.8-1.7 5.5-5 5.5-1.2 0-2.1-.3-3-.9" />
+      <path d="M10 18c1-1.5 2.2-2.6 4-3.5" />
+    </svg>
+  );
+}

@@ -10,6 +10,7 @@ import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { useProtectMain } from '@/hooks/useProtectMain';
+import { useRepoAppearance } from '@/hooks/useRepoAppearance';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { useSnapshotManager } from '@/hooks/useSnapshotManager';
 import { useBranchManager } from '@/hooks/useBranchManager';
@@ -58,6 +59,11 @@ function App() {
   const [isSandboxMode, setIsSandboxMode] = useState(false);
   const sandbox = useSandbox(isSandboxMode ? '' : (activeRepo?.full_name ?? null));
   const catalog = useModelCatalog();
+  const {
+    resolveRepoAppearance,
+    setRepoAppearance,
+    clearRepoAppearance,
+  } = useRepoAppearance();
 
   const defaultChatModels = useMemo<Record<PreferredProvider, string>>(() => ({
     ollama: catalog.ollama.model,
@@ -690,6 +696,9 @@ function App() {
             error={reposError}
             conversations={conversations}
             activeRepo={activeRepo}
+            resolveRepoAppearance={resolveRepoAppearance}
+            setRepoAppearance={setRepoAppearance}
+            clearRepoAppearance={clearRepoAppearance}
             onSelectRepo={handleSelectRepo}
             onResumeConversation={handleResumeConversationFromHome}
             onDisconnect={handleDisconnect}
@@ -724,6 +733,9 @@ function App() {
     <ChatScreen
       activeRepo={activeRepo}
       isSandboxMode={isSandboxMode}
+      resolveRepoAppearance={resolveRepoAppearance}
+      setRepoAppearance={setRepoAppearance}
+      clearRepoAppearance={clearRepoAppearance}
       sandbox={sandbox}
       messages={messages}
       sendMessage={sendMessageWithChatDraft}

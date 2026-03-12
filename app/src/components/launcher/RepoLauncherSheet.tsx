@@ -1,5 +1,6 @@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { RepoLauncherPanel, type LauncherSandboxSession } from './RepoLauncherPanel';
+import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { ActiveRepo, Conversation, RepoWithActivity } from '@/types';
 
 interface RepoLauncherSheetProps {
@@ -10,6 +11,9 @@ interface RepoLauncherSheetProps {
   error?: string | null;
   conversations: Record<string, Conversation>;
   activeRepo: ActiveRepo | null;
+  resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
+  setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
+  clearRepoAppearance: (repoFullName: string) => void;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
   sandboxSession?: LauncherSandboxSession | null;
@@ -25,6 +29,9 @@ export function RepoLauncherSheet({
   error,
   conversations,
   activeRepo,
+  resolveRepoAppearance,
+  setRepoAppearance,
+  clearRepoAppearance,
   onSelectRepo,
   onResumeConversation,
   sandboxSession,
@@ -51,6 +58,9 @@ export function RepoLauncherSheet({
             error={error}
             conversations={conversations}
             activeRepo={activeRepo}
+            resolveRepoAppearance={resolveRepoAppearance}
+            setRepoAppearance={setRepoAppearance}
+            clearRepoAppearance={clearRepoAppearance}
             onSelectRepo={(repo, branch) => {
               onSelectRepo(repo, branch);
               onOpenChange(false);

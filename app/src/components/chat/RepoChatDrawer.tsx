@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Menu,
+  Palette,
   Pencil,
   Plus,
   Search,
@@ -12,7 +13,9 @@ import {
   Loader2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { BranchWaveIcon, HistoryStackIcon, RepoLedgerIcon } from '@/components/icons/push-custom-icons';
+import { BranchWaveIcon, HistoryStackIcon } from '@/components/icons/push-custom-icons';
+import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
+import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +24,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HubControlGlow,
+} from '@/components/chat/hub-styles';
+import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { ActiveRepo, Conversation, RepoWithActivity } from '@/types';
 
 interface RepoChatDrawerProps {
@@ -30,6 +38,9 @@ interface RepoChatDrawerProps {
   activeRepo: ActiveRepo | null;
   conversations: Record<string, Conversation>;
   activeChatId: string;
+  resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
+  setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
+  clearRepoAppearance: (repoFullName: string) => void;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onSwitchChat: (id: string) => void;
   onNewChat: () => void;
@@ -63,6 +74,9 @@ export function RepoChatDrawer({
   activeRepo,
   conversations,
   activeChatId,
+  resolveRepoAppearance,
+  setRepoAppearance,
+  clearRepoAppearance,
   onSelectRepo,
   onSwitchChat,
   onNewChat,
@@ -84,6 +98,7 @@ export function RepoChatDrawer({
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [pendingDeleteBranch, setPendingDeleteBranch] = useState<string | null>(null);
   const [deletingBranch, setDeletingBranch] = useState<string | null>(null);
+  const [appearanceRepo, setAppearanceRepoState] = useState<RepoWithActivity | null>(null);
 
   useEffect(() => {
     if (open) return;
@@ -93,6 +108,7 @@ export function RepoChatDrawer({
     setBranchMenuOpen(false);
     setPendingDeleteBranch(null);
     setDeletingBranch(null);
+    setAppearanceRepoState(null);
   }, [open]);
 
   const drawerBranchOptions = useMemo(() => {
@@ -356,26 +372,42 @@ export function RepoChatDrawer({
                   const isActiveRepo = activeRepo?.id === repo.id;
                   return (
                     <div key={repo.id} className={DRAWER_SECTION_SURFACE_CLASS}>
-                      <button
-                        onClick={() => toggleRepo(repo.full_name, isExpanded)}
-                        className={`flex w-full items-center gap-2 rounded-xl px-1 py-2.5 text-left transition-colors ${
-                          isActiveRepo ? 'bg-push-surface-raised/55' : 'hover:bg-push-surface-hover/40'
-                        }`}
-                      >
-                        <ChevronRight
-                          className={`h-3.5 w-3.5 shrink-0 text-push-fg-muted transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-                        />
-                        <RepoLedgerIcon className={`h-3.5 w-3.5 shrink-0 ${isActiveRepo ? 'text-push-link' : 'text-push-fg-muted'}`} />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-push-base font-medium text-push-fg">{repo.name}</p>
-                          <p className="text-push-xs text-push-fg-muted">{chats.length} chat{chats.length !== 1 ? 's' : ''}</p>
-                        </div>
-                        {isActiveRepo && (
-                          <span className="text-push-2xs font-medium text-push-link">
-                            active
-                          </span>
-                        )}
-                      </button>
+                      <div className="relative">
+                        <button
+                          onClick={() => toggleRepo(repo.full_name, isExpanded)}
+                          className={`flex w-full items-center gap-2 rounded-xl px-1 py-2.5 pr-10 text-left transition-colors ${
+                            isActiveRepo ? 'bg-push-surface-raised/55' : 'hover:bg-push-surface-hover/40'
+                          }`}
+                        >
+                          <ChevronRight
+                            className={`h-3.5 w-3.5 shrink-0 text-push-fg-muted transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                          />
+                          <RepoAppearanceBadge
+                            appearance={resolveRepoAppearance(repo.full_name)}
+                            className="h-6 w-6 shrink-0 rounded-md"
+                            iconClassName="h-3.5 w-3.5"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-push-base font-medium text-push-fg">{repo.name}</p>
+                            <p className="text-push-xs text-push-fg-muted">{chats.length} chat{chats.length !== 1 ? 's' : ''}</p>
+                          </div>
+                          {isActiveRepo && (
+                            <span className="text-push-2xs font-medium text-push-link">
+                              active
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAppearanceRepoState(repo)}
+                          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} absolute right-0 top-1/2 h-8 w-8 -translate-y-1/2 justify-center px-0 text-push-fg-secondary`}
+                          aria-label={`Customize ${repo.name}`}
+                          title="Customize repo"
+                        >
+                          <HubControlGlow />
+                          <Palette className="relative z-10 h-3.5 w-3.5" />
+                        </button>
+                      </div>
 
                       {isExpanded && (
                         <div className="space-y-1 px-0 pb-0">
@@ -601,8 +633,21 @@ export function RepoChatDrawer({
             </div>
           </div>
         </div>
-      </SheetContent>
+        </SheetContent>
       </Sheet>
-    </>
-  );
+
+      {appearanceRepo && (
+        <RepoAppearanceSheet
+          open={Boolean(appearanceRepo)}
+          onOpenChange={(open) => {
+            if (!open) setAppearanceRepoState(null);
+          }}
+          repoName={appearanceRepo.name}
+          appearance={resolveRepoAppearance(appearanceRepo.full_name)}
+          onSave={(appearance) => setRepoAppearance(appearanceRepo.full_name, appearance)}
+          onReset={() => clearRepoAppearance(appearanceRepo.full_name)}
+        />
+      )}
+      </>
+    );
 }

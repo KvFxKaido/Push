@@ -12,3 +12,8 @@ commit-pulse | minimal git commit node with a trailing pulse ring and a short fo
 history-stack | stacked conversation sheets with a subtle backward fold, suggesting chat history and revisiting prior context
 pr-thread | pull request lane with two clean comment ticks feeding into one review thread, suggesting branch review conversation
 repo-ledger | a bound project ledger with a left spine and short indexed lines, suggesting a repository as a coding notebook volume
+robot-bot | a calm rounded robot face with tiny antenna and simple limbs, suggesting an AI-heavy or automation repo
+mobile-slab | a slim phone silhouette with a tiny speaker notch, suggesting a mobile app repo
+terminal-crate | a compact terminal panel with prompt chevron and command line, suggesting infrastructure or tooling repos
+api-nodes | four calm network nodes linked in a clean graph, suggesting backend or API repos
+docs-leaf | a notebook page with a small leaf-like curl, suggesting docs, content, or knowledge repos

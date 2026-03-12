@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Lock, Search, Loader2 } from 'lucide-react';
+import { Lock, Palette, Search, Loader2 } from 'lucide-react';
 import {
   BranchWaveIcon,
   CommitPulseIcon,
@@ -8,6 +8,8 @@ import {
   PushOrbitIcon,
   SandboxCubeIcon,
 } from '@/components/icons/push-custom-icons';
+import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
+import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +29,7 @@ import {
 import { fetchRepoBranches } from '@/lib/github-tools';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import type { SandboxStatus } from '@/hooks/useSandbox';
+import type { RepoAppearance } from '@/lib/repo-appearance';
 import { timeAgo, timeAgoCompact } from '@/lib/utils';
 import type { ActiveRepo, Conversation, RepoWithActivity } from '@/types';
 
@@ -92,6 +95,9 @@ interface RepoLauncherPanelProps {
   error?: string | null;
   conversations: Record<string, Conversation>;
   activeRepo: ActiveRepo | null;
+  resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
+  setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
+  clearRepoAppearance: (repoFullName: string) => void;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
   sandboxSession?: LauncherSandboxSession | null;
@@ -105,6 +111,9 @@ export function RepoLauncherPanel({
   error,
   conversations,
   activeRepo,
+  resolveRepoAppearance,
+  setRepoAppearance,
+  clearRepoAppearance,
   onSelectRepo,
   onResumeConversation,
   sandboxSession,
@@ -119,6 +128,7 @@ export function RepoLauncherPanel({
   const [repoBranchErrorByRepo, setRepoBranchErrorByRepo] = useState<Record<string, string | null>>({});
   const [branchCreateRepo, setBranchCreateRepo] = useState<RepoWithActivity | null>(null);
   const [sandboxRemainingMs, setSandboxRemainingMs] = useState<number | null>(null);
+  const [appearanceRepo, setAppearanceRepoState] = useState<RepoWithActivity | null>(null);
 
   useEffect(() => {
     if (!sandboxSession?.createdAt || sandboxSession.status !== 'ready') {
@@ -283,66 +293,84 @@ export function RepoLauncherPanel({
         key={repo.id}
         className={LAUNCHER_CARD_CLASS}
       >
-        <button
-          onClick={() => onSelectRepo(repo)}
-          className="flex w-full flex-col gap-1.5 text-left"
-        >
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-push-fg">
-              {repo.name}
-            </span>
-            {repo.private && (
-              <Lock className="h-3 w-3 shrink-0 text-[#52525b]" />
-            )}
-            {repo.activity.has_new_activity && (
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-push-accent" />
-            )}
-          </div>
+        <div className="relative">
+          <button
+            onClick={() => onSelectRepo(repo)}
+            className="flex w-full flex-col gap-1.5 pr-10 text-left"
+          >
+            <div className="flex items-center gap-2">
+              <RepoAppearanceBadge
+                appearance={resolveRepoAppearance(repo.full_name)}
+                className="h-6 w-6 shrink-0 rounded-md"
+                iconClassName="h-3.5 w-3.5"
+              />
+              <span className="truncate text-sm font-medium text-push-fg">
+                {repo.name}
+              </span>
+              {repo.private && (
+                <Lock className="h-3 w-3 shrink-0 text-[#52525b]" />
+              )}
+              {repo.activity.has_new_activity && (
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-push-accent" />
+              )}
+            </div>
 
-          {activeBranch && activeBranch !== repo.default_branch && (
-            <span className={`${HUB_TAG_CLASS} w-fit gap-1 text-push-xs text-[#9db8df]`}>
-              <BranchWaveIcon className="h-3 w-3" />
-              <span className="max-w-[160px] truncate">{activeBranch}</span>
-            </span>
-          )}
+            {activeBranch && activeBranch !== repo.default_branch && (
+              <span className={`${HUB_TAG_CLASS} w-fit gap-1 text-push-xs text-[#9db8df]`}>
+                <BranchWaveIcon className="h-3 w-3" />
+                <span className="max-w-[160px] truncate">{activeBranch}</span>
+              </span>
+            )}
 
-          {repo.description && (
-            <p className="line-clamp-1 text-xs text-[#788396]">
-              {repo.description}
-            </p>
-          )}
+            {repo.description && (
+              <p className="line-clamp-1 text-xs text-[#788396]">
+                {repo.description}
+              </p>
+            )}
 
-          <div className="flex items-center gap-3 text-xs text-push-fg-dim">
-            {repo.language && (
-              <span className="flex items-center gap-1">
-                <span
-                  className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: LANG_COLORS[repo.language] || '#8b8b8b' }}
-                />
-                {repo.language}
-              </span>
-            )}
-            {repo.activity.open_prs > 0 && (
-              <span className={`${HUB_TAG_CLASS} gap-1 text-[#58a6ff]`}>
-                <PRThreadIcon className="h-3 w-3" />
-                {repo.activity.open_prs}
-              </span>
-            )}
-            {repo.activity.recent_commits > 0 && (
-              <span className="flex items-center gap-1">
-                <CommitPulseIcon className="h-3 w-3" />
-                {repo.activity.recent_commits}
-              </span>
-            )}
-            {chatMeta && (
-              <span className={`${HUB_TAG_CLASS} gap-1 text-[#84bfff]`}>
-                <HistoryStackIcon className="h-3 w-3" />
-                {chatMeta.chatCount}
-              </span>
-            )}
-            <span>{timeAgo(repo.pushed_at)}</span>
-          </div>
-        </button>
+            <div className="flex items-center gap-3 text-xs text-push-fg-dim">
+              {repo.language && (
+                <span className="flex items-center gap-1">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: LANG_COLORS[repo.language] || '#8b8b8b' }}
+                  />
+                  {repo.language}
+                </span>
+              )}
+              {repo.activity.open_prs > 0 && (
+                <span className={`${HUB_TAG_CLASS} gap-1 text-[#58a6ff]`}>
+                  <PRThreadIcon className="h-3 w-3" />
+                  {repo.activity.open_prs}
+                </span>
+              )}
+              {repo.activity.recent_commits > 0 && (
+                <span className="flex items-center gap-1">
+                  <CommitPulseIcon className="h-3 w-3" />
+                  {repo.activity.recent_commits}
+                </span>
+              )}
+              {chatMeta && (
+                <span className={`${HUB_TAG_CLASS} gap-1 text-[#84bfff]`}>
+                  <HistoryStackIcon className="h-3 w-3" />
+                  {chatMeta.chatCount}
+                </span>
+              )}
+              <span>{timeAgo(repo.pushed_at)}</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setAppearanceRepoState(repo)}
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} absolute right-0 top-0 h-8 w-8 justify-center px-0 text-push-fg-secondary`}
+            aria-label={`Customize ${repo.name}`}
+            title="Customize repo"
+          >
+            <HubControlGlow />
+            <Palette className="relative z-10 h-3.5 w-3.5" />
+          </button>
+        </div>
 
         <div className="mt-2 flex items-center gap-2">
           <button
@@ -448,6 +476,7 @@ export function RepoLauncherPanel({
     repoBranchLoadingByRepo,
     repoBranchesByRepo,
     repoChatMeta,
+    resolveRepoAppearance,
   ]);
 
   return (
@@ -580,6 +609,19 @@ export function RepoLauncherPanel({
             if (!branchCreateRepo) return;
             onSelectRepo(branchCreateRepo, branch);
           }}
+        />
+      )}
+
+      {appearanceRepo && (
+        <RepoAppearanceSheet
+          open={Boolean(appearanceRepo)}
+          onOpenChange={(open) => {
+            if (!open) setAppearanceRepoState(null);
+          }}
+          repoName={appearanceRepo.name}
+          appearance={resolveRepoAppearance(appearanceRepo.full_name)}
+          onSave={(appearance) => setRepoAppearance(appearanceRepo.full_name, appearance)}
+          onReset={() => clearRepoAppearance(appearanceRepo.full_name)}
         />
       )}
     </>

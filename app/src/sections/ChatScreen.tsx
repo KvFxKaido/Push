@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Loader2, Download, Save, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
+import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
 import { Toaster } from '@/components/ui/sonner';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
@@ -18,6 +19,7 @@ import {
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import type { PreferredProvider } from '@/lib/providers';
+import { getRepoAppearanceColorHex, hexToRgba, type RepoAppearance } from '@/lib/repo-appearance';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import { formatSnapshotAge, isSnapshotStale, snapshotStagePercent } from '@/hooks/useSnapshotManager';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
@@ -53,6 +55,9 @@ interface ChatScreenProps {
   // Repo & sandbox
   activeRepo: ActiveRepo | null;
   isSandboxMode: boolean;
+  resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
+  setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
+  clearRepoAppearance: (repoFullName: string) => void;
   sandbox: {
     sandboxId: string | null;
     status: SandboxStatus;
@@ -223,6 +228,9 @@ export function ChatScreen(props: ChatScreenProps) {
   const {
     activeRepo,
     isSandboxMode,
+    resolveRepoAppearance,
+    setRepoAppearance,
+    clearRepoAppearance,
     sandbox,
     messages,
     sendMessage,
@@ -316,6 +324,42 @@ export function ChatScreen(props: ChatScreenProps) {
   } = props;
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
+  const activeRepoAppearance = activeRepo && !isSandboxMode
+    ? resolveRepoAppearance(activeRepo.full_name)
+    : null;
+  const activeRepoAccentHex = activeRepoAppearance
+    ? getRepoAppearanceColorHex(activeRepoAppearance.color)
+    : null;
+
+  useEffect(() => {
+    const root = document.documentElement;
+
+    if (!activeRepoAccentHex) {
+      root.removeAttribute('data-repo-theme');
+      root.style.removeProperty('--repo-theme-accent');
+      root.style.removeProperty('--repo-theme-accent-soft');
+      root.style.removeProperty('--repo-theme-accent-ultra-soft');
+      root.style.removeProperty('--repo-theme-accent-border');
+      root.style.removeProperty('--repo-theme-accent-glow');
+      return;
+    }
+
+    root.setAttribute('data-repo-theme', 'active');
+    root.style.setProperty('--repo-theme-accent', activeRepoAccentHex);
+    root.style.setProperty('--repo-theme-accent-soft', hexToRgba(activeRepoAccentHex, 0.10));
+    root.style.setProperty('--repo-theme-accent-ultra-soft', hexToRgba(activeRepoAccentHex, 0.06));
+    root.style.setProperty('--repo-theme-accent-border', hexToRgba(activeRepoAccentHex, 0.38));
+    root.style.setProperty('--repo-theme-accent-glow', hexToRgba(activeRepoAccentHex, 0.45));
+
+    return () => {
+      root.removeAttribute('data-repo-theme');
+      root.style.removeProperty('--repo-theme-accent');
+      root.style.removeProperty('--repo-theme-accent-soft');
+      root.style.removeProperty('--repo-theme-accent-ultra-soft');
+      root.style.removeProperty('--repo-theme-accent-border');
+      root.style.removeProperty('--repo-theme-accent-glow');
+    };
+  }, [activeRepoAccentHex]);
 
   const {
     currentBranch,
@@ -660,6 +704,9 @@ export function ChatScreen(props: ChatScreenProps) {
               activeRepo={activeRepo}
               conversations={conversations}
               activeChatId={activeChatId ?? ''}
+              resolveRepoAppearance={resolveRepoAppearance}
+              setRepoAppearance={setRepoAppearance}
+              clearRepoAppearance={clearRepoAppearance}
               onSelectRepo={handleSelectRepoFromDrawer}
               onSwitchChat={switchChat}
               onNewChat={handleCreateNewChat}
@@ -678,7 +725,14 @@ export function ChatScreen(props: ChatScreenProps) {
               }
               onDeleteBranch={handleDeleteBranch}
             />
-            <div className="-ml-1.5 flex min-w-0 items-center self-stretch">
+            {activeRepoAppearance && (
+              <RepoAppearanceBadge
+                appearance={activeRepoAppearance}
+                className="relative z-10 ml-0.5 h-5 w-5 shrink-0 rounded-md"
+                iconClassName="h-3 w-3"
+              />
+            )}
+            <div className={`${activeRepoAppearance ? '-ml-0.5' : '-ml-1.5'} flex min-w-0 items-center self-stretch`}>
               <p className="-translate-y-[2px] truncate text-sm font-medium leading-none text-[#f5f7ff]">
                 {isSandboxMode ? 'Sandbox' : activeRepo?.name || 'Push'}
               </p>
@@ -1010,6 +1064,9 @@ export function ChatScreen(props: ChatScreenProps) {
         error={reposError}
         conversations={conversations}
         activeRepo={activeRepo}
+        resolveRepoAppearance={resolveRepoAppearance}
+        setRepoAppearance={setRepoAppearance}
+        clearRepoAppearance={clearRepoAppearance}
         onSelectRepo={handleSelectRepoFromDrawer}
         onResumeConversation={handleResumeConversationFromLauncher}
         sandboxSession={isSandboxMode ? { status: sandbox.status, createdAt: sandbox.createdAt } : null}

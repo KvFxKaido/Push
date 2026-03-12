@@ -515,20 +515,20 @@ export const MessageBubble = memo(function MessageBubble({
         <div className="opacity-0 group-hover/user:opacity-100 transition-opacity duration-200 flex items-start pt-2 mr-1.5">
           <CopyButton text={message.content} />
         </div>
-        <div className="max-w-[85%] rounded-2xl rounded-br-md border border-[#22324d] bg-[linear-gradient(180deg,#112039_0%,#0c182d_100%)] px-4 py-3 shadow-push-md">
-        {hasAttachments && (
-          <div className="flex flex-wrap gap-2 mb-2">
-            {message.attachments!.map((att) => (
-              <AttachmentBadge key={att.id} attachment={att} />
-            ))}
-          </div>
-        )}
-        {hasContent && (
-          <p className="whitespace-pre-wrap break-words text-push-lg leading-relaxed text-push-fg">
-            {displayContentText}
-          </p>
-        )}
-      </div>
+        <div className="chat-user-bubble max-w-[85%] rounded-2xl rounded-br-md border px-4 py-3 shadow-push-md">
+          {hasAttachments && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {message.attachments!.map((att) => (
+                <AttachmentBadge key={att.id} attachment={att} />
+              ))}
+            </div>
+          )}
+          {hasContent && (
+            <p className="whitespace-pre-wrap break-words text-push-lg leading-relaxed text-push-fg">
+              {displayContentText}
+            </p>
+          )}
+        </div>
       </div>
     );
   }
