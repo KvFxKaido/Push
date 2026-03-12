@@ -49,7 +49,7 @@ function ResumeBanner({
 
   return (
     <div
-      className={`mx-4 mt-2 mb-1 flex items-center justify-between gap-3 px-3.5 py-3 animate-fade-in ${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-amber-500/20 bg-[linear-gradient(180deg,rgba(52,40,15,0.22)_0%,rgba(24,18,7,0.42)_100%)]`}
+      className={`mx-4 mt-4 mb-1 flex items-center justify-between gap-3 px-3.5 py-3 animate-fade-in ${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-amber-500/20 bg-[linear-gradient(180deg,rgba(52,40,15,0.22)_0%,rgba(24,18,7,0.42)_100%)]`}
     >
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-amber-200">Session interrupted {phaseLabel(checkpoint.phase)}</p>

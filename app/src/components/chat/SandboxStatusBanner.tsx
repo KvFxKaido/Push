@@ -32,7 +32,7 @@ export function SandboxStatusBanner({
   onNewSandbox,
   onExitSandboxMode,
 }: SandboxStatusBannerProps) {
-  const bannerBaseClass = `mx-4 mt-2 animate-fade-in px-3.5 py-3 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`;
+  const bannerBaseClass = `mx-4 mt-4 animate-fade-in px-3.5 py-3 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`;
 
   // Idle after a confirmed cold session (reconnect already failed or never attempted)
   if (status === 'idle' && hasMessages && !isStreaming) {
@@ -70,7 +70,7 @@ export function SandboxStatusBanner({
   if (status === 'error' && error) {
     const { title, detail } = categorizeSandboxError(error);
     return (
-      <div className={`mx-4 mt-2 flex items-center justify-between gap-2 animate-fade-in rounded-[18px] border border-red-500/20 bg-red-500/5 px-3.5 py-3`}>
+      <div className={`mx-4 mt-4 flex items-center justify-between gap-2 animate-fade-in rounded-[18px] border border-red-500/20 bg-red-500/5 px-3.5 py-3`}>
         <div className="min-w-0">
           <p className="text-xs font-medium text-red-300">{title}</p>
           <p className="text-push-2xs text-red-400/70">{detail}</p>
