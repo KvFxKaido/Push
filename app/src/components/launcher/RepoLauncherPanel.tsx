@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   GitBranch,
   GitCommit,
@@ -27,6 +27,7 @@ import {
 } from '@/components/chat/hub-styles';
 import { fetchRepoBranches } from '@/lib/github-tools';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
+import type { SandboxStatus } from '@/hooks/useSandbox';
 import { timeAgo, timeAgoCompact } from '@/lib/utils';
 import type { ActiveRepo, Conversation, RepoWithActivity } from '@/types';
 
@@ -65,10 +66,25 @@ const LAUNCHER_CARD_CLASS =
 
 const LAUNCHER_ACTION_BUTTON_CLASS =
   `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-8 flex-1 justify-center px-2.5`;
+const SANDBOX_SESSION_LIFETIME_MS = 30 * 60 * 1000;
+const SANDBOX_SESSION_WARNING_MS = 5 * 60 * 1000;
 
 function timeAgoWithAgo(timestamp: number): string {
   const compact = timeAgoCompact(timestamp);
   return compact === 'just now' ? compact : `${compact} ago`;
+}
+
+function formatRemainingDuration(ms: number): string {
+  if (ms <= 0) return '0:00';
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+export interface LauncherSandboxSession {
+  status: SandboxStatus;
+  createdAt: number | null;
 }
 
 interface RepoLauncherPanelProps {
@@ -79,6 +95,8 @@ interface RepoLauncherPanelProps {
   activeRepo: ActiveRepo | null;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
+  sandboxSession?: LauncherSandboxSession | null;
+  onResumeSandbox?: () => void;
   onSandboxMode?: () => void;
 }
 
@@ -90,6 +108,8 @@ export function RepoLauncherPanel({
   activeRepo,
   onSelectRepo,
   onResumeConversation,
+  sandboxSession,
+  onResumeSandbox,
   onSandboxMode,
 }: RepoLauncherPanelProps) {
   const [showAllRepos, setShowAllRepos] = useState(false);
@@ -99,6 +119,23 @@ export function RepoLauncherPanel({
   const [repoBranchLoadingByRepo, setRepoBranchLoadingByRepo] = useState<Record<string, boolean>>({});
   const [repoBranchErrorByRepo, setRepoBranchErrorByRepo] = useState<Record<string, string | null>>({});
   const [branchCreateRepo, setBranchCreateRepo] = useState<RepoWithActivity | null>(null);
+  const [sandboxRemainingMs, setSandboxRemainingMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!sandboxSession?.createdAt || sandboxSession.status !== 'ready') {
+      setSandboxRemainingMs(null);
+      return;
+    }
+
+    const tick = () => {
+      const remaining = SANDBOX_SESSION_LIFETIME_MS - (Date.now() - sandboxSession.createdAt);
+      setSandboxRemainingMs(remaining);
+    };
+
+    tick();
+    const intervalId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [sandboxSession?.createdAt, sandboxSession?.status]);
 
   const loadBranchesForRepo = useCallback(async (repoFullName: string, force: boolean = false) => {
     if (!force && (repoBranchLoadingByRepo[repoFullName] || repoBranchesByRepo[repoFullName]?.length)) {
@@ -137,21 +174,22 @@ export function RepoLauncherPanel({
     return meta;
   }, [conversations]);
 
-  const latestConversation = useMemo(() => {
+  const latestRepoConversation = useMemo(() => {
+    const availableRepos = new Set(repos.map((repo) => repo.full_name));
     let latest: Conversation | null = null;
     for (const conv of Object.values(conversations)) {
-      if (!conv.repoFullName) continue;
+      if (!conv.repoFullName || !availableRepos.has(conv.repoFullName)) continue;
       if (!latest || conv.lastMessageAt > latest.lastMessageAt) {
         latest = conv;
       }
     }
     return latest;
-  }, [conversations]);
+  }, [conversations, repos]);
 
-  const latestConversationRepo = useMemo(() => {
-    if (!latestConversation?.repoFullName) return null;
-    return repos.find((repo) => repo.full_name === latestConversation.repoFullName) ?? null;
-  }, [latestConversation, repos]);
+  const latestRepoConversationRepo = useMemo(() => {
+    if (!latestRepoConversation?.repoFullName) return null;
+    return repos.find((repo) => repo.full_name === latestRepoConversation.repoFullName) ?? null;
+  }, [latestRepoConversation, repos]);
 
   const recentRepos = useMemo(() => {
     return [...repos]
@@ -191,6 +229,35 @@ export function RepoLauncherPanel({
       private: branchCreateRepo.private,
     };
   }, [activeRepo, branchCreateRepo]);
+
+  const sandboxResumeMeta = useMemo(() => {
+    if (!sandboxSession || sandboxSession.status === 'idle') return null;
+    if (sandboxSession.status === 'ready') {
+      const isWarning = sandboxRemainingMs !== null && sandboxRemainingMs <= SANDBOX_SESSION_WARNING_MS;
+      return {
+        detail: sandboxRemainingMs !== null
+          ? `Sandbox session active - ${formatRemainingDuration(Math.max(sandboxRemainingMs, 0))} left`
+          : 'Sandbox session active',
+        detailClass: isWarning ? 'text-amber-300' : 'text-emerald-300',
+      };
+    }
+    if (sandboxSession.status === 'creating') {
+      return {
+        detail: 'Workspace is starting',
+        detailClass: 'text-push-fg-secondary',
+      };
+    }
+    if (sandboxSession.status === 'reconnecting') {
+      return {
+        detail: 'Reconnecting to your workspace',
+        detailClass: 'text-push-fg-secondary',
+      };
+    }
+    return {
+      detail: 'Workspace needs attention before you continue',
+      detailClass: 'text-red-300',
+    };
+  }, [sandboxRemainingMs, sandboxSession]);
 
   const renderRepoButton = useCallback((repo: RepoWithActivity) => {
     const chatMeta = repoChatMeta.get(repo.full_name);
@@ -395,28 +462,43 @@ export function RepoLauncherPanel({
           </div>
         )}
 
-        {latestConversation && latestConversationRepo && (
+        {sandboxResumeMeta && onResumeSandbox && (
           <button
-            onClick={() => onResumeConversation(latestConversation.id)}
+            onClick={onResumeSandbox}
+            className={`${HUB_PANEL_SURFACE_CLASS} flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-push-edge-hover`}
+          >
+            <SandboxCubeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-push-fg">Resume sandbox</p>
+              <p className={`mt-0.5 truncate text-xs ${sandboxResumeMeta.detailClass}`}>
+                {sandboxResumeMeta.detail}
+              </p>
+            </div>
+          </button>
+        )}
+
+        {latestRepoConversation && latestRepoConversationRepo && (
+          <button
+            onClick={() => onResumeConversation(latestRepoConversation.id)}
             className={`${HUB_PANEL_SURFACE_CLASS} flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-push-edge-hover`}
           >
             <PushOrbitIcon className="mt-0.5 h-4 w-4 shrink-0 text-[#8ad4ff]" />
             <div className="min-w-0">
-              <p className="text-sm font-medium text-push-fg">Resume latest chat</p>
+              <p className="text-sm font-medium text-push-fg">Resume latest repo chat</p>
               <p className="mt-0.5 truncate text-xs text-push-fg-secondary">
-                {latestConversation.title}
+                {latestRepoConversation.title}
               </p>
               <p className="mt-1 flex items-center gap-1 text-push-xs text-push-fg-dim">
-                <span>{latestConversationRepo.name}</span>
-                {latestConversation.branch && (
+                <span>{latestRepoConversationRepo.name}</span>
+                {latestRepoConversation.branch && (
                   <>
                     <span className="text-push-fg-dim/60">/</span>
                     <GitBranch className="h-2.5 w-2.5 shrink-0" />
-                    <span className="max-w-[120px] truncate">{latestConversation.branch}</span>
+                    <span className="max-w-[120px] truncate">{latestRepoConversation.branch}</span>
                   </>
                 )}
                 <span className="text-push-fg-dim/60">·</span>
-                <span>{timeAgoWithAgo(latestConversation.lastMessageAt)}</span>
+                <span>{timeAgoWithAgo(latestRepoConversation.lastMessageAt)}</span>
               </p>
             </div>
           </button>

@@ -23,7 +23,7 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
       <div className="flex items-center justify-between gap-2 border-b border-push-edge/80 px-3 py-2.5">
         <div className="flex items-center gap-2 min-w-0">
           <FolderGit2 className="h-4 w-4 text-push-status-success shrink-0" />
-          <span className="text-push-base text-push-fg font-medium truncate">Sandbox State</span>
+          <span className="text-push-base text-push-fg font-medium truncate">Workspace Status</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className={`text-push-xs px-1.5 py-0.5 rounded-full ${hasChanges ? CARD_BADGE_WARNING : CARD_BADGE_SUCCESS}`}>
@@ -34,7 +34,7 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
               type="button"
               onClick={() => onAction({ type: 'sandbox-state-refresh', messageId, cardIndex, sandboxId: data.sandboxId })}
               className={`${CARD_BUTTON_CLASS} h-7 px-2.5 text-push-2xs`}
-              title="Refresh sandbox state"
+              title="Refresh workspace status"
             >
               <RefreshCw className="h-3 w-3" />
               Refresh

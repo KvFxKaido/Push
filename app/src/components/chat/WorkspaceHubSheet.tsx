@@ -1026,11 +1026,11 @@ export function WorkspaceHubSheet({
                 )}
                 <span className="min-w-0 truncate text-push-xs">
                   {sandboxStatus === 'reconnecting' && <span className="text-push-fg-dim">Reconnecting…</span>}
-                  {sandboxStatus === 'creating' && <span className="text-push-fg-dim">Starting sandbox…</span>}
-                  {sandboxStatus === 'idle' && <span className="text-push-fg-dim">Sandbox not running</span>}
+                  {sandboxStatus === 'creating' && <span className="text-push-fg-dim">Starting workspace…</span>}
+                  {sandboxStatus === 'idle' && <span className="text-push-fg-dim">Workspace not running</span>}
                   {sandboxStatus === 'error' && (
                     <span className="text-red-400">
-                      {sandboxError ? categorizeSandboxError(sandboxError).title : 'Sandbox error'}
+                      {sandboxError ? categorizeSandboxError(sandboxError).title : 'Workspace error'}
                     </span>
                   )}
                 </span>

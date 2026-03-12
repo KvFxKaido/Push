@@ -500,12 +500,12 @@ export function SettingsSectionContent({
             )}
           </div>
 
-          {/* Sandbox State */}
+          {/* Workspace Status */}
           {workspace.sandboxStatus !== 'idle' && (
             <div className="space-y-3 pt-2 border-t border-push-edge">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-push-fg">
-                  Sandbox
+                  Workspace Status
                 </label>
                 <div className="flex items-center gap-1.5">
                   <div className={`h-2 w-2 rounded-full ${
@@ -541,7 +541,7 @@ export function SettingsSectionContent({
                         onClick={() => workspace.sandboxId && workspace.fetchSandboxState(workspace.sandboxId)}
                         disabled={workspace.sandboxStateLoading}
                         className="inline-flex items-center gap-1 rounded border border-push-edge px-1.5 py-0.5 text-push-2xs text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover disabled:opacity-50"
-                        title="Refresh sandbox state"
+                        title="Refresh workspace status"
                       >
                         {workspace.sandboxStateLoading ? (
                           <Loader2 className="h-3 w-3 animate-spin" />

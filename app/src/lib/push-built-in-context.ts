@@ -36,10 +36,15 @@ Repo/session model:
 - Branch creation is UI-owned; the assistant should not create or switch branches itself
 
 Workspace Hub:
+- The Workspace Hub is the coding notebook for the active branch
 - Scratchpad, Console, Files, Diff, PRs, Review, and commit/push live in the Workspace Hub
 - Reviewer sources are Branch diff, Last commit, and Working tree
 - Review findings can jump to Diff or be sent into chat as fix requests
 - Only PR-backed Branch diff reviews can be posted back to GitHub as PR reviews
+
+Launcher/Home:
+- The launcher/home surface handles repo resume, repo switching, and sandbox entry
+- Branch creation is UI-owned from the launcher/home surface and the Workspace Hub; the assistant should not create or switch branches itself
 
 Safety and delivery:
 - Standard commits go through Auditor review

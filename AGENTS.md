@@ -4,7 +4,7 @@ AI coding agent — mobile PWA + local CLI. Chat with your codebase — review P
 
 ## Project Overview
 
-Push is a personal chat interface backed by role-based AI agents. Users select a repo, ask questions, and the agent reads code, analyzes PRs, runs code in a sandbox, and shows results as inline cards — all in a streaming conversation.
+Push is a personal AI coding notebook backed by role-based AI agents. Users open the launcher/home surface, pick a repo or sandbox, ask questions, and the agent reads code, analyzes PRs, runs code in a sandbox, and shows results as inline cards — all in a streaming conversation.
 
 **Core Philosophy:**
 - Chat-first — conversation is the primary interface
@@ -84,11 +84,11 @@ A shared notepad that both the user and AI can read/write. Content persists in l
 
 ### Sandbox Mode
 
-Ephemeral workspace with no GitHub repo. Entry via onboarding or repo picker. GitHub tools are blocked; only sandbox tools are available. 30-min container lifetime with expiry warning. Download workspace as tar.gz via header button or `sandbox_download` tool.
+Ephemeral workspace with no GitHub repo. Entry via onboarding or the launcher/home surface. GitHub tools are blocked; only sandbox tools are available. 30-min container lifetime with expiry warning. Download workspace as tar.gz via header button or `sandbox_download` tool.
 
 ### Active Branch Model
 
-There is always exactly one Active Branch per repo session — it is the commit target, push target, diff base, and chat context. Switching branches is atomic and explicit — it tears down the sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer, home page, and workspace branch selector. Branch creation is an explicit UI action available from Home, the workspace/header branch controls, and the Workspace Hub commit/push sheet; the assistant does not create branches itself. On feature branches, the primary workspace action becomes "Merge into main". Non-default inactive branches can be deleted from the workspace branch selector.
+There is always exactly one Active Branch per repo session — it is the commit target, push target, diff base, and chat context. Switching branches is atomic and explicit — it tears down the sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer, launcher/home, and the workspace branch selector. Branch creation is an explicit UI action available from the launcher/home surface and the Workspace Hub commit/push sheet; the assistant does not create branches itself. The Workspace Hub is the coding notebook for the active branch. On feature branches, the primary workspace action becomes "Merge into main". Non-default inactive branches can be deleted from the workspace branch selector.
 
 ### Merge Flow (GitHub PR Merge)
 
@@ -108,7 +108,7 @@ When the user locks their phone or switches apps mid-tool-loop, the app checkpoi
 
 ### PR Awareness
 
-Home screen shows open PR count and review-requested indicator. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo. The Workspace Hub `Review` tab can review the active branch or latest commit from GitHub without a sandbox, send findings into chat as fix requests, and, when a Branch diff review resolves to an open PR, post Reviewer findings back as a GitHub PR review.
+The launcher/home surface shows repo activity, including open PR counts and recent activity markers. Chat tools include `github_list_prs`, `github_get_pr`, `github_pr_diff`, and `github_list_branches` for reading PR/branch state in any repo. The Workspace Hub `Review` tab can review the active branch or latest commit from GitHub without a sandbox, send findings into chat as fix requests, and, when a Branch diff review resolves to an open PR, post Reviewer findings back as a GitHub PR review.
 
 ### Rolling Window
 
@@ -121,7 +121,7 @@ When the user selects a repo, the app fetches project instruction files via the 
 ### Data Flow
 
 1. **Onboard** → Connect via GitHub App (recommended) or GitHub PAT
-2. **Pick repo** (or start Sandbox Mode for ephemeral workspace)
+2. **Open launcher/home** → Pick a repo or start Sandbox Mode for an ephemeral workspace
 3. **Chat** → Ask about PRs, changes, codebase
 4. **Tools** → JSON tool blocks → execute against GitHub API or sandbox
 5. **Scratchpad** → Shared notepad for ideas/requirements (user + AI can edit)

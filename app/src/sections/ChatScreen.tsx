@@ -744,8 +744,8 @@ export function ChatScreen(props: ChatScreenProps) {
               </>
             )}
         </div>
-        {/* Centered launcher trigger with branch context for repo chat */}
-        {activeRepo && !isSandboxMode && (
+        {/* Centered launcher trigger with repo or sandbox context */}
+        {(activeRepo || isSandboxMode) && (
           <div className="flex min-w-0 justify-center">
             <button
               onClick={openLauncher}
@@ -756,7 +756,7 @@ export function ChatScreen(props: ChatScreenProps) {
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
               <LauncherGridIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-colors group-hover:text-push-fg" />
               <span className="relative z-10 max-w-[92px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg sm:max-w-[128px]">
-                {currentBranch}
+                {isSandboxMode ? 'Sandbox' : currentBranch}
               </span>
             </button>
           </div>
@@ -1012,6 +1012,7 @@ export function ChatScreen(props: ChatScreenProps) {
         activeRepo={activeRepo}
         onSelectRepo={handleSelectRepoFromDrawer}
         onResumeConversation={handleResumeConversationFromLauncher}
+        sandboxSession={isSandboxMode ? { status: sandbox.status, createdAt: sandbox.createdAt } : null}
         onSandboxMode={handleSandboxMode}
       />
 

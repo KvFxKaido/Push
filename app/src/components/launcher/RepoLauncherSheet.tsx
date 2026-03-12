@@ -1,5 +1,5 @@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { RepoLauncherPanel } from './RepoLauncherPanel';
+import { RepoLauncherPanel, type LauncherSandboxSession } from './RepoLauncherPanel';
 import type { ActiveRepo, Conversation, RepoWithActivity } from '@/types';
 
 interface RepoLauncherSheetProps {
@@ -12,6 +12,8 @@ interface RepoLauncherSheetProps {
   activeRepo: ActiveRepo | null;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
+  sandboxSession?: LauncherSandboxSession | null;
+  onResumeSandbox?: () => void;
   onSandboxMode?: () => void;
 }
 
@@ -25,6 +27,8 @@ export function RepoLauncherSheet({
   activeRepo,
   onSelectRepo,
   onResumeConversation,
+  sandboxSession,
+  onResumeSandbox,
   onSandboxMode,
 }: RepoLauncherSheetProps) {
   return (
@@ -36,7 +40,7 @@ export function RepoLauncherSheet({
         <SheetHeader className="border-b border-push-edge/70 bg-[linear-gradient(180deg,rgba(10,13,20,0.84)_0%,rgba(6,8,13,0.92)_100%)] px-4 py-4 text-left backdrop-blur-xl">
           <SheetTitle className="text-sm font-semibold text-push-fg">Launcher</SheetTitle>
           <SheetDescription className="text-xs text-push-fg-dim">
-            Resume work, switch repos, or start a sandbox without leaving chat.
+            Resume repo work, reopen your sandbox, or switch context without leaving chat.
           </SheetDescription>
         </SheetHeader>
 
@@ -55,6 +59,13 @@ export function RepoLauncherSheet({
               onResumeConversation(chatId);
               onOpenChange(false);
             }}
+            sandboxSession={sandboxSession}
+            onResumeSandbox={sandboxSession
+              ? () => {
+                  onResumeSandbox?.();
+                  onOpenChange(false);
+                }
+              : undefined}
             onSandboxMode={onSandboxMode
               ? () => {
                   onSandboxMode();
