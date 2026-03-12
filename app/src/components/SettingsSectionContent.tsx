@@ -1,4 +1,5 @@
-import { GitBranch, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronDown, GitBranch, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
 import { getContextMetrics } from '@/lib/context-metrics';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -18,6 +19,30 @@ import {
 } from '@/components/SettingsSheet';
 import type { PreferredProvider } from '@/lib/providers';
 import type { AIProviderType } from '@/types';
+
+function PrivateConnectorsDisclosure({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="min-w-0 rounded-xl border border-push-edge bg-push-surface/40 p-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between text-left text-sm font-medium text-push-fg"
+      >
+        Private connectors (experimental)
+        <ChevronDown className={`h-4 w-4 shrink-0 text-push-fg-dim transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <p className="text-xs text-push-fg-dim">
+            Direct Azure/Bedrock connectors use one shared API key and base URL per provider, plus saved deployment/model entries on top. Vertex still uses a Google-native service-account setup so Gemini and Claude can share one provider entry.
+          </p>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface SettingsSectionContentProps {
   settingsTab: SettingsTabKey;
@@ -822,14 +847,7 @@ export function SettingsSectionContent({
             />
           </div>
 
-          <details className="min-w-0 space-y-3 overflow-hidden rounded-xl border border-push-edge bg-push-surface/40 p-3">
-            <summary className="cursor-pointer list-none text-sm font-medium text-push-fg">
-              Private connectors (experimental)
-            </summary>
-            <p className="mt-2 text-xs text-push-fg-dim">
-              Direct Azure/Bedrock connectors use one shared API key and base URL per provider, plus saved deployment/model entries on top. Vertex still uses a Google-native service-account setup so Gemini and Claude can share one provider entry.
-            </p>
-            <div className="mt-3 space-y-3">
+          <PrivateConnectorsDisclosure>
               <ExperimentalProviderSection
                 label="Azure OpenAI"
                 backendId="azure"
@@ -924,8 +942,7 @@ export function SettingsSectionContent({
                 projectId={ai.vertexProjectId}
                 hasLegacyConfig={ai.hasLegacyVertexConfig}
               />
-            </div>
-          </details>
+          </PrivateConnectorsDisclosure>
 
           {/* Web Search (Tavily) */}
           <div className="space-y-3 pt-2 border-t border-push-edge">
