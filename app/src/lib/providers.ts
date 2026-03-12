@@ -103,6 +103,8 @@ export const OPENROUTER_MODELS: string[] = [
   'inception/mercury',
   // Others
   'xiaomi/mimo-v2-flash:nitro',
+  'x-ai/grok-4.20-beta',
+  'x-ai/grok-4.20-multi-agent-beta',
   'x-ai/grok-4.1-fast',
   'moonshotai/kimi-k2.5:nitro',
 ];
