@@ -138,12 +138,16 @@ export function ChatInput({
     recognition.interimResults = false;
     recognition.lang = 'en-US';
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const transcript = Array.from(event.results)
-        .filter(r => r.isFinal)
-        .map(r => r[0].transcript)
-        .join(' ');
+      // Only process results from resultIndex onward — earlier entries are
+      // already in the textarea. The Web Speech API's results list is cumulative.
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          transcript += event.results[i][0].transcript;
+        }
+      }
       if (transcript) {
-        setValue(prev => prev ? prev + ' ' + transcript : transcript);
+        setValue(prev => prev ? prev + ' ' + transcript.trim() : transcript.trim());
       }
     };
     recognition.onend = () => setIsListening(false);
