@@ -2736,6 +2736,36 @@ export function useChat(
           break;
         }
 
+        case 'ask-user-submit': {
+          const responseText = action.responseText.trim();
+          if (!responseText || isStreaming || !sendMessageRef.current) {
+            return;
+          }
+
+          const sourceMessage = messages.find((message) => message.id === action.messageId);
+          const sourceCard = sourceMessage?.cards?.[action.cardIndex];
+          const question = sourceCard?.type === 'ask-user' ? sourceCard.data.question.trim() : '';
+
+          updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+            if (card.type !== 'ask-user') return card;
+            return {
+              ...card,
+              data: {
+                ...card.data,
+                responseText,
+                selectedOptionIds: action.selectedOptionIds,
+              },
+            };
+          });
+
+          const contextualReply = question
+            ? `Answer to your question "${question}": ${responseText}`
+            : responseText;
+
+          await sendMessageRef.current(contextualReply);
+          break;
+        }
+
         case 'editor-save': {
           updateAgentStatus(
             { active: true, phase: 'Saving file...' },
@@ -2795,7 +2825,7 @@ export function useChat(
         }
       }
     },
-    [activeChatId, updateCardInMessage, injectSyntheticMessage, updateAgentStatus],
+    [activeChatId, injectSyntheticMessage, isStreaming, messages, updateCardInMessage, updateAgentStatus],
   );
 
   return {

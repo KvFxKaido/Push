@@ -485,6 +485,7 @@ export type CardAction =
   | { type: 'commit-reject'; messageId: string; cardIndex: number }
   | { type: 'ci-refresh'; messageId: string; cardIndex: number }
   | { type: 'sandbox-state-refresh'; messageId: string; cardIndex: number; sandboxId: string }
+  | { type: 'ask-user-submit'; messageId: string; cardIndex: number; responseText: string; selectedOptionIds: string[] }
   | { type: 'editor-save'; messageId: string; cardIndex: number; path: string; content: string; sandboxId: string; expectedVersion?: string; expectedWorkspaceRevision?: number };
 
 export interface AgentStatus {
@@ -664,6 +665,8 @@ export interface AskUserCardData {
   question: string;
   options: AskUserOption[];
   multiSelect?: boolean;
+  selectedOptionIds?: string[];
+  responseText?: string;
 }
 
 // --- Resumable Sessions ---

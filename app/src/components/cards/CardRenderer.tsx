@@ -25,6 +25,7 @@ const WorkflowRunsCard = lazyWithRecovery(toDefaultExport(() => import('./Workfl
 const WorkflowLogsCard = lazyWithRecovery(toDefaultExport(() => import('./WorkflowLogsCard'), (module) => module.WorkflowLogsCard));
 const WebSearchCard = lazyWithRecovery(toDefaultExport(() => import('./WebSearchCard'), (module) => module.WebSearchCard));
 const CoderProgressCard = lazyWithRecovery(toDefaultExport(() => import('./CoderProgressCard'), (module) => module.CoderProgressCard));
+const AskUserCard = lazyWithRecovery(toDefaultExport(() => import('./AskUserCard'), (module) => module.AskUserCard));
 
 interface CardRendererProps {
   card: ChatCard;
@@ -102,6 +103,7 @@ const ACTION_CARDS: Record<string, ComponentType<{ data: any; messageId: string;
   'commit-review': CommitReviewCard,
   'ci-status':     CIStatusCard,
   'editor':        EditorCard,
+  'ask-user':      AskUserCard,
 };
 
 // ---------------------------------------------------------------------------

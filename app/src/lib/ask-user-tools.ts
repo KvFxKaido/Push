@@ -46,13 +46,29 @@ export function detectAskUserToolCall(text: string): AskUserToolCall | null {
       const p = parsed as Record<string, unknown>;
       const args = p.args as Record<string, unknown> | undefined;
       if (args && typeof args.question === 'string' && Array.isArray(args.options)) {
+        const question = args.question.trim();
+        const options = args.options
+          .filter((option): option is Record<string, unknown> => typeof option === 'object' && option !== null)
+          .map((option, index) => ({
+            id: typeof option.id === 'string' && option.id.trim() ? option.id.trim() : `option-${index + 1}`,
+            label: typeof option.label === 'string' ? option.label.trim() : '',
+            ...(typeof option.description === 'string' && option.description.trim()
+              ? { description: option.description.trim() }
+              : {}),
+          }))
+          .filter((option) => option.label.length > 0);
+
+        if (!question || options.length === 0) {
+          return null;
+        }
+
         return {
           tool: 'ask_user',
           args: {
-            question: args.question,
-            options: args.options as AskUserCardData['options'],
-            multiSelect: !!args.multiSelect
-          }
+            question,
+            options,
+            multiSelect: !!args.multiSelect,
+          },
         };
       }
     }
