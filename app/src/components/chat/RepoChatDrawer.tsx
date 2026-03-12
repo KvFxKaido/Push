@@ -316,7 +316,7 @@ export function RepoChatDrawer({
     <>
       <button
         onClick={() => onOpenChange(true)}
-        className="inline-flex h-8 items-center justify-center rounded-full px-2 text-push-fg-secondary transition-all duration-200 hover:bg-white/[0.04] hover:text-push-fg active:scale-95"
+        className="inline-flex h-8 items-center justify-center rounded-full px-1.5 text-push-fg-secondary transition-all duration-200 hover:bg-white/[0.04] hover:text-push-fg active:scale-95"
         aria-label="Open chats and repos"
         title="Chats and repos"
       >

@@ -695,7 +695,7 @@ export function ChatScreen(props: ChatScreenProps) {
       {/* Top bar */}
       <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
         <div className="relative z-20 flex min-w-0 items-center gap-2">
-          <div className={`flex h-9 min-w-0 items-center gap-1 pl-1 pr-3 ${headerSurfaceClass}`}>
+          <div className={`flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-2.5 ${headerSurfaceClass}`}>
             <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
             <RepoChatDrawer
               open={isHistoryDrawerOpen}
@@ -728,11 +728,11 @@ export function ChatScreen(props: ChatScreenProps) {
             {activeRepoAppearance && (
               <RepoAppearanceBadge
                 appearance={activeRepoAppearance}
-                className="relative z-10 ml-0.5 h-5 w-5 shrink-0 rounded-md"
-                iconClassName="h-3 w-3"
+                className="relative z-10 -ml-1.5 h-[18px] w-[18px] shrink-0 rounded-md"
+                iconClassName="h-[11px] w-[11px]"
               />
             )}
-            <div className={`${activeRepoAppearance ? '-ml-0.5' : '-ml-1.5'} flex min-w-0 items-center self-stretch`}>
+            <div className={`${activeRepoAppearance ? 'ml-0.5' : '-ml-0.5'} flex min-w-0 items-center self-stretch`}>
               <p className="-translate-y-[2px] truncate text-sm font-medium leading-none text-[#f5f7ff]">
                 {isSandboxMode ? 'Sandbox' : activeRepo?.name || 'Push'}
               </p>
