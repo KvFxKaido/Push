@@ -8,3 +8,7 @@ workspace-dock | a side dock panel with two stacked work modules and a central s
 notebook-pad | a notebook page with a left margin line and two short note rows, suggesting scratchpad notes
 review-lens | a calm review lens combining a circular inspect ring with two small annotation ticks, suggesting code review and verification
 settings-cells | three stacked notebook cells with a single tuning slider crossing them, suggesting settings and configuration
+commit-pulse | minimal git commit node with a trailing pulse ring and a short forward path, suggesting recent work and momentum
+history-stack | stacked conversation sheets with a subtle backward fold, suggesting chat history and revisiting prior context
+pr-thread | pull request lane with two clean comment ticks feeding into one review thread, suggesting branch review conversation
+repo-ledger | a bound project ledger with a left spine and short indexed lines, suggesting a repository as a coding notebook volume

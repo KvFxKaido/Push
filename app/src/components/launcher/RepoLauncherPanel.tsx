@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Lock, Search, Loader2 } from 'lucide-react';
 import {
-  GitBranch,
-  GitCommit,
-  GitPullRequest,
-  History,
-  Lock,
-  Search,
-  Loader2,
-} from 'lucide-react';
-import { PushOrbitIcon, SandboxCubeIcon } from '@/components/icons/push-custom-icons';
+  BranchWaveIcon,
+  CommitPulseIcon,
+  HistoryStackIcon,
+  PRThreadIcon,
+  PushOrbitIcon,
+  SandboxCubeIcon,
+} from '@/components/icons/push-custom-icons';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -302,7 +301,7 @@ export function RepoLauncherPanel({
 
           {activeBranch && activeBranch !== repo.default_branch && (
             <span className={`${HUB_TAG_CLASS} w-fit gap-1 text-push-xs text-[#9db8df]`}>
-              <GitBranch className="h-3 w-3" />
+              <BranchWaveIcon className="h-3 w-3" />
               <span className="max-w-[160px] truncate">{activeBranch}</span>
             </span>
           )}
@@ -325,19 +324,19 @@ export function RepoLauncherPanel({
             )}
             {repo.activity.open_prs > 0 && (
               <span className={`${HUB_TAG_CLASS} gap-1 text-[#58a6ff]`}>
-                <GitPullRequest className="h-3 w-3" />
+                <PRThreadIcon className="h-3 w-3" />
                 {repo.activity.open_prs}
               </span>
             )}
             {repo.activity.recent_commits > 0 && (
               <span className="flex items-center gap-1">
-                <GitCommit className="h-3 w-3" />
+                <CommitPulseIcon className="h-3 w-3" />
                 {repo.activity.recent_commits}
               </span>
             )}
             {chatMeta && (
               <span className={`${HUB_TAG_CLASS} gap-1 text-[#84bfff]`}>
-                <History className="h-3 w-3" />
+                <HistoryStackIcon className="h-3 w-3" />
                 {chatMeta.chatCount}
               </span>
             )}
@@ -351,7 +350,7 @@ export function RepoLauncherPanel({
             className={LAUNCHER_ACTION_BUTTON_CLASS}
           >
             <HubControlGlow />
-            <GitBranch className="relative z-10 h-3.5 w-3.5 text-push-fg-dim" />
+            <BranchWaveIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-dim" />
             <span className="relative z-10">Create branch</span>
           </button>
 
@@ -368,7 +367,7 @@ export function RepoLauncherPanel({
               <button className={`${LAUNCHER_ACTION_BUTTON_CLASS} justify-between text-[#9db8df]`}>
                 <HubControlGlow />
                 <span className="relative z-10 inline-flex min-w-0 items-center gap-1">
-                  <GitBranch className="h-3 w-3 text-push-fg-dim" />
+                  <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
                   <span className="truncate">Open on branch</span>
                 </span>
                 <span className="relative z-10 truncate text-push-xs text-[#788396]">{repo.default_branch}</span>
@@ -493,7 +492,7 @@ export function RepoLauncherPanel({
                 {latestRepoConversation.branch && (
                   <>
                     <span className="text-push-fg-dim/60">/</span>
-                    <GitBranch className="h-2.5 w-2.5 shrink-0" />
+                    <BranchWaveIcon className="h-2.5 w-2.5 shrink-0" />
                     <span className="max-w-[120px] truncate">{latestRepoConversation.branch}</span>
                   </>
                 )}

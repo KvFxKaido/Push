@@ -199,3 +199,90 @@ export function SettingsCellsIcon({ strokeWidth = 2, ...props }: IconProps) {
     </svg>
   );
 }
+
+export function CommitPulseIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="6" cy="12" r="2" />
+      <path d="M8 12h5" />
+      <circle cx="14" cy="12" r="1.25" fill="currentColor" stroke="none" />
+      <path d="M17 12a3 3 0 0 0-3-3" />
+      <path d="M17 12a3 3 0 0 1-3 3" />
+      <path d="M19.5 12a5.5 5.5 0 0 0-5.5-5.5" />
+      <path d="M19.5 12a5.5 5.5 0 0 1-5.5 5.5" />
+    </svg>
+  );
+}
+
+export function HistoryStackIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M7 3.5h8a2 2 0 0 1 2 2V7" />
+      <path d="M7 3.5V5.2H5.3" />
+      <path d="M6 7h10a2 2 0 0 1 2 2v1" />
+      <rect x="5" y="10" width="14" height="10" rx="2" />
+      <path d="M8 13h8" />
+      <path d="M8 16h5" />
+    </svg>
+  );
+}
+
+export function PRThreadIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="5" cy="7" r="1.5" />
+      <circle cx="5" cy="17" r="1.5" />
+      <circle cx="19" cy="12" r="1.5" />
+      <path d="M6.5 7c4.5 0 8 1.8 11 5" />
+      <path d="M6.5 17c4.5 0 8-1.8 11-5" />
+      <path d="M10 5.5h3" />
+      <path d="M10 18.5h3" />
+      <path d="M19 10v4" />
+    </svg>
+  );
+}
+
+export function RepoLedgerIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M7 4.5h10a2 2 0 0 1 2 2V19a1.5 1.5 0 0 1-1.5 1.5H9a2 2 0 0 0-2 2V6.5a2 2 0 0 1 2-2Z" />
+      <path d="M7 7H5.5A1.5 1.5 0 0 0 4 8.5v11A1.5 1.5 0 0 0 5.5 21H7" />
+      <path d="M9.5 4.5v16" />
+      <path d="M12.5 9H16" />
+      <path d="M12.5 13h3" />
+      <path d="M12.5 17h4" />
+    </svg>
+  );
+}

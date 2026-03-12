@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  GitMerge,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -22,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { LivePipelineIcon, MergeShieldIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -131,6 +131,9 @@ function StepIndicator({ current }: { current: MergeStep }) {
   const currentIdx = STEPS.findIndex((s) => s.key === current);
   return (
     <div className="mb-4 flex items-center gap-1.5 overflow-x-auto pb-1">
+      <div className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-push-edge/70 bg-black/10 text-push-fg-dim">
+        <LivePipelineIcon className="h-3.5 w-3.5" />
+      </div>
       {STEPS.map((step, i) => {
         const isActive = i === currentIdx;
         const isDone = i < currentIdx;
@@ -604,7 +607,7 @@ function MergeFlowSheet({
       >
         <SheetHeader className="pb-1 pt-5">
           <SheetTitle className="text-sm font-semibold text-push-fg flex items-center gap-2">
-            <GitMerge className="h-4 w-4 text-push-fg-dim" />
+            <MergeShieldIcon className="h-4 w-4 text-push-fg-dim" />
             Merge {currentBranch}
           </SheetTitle>
           <SheetDescription className="text-xs text-push-fg-dim">

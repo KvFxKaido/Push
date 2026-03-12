@@ -3,8 +3,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  FolderGit2,
-  GitBranch,
   Menu,
   Pencil,
   Plus,
@@ -14,6 +12,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { BranchWaveIcon, HistoryStackIcon, RepoLedgerIcon } from '@/components/icons/push-custom-icons';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -309,17 +308,20 @@ export function RepoChatDrawer({
       </button>
 
       <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="left"
-        overlayClassName="bg-transparent"
-        className="w-[86vw] rounded-r-2xl border-[#151b26] bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
-      >
-        {/* Subtle top glow */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 bg-gradient-to-b from-white/[0.03] to-transparent rounded-tr-2xl" />
-        <div className="relative h-full overflow-hidden">
-          <div className="absolute inset-0 flex flex-col">
+        <SheetContent
+          side="left"
+          overlayClassName="bg-transparent"
+          className="w-[86vw] rounded-r-2xl border-[#151b26] bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
+        >
+          {/* Subtle top glow */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tr-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
+          <div className="relative h-full overflow-hidden">
+            <div className="absolute inset-0 flex flex-col">
             <SheetHeader className="border-b border-push-edge pb-3">
-              <SheetTitle className="text-push-fg">History</SheetTitle>
+              <SheetTitle className="flex items-center gap-2 text-push-fg">
+                <HistoryStackIcon className="h-4 w-4 text-push-fg-dim" />
+                <span>History</span>
+              </SheetTitle>
               <SheetDescription className="text-push-fg-muted">
                 Repos and chats
               </SheetDescription>
@@ -363,7 +365,7 @@ export function RepoChatDrawer({
                         <ChevronRight
                           className={`h-3.5 w-3.5 shrink-0 text-push-fg-muted transition-transform ${isExpanded ? 'rotate-90' : ''}`}
                         />
-                        <FolderGit2 className={`h-3.5 w-3.5 shrink-0 ${isActiveRepo ? 'text-push-link' : 'text-push-fg-muted'}`} />
+                        <RepoLedgerIcon className={`h-3.5 w-3.5 shrink-0 ${isActiveRepo ? 'text-push-link' : 'text-push-fg-muted'}`} />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-push-base font-medium text-push-fg">{repo.name}</p>
                           <p className="text-push-xs text-push-fg-muted">{chats.length} chat{chats.length !== 1 ? 's' : ''}</p>
@@ -392,7 +394,7 @@ export function RepoChatDrawer({
                               }}
                             >
                               <DropdownMenuTrigger className={`mb-2 flex h-9 w-full items-center gap-1.5 px-3 text-left text-xs text-push-fg-secondary ${DRAWER_CONTROL_SURFACE_CLASS} ${DRAWER_CONTROL_INTERACTIVE_CLASS}`}>
-                                <GitBranch className="h-3 w-3 text-push-fg-dim" />
+                                <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
                                 <span className="min-w-0 flex-1 truncate">{currentBranch || defaultBranch || 'main'}</span>
                                 <ChevronDown className={`h-3 w-3 text-push-fg-dim transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`} />
                               </DropdownMenuTrigger>
@@ -550,7 +552,7 @@ export function RepoChatDrawer({
                                       }}
                                       className="flex w-full items-center gap-1.5 px-1.5 pb-0.5 pt-2 text-left"
                                     >
-                                      <GitBranch className={`h-3 w-3 shrink-0 ${isActiveBranch ? 'text-push-link' : 'text-push-fg-dim'}`} />
+                                      <BranchWaveIcon className={`h-3 w-3 shrink-0 ${isActiveBranch ? 'text-push-link' : 'text-push-fg-dim'}`} />
                                       <span className={`truncate text-push-2xs font-medium ${isActiveBranch ? 'text-push-link' : 'text-push-fg-dim'}`}>
                                         {branchName}
                                       </span>
