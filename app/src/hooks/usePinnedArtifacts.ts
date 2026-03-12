@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
 
 export interface PinnedArtifact {
@@ -21,34 +21,39 @@ function readArtifacts(repoFullName: string | null): PinnedArtifact[] {
 }
 
 export function usePinnedArtifacts(repoFullName: string | null) {
-  // Version counter triggers useMemo recompute after mutations.
-  // repoFullName in the deps handles repo switches automatically.
-  const [version, setVersion] = useState(0);
-  const artifacts = useMemo(() => readArtifacts(repoFullName), [repoFullName, version]);
+  const [artifacts, setArtifacts] = useState<PinnedArtifact[]>(() => readArtifacts(repoFullName));
 
-  const persist = useCallback((next: PinnedArtifact[]) => {
-    safeStorageSet(storageKey(repoFullName), JSON.stringify(next));
-    setVersion(v => v + 1);
+  useEffect(() => {
+    setArtifacts(readArtifacts(repoFullName));
+  }, [repoFullName]);
+
+  const updateArtifacts = useCallback((updater: (current: PinnedArtifact[]) => PinnedArtifact[]) => {
+    setArtifacts((current) => {
+      const next = updater(current);
+      safeStorageSet(storageKey(repoFullName), JSON.stringify(next));
+      return next;
+    });
   }, [repoFullName]);
 
   const pin = useCallback((content: string, sourceMessageId: string) => {
-    const current = readArtifacts(repoFullName);
     const artifact: PinnedArtifact = {
       id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       content,
       sourceMessageId,
       pinnedAt: Date.now(),
     };
-    persist([artifact, ...current]);
-  }, [repoFullName, persist]);
+    updateArtifacts((current) => [artifact, ...current]);
+  }, [updateArtifacts]);
 
   const unpin = useCallback((id: string) => {
-    persist(readArtifacts(repoFullName).filter(a => a.id !== id));
-  }, [repoFullName, persist]);
+    updateArtifacts((current) => current.filter((artifact) => artifact.id !== id));
+  }, [updateArtifacts]);
 
   const updateLabel = useCallback((id: string, label: string) => {
-    persist(readArtifacts(repoFullName).map(a => a.id === id ? { ...a, label } : a));
-  }, [repoFullName, persist]);
+    updateArtifacts((current) => current.map((artifact) => (
+      artifact.id === id ? { ...artifact, label } : artifact
+    )));
+  }, [updateArtifacts]);
 
   return { artifacts, pin, unpin, updateLabel, hasArtifacts: artifacts.length > 0 };
 }
