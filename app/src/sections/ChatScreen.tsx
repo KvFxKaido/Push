@@ -840,8 +840,8 @@ export function ChatScreen(props: ChatScreenProps) {
                 iconClassName="h-[11px] w-[11px]"
               />
             )}
-            <div className={`${activeRepoAppearance ? 'ml-0.5' : '-ml-0.5'} flex min-w-0 items-center self-stretch`}>
-              <p className="-translate-y-[2px] truncate text-sm font-medium leading-none text-[#f5f7ff]">
+            <div className={`${activeRepoAppearance ? '-ml-1.5' : '-ml-2.5'} flex min-w-0 items-center self-stretch`}>
+              <p className="-translate-y-px truncate text-sm font-medium leading-none text-[#f5f7ff]">
                 {isSandboxMode ? 'Sandbox' : activeRepo?.name || 'Push'}
               </p>
             </div>
