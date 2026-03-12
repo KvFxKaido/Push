@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
-import { Loader2, Download, Save, RotateCcw, GitBranch, GitMerge, ChevronDown, Check, Trash2 } from 'lucide-react';
+import { Loader2, Download, Save, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
-import { BranchWaveIcon, LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
+import { LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import { Toaster } from '@/components/ui/sonner';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
@@ -17,14 +17,6 @@ import {
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import type { PreferredProvider } from '@/lib/providers';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import { formatSnapshotAge, isSnapshotStale, snapshotStagePercent } from '@/hooks/useSnapshotManager';
@@ -327,15 +319,9 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const {
     currentBranch,
-    isOnMain,
     displayBranches,
     repoBranchesLoading,
     repoBranchesError,
-    branchMenuOpen,
-    setBranchMenuOpen,
-    pendingDeleteBranch,
-    setPendingDeleteBranch,
-    deletingBranch,
     showBranchCreate,
     setShowBranchCreate,
     showMergeFlow,
@@ -385,6 +371,12 @@ export function ChatScreen(props: ChatScreenProps) {
   const openWorkspaceHub = useCallback(() => {
     setIsHistoryDrawerOpen(false);
     setIsWorkspaceHubOpen(true);
+  }, [setIsWorkspaceHubOpen]);
+
+  const openLauncher = useCallback(() => {
+    setIsHistoryDrawerOpen(false);
+    setIsWorkspaceHubOpen(false);
+    setIsLauncherOpen(true);
   }, [setIsWorkspaceHubOpen]);
 
   const handleFixReviewFinding = useCallback(async (prompt: string) => {
@@ -657,8 +649,8 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
       >
       {/* Top bar */}
-      <header className="relative z-10 flex items-center justify-between px-3 pt-3 pb-2">
-        <div className="relative z-20 flex min-w-0 flex-1 items-center gap-2">
+      <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
+        <div className="relative z-20 flex min-w-0 items-center gap-2">
           <div className={`flex h-9 min-w-0 items-center gap-1 pl-1 pr-3 ${headerSurfaceClass}`}>
             <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
             <RepoChatDrawer
@@ -752,169 +744,24 @@ export function ChatScreen(props: ChatScreenProps) {
               </>
             )}
         </div>
-        {/* Centered branch selector for chat mode */}
+        {/* Centered launcher trigger with branch context for repo chat */}
         {activeRepo && !isSandboxMode && (
-          <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 max-w-[calc(100%-7.5rem)] -translate-x-1/2 -translate-y-1/2 sm:max-w-none">
-            <DropdownMenu
-              open={branchMenuOpen}
-              onOpenChange={(open) => {
-                setBranchMenuOpen(open);
-                if (!open) {
-                  setPendingDeleteBranch(null);
-                }
-                if (open && !repoBranchesLoading && displayBranches.length === 0) {
-                  void loadRepoBranches(activeRepo.full_name);
-                }
-              }}
-            >
-              <DropdownMenuTrigger className={`${headerPillButtonClass} group max-w-full`}>
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-                <BranchWaveIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-colors group-hover:text-push-fg" />
-                <span className="relative z-10 max-w-[72px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg sm:max-w-[108px]">
-                  {currentBranch}
-                </span>
-                <ChevronDown className={`relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-[transform,color] group-hover:text-push-fg ${branchMenuOpen ? 'rotate-180' : ''}`} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="center"
-                sideOffset={8}
-                className="w-[240px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
-              >
-                {isOnMain ? (
-                  <DropdownMenuItem
-                    onSelect={() => setShowBranchCreate(true)}
-                    className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-secondary hover:bg-push-surface-hover"
-                  >
-                    <GitBranch className="h-3.5 w-3.5" />
-                    Create branch
-                  </DropdownMenuItem>
-                ) : (
-                  <DropdownMenuItem
-                    onSelect={() => setShowMergeFlow(true)}
-                    className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-emerald-300 hover:bg-push-surface-hover"
-                  >
-                    <GitMerge className="h-3.5 w-3.5" />
-                    Merge into {activeRepo.default_branch}
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator className="bg-push-edge" />
-                <DropdownMenuLabel className="px-3 py-1.5 text-push-2xs font-medium uppercase tracking-wider text-push-fg-dim">
-                  Switch Branch
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator className="bg-push-edge" />
-
-                {repoBranchesLoading && (
-                  <DropdownMenuItem disabled className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Loading branches...
-                  </DropdownMenuItem>
-                )}
-
-                {!repoBranchesLoading && repoBranchesError && (
-                  <>
-                    <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400">
-                      Failed to load branches
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={(e) => {
-                        e.preventDefault();
-                        void loadRepoBranches(activeRepo.full_name);
-                      }}
-                      className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-push-surface-hover"
-                    >
-                      Retry
-                    </DropdownMenuItem>
-                  </>
-                )}
-
-                {!repoBranchesLoading && !repoBranchesError && displayBranches.length === 0 && (
-                  <DropdownMenuItem disabled className="mx-1 rounded-lg px-3 py-2 text-xs text-push-fg-dim">
-                    No branches found
-                  </DropdownMenuItem>
-                )}
-
-                {!repoBranchesLoading && !repoBranchesError && displayBranches.map((branch) => {
-                  const isActiveBranch = branch.name === currentBranch;
-                  const canDeleteBranch = !isActiveBranch && !branch.isDefault && !branch.isProtected;
-                  const isDeletePending = pendingDeleteBranch === branch.name;
-                  const isDeletingThisBranch = deletingBranch === branch.name;
-                  return (
-                    <div key={branch.name}>
-                      <DropdownMenuItem
-                        onSelect={(e) => {
-                          if (isActiveBranch) {
-                            e.preventDefault();
-                            return;
-                          }
-                          setPendingDeleteBranch(null);
-                          setCurrentBranch(branch.name);
-                        }}
-                        className={`mx-1 flex items-center gap-2 rounded-lg px-3 py-2 ${
-                          isActiveBranch ? 'bg-[#101621]' : 'hover:bg-push-surface-hover'
-                        }`}
-                      >
-                        <span className={`min-w-0 flex-1 truncate text-xs ${isActiveBranch ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
-                          {branch.name}
-                        </span>
-                        {branch.isDefault && (
-                          <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-[#58a6ff]">
-                            default
-                          </span>
-                        )}
-                        {branch.isProtected && (
-                          <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-push-2xs text-[#fca5a5]">
-                            protected
-                          </span>
-                        )}
-                        {isActiveBranch && <Check className="h-3.5 w-3.5 text-push-link" />}
-                      </DropdownMenuItem>
-                      {canDeleteBranch && (
-                        <DropdownMenuItem
-                          onSelect={(e) => {
-                            e.preventDefault();
-                            if (isDeletingThisBranch || deletingBranch) return;
-                            if (!isDeletePending) {
-                              setPendingDeleteBranch(branch.name);
-                              return;
-                            }
-                            void handleDeleteBranch(branch.name);
-                          }}
-                          className={`mx-1 mb-1 flex items-center gap-2 rounded-lg px-3 py-1.5 text-push-xs ${
-                            isDeletePending
-                              ? 'bg-red-950/30 text-red-300 hover:bg-red-950/40'
-                              : 'text-push-fg-dim hover:bg-push-surface-hover hover:text-red-300'
-                          }`}
-                        >
-                          {isDeletingThisBranch ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                          {isDeletingThisBranch
-                            ? `Deleting ${branch.name}...`
-                            : isDeletePending
-                            ? `Confirm delete ${branch.name}`
-                            : `Delete ${branch.name}`}
-                        </DropdownMenuItem>
-                      )}
-                    </div>
-                  );
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        )}
-        <div className="relative z-20 flex shrink-0 items-center gap-2">
-          {!isSandboxMode && (
+          <div className="flex min-w-0 justify-center">
             <button
-              onClick={() => {
-                setIsHistoryDrawerOpen(false);
-                setIsLauncherOpen(true);
-              }}
-              className={headerRoundButtonClass}
+              onClick={openLauncher}
+              className={`${headerPillButtonClass} group min-w-0 max-w-full`}
               aria-label="Open launcher"
               title="Launcher"
             >
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-              <LauncherGridIcon className="relative z-10 h-3.5 w-3.5" />
+              <LauncherGridIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-colors group-hover:text-push-fg" />
+              <span className="relative z-10 max-w-[92px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg sm:max-w-[128px]">
+                {currentBranch}
+              </span>
             </button>
-          )}
+          </div>
+        )}
+        <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
           {(activeRepo || isSandboxMode) && (
             <button
               onClick={() => openWorkspaceHub()}
