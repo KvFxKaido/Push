@@ -20,6 +20,10 @@ import {
   type ExperimentalProviderType,
 } from '@/lib/experimental-providers';
 import type { VertexConfiguredMode } from '@/hooks/useVertexConfig';
+import type {
+  BuiltInSettingsProviderId,
+  ExperimentalSettingsProviderId,
+} from '@/components/settings-shared';
 
 export type SettingsTabKey = 'you' | 'workspace' | 'ai';
 
@@ -69,142 +73,87 @@ export interface SettingsAIProps {
   availableProviders: readonly (readonly [string, string, boolean])[];
   setPreferredProvider: (v: PreferredProvider) => void;
   clearPreferredProvider: () => void;
-  // Ollama
-  hasOllamaKey: boolean;
-  ollamaModel: string;
-  setOllamaModel: (v: string) => void;
-  ollamaModelOptions: string[];
-  ollamaModelsLoading: boolean;
-  ollamaModelsError: string | null;
-  ollamaModelsUpdatedAt: number | null;
-  isOllamaModelLocked: boolean;
-  refreshOllamaModels: () => void;
-  ollamaKeyInput: string;
-  setOllamaKeyInput: (v: string) => void;
-  setOllamaKey: (v: string) => void;
-  clearOllamaKey: () => void;
-  // OpenRouter
-  hasOpenRouterKey: boolean;
-  openRouterModel: string;
-  setOpenRouterModel: (v: string) => void;
-  openRouterModelOptions: string[];
-  openRouterModelsLoading: boolean;
-  openRouterModelsError: string | null;
-  openRouterModelsUpdatedAt: number | null;
-  isOpenRouterModelLocked: boolean;
-  refreshOpenRouterModels: () => void;
-  openRouterKeyInput: string;
-  setOpenRouterKeyInput: (v: string) => void;
-  setOpenRouterKey: (v: string) => void;
-  clearOpenRouterKey: () => void;
-  // OpenCode Zen
-  hasZenKey: boolean;
-  zenModel: string;
-  setZenModel: (v: string) => void;
-  zenModelOptions: string[];
-  zenModelsLoading: boolean;
-  zenModelsError: string | null;
-  zenModelsUpdatedAt: number | null;
-  isZenModelLocked: boolean;
-  refreshZenModels: () => void;
-  zenKeyInput: string;
-  setZenKeyInput: (v: string) => void;
-  setZenKey: (v: string) => void;
-  clearZenKey: () => void;
-  // Nvidia NIM
-  hasNvidiaKey: boolean;
-  nvidiaModel: string;
-  setNvidiaModel: (v: string) => void;
-  nvidiaModelOptions: string[];
-  nvidiaModelsLoading: boolean;
-  nvidiaModelsError: string | null;
-  nvidiaModelsUpdatedAt: number | null;
-  isNvidiaModelLocked: boolean;
-  refreshNvidiaModels: () => void;
-  nvidiaKeyInput: string;
-  setNvidiaKeyInput: (v: string) => void;
-  setNvidiaKey: (v: string) => void;
-  clearNvidiaKey: () => void;
-  // Azure OpenAI (experimental)
-  hasAzureKey: boolean;
-  azureKeyInput: string;
-  setAzureKeyInput: (v: string) => void;
-  setAzureKey: (v: string) => void;
-  clearAzureKey: () => void;
-  azureBaseUrl: string;
-  azureBaseUrlInput: string;
-  setAzureBaseUrlInput: (v: string) => void;
-  azureBaseUrlError: string | null;
-  setAzureBaseUrl: (v: string) => void;
-  clearAzureBaseUrl: () => void;
-  azureModel: string;
-  azureModelInput: string;
-  setAzureModelInput: (v: string) => void;
-  setAzureModel: (v: string) => void;
-  clearAzureModel: () => void;
-  azureDeployments: ExperimentalDeployment[];
-  azureActiveDeploymentId: string | null;
-  saveAzureDeployment: (model: string) => boolean;
-  selectAzureDeployment: (id: string) => void;
-  removeAzureDeployment: (id: string) => void;
-  clearAzureDeployments: () => void;
-  isAzureDeploymentLimitReached: boolean;
-  isAzureConfigured: boolean;
-  // AWS Bedrock (experimental)
-  hasBedrockKey: boolean;
-  bedrockKeyInput: string;
-  setBedrockKeyInput: (v: string) => void;
-  setBedrockKey: (v: string) => void;
-  clearBedrockKey: () => void;
-  bedrockBaseUrl: string;
-  bedrockBaseUrlInput: string;
-  setBedrockBaseUrlInput: (v: string) => void;
-  bedrockBaseUrlError: string | null;
-  setBedrockBaseUrl: (v: string) => void;
-  clearBedrockBaseUrl: () => void;
-  bedrockModel: string;
-  bedrockModelInput: string;
-  setBedrockModelInput: (v: string) => void;
-  setBedrockModel: (v: string) => void;
-  clearBedrockModel: () => void;
-  bedrockDeployments: ExperimentalDeployment[];
-  bedrockActiveDeploymentId: string | null;
-  saveBedrockDeployment: (model: string) => boolean;
-  selectBedrockDeployment: (id: string) => void;
-  removeBedrockDeployment: (id: string) => void;
-  clearBedrockDeployments: () => void;
-  isBedrockDeploymentLimitReached: boolean;
-  isBedrockConfigured: boolean;
-  // Google Vertex (experimental)
-  hasVertexKey: boolean;
-  vertexKeyInput: string;
-  setVertexKeyInput: (v: string) => void;
-  setVertexKey: (v: string) => void;
-  clearVertexKey: () => void;
-  vertexKeyError: string | null;
-  vertexRegion: string;
-  vertexRegionInput: string;
-  setVertexRegionInput: (v: string) => void;
-  vertexRegionError: string | null;
-  vertexModel: string;
-  vertexModelInput: string;
-  setVertexModelInput: (v: string) => void;
-  vertexModelOptions: string[];
-  setVertexRegion: (v: string) => void;
-  clearVertexRegion: () => void;
-  setVertexModel: (v: string) => void;
-  clearVertexModel: () => void;
-  vertexMode: VertexConfiguredMode;
-  vertexTransport: 'openapi' | 'anthropic';
-  vertexProjectId: string | null;
-  hasLegacyVertexConfig: boolean;
-  isVertexConfigured: boolean;
-  // Tavily
-  hasTavilyKey: boolean;
-  tavilyKeyInput: string;
-  setTavilyKeyInput: (v: string) => void;
-  setTavilyKey: (v: string) => void;
-  clearTavilyKey: () => void;
+  builtInProviders: Record<BuiltInSettingsProviderId, SettingsBuiltInProvider>;
+  experimentalProviders: Record<ExperimentalSettingsProviderId, SettingsExperimentalProvider>;
+  vertexProvider: SettingsVertexProvider;
+  tavilyProvider: SettingsTavilyProvider;
+}
+
+export interface SettingsBuiltInProvider {
+  hasKey: boolean;
+  model: string;
+  setModel: (value: string) => void;
+  modelOptions: string[];
+  modelsLoading: boolean;
+  modelsError: string | null;
+  modelsUpdatedAt: number | null;
+  isModelLocked: boolean;
+  refreshModels: () => void;
+  keyInput: string;
+  setKeyInput: (value: string) => void;
+  setKey: (value: string) => void;
+  clearKey: () => void;
+}
+
+export interface SettingsExperimentalProvider {
+  hasKey: boolean;
+  keyInput: string;
+  setKeyInput: (value: string) => void;
+  setKey: (value: string) => void;
+  clearKey: () => void;
+  baseUrl: string;
+  baseUrlInput: string;
+  setBaseUrlInput: (value: string) => void;
+  baseUrlError: string | null;
+  setBaseUrl: (value: string) => void;
+  clearBaseUrl: () => void;
+  model: string;
+  modelInput: string;
+  setModelInput: (value: string) => void;
+  setModel: (value: string) => void;
+  clearModel: () => void;
+  deployments: ExperimentalDeployment[];
+  activeDeploymentId: string | null;
+  saveDeployment: (model: string) => boolean;
+  selectDeployment: (id: string) => void;
+  removeDeployment: (id: string) => void;
+  clearDeployments: () => void;
+  deploymentLimitReached: boolean;
+  isConfigured: boolean;
+}
+
+export interface SettingsVertexProvider {
+  hasKey: boolean;
+  keyInput: string;
+  setKeyInput: (value: string) => void;
+  keyError: string | null;
+  setKey: (value: string) => void;
+  clearKey: () => void;
+  region: string;
+  regionInput: string;
+  setRegionInput: (value: string) => void;
+  regionError: string | null;
+  setRegion: (value: string) => void;
+  clearRegion: () => void;
+  model: string;
+  modelInput: string;
+  setModelInput: (value: string) => void;
+  modelOptions: string[];
+  setModel: (value: string) => void;
+  clearModel: () => void;
+  mode: VertexConfiguredMode;
+  transport: 'openapi' | 'anthropic';
+  projectId: string | null;
+  hasLegacyConfig: boolean;
+  isConfigured: boolean;
+}
+
+export interface SettingsTavilyProvider {
+  hasKey: boolean;
+  keyInput: string;
+  setKeyInput: (value: string) => void;
+  setKey: (value: string) => void;
+  clearKey: () => void;
 }
 
 export interface SettingsWorkspaceProps {

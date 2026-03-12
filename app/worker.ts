@@ -157,99 +157,9 @@ async function getGoogleAccessToken(serviceAccount: {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-
-    // API route: health check endpoint
-    if (url.pathname === '/api/health' && request.method === 'GET') {
-      return handleHealthCheck(env);
-    }
-
-    // API route: GitHub App token exchange
-    if (url.pathname === '/api/github/app-token' && request.method === 'POST') {
-      return handleGitHubAppToken(request, env);
-    }
-
-    // API route: GitHub App OAuth auto-connect (code → user token → find installation → installation token)
-    if (url.pathname === '/api/github/app-oauth' && request.method === 'POST') {
-      return handleGitHubAppOAuth(request, env);
-    }
-
-    // API route: streaming proxy to Ollama Cloud (SSE, OpenAI-compatible)
-    if (url.pathname === '/api/ollama/chat' && request.method === 'POST') {
-      return handleOllamaChat(request, env);
-    }
-
-    // API route: model catalog proxy to Ollama Cloud
-    if (url.pathname === '/api/ollama/models' && request.method === 'GET') {
-      return handleOllamaModels(request, env);
-    }
-
-    // API route: streaming proxy to OpenRouter (SSE, OpenAI-compatible)
-    if (url.pathname === '/api/openrouter/chat' && request.method === 'POST') {
-      return handleOpenRouterChat(request, env);
-    }
-
-    // API route: model catalog proxy to OpenRouter
-    if (url.pathname === '/api/openrouter/models' && request.method === 'GET') {
-      return handleOpenRouterModels(request, env);
-    }
-
-    // API route: streaming proxy to OpenCode Zen (SSE, OpenAI-compatible)
-    if (url.pathname === '/api/zen/chat' && request.method === 'POST') {
-      return handleZenChat(request, env);
-    }
-
-    // API route: model catalog proxy to OpenCode Zen
-    if (url.pathname === '/api/zen/models' && request.method === 'GET') {
-      return handleZenModels(request, env);
-    }
-
-    // API route: streaming proxy to Nvidia NIM (SSE, OpenAI-compatible)
-    if (url.pathname === '/api/nvidia/chat' && request.method === 'POST') {
-      return handleNvidiaChat(request, env);
-    }
-
-    // API route: model catalog proxy to Nvidia NIM
-    if (url.pathname === '/api/nvidia/models' && request.method === 'GET') {
-      return handleNvidiaModels(request, env);
-    }
-
-    if (url.pathname === '/api/azure/chat' && request.method === 'POST') {
-      return handleAzureChat(request, env);
-    }
-
-    if (url.pathname === '/api/azure/models' && request.method === 'GET') {
-      return handleAzureModels(request, env);
-    }
-
-    if (url.pathname === '/api/bedrock/chat' && request.method === 'POST') {
-      return handleBedrockChat(request, env);
-    }
-
-    if (url.pathname === '/api/bedrock/models' && request.method === 'GET') {
-      return handleBedrockModels(request, env);
-    }
-
-    if (url.pathname === '/api/vertex/chat' && request.method === 'POST') {
-      return handleVertexChat(request, env);
-    }
-
-    if (url.pathname === '/api/vertex/models' && request.method === 'GET') {
-      return handleVertexModels(request, env);
-    }
-
-    // API route: Ollama web search proxy
-    if (url.pathname === '/api/ollama/search' && request.method === 'POST') {
-      return handleOllamaSearch(request, env);
-    }
-
-    // API route: Tavily web search proxy (optional premium upgrade)
-    if (url.pathname === '/api/search/tavily' && request.method === 'POST') {
-      return handleTavilySearch(request, env);
-    }
-
-    // API route: free web search (DuckDuckGo HTML scraping — no API key needed)
-    if (url.pathname === '/api/search' && request.method === 'POST') {
-      return handleFreeSearch(request, env);
+    const exactRoute = matchExactApiRoute(url.pathname, request.method);
+    if (exactRoute) {
+      return exactRoute.handler(request, env);
     }
 
     // API route: sandbox proxy to Modal
@@ -1924,6 +1834,39 @@ async function handleGitHubAppToken(request: Request, env: Env): Promise<Respons
     wlog('error', 'github_token_error', { message });
     return Response.json({ error: `GitHub App authentication failed: ${message}` }, { status: 500 });
   }
+}
+
+type ExactApiRoute = {
+  path: string;
+  method: 'GET' | 'POST';
+  handler: (request: Request, env: Env) => Promise<Response>;
+};
+
+const EXACT_API_ROUTES: ExactApiRoute[] = [
+  { path: '/api/health', method: 'GET', handler: (_request, env) => handleHealthCheck(env) },
+  { path: '/api/github/app-token', method: 'POST', handler: handleGitHubAppToken },
+  { path: '/api/github/app-oauth', method: 'POST', handler: handleGitHubAppOAuth },
+  { path: '/api/ollama/chat', method: 'POST', handler: handleOllamaChat },
+  { path: '/api/ollama/models', method: 'GET', handler: handleOllamaModels },
+  { path: '/api/openrouter/chat', method: 'POST', handler: handleOpenRouterChat },
+  { path: '/api/openrouter/models', method: 'GET', handler: handleOpenRouterModels },
+  { path: '/api/zen/chat', method: 'POST', handler: handleZenChat },
+  { path: '/api/zen/models', method: 'GET', handler: handleZenModels },
+  { path: '/api/nvidia/chat', method: 'POST', handler: handleNvidiaChat },
+  { path: '/api/nvidia/models', method: 'GET', handler: handleNvidiaModels },
+  { path: '/api/azure/chat', method: 'POST', handler: handleAzureChat },
+  { path: '/api/azure/models', method: 'GET', handler: handleAzureModels },
+  { path: '/api/bedrock/chat', method: 'POST', handler: handleBedrockChat },
+  { path: '/api/bedrock/models', method: 'GET', handler: handleBedrockModels },
+  { path: '/api/vertex/chat', method: 'POST', handler: handleVertexChat },
+  { path: '/api/vertex/models', method: 'GET', handler: handleVertexModels },
+  { path: '/api/ollama/search', method: 'POST', handler: handleOllamaSearch },
+  { path: '/api/search/tavily', method: 'POST', handler: handleTavilySearch },
+  { path: '/api/search', method: 'POST', handler: handleFreeSearch },
+];
+
+function matchExactApiRoute(pathname: string, method: string): ExactApiRoute | null {
+  return EXACT_API_ROUTES.find((route) => route.path === pathname && route.method === method) ?? null;
 }
 
 async function generateGitHubAppJWT(appId: string, privateKeyPEM: string): Promise<string> {

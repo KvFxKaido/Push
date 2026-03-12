@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
-import { readFromSandbox, execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
+import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { fetchProjectInstructions } from '@/lib/github-tools';
 import { syncProjectInstructionsFromSandbox } from '@/lib/project-instructions-utils';
@@ -161,14 +161,21 @@ export function useProjectInstructions(
   useEffect(() => {
     if (sandbox.status !== 'ready' || !sandbox.sandboxId) return;
     let cancelled = false;
-    readFromSandbox(sandbox.sandboxId, '/workspace/AGENTS.md')
-      .then((result) => {
+    syncProjectInstructionsFromSandbox(sandbox.sandboxId, {
+      applyEffectiveInstructions: (content) => {
         if (cancelled) return;
-        applyEffectiveInstructions(result.content);
-        // Sandbox upgrade only reads AGENTS.md per design
-        setInstructionFilenameState('AGENTS.md');
-        setInstructionFilename('AGENTS.md');
-      })
+        applyEffectiveInstructions(content);
+      },
+      setInstructionFilenameState: (filename) => {
+        if (cancelled) return;
+        setInstructionFilenameState(filename);
+      },
+      setInstructionFilename: (filename) => {
+        if (cancelled) return;
+        setInstructionFilename(filename);
+      },
+      instructionPaths: ['/workspace/AGENTS.md'],
+    })
       .catch(() => {
         // Sandbox read failed — keep Phase A content
       });

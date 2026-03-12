@@ -149,13 +149,9 @@ export function HubSettingsTab({
   const [activeView, setActiveView] = useState<SettingsSubview>('landing');
 
   const configuredProviderCount = [
-    ai.hasOllamaKey,
-    ai.hasOpenRouterKey,
-    ai.hasZenKey,
-    ai.hasNvidiaKey,
-    ai.hasAzureKey,
-    ai.hasBedrockKey,
-    ai.hasVertexKey,
+    ...Object.values(ai.builtInProviders).map((provider) => provider.hasKey),
+    ...Object.values(ai.experimentalProviders).map((provider) => provider.hasKey),
+    ai.vertexProvider.hasKey,
   ].filter(Boolean).length;
 
   const defaultProvider = ai.activeBackend ?? (ai.activeProviderLabel === 'demo' ? null : ai.activeProviderLabel);
@@ -204,7 +200,7 @@ export function HubSettingsTab({
       lines: [
         `default  ${defaultProvider ? PROVIDER_LABELS[defaultProvider] : 'Auto routing'}`,
         `models   ${ai.lockedModel ? `chat locked to ${ai.lockedModel}` : 'new chats inherit defaults'}`,
-        `search   ${ai.hasTavilyKey ? 'Tavily key saved' : 'fallback web search only'}`,
+        `search   ${ai.tavilyProvider.hasKey ? 'Tavily key saved' : 'fallback web search only'}`,
       ],
       onClick: () => setActiveView('ai'),
     },

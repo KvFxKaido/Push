@@ -1,259 +1,283 @@
 # Duplication and Structural Symmetry Analysis
 
-Analysis of repeated patterns, structural symmetry, and consolidation opportunities across the Push codebase. This document is observational — no behavior changes proposed.
+Current audit of repeated structure across Push. This is observational only. No behavior changes are proposed here.
 
-**Last audit: 2026-02-19 — 100% of identified duplication has been consolidated.**
+Last audit: 2026-03-12
 
----
+## Snapshot
 
-## 1. Provider Axis — The Six-Way Symmetry
+The codebase is strongly symmetric along three axes:
 
-The codebase is organized around AI providers (Ollama, Mistral, OpenRouter, Z.AI, Google, OpenCode Zen). Each provider requires identical plumbing at every layer. This creates a structural symmetry that repeats across files:
+1. Provider axis
+2. Surface axis (web app vs CLI)
+3. Role/config axis (Orchestrator/Coder/Reviewer/Auditor, plus provider-specific settings)
 
-### 1a. Config Hooks (already consolidated) — DONE
+Most of the obvious provider duplication is already consolidated behind factories and registries. The biggest remaining repetition is in the Settings and model-catalog layer. The highest drift risk is in web/CLI mirrored modules that now implement the same concept differently.
 
-Each provider has a thin config hook wrapping the shared `useApiKeyConfig` factory:
+## 1. Provider Axis — Mostly Consolidated
 
-| Hook file | Factory used | Extra state |
-|-----------|-------------|-------------|
-| `useTavilyConfig.ts` | `useApiKeyConfig` | key only |
-| `useOllamaConfig.ts` | `useApiKeyWithModelConfig` | key + model |
-| `useMistralConfig.ts` | `useApiKeyWithModelConfig` | key + model |
-| `useOpenRouterConfig.ts` | `useApiKeyWithModelConfig` | key + model |
-| `useZaiConfig.ts` | `useApiKeyWithModelConfig` | key + model |
-| `useGoogleConfig.ts` | `useApiKeyWithModelConfig` | key + model |
-| `useZenConfig.ts` | `useApiKeyWithModelConfig` | key + model |
+### 1a. Config hooks are thin wrappers
 
-**Status:** DONE. Well-factored. The `useApiKeyConfig.ts` factory eliminated the duplication. Each hook is a 12–20 line thin wrapper.
+The built-in provider hooks are now intentionally tiny wrappers over shared factories:
 
-### 1b. Provider Config — `providers.ts` — PARTIAL
+- `app/src/hooks/useApiKeyConfig.ts`
+- `app/src/hooks/useOllamaConfig.ts`
+- `app/src/hooks/useOpenRouterConfig.ts`
+- `app/src/hooks/useZenConfig.ts`
+- `app/src/hooks/useNvidiaConfig.ts`
+- `app/src/hooks/useTavilyConfig.ts`
 
-The `PROVIDERS` array repeats the same three-role model block (orchestrator/coder/auditor) for each of the six providers. Each entry is structurally identical:
+This is good symmetry, not problematic duplication. Each provider contributes only storage keys, env vars, and defaults.
 
-```typescript
-{
-  type: '<provider>',
-  name: '<Display Name>',
-  models: [
-    { id: DEFAULT_MODEL, name: '... (Orchestrator)', provider: '<provider>', role: 'orchestrator', context: N },
-    { id: DEFAULT_MODEL, name: '... (Coder)',        provider: '<provider>', role: 'coder',        context: N },
-    { id: DEFAULT_MODEL, name: '... (Auditor)',      provider: '<provider>', role: 'auditor',      context: N },
-  ],
-}
-```
+### 1b. Provider metadata is centralized
 
-Six providers × three roles = 18 model entries that share the same shape. The `getModelForRole()` function has a chain of `if (type === 'ollama') ... if (type === 'mistral') ...` blocks that could be a lookup table.
+`app/src/lib/providers.ts` is now the main provider registry:
 
-The `createModelNameStorage` factory at the bottom already consolidates the per-provider model-name storage getters/setters.
+- `PROVIDER_URLS` centralizes chat and model endpoints
+- `makeRoleModels()` builds the per-role model entries
+- `createModelNameStorage()` centralizes runtime model-name persistence
+- `MODEL_NAME_GETTERS` routes provider lookups through one table
 
-**Status:** PARTIAL. `createModelNameStorage` is consolidated. `PROVIDERS` array and `getModelForRole()` if-chain remain as-is — structurally repetitive but functional.
+This means the provider layer is structurally repetitive, but the repetition is data-shaped rather than code-shaped.
 
-### 1c. Orchestrator Streaming — `orchestrator.ts` — DONE
+### 1c. Streaming configuration is registry-driven
 
-~~Six `stream*Chat` functions share identical signatures (11 parameters) and the same body structure.~~
+`app/src/lib/orchestrator.ts` consolidates provider chat setup behind `PROVIDER_STREAM_CONFIGS` and `streamProviderChat()`.
 
-~~**Already partially consolidated:** All six delegate to the shared `streamSSEChat()` engine. What remains duplicated is the per-provider wrapper function (~300 lines total for six wrappers).~~
+That is the right kind of symmetry:
 
-**Status:** DONE. Fully consolidated via factory + registry pattern:
-- `PROVIDER_STREAM_CONFIGS` registry maps each provider to `{ getKey, buildConfig }`.
-- `buildErrorMessages(name, connectHint?)` factory generates all error messages — only provider name varies.
-- `streamProviderChat()` single entry point: looks up provider → fetches key → builds config → delegates to `streamSSEChat()`.
-- Six exports (`streamOllamaChat`, `streamMistralChat`, `streamOpenRouterChat`, `streamZaiChat`, `streamGoogleChat`, `streamZenChat`) are now **one-line lambdas** for backward compatibility.
-- ~300 lines of wrapper duplication reduced to ~12 lines of thin lambdas.
+- shared stream engine
+- per-provider config entries
+- thin compatibility exports like `streamOllamaChat`
 
-### 1d. Worker Proxy — `worker.ts` — DONE
+The remaining provider differences here are real differences: key lookup, model lookup, base URL rules, and Vertex-specific headers.
 
-~~The Cloudflare Worker repeats the same handler skeleton 15+ times across provider endpoints.~~
+### 1d. Worker handlers are factory-backed, but route dispatch is still manual
 
-~~**Estimated duplicated lines: ~400–450** out of ~2164 lines (~20% of the file).~~
+`app/worker.ts` already removed most handler boilerplate through:
 
-**Status:** DONE. Fully consolidated via shared helpers and factories:
-- `runPreamble()` — handles origin validation, rate limiting, auth header building, and body reading for all handlers.
-- `createStreamProxyHandler()` — factory for SSE chat endpoints across providers.
-- `createJsonProxyHandler()` — factory for model list and search endpoints.
-- `validateOrigin()`, `standardAuth()`, `getClientIp()`, `checkRateLimit()`, `readBodyText()` — all shared.
-- Each handler is now 1–5 lines instead of 40–50. ~400–450 lines of duplication eliminated.
-- Provider consistency issues are resolved by the shared factories.
+- `runPreamble()`
+- `createStreamProxyHandler()`
+- `createJsonProxyHandler()`
 
-### 1e. Settings UI — `SettingsSheet.tsx` — DONE
+What remains repetitive is the top-level route dispatch chain in `fetch()`, where every endpoint is still wired by a separate `if (url.pathname === ...)` branch.
 
-~~Each provider's API key section repeats the same UI block (~40 lines per provider).~~
+This is not a correctness issue. It is a remaining structural mirror:
 
-~~The input/save/clear pattern is copied six times with only the provider name and prop names changing.~~
+- handler bodies are factory-generated
+- route registration is still handwritten
 
-**Status:** DONE. Shared `ProviderKeySection` component (~170 lines) handles key saving/clearing, model selection, model refresh (with loading/error states), and locked models. All 7 providers use it — each provider section is now 5–10 lines of config. ~240 lines of duplication eliminated.
+## 2. Settings and Model Catalog — Largest Remaining Local Duplication
 
----
+### 2a. `SettingsAIProps` is a repeated provider contract
 
-## 2. Tool Protocol — Detection/Execution Symmetry — DONE
+`app/src/components/SettingsSheet.tsx` contains a very large `SettingsAIProps` interface that manually expands nearly the same shape for:
 
-Each tool subsystem follows the same structural pattern:
+- Ollama
+- OpenRouter
+- Zen
+- Nvidia
+- Azure
+- Bedrock
+- Vertex
+- Tavily
 
-```
-detect*ToolCall(text: string): *ToolCall | null
-  → calls detectToolFromText(text, validator)
+This is the strongest local repetition in the web app today. The duplication is mostly type-surface duplication rather than rendering duplication.
 
-execute*ToolCall(call, ...context): ToolExecutionResult
-  → switch on tool name, call APIs, return { text, card? }
-```
+### 2b. `useModelCatalog()` repeats provider slices
 
-| Module | Detection | Execution | Shared infra |
-|--------|-----------|-----------|--------------|
-| `github-tools.ts` | `detectToolCall` | `executeToolCall` | `detectToolFromText` |
-| `sandbox-tools.ts` | `detectSandboxToolCall` | `executeSandboxToolCall` | `detectToolFromText` |
-| `scratchpad-tools.ts` | `detectScratchpadToolCall` | `executeScratchpadToolCall` | `detectToolFromText` |
-| `web-search-tools.ts` | `detectWebSearchToolCall` | `executeWebSearch` | `detectToolFromText` |
-| `tool-dispatch.ts` | `detectAnyToolCall` (aggregator) | `executeAnyToolCall` (router) | — |
+`app/src/hooks/useModelCatalog.ts` repeats the same pattern several times for the built-in providers:
 
-**Status:** DONE. The `detectToolFromText<T>()` generic in `utils.ts` already eliminates the JSON-extraction duplication. Each tool module provides only its validator function. This layer is well-factored. All validators follow the same `(parsed: unknown) => T | null` signature.
+- key input state
+- model list state
+- loading state
+- error state
+- updated-at state
+- refresh callback
+- auto-fetch effect
+- clear-on-key-removal effect
 
----
+This file is already partially consolidated through `refreshModels()`, but the surrounding state still expands provider-by-provider.
 
-## 3. Web Search Execution — ~~Triple Duplication~~ DONE
+The symmetry is especially visible around:
 
-~~Three functions in `web-search-tools.ts` are near-identical.~~
+- `ollama`
+- `openrouter`
+- `zen`
+- `nvidia`
 
-~~Only three things differ: the URL, the authorization header, and the "key not configured" guard.~~
+Azure, Bedrock, and Vertex then follow the same broader settings pattern with different field sets.
 
-**Status:** DONE. `executeWebSearchCore(url, query, headers?)` handles fetch, error handling, result formatting, and card data construction. Three backends are now thin wrappers (3–10 lines each):
-- `executeOllamaWebSearch` → calls core with Ollama URL + auth
-- `executeFreeWebSearch` → calls core with DuckDuckGo URL, no auth
-- `executeTavilySearch` → calls core with Tavily URL + auth
+### 2c. UI rendering is partially consolidated
 
-~150 lines of duplication reduced to ~50.
+`SettingsSheet.tsx` already extracted:
 
----
+- `ProviderKeySection`
+- `ExperimentalProviderSection`
+- `VertexProviderSection`
 
-## 4. Diff Parsing — ~~Triple Duplication~~ DONE
+That means the visual duplication is significantly lower than the data/prop duplication. The remaining repetition is mostly in prop plumbing and in the provider-specific input state assembled by `useModelCatalog()`.
 
-~~Three functions across three files parse unified diffs with the same loop.~~
+## 3. Experimental Connectors — Clean Azure/Bedrock Symmetry, Intentional Vertex Fork
 
-~~A shared `parseDiffStats(diff)` in `diff-utils.ts` (which already exists but doesn't contain this) would serve all three callers.~~
+`app/src/hooks/useExperimentalProviderConfig.ts` cleanly consolidates Azure and Bedrock behind `createExperimentalProviderConfig()`.
 
-**Status:** DONE. `diff-utils.ts` now exports:
-- `parseDiffStats()` — counts files/additions/deletions
-- `parseDiffIntoFiles()` — splits diff into per-file sections
-- `formatSize()` — human-friendly byte labels
+This is a strong example of useful symmetry:
 
-All three callers (`sandbox-tools.ts`, `auditor-agent.ts`, `coder-agent.ts`) import from `diff-utils.ts`. No inline diff parsing remains.
+- same storage pattern
+- same validation pattern
+- same deployment-list lifecycle
+- same getter + hook dual export pattern
 
----
+`app/src/hooks/useVertexConfig.ts` is parallel to that abstraction, but it is intentionally separate because Vertex has extra complexity:
 
-## 5. Agent Module Symmetry — Coder vs Auditor — DONE
+- native service-account mode
+- legacy raw-endpoint mode
+- region validation
+- transport selection (`openapi` vs `anthropic`)
 
-Both agent modules follow the same lifecycle:
+So this is mirrored structure, but not accidental duplication. Vertex is a sibling abstraction, not just an unrefactored copy.
 
-```
-1. Get active provider → guard on 'demo'
-2. Get streamFn and model via getProviderStreamFn() / getModelForRole()
-3. Build system prompt
-4. Build messages array
-5. streamWithTimeout(timeoutMs, message, (onToken, onDone, onError) => streamFn(...))
-6. Check for stream error
-7. Parse accumulated text
-8. Return structured result
-```
+## 4. Web/CLI Mirrors — The Main Drift Hotspot
 
-| Aspect | `coder-agent.ts` | `auditor-agent.ts` |
-|--------|---------------------|---------------------|
-| Provider/model setup | lines 247–253 | lines 63–78 |
-| `streamWithTimeout` call | lines 308–326 | lines 91–107 |
-| Stream error check | lines 327–332 | lines 108–122 |
-| `truncateContent()` | defined locally (line 36) | not needed |
+The repo now has several conceptually paired modules across web and CLI. These are the highest-risk symmetry points because they look related but no longer behave identically.
 
-**Status:** DONE. The `streamWithTimeout` utility (in `utils.ts`) already consolidated what was previously duplicated. The remaining setup boilerplate (provider check → streamFn → model lookup) is ~10–12 lines per agent and not worth abstracting further.
+### 4a. `hashline` exists twice and has materially diverged
 
----
+Files:
 
-## 6. Card Components — Structural Patterns
+- `app/src/lib/hashline.ts`
+- `cli/hashline.mjs`
 
-27 card components share significant structural repetition:
+Both implement hash-anchored editing, but the implementations are no longer equivalent.
 
-### 6a. Shell + Header (100% of cards) — PARTIAL
+Web version characteristics:
 
-Every card wraps in `CARD_SHELL_CLASS` (shared constant) and uses a header. Shell is consolidated; headers are manually implemented per card (no shared `CardHeader` component extracted yet).
+- async SHA-256 hashing
+- 7 to 12 character ref support
+- two-phase batch resolution
+- ambiguity diagnostics
+- structured `{ content, applied, failed, errors }` result
 
-**Remaining:** A shared `CardHeader` component taking icon + title could reduce boilerplate across 27 cards.
+CLI version characteristics:
 
-### 6b. Expandable Pattern (5 cards) — DONE
+- sync SHA-1 hashing
+- refs normalized down to 7 chars
+- inline sequential resolution
+- different ambiguity/staleness behavior
+- structured `{ content, applied }` result with a different shape
 
-PRCard, SandboxCard, DiffPreviewCard, FileCard, and EditorCard all use the expandable pattern.
+This is the clearest example of duplicated concept with behavioral drift.
 
-**Status:** DONE. `expandable.tsx` exports `useExpandable`, `ExpandChevron`, and `ExpandableCardPanel` — all cards use these shared components. Wiring is minimal (~3 lines per card).
+### 4b. Model catalog logic exists on both surfaces
 
-### 6c. Status Badge (6 cards) — DONE
+Files:
 
-PRCard, AuditVerdictCard, SandboxCard, TestResultsCard, TypeCheckCard, and CIStatusCard each define independent status-to-color config objects.
+- `app/src/lib/model-catalog.ts`
+- `cli/model-catalog.mjs`
+- `app/src/lib/providers.ts`
 
-**Status:** DONE. `lib/utils.ts` now exports the shared palette:
-- `CARD_TEXT_SUCCESS/ERROR/WARNING` — standalone text color classes
-- `CARD_BADGE_SUCCESS/ERROR/WARNING` — pill badge pattern (`bg-[...]/15 text-[...]`)
-- `CARD_HEADER_BG_SUCCESS/ERROR` — header band pattern (`bg-[...]/10`)
+Both surfaces maintain curated defaults, model lists, and live `/models` fetching logic, but they do so differently:
 
-All config objects (riskColors, statusConfig, etc.) replaced with constants. ~60 lines consolidated.
+- different curated catalogs
+- different default model strings
+- different normalization breadth
+- different fallback behavior
+- different placement of provider metadata
 
-### 6d. List/Divider Pattern (7 cards) — DONE
+This is not just symmetry. It is split source-of-truth risk.
 
-CommitListCard, FileListCard, BranchListCard, CommitFilesCard, TypeCheckCard, FileSearchCard, and WebSearchCard all repeat the same `divide-y divide-push-edge` list markup.
+### 4c. Tool-call metrics are parallel, but not parity-aligned
 
-**Status:** DONE. `CARD_LIST_CLASS = 'divide-y divide-push-edge'` exported from `lib/utils.ts`. All 7 cards use it (cards with max-height combine via template string). ~100 lines consolidated.
+Files:
 
-### 6e. Code Block Pattern (2 cards, 3 instances) — DONE
+- `app/src/lib/tool-call-metrics.ts`
+- `cli/tool-call-metrics.mjs`
 
-FileCard and SandboxCard (stdout + stderr) duplicate the `<pre><code>` block wrapper.
+The web app records rich metrics by provider, model, reason, and tool. The CLI records only a count by reason.
 
-**Status:** DONE. `CardCodeBlock` component in `components/cards/card-code-block.tsx`. Base styles on `<pre>` (`px-3 py-2 overflow-x-auto`) and `<code>` (`font-mono text-[12px] leading-relaxed`) are built in; color, whitespace, and max-height passed via `codeClassName`/`preClassName` props. ~30 lines consolidated.
+That may be acceptable, but it is another mirrored module where one side has evolved and the other has remained minimal.
 
-### 6f. Utility Duplication — DONE
+### 4d. Workspace-context naming is symmetric, semantics are different
 
-~~`FileListCard` defines `formatSize(bytes)` and `SandboxDownloadCard` defines `formatBytes(bytes)` — nearly identical functions.~~
+Files:
 
-**Status:** DONE. Single `formatSize()` in `diff-utils.ts`, imported by both `FileListCard` and `SandboxDownloadCard`.
+- `app/src/lib/workspace-context.ts`
+- `cli/workspace-context.mjs`
 
----
+These two files share a name but solve different problems:
 
-## 7. Standalone Getter + React Hook Pattern — N/A (Intentional)
+- web: summarize GitHub repo context for prompt injection
+- CLI: inspect the local filesystem, manifests, git state, memory, and instruction files
 
-Two hooks follow a "standalone getter for non-React code + React hook for UI" dual-export pattern:
+This is structural symmetry at the product level, not code duplication. The shared naming is useful, but they should not be treated as interchangeable implementations.
 
-| Hook | Getter | React hook |
-|------|--------|------------|
-| `useUserProfile.ts` | `getUserProfile()` | `useUserProfile()` |
-| `useProtectMain.ts` | `getIsMainProtected()` | `useProtectMain()` |
+## 5. Project Instructions Loading — Partial Symmetry With a Narrower Sandbox Path
 
-This is a deliberate design pattern (documented in CLAUDE.md) for hooks whose state needs to be read from library code (like orchestrator.ts) that can't call React hooks. The config hooks use `createApiKeyGetter()` for the same purpose.
+Project-instruction loading now exists in multiple layers:
 
-**Status:** DONE (N/A). Consistent and intentional. No consolidation needed.
+- `app/src/lib/github-tools.ts` fetches `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`
+- `app/src/lib/project-instructions-utils.ts` supports syncing those three files from sandbox paths
+- `cli/workspace-context.mjs` looks for `.push/instructions.md`, then `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`
 
----
+Inside the web hook, there is a local asymmetry:
 
-## 8. `getActiveProvider()` — Linear Scan — DONE
+- `refreshProjectInstructionsFromSandbox()` uses the shared sandbox sync helper
+- the Phase B sandbox-upgrade effect in `app/src/hooks/useProjectInstructions.ts` directly reads only `/workspace/AGENTS.md`
 
-~~`getActiveProvider()` still checks each provider in a linear if-chain.~~
+That means the same feature area has both:
 
-**Status:** DONE. Registry maps replace both linear chains:
-- `PROVIDER_KEY_GETTERS` in `orchestrator.ts` maps each `PreferredProvider` → its key getter function. `getActiveProvider()` uses a single preference check + `for` loop over `PROVIDER_FALLBACK_ORDER`. ~12 if-checks → 5 lines.
-- `MODEL_NAME_GETTERS` in `providers.ts` maps each overridable provider → its model name getter. `getModelForRole()` replaces the 5-check if-chain with one map lookup + spread. Adding a new provider now requires updating only `PROVIDER_KEY_GETTERS`, `MODEL_NAME_GETTERS`, and the `PROVIDERS` array.
+- a generalized helper path
+- a narrower one-off path
 
----
+This is a small duplication seam and a small symmetry break. It is not necessarily wrong, but it is easy to miss during future edits.
 
-## Summary — Consolidation Opportunity Map
+## 6. Structural Symmetry That Looks Healthy
 
-**Audit date: 2026-02-19 — 14 of 14 areas fully consolidated (100%).**
+Not all symmetry here is a problem. Some of it is exactly what we want.
 
-| Area | Severity | Lines Affected | Status |
-|------|----------|----------------|--------|
-| Config hooks (useApiKeyConfig) | — | ~120 | **DONE** |
-| Model name storage (createModelNameStorage) | — | ~30 | **DONE** |
-| Tool detection (detectToolFromText) | — | ~100 | **DONE** |
-| Stream timeout (streamWithTimeout) | — | ~60 | **DONE** |
-| Web search execution (3 functions) | ~~High~~ | ~150 | **DONE** — `executeWebSearchCore()` |
-| Diff parsing (3 locations) | ~~Medium~~ | ~50 | **DONE** — `diff-utils.ts` |
-| Worker handler boilerplate | ~~High~~ | ~400–450 | **DONE** — `runPreamble()` + `createStreamProxyHandler()` + `createJsonProxyHandler()` |
-| Orchestrator stream wrappers | ~~Medium~~ | ~300 | **DONE** — `PROVIDER_STREAM_CONFIGS` registry + `buildErrorMessages()` factory |
-| Settings UI key sections | ~~Medium~~ | ~240 | **DONE** — shared `ProviderKeySection` component |
-| `formatSize`/`formatBytes` | ~~Low~~ | ~20 | **DONE** — single `formatSize()` in `diff-utils.ts` |
-| Card status badge colors | ~~Low~~ | ~60 | **DONE** — `CARD_BADGE_*/CARD_TEXT_*/CARD_HEADER_BG_*` in `lib/utils.ts` |
-| Card list/divider pattern | ~~Low~~ | ~100 | **DONE** — `CARD_LIST_CLASS` in `lib/utils.ts` |
-| Card code block pattern | ~~Low~~ | ~40 | **DONE** — `CardCodeBlock` in `components/cards/card-code-block.tsx` |
-| Provider registration (multi-point) | ~~Low~~ | ~30 | **DONE** — `PROVIDER_KEY_GETTERS` + `MODEL_NAME_GETTERS` maps |
+Healthy symmetry examples:
+
+- provider hooks built from shared factories
+- provider metadata stored as registries instead of conditionals
+- orchestrator stream setup routed through a provider table
+- Azure and Bedrock sharing one experimental-provider config factory
+- worker handler bodies generated from stream/JSON proxy factories
+
+These areas are repetitive in shape, but the repetition has been pushed into configuration instead of copied implementation.
+
+## 7. Summary Map
+
+### Already centralized
+
+- Provider config hooks
+- Provider endpoint registry
+- Per-role model generation
+- Runtime model getter registry
+- Stream proxy handler factories
+- Experimental provider config factory
+
+### Biggest remaining repetition
+
+- `SettingsAIProps` in `app/src/components/SettingsSheet.tsx`
+- provider-sliced state assembly in `app/src/hooks/useModelCatalog.ts`
+- manual route registration in `app/worker.ts`
+
+### Highest drift risk
+
+- `app/src/lib/hashline.ts` vs `cli/hashline.mjs`
+- `app/src/lib/model-catalog.ts` plus `app/src/lib/providers.ts` vs `cli/model-catalog.mjs`
+- project-instruction loading paths across web, sandbox, and CLI
+- `app/src/lib/tool-call-metrics.ts` vs `cli/tool-call-metrics.mjs`
+
+## Bottom Line
+
+The codebase is no longer suffering from broad copy-paste duplication. Most of the large provider-axis duplication has already been converted into registries and factories.
+
+The remaining work is narrower:
+
+- large prop/state surfaces in Settings
+- route-registration boilerplate
+- web/CLI concept pairs that have drifted into separate implementations
+
+If this area gets revisited later, the highest-value lens is not "remove all repetition." It is "decide which mirrored modules should truly share behavior and which ones should stay intentionally forked."

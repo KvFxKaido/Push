@@ -5,7 +5,14 @@ import { getContextMetrics } from '@/lib/context-metrics';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { ProviderIcon } from '@/components/ui/provider-icon';
 import { Button } from '@/components/ui/button';
-import { PROVIDER_LABELS } from '@/components/settings-shared';
+import {
+  BUILT_IN_SETTINGS_PROVIDER_META,
+  BUILT_IN_SETTINGS_PROVIDER_ORDER,
+  EXPERIMENTAL_SETTINGS_PROVIDER_META,
+  EXPERIMENTAL_SETTINGS_PROVIDER_ORDER,
+  PROVIDER_LABELS,
+  TAVILY_SETTINGS_META,
+} from '@/components/settings-shared';
 import {
   ExperimentalProviderSection,
   ProviderKeySection,
@@ -710,238 +717,120 @@ export function SettingsSectionContent({
               </p>
             </div>
 
-            {/* Ollama */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-push-fg-secondary">Ollama</label>
-              <ProviderKeySection
-                label="Ollama"
-                hasKey={ai.hasOllamaKey}
-                keyInput={ai.ollamaKeyInput}
-                setKeyInput={ai.setOllamaKeyInput}
-                saveKey={() => ai.setOllamaKey(ai.ollamaKeyInput.trim())}
-                clearKey={ai.clearOllamaKey}
-                activeBackend={ai.activeBackend}
-                backendId="ollama"
-                clearPreferredProvider={ai.clearPreferredProvider}
-                setActiveBackend={ai.setActiveBackend}
-                placeholder="Ollama API key"
-                saveLabel="Save Ollama key"
-                hint="Ollama API key (local or cloud)."
-                model={{
-                  value: ai.ollamaModel,
-                  set: ai.setOllamaModel,
-                  options: ai.ollamaModelOptions,
-                  isLocked: ai.isOllamaModelLocked,
-                  lockedModel: ai.lockedModel,
-                }}
-                refresh={{
-                  trigger: ai.refreshOllamaModels,
-                  loading: ai.ollamaModelsLoading,
-                  error: ai.ollamaModelsError,
-                  updatedAt: ai.ollamaModelsUpdatedAt,
-                }}
-              />
-            </div>
+            {BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => {
+              const provider = ai.builtInProviders[providerId];
+              const meta = BUILT_IN_SETTINGS_PROVIDER_META[providerId];
+              const label = PROVIDER_LABELS[providerId];
 
+              return (
+                <div key={providerId} className="space-y-2">
+                  <label className="text-xs font-medium text-push-fg-secondary">{label}</label>
+                  <ProviderKeySection
+                    label={label}
+                    hasKey={provider.hasKey}
+                    keyInput={provider.keyInput}
+                    setKeyInput={provider.setKeyInput}
+                    saveKey={() => provider.setKey(provider.keyInput.trim())}
+                    clearKey={provider.clearKey}
+                    activeBackend={ai.activeBackend}
+                    backendId={providerId}
+                    clearPreferredProvider={ai.clearPreferredProvider}
+                    setActiveBackend={ai.setActiveBackend}
+                    placeholder={meta.placeholder}
+                    saveLabel={meta.saveLabel}
+                    hint={meta.hint}
+                    model={{
+                      value: provider.model,
+                      set: provider.setModel,
+                      options: provider.modelOptions,
+                      isLocked: provider.isModelLocked,
+                      lockedModel: ai.lockedModel,
+                      labelTransform: meta.labelTransform,
+                    }}
+                    refresh={{
+                      trigger: provider.refreshModels,
+                      loading: provider.modelsLoading,
+                      error: provider.modelsError,
+                      updatedAt: provider.modelsUpdatedAt,
+                    }}
+                  />
+                </div>
+              );
+            })}
 
-          </div>
-
-
-          {/* OpenRouter */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-push-fg-secondary">OpenRouter</label>
-            <ProviderKeySection
-              label="OpenRouter"
-              hasKey={ai.hasOpenRouterKey}
-              keyInput={ai.openRouterKeyInput}
-              setKeyInput={ai.setOpenRouterKeyInput}
-              saveKey={() => ai.setOpenRouterKey(ai.openRouterKeyInput.trim())}
-              clearKey={ai.clearOpenRouterKey}
-              activeBackend={ai.activeBackend}
-              backendId="openrouter"
-              clearPreferredProvider={ai.clearPreferredProvider}
-              setActiveBackend={ai.setActiveBackend}
-              placeholder="OpenRouter API key"
-              saveLabel="Save OpenRouter key"
-              hint="OpenRouter API key from openrouter.ai. BYOK works too: keep provider-native keys in your OpenRouter account, then use your OpenRouter key here."
-              model={{
-                value: ai.openRouterModel,
-                set: ai.setOpenRouterModel,
-                options: ai.openRouterModelOptions,
-                isLocked: ai.isOpenRouterModelLocked,
-                lockedModel: ai.lockedModel,
-                labelTransform: (m) => m.replace(/^[^/]+\//, ''),
-              }}
-              refresh={{
-                trigger: ai.refreshOpenRouterModels,
-                loading: ai.openRouterModelsLoading,
-                error: ai.openRouterModelsError,
-                updatedAt: ai.openRouterModelsUpdatedAt,
-              }}
-            />
-          </div>
-
-          {/* Nvidia NIM */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-push-fg-secondary">Nvidia NIM</label>
-            <ProviderKeySection
-              label="Nvidia NIM"
-              hasKey={ai.hasNvidiaKey}
-              keyInput={ai.nvidiaKeyInput}
-              setKeyInput={ai.setNvidiaKeyInput}
-              saveKey={() => ai.setNvidiaKey(ai.nvidiaKeyInput.trim())}
-              clearKey={ai.clearNvidiaKey}
-              activeBackend={ai.activeBackend}
-              backendId="nvidia"
-              clearPreferredProvider={ai.clearPreferredProvider}
-              setActiveBackend={ai.setActiveBackend}
-              placeholder="Nvidia API key"
-              saveLabel="Save Nvidia key"
-              hint="Nvidia NIM API key (OpenAI-compatible endpoint)."
-              model={{
-                value: ai.nvidiaModel,
-                set: ai.setNvidiaModel,
-                options: ai.nvidiaModelOptions,
-                isLocked: ai.isNvidiaModelLocked,
-                lockedModel: ai.lockedModel,
-              }}
-              refresh={{
-                trigger: ai.refreshNvidiaModels,
-                loading: ai.nvidiaModelsLoading,
-                error: ai.nvidiaModelsError,
-                updatedAt: ai.nvidiaModelsUpdatedAt,
-              }}
-            />
-          </div>
-
-          {/* OpenCode Zen */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-push-fg-secondary">OpenCode Zen</label>
-            <ProviderKeySection
-              label="OpenCode Zen"
-              hasKey={ai.hasZenKey}
-              keyInput={ai.zenKeyInput}
-              setKeyInput={ai.setZenKeyInput}
-              saveKey={() => ai.setZenKey(ai.zenKeyInput.trim())}
-              clearKey={ai.clearZenKey}
-              activeBackend={ai.activeBackend}
-              backendId="zen"
-              clearPreferredProvider={ai.clearPreferredProvider}
-              setActiveBackend={ai.setActiveBackend}
-              placeholder="Zen API key"
-              saveLabel="Save OpenCode Zen key"
-              hint="OpenCode Zen API key for https://opencode.ai/zen."
-              model={{
-                value: ai.zenModel,
-                set: ai.setZenModel,
-                options: ai.zenModelOptions,
-                isLocked: ai.isZenModelLocked,
-                lockedModel: ai.lockedModel,
-              }}
-              refresh={{
-                trigger: ai.refreshZenModels,
-                loading: ai.zenModelsLoading,
-                error: ai.zenModelsError,
-                updatedAt: ai.zenModelsUpdatedAt,
-              }}
-            />
           </div>
 
           <PrivateConnectorsDisclosure>
-              <ExperimentalProviderSection
-                label="Azure OpenAI"
-                backendId="azure"
-                activeBackend={ai.activeBackend}
-                setActiveBackend={ai.setActiveBackend}
-                clearPreferredProvider={ai.clearPreferredProvider}
-                helperText="Use either your classic Azure OpenAI /openai/v1 base URL or an Azure AI Foundry project URL. Push normalizes Foundry project URLs to .../openai/v1."
-                configured={ai.isAzureConfigured}
-                hasKey={ai.hasAzureKey}
-                keyInput={ai.azureKeyInput}
-                setKeyInput={ai.setAzureKeyInput}
-                setKey={ai.setAzureKey}
-                clearKey={ai.clearAzureKey}
-                baseUrl={ai.azureBaseUrl}
-                baseUrlInput={ai.azureBaseUrlInput}
-                setBaseUrlInput={ai.setAzureBaseUrlInput}
-                baseUrlError={ai.azureBaseUrlError}
-                setBaseUrl={ai.setAzureBaseUrl}
-                clearBaseUrl={ai.clearAzureBaseUrl}
-                baseUrlPlaceholder="https://your-resource.services.ai.azure.com/api/projects/PROJECT"
-                model={ai.azureModel}
-                modelInput={ai.azureModelInput}
-                setModelInput={ai.setAzureModelInput}
-                clearModel={ai.clearAzureModel}
-                deployments={ai.azureDeployments}
-                activeDeploymentId={ai.azureActiveDeploymentId}
-                saveDeployment={ai.saveAzureDeployment}
-                selectDeployment={ai.selectAzureDeployment}
-                removeDeployment={ai.removeAzureDeployment}
-                clearDeployments={ai.clearAzureDeployments}
-                modelPlaceholder="Deployment or model name"
-              />
+            {EXPERIMENTAL_SETTINGS_PROVIDER_ORDER.map((providerId) => {
+              const provider = ai.experimentalProviders[providerId];
+              const meta = EXPERIMENTAL_SETTINGS_PROVIDER_META[providerId];
+              const label = PROVIDER_LABELS[providerId];
 
-              <ExperimentalProviderSection
-                label="AWS Bedrock"
-                backendId="bedrock"
-                activeBackend={ai.activeBackend}
-                setActiveBackend={ai.setActiveBackend}
-                clearPreferredProvider={ai.clearPreferredProvider}
-                helperText="Use the Bedrock OpenAI-compatible /openai/v1 base URL for a specific region and the exact model id."
-                configured={ai.isBedrockConfigured}
-                hasKey={ai.hasBedrockKey}
-                keyInput={ai.bedrockKeyInput}
-                setKeyInput={ai.setBedrockKeyInput}
-                setKey={ai.setBedrockKey}
-                clearKey={ai.clearBedrockKey}
-                baseUrl={ai.bedrockBaseUrl}
-                baseUrlInput={ai.bedrockBaseUrlInput}
-                setBaseUrlInput={ai.setBedrockBaseUrlInput}
-                baseUrlError={ai.bedrockBaseUrlError}
-                setBaseUrl={ai.setBedrockBaseUrl}
-                clearBaseUrl={ai.clearBedrockBaseUrl}
-                baseUrlPlaceholder="https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"
-                model={ai.bedrockModel}
-                modelInput={ai.bedrockModelInput}
-                setModelInput={ai.setBedrockModelInput}
-                clearModel={ai.clearBedrockModel}
-                deployments={ai.bedrockDeployments}
-                activeDeploymentId={ai.bedrockActiveDeploymentId}
-                saveDeployment={ai.saveBedrockDeployment}
-                selectDeployment={ai.selectBedrockDeployment}
-                removeDeployment={ai.removeBedrockDeployment}
-                clearDeployments={ai.clearBedrockDeployments}
-                modelPlaceholder="Bedrock model id"
-              />
+              return (
+                <ExperimentalProviderSection
+                  key={providerId}
+                  label={label}
+                  backendId={providerId}
+                  activeBackend={ai.activeBackend}
+                  setActiveBackend={ai.setActiveBackend}
+                  clearPreferredProvider={ai.clearPreferredProvider}
+                  helperText={meta.helperText}
+                  configured={provider.isConfigured}
+                  hasKey={provider.hasKey}
+                  keyInput={provider.keyInput}
+                  setKeyInput={provider.setKeyInput}
+                  setKey={provider.setKey}
+                  clearKey={provider.clearKey}
+                  baseUrl={provider.baseUrl}
+                  baseUrlInput={provider.baseUrlInput}
+                  setBaseUrlInput={provider.setBaseUrlInput}
+                  baseUrlError={provider.baseUrlError}
+                  setBaseUrl={provider.setBaseUrl}
+                  clearBaseUrl={provider.clearBaseUrl}
+                  baseUrlPlaceholder={meta.baseUrlPlaceholder}
+                  model={provider.model}
+                  modelInput={provider.modelInput}
+                  setModelInput={provider.setModelInput}
+                  clearModel={provider.clearModel}
+                  deployments={provider.deployments}
+                  activeDeploymentId={provider.activeDeploymentId}
+                  saveDeployment={provider.saveDeployment}
+                  selectDeployment={provider.selectDeployment}
+                  removeDeployment={provider.removeDeployment}
+                  clearDeployments={provider.clearDeployments}
+                  modelPlaceholder={meta.modelPlaceholder}
+                />
+              );
+            })}
 
-              <VertexProviderSection
-                activeBackend={ai.activeBackend}
-                setActiveBackend={ai.setActiveBackend}
-                clearPreferredProvider={ai.clearPreferredProvider}
-                configured={ai.isVertexConfigured}
-                hasKey={ai.hasVertexKey}
-                keyInput={ai.vertexKeyInput}
-                setKeyInput={ai.setVertexKeyInput}
-                keyError={ai.vertexKeyError}
-                setKey={ai.setVertexKey}
-                clearKey={ai.clearVertexKey}
-                region={ai.vertexRegion}
-                regionInput={ai.vertexRegionInput}
-                setRegionInput={ai.setVertexRegionInput}
-                regionError={ai.vertexRegionError}
-                setRegion={ai.setVertexRegion}
-                clearRegion={ai.clearVertexRegion}
-                model={ai.vertexModel}
-                modelInput={ai.vertexModelInput}
-                setModelInput={ai.setVertexModelInput}
-                modelOptions={ai.vertexModelOptions}
-                setModel={ai.setVertexModel}
-                clearModel={ai.clearVertexModel}
-                mode={ai.vertexMode}
-                transport={ai.vertexTransport}
-                projectId={ai.vertexProjectId}
-                hasLegacyConfig={ai.hasLegacyVertexConfig}
-              />
+            <VertexProviderSection
+              activeBackend={ai.activeBackend}
+              setActiveBackend={ai.setActiveBackend}
+              clearPreferredProvider={ai.clearPreferredProvider}
+              configured={ai.vertexProvider.isConfigured}
+              hasKey={ai.vertexProvider.hasKey}
+              keyInput={ai.vertexProvider.keyInput}
+              setKeyInput={ai.vertexProvider.setKeyInput}
+              keyError={ai.vertexProvider.keyError}
+              setKey={ai.vertexProvider.setKey}
+              clearKey={ai.vertexProvider.clearKey}
+              region={ai.vertexProvider.region}
+              regionInput={ai.vertexProvider.regionInput}
+              setRegionInput={ai.vertexProvider.setRegionInput}
+              regionError={ai.vertexProvider.regionError}
+              setRegion={ai.vertexProvider.setRegion}
+              clearRegion={ai.vertexProvider.clearRegion}
+              model={ai.vertexProvider.model}
+              modelInput={ai.vertexProvider.modelInput}
+              setModelInput={ai.vertexProvider.setModelInput}
+              modelOptions={ai.vertexProvider.modelOptions}
+              setModel={ai.vertexProvider.setModel}
+              clearModel={ai.vertexProvider.clearModel}
+              mode={ai.vertexProvider.mode}
+              transport={ai.vertexProvider.transport}
+              projectId={ai.vertexProvider.projectId}
+              hasLegacyConfig={ai.vertexProvider.hasLegacyConfig}
+            />
           </PrivateConnectorsDisclosure>
 
           {/* Web Search (Tavily) */}
@@ -955,18 +844,18 @@ export function SettingsSectionContent({
             <div className="space-y-2">
               <ProviderKeySection
                 label="Tavily"
-                hasKey={ai.hasTavilyKey}
-                keyInput={ai.tavilyKeyInput}
-                setKeyInput={ai.setTavilyKeyInput}
-                saveKey={() => ai.setTavilyKey(ai.tavilyKeyInput.trim())}
-                clearKey={ai.clearTavilyKey}
+                hasKey={ai.tavilyProvider.hasKey}
+                keyInput={ai.tavilyProvider.keyInput}
+                setKeyInput={ai.tavilyProvider.setKeyInput}
+                saveKey={() => ai.tavilyProvider.setKey(ai.tavilyProvider.keyInput.trim())}
+                clearKey={ai.tavilyProvider.clearKey}
                 activeBackend={ai.activeBackend}
                 backendId="tavily"
                 clearPreferredProvider={ai.clearPreferredProvider}
                 setActiveBackend={ai.setActiveBackend}
-                placeholder="tvly-..."
-                saveLabel="Save Tavily key"
-                hint="Not required — web search works without this. Add a Tavily API key for higher-quality, LLM-optimized results. Free tier: 1,000 searches/month."
+                placeholder={TAVILY_SETTINGS_META.placeholder}
+                saveLabel={TAVILY_SETTINGS_META.saveLabel}
+                hint={TAVILY_SETTINGS_META.hint}
               />
             </div>
           </div>
