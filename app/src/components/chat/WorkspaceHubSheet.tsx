@@ -2,19 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, 
 import {
   Check,
   ChevronDown,
-  FileDiff,
-  Files,
   GitBranch,
   GitCommitHorizontal,
   GitMerge,
-  GitPullRequest,
   Loader2,
-  Pin,
   Plus,
   RefreshCw,
   Sparkles,
   Terminal,
-  TerminalSquare,
   Trash2,
   X,
 } from 'lucide-react';
@@ -37,7 +32,16 @@ import {
   HUB_TAG_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
-import { NotebookPadIcon, ReviewLensIcon, SettingsCellsIcon } from '@/components/icons/push-custom-icons';
+import {
+  ConsoleTraceIcon,
+  DiffSeamIcon,
+  FilesStackIcon,
+  KeptCacheIcon,
+  NotebookPadIcon,
+  PRThreadIcon,
+  ReviewLensIcon,
+  SettingsCellsIcon,
+} from '@/components/icons/push-custom-icons';
 import { HubScratchpadTab, HubKeptTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab, HubSettingsTab } from './hub-tabs';
 import type {
   SettingsAIProps,
@@ -143,11 +147,11 @@ interface WorkspaceHubSheetProps {
 
 const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: ComponentType<SVGProps<SVGSVGElement>> }> = [
   { key: 'scratchpad', label: 'Pad', icon: NotebookPadIcon },
-  { key: 'kept', label: 'Kept', icon: Pin },
-  { key: 'console', label: 'Console', icon: TerminalSquare },
-  { key: 'files', label: 'Files', icon: Files },
-  { key: 'diff', label: 'Diff', icon: FileDiff },
-  { key: 'prs', label: 'PRs', icon: GitPullRequest },
+  { key: 'kept', label: 'Kept', icon: KeptCacheIcon },
+  { key: 'console', label: 'Console', icon: ConsoleTraceIcon },
+  { key: 'files', label: 'Files', icon: FilesStackIcon },
+  { key: 'diff', label: 'Diff', icon: DiffSeamIcon },
+  { key: 'prs', label: 'PRs', icon: PRThreadIcon },
   { key: 'review', label: 'Review', icon: ReviewLensIcon },
   { key: 'settings', label: 'Settings', icon: SettingsCellsIcon },
 ];

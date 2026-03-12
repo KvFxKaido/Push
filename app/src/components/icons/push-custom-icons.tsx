@@ -200,6 +200,91 @@ export function SettingsCellsIcon({ strokeWidth = 2, ...props }: IconProps) {
   );
 }
 
+export function KeptCacheIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M10 5.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-3" />
+      <path d="M14.5 10.5v5l2-1.5 2 1.5v-5" />
+      <rect x="5" y="8" width="10" height="11" rx="2" />
+      <path d="M8 12h4" />
+      <path d="M8 15h3" />
+    </svg>
+  );
+}
+
+export function ConsoleTraceIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M4 8h16" />
+      <path d="m7.5 11.5 2.5 2-2.5 2" />
+      <path d="M12 13.5h1.5" />
+      <path d="M15.5 11.5c1.3.2 2.2 1 2.6 2.2" />
+      <path d="M15.5 14.5c1.1.2 1.9.8 2.3 1.7" />
+    </svg>
+  );
+}
+
+export function FilesStackIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M8 5.5h7l3 3V18a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2Z" />
+      <path d="M15 5.5V9h3" />
+      <path d="M4 8.5v8A2.5 2.5 0 0 0 6.5 19" />
+      <path d="M9.5 11v6" />
+      <path d="M11.5 12h3.5" />
+      <path d="M11.5 15h2.5" />
+    </svg>
+  );
+}
+
+export function DiffSeamIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M12 7v2" />
+      <path d="M12 11v2" />
+      <path d="M12 15v2" />
+      <path d="M7 10h2.5" />
+      <path d="M7 14h3.5" />
+      <path d="M14.5 10H17" />
+      <path d="M14.5 14H16" />
+    </svg>
+  );
+}
+
 export function CommitPulseIcon({ strokeWidth = 2, ...props }: IconProps) {
   return (
     <svg
