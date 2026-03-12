@@ -21,14 +21,22 @@ interface UseCodeMirrorOptions {
   doc: string;
   language?: string;
   readOnly?: boolean;
+  lineWrapping?: boolean;
   onDocChange?: (doc: string) => void;
 }
 
-export function useCodeMirror({ doc, language, readOnly = true, onDocChange }: UseCodeMirrorOptions) {
+export function useCodeMirror({
+  doc,
+  language,
+  readOnly = true,
+  lineWrapping = true,
+  onDocChange,
+}: UseCodeMirrorOptions) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const langCompartment = useRef(new Compartment());
   const readOnlyCompartment = useRef(new Compartment());
+  const lineWrappingCompartment = useRef(new Compartment());
   const [ready, setReady] = useState(false);
 
   // Create EditorView on mount
@@ -57,8 +65,8 @@ export function useCodeMirror({ doc, language, readOnly = true, onDocChange }: U
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         langCompartment.current.of([]),
         readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly)),
+        lineWrappingCompartment.current.of(lineWrapping ? [EditorView.lineWrapping] : []),
         updateListener,
-        EditorView.lineWrapping,
       ],
     });
 
@@ -97,6 +105,14 @@ export function useCodeMirror({ doc, language, readOnly = true, onDocChange }: U
       effects: readOnlyCompartment.current.reconfigure(EditorState.readOnly.of(readOnly)),
     });
   }, [readOnly, ready]);
+
+  // Sync line wrapping changes
+  useEffect(() => {
+    if (!viewRef.current) return;
+    viewRef.current.dispatch({
+      effects: lineWrappingCompartment.current.reconfigure(lineWrapping ? [EditorView.lineWrapping] : []),
+    });
+  }, [lineWrapping, ready]);
 
   // Sync doc from outside (e.g., when card data changes)
   useEffect(() => {

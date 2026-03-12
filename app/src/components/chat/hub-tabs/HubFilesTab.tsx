@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -10,11 +10,15 @@ import {
 import { toast } from 'sonner';
 import { readFromSandbox } from '@/lib/sandbox-client';
 import { formatSize } from '@/lib/diff-utils';
+import { getFileEditability } from '@/lib/file-utils';
 import { useFileBrowser } from '@/hooks/useFileBrowser';
+import { useCodeMirror } from '@/hooks/useCodeMirror';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_MATERIAL_ROUND_BUTTON_CLASS,
+  HUB_PANEL_SURFACE_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HUB_TAG_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 
@@ -30,6 +34,18 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
   const [previewContent, setPreviewContent] = useState('');
   const [previewTruncated, setPreviewTruncated] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const previewLanguage = useMemo(
+    () => (previewPath ? getFileEditability(previewPath, 0).language : 'text'),
+    [previewPath],
+  );
+  const previewName = useMemo(
+    () => (previewPath ? previewPath.split('/').pop() || previewPath : ''),
+    [previewPath],
+  );
+  const previewLineCount = useMemo(
+    () => (previewContent ? previewContent.split('\n').length : 0),
+    [previewContent],
+  );
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
 
@@ -97,36 +113,51 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
 
   if (previewPath) {
     return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex items-center justify-between gap-2 border-b border-push-edge px-3 py-2">
-          <button
-            onClick={() => {
-              setPreviewPath(null);
-              setPreviewContent('');
-              setPreviewTruncated(false);
-            }}
-            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
-          >
-            <HubControlGlow />
-            <ChevronLeft className="relative z-10 h-3.5 w-3.5" />
-            <span className="relative z-10">Back</span>
-          </button>
-          <p className="truncate text-xs text-push-fg-secondary">{previewPath}</p>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          {previewLoading ? (
-            <div className="flex items-center gap-2 text-xs text-push-fg-dim">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Loading file...
+      <div className="flex h-full min-h-0 flex-col p-3">
+        <div className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}>
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-white/[0.04] to-transparent" />
+          <div className="relative z-10 flex items-start gap-2 border-b border-push-edge/80 bg-[linear-gradient(180deg,rgba(10,13,20,0.78)_0%,rgba(6,9,14,0.88)_100%)] px-3 py-2.5 backdrop-blur-xl">
+            <button
+              onClick={() => {
+                setPreviewPath(null);
+                setPreviewContent('');
+                setPreviewTruncated(false);
+              }}
+              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} shrink-0 px-2.5`}
+            >
+              <HubControlGlow />
+              <ChevronLeft className="relative z-10 h-3.5 w-3.5" />
+              <span className="relative z-10">Back</span>
+            </button>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <p className="truncate text-sm font-medium text-push-fg">{previewName}</p>
+              <p className="truncate font-mono text-push-2xs text-push-fg-dim">{previewPath}</p>
             </div>
-          ) : (
-            <pre className={`whitespace-pre-wrap break-words p-3 font-mono text-xs text-push-fg-secondary ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
-              {previewContent}
-            </pre>
-          )}
-          {previewTruncated && (
-            <p className="mt-2 text-push-2xs text-push-fg-dim">File output truncated.</p>
-          )}
+          </div>
+
+          <div className="relative min-h-0 flex-1 overflow-hidden p-3">
+            <div className="pointer-events-none absolute inset-x-3 top-0 h-10 bg-gradient-to-b from-white/[0.02] to-transparent" />
+            {previewLoading ? (
+              <div className="relative z-10 flex items-center gap-2 text-xs text-push-fg-dim">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading file...
+              </div>
+            ) : (
+              <div className="relative z-10 flex h-full min-h-0 flex-col gap-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={HUB_TAG_CLASS}>{previewLanguage}</span>
+                  <span className={HUB_TAG_CLASS}>
+                    {previewLineCount} line{previewLineCount === 1 ? '' : 's'}
+                  </span>
+                  {previewTruncated && <span className={HUB_TAG_CLASS}>Truncated preview</span>}
+                </div>
+                <ReadOnlyCodePreview
+                  content={previewContent}
+                  language={previewLanguage}
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -230,5 +261,21 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
         )}
       </div>
     </>
+  );
+}
+
+function ReadOnlyCodePreview({ content, language }: { content: string; language: string }) {
+  const { containerRef } = useCodeMirror({
+    doc: content,
+    language,
+    readOnly: true,
+    lineWrapping: false,
+  });
+
+  return (
+    <div
+      ref={containerRef}
+      className={`min-h-0 flex-1 overflow-hidden rounded-[16px] ${HUB_PANEL_SUBTLE_SURFACE_CLASS} [&_.cm-editor]:h-full [&_.cm-editor]:bg-transparent [&_.cm-editor]:text-push-fg-secondary [&_.cm-activeLine]:bg-white/[0.03] [&_.cm-activeLineGutter]:bg-white/[0.03] [&_.cm-activeLineGutter]:text-push-fg-dim [&_.cm-content]:pb-5 [&_.cm-content]:pt-3 [&_.cm-gutters]:border-r [&_.cm-gutters]:border-push-edge/70 [&_.cm-gutters]:bg-white/[0.02] [&_.cm-gutters]:text-push-fg-muted [&_.cm-lineNumbers_.cm-gutterElement]:pr-3 [&_.cm-lineNumbers_.cm-gutterElement]:text-push-2xs [&_.cm-scroller]:!overflow-auto [&_.cm-scroller]:overscroll-contain`}
+    />
   );
 }
