@@ -397,7 +397,7 @@ export function ProviderKeySection({
               value={model.value}
               onChange={(e) => model.set(e.target.value)}
               disabled={model.options.length === 0 || (refresh?.loading ?? false)}
-              className="flex-1 rounded-md border border-push-edge-subtle bg-push-grad-input px-2 py-1 text-xs text-push-fg font-mono shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 disabled:opacity-50"
+              className="flex-1 rounded-md border border-push-edge-subtle bg-push-grad-input px-2 py-1 text-xs text-push-fg font-mono shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 disabled:opacity-50"
             >
               {model.options.length === 0 ? (
                 <option value={model.value}>{model.labelTransform ? model.labelTransform(model.value) : model.value}</option>
@@ -454,7 +454,7 @@ export function ProviderKeySection({
         value={keyInput}
         onChange={(e) => setKeyInput(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+        className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
         onKeyDown={(e) => {
           if (e.key === 'Enter' && keyInput.trim()) {
             saveKey();
@@ -589,7 +589,7 @@ export function ExperimentalProviderSection({
           value={keyInput}
           onChange={(e) => setKeyInput(e.target.value)}
           placeholder={hasKey ? 'Key saved' : `${label} API key`}
-          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
         />
         <div className="flex gap-2">
           <Button
@@ -675,7 +675,7 @@ export function ExperimentalProviderSection({
           value={baseUrlInput}
           onChange={(e) => setBaseUrlInput(e.target.value)}
           placeholder={baseUrl || baseUrlPlaceholder}
-          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
         />
         {draftBaseUrlError && <p className="text-xs text-amber-400">{draftBaseUrlError}</p>}
         <div className="flex gap-2">
@@ -715,7 +715,7 @@ export function ExperimentalProviderSection({
                   value={modelInput}
                   onChange={(e) => setModelInput(e.target.value)}
                   placeholder={model || modelPlaceholder}
-                  className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+                  className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
                 />
               </div>
 
@@ -823,7 +823,7 @@ export function VertexProviderSection({
           value={keyInput}
           onChange={(e) => setKeyInput(e.target.value)}
           placeholder={hasKey ? 'Service account JSON saved locally' : 'Paste the full Google service account JSON'}
-          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 font-mono resize-y"
+          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 font-mono resize-y"
         />
         <div className="flex gap-2">
           <Button
@@ -857,7 +857,7 @@ export function VertexProviderSection({
             value={regionInput}
             onChange={(e) => setRegionInput(e.target.value)}
             placeholder={region || 'global'}
-            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
           />
           <div className="flex gap-2">
             <Button
@@ -893,7 +893,7 @@ export function VertexProviderSection({
               setModel(e.target.value);
               setModelInput(e.target.value);
             }}
-            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
           >
             {modelOptions.map((option) => (
               <option key={option} value={option}>{option}</option>
@@ -904,7 +904,7 @@ export function VertexProviderSection({
             value={modelInput}
             onChange={(e) => setModelInput(e.target.value)}
             placeholder={model}
-            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
           />
           <div className="flex gap-2">
             <Button
@@ -987,7 +987,7 @@ export function SettingsSheet({
                 onClick={() => setSettingsTab(key)}
                 className={`flex min-h-[42px] items-center justify-center gap-1.5 rounded-lg px-1 text-push-xs font-medium transition-all ${
                   settingsTab === key
-                    ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_8px_20px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.22)] backdrop-blur-xl'
+                    ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_8px_20px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.22)]'
                     : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
                 }`}
               >

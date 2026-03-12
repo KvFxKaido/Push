@@ -129,7 +129,7 @@ export function SettingsSectionContent({
                           value={auth.installIdInput}
                           onChange={(e) => auth.setInstallIdInput(e.target.value)}
                           placeholder="Installation ID (e.g., 12345678)"
-                          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 font-mono"
+                          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 font-mono"
                           onKeyDown={async (e) => {
                             if (e.key === 'Enter' && auth.installIdInput.trim()) {
                               const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
@@ -257,7 +257,7 @@ export function SettingsSectionContent({
                 onChange={(e) => profile.setDisplayNameDraft(e.target.value)}
                 onBlur={profile.onDisplayNameBlur}
                 placeholder="Your name"
-                className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50"
+                className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
               />
             </div>
 
@@ -283,7 +283,7 @@ export function SettingsSectionContent({
                 rows={3}
                 maxLength={300}
                 placeholder="Anything you want the assistant to know about you"
-                className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] backdrop-blur-xl outline-none transition-all focus:border-push-sky/50 resize-none"
+                className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 resize-none"
               />
               <p className="text-push-2xs text-push-fg-dim">
                 {profile.bioDraft.length}/300
