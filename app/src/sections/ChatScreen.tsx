@@ -10,6 +10,7 @@ import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
 import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
+import { NewChatWorkspaceSheet } from '@/components/chat/NewChatWorkspaceSheet';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import { MergeFlowSheet } from '@/components/chat/MergeFlowSheet';
 import { RepoLauncherSheet } from '@/components/launcher/RepoLauncherSheet';
@@ -42,6 +43,7 @@ import type {
   GitHubUser,
   UserProfile,
   SandboxStateCardData,
+  NewChatWorkspaceState,
   AttachmentData,
 } from '@/types';
 import type { ContextMode } from '@/lib/orchestrator';
@@ -164,6 +166,7 @@ interface ChatScreenProps {
 
   // Chat creation
   handleCreateNewChat: () => void;
+  inspectNewChatWorkspace: () => Promise<NewChatWorkspaceState | null>;
 
   handleDisconnect: () => void;
 
@@ -282,6 +285,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSandboxMode,
     handleExitSandboxMode,
     handleCreateNewChat,
+    inspectNewChatWorkspace,
     handleDisconnect,
     handleSandboxRestart,
     handleSandboxDownload,
@@ -324,6 +328,11 @@ export function ChatScreen(props: ChatScreenProps) {
   } = props;
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
+  const [newChatSheetOpen, setNewChatSheetOpen] = useState(false);
+  const [newChatWorkspaceState, setNewChatWorkspaceState] = useState<NewChatWorkspaceState | null>(null);
+  const [checkingNewChatWorkspace, setCheckingNewChatWorkspace] = useState(false);
+  const [resettingWorkspaceForNewChat, setResettingWorkspaceForNewChat] = useState(false);
+  const [hubTabRequest, setHubTabRequest] = useState<{ tab: 'files' | 'diff'; requestKey: number } | null>(null);
   const activeRepoAppearance = activeRepo && !isSandboxMode
     ? resolveRepoAppearance(activeRepo.full_name)
     : null;
@@ -422,6 +431,98 @@ export function ChatScreen(props: ChatScreenProps) {
     setIsWorkspaceHubOpen(false);
     setIsLauncherOpen(true);
   }, [setIsWorkspaceHubOpen]);
+
+  const handleNewChatSheetOpenChange = useCallback((open: boolean) => {
+    setNewChatSheetOpen(open);
+    if (!open && !resettingWorkspaceForNewChat) {
+      setNewChatWorkspaceState(null);
+      setCheckingNewChatWorkspace(false);
+    }
+  }, [resettingWorkspaceForNewChat]);
+
+  const handleCreateNewChatRequest = useCallback(async () => {
+    if (checkingNewChatWorkspace || resettingWorkspaceForNewChat) return;
+
+    if (sandbox.status !== 'ready' || !sandbox.sandboxId) {
+      handleCreateNewChat();
+      return;
+    }
+
+    setNewChatWorkspaceState(null);
+    setCheckingNewChatWorkspace(true);
+    setNewChatSheetOpen(true);
+
+    const workspaceState = await inspectNewChatWorkspace();
+    if (!workspaceState) {
+      setNewChatSheetOpen(false);
+      setCheckingNewChatWorkspace(false);
+      handleCreateNewChat();
+      return;
+    }
+
+    setNewChatWorkspaceState(workspaceState);
+    setCheckingNewChatWorkspace(false);
+  }, [
+    checkingNewChatWorkspace,
+    handleCreateNewChat,
+    inspectNewChatWorkspace,
+    resettingWorkspaceForNewChat,
+    sandbox.sandboxId,
+    sandbox.status,
+  ]);
+
+  const handleContinueCurrentWorkspace = useCallback(() => {
+    setNewChatSheetOpen(false);
+    setNewChatWorkspaceState(null);
+    setCheckingNewChatWorkspace(false);
+    handleCreateNewChat();
+  }, [handleCreateNewChat]);
+
+  const handleReviewNewChatWorkspace = useCallback(() => {
+    if (!newChatWorkspaceState) return;
+    setNewChatSheetOpen(false);
+    setCheckingNewChatWorkspace(false);
+    setHubTabRequest({
+      tab: newChatWorkspaceState.mode === 'sandbox' ? 'files' : 'diff',
+      requestKey: Date.now(),
+    });
+    setIsLauncherOpen(false);
+    setIsHistoryDrawerOpen(false);
+    handleWorkspaceHubOpenChange(true);
+  }, [handleWorkspaceHubOpenChange, newChatWorkspaceState]);
+
+  const handleStartFreshWorkspaceForNewChat = useCallback(async () => {
+    if (resettingWorkspaceForNewChat) return;
+
+    setResettingWorkspaceForNewChat(true);
+    try {
+      await sandbox.stop();
+
+      let freshSandboxId: string | null = null;
+      if (isSandboxMode) {
+        freshSandboxId = await sandbox.start('', 'main');
+      } else if (activeRepo) {
+        freshSandboxId = await sandbox.start(
+          activeRepo.full_name,
+          activeRepo.current_branch || activeRepo.default_branch,
+        );
+      }
+
+      if ((isSandboxMode || activeRepo) && !freshSandboxId) {
+        toast.error('Failed to start a fresh workspace.');
+        return;
+      }
+
+      setNewChatSheetOpen(false);
+      setNewChatWorkspaceState(null);
+      setCheckingNewChatWorkspace(false);
+      handleCreateNewChat();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to start a fresh workspace.');
+    } finally {
+      setResettingWorkspaceForNewChat(false);
+    }
+  }, [activeRepo, handleCreateNewChat, isSandboxMode, resettingWorkspaceForNewChat, sandbox]);
 
   const handleFixReviewFinding = useCallback(async (prompt: string) => {
     if (isStreaming) {
@@ -709,7 +810,7 @@ export function ChatScreen(props: ChatScreenProps) {
               clearRepoAppearance={clearRepoAppearance}
               onSelectRepo={handleSelectRepoFromDrawer}
               onSwitchChat={switchChat}
-              onNewChat={handleCreateNewChat}
+              onNewChat={handleCreateNewChatRequest}
               onDeleteChat={deleteChat}
               onRenameChat={renameChat}
               currentBranch={activeRepo?.current_branch || activeRepo?.default_branch}
@@ -987,6 +1088,7 @@ export function ChatScreen(props: ChatScreenProps) {
       <WorkspaceHubSheet
         open={isWorkspaceHubOpen}
         onOpenChange={handleWorkspaceHubOpenChange}
+        externalTabRequest={hubTabRequest}
         messages={messages}
         agentEvents={agentEvents}
         sandboxId={sandbox.sandboxId}
@@ -1054,6 +1156,16 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
         onSandboxBranchSwitch={onSandboxBranchSwitch}
         onFixReviewFinding={handleFixReviewFinding}
+      />
+      <NewChatWorkspaceSheet
+        open={newChatSheetOpen}
+        onOpenChange={handleNewChatSheetOpenChange}
+        workspace={newChatWorkspaceState}
+        checking={checkingNewChatWorkspace}
+        resetting={resettingWorkspaceForNewChat}
+        onContinueCurrentWorkspace={handleContinueCurrentWorkspace}
+        onStartFresh={handleStartFreshWorkspaceForNewChat}
+        onReviewChanges={handleReviewNewChatWorkspace}
       />
 
       <RepoLauncherSheet

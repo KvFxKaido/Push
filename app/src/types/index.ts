@@ -415,6 +415,18 @@ export interface SandboxStateCardData {
   fetchedAt: string;
 }
 
+export interface NewChatWorkspaceState {
+  mode: 'repo' | 'sandbox';
+  sandboxId: string;
+  branch: string;
+  changedFiles: number;
+  stagedFiles: number;
+  unstagedFiles: number;
+  untrackedFiles: number;
+  preview: string[];
+  fetchedAt: string;
+}
+
 export interface SandboxDownloadCardData {
   path: string;
   format: string;

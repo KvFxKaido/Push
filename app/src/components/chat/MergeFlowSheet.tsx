@@ -5,6 +5,7 @@ import {
   XCircle,
   AlertTriangle,
   ExternalLink,
+  GitMerge,
   Trash2,
   ArrowRight,
   ShieldCheck,

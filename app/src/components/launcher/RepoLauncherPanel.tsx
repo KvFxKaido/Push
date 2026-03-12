@@ -135,9 +135,10 @@ export function RepoLauncherPanel({
       setSandboxRemainingMs(null);
       return;
     }
+    const createdAt = sandboxSession.createdAt;
 
     const tick = () => {
-      const remaining = SANDBOX_SESSION_LIFETIME_MS - (Date.now() - sandboxSession.createdAt);
+      const remaining = SANDBOX_SESSION_LIFETIME_MS - (Date.now() - createdAt);
       setSandboxRemainingMs(remaining);
     };
 

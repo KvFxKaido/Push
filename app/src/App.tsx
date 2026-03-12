@@ -22,8 +22,42 @@ import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestr
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
-import type { AppScreen, AttachmentData, RepoWithActivity, SandboxStateCardData } from '@/types';
+import type { AppScreen, AttachmentData, NewChatWorkspaceState, RepoWithActivity, SandboxStateCardData } from '@/types';
 import './App.css';
+
+function parseSandboxGitStatus(sandboxId: string, stdout: string): SandboxStateCardData {
+  const lines = stdout.split('\n').map((line) => line.trimEnd()).filter(Boolean);
+  const statusLine = lines.find((line) => line.startsWith('##'))?.slice(2).trim() || 'unknown';
+  const branch = statusLine.split('...')[0].trim() || 'unknown';
+  const entries = lines.filter((line) => !line.startsWith('##'));
+
+  let stagedFiles = 0;
+  let unstagedFiles = 0;
+  let untrackedFiles = 0;
+  for (const entry of entries) {
+    const x = entry[0] || ' ';
+    const y = entry[1] || ' ';
+    if (x === '?' && y === '?') {
+      untrackedFiles++;
+      continue;
+    }
+    if (x !== ' ') stagedFiles++;
+    if (y !== ' ') unstagedFiles++;
+  }
+
+  return {
+    sandboxId,
+    repoPath: '/workspace',
+    branch,
+    statusLine,
+    changedFiles: entries.length,
+    stagedFiles,
+    unstagedFiles,
+    untrackedFiles,
+    preview: entries.slice(0, 6).map((line) => line.length > 120 ? `${line.slice(0, 120)}...` : line),
+    fetchedAt: new Date().toISOString(),
+  };
+}
 
 // --- Lazy-loaded screen & settings components (code-split) ---
 const OnboardingScreen = lazyWithRecovery(
@@ -500,43 +534,69 @@ function App() {
     setSandboxId(sandbox.sandboxId);
   }, [sandbox.sandboxId, setSandboxId]);
 
-  const fetchSandboxState = useCallback(async (id: string) => {
+  const fetchSandboxState = useCallback(async (id: string): Promise<SandboxStateCardData | null> => {
     setSandboxStateLoading(true);
     try {
       const result = await execInSandbox(id, 'cd /workspace && git status -sb --porcelain=1');
-      if (result.exitCode !== 0) return;
+      if (result.exitCode !== 0) return null;
 
-      const lines = result.stdout.split('\n').map((l: string) => l.trimEnd()).filter(Boolean);
-      const statusLine = lines.find((l: string) => l.startsWith('##'))?.slice(2).trim() || 'unknown';
-      const branch = statusLine.split('...')[0].trim() || 'unknown';
-      const entries = lines.filter((l: string) => !l.startsWith('##'));
-
-      let stagedFiles = 0, unstagedFiles = 0, untrackedFiles = 0;
-      for (const entry of entries) {
-        const x = entry[0] || ' ', y = entry[1] || ' ';
-        if (x === '?' && y === '?') { untrackedFiles++; continue; }
-        if (x !== ' ') stagedFiles++;
-        if (y !== ' ') unstagedFiles++;
-      }
-
-      setSandboxState({
-        sandboxId: id,
-        repoPath: '/workspace',
-        branch,
-        statusLine,
-        changedFiles: entries.length,
-        stagedFiles,
-        unstagedFiles,
-        untrackedFiles,
-        preview: entries.slice(0, 6).map((l: string) => l.length > 120 ? `${l.slice(0, 120)}...` : l),
-        fetchedAt: new Date().toISOString(),
-      });
+      const nextState = parseSandboxGitStatus(id, result.stdout);
+      setSandboxState(nextState);
+      return nextState;
     } catch {
-      // Best-effort
+      return null;
     } finally {
       setSandboxStateLoading(false);
     }
   }, []);
+
+  const inspectNewChatWorkspace = useCallback(async (): Promise<NewChatWorkspaceState | null> => {
+    if (sandbox.status !== 'ready' || !sandbox.sandboxId) return null;
+
+    if (isSandboxMode) {
+      try {
+        const result = await execInSandbox(
+          sandbox.sandboxId,
+          "cd /workspace && total=$(find . -path './.git' -prune -o -type f -print | sed 's#^\\./##' | sort | wc -l | tr -d ' '); printf '__COUNT__%s\\n' \"$total\"; find . -path './.git' -prune -o -type f -print | sed 's#^\\./##' | sort | head -6",
+        );
+        if (result.exitCode !== 0) return null;
+
+        const lines = result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+        const countLine = lines.find((line) => line.startsWith('__COUNT__'));
+        const fileCount = Number.parseInt(countLine?.slice('__COUNT__'.length) || '0', 10);
+        if (!Number.isFinite(fileCount) || fileCount <= 0) return null;
+
+        return {
+          mode: 'sandbox',
+          sandboxId: sandbox.sandboxId,
+          branch: 'sandbox',
+          changedFiles: fileCount,
+          stagedFiles: 0,
+          unstagedFiles: fileCount,
+          untrackedFiles: fileCount,
+          preview: lines.filter((line) => !line.startsWith('__COUNT__')).slice(0, 6),
+          fetchedAt: new Date().toISOString(),
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    const nextState = await fetchSandboxState(sandbox.sandboxId);
+    if (!nextState || nextState.changedFiles <= 0) return null;
+
+    return {
+      mode: 'repo',
+      sandboxId: nextState.sandboxId,
+      branch: nextState.branch,
+      changedFiles: nextState.changedFiles,
+      stagedFiles: nextState.stagedFiles,
+      unstagedFiles: nextState.unstagedFiles,
+      untrackedFiles: nextState.untrackedFiles,
+      preview: nextState.preview,
+      fetchedAt: nextState.fetchedAt,
+    };
+  }, [fetchSandboxState, isSandboxMode, sandbox.sandboxId, sandbox.status]);
 
   useEffect(() => {
     if (sandbox.status !== 'ready' || !sandbox.sandboxId) {
@@ -789,6 +849,7 @@ function App() {
       handleSandboxMode={isSandboxMode ? undefined : handleSandboxMode}
       handleExitSandboxMode={handleExitSandboxMode}
       handleCreateNewChat={handleCreateNewChat}
+      inspectNewChatWorkspace={inspectNewChatWorkspace}
       handleDisconnect={handleDisconnect}
       handleSandboxRestart={handleSandboxRestart}
       handleSandboxDownload={handleSandboxDownload}

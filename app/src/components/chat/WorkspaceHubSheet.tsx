@@ -90,6 +90,7 @@ export interface HubBranchProps {
 interface WorkspaceHubSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  externalTabRequest?: { tab: HubTab; requestKey: number } | null;
   messages: ChatMessage[];
   agentEvents: AgentStatusEvent[];
   sandboxId: string | null;
@@ -253,6 +254,7 @@ function normalizeSuggestedCommitMessage(raw: string): string {
 export function WorkspaceHubSheet({
   open,
   onOpenChange,
+  externalTabRequest,
   messages,
   agentEvents,
   sandboxId,
@@ -377,6 +379,15 @@ export function WorkspaceHubSheet({
     setReviewDiffSelection(null);
     setDiffJumpTarget(null);
   }, []);
+
+  useEffect(() => {
+    if (!externalTabRequest) return;
+    if (externalTabRequest.tab === 'console' && !showToolActivity) {
+      setActiveTab('files');
+      return;
+    }
+    setActiveTab(externalTabRequest.tab);
+  }, [externalTabRequest, showToolActivity]);
 
   useEffect(() => {
     setReviewDiffSelection(null);
