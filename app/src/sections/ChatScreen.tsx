@@ -658,7 +658,7 @@ export function ChatScreen(props: ChatScreenProps) {
       >
       {/* Top bar */}
       <header className="relative z-10 flex items-center justify-between px-3 pt-3 pb-2">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
+        <div className="relative z-20 flex min-w-0 flex-1 items-center gap-2">
           <div className={`flex h-9 min-w-0 items-center gap-1 pl-1 pr-3 ${headerSurfaceClass}`}>
             <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
             <RepoChatDrawer
@@ -754,7 +754,7 @@ export function ChatScreen(props: ChatScreenProps) {
         </div>
         {/* Centered branch selector for chat mode */}
         {activeRepo && !isSandboxMode && (
-          <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
+          <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 max-w-[calc(100%-7.5rem)] -translate-x-1/2 -translate-y-1/2 sm:max-w-none">
             <DropdownMenu
               open={branchMenuOpen}
               onOpenChange={(open) => {
@@ -767,10 +767,10 @@ export function ChatScreen(props: ChatScreenProps) {
                 }
               }}
             >
-              <DropdownMenuTrigger className={`${headerPillButtonClass} group`}>
+              <DropdownMenuTrigger className={`${headerPillButtonClass} group max-w-full`}>
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
                 <BranchWaveIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-colors group-hover:text-push-fg" />
-                <span className="relative z-10 max-w-[108px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg">
+                <span className="relative z-10 max-w-[72px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg sm:max-w-[108px]">
                   {currentBranch}
                 </span>
                 <ChevronDown className={`relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-[transform,color] group-hover:text-push-fg ${branchMenuOpen ? 'rotate-180' : ''}`} />
@@ -900,7 +900,7 @@ export function ChatScreen(props: ChatScreenProps) {
             </DropdownMenu>
           </div>
         )}
-        <div className="flex items-center gap-2">
+        <div className="relative z-20 flex shrink-0 items-center gap-2">
           {!isSandboxMode && (
             <button
               onClick={() => {
