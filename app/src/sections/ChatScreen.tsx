@@ -841,7 +841,7 @@ export function ChatScreen(props: ChatScreenProps) {
               />
             )}
             <div className={`${activeRepoAppearance ? '-ml-1.5' : '-ml-2.5'} flex min-w-0 items-center self-stretch`}>
-              <p className="-translate-y-px truncate text-sm font-medium leading-none text-[#f5f7ff]">
+              <p className="truncate text-sm font-medium leading-tight text-[#f5f7ff]">
                 {isSandboxMode ? 'Sandbox' : activeRepo?.name || 'Push'}
               </p>
             </div>
