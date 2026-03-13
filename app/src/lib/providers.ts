@@ -49,10 +49,7 @@ export const OPENROUTER_MODELS: string[] = [
   'anthropic/claude-haiku-4.5:nitro',
   'anthropic/claude-3.5-haiku:nitro',
   'anthropic/claude-3-haiku:nitro',
-  // OpenAI GPT-4.1 / GPT-4o / GPT-5.4
-  'openai/gpt-4.1-mini:nitro',
-  'openai/gpt-4.1-nano:nitro',
-  'openai/gpt-4o-mini:nitro',
+  // OpenAI GPT-5.4
   'openai/gpt-5.4-pro',
   'openai/gpt-5.4',
   'openai/gpt-5-mini:nitro',
@@ -81,6 +78,7 @@ export const OPENROUTER_MODELS: string[] = [
   'minimax/minimax-m2.1:nitro',
   // Qwen
   'qwen/qwen3.5-397b-a17b:nitro',
+  'qwen/qwen3.5-flash-02-23',
   // Z.AI (GLM)
   'z-ai/glm-5:nitro',
   'z-ai/glm-4.6:nitro',

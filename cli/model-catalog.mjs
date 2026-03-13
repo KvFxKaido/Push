@@ -21,6 +21,8 @@ export const OPENROUTER_MODELS = [
   // MiniMax (via OpenRouter BYOK)
   'minimax/minimax-m2.5',
   'minimax/minimax-m2.1',
+  // Qwen
+  'qwen/qwen3.5-flash-02-23',
   // Z.AI (via OpenRouter BYOK)
   'zhipu/glm-4.7',
   'zhipu/glm-5.0',
