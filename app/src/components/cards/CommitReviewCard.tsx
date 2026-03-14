@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, X, Loader2, AlertCircle, GitCommit } from 'lucide-react';
+import { Check, X, Loader2, AlertCircle } from 'lucide-react';
 import type { CommitReviewCardData, CardAction } from '@/types';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
@@ -12,6 +12,7 @@ import {
   CARD_HEADER_BG_ERROR,
   CARD_HEADER_BG_INFO,
 } from '@/lib/utils';
+import { CommitPulseIcon } from '@/components/icons/push-custom-icons';
 
 interface CommitReviewCardProps {
   data: CommitReviewCardData;
@@ -49,7 +50,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
         ) : isBusy ? (
           <Loader2 className="h-4 w-4 shrink-0 text-push-link animate-spin" />
         ) : (
-          <GitCommit className="h-4 w-4 shrink-0 text-push-link" />
+          <CommitPulseIcon className="h-4 w-4 shrink-0 text-push-link" />
         )}
         <span className={`text-sm font-medium ${
           isCommitted ? 'text-push-status-success' :

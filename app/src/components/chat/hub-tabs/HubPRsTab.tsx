@@ -7,9 +7,6 @@ import {
   CircleSlash,
   ExternalLink,
   FileDiff,
-  GitBranch,
-  GitCommit,
-  GitPullRequest,
   Loader2,
   MessageSquareText,
   RefreshCw,
@@ -17,6 +14,7 @@ import {
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
+import { BranchWaveIcon, CommitPulseIcon, PRThreadIcon } from '@/components/icons/push-custom-icons';
 import { DiffLine } from '@/components/cards/DiffPreviewCard';
 import { parseDiffStats } from '@/lib/diff-utils';
 import {
@@ -286,7 +284,7 @@ export function HubPRsTab({
                       className="w-full px-3 py-3 text-left hover:bg-push-surface-hover"
                     >
                       <div className="flex items-start gap-2">
-                        <GitPullRequest className="mt-0.5 h-4 w-4 shrink-0 text-push-accent" />
+                        <PRThreadIcon className="mt-0.5 h-4 w-4 shrink-0 text-push-accent" />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <p className="line-clamp-2 text-sm font-medium leading-tight text-push-fg">
@@ -312,7 +310,7 @@ export function HubPRsTab({
                               {pr.state}
                             </span>
                             <span className="inline-flex items-center gap-1">
-                              <GitBranch className="h-3 w-3" />
+                              <BranchWaveIcon className="h-3 w-3" />
                               {pr.headRef} → {pr.baseRef}
                             </span>
                             {(pr.additions > 0 || pr.deletions > 0) && (
@@ -435,7 +433,7 @@ export function HubPRsTab({
                 <span>{detail.author}</span>
                 <span>opened {timeAgo(detail.createdAt)}</span>
                 <span className={`${HUB_TAG_CLASS} gap-1`}>
-                  <GitBranch className="h-3 w-3" />
+                  <BranchWaveIcon className="h-3 w-3" />
                   {detail.headRef} → {detail.baseRef}
                 </span>
               </div>
@@ -516,7 +514,7 @@ export function HubPRsTab({
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
                 >
                   <HubControlGlow />
-                  <GitPullRequest className="relative z-10 h-3.5 w-3.5" />
+                  <PRThreadIcon className="relative z-10 h-3.5 w-3.5" />
                   <span className="relative z-10">Review in Push</span>
                 </button>
               )}
@@ -580,7 +578,7 @@ export function HubPRsTab({
                     <div className="space-y-2">
                       {detail.commits.slice(0, 6).map((commit) => (
                         <div key={commit.sha} className="flex items-start gap-2">
-                          <GitCommit className="mt-0.5 h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
+                          <CommitPulseIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
                           <div className="min-w-0">
                             <p className="truncate text-push-sm text-push-fg-secondary">{commit.message || commit.sha}</p>
                             <p className="text-push-2xs text-push-fg-dim">
@@ -705,7 +703,7 @@ export function HubPRsTab({
                         <div key={thread.id} className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={`${HUB_TAG_CLASS} gap-1 text-push-2xs`}>
-                              <GitBranch className="h-3 w-3" />
+                              <BranchWaveIcon className="h-3 w-3" />
                               {thread.file}
                               {typeof thread.line === 'number' ? ` · L${thread.line}` : ''}
                             </span>

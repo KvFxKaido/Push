@@ -3,9 +3,6 @@ import {
   Check,
   ChevronDown,
   Download,
-  GitBranch,
-  GitCommitHorizontal,
-  GitMerge,
   Loader2,
   Plus,
   RefreshCw,
@@ -36,9 +33,12 @@ import {
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import {
+  BranchWaveIcon,
+  CommitPulseIcon,
   ConsoleTraceIcon,
   DiffSeamIcon,
   FilesStackIcon,
+  MergeShieldIcon,
   NotebookPadIcon,
   PRThreadIcon,
   ReviewLensIcon,
@@ -974,7 +974,7 @@ export function WorkspaceHubSheet({
                         className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-push-2xs`}
                       >
                         <HubControlGlow />
-                        <GitBranch className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
+                        <BranchWaveIcon className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
                         <span className={`${HUB_CONTROL_TEXT_CLASS} max-w-[92px] truncate`}>
                           {branchProps.currentBranch}
                         </span>
@@ -992,7 +992,7 @@ export function WorkspaceHubSheet({
                                 onClick={() => { setBranchDropdownOpen(false); branchProps.onShowBranchCreate(); }}
                                 className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-push-fg-secondary transition-colors hover:bg-white/[0.04]"
                               >
-                                <GitBranch className="h-3.5 w-3.5" />
+                                <BranchWaveIcon className="h-3.5 w-3.5" />
                                 Create branch
                               </button>
                             ) : (
@@ -1000,7 +1000,7 @@ export function WorkspaceHubSheet({
                                 onClick={() => { setBranchDropdownOpen(false); branchProps.onShowMergeFlow(); }}
                                 className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-emerald-300 transition-colors hover:bg-white/[0.04]"
                               >
-                                <GitMerge className="h-3.5 w-3.5" />
+                                <MergeShieldIcon className="h-3.5 w-3.5" />
                                 Merge into {branchProps.defaultBranch}
                               </button>
                             )}
@@ -1252,7 +1252,7 @@ export function WorkspaceHubSheet({
                   ) : commitPhase === 'success' ? (
                     <Check className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
                   ) : (
-                    <GitCommitHorizontal className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                    <CommitPulseIcon className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
                   )}
                   <span className={HUB_CONTROL_TEXT_CLASS}>
                     {commitPhase === 'idle'

@@ -1,4 +1,4 @@
-import { GitPullRequest } from 'lucide-react';
+import { PRThreadIcon } from '@/components/icons/push-custom-icons';
 import type { PRListCardData } from '@/types';
 import { timeAgo, CARD_SHELL_CLASS, CARD_LIST_CLASS } from '@/lib/utils';
 
@@ -7,7 +7,7 @@ export function PRListCard({ data }: { data: PRListCardData }) {
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-push-edge/80 px-3.5 py-3">
-        <GitPullRequest className="h-3.5 w-3.5 text-push-fg-secondary" />
+        <PRThreadIcon className="h-3.5 w-3.5 text-push-fg-secondary" />
         <span className="text-push-base font-medium text-push-fg">
           {data.prs.length} {data.state} PR{data.prs.length !== 1 ? 's' : ''}
         </span>

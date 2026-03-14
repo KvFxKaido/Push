@@ -1,4 +1,4 @@
-import { FolderGit2, GitBranch, Files, Clock3, RefreshCw } from 'lucide-react';
+import { Files, Clock3, RefreshCw } from 'lucide-react';
 import type { SandboxStateCardData, CardAction } from '@/types';
 import {
   CARD_SHELL_CLASS,
@@ -7,6 +7,7 @@ import {
   CARD_BUTTON_CLASS,
   CARD_PANEL_SUBTLE_CLASS,
 } from '@/lib/utils';
+import { BranchWaveIcon, RepoLedgerIcon } from '@/components/icons/push-custom-icons';
 
 interface SandboxStateCardProps {
   data: SandboxStateCardData;
@@ -22,7 +23,7 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
     <div className={CARD_SHELL_CLASS}>
       <div className="flex items-center justify-between gap-2 border-b border-push-edge/80 px-3 py-2.5">
         <div className="flex items-center gap-2 min-w-0">
-          <FolderGit2 className="h-4 w-4 text-push-status-success shrink-0" />
+          <RepoLedgerIcon className="h-4 w-4 text-push-status-success shrink-0" />
           <span className="text-push-base text-push-fg font-medium truncate">Workspace Status</span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -45,7 +46,7 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
 
       <div className="px-3 py-2 space-y-2">
         <div className="text-push-sm text-push-fg-secondary flex items-center gap-2">
-          <GitBranch className="h-3.5 w-3.5 text-push-fg-muted" />
+          <BranchWaveIcon className="h-3.5 w-3.5 text-push-fg-muted" />
           <span className="font-mono">{data.branch}</span>
         </div>
         {data.statusLine && (

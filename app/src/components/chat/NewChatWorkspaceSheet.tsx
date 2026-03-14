@@ -1,10 +1,11 @@
-import { FileDiff, Files, GitBranch, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { FileDiff, Files, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
+import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import type { NewChatWorkspaceState } from '@/types';
 
 interface NewChatWorkspaceSheetProps {
@@ -78,7 +79,7 @@ export function NewChatWorkspaceSheet({
                     <p className="mt-1 text-xs text-push-fg-dim">{formatSummary(workspace)}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2 rounded-full border border-push-edge bg-push-surface/80 px-2.5 py-1 text-push-2xs text-push-fg-secondary">
-                    <GitBranch className="h-3 w-3 text-push-fg-dim" />
+                    <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
                     <span>{workspace.branch}</span>
                   </div>
                 </div>

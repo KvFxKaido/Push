@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ChevronDown, GitBranch, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { ChevronDown, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
 import { getContextMetrics } from '@/lib/context-metrics';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -573,7 +574,7 @@ export function SettingsSectionContent({
                 <div className="rounded-lg border border-push-edge bg-push-surface overflow-hidden">
                   <div className="px-3 py-2 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <GitBranch className="h-3.5 w-3.5 text-push-fg-muted" />
+                      <BranchWaveIcon className="h-3.5 w-3.5 text-push-fg-muted" />
                       <span className="text-xs text-push-fg-secondary font-mono truncate">{workspace.sandboxState.branch}</span>
                     </div>
                     <div className="flex items-center gap-2">

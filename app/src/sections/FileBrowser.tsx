@@ -19,7 +19,6 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
-  GitCommitHorizontal,
   FileEdit,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -28,6 +27,7 @@ import { FileActionsSheet } from '@/components/filebrowser/FileActionsSheet';
 import { UploadButton } from '@/components/filebrowser/UploadButton';
 import { CommitPushSheet } from '@/components/filebrowser/CommitPushSheet';
 import { FileEditor } from '@/components/filebrowser/FileEditor';
+import { CommitPulseIcon } from '@/components/icons/push-custom-icons';
 import { getFileEditability } from '@/lib/file-utils';
 import { writeToSandbox } from '@/lib/sandbox-client';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -291,7 +291,7 @@ export function FileBrowser({
           title="Commit & push"
           aria-label="Commit and push changes"
         >
-          <GitCommitHorizontal className="h-5 w-5" />
+          <CommitPulseIcon className="h-5 w-5" />
         </button>
       )}
 

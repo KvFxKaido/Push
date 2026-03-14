@@ -1,6 +1,7 @@
-import { GitBranch, Play } from 'lucide-react';
+import { Play } from 'lucide-react';
 import type { WorkflowRunsCardData } from '@/types';
 import { timeAgo, CARD_SHELL_CLASS, CARD_PANEL_SUBTLE_CLASS } from '@/lib/utils';
+import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import {
   checkToneBgClass,
   checkToneColorClass,
@@ -49,7 +50,7 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 text-push-sm text-push-fg-dim">
-                  <GitBranch className="h-3 w-3 shrink-0" />
+                  <BranchWaveIcon className="h-3 w-3 shrink-0" />
                   <span className="truncate">{run.branch}</span>
                   <span>·</span>
                   <span>{run.event}</span>

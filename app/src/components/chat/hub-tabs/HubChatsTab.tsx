@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Check, GitBranch, MessageSquare, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Check, MessageSquare, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import type { Conversation } from '@/types';
+import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 
 interface HubChatsTabProps {
   conversations: Record<string, Conversation>;
@@ -151,7 +152,7 @@ export function HubChatsTab({
                   }}
                   className="flex w-full items-center gap-1.5 px-3 pb-1 pt-3 text-left"
                 >
-                  <GitBranch className={`h-3 w-3 shrink-0 ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`} />
+                  <BranchWaveIcon className={`h-3 w-3 shrink-0 ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`} />
                   <span className={`truncate text-push-2xs font-medium ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`}>
                     {group.name}
                   </span>

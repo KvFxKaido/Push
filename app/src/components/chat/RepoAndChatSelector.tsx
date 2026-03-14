@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { ChevronDown, Plus, Trash2, MessageSquare, Lock, GitPullRequest, House } from 'lucide-react';
-import { WorkspaceSparkIcon } from '@/components/icons/push-custom-icons';
+import { ChevronDown, Plus, Trash2, MessageSquare, Lock, House } from 'lucide-react';
+import { PRThreadIcon, WorkspaceSparkIcon } from '@/components/icons/push-custom-icons';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -91,7 +91,7 @@ export function RepoAndChatSelector({
                     {repo.private && <Lock className="h-3 w-3 text-push-fg-dim" />}
                     {repo.activity.open_prs > 0 && (
                       <span className="flex items-center gap-0.5 text-xs text-push-fg-dim">
-                        <GitPullRequest className="h-3 w-3" />
+                        <PRThreadIcon className="h-3 w-3" />
                         {repo.activity.open_prs}
                       </span>
                     )}

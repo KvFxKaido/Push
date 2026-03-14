@@ -1,6 +1,7 @@
-import { GitCommit, Plus, Minus, FileEdit } from 'lucide-react';
+import { Plus, Minus, FileEdit } from 'lucide-react';
 import type { CommitFilesCardData } from '@/types';
 import { timeAgo, CARD_SHELL_CLASS, CARD_TEXT_SUCCESS, CARD_TEXT_ERROR, CARD_TEXT_WARNING, CARD_LIST_CLASS } from '@/lib/utils';
+import { CommitPulseIcon } from '@/components/icons/push-custom-icons';
 
 export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
   const statusIcon = (status: string) => {
@@ -16,7 +17,7 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
       {/* Header */}
       <div className="border-b border-push-edge/80 px-3.5 py-3">
         <div className="flex items-center gap-2">
-          <GitCommit className="h-3.5 w-3.5 text-push-fg-secondary" />
+          <CommitPulseIcon className="h-3.5 w-3.5 text-push-fg-secondary" />
           <span className="text-push-sm text-push-link font-mono">{data.sha.slice(0, 7)}</span>
           <span className="text-push-base text-push-fg truncate flex-1">{data.message}</span>
         </div>

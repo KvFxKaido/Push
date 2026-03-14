@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
-import { Search, Lock, LogOut, Loader2, GitPullRequest, GitCommit } from 'lucide-react';
-import { WorkspaceSparkIcon } from '@/components/icons/push-custom-icons';
+import { Search, Lock, LogOut, Loader2 } from 'lucide-react';
+import { CommitPulseIcon, PRThreadIcon, WorkspaceSparkIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -201,13 +201,13 @@ export function RepoPicker({
                   )}
                   {repo.activity.open_prs > 0 && (
                     <span className={`${HUB_TAG_CLASS} gap-1 text-[#58a6ff]`}>
-                      <GitPullRequest className="h-3 w-3" />
+                      <PRThreadIcon className="h-3 w-3" />
                       {repo.activity.open_prs}
                     </span>
                   )}
                   {repo.activity.recent_commits > 0 && (
                     <span className="flex items-center gap-1">
-                      <GitCommit className="h-3 w-3" />
+                      <CommitPulseIcon className="h-3 w-3" />
                       {repo.activity.recent_commits}
                     </span>
                   )}

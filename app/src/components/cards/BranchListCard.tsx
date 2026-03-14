@@ -1,4 +1,5 @@
-import { GitBranch, Shield, Star } from 'lucide-react';
+import { Shield, Star } from 'lucide-react';
+import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import type { BranchListCardData } from '@/types';
 import {
   CARD_SHELL_CLASS,
@@ -12,7 +13,7 @@ export function BranchListCard({ data }: { data: BranchListCardData }) {
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-push-edge/80 px-3.5 py-3">
-        <GitBranch className="h-3.5 w-3.5 text-push-fg-secondary" />
+        <BranchWaveIcon className="h-3.5 w-3.5 text-push-fg-secondary" />
         <span className="text-push-base font-medium text-push-fg">
           {data.branches.length} branch{data.branches.length !== 1 ? 'es' : ''}
         </span>

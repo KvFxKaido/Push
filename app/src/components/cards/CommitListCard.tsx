@@ -1,4 +1,4 @@
-import { GitCommit } from 'lucide-react';
+import { CommitPulseIcon } from '@/components/icons/push-custom-icons';
 import type { CommitListCardData } from '@/types';
 import { timeAgo, CARD_SHELL_CLASS, CARD_LIST_CLASS } from '@/lib/utils';
 
@@ -7,7 +7,7 @@ export function CommitListCard({ data }: { data: CommitListCardData }) {
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-push-edge/80 px-3.5 py-3">
-        <GitCommit className="h-3.5 w-3.5 text-push-fg-secondary" />
+        <CommitPulseIcon className="h-3.5 w-3.5 text-push-fg-secondary" />
         <span className="text-push-base font-medium text-push-fg">
           {data.commits.length} recent commit{data.commits.length !== 1 ? 's' : ''}
         </span>

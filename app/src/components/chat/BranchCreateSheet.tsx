@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { GitBranch, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import {
   Sheet,
   SheetContent,
@@ -121,7 +122,7 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
       >
         <SheetHeader className="pt-5 pb-1">
           <SheetTitle className="text-sm font-semibold text-push-fg flex items-center gap-2">
-            <GitBranch className="h-4 w-4 text-push-fg-dim" />
+            <BranchWaveIcon className="h-4 w-4 text-push-fg-dim" />
             Create branch
           </SheetTitle>
           <SheetDescription className="text-xs text-push-fg-dim">

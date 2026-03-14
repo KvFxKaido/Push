@@ -5,7 +5,6 @@ import {
   XCircle,
   AlertTriangle,
   ExternalLink,
-  GitMerge,
   Trash2,
   ArrowRight,
   ShieldCheck,
@@ -936,7 +935,7 @@ function MergeFlowSheet({
                               </>
                             ) : (
                               <>
-                                <GitMerge className="relative z-10 h-4 w-4" />
+                              <MergeShieldIcon className="relative z-10 h-4 w-4" />
                                 <span className="relative z-10">Merge</span>
                               </>
                             )}
