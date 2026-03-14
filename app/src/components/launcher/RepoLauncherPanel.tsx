@@ -7,6 +7,7 @@ import {
   PRThreadIcon,
   PushOrbitIcon,
   SandboxCubeIcon,
+  WorkspaceSparkIcon,
 } from '@/components/icons/push-custom-icons';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
@@ -540,7 +541,7 @@ export function RepoLauncherPanel({
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-emerald-300`}
             >
               <HubControlGlow />
-              <SandboxCubeIcon className="relative z-10 h-4 w-4" />
+              <WorkspaceSparkIcon className="relative z-10 h-4 w-4" />
               <span className="relative z-10">New Workspace</span>
             </button>
           )}

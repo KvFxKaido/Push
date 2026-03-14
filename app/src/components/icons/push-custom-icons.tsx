@@ -59,6 +59,26 @@ export function SandboxCubeIcon({ strokeWidth = 2, ...props }: IconProps) {
   );
 }
 
+export function WorkspaceSparkIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="3" y="5" width="18" height="15" rx="2" />
+      <path d="M9 5v15" />
+      <path d="M12.5 10h4" />
+      <path d="M12.5 14h3" />
+      <path d="M17.5 2q0 2 2 2-2 0-2 2 0-2-2-2 2 0 2-2Z" />
+    </svg>
+  );
+}
+
 export function MergeShieldIcon({ strokeWidth = 2, ...props }: IconProps) {
   return (
     <svg

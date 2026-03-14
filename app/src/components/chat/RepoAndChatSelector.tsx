@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ChevronDown, Plus, Trash2, MessageSquare, Lock, GitPullRequest, Box, House } from 'lucide-react';
+import { ChevronDown, Plus, Trash2, MessageSquare, Lock, GitPullRequest, House } from 'lucide-react';
+import { WorkspaceSparkIcon } from '@/components/icons/push-custom-icons';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -113,7 +114,7 @@ export function RepoAndChatSelector({
               </DropdownMenuItem>
             )}
 
-            {/* --- New Sandbox --- */}
+            {/* --- New Workspace --- */}
             {onStartWorkspace && (
               <DropdownMenuItem
                 onSelect={() => {
@@ -122,7 +123,7 @@ export function RepoAndChatSelector({
                 }}
                 className="mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-emerald-300 hover:bg-push-surface-hover hover:text-emerald-200"
               >
-                <Box className="h-4 w-4" />
+                <WorkspaceSparkIcon className="h-4 w-4" />
                 <span className="text-sm font-medium">New Workspace</span>
               </DropdownMenuItem>
             )}

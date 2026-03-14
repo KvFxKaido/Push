@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Search, Lock, LogOut, Loader2, GitPullRequest, GitCommit } from 'lucide-react';
-import { SandboxCubeIcon } from '@/components/icons/push-custom-icons';
+import { WorkspaceSparkIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -131,12 +131,12 @@ export function RepoPicker({
 
       {/* Repo list */}
       <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
-        {/* New Sandbox option */}
+        {/* New Workspace option */}
         <button
           onClick={onStartWorkspace}
           className={`${HUB_PANEL_SURFACE_CLASS} mb-3 flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-emerald-500/30 active:scale-[0.995]`}
         >
-          <SandboxCubeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
+          <WorkspaceSparkIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
           <div className="min-w-0">
             <span className="text-sm font-medium text-emerald-300">New Workspace</span>
             <p className="mt-0.5 text-xs text-push-fg-secondary">Ephemeral workspace with no repo needed.</p>
