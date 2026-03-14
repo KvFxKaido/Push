@@ -1,4 +1,4 @@
-import { Files, Clock3, RefreshCw } from 'lucide-react';
+import { Clock3, RefreshCw } from 'lucide-react';
 import type { SandboxStateCardData, CardAction } from '@/types';
 import {
   CARD_SHELL_CLASS,
@@ -7,7 +7,7 @@ import {
   CARD_BUTTON_CLASS,
   CARD_PANEL_SUBTLE_CLASS,
 } from '@/lib/utils';
-import { BranchWaveIcon, RepoLedgerIcon } from '@/components/icons/push-custom-icons';
+import { BranchWaveIcon, FilesStackIcon, RepoLedgerIcon } from '@/components/icons/push-custom-icons';
 
 interface SandboxStateCardProps {
   data: SandboxStateCardData;
@@ -67,7 +67,7 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
         {data.preview.length > 0 && (
           <div className={`${CARD_PANEL_SUBTLE_CLASS} p-2.5`}>
             <div className="flex items-center gap-1.5 text-push-xs text-push-fg-muted mb-1">
-              <Files className="h-3 w-3" />
+              <FilesStackIcon className="h-3 w-3" />
               <span>Preview</span>
             </div>
             <div className="space-y-0.5">

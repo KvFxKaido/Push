@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Terminal, CheckCircle2, XCircle, Copy, Download, Check } from 'lucide-react';
+import { CheckCircle2, XCircle, Copy, Download, Check } from 'lucide-react';
 import type { SandboxCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
 import {
@@ -8,6 +8,7 @@ import {
   CARD_BADGE_ERROR,
   CARD_ICON_BUTTON_CLASS,
 } from '@/lib/utils';
+import { TerminalCrateIcon } from '@/components/icons/push-custom-icons';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 import { CardCodeBlock } from './card-code-block';
 
@@ -48,7 +49,7 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
         onClick={toggleExpanded}
         className="flex w-full items-center gap-2.5 px-3.5 py-3 transition-colors duration-200 hover:bg-white/[0.02]"
       >
-        <Terminal className="h-4 w-4 shrink-0 text-push-fg-secondary" />
+        <TerminalCrateIcon className="h-4 w-4 shrink-0 text-push-fg-secondary" />
         <code className="flex-1 text-push-base text-push-fg font-mono text-left truncate">
           {data.command}
         </code>

@@ -24,6 +24,7 @@ import {
   HUB_PANEL_SURFACE_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
+import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { RepoLauncherPanel } from '@/components/launcher/RepoLauncherPanel';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { ActiveRepo, Conversation, GitHubUser, RepoWithActivity } from '@/types';
@@ -70,9 +71,7 @@ export function HomeScreen({
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center text-push-accent">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-push-accent">
-                  <path d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-                </svg>
+                <PushMarkIcon className="h-4 w-4 text-push-accent" />
               </div>
               <div>
                 <h1 className="text-lg font-semibold tracking-tight text-push-fg">Push</h1>

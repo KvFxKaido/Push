@@ -8,6 +8,7 @@ import {
   HUB_TAG_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
+import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import type { GitHubUser } from '@/types';
 
 interface OnboardingScreenProps {
@@ -66,20 +67,7 @@ export function OnboardingScreen({
         {/* Logo + tagline */}
         <div className="text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center text-push-accent animate-fade-in-up">
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 16 16"
-              fill="none"
-              className="text-push-accent"
-            >
-              <path
-                d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-              />
-            </svg>
+            <PushMarkIcon className="h-[22px] w-[22px] text-push-accent" />
           </div>
           <h1 className="text-2xl font-semibold text-[#fafafa] tracking-tight mb-2">
             Push

@@ -1,3 +1,5 @@
+import type { ComponentType, SVGProps } from 'react';
+import { AICoreIcon, WorkspaceTuneIcon, YouBadgeIcon } from '@/components/icons/push-custom-icons';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalProviderType } from '@/lib/experimental-providers';
 import type { AIProviderType } from '@/types';
@@ -22,6 +24,14 @@ export type ExperimentalSettingsProviderId = Extract<
   ExperimentalProviderType,
   'azure' | 'bedrock'
 >;
+
+export type SettingsSectionIcon = ComponentType<SVGProps<SVGSVGElement>>;
+
+export const SETTINGS_SECTION_ICONS: Record<'you' | 'workspace' | 'ai', SettingsSectionIcon> = {
+  you: YouBadgeIcon,
+  workspace: WorkspaceTuneIcon,
+  ai: AICoreIcon,
+};
 
 export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'ollama',

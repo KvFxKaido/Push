@@ -2,6 +2,7 @@ import { memo, useMemo, useState, useCallback } from 'react';
 import { ChevronRight, FileCode, FileText, Copy, Check, Pin, Pencil, RefreshCw } from 'lucide-react';
 import type { ChatMessage, CardAction, AttachmentData } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
+import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -558,20 +559,7 @@ export const MessageBubble = memo(function MessageBubble({
   return (
     <div className="flex items-start gap-2.5 px-4 py-1.5 group/assistant animate-fade-in">
       <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#1e2634] bg-push-grad-icon">
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 16 16"
-          fill="none"
-          className="text-push-accent"
-        >
-          <path
-            d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <PushMarkIcon className="h-[10px] w-[10px] text-push-accent" />
       </div>
       <div className="min-w-0 max-w-[85%]">
         {hasThinking && (

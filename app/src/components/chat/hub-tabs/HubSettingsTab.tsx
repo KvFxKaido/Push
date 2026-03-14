@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowLeft, ChevronRight, Cpu, FolderCog, Sparkles, User } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { ProviderIcon } from '@/components/ui/provider-icon';
 import { SettingsSectionContent } from '@/components/SettingsSectionContent';
-import { PROVIDER_LABELS } from '@/components/settings-shared';
+import { PROVIDER_LABELS, SETTINGS_SECTION_ICONS, type SettingsSectionIcon } from '@/components/settings-shared';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
@@ -32,7 +32,7 @@ interface HubSettingsTabProps {
 interface NotebookCardProps {
   badge: string;
   description: string;
-  icon: typeof User;
+  icon: SettingsSectionIcon;
   lines: string[];
   title: string;
   onClick: () => void;
@@ -40,27 +40,27 @@ interface NotebookCardProps {
 
 interface DetailShellProps {
   description: string;
-  icon: typeof User;
+  icon: SettingsSectionIcon;
   title: string;
   onBack: () => void;
   children: ReactNode;
 }
 
-const DETAIL_META: Record<SettingsTabKey, { title: string; description: string; icon: typeof User }> = {
+const DETAIL_META: Record<SettingsTabKey, { title: string; description: string; icon: SettingsSectionIcon }> = {
   you: {
     title: 'You',
     description: 'GitHub, profile, and the context Push carries into chats.',
-    icon: User,
+    icon: SETTINGS_SECTION_ICONS.you,
   },
   workspace: {
     title: 'Workspace',
     description: 'Long-chat behavior, runtime warm-up, and branch safety.',
-    icon: FolderCog,
+    icon: SETTINGS_SECTION_ICONS.workspace,
   },
   ai: {
     title: 'AI',
     description: 'Default providers, model choices, and connector setup.',
-    icon: Cpu,
+    icon: SETTINGS_SECTION_ICONS.ai,
   },
 };
 
@@ -174,7 +174,7 @@ export function HubSettingsTab({
       title: 'You',
       description: 'Identity and GitHub state available to every chat.',
       badge: auth.isDemo ? 'demo' : auth.isConnected ? 'linked' : 'offline',
-      icon: User,
+      icon: SETTINGS_SECTION_ICONS.you,
       lines: [
         `Push knows you as ${profileName}.`,
         `GitHub ${auth.isDemo ? 'is in demo mode right now.' : auth.isConnected ? `is connected ${profile.profile.githubLogin || profile.validatedUser?.login ? `as ${profile.profile.githubLogin || profile.validatedUser?.login}.` : 'and ready.'}` : 'is not connected yet.'}`,
@@ -186,7 +186,7 @@ export function HubSettingsTab({
       title: 'Workspace',
       description: 'Notebook controls for context, sandbox, and branch safety.',
       badge: sandboxLabel,
-      icon: FolderCog,
+      icon: SETTINGS_SECTION_ICONS.workspace,
       lines: [
         `Long chats are set to ${workspace.contextMode === 'graceful' ? 'keep steady' : 'keep everything'}.`,
         `Runtime warm-up is ${workspace.sandboxStartMode === 'off' ? 'manual' : workspace.sandboxStartMode}.`,
@@ -198,7 +198,7 @@ export function HubSettingsTab({
       title: 'AI',
       description: 'Provider defaults, model picks, and connector readiness.',
       badge: configuredProviderCount > 0 ? `${configuredProviderCount} ready` : 'offline',
-      icon: Cpu,
+      icon: SETTINGS_SECTION_ICONS.ai,
       lines: [
         `New chats start on ${defaultProvider ? PROVIDER_LABELS[defaultProvider] : 'auto routing'}.`,
         `${ai.lockedModel ? `This chat is currently locked to ${ai.lockedModel}.` : 'New chats inherit your saved defaults.'}`,

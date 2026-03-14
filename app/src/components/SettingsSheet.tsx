@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Trash2, RefreshCw, Loader2, User, FolderCog, Cpu, Check, Plus, ChevronDown } from 'lucide-react';
+import { Trash2, RefreshCw, Loader2, Check, Plus, ChevronDown } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -24,6 +24,7 @@ import type {
   BuiltInSettingsProviderId,
   ExperimentalSettingsProviderId,
 } from '@/components/settings-shared';
+import { SETTINGS_SECTION_ICONS } from '@/components/settings-shared';
 
 export type SettingsTabKey = 'you' | 'workspace' | 'ai';
 
@@ -926,7 +927,7 @@ export function SettingsSheet({
   data,
 }: SettingsSheetProps) {
   const tabMeta = SETTINGS_TAB_META[settingsTab];
-  const ActiveTabIcon = settingsTab === 'you' ? User : settingsTab === 'workspace' ? FolderCog : Cpu;
+  const ActiveTabIcon = SETTINGS_SECTION_ICONS[settingsTab];
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -961,7 +962,9 @@ export function SettingsSheet({
         <div className="shrink-0 border-b border-push-edge px-3 py-3">
           <div className="rounded-2xl border border-push-edge bg-[#0b1017]/85 p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
             <div className="grid grid-cols-3 gap-1.5">
-            {([['you', 'You', User], ['workspace', 'Workspace', FolderCog], ['ai', 'AI', Cpu]] as const).map(([key, label, Icon]) => (
+            {([['you', 'You'], ['workspace', 'Workspace'], ['ai', 'AI']] as const).map(([key, label]) => {
+              const Icon = SETTINGS_SECTION_ICONS[key];
+              return (
               <button
                 key={key}
                 type="button"
@@ -981,7 +984,8 @@ export function SettingsSheet({
                 </span>
                 {label}
               </button>
-            ))}
+            );
+            })}
             </div>
           </div>
         </div>

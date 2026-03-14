@@ -9,7 +9,6 @@ import {
   RotateCcw,
   Save,
   Sparkles,
-  Terminal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -42,6 +41,7 @@ import {
   NotebookPadIcon,
   PRThreadIcon,
   ReviewLensIcon,
+  SandboxCubeIcon,
   SettingsCellsIcon,
 } from '@/components/icons/push-custom-icons';
 import { HubNotesTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab, HubSettingsTab } from './hub-tabs';
@@ -1100,7 +1100,7 @@ export function WorkspaceHubSheet({
                 ) : sandboxStatus === 'error' ? (
                   <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-400" />
                 ) : (
-                  <Terminal className="h-3 w-3 flex-shrink-0 text-push-fg-dim" />
+                  <SandboxCubeIcon className="h-3 w-3 flex-shrink-0 text-push-fg-dim" />
                 )}
                 <span className="min-w-0 truncate text-push-xs">
                   {sandboxStatus === 'reconnecting' && <span className="text-push-fg-dim">Reconnecting…</span>}

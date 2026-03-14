@@ -13,7 +13,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { BranchWaveIcon, HistoryStackIcon } from '@/components/icons/push-custom-icons';
+import { BranchWaveIcon, HistoryStackIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
 import {
@@ -623,9 +623,7 @@ export function RepoChatDrawer({
             </div>
 
             <div className="flex items-center gap-2 border-t border-push-edge bg-[linear-gradient(180deg,rgba(7,10,15,0.92)_0%,rgba(3,5,9,0.98)_100%)] px-3 py-3">
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0 text-push-accent">
-                <path d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-              </svg>
+              <PushMarkIcon className="h-[13px] w-[13px] shrink-0 text-push-accent" />
               <div className="min-w-0">
                 <p className="text-push-xs font-medium text-push-fg-secondary">Push</p>
                 <p className="truncate text-push-2xs text-push-fg-dim">Your coding notebook</p>

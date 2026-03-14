@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, FileDiff, Info, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
 import { executePostPRReview, fetchGitHubReviewDiff, fetchLatestCommitDiff } from '@/lib/github-tools';
@@ -15,7 +15,7 @@ import {
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData, ReviewResult, ReviewComment } from '@/types';
-import { SendLiftIcon } from '@/components/icons/push-custom-icons';
+import { DiffSeamIcon, SendLiftIcon } from '@/components/icons/push-custom-icons';
 
 interface HubReviewTabProps {
   sandboxId: string | null;
@@ -1067,7 +1067,7 @@ export function HubReviewTab({
                                 title={`Open ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} in Diff`}
                               >
                                 <HubControlGlow />
-                                <FileDiff className="relative z-10 h-3 w-3" />
+                                <DiffSeamIcon className="relative z-10 h-3 w-3" />
                                 <span className="relative z-10">Diff</span>
                               </button>
                               {onFixFinding && (

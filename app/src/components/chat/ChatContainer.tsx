@@ -5,6 +5,7 @@ import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
 import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
+import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
@@ -130,22 +131,13 @@ function EmptyState({
           onClick={handleHexTap}
           className="mx-auto mb-5 flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl border border-[#1e2634] bg-push-grad-icon shadow-[0_12px_30px_rgba(0,0,0,0.55)] active:scale-95 transition-transform"
         >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 16 16"
-            fill="none"
+          <PushMarkIcon
             className={`text-push-accent transition-colors ${hexTap ? 'hex-tap' : ''}`}
+            pathClassName={`transition-all duration-300 ${hexTap ? 'fill-[#0070f3]/20' : 'fill-transparent'}`}
+            height={22}
             onAnimationEnd={() => setHexTap(false)}
-          >
-            <path
-              d="M8 1L14.5 5V11L8 15L1.5 11V5L8 1Z"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinejoin="round"
-              className={`transition-all duration-300 ${hexTap ? 'fill-[#0070f3]/20' : 'fill-transparent'}`}
-            />
-          </svg>
+            width={22}
+          />
         </button>
         <h2 className="text-lg font-semibold text-[#fafafa] mb-2.5">
           {activeRepo ? activeRepo.name : hasSandbox ? 'Workspace' : 'Push'}

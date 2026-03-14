@@ -1,6 +1,9 @@
 import type { SVGProps } from 'react';
 
 type IconProps = SVGProps<SVGSVGElement>;
+type PushMarkIconProps = IconProps & {
+  pathClassName?: string;
+};
 
 export function PushOrbitIcon({ strokeWidth = 2, ...props }: IconProps) {
   return (
@@ -17,6 +20,21 @@ export function PushOrbitIcon({ strokeWidth = 2, ...props }: IconProps) {
       <path d="M16.62 10.09a5 5 0 1 1-2.71-2.71" />
       <path d="M19.39 8.94a8 8 0 1 1-4.33-4.33" />
       <path d="M14.5 9.5L21 3M17 3h4v4" />
+    </svg>
+  );
+}
+
+export function PushMarkIcon({ strokeWidth = 1.5, pathClassName, ...props }: PushMarkIconProps) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path className={pathClassName} d="M8 1 14.5 5v6L8 15 1.5 11V5L8 1Z" />
     </svg>
   );
 }
@@ -250,6 +268,64 @@ export function ReviewLensIcon({ strokeWidth = 2, ...props }: IconProps) {
       <path d="M7 10.5l2 2 4-4" />
       <path d="M17 5l2-2" />
       <path d="M20 8l2-2" />
+    </svg>
+  );
+}
+
+export function YouBadgeIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="12" cy="8" r="3" />
+      <path d="M6.5 18a5.5 5.5 0 0 1 11 0" />
+      <path d="M18 4.5q0 1.5 1.5 1.5Q18 6 18 7.5 18 6 16.5 6 18 6 18 4.5Z" />
+    </svg>
+  );
+}
+
+export function WorkspaceTuneIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="3" y="4" width="18" height="15" rx="2" />
+      <path d="M3 8h18" />
+      <path d="M8 12h8" />
+      <circle cx="11" cy="12" r="1.25" fill="currentColor" stroke="none" />
+      <path d="M8 16h8" />
+      <circle cx="15" cy="16" r="1.25" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function AICoreIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="7" y="7" width="10" height="10" rx="2" />
+      <path d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <path d="M12 10.5v-1M10.5 12h-1M13.5 12h1M12 13.5v1" />
     </svg>
   );
 }

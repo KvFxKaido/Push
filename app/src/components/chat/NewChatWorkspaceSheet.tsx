@@ -1,11 +1,11 @@
-import { FileDiff, Files, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
-import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
+import { BranchWaveIcon, DiffSeamIcon, FilesStackIcon } from '@/components/icons/push-custom-icons';
 import type { NewChatWorkspaceState } from '@/types';
 
 interface NewChatWorkspaceSheetProps {
@@ -42,7 +42,7 @@ export function NewChatWorkspaceSheet({
   onReviewChanges,
 }: NewChatWorkspaceSheetProps) {
   const reviewLabel = workspace?.mode === 'scratch' ? 'Review files' : 'Review changes';
-  const ReviewIcon = workspace?.mode === 'scratch' ? Files : FileDiff;
+  const ReviewIcon = workspace?.mode === 'scratch' ? FilesStackIcon : DiffSeamIcon;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

@@ -1,6 +1,7 @@
-import { Loader2, RefreshCw, Plus, Terminal } from 'lucide-react';
+import { Loader2, RefreshCw, Plus } from 'lucide-react';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
+import { SandboxCubeIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
@@ -39,7 +40,7 @@ export function SandboxStatusBanner({
     return (
       <div className={`${bannerBaseClass} flex items-center justify-between gap-2`}>
         <div className="flex min-w-0 items-center gap-2.5">
-          <Terminal className="h-3.5 w-3.5 flex-shrink-0 text-push-fg-dim" />
+          <SandboxCubeIcon className="h-3.5 w-3.5 flex-shrink-0 text-push-fg-dim" />
           <div>
             <p className="text-xs font-medium text-push-fg-muted">Sandbox not running</p>
             <p className="text-push-2xs text-push-fg-dim">Start to enable code tools for this workspace.</p>

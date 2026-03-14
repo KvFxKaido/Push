@@ -6,7 +6,6 @@ import {
   ChevronRight,
   CircleSlash,
   ExternalLink,
-  FileDiff,
   Loader2,
   MessageSquareText,
   RefreshCw,
@@ -14,7 +13,7 @@ import {
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
-import { BranchWaveIcon, CommitPulseIcon, PRThreadIcon } from '@/components/icons/push-custom-icons';
+import { BranchWaveIcon, CommitPulseIcon, DiffSeamIcon, PRThreadIcon } from '@/components/icons/push-custom-icons';
 import { DiffLine } from '@/components/cards/DiffPreviewCard';
 import { parseDiffStats } from '@/lib/diff-utils';
 import {
@@ -505,7 +504,7 @@ export function HubPRsTab({
                 className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
               >
                 <HubControlGlow />
-                <FileDiff className="relative z-10 h-3.5 w-3.5" />
+                <DiffSeamIcon className="relative z-10 h-3.5 w-3.5" />
                 <span className="relative z-10">Open in Diff</span>
               </button>
               {canUseReviewTab && (

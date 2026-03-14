@@ -1,7 +1,7 @@
-import { FileDiff } from 'lucide-react';
 import type { DiffPreviewCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
 import { CARD_SHELL_CLASS } from '@/lib/utils';
+import { DiffSeamIcon } from '@/components/icons/push-custom-icons';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 
 export function DiffLine({ line, index }: { line: string; index: number }) {
@@ -37,7 +37,7 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
         onClick={toggleExpanded}
         className="flex w-full items-center gap-2.5 px-3.5 py-3 transition-colors duration-200 hover:bg-white/[0.02]"
       >
-        <FileDiff className="h-4 w-4 shrink-0 text-push-fg-secondary" />
+        <DiffSeamIcon className="h-4 w-4 shrink-0 text-push-fg-secondary" />
         <span className="flex-1 text-push-base text-push-fg text-left">
           {data.filesChanged} file{data.filesChanged !== 1 ? 's' : ''} changed
         </span>
