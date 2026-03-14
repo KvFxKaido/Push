@@ -13,6 +13,7 @@ export const OPENROUTER_MODELS = [
   'openai/gpt-5.3-codex',
   'stepfun/step-3.5-flash:free',
   'google/gemini-3.1-pro-preview',
+  'google/gemini-3.1-pro-preview-customtools',
   'google/gemini-3.1-flash-lite-preview',
   // Mistral (via OpenRouter BYOK)
   'mistralai/mistral-large-2512',
