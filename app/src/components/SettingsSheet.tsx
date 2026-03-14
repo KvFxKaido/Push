@@ -27,6 +27,21 @@ import type {
 
 export type SettingsTabKey = 'you' | 'workspace' | 'ai';
 
+const SETTINGS_TAB_META: Record<SettingsTabKey, { title: string; description: string }> = {
+  you: {
+    title: 'You',
+    description: 'How Push should know and represent you.',
+  },
+  workspace: {
+    title: 'Workspace',
+    description: 'How this workspace behaves while you work.',
+  },
+  ai: {
+    title: 'AI',
+    description: 'Which models power new chats and reviews.',
+  },
+};
+
 // ── Prop groups ──────────────────────────────────────────────────────
 
 export interface SettingsAuthProps {
@@ -320,9 +335,12 @@ export function ProviderKeySection({
 }: ProviderKeySectionProps) {
   if (hasKey) {
     return (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between rounded-lg border border-push-edge-subtle bg-push-surface px-3 py-2">
-          <p className="text-sm text-push-fg-secondary font-mono">Key Saved</p>
+      <div className="space-y-3 rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.015))] p-3 shadow-[0_12px_24px_rgba(0,0,0,0.18)]">
+        <div className="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/8 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            <p className="text-sm text-push-fg-secondary">Connected</p>
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -340,8 +358,8 @@ export function ProviderKeySection({
           </button>
         </div>
         {model && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-push-fg-muted shrink-0">Default model:</span>
+          <div className="flex items-center gap-2 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
+            <span className="shrink-0 text-xs text-push-fg-muted">Use for new chats</span>
             <select
               value={model.value}
               onChange={(e) => model.set(e.target.value)}
@@ -384,7 +402,7 @@ export function ProviderKeySection({
         )}
         {model?.isLocked && model.lockedModel && (
           <p className="text-xs text-amber-400">
-            Current chat remains locked to {model.lockedModel}. Default applies on new chats.
+            This chat keeps using {model.lockedModel}. New chats will use your updated default.
           </p>
         )}
         {savedHint && (
@@ -397,7 +415,7 @@ export function ProviderKeySection({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.012))] p-3 shadow-[0_12px_24px_rgba(0,0,0,0.16)]">
       <input
         type="password"
         value={keyInput}
@@ -515,7 +533,7 @@ export function ExperimentalProviderSection({
                 ? 'bg-emerald-500/10 text-emerald-400'
                 : 'bg-amber-500/10 text-amber-300'
             }`}>
-              {configured ? 'Ready' : 'Experimental'}
+              {configured ? 'Connected' : 'Bring your own'}
             </span>
           </div>
           <p className="text-xs text-push-fg-dim">{helperText}</p>
@@ -747,11 +765,11 @@ export function VertexProviderSection({
                 ? 'bg-emerald-500/10 text-emerald-400'
                 : 'bg-amber-500/10 text-amber-300'
             }`}>
-              {configured ? 'Ready' : 'Experimental'}
+              {configured ? 'Connected' : 'Bring your own'}
             </span>
           </div>
           <p className="text-xs text-push-fg-dim">
-            OpenRouter-style setup: save a Google service account JSON, choose a region, and Push routes Gemini through Vertex&apos;s OpenAI-compatible API while Claude uses the native Anthropic partner-model API.
+            Bring your own Google service account, pick a region, and Push will route Gemini and Claude through Vertex for you.
           </p>
         </div>
         <button
@@ -907,6 +925,9 @@ export function SettingsSheet({
   workspace,
   data,
 }: SettingsSheetProps) {
+  const tabMeta = SETTINGS_TAB_META[settingsTab];
+  const ActiveTabIcon = settingsTab === 'you' ? User : settingsTab === 'workspace' ? FolderCog : Cpu;
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -921,29 +942,47 @@ export function SettingsSheet({
 
         <div className="relative flex h-dvh flex-col overflow-hidden rounded-r-2xl">
         {/* Header */}
-        <header className="border-b border-push-edge px-3 py-3 shrink-0">
-          <p className="text-sm font-semibold text-push-fg">Settings</p>
-          <p className="text-push-xs text-push-fg-dim">Configure your workspace</p>
+        <header className="shrink-0 border-b border-push-edge px-4 pt-4 pb-3">
+          <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015))] px-3 py-3 shadow-[0_16px_30px_rgba(0,0,0,0.24)]">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-push-edge bg-push-surface/80 text-push-fg shadow-[0_10px_22px_rgba(0,0,0,0.22)]">
+                <ActiveTabIcon className="h-4.5 w-4.5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-push-2xs uppercase tracking-[0.24em] text-push-fg-dim">Control center</p>
+                <p className="mt-1 text-base font-semibold text-push-fg">{tabMeta.title}</p>
+                <p className="mt-0.5 text-push-xs text-push-fg-dim">{tabMeta.description}</p>
+              </div>
+            </div>
+          </div>
         </header>
 
         {/* Tab bar */}
-        <div className="border-b border-push-edge px-2 py-2 shrink-0">
-          <div className="grid grid-cols-3 gap-1">
+        <div className="shrink-0 border-b border-push-edge px-3 py-3">
+          <div className="rounded-2xl border border-push-edge bg-[#0b1017]/85 p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
+            <div className="grid grid-cols-3 gap-1.5">
             {([['you', 'You', User], ['workspace', 'Workspace', FolderCog], ['ai', 'AI', Cpu]] as const).map(([key, label, Icon]) => (
               <button
                 key={key}
                 type="button"
                 onClick={() => setSettingsTab(key)}
-                className={`flex min-h-[42px] items-center justify-center gap-1.5 rounded-lg px-1 text-push-xs font-medium transition-all ${
+                className={`flex min-h-[48px] items-center justify-center gap-2 rounded-xl px-2 text-push-xs font-medium transition-all ${
                   settingsTab === key
-                    ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_8px_20px_rgba(0,0,0,0.4),0_2px_6px_rgba(0,0,0,0.22)]'
+                    ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_12px_24px_rgba(0,0,0,0.32),0_2px_6px_rgba(0,0,0,0.18)]'
                     : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
                 }`}
               >
-                <Icon className="h-3.5 w-3.5" />
+                <span className={`flex h-7 w-7 items-center justify-center rounded-full border ${
+                  settingsTab === key
+                    ? 'border-push-edge-hover bg-white/6'
+                    : 'border-transparent bg-transparent'
+                }`}>
+                  <Icon className="h-3.5 w-3.5" />
+                </span>
                 {label}
               </button>
             ))}
+            </div>
           </div>
         </div>
 

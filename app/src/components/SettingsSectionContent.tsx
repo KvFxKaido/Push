@@ -27,10 +27,12 @@ import {
 import type { PreferredProvider } from '@/lib/providers';
 import type { AIProviderType } from '@/types';
 
+const SECTION_CARD_CLASS = 'space-y-3 rounded-2xl border border-push-edge bg-push-surface/55 p-4 shadow-[0_14px_28px_rgba(0,0,0,0.18)]';
+
 function PrivateConnectorsDisclosure({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="min-w-0 rounded-xl border border-push-edge bg-push-surface/40 p-3">
+    <div className="min-w-0 rounded-2xl border border-push-edge bg-push-surface/55 p-4 shadow-[0_14px_28px_rgba(0,0,0,0.18)]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -79,11 +81,18 @@ export function SettingsSectionContent({
           {/* ── You tab ── */}
           {settingsTab === 'you' && (
           <>
+          <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.015))] px-4 py-4 shadow-[0_16px_30px_rgba(0,0,0,0.2)]">
+            <p className="text-sm font-medium text-push-fg">Personalize Push</p>
+            <p className="mt-1 text-xs text-push-fg-dim">
+              Set how Push knows you and how it connects to GitHub.
+            </p>
+          </div>
+
           {/* GitHub Connection */}
-          <div className="space-y-3">
+          <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-push-fg">
-                GitHub
+                GitHub connection
               </label>
               <div className="flex items-center gap-1.5">
                 <div
@@ -96,7 +105,7 @@ export function SettingsSectionContent({
                     ? 'Demo mode'
                     : auth.isConnected
                     ? `Connected${auth.validatedUser ? ` as ${auth.validatedUser.login}` : ''}`
-                    : 'Not connected'}
+                    : 'Signed out'}
                 </span>
               </div>
             </div>
@@ -116,7 +125,7 @@ export function SettingsSectionContent({
                     </p>
                     {auth.isAppAuth && (
                       <p className="text-xs text-push-fg-dim mt-1">
-                        Auto-refreshing token
+                        Push keeps this token fresh for you
                       </p>
                     )}
                     {auth.isAppAuth && auth.installationId && (
@@ -250,20 +259,20 @@ export function SettingsSectionContent({
           </div>
 
           {/* About You */}
-          <div className="space-y-3 pt-2 border-t border-push-edge">
+          <div className={SECTION_CARD_CLASS}>
             <label className="text-sm font-medium text-push-fg">
-              About You
+              About you
             </label>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-push-fg-secondary">
-                Your Name
+                Name
               </label>
               <input
                 type="text"
                 value={profile.displayNameDraft}
                 onChange={(e) => profile.setDisplayNameDraft(e.target.value)}
                 onBlur={profile.onDisplayNameBlur}
-                placeholder="Your name"
+                placeholder="What should Push call you?"
                 className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
               />
             </div>
@@ -281,7 +290,7 @@ export function SettingsSectionContent({
 
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-push-fg-secondary">
-                About You
+                Working style
               </label>
               <textarea
                 value={profile.bioDraft}
@@ -289,7 +298,7 @@ export function SettingsSectionContent({
                 onBlur={profile.onBioBlur}
                 rows={3}
                 maxLength={300}
-                placeholder="Anything you want the assistant to know about you"
+                placeholder="Anything helpful to know about how you like to work"
                 className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 resize-none"
               />
               <p className="text-push-2xs text-push-fg-dim">
@@ -308,7 +317,7 @@ export function SettingsSectionContent({
                 }}
                 className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
               >
-                Clear Profile
+                Clear profile
               </Button>
             )}
           </div>
@@ -317,14 +326,21 @@ export function SettingsSectionContent({
 
           {/* ── Workspace tab ── */}
           {settingsTab === 'workspace' && (<>
+          <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.015))] px-4 py-4 shadow-[0_16px_30px_rgba(0,0,0,0.2)]">
+            <p className="text-sm font-medium text-push-fg">Shape how the workspace behaves</p>
+            <p className="mt-1 text-xs text-push-fg-dim">
+              Tune long-chat behavior, runtime warm-up, and branch safety without changing your overall flow.
+            </p>
+          </div>
+
           {/* Context Mode */}
-          <div className="space-y-3">
+          <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-push-fg">
-                Context Mode
+                Long-chat behavior
               </label>
               <span className="text-xs text-push-fg-secondary">
-                {workspace.contextMode === 'graceful' ? 'Graceful digest' : 'No trimming'}
+                {workspace.contextMode === 'graceful' ? 'Keep chats steady' : 'Keep everything'}
               </span>
             </div>
             <div className="flex gap-2">
@@ -337,7 +353,7 @@ export function SettingsSectionContent({
                     : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
                 }`}
               >
-                Graceful Digest
+                Keep steady
               </button>
               <button
                 type="button"
@@ -348,24 +364,24 @@ export function SettingsSectionContent({
                     : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
                 }`}
               >
-                No Trimming
+                Keep all
               </button>
             </div>
             {workspace.contextMode === 'none' && (
               <p className="text-push-xs text-push-fg-secondary">
-                No trimming can hit model context limits on long chats and cause failures.
+                This keeps every message, but very long chats can run into model limits.
               </p>
             )}
           </div>
 
           {/* Sandbox Start Mode */}
-          <div className="space-y-3 pt-2 border-t border-push-edge">
+          <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-push-fg">
-                Sandbox Start Mode
+                Runtime warm-up
               </label>
               <span className="text-xs text-push-fg-secondary">
-                {workspace.sandboxStartMode === 'off' ? 'Off' : workspace.sandboxStartMode === 'smart' ? 'Smart' : 'Always'}
+                {workspace.sandboxStartMode === 'off' ? 'Manual' : workspace.sandboxStartMode === 'smart' ? 'Smart' : 'Always'}
               </span>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -378,7 +394,7 @@ export function SettingsSectionContent({
                     : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
                 }`}
               >
-                Off
+                Manual
               </button>
               <button
                 type="button"
@@ -404,18 +420,18 @@ export function SettingsSectionContent({
               </button>
             </div>
             <p className="text-push-xs text-push-fg-secondary">
-              Smart prewarms sandbox for likely coding prompts. Always prewarms on every message.
+              Smart starts a runtime when a prompt looks code-heavy. Always starts one on every message.
             </p>
           </div>
 
           {/* Show Tool Activity */}
-          <div className="space-y-3 pt-2 border-t border-push-edge">
+          <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-push-fg">
-                Show Tool Activity
+                Console in hub
               </label>
               <span className="text-xs text-push-fg-secondary">
-                {workspace.showToolActivity ? 'On' : 'Off'}
+                {workspace.showToolActivity ? 'Visible' : 'Hidden'}
               </span>
             </div>
             <div className="flex gap-2">
@@ -428,7 +444,7 @@ export function SettingsSectionContent({
                     : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
                 }`}
               >
-                Off
+                Hidden
               </button>
               <button
                 type="button"
@@ -439,16 +455,16 @@ export function SettingsSectionContent({
                     : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
                 }`}
               >
-                On
+                Visible
               </button>
             </div>
             <p className="text-push-xs text-push-fg-secondary">
-              Controls whether the Console tab appears in Workspace Hub. Tool execution is unchanged.
+              Show or hide the Console tab in the hub. Tool execution stays the same either way.
             </p>
           </div>
 
           {/* Protect Main */}
-          <div className="space-y-3 pt-2 border-t border-push-edge">
+          <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-push-fg">
                 Protect Main
@@ -482,7 +498,7 @@ export function SettingsSectionContent({
               </button>
             </div>
             <p className="text-push-xs text-push-fg-secondary">
-              When enabled, commits and pushes to the main/default branch are blocked. Create a feature branch first.
+              Keep main as a landing zone. Start a branch first when you want to make changes.
             </p>
 
             {workspace.activeRepoFullName && (
@@ -526,7 +542,7 @@ export function SettingsSectionContent({
                   </button>
                 </div>
                 <p className="text-push-xs text-push-fg-dim">
-                  Inherit uses the global default. Always/Never overrides it for this repo only.
+                  Inherit follows your global default. Always or Never only affects this repo.
                 </p>
               </div>
             )}
@@ -534,10 +550,10 @@ export function SettingsSectionContent({
 
           {/* Workspace Status */}
           {workspace.sandboxStatus !== 'idle' && (
-            <div className="space-y-3 pt-2 border-t border-push-edge">
+            <div className={SECTION_CARD_CLASS}>
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-push-fg">
-                  Workspace Status
+                  Runtime status
                 </label>
                 <div className="flex items-center gap-1.5">
                   <div className={`h-2 w-2 rounded-full ${
@@ -547,7 +563,7 @@ export function SettingsSectionContent({
                   }`} />
                   <span className="text-xs text-push-fg-secondary">
                     {workspace.sandboxStatus === 'ready' ? 'Running' :
-                     workspace.sandboxStatus === 'creating' ? 'Starting...' :
+                     workspace.sandboxStatus === 'creating' ? 'Warming up...' :
                      workspace.sandboxStatus === 'error' ? 'Error' : 'Idle'}
                   </span>
                 </div>
@@ -620,10 +636,17 @@ export function SettingsSectionContent({
 
           {/* ── AI tab ── */}
           {settingsTab === 'ai' && (<>
-          <div className="space-y-3">
+          <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.015))] px-4 py-4 shadow-[0_16px_30px_rgba(0,0,0,0.2)]">
+            <p className="text-sm font-medium text-push-fg">Set your defaults once</p>
+            <p className="mt-1 text-xs text-push-fg-dim">
+              Choose which providers and models new chats should reach for first.
+            </p>
+          </div>
+
+          <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-push-fg">
-                AI Defaults
+                New chat defaults
               </label>
               <div className="flex items-center gap-1.5">
                 <div
@@ -638,8 +661,8 @@ export function SettingsSectionContent({
                       size={12}
                     />
                     {ai.activeBackend
-                      ? `${PROVIDER_LABELS[ai.activeBackend]} default`
-                      : `${PROVIDER_LABELS[ai.activeProviderLabel] || 'Offline'} (auto)`}
+                      ? `${PROVIDER_LABELS[ai.activeBackend]} for new chats`
+                      : `${PROVIDER_LABELS[ai.activeProviderLabel] || 'Offline'} on auto`}
                   </span>
                 </span>
               </div>
@@ -651,10 +674,10 @@ export function SettingsSectionContent({
                 <p className="inline-flex items-center gap-1.5 text-xs text-amber-400">
                   <span aria-hidden="true">🔒</span>
                   <ProviderIcon provider={ai.lockedProvider} size={12} />
-                  Current chat is locked to {PROVIDER_LABELS[ai.lockedProvider]}
+                  This chat is staying on {PROVIDER_LABELS[ai.lockedProvider]}
                 </p>
                 <p className="text-xs text-push-fg-muted mt-0.5">
-                  Defaults below apply to new chats.
+                  Any changes below only affect new chats.
                 </p>
                 {ai.lockedModel && (
                   <p className="text-xs text-push-fg-muted mt-0.5">
@@ -667,7 +690,7 @@ export function SettingsSectionContent({
             {/* Backend picker */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-push-fg-secondary">
-                Default backend (new chats)
+                Use this provider for new chats
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <button
@@ -713,7 +736,7 @@ export function SettingsSectionContent({
                 )}
               </div>
               <p className="text-push-xs text-push-fg-dim">
-                Sets your preferred provider for new chats. Auto prefers OpenCode Zen when available.
+                Auto sticks with OpenCode Zen when it&apos;s available.
               </p>
             </div>
 
@@ -723,7 +746,7 @@ export function SettingsSectionContent({
               const label = PROVIDER_LABELS[providerId];
 
               return (
-                <div key={providerId} className="space-y-2">
+                <div key={providerId} className="space-y-2 rounded-2xl border border-push-edge bg-push-surface/35 p-3">
                   <label className="text-xs font-medium text-push-fg-secondary">{label}</label>
                   <ProviderKeySection
                     label={label}
@@ -834,7 +857,7 @@ export function SettingsSectionContent({
           </PrivateConnectorsDisclosure>
 
           {/* Web Search (Tavily) */}
-          <div className="space-y-3 pt-2 border-t border-push-edge">
+          <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-push-fg">
                 Web Search
@@ -861,7 +884,7 @@ export function SettingsSectionContent({
           </div>
 
           {/* Edit Guard Diagnostics */}
-          <div className="space-y-3 pt-2 border-t border-push-edge">
+          <div className={SECTION_CARD_CLASS}>
             <label className="text-sm font-medium text-push-fg">
               Edit Guard Diagnostics
             </label>
@@ -914,7 +937,7 @@ export function SettingsSectionContent({
           </div>
 
           {/* Tool Call Diagnostics */}
-          <div className="space-y-3 pt-2 border-t border-push-edge">
+          <div className={SECTION_CARD_CLASS}>
             <label className="text-sm font-medium text-push-fg">
               Tool Call Diagnostics
             </label>
@@ -962,7 +985,7 @@ export function SettingsSectionContent({
           </div>
 
           {/* Context Diagnostics */}
-          <div className="space-y-3 pt-2 border-t border-push-edge">
+          <div className={SECTION_CARD_CLASS}>
             <label className="text-sm font-medium text-push-fg">
               Context Diagnostics
             </label>

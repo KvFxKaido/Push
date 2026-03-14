@@ -7,7 +7,6 @@ import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_PANEL_SURFACE_CLASS,
-  HUB_TAG_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import {
@@ -32,7 +31,6 @@ interface HubSettingsTabProps {
 
 interface NotebookCardProps {
   badge: string;
-  cellLabel: string;
   description: string;
   icon: typeof User;
   lines: string[];
@@ -41,32 +39,35 @@ interface NotebookCardProps {
 }
 
 interface DetailShellProps {
-  cellLabel: string;
   description: string;
+  icon: typeof User;
   title: string;
   onBack: () => void;
   children: ReactNode;
 }
 
-const DETAIL_META: Record<SettingsTabKey, { title: string; description: string; cellLabel: string }> = {
+const DETAIL_META: Record<SettingsTabKey, { title: string; description: string; icon: typeof User }> = {
   you: {
     title: 'You',
-    description: 'GitHub, profile, and personal context',
-    cellLabel: 'cell 01',
+    description: 'GitHub, profile, and the context Push carries into chats.',
+    icon: User,
   },
   workspace: {
     title: 'Workspace',
-    description: 'Context policy, sandbox behavior, and repo safety',
-    cellLabel: 'cell 02',
+    description: 'Long-chat behavior, runtime warm-up, and branch safety.',
+    icon: FolderCog,
   },
   ai: {
     title: 'AI',
-    description: 'Provider defaults, keys, and model wiring',
-    cellLabel: 'cell 03',
+    description: 'Default providers, model choices, and connector setup.',
+    icon: Cpu,
   },
 };
 
-function DetailShell({ cellLabel, description, title, onBack, children }: DetailShellProps) {
+const SETTINGS_PILL_CLASS =
+  'inline-flex items-center rounded-full border border-push-edge/80 bg-white/[0.04] px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-push-fg-dim';
+
+function DetailShell({ description, icon: Icon, title, onBack, children }: DetailShellProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-b border-push-edge px-3 py-3">
@@ -79,12 +80,17 @@ function DetailShell({ cellLabel, description, title, onBack, children }: Detail
           <ArrowLeft className="relative z-10 h-3.5 w-3.5" />
           <span className="relative z-10">Back</span>
         </button>
-        <div className="min-w-0">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-push-fg-dim">
-            {cellLabel}
-          </p>
-          <h3 className="mt-1 text-sm font-semibold text-push-fg">{title}</h3>
-          <p className="mt-1 text-push-xs text-push-fg-muted">{description}</p>
+        <div className={`${HUB_PANEL_SURFACE_CLASS} px-4 py-4`}>
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-push-edge/80 bg-white/[0.04] text-push-fg shadow-[0_12px_24px_rgba(0,0,0,0.24)]">
+              <Icon className="h-4.5 w-4.5" />
+            </div>
+            <div className="min-w-0">
+              <span className={SETTINGS_PILL_CLASS}>Settings</span>
+              <h3 className="mt-2 text-base font-semibold text-push-fg">{title}</h3>
+              <p className="mt-1 text-push-xs leading-5 text-push-fg-muted">{description}</p>
+            </div>
+          </div>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -96,7 +102,6 @@ function DetailShell({ cellLabel, description, title, onBack, children }: Detail
 
 function NotebookCard({
   badge,
-  cellLabel,
   description,
   icon: Icon,
   lines,
@@ -107,28 +112,28 @@ function NotebookCard({
     <button
       type="button"
       onClick={onClick}
-      className={`group w-full px-4 py-3 text-left transition-all duration-200 hover:border-push-edge-hover ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
+      className={`group w-full px-4 py-4 text-left transition-all duration-200 hover:border-push-edge-hover hover:-translate-y-0.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
     >
       <div className="flex items-start gap-3">
-        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-push-fg-dim transition-colors group-hover:text-push-fg-secondary" />
+        <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-push-edge/80 bg-white/[0.035] shadow-[0_12px_20px_rgba(0,0,0,0.2)]">
+          <Icon className="h-4 w-4 text-push-fg-dim transition-colors group-hover:text-push-fg-secondary" />
+        </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-push-fg-dim">
-                {cellLabel}
-              </p>
               <h3 className="truncate text-sm font-semibold text-push-fg">{title}</h3>
-              <p className="mt-1 text-push-xs text-push-fg-muted">{description}</p>
+              <p className="mt-1 text-push-xs leading-5 text-push-fg-muted">{description}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <span className={HUB_TAG_CLASS}>{badge}</span>
+              <span className={SETTINGS_PILL_CLASS}>{badge}</span>
               <ChevronRight className="h-4 w-4 text-push-fg-dim transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-push-fg-secondary" />
             </div>
           </div>
-          <div className="mt-3 space-y-1.5 border-t border-push-edge/70 pt-3 font-mono text-[11px] leading-5 text-push-fg-secondary">
+          <div className="mt-3 space-y-2 border-t border-push-edge/70 pt-3">
             {lines.map((line) => (
-              <div key={line} className="truncate">
-                {line}
+              <div key={line} className="flex items-start gap-2 text-push-xs leading-5 text-push-fg-secondary">
+                <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-push-fg-dim/80" />
+                <span className="min-w-0 truncate">{line}</span>
               </div>
             ))}
           </div>
@@ -168,43 +173,40 @@ export function HubSettingsTab({
     {
       title: 'You',
       description: 'Identity and GitHub state available to every chat.',
-      cellLabel: DETAIL_META.you.cellLabel,
       badge: auth.isDemo ? 'demo' : auth.isConnected ? 'linked' : 'offline',
       icon: User,
       lines: [
-        `profile  ${profileName}`,
-        `github   ${profile.profile.githubLogin || profile.validatedUser?.login || 'not set'}`,
-        `auth     ${auth.isDemo ? 'Demo mode' : auth.isConnected ? auth.isAppAuth ? 'GitHub App' : 'Token saved' : 'Not connected'}`,
+        `Push knows you as ${profileName}.`,
+        `GitHub ${auth.isDemo ? 'is in demo mode right now.' : auth.isConnected ? `is connected ${profile.profile.githubLogin || profile.validatedUser?.login ? `as ${profile.profile.githubLogin || profile.validatedUser?.login}.` : 'and ready.'}` : 'is not connected yet.'}`,
+        `${profile.profile.bio.trim() ? 'Personal context is saved for chats.' : 'No personal context saved yet.'}`,
       ],
       onClick: () => setActiveView('you'),
     },
     {
       title: 'Workspace',
       description: 'Notebook controls for context, sandbox, and branch safety.',
-      cellLabel: DETAIL_META.workspace.cellLabel,
       badge: sandboxLabel,
       icon: FolderCog,
       lines: [
-        `context  ${workspace.contextMode === 'graceful' ? 'Graceful digest' : 'No trimming'}`,
-        `sandbox  ${workspace.sandboxStartMode} start · ${sandboxLabel}`,
-        `safety   protect-main ${workspace.protectMainGlobal ? 'on' : 'off'} · tool log ${workspace.showToolActivity ? 'on' : 'off'}`,
+        `Long chats are set to ${workspace.contextMode === 'graceful' ? 'keep steady' : 'keep everything'}.`,
+        `Runtime warm-up is ${workspace.sandboxStartMode === 'off' ? 'manual' : workspace.sandboxStartMode}.`,
+        `Main protection is ${workspace.protectMainGlobal ? 'on' : 'off'} and the console is ${workspace.showToolActivity ? 'visible' : 'hidden'}.`,
       ],
       onClick: () => setActiveView('workspace'),
     },
     {
       title: 'AI',
       description: 'Provider defaults, model picks, and connector readiness.',
-      cellLabel: DETAIL_META.ai.cellLabel,
       badge: configuredProviderCount > 0 ? `${configuredProviderCount} ready` : 'offline',
       icon: Cpu,
       lines: [
-        `default  ${defaultProvider ? PROVIDER_LABELS[defaultProvider] : 'Auto routing'}`,
-        `models   ${ai.lockedModel ? `chat locked to ${ai.lockedModel}` : 'new chats inherit defaults'}`,
-        `search   ${ai.tavilyProvider.hasKey ? 'Tavily key saved' : 'fallback web search only'}`,
+        `New chats start on ${defaultProvider ? PROVIDER_LABELS[defaultProvider] : 'auto routing'}.`,
+        `${ai.lockedModel ? `This chat is currently locked to ${ai.lockedModel}.` : 'New chats inherit your saved defaults.'}`,
+        `${ai.tavilyProvider.hasKey ? 'Tavily web search is ready.' : 'Web search will use fallback providers.'}`,
       ],
       onClick: () => setActiveView('ai'),
     },
-  ];
+  ].map((card) => ({ ...card, lines: card.lines.filter(Boolean) }));
 
   const views: SettingsSubview[] = ['landing', 'you', 'workspace', 'ai'];
   const activeViewIndex = views.indexOf(activeView);
@@ -224,26 +226,24 @@ export function HubSettingsTab({
               <div className={`${HUB_PANEL_SURFACE_CLASS} px-4 py-4`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-push-fg-dim">
-                      settings/notebook
-                    </p>
-                    <h2 className="mt-2 text-sm font-semibold text-push-fg">Live configuration cells</h2>
-                    <p className="mt-1 text-push-xs text-push-fg-muted">
-                      Identity, workspace, and model wiring in one panel. Tap a cell to drill in and edit the underlying state.
+                    <span className={SETTINGS_PILL_CLASS}>Settings</span>
+                    <h2 className="mt-2 text-base font-semibold text-push-fg">Settings</h2>
+                    <p className="mt-1 text-push-xs leading-5 text-push-fg-muted">
+                      Your profile, workspace behavior, and AI defaults live here. Pick a section to tune the details without leaving the hub.
                     </p>
                   </div>
                   <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">
-                  <span className={HUB_TAG_CLASS}>
-                    repo {workspace.activeRepoFullName?.split('/').pop() || 'sandbox'}
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-push-2xs text-push-fg-dim">
+                  <span className={SETTINGS_PILL_CLASS}>
+                    {workspace.activeRepoFullName?.split('/').pop() || 'Scratch workspace'}
                   </span>
-                  <span className={HUB_TAG_CLASS}>
-                    chats {data.activeRepo ? data.activeRepo.name : 'global'}
+                  <span className={SETTINGS_PILL_CLASS}>
+                    {auth.isConnected ? 'GitHub linked' : auth.isDemo ? 'Demo mode' : 'GitHub not linked'}
                   </span>
-                  <span className={HUB_TAG_CLASS}>
-                    provider {defaultProvider ? PROVIDER_LABELS[defaultProvider] : 'auto'}
+                  <span className={SETTINGS_PILL_CLASS}>
+                    {defaultProvider ? `${PROVIDER_LABELS[defaultProvider]} default` : 'Auto provider'}
                   </span>
                 </div>
               </div>
@@ -259,8 +259,8 @@ export function HubSettingsTab({
                   <ProviderIcon provider={defaultProvider} size={16} className="shrink-0" />
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-push-fg">Current default provider</p>
-                    <p className="truncate font-mono text-push-2xs text-push-fg-dim">
-                      {PROVIDER_LABELS[defaultProvider]}{ai.lockedModel ? ` · locked chat model ${ai.lockedModel}` : ' · new chats inherit defaults'}
+                    <p className="truncate text-push-2xs text-push-fg-dim">
+                      {PROVIDER_LABELS[defaultProvider]}{ai.lockedModel ? ` for new chats · current chat stays on ${ai.lockedModel}` : ' for new chats'}
                     </p>
                   </div>
                 </div>
@@ -277,9 +277,9 @@ export function HubSettingsTab({
                 style={{ width: `${100 / views.length}%` }}
               >
                 <DetailShell
-                  cellLabel={meta.cellLabel}
                   title={meta.title}
                   description={meta.description}
+                  icon={meta.icon}
                   onBack={() => setActiveView('landing')}
                 >
                   <SettingsSectionContent
