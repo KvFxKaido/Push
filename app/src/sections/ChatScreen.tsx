@@ -1128,7 +1128,7 @@ export function ChatScreen(props: ChatScreenProps) {
       )}
 
       {!isScratch && activeRepo && instructions.projectInstructionsChecked && !instructions.projectInstructionsCheckFailed && !instructions.agentsMdContent && (
-        <div className={`mx-4 mt-4 animate-fade-in px-3.5 py-3.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
+        <div className={`mx-4 mt-5 animate-fade-in px-3.5 py-3.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-medium text-push-fg">No AGENTS.md found</p>

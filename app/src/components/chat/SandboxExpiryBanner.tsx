@@ -77,7 +77,7 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
   // Expired
   if (remainingMs <= 0) {
     return (
-      <div className="mx-3 mt-4 flex items-center justify-between gap-3 rounded-[18px] border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+      <div className="mx-3 mt-5 flex items-center justify-between gap-3 rounded-[18px] border border-red-500/20 bg-red-500/5 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <Clock className="h-4 w-4 flex-shrink-0 text-red-400" />
           <div className="min-w-0">
@@ -100,7 +100,7 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
   // Warning zone (5 min remaining)
   if (remainingMs <= WARNING_THRESHOLD_MS) {
     return (
-      <div className={`mx-3 mt-4 flex items-center justify-between gap-3 px-3 py-2 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
+      <div className={`mx-3 mt-5 flex items-center justify-between gap-3 px-3 py-2 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
         <div className="flex min-w-0 items-center gap-2">
           <Clock className="h-4 w-4 flex-shrink-0 text-amber-400" />
           <div className="min-w-0">

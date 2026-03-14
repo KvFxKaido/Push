@@ -21,7 +21,7 @@ export function CIStatusBanner({ status, onDiagnose }: CIStatusBannerProps) {
 
   return (
     <div 
-      className={`mx-4 mt-4 mb-1 flex items-center justify-between gap-3 px-3.5 py-3 animate-fade-in ${
+      className={`mx-4 mt-5 mb-1 flex items-center justify-between gap-3 px-3.5 py-3 animate-fade-in ${
         isFailure 
           ? 'rounded-[18px] border border-red-500/20 bg-red-500/5' 
           : `${HUB_PANEL_SUBTLE_SURFACE_CLASS}`
