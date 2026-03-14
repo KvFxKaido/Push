@@ -17,6 +17,63 @@ import {
   type ReasoningEffort,
 } from '@/lib/model-catalog';
 import type { AIProviderType, AttachmentData } from '@/types';
+
+/** Provider display names for optgroup labels */
+const OPTGROUP_LABELS: Record<string, string> = {
+  anthropic: 'Anthropic',
+  'arcee-ai': 'Arcee AI',
+  cohere: 'Cohere',
+  deepseek: 'DeepSeek',
+  google: 'Google',
+  'meta-llama': 'Meta',
+  minimax: 'MiniMax',
+  mistralai: 'Mistral',
+  moonshotai: 'Moonshot',
+  openai: 'OpenAI',
+  perplexity: 'Perplexity',
+  qwen: 'Qwen',
+  stepfun: 'StepFun',
+  'x-ai': 'xAI',
+  'z-ai': 'Zhipu',
+};
+
+function getProviderPrefix(modelId: string): string {
+  const slash = modelId.indexOf('/');
+  return slash > 0 ? modelId.slice(0, slash) : '';
+}
+
+/** Group model IDs by provider prefix and render as optgroups with capability hints. */
+function renderGroupedModelOptions(models: string[], provider: string) {
+  const groups: { prefix: string; label: string; models: string[] }[] = [];
+  let currentPrefix = '';
+
+  for (const model of models) {
+    const prefix = getProviderPrefix(model);
+    if (prefix !== currentPrefix) {
+      currentPrefix = prefix;
+      groups.push({
+        prefix,
+        label: OPTGROUP_LABELS[prefix] || prefix,
+        models: [],
+      });
+    }
+    groups[groups.length - 1].models.push(model);
+  }
+
+  return groups.map((group) => (
+    <optgroup key={group.prefix} label={group.label}>
+      {group.models.map((model) => {
+        const hints = formatModelCapabilityHints(getModelCapabilities(provider, model));
+        const displayName = model.replace(/^[^/]+\//, '');
+        return (
+          <option key={model} value={model}>
+            {hints ? `${displayName}  ·  ${hints}` : displayName}
+          </option>
+        );
+      })}
+    </optgroup>
+  ));
+}
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
@@ -703,15 +760,7 @@ export function ChatInput({
                             onChange={(e) => providerControls.onSelectOpenRouterModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
-                            {providerControls.openRouterModelOptions.map((model) => {
-                              const hints = formatModelCapabilityHints(getModelCapabilities('openrouter', model));
-                              const label = model.replace(/^[^/]+\//, '');
-                              return (
-                                <option key={model} value={model}>
-                                  {hints ? `${label}  ·  ${hints}` : label}
-                                </option>
-                              );
-                            })}
+                            {renderGroupedModelOptions(providerControls.openRouterModelOptions, 'openrouter')}
                           </select>
                           {providerControls.isOpenRouterModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
