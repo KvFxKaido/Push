@@ -231,7 +231,7 @@ function buildFixPrompt(params: {
   const reviewContextLine = (() => {
     switch (reviewContext?.kind) {
       case 'sandbox':
-        return 'This finding came from a Working tree review of the current sandbox changes. Reuse the current sandbox state if it is available.';
+        return 'This finding came from a Working tree review of the current workspace changes. Reuse the current sandbox if it is still available.';
       case 'github-pr':
         return `This finding came from the pushed PR diff (${reviewContext.label}). Start from the current branch workspace, but verify against the current sandbox because local code may have diverged from the reviewed snapshot.`;
       case 'github-branch':
@@ -254,7 +254,7 @@ function buildFixPrompt(params: {
     `Review context: ${reviewContextLine}`,
     '',
     'Instructions:',
-    '- Start from the current sandbox/workspace state, not just the reviewed snapshot.',
+    '- Start from the current workspace state, not just the reviewed snapshot.',
     '- Inspect the referenced file and any nearby call sites before editing.',
     '- If the finding is still valid, make the smallest reasonable fix.',
     '- If the current code already differs enough that the finding is stale or invalid, explain that briefly instead of forcing a change.',
@@ -732,7 +732,7 @@ export function HubReviewTab({
                     ? 'Reviews the pushed PR or branch diff against the default branch.'
                     : reviewSource === 'commit'
                     ? 'Reviews the diff of the most recent commit — no sandbox needed.'
-                    : 'Reviews uncommitted sandbox edits in the current working tree.'}
+                    : 'Reviews uncommitted working tree edits in the current workspace.'}
                 </p>
               </div>
             )}

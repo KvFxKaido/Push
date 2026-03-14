@@ -7,7 +7,11 @@ import { Toaster } from '@/components/ui/sonner';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
-import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
+import {
+  WorkspaceHubSheet,
+  type WorkspaceHubCapabilities,
+  type WorkspaceHubScratchActions,
+} from '@/components/chat/WorkspaceHubSheet';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
 import { NewChatWorkspaceSheet } from '@/components/chat/NewChatWorkspaceSheet';
@@ -567,6 +571,35 @@ export function ChatScreen(props: ChatScreenProps) {
   const snapshotIsStale = snapshots.latestSnapshot
     ? isSnapshotStale(snapshots.latestSnapshot.createdAt)
     : false;
+  const latestSnapshotLabel = snapshotAgeLabel ?? 'recently';
+  const workspaceHubCapabilities: WorkspaceHubCapabilities = {
+    canManageBranches: !isSandboxMode && Boolean(activeRepo?.full_name),
+    canBrowsePullRequests: !isSandboxMode && Boolean(activeRepo?.full_name),
+    canCommitAndPush: !isSandboxMode && Boolean(activeRepo?.full_name),
+  };
+  const workspaceHubScratchActions: WorkspaceHubScratchActions | null = isSandboxMode ? {
+    statusText: snapshots.latestSnapshot
+      ? snapshotIsStale
+        ? `Latest snapshot stale (${latestSnapshotLabel})`
+        : `Latest snapshot ${latestSnapshotLabel}`
+      : 'Save a snapshot or download your files from this sandbox.',
+    tone: snapshotIsStale ? 'stale' : 'default',
+    canSaveSnapshot: sandbox.status === 'ready' && !snapshots.snapshotSaving && !snapshots.snapshotRestoring,
+    canRestoreSnapshot: Boolean(snapshots.latestSnapshot) && !snapshots.snapshotSaving && !snapshots.snapshotRestoring && sandbox.status !== 'creating',
+    canDownloadWorkspace: sandbox.status === 'ready' && !sandboxDownloading,
+    snapshotSaving: snapshots.snapshotSaving,
+    snapshotRestoring: snapshots.snapshotRestoring,
+    downloadingWorkspace: sandboxDownloading,
+    onSaveSnapshot: () => {
+      void snapshots.captureSnapshot('manual');
+    },
+    onRestoreSnapshot: () => {
+      void snapshots.handleRestoreFromSnapshot();
+    },
+    onDownloadWorkspace: () => {
+      void handleSandboxDownload();
+    },
+  } : null;
 
   // Provider locked states
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
@@ -1152,6 +1185,9 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
         lockedProvider={lockedProvider}
         lockedModel={lockedModel}
+        workspaceMode={isSandboxMode ? 'scratch' : 'repo'}
+        capabilities={workspaceHubCapabilities}
+        scratchActions={workspaceHubScratchActions}
         repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
         repoFullName={activeRepo?.full_name}
         projectInstructions={instructions.agentsMdContent}

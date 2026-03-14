@@ -253,18 +253,18 @@ export function RepoLauncherPanel({
     }
     if (sandboxSession.status === 'creating') {
       return {
-        detail: 'Workspace is starting',
+        detail: 'Sandbox is starting',
         detailClass: 'text-push-fg-secondary',
       };
     }
     if (sandboxSession.status === 'reconnecting') {
       return {
-        detail: 'Reconnecting to your workspace',
+        detail: 'Reconnecting to your sandbox',
         detailClass: 'text-push-fg-secondary',
       };
     }
     return {
-      detail: 'Workspace needs attention before you continue',
+      detail: 'Sandbox needs attention before you continue',
       detailClass: 'text-red-300',
     };
   }, [sandboxRemainingMs, sandboxSession]);

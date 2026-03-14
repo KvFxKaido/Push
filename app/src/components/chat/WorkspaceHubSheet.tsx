@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, 
 import {
   Check,
   ChevronDown,
+  Download,
   GitBranch,
   GitCommitHorizontal,
   GitMerge,
   Loader2,
   Plus,
   RefreshCw,
+  RotateCcw,
+  Save,
   Sparkles,
   Terminal,
   Trash2,
@@ -63,6 +66,7 @@ type HubTab = 'scratchpad' | 'kept' | 'console' | 'files' | 'diff' | 'prs' | 're
 type CommitPhase = 'idle' | 'fetching-diff' | 'branching' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
 type CommitTargetMode = 'current' | 'new';
 type DiffViewMode = 'working-tree' | 'review-github' | 'review-sandbox';
+type WorkspaceHubMode = 'repo' | 'scratch';
 
 interface DiffJumpTarget {
   path: string;
@@ -93,6 +97,26 @@ export interface HubBranchProps {
   onDeleteBranch: (branch: string) => Promise<boolean>;
 }
 
+export interface WorkspaceHubCapabilities {
+  canManageBranches: boolean;
+  canBrowsePullRequests: boolean;
+  canCommitAndPush: boolean;
+}
+
+export interface WorkspaceHubScratchActions {
+  statusText: string;
+  tone: 'default' | 'stale';
+  canSaveSnapshot: boolean;
+  canRestoreSnapshot: boolean;
+  canDownloadWorkspace: boolean;
+  snapshotSaving: boolean;
+  snapshotRestoring: boolean;
+  downloadingWorkspace: boolean;
+  onSaveSnapshot: () => void;
+  onRestoreSnapshot: () => void;
+  onDownloadWorkspace: () => void;
+}
+
 interface WorkspaceHubSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -111,6 +135,9 @@ interface WorkspaceHubSheetProps {
   reviewProviderModels: Record<PreferredProvider, string>;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
+  workspaceMode: WorkspaceHubMode;
+  capabilities: WorkspaceHubCapabilities;
+  scratchActions?: WorkspaceHubScratchActions | null;
   repoName?: string;
   /** owner/name format — passed to Review tab for PR detection */
   repoFullName?: string;
@@ -280,6 +307,9 @@ export function WorkspaceHubSheet({
   reviewProviderModels,
   lockedProvider,
   lockedModel,
+  workspaceMode,
+  capabilities,
+  scratchActions,
   repoName,
   repoFullName,
   projectInstructions,
@@ -334,11 +364,17 @@ export function WorkspaceHubSheet({
   const [switchConfirmBranch, setSwitchConfirmBranch] = useState<string | null>(null);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
-  const tabs = showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE;
+  const tabs = useMemo(() => {
+    const baseTabs = showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE;
+    return baseTabs.filter((tab) => capabilities.canBrowsePullRequests || tab.key !== 'prs');
+  }, [capabilities.canBrowsePullRequests, showToolActivity]);
+  const fallbackTab = (tabs.find((tab) => tab.key === 'files')?.key ?? tabs[0]?.key ?? 'settings') as HubTab;
   const activeTabIndex = tabs.findIndex((tab) => tab.key === activeTab);
-  const showCommitBar =
+  const showActionBar =
     activeTab === 'files' ||
     (activeTab === 'diff' && reviewDiffSelection?.mode !== 'review-github');
+  const showCommitBar = showActionBar && capabilities.canCommitAndPush;
+  const showScratchActionBar = showActionBar && workspaceMode === 'scratch' && Boolean(scratchActions);
 
   const blockedByProtectMain = Boolean(
     protectMainEnabled &&
@@ -397,11 +433,23 @@ export function WorkspaceHubSheet({
   useEffect(() => {
     if (!externalTabRequest) return;
     if (externalTabRequest.tab === 'console' && !showToolActivity) {
-      setActiveTab('files');
+      setActiveTab(fallbackTab);
       return;
     }
-    setActiveTab(externalTabRequest.tab);
-  }, [externalTabRequest, showToolActivity]);
+    setActiveTab(tabs.some((tab) => tab.key === externalTabRequest.tab) ? externalTabRequest.tab : fallbackTab);
+  }, [externalTabRequest, fallbackTab, showToolActivity, tabs]);
+
+  useEffect(() => {
+    if (tabs.some((tab) => tab.key === activeTab)) return;
+    setActiveTab(fallbackTab);
+  }, [activeTab, fallbackTab, tabs]);
+
+  useEffect(() => {
+    if (capabilities.canCommitAndPush) return;
+    if (!commitTargetSheetOpen) return;
+    setCommitTargetSheetOpen(false);
+    setCommitTargetError(null);
+  }, [capabilities.canCommitAndPush, commitTargetSheetOpen]);
 
   useEffect(() => {
     setReviewDiffSelection(null);
@@ -924,9 +972,12 @@ export function WorkspaceHubSheet({
                 </p>
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-push-xs text-push-fg-dim">
-                    {repoName || 'Sandbox'}
+                    {repoName || (workspaceMode === 'scratch' ? 'Sandbox' : 'Workspace')}
                   </span>
-                  {branchProps.currentBranch && (
+                  {workspaceMode === 'scratch' && (
+                    <span className={HUB_TAG_CLASS}>ephemeral</span>
+                  )}
+                  {capabilities.canManageBranches && branchProps.currentBranch && (
                     <div className="relative">
                       <button
                         onClick={() => {
@@ -1068,11 +1119,11 @@ export function WorkspaceHubSheet({
                 )}
                 <span className="min-w-0 truncate text-push-xs">
                   {sandboxStatus === 'reconnecting' && <span className="text-push-fg-dim">Reconnecting…</span>}
-                  {sandboxStatus === 'creating' && <span className="text-push-fg-dim">Starting workspace…</span>}
-                  {sandboxStatus === 'idle' && <span className="text-push-fg-dim">Workspace not running</span>}
+                  {sandboxStatus === 'creating' && <span className="text-push-fg-dim">Starting sandbox…</span>}
+                  {sandboxStatus === 'idle' && <span className="text-push-fg-dim">Sandbox not running</span>}
                   {sandboxStatus === 'error' && (
                     <span className="text-red-400">
-                      {sandboxError ? categorizeSandboxError(sandboxError).title : 'Workspace error'}
+                      {sandboxError ? categorizeSandboxError(sandboxError).title : 'Sandbox error'}
                     </span>
                   )}
                 </span>
@@ -1160,7 +1211,7 @@ export function WorkspaceHubSheet({
             </div>
           </div>
 
-          {/* Commit bar (shown on Files/Diff tabs, below tab bar) */}
+          {/* Repo commit bar (shown on Files/Diff tabs when commit/push is meaningful) */}
           {showCommitBar && (
             <div className="border-b border-push-edge px-3 py-2">
               <div className="flex items-center gap-1.5">
@@ -1235,6 +1286,64 @@ export function WorkspaceHubSheet({
               {commitPhase === 'error' && commitError && (
                 <p className="mt-1 text-push-2xs text-red-300">{commitError}</p>
               )}
+            </div>
+          )}
+
+          {/* Sandbox actions replace the repo commit bar in sandbox (no-repo) mode. */}
+          {showScratchActionBar && scratchActions && (
+            <div className="border-b border-push-edge px-3 py-2">
+              <div className="space-y-2">
+                <div className="min-w-0">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">Sandbox Actions</p>
+                  <p className={`mt-1 truncate text-push-xs ${scratchActions.tone === 'stale' ? 'text-amber-300' : 'text-push-fg-dim'}`}>
+                    {scratchActions.statusText}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    onClick={scratchActions.onSaveSnapshot}
+                    disabled={!scratchActions.canSaveSnapshot || scratchActions.snapshotRestoring}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 disabled:opacity-50`}
+                    title="Save sandbox snapshot"
+                  >
+                    <HubControlGlow />
+                    {scratchActions.snapshotSaving ? (
+                      <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                    ) : (
+                      <Save className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                    )}
+                    <span className={HUB_CONTROL_TEXT_CLASS}>Save</span>
+                  </button>
+                  <button
+                    onClick={scratchActions.onRestoreSnapshot}
+                    disabled={!scratchActions.canRestoreSnapshot || scratchActions.snapshotSaving}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 disabled:opacity-50`}
+                    title="Restore latest sandbox snapshot"
+                  >
+                    <HubControlGlow />
+                    {scratchActions.snapshotRestoring ? (
+                      <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                    ) : (
+                      <RotateCcw className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                    )}
+                    <span className={HUB_CONTROL_TEXT_CLASS}>Restore</span>
+                  </button>
+                  <button
+                    onClick={scratchActions.onDownloadWorkspace}
+                    disabled={!scratchActions.canDownloadWorkspace}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 disabled:opacity-50`}
+                    title="Download sandbox workspace"
+                  >
+                    <HubControlGlow />
+                    {scratchActions.downloadingWorkspace ? (
+                      <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                    ) : (
+                      <Download className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                    )}
+                    <span className={HUB_CONTROL_TEXT_CLASS}>Download</span>
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

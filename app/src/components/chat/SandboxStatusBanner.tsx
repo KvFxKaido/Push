@@ -41,7 +41,7 @@ export function SandboxStatusBanner({
         <div className="flex min-w-0 items-center gap-2.5">
           <Terminal className="h-3.5 w-3.5 flex-shrink-0 text-push-fg-dim" />
           <div>
-            <p className="text-xs font-medium text-push-fg-muted">Workspace not running</p>
+            <p className="text-xs font-medium text-push-fg-muted">Sandbox not running</p>
             <p className="text-push-2xs text-push-fg-dim">Start to enable code tools for this workspace.</p>
           </div>
         </div>
@@ -61,7 +61,7 @@ export function SandboxStatusBanner({
     return (
       <div className={`${bannerBaseClass} flex items-center gap-2.5`}>
         <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0 text-push-accent" />
-        <p className="text-xs text-push-fg-muted">Starting workspace…</p>
+        <p className="text-xs text-push-fg-muted">Starting sandbox…</p>
       </div>
     );
   }
