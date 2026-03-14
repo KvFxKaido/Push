@@ -25,7 +25,7 @@ Push is an execution control plane for developers who need to keep shipping when
 - Keep context repo-locked to one repo and one active branch
 - Resume interrupted mobile runs with checkpoint + reconciliation
 - Branch, commit, push, and merge through GitHub PR flow
-- Start in sandbox-only mode without GitHub auth and export anytime
+- Start in a scratch workspace without GitHub auth and export anytime
 - Use the same role-based agent system from terminal with Push CLI
 
 ## Why Push Is Different
@@ -152,9 +152,9 @@ Install the Push GitHub App and authorize access to your repos. Tokens refresh a
 
 Create a PAT with `repo` scope and paste it in the Settings UI. Simpler setup, but tokens can expire and need manual rotation.
 
-## Sandbox Mode
+## Scratch Workspace
 
-Don't have GitHub access right now? Start a **Sandbox** — an ephemeral workspace with no authentication required. The agent can still write code, run commands, and iterate in an isolated Linux container.
+Don't have GitHub access right now? Start a **scratch workspace** — an ephemeral workspace with no authentication required. The agent can still write code, run commands, and iterate in an isolated Linux container.
 
 - **30 minute lifetime** — Container auto-terminates (5-minute warning banner shown)
 - **Download anytime** — Export your work as a tar.gz archive before expiry

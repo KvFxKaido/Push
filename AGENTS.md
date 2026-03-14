@@ -4,7 +4,7 @@ AI coding agent — mobile PWA + local CLI. Chat with your codebase — review P
 
 ## Project Overview
 
-Push is a personal AI coding notebook backed by role-based AI agents. Users open the launcher/home surface, pick a repo or sandbox, ask questions, and the agent reads code, analyzes PRs, runs code in a sandbox, and shows results as inline cards — all in a streaming conversation.
+Push is a personal AI coding notebook backed by role-based AI agents. Users open the launcher/home surface, pick a repo or start a scratch workspace, ask questions, and the agent reads code, analyzes PRs, runs code in a sandbox, and shows results as inline cards — all in a streaming conversation.
 
 **Core Philosophy:**
 - Chat-first — conversation is the primary interface
@@ -82,7 +82,7 @@ Users set a display name, bio, and GitHub login in Settings. Stored in localStor
 
 A shared notepad that both the user and AI can read/write. Content persists in localStorage and is always injected into the system prompt. Tools: `set_scratchpad` (replace) and `append_scratchpad` (add).
 
-### Sandbox Mode
+### Scratch Workspace
 
 Ephemeral workspace with no GitHub repo. Entry via onboarding or the launcher/home surface. GitHub tools are blocked; only sandbox tools are available. 30-min container lifetime with expiry warning. Download workspace as tar.gz via header button or `sandbox_download` tool.
 
@@ -96,7 +96,7 @@ All merges go through GitHub — Push never runs `git merge` locally. "Merge int
 
 ### Protect Main
 
-Optional setting that blocks direct commits to `main`, requiring a branch for all work. Configurable as a global default (on/off) plus per-repo override (inherit/always/never). Stored in localStorage via `useProtectMain` hook. No-op in Sandbox Mode.
+Optional setting that blocks direct commits to `main`, requiring a branch for all work. Configurable as a global default (on/off) plus per-repo override (inherit/always/never). Stored in localStorage via `useProtectMain` hook. No-op in scratch workspaces.
 
 ### Branch-Scoped Chats
 
@@ -121,7 +121,7 @@ When the user selects a repo, the app fetches project instruction files via the 
 ### Data Flow
 
 1. **Onboard** → Connect via GitHub App (recommended) or GitHub PAT
-2. **Open launcher/home** → Pick a repo or start Sandbox Mode for an ephemeral workspace
+2. **Open launcher/home** → Pick a repo or start a scratch workspace
 3. **Chat** → Ask about PRs, changes, codebase
 4. **Tools** → JSON tool blocks → execute against GitHub API or sandbox
 5. **Scratchpad** → Shared notepad for ideas/requirements (user + AI can edit)
