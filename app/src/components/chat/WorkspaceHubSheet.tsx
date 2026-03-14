@@ -1400,24 +1400,22 @@ export function WorkspaceHubSheet({
               </div>
             )}
 
-            {activeTab === 'review' && (
-              <div className="flex h-full min-h-0 flex-col">
-                <HubReviewTab
-                  sandboxId={sandboxId}
-                  sandboxStatus={sandboxStatus}
-                  ensureSandbox={ensureSandbox}
-                  availableProviders={reviewProviders}
-                  activeProvider={reviewActiveProvider}
-                  providerModels={reviewProviderModels}
-                  repoFullName={repoFullName}
-                  activeBranch={branchProps.currentBranch}
-                  defaultBranch={branchProps.defaultBranch}
-                  projectInstructions={projectInstructions}
-                  onOpenDiff={handleOpenReviewDiff}
-                  onFixFinding={onFixReviewFinding}
-                />
-              </div>
-            )}
+            <div className={activeTab === 'review' ? 'flex h-full min-h-0 flex-col' : 'hidden h-full min-h-0 flex-col'}>
+              <HubReviewTab
+                sandboxId={sandboxId}
+                sandboxStatus={sandboxStatus}
+                ensureSandbox={ensureSandbox}
+                availableProviders={reviewProviders}
+                activeProvider={reviewActiveProvider}
+                providerModels={reviewProviderModels}
+                repoFullName={repoFullName}
+                activeBranch={branchProps.currentBranch}
+                defaultBranch={branchProps.defaultBranch}
+                projectInstructions={projectInstructions}
+                onOpenDiff={handleOpenReviewDiff}
+                onFixFinding={onFixReviewFinding}
+              />
+            </div>
 
             {activeTab === 'settings' && (
               <div className="flex h-full min-h-0 flex-col">
