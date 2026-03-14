@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, FileDiff, Info, Loader2, RefreshCw, Send, Sparkles } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, FileDiff, Info, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
 import { executePostPRReview, fetchGitHubReviewDiff, fetchLatestCommitDiff } from '@/lib/github-tools';
@@ -15,6 +15,7 @@ import {
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData, ReviewResult, ReviewComment } from '@/types';
+import { SendLiftIcon } from '@/components/icons/push-custom-icons';
 
 interface HubReviewTabProps {
   sandboxId: string | null;
@@ -955,7 +956,7 @@ export function HubReviewTab({
                     </>
                   ) : (
                     <>
-                      <Send className="relative z-10 h-3 w-3" />
+                      <SendLiftIcon className="relative z-10 h-3 w-3" />
                       <span className="relative z-10">Post to PR</span>
                     </>
                   )}

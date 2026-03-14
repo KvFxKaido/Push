@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CheckCircle2, HelpCircle, Send } from 'lucide-react';
+import { CheckCircle2, HelpCircle } from 'lucide-react';
 import type { AskUserCardData, CardAction } from '@/types';
 import {
   CARD_SHELL_CLASS,
@@ -9,6 +9,7 @@ import {
   CARD_PANEL_SUBTLE_CLASS,
   CARD_HEADER_BG_INFO,
 } from '@/lib/utils';
+import { SendLiftIcon } from '@/components/icons/push-custom-icons';
 
 interface AskUserCardProps {
   data: AskUserCardData;
@@ -159,7 +160,7 @@ export function AskUserCard({ data, messageId, cardIndex, onAction }: AskUserCar
                 className={`${CARD_BUTTON_CLASS} h-11 w-full`}
                 style={{ minHeight: '44px' }}
               >
-                <Send className="h-4 w-4" />
+                <SendLiftIcon className="h-4 w-4" />
                 Submit response
               </button>
             </div>

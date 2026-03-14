@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { ArrowUp, ChevronsUpDown, Loader2, Lock, Mic, Paperclip, RefreshCw, Square } from 'lucide-react';
+import { ChevronsUpDown, Loader2, Lock, RefreshCw, Square } from 'lucide-react';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ContextMeter } from './ContextMeter';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -12,6 +12,7 @@ import type { AIProviderType, AttachmentData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { AttachmentLinkIcon, SendLiftIcon, VoicePulseIcon } from '@/components/icons/push-custom-icons';
 
 interface ChatInputProps {
   onSend: (message: string, attachments?: AttachmentData[]) => void;
@@ -496,24 +497,6 @@ export function ChatInput({
         <div className="flex items-center gap-2.5 px-2.5 pb-2.5 pt-1.5">
           <div className="flex shrink-0 items-center gap-2">
             {/* File attachment button */}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isStreaming}
-              className={`flex h-10 w-10 items-center justify-center text-push-fg-secondary ${
-                isStreaming
-                  ? 'cursor-not-allowed border-[#1f2430] bg-[#151a22] text-[#545c6e] shadow-none'
-                  : `${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
-              }`}
-              aria-label="Attach file"
-              title="Attach file"
-            >
-              {!isStreaming && (
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-              )}
-              <Paperclip className="relative z-10 h-4 w-4" />
-            </button>
-
             {speechSupported && (
               <button
                 type="button"
@@ -532,12 +515,30 @@ export function ChatInput({
                 {!isStreaming && (
                   <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
                 )}
-                <Mic className="relative z-10 h-4 w-4" />
+                <VoicePulseIcon className="relative z-10 h-4 w-4" />
                 {isListening && (
                   <span className="absolute top-1.5 right-1.5 z-20 h-2 w-2 rounded-full bg-red-400 animate-pulse" />
                 )}
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isStreaming}
+              className={`flex h-10 w-10 items-center justify-center text-push-fg-secondary ${
+                isStreaming
+                  ? 'cursor-not-allowed border-[#1f2430] bg-[#151a22] text-[#545c6e] shadow-none'
+                  : `${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
+              }`}
+              aria-label="Attach file"
+              title="Attach file"
+            >
+              {!isStreaming && (
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+              )}
+              <AttachmentLinkIcon className="relative z-10 h-4 w-4" />
+            </button>
 
             {providerControls && (
               <Popover>
@@ -899,7 +900,7 @@ export function ChatInput({
             {isStreaming ? (
               <Square className="relative z-10 h-4 w-4 fill-current" />
             ) : (
-              <ArrowUp className="relative z-10 h-4 w-4" />
+              <SendLiftIcon className="relative z-10 h-4 w-4" />
             )}
           </button>
         </div>

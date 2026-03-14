@@ -79,6 +79,61 @@ export function WorkspaceSparkIcon({ strokeWidth = 2, ...props }: IconProps) {
   );
 }
 
+export function AttachmentLinkIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M8.5 12.5l5.8-5.8a3 3 0 1 1 4.2 4.2l-7.2 7.2a5 5 0 0 1-7.1-7.1l7.6-7.6" />
+      <path d="M9.8 14.2l5.6-5.6" />
+    </svg>
+  );
+}
+
+export function VoicePulseIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <rect x="9" y="4" width="6" height="10" rx="3" />
+      <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0" />
+      <path d="M12 17v3" />
+      <path d="M9.5 20h5" />
+      <path d="M4 10.5v2" />
+      <path d="M20 10.5v2" />
+    </svg>
+  );
+}
+
+export function SendLiftIcon({ strokeWidth = 2, ...props }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M4 11.5 20 4l-5.5 16-3.2-6.3L4 11.5Z" />
+      <path d="M11.2 13.7 20 4" />
+    </svg>
+  );
+}
+
 export function MergeShieldIcon({ strokeWidth = 2, ...props }: IconProps) {
   return (
     <svg
