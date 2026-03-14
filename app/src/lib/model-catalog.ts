@@ -258,14 +258,14 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
   return getModelCapabilities('openrouter', modelId).reasoning;
 }
 
-/** Build a short capability label string for display in model pickers. */
+/** Build a compact icon string for display in model pickers. */
 export function formatModelCapabilityHints(caps: ResolvedModelCapabilities): string {
-  const hints: string[] = [];
-  if (caps.reasoning) hints.push('reasoning');
-  if (caps.vision) hints.push('vision');
-  if (caps.imageGen) hints.push('image gen');
-  if (caps.toolCall) hints.push('tools');
-  return hints.join(' · ');
+  const icons: string[] = [];
+  if (caps.reasoning) icons.push('⚡');  // reasoning/thinking
+  if (caps.vision) icons.push('👁');     // vision input
+  if (caps.imageGen) icons.push('🎨');   // image generation
+  if (caps.toolCall) icons.push('⚙');    // tool/function calling
+  return icons.join(' ');
 }
 
 function writeCachedModelsDevOpenRouterMetadata(models: Record<string, ModelsDevOpenRouterMetadata>): void {
