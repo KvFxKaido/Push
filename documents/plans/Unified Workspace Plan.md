@@ -96,11 +96,13 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
 ### Tasks
 
 - [ ] **2a. Define `WorkspaceSession` type.** Add to `types/index.ts`:
+
   ```typescript
   type WorkspaceSession =
     | { id: string; kind: 'scratch'; sandboxId: string | null }
     | { id: string; kind: 'repo'; repo: ActiveRepo; sandboxId: string | null };
   ```
+
   `id` is the **stable workspace-session identity**. It is generated when the user starts a scratch workspace or opens a repo, survives sandbox restarts, and is replaced only when the user starts a fresh workspace, switches repo, or changes branch context.
 
   `sandboxId` is `null` until the container starts — it is a **runtime instance id**, not the logical workspace id. The session represents *intent* (the user is in a workspace), not *container health*. This means a sandbox startup failure keeps the user in the session (showing an error state) rather than dumping them back to onboarding.
