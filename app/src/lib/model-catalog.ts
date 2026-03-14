@@ -27,6 +27,7 @@ const OPENROUTER_PRIORITY_MODELS = [
   'google/gemini-2.5-flash',
   'google/gemini-2.5-pro',
   'google/gemini-3-flash-preview',
+  'google/gemini-3.1-flash-lite-preview',
   'google/gemini-3.1-pro-preview',
   'meta-llama/llama-4-maverick',
   'minimax/minimax-m2.5',
