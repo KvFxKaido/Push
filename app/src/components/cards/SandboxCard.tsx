@@ -13,7 +13,7 @@ import { ExpandChevron, ExpandableCardPanel } from './expandable';
 import { CardCodeBlock } from './card-code-block';
 
 export function SandboxCard({ data }: { data: SandboxCardData }) {
-  const { expanded, toggleExpanded } = useExpandable(data.exitCode !== 0);
+  const { expanded, toggleExpanded } = useExpandable(data.exitCode !== 0, { collapseOnMobile: true });
   const [copied, setCopied] = useState(false);
   const isSuccess = data.exitCode === 0;
 

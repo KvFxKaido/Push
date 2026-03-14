@@ -5,13 +5,15 @@ import type { Conversation, ChatMessage } from '@/types';
 // Mocks — isolate from IndexedDB and localStorage
 // ---------------------------------------------------------------------------
 
-const mockGetAll = vi.fn<() => Promise<Conversation[]>>().mockResolvedValue([]);
-const mockPutMany = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+const mockGetAll = vi.fn<(storeName: string) => Promise<Conversation[]>>().mockResolvedValue([]);
+const mockPutMany = vi
+  .fn<(storeName: string, conversations: Conversation[]) => Promise<void>>()
+  .mockResolvedValue(undefined);
 
 vi.mock('./app-db', () => ({
   STORE: { conversations: 'conversations' },
-  getAll: (...args: unknown[]) => mockGetAll(...(args as [])),
-  putMany: (...args: unknown[]) => mockPutMany(...(args as [])),
+  getAll: mockGetAll,
+  putMany: mockPutMany,
 }));
 
 let fakeStorage: Record<string, string> = {};

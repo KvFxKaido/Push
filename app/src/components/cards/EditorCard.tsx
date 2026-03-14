@@ -25,7 +25,7 @@ interface EditorCardProps {
 }
 
 export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardProps) {
-  const { expanded, toggleExpanded } = useExpandable(true);
+  const { expanded, toggleExpanded } = useExpandable(true, { collapseOnMobile: true });
   const [panelOpen, setPanelOpen] = useState(false);
   const lineCount = useMemo(() => data.content.split('\n').length, [data.content]);
 

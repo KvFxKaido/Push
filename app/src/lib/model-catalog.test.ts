@@ -86,18 +86,7 @@ describe('buildCuratedOpenRouterModelList', () => {
       ],
     });
 
-    const curated = buildCuratedOpenRouterModelList(models, {
-      'openai/gpt-5.4': {
-        id: 'openai/gpt-5.4',
-        reasoning: true,
-        toolCall: true,
-        structuredOutput: true,
-        openWeights: false,
-        inputModalities: ['text', 'image', 'file'],
-        outputModalities: ['text'],
-        contextLimit: 1_050_000,
-      },
-    });
+    const curated = buildCuratedOpenRouterModelList(models);
 
     expect(curated[0]).toBe('anthropic/claude-sonnet-4.6');
     expect(curated).toContain('openai/gpt-5.4');

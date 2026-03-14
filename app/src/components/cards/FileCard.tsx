@@ -6,7 +6,7 @@ import { ExpandChevron, ExpandableCardPanel } from './expandable';
 import { CardCodeBlock } from './card-code-block';
 
 export function FileCard({ data }: { data: FileCardData }) {
-  const { expanded, toggleExpanded } = useExpandable(true);
+  const { expanded, toggleExpanded } = useExpandable(true, { collapseOnMobile: true });
   const lineCount = data.content.split('\n').length;
 
   return (

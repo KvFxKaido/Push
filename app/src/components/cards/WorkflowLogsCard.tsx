@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { WorkflowLogsCardData, WorkflowJob } from '@/types';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { CARD_SHELL_CLASS, CARD_PANEL_SUBTLE_CLASS } from '@/lib/utils';
 import {
   checkToneBgClass,
@@ -21,11 +22,32 @@ function getInitialExpanded(jobs: WorkflowJob[]): Set<number> {
   return new Set([failedIdx >= 0 ? failedIdx : 0]);
 }
 
+function getInitialWorkflowExpansion(jobs: WorkflowJob[]): Set<number> {
+  if (typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches) {
+    return new Set();
+  }
+  return getInitialExpanded(jobs);
+}
+
 export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
-  const [expanded, setExpanded] = useState<Set<number>>(() => getInitialExpanded(data.jobs));
+  const isMobile = useIsMobile();
+  const [expanded, setExpanded] = useState<Set<number>>(() => getInitialWorkflowExpansion(data.jobs));
   const headerTone = getWorkflowLogsHeaderTone(data.conclusion);
+  const hasUserInteractedRef = useRef(false);
+  const previousIsMobileRef = useRef(isMobile);
+
+  useEffect(() => {
+    const wasMobile = previousIsMobileRef.current;
+    previousIsMobileRef.current = isMobile;
+    if (hasUserInteractedRef.current) return;
+    if (isMobile && !wasMobile) {
+      const collapseTimer = window.setTimeout(() => setExpanded(new Set()), 0);
+      return () => window.clearTimeout(collapseTimer);
+    }
+  }, [isMobile]);
 
   const toggleJob = (idx: number) => {
+    hasUserInteractedRef.current = true;
     setExpanded(prev => {
       const next = new Set(prev);
       if (next.has(idx)) {
