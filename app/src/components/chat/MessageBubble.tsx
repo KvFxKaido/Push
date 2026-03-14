@@ -483,8 +483,13 @@ export const MessageBubble = memo(function MessageBubble({
   const isStreaming = message.status === 'streaming';
   const hasThinking = Boolean(message.thinking);
   const displayContentText = useMemo(
-    () => (message.isToolCall ? stripToolCallPayload(message.content) : message.content),
-    [message.content, message.isToolCall],
+    () => {
+      if (isUser) {
+        return message.displayContent ?? message.content;
+      }
+      return message.isToolCall ? stripToolCallPayload(message.content) : message.content;
+    },
+    [isUser, message.content, message.displayContent, message.isToolCall],
   );
   const hasContent = Boolean(displayContentText.trim());
 
@@ -515,7 +520,7 @@ export const MessageBubble = memo(function MessageBubble({
     return (
       <div className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up">
         <div className="opacity-0 group-hover/user:opacity-100 transition-opacity duration-200 flex items-start pt-2 mr-1.5">
-          <CopyButton text={message.content} />
+          <CopyButton text={displayContentText} />
         </div>
         <div className="chat-user-bubble max-w-[85%] rounded-2xl rounded-br-md border px-4 py-3 shadow-push-md">
           {hasAttachments && (

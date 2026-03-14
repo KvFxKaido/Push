@@ -9,7 +9,7 @@ import {
   type SnapshotMeta,
   type HydrateProgress,
 } from '@/lib/snapshot-manager';
-import type { ActiveRepo, WorkspaceScratchActions } from '@/types';
+import type { ActiveRepo, WorkspaceScratchActions, WorkspaceSession } from '@/types';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 
 // ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ export function buildWorkspaceScratchActions({
 // ---------------------------------------------------------------------------
 
 export function useSnapshotManager(
-  isSandboxMode: boolean,
+  workspaceSession: WorkspaceSession | null,
   sandbox: {
     sandboxId: string | null;
     status: SandboxStatus;
@@ -126,6 +126,8 @@ export function useSnapshotManager(
   activeRepo: ActiveRepo | null,
   isStreaming: boolean,
 ): SnapshotManager {
+  const isScratch = workspaceSession?.kind === 'scratch';
+  const sessionId = workspaceSession?.id;
   const [latestSnapshot, setLatestSnapshot] = useState<SnapshotMeta | null>(null);
   const [snapshotSaving, setSnapshotSaving] = useState(false);
   const [snapshotRestoring, setSnapshotRestoring] = useState(false);
@@ -142,12 +144,12 @@ export function useSnapshotManager(
 
   const refreshLatestSnapshot = useCallback(async () => {
     try {
-      const meta = await getLatestSnapshotMeta();
+      const meta = await getLatestSnapshotMeta(sessionId);
       setLatestSnapshot(meta);
     } catch {
       setLatestSnapshot(null);
     }
-  }, []);
+  }, [sessionId]);
 
   const captureSnapshot = useCallback(async (reason: 'manual' | 'interval' | 'idle') => {
     if (!sandbox.sandboxId || sandbox.status !== 'ready') return false;
@@ -160,7 +162,7 @@ export function useSnapshotManager(
     try {
       const blob = await createSnapshot('/workspace', sandbox.sandboxId);
       const label = `workspace-${new Date().toISOString()}`;
-      await saveSnapshotToIndexedDB(label, blob);
+      await saveSnapshotToIndexedDB(label, blob, sessionId);
       snapshotLastSavedAtRef.current = Date.now();
       await refreshLatestSnapshot();
       if (reason === 'manual') {
@@ -176,11 +178,11 @@ export function useSnapshotManager(
     } finally {
       setSnapshotSaving(false);
     }
-  }, [sandbox.sandboxId, sandbox.status, refreshLatestSnapshot]);
+  }, [sandbox.sandboxId, sandbox.status, sessionId, refreshLatestSnapshot]);
 
   const handleRestoreFromSnapshot = useCallback(async () => {
     if (snapshotRestoring) return;
-    const blob = await getLatestSnapshotBlob();
+    const blob = await getLatestSnapshotBlob(sessionId);
     if (!blob) {
       toast.error('No snapshot found');
       return;
@@ -188,7 +190,7 @@ export function useSnapshotManager(
 
     let targetSandboxId = sandbox.sandboxId;
     if (!targetSandboxId) {
-      targetSandboxId = isSandboxMode
+      targetSandboxId = isScratch
         ? await sandbox.start('', 'main')
         : (activeRepo ? await sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch) : null);
     }
@@ -217,17 +219,17 @@ export function useSnapshotManager(
       setSnapshotRestoring(false);
       setSnapshotRestoreProgress(null);
     }
-  }, [snapshotRestoring, sandbox, isSandboxMode, activeRepo, markSnapshotActivity]);
+  }, [snapshotRestoring, sandbox, isScratch, sessionId, activeRepo, markSnapshotActivity]);
 
-  // Load latest snapshot metadata when sandbox mode is active
+  // Load latest snapshot metadata when scratch workspace is active
   useEffect(() => {
-    if (!isSandboxMode) return;
+    if (!isScratch) return;
     refreshLatestSnapshot();
-  }, [isSandboxMode, refreshLatestSnapshot]);
+  }, [isScratch, refreshLatestSnapshot]);
 
   // Snapshot activity heartbeat: user input + chat agent activity
   useEffect(() => {
-    if (!isSandboxMode) return;
+    if (!isScratch) return;
     const mark = () => markSnapshotActivity();
     window.addEventListener('keydown', mark);
     window.addEventListener('pointerdown', mark);
@@ -235,7 +237,7 @@ export function useSnapshotManager(
       window.removeEventListener('keydown', mark);
       window.removeEventListener('pointerdown', mark);
     };
-  }, [isSandboxMode, markSnapshotActivity]);
+  }, [isScratch, markSnapshotActivity]);
 
   useEffect(() => {
     if (isStreaming) markSnapshotActivity();
@@ -250,7 +252,7 @@ export function useSnapshotManager(
 
   // Auto-save every 5 minutes and on idle heartbeat, with a 4-hour hard cap
   useEffect(() => {
-    if (!isSandboxMode || sandbox.status !== 'ready' || !sandbox.sandboxId) return;
+    if (!isScratch || sandbox.status !== 'ready' || !sandbox.sandboxId) return;
     const timer = window.setInterval(async () => {
       const now = Date.now();
       const age = now - snapshotSessionStartedAtRef.current;
@@ -274,7 +276,7 @@ export function useSnapshotManager(
     }, 15_000);
 
     return () => window.clearInterval(timer);
-  }, [isSandboxMode, sandbox.status, sandbox.sandboxId, captureSnapshot]);
+  }, [isScratch, sandbox.status, sandbox.sandboxId, captureSnapshot]);
 
   return {
     latestSnapshot,

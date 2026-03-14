@@ -959,7 +959,7 @@ export function WorkspaceHubSheet({
                 </p>
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-push-xs text-push-fg-dim">
-                    {repoName || (workspaceMode === 'scratch' ? 'Sandbox' : 'Workspace')}
+                    {repoName || 'Workspace'}
                   </span>
                   {workspaceMode === 'scratch' && (
                     <span className={HUB_TAG_CLASS}>ephemeral</span>

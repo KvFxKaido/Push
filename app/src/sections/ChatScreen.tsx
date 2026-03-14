@@ -30,6 +30,7 @@ import type { ProjectInstructionsManager } from '@/hooks/useProjectInstructions'
 import type { RepoOverride } from '@/hooks/useProtectMain';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
+import { buildQuickPromptMessage } from '@/lib/quick-prompts';
 import type {
   ActiveRepo,
   RepoWithActivity,
@@ -46,8 +47,11 @@ import type {
   SandboxStateCardData,
   NewChatWorkspaceState,
   AttachmentData,
+  ChatSendOptions,
+  QuickPrompt,
   WorkspaceCapabilities,
   WorkspaceScratchActions,
+  WorkspaceSession,
 } from '@/types';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
@@ -57,9 +61,9 @@ import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
 // ---------------------------------------------------------------------------
 
 interface ChatScreenProps {
-  // Repo & sandbox
+  // Repo & workspace
   activeRepo: ActiveRepo | null;
-  isSandboxMode: boolean;
+  workspaceSession?: WorkspaceSession | null;
   resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
   setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
   clearRepoAppearance: (repoFullName: string) => void;
@@ -76,7 +80,7 @@ interface ChatScreenProps {
 
   // Chat
   messages: ChatMessage[];
-  sendMessage: (message: string, attachments?: AttachmentData[]) => Promise<void> | void;
+  sendMessage: (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => Promise<void> | void;
   agentStatus: AgentStatus;
   agentEvents: AgentStatusEvent[];
   isStreaming: boolean;
@@ -163,9 +167,9 @@ interface ChatScreenProps {
   // File browser
   setShowFileBrowser: (show: boolean) => void;
 
-  // Sandbox mode controls
-  handleSandboxMode: (() => void) | undefined;
-  handleExitSandboxMode: () => void;
+  // Workspace controls
+  handleStartWorkspace: (() => void) | undefined;
+  handleExitWorkspace: () => void;
 
   // Chat creation
   handleCreateNewChat: () => void;
@@ -233,7 +237,7 @@ interface ChatScreenProps {
 export function ChatScreen(props: ChatScreenProps) {
   const {
     activeRepo,
-    isSandboxMode,
+    workspaceSession,
     resolveRepoAppearance,
     setRepoAppearance,
     clearRepoAppearance,
@@ -285,8 +289,8 @@ export function ChatScreen(props: ChatScreenProps) {
     isWorkspaceHubOpen,
     setIsWorkspaceHubOpen,
     showToolActivity,
-    handleSandboxMode,
-    handleExitSandboxMode,
+    handleStartWorkspace,
+    handleExitWorkspace,
     handleCreateNewChat,
     inspectNewChatWorkspace,
     handleDisconnect,
@@ -329,6 +333,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleBioBlur,
     ensureSandbox,
   } = props;
+  const isScratch = workspaceSession?.kind === 'scratch';
   const pinnedArtifacts = usePinnedArtifacts(activeRepo?.full_name ?? null);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
@@ -337,7 +342,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const [checkingNewChatWorkspace, setCheckingNewChatWorkspace] = useState(false);
   const [resettingWorkspaceForNewChat, setResettingWorkspaceForNewChat] = useState(false);
   const [hubTabRequest, setHubTabRequest] = useState<{ tab: 'files' | 'diff'; requestKey: number } | null>(null);
-  const activeRepoAppearance = activeRepo && !isSandboxMode
+  const activeRepoAppearance = activeRepo && !isScratch
     ? resolveRepoAppearance(activeRepo.full_name)
     : null;
   const activeRepoAccentHex = activeRepoAppearance
@@ -387,7 +392,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleDeleteBranch,
   } = branches;
 
-  const isConnected = Boolean(token) || isDemo || isSandboxMode;
+  const isConnected = Boolean(token) || isDemo || isScratch;
   const historyDrawerOffset = 'min(86vw, 24rem)';
   const workspaceHubOffset = '94vw';
   const chatShellTransform = isHistoryDrawerOpen
@@ -413,10 +418,15 @@ export function ChatScreen(props: ChatScreenProps) {
   const { markSnapshotActivity } = snapshots;
 
   // Snapshot heartbeat wrappers
-  const sendMessageWithSnapshotHeartbeat = useCallback((message: string, attachments?: AttachmentData[]) => {
+  const sendMessageWithSnapshotHeartbeat = useCallback((message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
     markSnapshotActivity();
-    return sendMessage(message, attachments);
+    return sendMessage(message, attachments, options);
   }, [markSnapshotActivity, sendMessage]);
+
+  const handleQuickPrompt = useCallback((quickPrompt: QuickPrompt) => {
+    const { text, displayText } = buildQuickPromptMessage(quickPrompt);
+    return sendMessageWithSnapshotHeartbeat(text, undefined, { displayText });
+  }, [sendMessageWithSnapshotHeartbeat]);
 
   const handleWorkspaceHubOpenChange = useCallback((open: boolean) => {
     if (open) {
@@ -487,7 +497,7 @@ export function ChatScreen(props: ChatScreenProps) {
     setNewChatSheetOpen(false);
     setCheckingNewChatWorkspace(false);
     setHubTabRequest({
-      tab: newChatWorkspaceState.mode === 'sandbox' ? 'files' : 'diff',
+      tab: newChatWorkspaceState.mode === 'scratch' ? 'files' : 'diff',
       requestKey: Date.now(),
     });
     setIsLauncherOpen(false);
@@ -503,7 +513,7 @@ export function ChatScreen(props: ChatScreenProps) {
       await sandbox.stop();
 
       let freshSandboxId: string | null = null;
-      if (isSandboxMode) {
+      if (isScratch) {
         freshSandboxId = await sandbox.start('', 'main');
       } else if (activeRepo) {
         freshSandboxId = await sandbox.start(
@@ -512,7 +522,7 @@ export function ChatScreen(props: ChatScreenProps) {
         );
       }
 
-      if ((isSandboxMode || activeRepo) && !freshSandboxId) {
+      if ((isScratch || activeRepo) && !freshSandboxId) {
         toast.error('Failed to start a fresh workspace.');
         return;
       }
@@ -526,7 +536,7 @@ export function ChatScreen(props: ChatScreenProps) {
     } finally {
       setResettingWorkspaceForNewChat(false);
     }
-  }, [activeRepo, handleCreateNewChat, isSandboxMode, resettingWorkspaceForNewChat, sandbox]);
+  }, [activeRepo, handleCreateNewChat, isScratch, resettingWorkspaceForNewChat, sandbox]);
 
   const handleFixReviewFinding = useCallback(async (prompt: string) => {
     if (isStreaming) {
@@ -570,11 +580,11 @@ export function ChatScreen(props: ChatScreenProps) {
     ? isSnapshotStale(snapshots.latestSnapshot.createdAt)
     : false;
   const workspaceHubCapabilities: WorkspaceCapabilities = {
-    canManageBranches: !isSandboxMode && Boolean(activeRepo?.full_name),
-    canBrowsePullRequests: !isSandboxMode && Boolean(activeRepo?.full_name),
-    canCommitAndPush: !isSandboxMode && Boolean(activeRepo?.full_name),
+    canManageBranches: !isScratch && Boolean(activeRepo?.full_name),
+    canBrowsePullRequests: !isScratch && Boolean(activeRepo?.full_name),
+    canCommitAndPush: !isScratch && Boolean(activeRepo?.full_name),
   };
-  const workspaceHubScratchActions: WorkspaceScratchActions | null = isSandboxMode
+  const workspaceHubScratchActions: WorkspaceScratchActions | null = isScratch
     ? buildWorkspaceScratchActions({
       snapshots,
       sandboxStatus: sandbox.status,
@@ -582,7 +592,7 @@ export function ChatScreen(props: ChatScreenProps) {
       onDownloadWorkspace: () => {
         void handleSandboxDownload();
       },
-      emptyStateText: 'Save a snapshot or download your files from this sandbox.',
+      emptyStateText: 'Save a snapshot or download your files from this workspace.',
     })
     : null;
 
@@ -881,11 +891,11 @@ export function ChatScreen(props: ChatScreenProps) {
             )}
             <div className={`${activeRepoAppearance ? '-ml-1.5' : '-ml-2.5'} flex min-w-0 items-center self-stretch`}>
               <p className="truncate text-sm font-medium leading-tight text-[#f5f7ff]">
-                {isSandboxMode ? 'Sandbox' : activeRepo?.name || 'Push'}
+                {isScratch ? 'Workspace' : activeRepo?.name || 'Push'}
               </p>
             </div>
           </div>
-          {isSandboxMode && (
+          {isScratch && (
               <>
                 <span className="text-push-2xs text-push-fg-dim">ephemeral</span>
                 {snapshots.latestSnapshot && (
@@ -946,7 +956,7 @@ export function ChatScreen(props: ChatScreenProps) {
             )}
         </div>
         {/* Centered launcher trigger with repo or sandbox context */}
-        {(activeRepo || isSandboxMode) && (
+        {(activeRepo || isScratch) && (
           <div className="flex min-w-0 justify-center">
             <button
               onClick={openLauncher}
@@ -957,13 +967,13 @@ export function ChatScreen(props: ChatScreenProps) {
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
               <LauncherGridIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-colors group-hover:text-push-fg" />
               <span className="relative z-10 max-w-[92px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg sm:max-w-[128px]">
-                {isSandboxMode ? 'Sandbox' : currentBranch}
+                {isScratch ? 'Workspace' : currentBranch}
               </span>
             </button>
           </div>
         )}
         <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
-          {(activeRepo || isSandboxMode) && (
+          {(activeRepo || isScratch) && (
             <button
               onClick={() => openWorkspaceHub()}
               className={headerRoundButtonClass}
@@ -992,9 +1002,9 @@ export function ChatScreen(props: ChatScreenProps) {
         hasMessages={messages.length > 0}
         isStreaming={isStreaming}
         sandboxId={sandbox.sandboxId}
-        isSandboxMode={isSandboxMode}
+        isInScratchWorkspace={Boolean(isScratch)}
         onStart={() => {
-          if (isSandboxMode) {
+          if (isScratch) {
             void sandbox.start('', 'main');
           } else if (activeRepo) {
             void sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
@@ -1002,17 +1012,17 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
         onRetry={() => void sandbox.refresh()}
         onNewSandbox={() => {
-          if (isSandboxMode) {
+          if (isScratch) {
             void sandbox.stop().then(() => sandbox.start('', 'main'));
           } else if (activeRepo) {
             void sandbox.stop().then(() => sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
           }
         }}
-        onExitSandboxMode={handleExitSandboxMode}
+        onExitWorkspace={handleExitWorkspace}
       />
 
       {/* Sandbox expiry warning */}
-      {isSandboxMode && (
+      {isScratch && (
         <SandboxExpiryBanner
           createdAt={sandbox.createdAt}
           sandboxId={sandbox.sandboxId}
@@ -1021,7 +1031,7 @@ export function ChatScreen(props: ChatScreenProps) {
         />
       )}
 
-      {!isSandboxMode && activeRepo && instructions.projectInstructionsChecked && !instructions.projectInstructionsCheckFailed && !instructions.agentsMdContent && (
+      {!isScratch && activeRepo && instructions.projectInstructionsChecked && !instructions.projectInstructionsCheckFailed && !instructions.agentsMdContent && (
         <div className={`mx-4 mt-4 animate-fade-in px-3.5 py-3.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -1059,8 +1069,8 @@ export function ChatScreen(props: ChatScreenProps) {
         messages={messages}
         agentStatus={agentStatus}
         activeRepo={activeRepo}
-        isSandboxMode={isSandboxMode}
-        onSuggestion={sendMessageWithSnapshotHeartbeat}
+        hasSandbox={Boolean(isScratch || activeRepo)}
+        onSuggestion={handleQuickPrompt}
         onCardAction={handleCardActionWithSnapshotHeartbeat}
         onPin={pinnedArtifacts.pin}
         interruptedCheckpoint={interruptedCheckpoint}
@@ -1143,7 +1153,7 @@ export function ChatScreen(props: ChatScreenProps) {
         sandboxError={sandbox.error}
         ensureSandbox={ensureSandbox}
         onStartSandbox={() => {
-          if (isSandboxMode) {
+          if (isScratch) {
             void sandbox.start('', 'main');
           } else if (activeRepo) {
             void sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
@@ -1151,7 +1161,7 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
         onRetrySandbox={() => void sandbox.refresh()}
         onNewSandbox={() => {
-          if (isSandboxMode) {
+          if (isScratch) {
             void sandbox.stop().then(() => sandbox.start('', 'main'));
           } else if (activeRepo) {
             void sandbox.stop().then(() => sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
@@ -1170,10 +1180,10 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
         lockedProvider={lockedProvider}
         lockedModel={lockedModel}
-        workspaceMode={isSandboxMode ? 'scratch' : 'repo'}
+        workspaceMode={isScratch ? 'scratch' : 'repo'}
         capabilities={workspaceHubCapabilities}
         scratchActions={workspaceHubScratchActions}
-        repoName={activeRepo?.name || (isSandboxMode ? 'Sandbox' : undefined)}
+        repoName={activeRepo?.name || (isScratch ? 'Workspace' : undefined)}
         repoFullName={activeRepo?.full_name}
         projectInstructions={instructions.agentsMdContent}
         protectMainEnabled={protectMain.isProtected}
@@ -1234,8 +1244,8 @@ export function ChatScreen(props: ChatScreenProps) {
         clearRepoAppearance={clearRepoAppearance}
         onSelectRepo={handleSelectRepoFromDrawer}
         onResumeConversation={handleResumeConversationFromLauncher}
-        sandboxSession={isSandboxMode ? { status: sandbox.status, createdAt: sandbox.createdAt } : null}
-        onSandboxMode={handleSandboxMode}
+        sandboxSession={isScratch ? { status: sandbox.status, createdAt: sandbox.createdAt } : null}
+        onStartWorkspace={handleStartWorkspace}
       />
 
       {/* Toast notifications */}

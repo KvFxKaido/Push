@@ -9,6 +9,23 @@ export interface UserProfile {
 
 export type WorkspaceMode = 'repo' | 'scratch';
 
+/**
+ * Workspace session identity — replaces the isSandboxMode boolean.
+ * `id` is a stable logical identity that survives sandbox restarts.
+ * `sandboxId` is the runtime container id (null until the container starts).
+ */
+export type WorkspaceSession =
+  | { id: string; kind: 'scratch'; sandboxId: string | null }
+  | { id: string; kind: 'repo'; repo: ActiveRepo; sandboxId: string | null };
+
+/** Structured workspace context passed through the streaming pipeline to toLLMMessages. */
+export interface WorkspaceContext {
+  /** Workspace description text injected into the system prompt */
+  description: string;
+  /** Whether to include GitHub tool protocol (false for scratch workspaces) */
+  includeGitHubTools: boolean;
+}
+
 export interface WorkspaceCapabilities {
   canManageBranches: boolean;
   canBrowsePullRequests: boolean;
@@ -27,6 +44,16 @@ export interface WorkspaceScratchActions {
   onSaveSnapshot: () => void;
   onRestoreSnapshot: () => void;
   onDownloadWorkspace: () => void;
+}
+
+export interface QuickPrompt {
+  label: string;
+  expandedPrompt?: string;
+  suggestedAskUserPath?: AskUserCardData;
+}
+
+export interface ChatSendOptions {
+  displayText?: string;
 }
 
 export const USER_PROFILE_DEFAULTS: UserProfile = {
@@ -201,6 +228,7 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  displayContent?: string;
   timestamp: number;
   status?: 'sending' | 'streaming' | 'done' | 'error';
   thinking?: string;
@@ -438,7 +466,7 @@ export interface SandboxStateCardData {
 }
 
 export interface NewChatWorkspaceState {
-  mode: 'repo' | 'sandbox';
+  mode: 'repo' | 'scratch';
   sandboxId: string;
   branch: string;
   changedFiles: number;
@@ -712,4 +740,6 @@ export interface RunCheckpoint {
   activeBranch: string;
   repoId: string;
   userAborted?: boolean;
+  /** Logical workspace session identity (Sprint 2f). Old checkpoints without this field are unresumable. */
+  workspaceSessionId?: string;
 }

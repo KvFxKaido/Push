@@ -21,7 +21,7 @@ interface RepoAndChatSelectorProps {
   onNewChat: () => void;
   onDeleteChat: (id: string) => void;
   onBrowseRepos?: () => void;
-  onSandboxMode?: () => void;
+  onStartWorkspace?: () => void;
 }
 
 export function RepoAndChatSelector({
@@ -35,7 +35,7 @@ export function RepoAndChatSelector({
   onNewChat,
   onDeleteChat,
   onBrowseRepos,
-  onSandboxMode,
+  onStartWorkspace,
 }: RepoAndChatSelectorProps) {
   const [open, setOpen] = useState(false);
   const repoName = activeRepo?.name;
@@ -114,16 +114,16 @@ export function RepoAndChatSelector({
             )}
 
             {/* --- New Sandbox --- */}
-            {onSandboxMode && (
+            {onStartWorkspace && (
               <DropdownMenuItem
                 onSelect={() => {
-                  onSandboxMode();
+                  onStartWorkspace();
                   setOpen(false);
                 }}
                 className="mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-emerald-300 hover:bg-push-surface-hover hover:text-emerald-200"
               >
                 <Box className="h-4 w-4" />
-                <span className="text-sm font-medium">New Sandbox</span>
+                <span className="text-sm font-medium">New Workspace</span>
               </DropdownMenuItem>
             )}
 

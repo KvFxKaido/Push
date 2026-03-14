@@ -13,11 +13,11 @@ interface SandboxStatusBannerProps {
   hasMessages: boolean;
   isStreaming: boolean;
   sandboxId: string | null;
-  isSandboxMode: boolean;
+  isInScratchWorkspace: boolean;
   onStart: () => void;
   onRetry: () => void;
   onNewSandbox: () => void;
-  onExitSandboxMode?: () => void;
+  onExitWorkspace?: () => void;
 }
 
 export function SandboxStatusBanner({
@@ -26,11 +26,11 @@ export function SandboxStatusBanner({
   hasMessages,
   isStreaming,
   sandboxId,
-  isSandboxMode,
+  isInScratchWorkspace,
   onStart,
   onRetry,
   onNewSandbox,
-  onExitSandboxMode,
+  onExitWorkspace,
 }: SandboxStatusBannerProps) {
   const bannerBaseClass = `mx-4 mt-4 animate-fade-in px-3.5 py-3 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`;
 
@@ -92,11 +92,11 @@ export function SandboxStatusBanner({
           >
             <HubControlGlow />
             <Plus className="relative z-10 h-3 w-3" />
-            <span className="relative z-10">New sandbox</span>
+            <span className="relative z-10">Restart runtime</span>
           </button>
-          {isSandboxMode && onExitSandboxMode && (
+          {isInScratchWorkspace && onExitWorkspace && (
             <button
-              onClick={onExitSandboxMode}
+              onClick={onExitWorkspace}
               className="text-xs font-medium text-[#71717a] transition-colors hover:text-push-fg-secondary"
             >
               Exit

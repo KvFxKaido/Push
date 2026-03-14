@@ -24,10 +24,13 @@ import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from 
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import type {
   AppScreen,
+  ActiveRepo,
   AttachmentData,
+  ChatSendOptions,
   NewChatWorkspaceState,
   RepoWithActivity,
   SandboxStateCardData,
+  WorkspaceSession,
   WorkspaceCapabilities,
   WorkspaceScratchActions,
 } from '@/types';
@@ -67,6 +70,18 @@ function parseSandboxGitStatus(sandboxId: string, stdout: string): SandboxStateC
   };
 }
 
+function sameActiveRepo(a: ActiveRepo | null, b: ActiveRepo | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.id === b.id
+    && a.name === b.name
+    && a.full_name === b.full_name
+    && a.owner === b.owner
+    && a.default_branch === b.default_branch
+    && a.current_branch === b.current_branch
+    && a.private === b.private;
+}
+
 // --- Lazy-loaded screen & settings components (code-split) ---
 const OnboardingScreen = lazyWithRecovery(
   toDefaultExport(() => import('@/sections/OnboardingScreen'), (module) => module.OnboardingScreen),
@@ -96,10 +111,16 @@ type ChatComposerDraftUpdate = {
 function App() {
   // --- Core state ---
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
-  const scratchpad = useScratchpad(activeRepo?.full_name ?? null);
   const [isWorkspaceHubOpen, setIsWorkspaceHubOpen] = useState(false);
-  const [isSandboxMode, setIsSandboxMode] = useState(false);
-  const sandbox = useSandbox(isSandboxMode ? '' : (activeRepo?.full_name ?? null));
+  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => (
+    activeRepo
+      ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
+      : null
+  ));
+  const isScratch = workspaceSession?.kind === 'scratch';
+  const workspaceRepo = workspaceSession?.kind === 'repo' ? workspaceSession.repo : null;
+  const scratchpad = useScratchpad(workspaceRepo?.full_name ?? null);
+  const sandbox = useSandbox(isScratch ? '' : (workspaceRepo?.full_name ?? null));
   const catalog = useModelCatalog();
   const {
     resolveRepoAppearance,
@@ -186,6 +207,7 @@ function App() {
     deleteAllChats,
     setWorkspaceContext,
     setSandboxId,
+    setWorkspaceSessionId,
     setEnsureSandbox,
     setAgentsMd,
     setInstructionFilename,
@@ -199,7 +221,7 @@ function App() {
     ciStatus,
     diagnoseCIFailure,
   } = useChat(
-    activeRepo?.full_name ?? null,
+    workspaceRepo?.full_name ?? null,
     {
       content: scratchpad.content,
       replace: scratchpad.replace,
@@ -213,7 +235,12 @@ function App() {
       onSandboxPromoted: (repo) => {
         sandbox.rebindSessionRepo(repo.full_name, repo.default_branch);
         setActiveRepo(repo);
-        setIsSandboxMode(false);
+        setWorkspaceSession((prev) => ({
+          id: prev?.id ?? crypto.randomUUID(),
+          kind: 'repo',
+          repo,
+          sandboxId: sandbox.sandboxId,
+        }));
         toast.success(`Promoted to GitHub: ${repo.full_name}`);
       },
       onBranchSwitch: handleSandboxBranchSwitch,
@@ -222,8 +249,8 @@ function App() {
       },
     },
     {
-      currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
-      defaultBranch: activeRepo?.default_branch,
+      currentBranch: workspaceRepo?.current_branch || workspaceRepo?.default_branch,
+      defaultBranch: workspaceRepo?.default_branch,
     },
   );
 
@@ -291,7 +318,7 @@ function App() {
   }, [activeChatDraft, activeChatId, createNewChat, isModelLocked, isProviderLocked, upsertChatDraft]);
 
   // --- Protect Main ---
-  const protectMain = useProtectMain(activeRepo?.full_name ?? undefined);
+  const protectMain = useProtectMain(workspaceRepo?.full_name ?? undefined);
   useEffect(() => {
     setIsMainProtected(protectMain.isProtected);
   }, [protectMain.isProtected, setIsMainProtected]);
@@ -325,22 +352,23 @@ function App() {
   const validatedUser = appUser || patUser;
   const { repos, loading: reposLoading, error: reposError, sync: syncRepos } = useRepos();
 
-  const sendMessageWithChatDraft = useCallback((message: string, attachments?: AttachmentData[]) => {
+  const sendMessageWithChatDraft = useCallback((message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
     return sendMessage(message, attachments, {
       provider: activeChatDraft.provider,
       model: activeChatDraft.provider ? activeChatDraft.models[activeChatDraft.provider] : null,
+      displayText: options?.displayText,
     });
   }, [activeChatDraft, sendMessage]);
 
   // --- Extracted hooks ---
-  const snapshots = useSnapshotManager(isSandboxMode, sandbox, activeRepo, isStreaming);
-  const branches = useBranchManager(activeRepo, isSandboxMode);
+  const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
+  const branches = useBranchManager(workspaceRepo, workspaceSession);
   const [showFileBrowser, setShowFileBrowser] = useState(false);
 
   const instructions = useProjectInstructions(
-    activeRepo,
+    workspaceRepo,
     repos,
-    isSandboxMode,
+    workspaceSession,
     sandbox,
     setAgentsMd,
     setInstructionFilename,
@@ -414,13 +442,14 @@ function App() {
 
   // --- Screen state machine ---
   const screen: AppScreen = useMemo(() => {
-    if (isSandboxMode) return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
+    if (isScratch) return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
     if (isDemo) return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
     if (!token) return 'onboarding';
-    if (!activeRepo) return 'home';
-    if (showFileBrowser && sandbox.sandboxId) return 'file-browser';
-    return 'chat';
-  }, [token, activeRepo, isDemo, isSandboxMode, showFileBrowser, sandbox.sandboxId]);
+    if (workspaceSession?.kind === 'repo') {
+      return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
+    }
+    return 'home';
+  }, [token, isDemo, isScratch, showFileBrowser, sandbox.sandboxId, workspaceSession]);
 
   // --- Auth & repo handlers ---
   const handleConnect = useCallback(
@@ -432,16 +461,16 @@ function App() {
     [setTokenManually, syncRepos],
   );
 
-  const handleSandboxMode = useCallback(() => {
+  const handleStartScratchWorkspace = useCallback(() => {
     if (isStreaming) abortStream();
     clearActiveRepo();
-    setIsSandboxMode(true);
+    setWorkspaceSession({ id: crypto.randomUUID(), kind: 'scratch', sandboxId: null });
     createNewChat();
   }, [isStreaming, abortStream, createNewChat, clearActiveRepo]);
 
-  const handleExitSandboxMode = useCallback(() => {
+  const handleEndWorkspace = useCallback(() => {
     if (isStreaming) abortStream();
-    setIsSandboxMode(false);
+    setWorkspaceSession(null);
     void sandbox.stop();
     createNewChat();
   }, [isStreaming, abortStream, sandbox, createNewChat]);
@@ -453,7 +482,7 @@ function App() {
 
   const handleSelectRepo = useCallback(
     (repo: RepoWithActivity, branch?: string) => {
-      setActiveRepo({
+      const repoData = {
         id: repo.id,
         name: repo.name,
         full_name: repo.full_name,
@@ -461,18 +490,20 @@ function App() {
         default_branch: repo.default_branch,
         current_branch: branch || repo.default_branch,
         private: repo.private,
-      });
+      };
+      setActiveRepo(repoData);
+      setWorkspaceSession({ id: crypto.randomUUID(), kind: 'repo', repo: repoData, sandboxId: null });
     },
     [setActiveRepo],
   );
 
   const handleSelectRepoFromDrawer = useCallback((repo: RepoWithActivity, branch?: string) => {
-    if (isSandboxMode) {
-      setIsSandboxMode(false);
+    if (isScratch) {
+      setWorkspaceSession(null);
       void sandbox.stop();
     }
     handleSelectRepo(repo, branch);
-  }, [isSandboxMode, sandbox, handleSelectRepo]);
+  }, [isScratch, sandbox, handleSelectRepo]);
 
   const handleResumeConversationFromHome = useCallback((chatId: string) => {
     const conv = conversations[chatId];
@@ -534,13 +565,39 @@ function App() {
     clearActiveRepo();
     deleteAllChats();
     setIsDemo(false);
-    setIsSandboxMode(false);
+    setWorkspaceSession(null);
   }, [appDisconnect, patLogout, clearActiveRepo, deleteAllChats]);
+
+  useEffect(() => {
+    if (!activeRepo) {
+      setWorkspaceSession((prev) => (prev?.kind === 'repo' ? null : prev));
+      return;
+    }
+
+    setWorkspaceSession((prev) => {
+      if (!prev) {
+        return { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null };
+      }
+      if (prev.kind !== 'repo' || sameActiveRepo(prev.repo, activeRepo)) {
+        return prev;
+      }
+      return { ...prev, repo: activeRepo };
+    });
+  }, [activeRepo]);
 
   // --- Sandbox lifecycle ---
   useEffect(() => {
     setSandboxId(sandbox.sandboxId);
+    setWorkspaceSession((prev) => {
+      if (!prev || prev.sandboxId === sandbox.sandboxId) return prev;
+      return { ...prev, sandboxId: sandbox.sandboxId };
+    });
   }, [sandbox.sandboxId, setSandboxId]);
+
+  // Keep useChat's workspace session ID ref in sync
+  useEffect(() => {
+    setWorkspaceSessionId(workspaceSession?.id ?? null);
+  }, [workspaceSession?.id, setWorkspaceSessionId]);
 
   const fetchSandboxState = useCallback(async (id: string): Promise<SandboxStateCardData | null> => {
     setSandboxStateLoading(true);
@@ -561,7 +618,7 @@ function App() {
   const inspectNewChatWorkspace = useCallback(async (): Promise<NewChatWorkspaceState | null> => {
     if (sandbox.status !== 'ready' || !sandbox.sandboxId) return null;
 
-    if (isSandboxMode) {
+    if (isScratch) {
       try {
         const result = await execInSandbox(
           sandbox.sandboxId,
@@ -575,9 +632,9 @@ function App() {
         if (!Number.isFinite(fileCount) || fileCount <= 0) return null;
 
         return {
-          mode: 'sandbox',
+          mode: 'scratch',
           sandboxId: sandbox.sandboxId,
-          branch: 'sandbox',
+          branch: 'scratch',
           changedFiles: fileCount,
           stagedFiles: 0,
           unstagedFiles: fileCount,
@@ -604,7 +661,7 @@ function App() {
       preview: nextState.preview,
       fetchedAt: nextState.fetchedAt,
     };
-  }, [fetchSandboxState, isSandboxMode, sandbox.sandboxId, sandbox.status]);
+  }, [fetchSandboxState, isScratch, sandbox.sandboxId, sandbox.status]);
 
   useEffect(() => {
     if (sandbox.status !== 'ready' || !sandbox.sandboxId) {
@@ -621,24 +678,24 @@ function App() {
 
   const ensureSandbox = useCallback(async (): Promise<string | null> => {
     if (sandbox.sandboxId) return sandbox.sandboxId;
-    if (isSandboxMode) return sandbox.start('', 'main');
-    if (!activeRepo) return null;
-    return sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
-  }, [sandbox, activeRepo, isSandboxMode]);
+    if (isScratch) return sandbox.start('', 'main');
+    if (!workspaceRepo) return null;
+    return sandbox.start(workspaceRepo.full_name, workspaceRepo.current_branch || workspaceRepo.default_branch);
+  }, [sandbox, isScratch, workspaceRepo]);
 
   useEffect(() => {
     setEnsureSandbox(ensureSandbox);
   }, [ensureSandbox, setEnsureSandbox]);
 
   // Branch switching: tear down sandbox when branch changes
-  const prevBranchRef = useRef<string | undefined>(activeRepo?.current_branch);
+  const prevBranchRef = useRef<string | undefined>(workspaceRepo?.current_branch);
   useEffect(() => {
-    const currentBranchValue = activeRepo?.current_branch;
+    const currentBranchValue = workspaceRepo?.current_branch;
     const prevBranch = prevBranchRef.current;
     prevBranchRef.current = currentBranchValue;
 
     if (prevBranch === currentBranchValue) return;
-    if (isSandboxMode) return;
+    if (isScratch) return;
     if (prevBranch === undefined) return;
 
     if (skipBranchTeardownRef.current) {
@@ -649,15 +706,15 @@ function App() {
 
     console.log(`[App] Branch changed: ${prevBranch} → ${currentBranchValue}, tearing down sandbox`);
     void sandbox.stop();
-  }, [activeRepo?.current_branch, isSandboxMode, sandbox]);
+  }, [workspaceRepo?.current_branch, isScratch, sandbox]);
 
   // Auto-start sandbox when entering sandbox mode
   const { status: sandboxStatus, sandboxId: currentSandboxId, start: startSandbox } = sandbox;
   useEffect(() => {
-    if (isSandboxMode && sandboxStatus === 'idle' && !currentSandboxId) {
+    if (isScratch && sandboxStatus === 'idle' && !currentSandboxId) {
       startSandbox('', 'main');
     }
-  }, [isSandboxMode, sandboxStatus, currentSandboxId, startSandbox]);
+  }, [isScratch, sandboxStatus, currentSandboxId, startSandbox]);
 
   // --- Global effects ---
   useEffect(() => {
@@ -731,10 +788,10 @@ function App() {
   }, [sandbox.sandboxId, sandboxDownloading]);
 
   const fileBrowserCapabilities: Pick<WorkspaceCapabilities, 'canCommitAndPush'> = {
-    canCommitAndPush: !isSandboxMode,
+    canCommitAndPush: !isScratch,
   };
 
-  const fileBrowserScratchActions: WorkspaceScratchActions | null = isSandboxMode
+  const fileBrowserScratchActions: WorkspaceScratchActions | null = isScratch
     ? buildWorkspaceScratchActions({
       snapshots,
       sandboxStatus: sandbox.status,
@@ -742,7 +799,7 @@ function App() {
       onDownloadWorkspace: () => {
         void handleSandboxDownload();
       },
-      emptyStateText: 'Save a snapshot or download your files from this scratch workspace.',
+      emptyStateText: 'Save a snapshot or download your files from this workspace.',
     })
     : null;
 
@@ -757,7 +814,7 @@ function App() {
           <OnboardingScreen
             onConnect={handleConnect}
             onConnectOAuth={connectApp}
-            onSandboxMode={handleSandboxMode}
+            onStartWorkspace={handleStartScratchWorkspace}
             onInstallApp={installApp}
             onConnectInstallationId={setInstallationIdManually}
             loading={authLoading}
@@ -779,14 +836,14 @@ function App() {
             loading={reposLoading}
             error={reposError}
             conversations={conversations}
-            activeRepo={activeRepo}
+            activeRepo={workspaceRepo ?? activeRepo}
             resolveRepoAppearance={resolveRepoAppearance}
             setRepoAppearance={setRepoAppearance}
             clearRepoAppearance={clearRepoAppearance}
             onSelectRepo={handleSelectRepo}
             onResumeConversation={handleResumeConversationFromHome}
             onDisconnect={handleDisconnect}
-            onSandboxMode={handleSandboxMode}
+            onStartWorkspace={handleStartScratchWorkspace}
             user={validatedUser}
           />
         </div>
@@ -800,7 +857,7 @@ function App() {
         <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
           <FileBrowser
             sandboxId={sandbox.sandboxId}
-            workspaceLabel={activeRepo?.name || 'Scratch'}
+            workspaceLabel={workspaceRepo?.name || 'Workspace'}
             capabilities={fileBrowserCapabilities}
             scratchActions={fileBrowserScratchActions}
             onBack={() => setShowFileBrowser(false)}
@@ -817,8 +874,8 @@ function App() {
   return (
     <Suspense fallback={suspenseFallback}>
     <ChatScreen
-      activeRepo={activeRepo}
-      isSandboxMode={isSandboxMode}
+      activeRepo={workspaceRepo}
+      workspaceSession={workspaceSession}
       resolveRepoAppearance={resolveRepoAppearance}
       setRepoAppearance={setRepoAppearance}
       clearRepoAppearance={clearRepoAppearance}
@@ -872,8 +929,8 @@ function App() {
       setIsWorkspaceHubOpen={setIsWorkspaceHubOpen}
       showToolActivity={showToolActivity}
       setShowFileBrowser={setShowFileBrowser}
-      handleSandboxMode={isSandboxMode ? undefined : handleSandboxMode}
-      handleExitSandboxMode={handleExitSandboxMode}
+      handleStartWorkspace={isScratch ? undefined : handleStartScratchWorkspace}
+      handleExitWorkspace={handleEndWorkspace}
       handleCreateNewChat={handleCreateNewChat}
       inspectNewChatWorkspace={inspectNewChatWorkspace}
       handleDisconnect={handleDisconnect}

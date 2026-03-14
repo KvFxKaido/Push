@@ -19,8 +19,8 @@ interface NewChatWorkspaceSheetProps {
 }
 
 function formatSummary(workspace: NewChatWorkspaceState): string {
-  if (workspace.mode === 'sandbox') {
-    return `${workspace.changedFiles} file${workspace.changedFiles === 1 ? '' : 's'} in this sandbox session`;
+  if (workspace.mode === 'scratch') {
+    return `${workspace.changedFiles} file${workspace.changedFiles === 1 ? '' : 's'} in this workspace`;
   }
 
   const parts = [`${workspace.changedFiles} changed`];
@@ -40,8 +40,8 @@ export function NewChatWorkspaceSheet({
   onStartFresh,
   onReviewChanges,
 }: NewChatWorkspaceSheetProps) {
-  const reviewLabel = workspace?.mode === 'sandbox' ? 'Review files' : 'Review changes';
-  const ReviewIcon = workspace?.mode === 'sandbox' ? Files : FileDiff;
+  const reviewLabel = workspace?.mode === 'scratch' ? 'Review files' : 'Review changes';
+  const ReviewIcon = workspace?.mode === 'scratch' ? Files : FileDiff;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -55,8 +55,8 @@ export function NewChatWorkspaceSheet({
             Start new chat?
           </SheetTitle>
           <SheetDescription className="text-xs text-push-fg-dim">
-            {workspace?.mode === 'sandbox'
-              ? 'This sandbox session still has files in it. New chat can continue from here or start fresh.'
+            {workspace?.mode === 'scratch'
+              ? 'This workspace still has files in it. New chat can continue from here or start fresh.'
               : 'This workspace has uncommitted changes. New chat can keep the current workspace or reset to branch HEAD.'}
           </SheetDescription>
         </SheetHeader>
@@ -73,7 +73,7 @@ export function NewChatWorkspaceSheet({
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-push-fg">
-                      {workspace.mode === 'sandbox' ? 'Sandbox session' : 'Current workspace'}
+                      {workspace.mode === 'scratch' ? 'Workspace' : 'Current workspace'}
                     </p>
                     <p className="mt-1 text-xs text-push-fg-dim">{formatSummary(workspace)}</p>
                   </div>
@@ -99,8 +99,8 @@ export function NewChatWorkspaceSheet({
 
               <div className="rounded-[18px] border border-amber-500/20 bg-[linear-gradient(180deg,rgba(62,45,16,0.16)_0%,rgba(22,17,7,0.3)_100%)] px-3.5 py-3">
                 <p className="text-xs text-amber-200/90">
-                  {workspace.mode === 'sandbox'
-                    ? 'Starting fresh clears the current sandbox session. Review or continue if you still need these files.'
+                  {workspace.mode === 'scratch'
+                    ? 'Starting fresh clears the current workspace. Review or continue if you still need these files.'
                     : 'Starting fresh resets the branch workspace and discards these uncommitted changes across chats on this branch.'}
                 </p>
               </div>

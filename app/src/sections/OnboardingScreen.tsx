@@ -13,7 +13,7 @@ import type { GitHubUser } from '@/types';
 interface OnboardingScreenProps {
   onConnect: (pat: string) => Promise<boolean>;
   onConnectOAuth: () => void;
-  onSandboxMode: () => void;
+  onStartWorkspace: () => void;
   onInstallApp: () => void;
   onConnectInstallationId: (installationId: string) => Promise<boolean>;
   loading: boolean;
@@ -25,7 +25,7 @@ interface OnboardingScreenProps {
 export function OnboardingScreen({
   onConnect,
   onConnectOAuth,
-  onSandboxMode,
+  onStartWorkspace,
   onInstallApp,
   onConnectInstallationId,
   loading,
@@ -276,7 +276,7 @@ export function OnboardingScreen({
             </div>
 
             <button
-              onClick={onSandboxMode}
+              onClick={onStartWorkspace}
               className={`${onboardingButtonClass} text-emerald-300`}
             >
               <HubControlGlow />

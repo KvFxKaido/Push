@@ -1,4 +1,4 @@
-import type { AIProviderType, ChatMessage } from '@/types';
+import type { AIProviderType, ChatMessage, WorkspaceContext } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
 import { getSandboxToolProtocol } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
@@ -641,7 +641,7 @@ export function buildUserIdentityBlock(profile?: UserProfile): string {
 
 function toLLMMessages(
   messages: ChatMessage[],
-  workspaceContext?: string,
+  workspaceContext?: WorkspaceContext,
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
@@ -669,26 +669,23 @@ function toLLMMessages(
       if (import.meta.env.DEV) _promptSizes.identity = identityBlock.length;
     }
 
+    // Workspace description (always present for active workspaces)
     if (workspaceContext) {
-      systemContent += '\n\n' + workspaceContext + '\n' + TOOL_PROTOCOL;
-      if (import.meta.env.DEV) {
-        _promptSizes.workspace = workspaceContext.length;
-        _promptSizes.tools = TOOL_PROTOCOL.length;
+      systemContent += '\n\n' + workspaceContext.description;
+      if (import.meta.env.DEV) _promptSizes.workspace = workspaceContext.description.length;
+
+      // GitHub tools only when workspace has repo context
+      if (workspaceContext.includeGitHubTools) {
+        systemContent += '\n' + TOOL_PROTOCOL;
+        if (import.meta.env.DEV) _promptSizes.tools = TOOL_PROTOCOL.length;
       }
-      if (hasSandbox) {
-        const sandboxProto = getSandboxToolProtocol();
-        systemContent += '\n' + sandboxProto;
-        if (import.meta.env.DEV) _promptSizes.sandbox = sandboxProto.length;
-      }
-    } else if (hasSandbox) {
-      // Sandbox mode (no repo): include sandbox tools with ephemeral preamble, no GitHub tools
-      const sandboxPreamble = 'You are in **Sandbox Mode** — an ephemeral Linux workspace with no GitHub repo connected.'
-        + ' You have full access to the sandbox filesystem and can create, edit, and run files freely.'
-        + ' Nothing is saved or committed unless the user explicitly downloads their work.'
-        + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.';
+    }
+
+    // Sandbox tools (always included when a sandbox is active)
+    if (hasSandbox) {
       const sandboxProto = getSandboxToolProtocol();
-      systemContent += '\n\n' + sandboxPreamble + '\n' + sandboxProto;
-      if (import.meta.env.DEV) _promptSizes.sandbox = sandboxPreamble.length + sandboxProto.length;
+      systemContent += '\n' + sandboxProto;
+      if (import.meta.env.DEV) _promptSizes.sandbox = sandboxProto.length;
     }
 
     // Scratchpad context and tools
@@ -994,7 +991,7 @@ async function streamSSEChat(
   onDone: (usage?: StreamUsage) => void,
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
+  workspaceContext?: WorkspaceContext,
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
@@ -1044,7 +1041,7 @@ async function streamSSEChatOnce(
   onDone: (usage?: StreamUsage) => void,
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
+  workspaceContext?: WorkspaceContext,
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
@@ -1548,7 +1545,7 @@ async function streamProviderChat(
   onDone: (usage?: StreamUsage) => void,
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
+  workspaceContext?: WorkspaceContext,
   hasSandbox?: boolean,
   modelOverride?: string,
   systemPromptOverride?: string,
@@ -1589,7 +1586,7 @@ type StreamChatFn = (
   onDone: (usage?: StreamUsage) => void,
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
+  workspaceContext?: WorkspaceContext,
   hasSandbox?: boolean,
   modelOverride?: string,
   systemPromptOverride?: string,
@@ -1689,7 +1686,7 @@ export async function streamChat(
   onDone: (usage?: StreamUsage) => void,
   onError: (error: Error) => void,
   onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: string,
+  workspaceContext?: WorkspaceContext,
   hasSandbox?: boolean,
   scratchpadContent?: string,
   signal?: AbortSignal,

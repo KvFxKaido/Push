@@ -102,7 +102,7 @@ interface RepoLauncherPanelProps {
   onResumeConversation: (chatId: string) => void;
   sandboxSession?: LauncherSandboxSession | null;
   onResumeSandbox?: () => void;
-  onSandboxMode?: () => void;
+  onStartWorkspace?: () => void;
 }
 
 export function RepoLauncherPanel({
@@ -118,7 +118,7 @@ export function RepoLauncherPanel({
   onResumeConversation,
   sandboxSession,
   onResumeSandbox,
-  onSandboxMode,
+  onStartWorkspace,
 }: RepoLauncherPanelProps) {
   const [showAllRepos, setShowAllRepos] = useState(false);
   const [search, setSearch] = useState('');
@@ -533,15 +533,15 @@ export function RepoLauncherPanel({
           </button>
         )}
 
-        <div className={`grid gap-2 ${onSandboxMode ? 'grid-cols-2' : 'grid-cols-1'}`}>
-          {onSandboxMode && (
+        <div className={`grid gap-2 ${onStartWorkspace ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {onStartWorkspace && (
             <button
-              onClick={onSandboxMode}
+              onClick={onStartWorkspace}
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-emerald-300`}
             >
               <HubControlGlow />
               <SandboxCubeIcon className="relative z-10 h-4 w-4" />
-              <span className="relative z-10">New Sandbox</span>
+              <span className="relative z-10">New Workspace</span>
             </button>
           )}
           <button

@@ -81,8 +81,8 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
         <div className="flex min-w-0 items-center gap-2">
           <Clock className="h-4 w-4 flex-shrink-0 text-red-400" />
           <div className="min-w-0">
-            <p className="text-xs font-medium text-red-300">Sandbox session expired</p>
-            <p className="text-push-2xs text-red-400/70">This temporary workspace is no longer available.</p>
+            <p className="text-xs font-medium text-red-300">Workspace runtime expired</p>
+            <p className="text-push-2xs text-red-400/70">This temporary workspace runtime is no longer available.</p>
           </div>
         </div>
         <button
@@ -91,7 +91,7 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
         >
           <HubControlGlow />
           <RefreshCw className="relative z-10 h-3 w-3" />
-          <span className="relative z-10">New sandbox</span>
+          <span className="relative z-10">Restart runtime</span>
         </button>
       </div>
     );
@@ -108,7 +108,7 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
               {formatRemaining(remainingMs)} remaining
             </p>
             <p className="text-push-2xs text-amber-400/70">
-              Download your work before this sandbox session expires.
+              Download your work before this workspace runtime expires.
             </p>
           </div>
         </div>

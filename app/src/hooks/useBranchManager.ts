@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { fetchRepoBranches, executeDeleteBranch } from '@/lib/github-tools';
-import type { ActiveRepo } from '@/types';
+import type { ActiveRepo, WorkspaceSession } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,7 +39,7 @@ export interface BranchManager {
 
 export function useBranchManager(
   activeRepo: ActiveRepo | null,
-  isSandboxMode: boolean,
+  workspaceSession: WorkspaceSession | null,
 ): BranchManager {
   const [repoBranches, setRepoBranches] = useState<BranchInfo[]>([]);
   const [repoBranchesLoading, setRepoBranchesLoading] = useState(false);
@@ -90,7 +90,7 @@ export function useBranchManager(
 
   // Auto-load branches when repo changes
   useEffect(() => {
-    if (!activeRepoFullName || isSandboxMode) {
+    if (!activeRepoFullName || workspaceSession?.kind !== 'repo') {
       branchFetchSeqRef.current++;
       setRepoBranches([]);
       setRepoBranchesError(null);
@@ -103,10 +103,10 @@ export function useBranchManager(
     setPendingDeleteBranch(null);
     setDeletingBranch(null);
     void loadRepoBranches(activeRepoFullName);
-  }, [activeRepoFullName, isSandboxMode, loadRepoBranches]);
+  }, [activeRepoFullName, workspaceSession, loadRepoBranches]);
 
   const handleDeleteBranch = useCallback(async (branchName: string): Promise<boolean> => {
-    if (!activeRepo || isSandboxMode) return false;
+    if (!activeRepo || workspaceSession?.kind !== 'repo') return false;
     const normalized = branchName.trim();
     if (!normalized) return false;
 
@@ -142,7 +142,7 @@ export function useBranchManager(
     } finally {
       setDeletingBranch((prev) => (prev === normalized ? null : prev));
     }
-  }, [activeRepo, currentBranch, displayBranches, isSandboxMode, loadRepoBranches]);
+  }, [activeRepo, currentBranch, displayBranches, workspaceSession, loadRepoBranches]);
 
   return {
     repoBranches,

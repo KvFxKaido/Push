@@ -19,6 +19,8 @@ import type {
   LoopPhase,
   RunCheckpoint,
   CoderWorkingMemory,
+  WorkspaceContext,
+  ChatSendOptions,
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, detectAllToolCalls, getToolSource, CANONICAL_SANDBOX_TOOL_NAMES } from '@/lib/tool-dispatch';
@@ -78,7 +80,7 @@ function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
 function generateTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user');
   if (!firstUser) return 'New Chat';
-  const content = firstUser.content.trim();
+  const content = (firstUser.displayContent ?? firstUser.content).trim();
   return content.length > 30 ? content.slice(0, 30) + '...' : content;
 }
 
@@ -128,6 +130,7 @@ export function detectInterruptedRun(
   currentSandboxId: string | null,
   currentBranch: string | null,
   currentRepoId: string | null,
+  currentWorkspaceSessionId?: string | null,
 ): RunCheckpoint | null {
   const checkpoint = loadCheckpoint(chatId);
   if (!checkpoint) return null;
@@ -141,6 +144,19 @@ export function detectInterruptedRun(
 
   // User had requested abort — don't offer resume
   if (checkpoint.userAborted) {
+    clearCheckpoint(chatId);
+    return null;
+  }
+
+  // Old checkpoints without workspaceSessionId are unresumable
+  if (currentWorkspaceSessionId && !checkpoint.workspaceSessionId) {
+    clearCheckpoint(chatId);
+    return null;
+  }
+
+  // Workspace session identity must match
+  if (currentWorkspaceSessionId && checkpoint.workspaceSessionId &&
+      checkpoint.workspaceSessionId !== currentWorkspaceSessionId) {
     clearCheckpoint(chatId);
     return null;
   }
@@ -530,6 +546,8 @@ interface ChatDraftSelection {
   model: string | null;
 }
 
+type SendMessageOptions = Partial<ChatDraftSelection> & ChatSendOptions;
+
 export function useChat(
   activeRepoFullName: string | null,
   scratchpad?: ScratchpadHandlers,
@@ -549,8 +567,9 @@ export function useChat(
   const processedContentRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const cancelStatusTimerRef = useRef<number | null>(null);
-  const workspaceContextRef = useRef<string | null>(null);
+  const workspaceContextRef = useRef<WorkspaceContext | null>(null);
   const sandboxIdRef = useRef<string | null>(null);
+  const workspaceSessionIdRef = useRef<string | null>(null);
   const isMainProtectedRef = useRef(false);
   const autoCreateRef = useRef(false); // Guard against creation loops
 
@@ -569,7 +588,7 @@ export function useChat(
   const loopActiveRef = useRef(false);
 
   // Ref-based access to sendMessage for resume callback (defined later in the hook)
-  const sendMessageRef = useRef<((text: string, attachments?: AttachmentData[], options?: Partial<ChatDraftSelection>) => Promise<void>) | null>(null);
+  const sendMessageRef = useRef<((text: string, attachments?: AttachmentData[], options?: SendMessageOptions) => Promise<void>) | null>(null);
 
   // Keep activeRepoFullName in a ref so callbacks always see the latest value
   const repoRef = useRef(activeRepoFullName);
@@ -657,6 +676,7 @@ export function useChat(
       activeBranch: branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || '',
       repoId: repoRef.current || '',
       userAborted: abortRef.current || undefined,
+      workspaceSessionId: workspaceSessionIdRef.current || undefined,
     };
 
     saveCheckpoint(checkpoint);
@@ -754,6 +774,7 @@ export function useChat(
       sandboxIdRef.current,
       branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
       repoRef.current,
+      workspaceSessionIdRef.current,
     );
 
     setInterruptedCheckpoint(checkpoint);
@@ -781,6 +802,7 @@ export function useChat(
       currentSandboxId,
       branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
       repoRef.current,
+      workspaceSessionIdRef.current,
     );
     if (!revalidated) {
       // Checkpoint no longer valid — silently discard
@@ -962,7 +984,7 @@ export function useChat(
 
   // --- Workspace context (set from App.tsx, read during sendMessage) ---
 
-  const setWorkspaceContext = useCallback((ctx: string | null) => {
+  const setWorkspaceContext = useCallback((ctx: WorkspaceContext | null) => {
     workspaceContextRef.current = ctx;
   }, []);
 
@@ -970,6 +992,10 @@ export function useChat(
 
   const setSandboxId = useCallback((id: string | null) => {
     sandboxIdRef.current = id;
+  }, []);
+
+  const setWorkspaceSessionId = useCallback((id: string | null) => {
+    workspaceSessionIdRef.current = id;
   }, []);
 
   const setIsMainProtected = useCallback((value: boolean) => {
@@ -1174,7 +1200,7 @@ export function useChat(
   // --- Send message with tool execution loop ---
 
   const sendMessage = useCallback(
-    async (text: string, attachments?: AttachmentData[], options?: Partial<ChatDraftSelection>) => {
+    async (text: string, attachments?: AttachmentData[], options?: SendMessageOptions) => {
       if ((!text.trim() && (!attachments || attachments.length === 0)) || isStreaming) return;
 
       let chatId = activeChatId;
@@ -1182,10 +1208,13 @@ export function useChat(
         chatId = createNewChat();
       }
 
+      const trimmedText = text.trim();
+      const displayText = options?.displayText?.trim();
       const userMessage: ChatMessage = {
         id: createId(),
         role: 'user',
-        content: text.trim(),
+        content: trimmedText,
+        displayContent: displayText && displayText !== trimmedText ? displayText : undefined,
         timestamp: Date.now(),
         status: 'done',
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
@@ -1245,7 +1274,7 @@ export function useChat(
 
       const sandboxStartMode = getSandboxStartMode();
       const shouldAutoStartSandbox = sandboxStartMode === 'always'
-        || (sandboxStartMode === 'smart' && shouldPrewarmSandbox(text.trim(), attachments));
+        || (sandboxStartMode === 'smart' && shouldPrewarmSandbox(trimmedText, attachments));
       if (!sandboxIdRef.current && ensureSandboxRef.current && shouldAutoStartSandbox) {
         updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
         try {
@@ -1413,7 +1442,7 @@ export function useChat(
                   return { ...prev, [chatId]: { ...conv, messages: msgs } };
                 });
               },
-              workspaceContextRef.current || undefined,
+              workspaceContextRef.current ?? undefined,
               hasSandboxThisRound,
               scratchpadRef.current?.content,
               abortControllerRef.current?.signal,
@@ -2855,6 +2884,7 @@ export function useChat(
 
     // Sandbox
     setSandboxId,
+    setWorkspaceSessionId,
     setEnsureSandbox,
 
     // Protect Main

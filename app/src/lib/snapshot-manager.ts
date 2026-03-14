@@ -13,6 +13,7 @@ interface SnapshotRecord {
   blob: Blob;
   createdAt: number;
   sizeBytes: number;
+  sessionId?: string;
 }
 
 export interface SnapshotMeta {
@@ -20,6 +21,7 @@ export interface SnapshotMeta {
   name: string;
   createdAt: number;
   sizeBytes: number;
+  sessionId?: string;
 }
 
 export interface HydrateProgress {
@@ -108,6 +110,7 @@ export async function createSnapshot(
 export async function saveSnapshotToIndexedDB(
   name: string,
   blob: Blob,
+  sessionId?: string,
 ): Promise<SnapshotMeta> {
   const now = Date.now();
   const record: SnapshotRecord = {
@@ -116,6 +119,7 @@ export async function saveSnapshotToIndexedDB(
     blob,
     createdAt: now,
     sizeBytes: blob.size,
+    sessionId,
   };
 
   const writeWithRetention = async (retainCount: number): Promise<void> => {
@@ -162,30 +166,34 @@ export async function saveSnapshotToIndexedDB(
     name: record.name,
     createdAt: record.createdAt,
     sizeBytes: record.sizeBytes,
+    sessionId: record.sessionId,
   };
 }
 
-export async function getLatestSnapshotBlob(): Promise<Blob | null> {
+export async function getLatestSnapshotBlob(sessionId?: string): Promise<Blob | null> {
   return withStore('readonly', async (store) => {
     const index = store.index(CREATED_AT_INDEX);
-    const cursor = await requestToPromise(index.openCursor(null, 'prev'));
-    if (!cursor) return null;
-    const value = cursor.value as SnapshotRecord;
-    return value.blob ?? null;
+    const all = await requestToPromise(index.getAll()) as SnapshotRecord[];
+    const filtered = sessionId ? all.filter((r) => r.sessionId === sessionId) : all;
+    if (filtered.length === 0) return null;
+    const latest = filtered.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
+    return latest.blob ?? null;
   });
 }
 
-export async function getLatestSnapshotMeta(): Promise<SnapshotMeta | null> {
+export async function getLatestSnapshotMeta(sessionId?: string): Promise<SnapshotMeta | null> {
   return withStore('readonly', async (store) => {
     const index = store.index(CREATED_AT_INDEX);
-    const cursor = await requestToPromise(index.openCursor(null, 'prev'));
-    if (!cursor) return null;
-    const value = cursor.value as SnapshotRecord;
+    const all = await requestToPromise(index.getAll()) as SnapshotRecord[];
+    const filtered = sessionId ? all.filter((r) => r.sessionId === sessionId) : all;
+    if (filtered.length === 0) return null;
+    const latest = filtered.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
     return {
-      id: value.id,
-      name: value.name,
-      createdAt: value.createdAt,
-      sizeBytes: value.sizeBytes,
+      id: latest.id,
+      name: latest.name,
+      createdAt: latest.createdAt,
+      sizeBytes: latest.sizeBytes,
+      sessionId: latest.sessionId,
     };
   });
 }

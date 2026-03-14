@@ -18,7 +18,7 @@ interface RepoPickerProps {
   error?: string | null;
   onSelect: (repo: RepoWithActivity) => void;
   onDisconnect: () => void;
-  onSandboxMode: () => void;
+  onStartWorkspace: () => void;
   user: GitHubUser | null;
 }
 
@@ -53,7 +53,7 @@ export function RepoPicker({
   error,
   onSelect,
   onDisconnect,
-  onSandboxMode,
+  onStartWorkspace,
   user,
 }: RepoPickerProps) {
   const [search, setSearch] = useState('');
@@ -133,12 +133,12 @@ export function RepoPicker({
       <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
         {/* New Sandbox option */}
         <button
-          onClick={onSandboxMode}
+          onClick={onStartWorkspace}
           className={`${HUB_PANEL_SURFACE_CLASS} mb-3 flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-emerald-500/30 active:scale-[0.995]`}
         >
           <SandboxCubeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
           <div className="min-w-0">
-            <span className="text-sm font-medium text-emerald-300">New Sandbox</span>
+            <span className="text-sm font-medium text-emerald-300">New Workspace</span>
             <p className="mt-0.5 text-xs text-push-fg-secondary">Ephemeral workspace with no repo needed.</p>
           </div>
         </button>

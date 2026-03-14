@@ -18,7 +18,7 @@ interface RepoLauncherSheetProps {
   onResumeConversation: (chatId: string) => void;
   sandboxSession?: LauncherSandboxSession | null;
   onResumeSandbox?: () => void;
-  onSandboxMode?: () => void;
+  onStartWorkspace?: () => void;
 }
 
 export function RepoLauncherSheet({
@@ -36,7 +36,7 @@ export function RepoLauncherSheet({
   onResumeConversation,
   sandboxSession,
   onResumeSandbox,
-  onSandboxMode,
+  onStartWorkspace,
 }: RepoLauncherSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -76,9 +76,9 @@ export function RepoLauncherSheet({
                   onOpenChange(false);
                 }
               : undefined}
-            onSandboxMode={onSandboxMode
+            onStartWorkspace={onStartWorkspace
               ? () => {
-                  onSandboxMode();
+                  onStartWorkspace();
                   onOpenChange(false);
                 }
               : undefined}

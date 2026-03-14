@@ -40,7 +40,7 @@ interface HomeScreenProps {
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
   onDisconnect: () => void;
-  onSandboxMode: () => void;
+  onStartWorkspace: () => void;
   user: GitHubUser | null;
 }
 
@@ -56,7 +56,7 @@ export function HomeScreen({
   onSelectRepo,
   onResumeConversation,
   onDisconnect,
-  onSandboxMode,
+  onStartWorkspace,
   user,
 }: HomeScreenProps) {
   const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false);
@@ -150,7 +150,7 @@ export function HomeScreen({
             clearRepoAppearance={clearRepoAppearance}
             onSelectRepo={onSelectRepo}
             onResumeConversation={onResumeConversation}
-            onSandboxMode={onSandboxMode}
+            onStartWorkspace={onStartWorkspace}
           />
         </div>
       </div>

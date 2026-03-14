@@ -2,7 +2,7 @@
 
 ## Status
 - Last updated: 2026-03-14
-- State: Sprint 0 shipped (capability model + terminology), Sprints 1–4 planned
+- State: All sprints shipped (Sprint 0–4 complete)
 - Intent: Collapse the sandbox/repo mode split so everything is a workspace, with GitHub as an opt-in capability layer
 
 ## Why
@@ -65,18 +65,18 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
 
 ### Tasks
 
-- [ ] **1a. Merge the two preambles.** Replace the sandbox-specific preamble and the repo-specific workspace context injection with a single prompt structure. The base prompt always describes the workspace. When GitHub context is available, it's appended. When it's not, the prompt says so simply — no special "Sandbox Mode" framing.
+- [x] **1a. Merge the two preambles.** Replace the sandbox-specific preamble and the repo-specific workspace context injection with a single prompt structure. The base prompt always describes the workspace. When GitHub context is available, it's appended. When it's not, the prompt says so simply — no special "Sandbox Mode" framing.
   - File: `lib/orchestrator.ts` (lines 642–700, `toLLMMessages()`)
   - The sandbox preamble text ("You are in **Sandbox Mode**…") becomes the default workspace description
   - `TOOL_PROTOCOL` (GitHub tools section) is conditionally appended when `workspaceContext` is non-null
   - Sandbox tools are always included when `hasSandbox` is true (already the case in both branches)
 
-- [ ] **1b. Make `workspaceContext` always present for active workspaces.** Currently `useProjectInstructions` returns `null` for sandbox mode (line 187). Instead, when a scratch workspace session is active, return a minimal workspace context that describes the empty workspace state — no repo, no branch, just `/workspace`. When there is **no workspace session yet**, keep `workspaceContext = null`. This removes the sandbox-specific null path without blurring "home/onboarding" into "scratch workspace active."
+- [x] **1b. Make `workspaceContext` always present for active workspaces.** Currently `useProjectInstructions` returns `null` for sandbox mode (line 187). Instead, when a scratch workspace session is active, return a minimal workspace context that describes the empty workspace state — no repo, no branch, just `/workspace`. When there is **no workspace session yet**, keep `workspaceContext = null`. This removes the sandbox-specific null path without blurring "home/onboarding" into "scratch workspace active."
   - File: `hooks/useProjectInstructions.ts` (lines 187–189)
   - The minimal context should include: workspace path, sandbox status, user identity block
   - Project instructions (AGENTS.md) remain repo-only — they're just absent from the minimal context
 
-- [ ] **1c. Update Coder delegation context.** The Coder inherits the chat-locked provider/model and gets its own system prompt. Verify the Coder prompt path also works with the unified structure. The Coder should not see a "Sandbox Mode" label — it should see "workspace with no repo connected" at most.
+- [x] **1c. Update Coder delegation context.** The Coder inherits the chat-locked provider/model and gets its own system prompt. Verify the Coder prompt path also works with the unified structure. The Coder should not see a "Sandbox Mode" label — it should see "workspace with no repo connected" at most.
   - File: `lib/coder-agent.ts`
 
 ### Verification
@@ -95,7 +95,7 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
 
 ### Tasks
 
-- [ ] **2a. Define `WorkspaceSession` type.** Add to `types/index.ts`:
+- [x] **2a. Define `WorkspaceSession` type.** Add to `types/index.ts`:
 
   ```typescript
   type WorkspaceSession =
@@ -119,26 +119,26 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
 
   During the transition, derive `isSandboxMode` from the session: `const isSandboxMode = session?.kind === 'scratch'`. The boolean stays alive but is now computed, not stored.
 
-- [ ] **2b. `useProjectInstructions` — replace guard with session check.** After Sprint 1b makes this hook return a minimal context for active scratch workspaces, the `if (isSandboxMode)` early return becomes two cases:
+- [x] **2b. `useProjectInstructions` — replace guard with session check.** After Sprint 1b makes this hook return a minimal context for active scratch workspaces, the `if (isSandboxMode)` early return becomes two cases:
   - `if (!session)` → `setWorkspaceContext(null)` (no workspace yet)
   - `if (session.kind === 'scratch')` → return the minimal workspace context
   - File: `hooks/useProjectInstructions.ts`
 
-- [ ] **2c. `useBranchManager` — replace sandbox guards with session checks.** Lines 93 and 109 guard on `isSandboxMode`. Replace with `session?.kind !== 'repo'` — this correctly handles both "no workspace" and "scratch workspace" states.
+- [x] **2c. `useBranchManager` — replace sandbox guards with session checks.** Lines 93 and 109 guard on `isSandboxMode`. Replace with `session?.kind !== 'repo'` — this correctly handles both "no workspace" and "scratch workspace" states.
   - File: `hooks/useBranchManager.ts`
 
-- [ ] **2d. `useSnapshotManager` — scope snapshots to session identity.** This hook has 5 `isSandboxMode` guards. Replace with `session?.kind === 'scratch'` checks. Additionally, snapshot storage is currently global ("latest snapshot" state, not workspace-scoped — `snapshot-manager.ts:3`, `snapshot-manager.ts:178`). Before broadening the model, snapshot keys must be scoped to the session — otherwise restoring in session B could load session A's snapshot.
+- [x] **2d. `useSnapshotManager` — scope snapshots to session identity.** This hook has 5 `isSandboxMode` guards. Replace with `session?.kind === 'scratch'` checks. Additionally, snapshot storage is currently global ("latest snapshot" state, not workspace-scoped — `snapshot-manager.ts:3`, `snapshot-manager.ts:178`). Before broadening the model, snapshot keys must be scoped to the session — otherwise restoring in session B could load session A's snapshot.
   - File: `hooks/useSnapshotManager.ts`
   - **Prerequisite:** Use `session.id` as the snapshot storage key. Snapshots saved in scratch session A remain visible after that session's sandbox restarts, but are invisible to scratch session B. This must ship before or with the guard replacement.
   - Decision: Snapshots remain scratch-only for now. Repo workspaces use git as persistence. This can be revisited later.
   - The ephemeral sandbox start path (line 145: `sandbox.start('', 'main')`) needs to remain distinct.
 
-- [ ] **2e. `useSandbox` — replace empty-string convention with explicit config.** The hook currently uses `repo === ''` as the signal for ephemeral mode (line 74–75). Replace the call site with a workspace session check:
+- [x] **2e. `useSandbox` — replace empty-string convention with explicit config.** The hook currently uses `repo === ''` as the signal for ephemeral mode (line 74–75). Replace the call site with a workspace session check:
   - `useSandbox(session?.kind === 'repo' ? session.repo.full_name : session?.kind === 'scratch' ? '' : null)`
   - Or better: accept `WorkspaceSession | null` directly and derive the repo string internally.
   - File: `hooks/useSandbox.ts`, `App.tsx` (line 94)
 
-- [ ] **2f. Resumable checkpoints — add workspace session identity.** Extend the resume/checkpoint model so `RunCheckpoint` carries `workspaceSessionId` alongside the existing runtime checks (`sandboxSessionId`, `activeBranch`, `repoId`). On resume:
+- [x] **2f. Resumable checkpoints — add workspace session identity.** Extend the resume/checkpoint model so `RunCheckpoint` carries `workspaceSessionId` alongside the existing runtime checks (`sandboxSessionId`, `activeBranch`, `repoId`). On resume:
   - old checkpoints without `workspaceSessionId` are treated as unresumable and silently cleared
   - new checkpoints validate both logical workspace identity and runtime identity
   - scratch workspace resume can survive runtime restarts as long as the workspace session still exists
@@ -162,7 +162,7 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
 
 ### Tasks
 
-- [ ] **3a. Redesign the onboarding screen.** The current `OnboardingScreen.tsx` is still organized around GitHub connection mechanics first (OAuth / install / PAT / installation ID), with the no-account path feeling like a fallback. Redesign it so the first-run story matches the unified workspace model:
+- [x] **3a. Redesign the onboarding screen.** The current `OnboardingScreen.tsx` is still organized around GitHub connection mechanics first (OAuth / install / PAT / installation ID), with the no-account path feeling like a fallback. Redesign it so the first-run story matches the unified workspace model:
   - Present two clear primary actions: `Start Workspace` and `Connect GitHub`
   - Make the no-account path feel first-class, not secondary
   - Demote PAT / installation ID flows into clearly-labeled advanced or recovery paths
@@ -171,24 +171,24 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
   - File: `sections/OnboardingScreen.tsx`
   - Output: new mobile-first layout + revised copy, not just renamed buttons
 
-- [ ] **3b. Onboarding flow callbacks.** "Try it now — no account needed" can stay as copy (or evolve within the redesign). Internally it should create a workspace, not "enter sandbox mode." The `onSandboxMode` callback becomes `onStartWorkspace` or similar.
+- [x] **3b. Onboarding flow callbacks.** "Try it now — no account needed" can stay as copy (or evolve within the redesign). Internally it should create a workspace, not "enter sandbox mode." The `onSandboxMode` callback becomes `onStartWorkspace` or similar.
   - File: `sections/OnboardingScreen.tsx`
   - Rename: `onSandboxMode` → `onStartWorkspace` (prop + callback)
 
-- [ ] **3c. Repo picker / launcher.** Rename "New Sandbox" to workspace language such as "New Workspace" or "Start Workspace." Keep `sandbox` wording only when explicitly referring to the live runtime/container status, not the product-level entry point. The `onSandboxMode` callback renames to match 3b.
+- [x] **3c. Repo picker / launcher.** Rename "New Sandbox" to workspace language such as "New Workspace" or "Start Workspace." Keep `sandbox` wording only when explicitly referring to the live runtime/container status, not the product-level entry point. The `onSandboxMode` callback renames to match 3b.
   - Files: `sections/RepoPicker.tsx`, `components/launcher/RepoLauncherPanel.tsx`, `components/launcher/RepoLauncherSheet.tsx`, `components/chat/RepoAndChatSelector.tsx`
 
-- [ ] **3d. ChatContainer empty state.** The starter suggestions currently branch on `isSandboxMode` to show different prompts (explore/build/prototype vs PRs/issues/codebase). Replace with a check on `activeRepo` — if no repo, show workspace-oriented suggestions; if repo, show repo-oriented suggestions. Same behavior, no flag.
+- [x] **3d. ChatContainer empty state.** The starter suggestions currently branch on `isSandboxMode` to show different prompts (explore/build/prototype vs PRs/issues/codebase). Replace with a check on `activeRepo` — if no repo, show workspace-oriented suggestions; if repo, show repo-oriented suggestions. Same behavior, no flag.
   - File: `components/chat/ChatContainer.tsx` (lines 119–138)
 
-- [ ] **3e. SandboxStatusBanner exit button.** The "Exit" button on error state (line 97) is gated on `isSandboxMode`. This should be gated on `workspaceSession?.kind === 'scratch'` instead — the banner should follow the active workspace session, not infer from missing repo data.
+- [x] **3e. SandboxStatusBanner exit button.** The "Exit" button on error state (line 97) is gated on `isSandboxMode`. This should be gated on `workspaceSession?.kind === 'scratch'` instead — the banner should follow the active workspace session, not infer from missing repo data.
   - File: `components/chat/SandboxStatusBanner.tsx`
 
-- [ ] **3f. ChatScreen header and sandbox-specific UI.** The header badge ("ephemeral"), snapshot controls, download button, and expiry banner are all gated on `isSandboxMode`. Replace with `workspaceSession.kind === 'scratch'` or capability checks where the hub already handles it.
+- [x] **3f. ChatScreen header and sandbox-specific UI.** The header badge ("ephemeral"), snapshot controls, download button, and expiry banner are all gated on `isSandboxMode`. Replace with `workspaceSession.kind === 'scratch'` or capability checks where the hub already handles it.
   - File: `sections/ChatScreen.tsx`
   - Consider: The snapshot/download controls in the header overlap with the hub scratch action bar. Sprint 0 added the hub actions — the header controls may now be redundant. Evaluate whether to keep both or consolidate to hub-only.
 
-- [ ] **3g. `NewChatWorkspaceSheet` migration.** This sheet should not be a one-line flag swap. Update the full path that feeds it:
+- [x] **3g. `NewChatWorkspaceSheet` migration.** This sheet should not be a one-line flag swap. Update the full path that feeds it:
   - change `NewChatWorkspaceState.mode` from `'repo' | 'sandbox'` to workspace-appropriate terminology
   - update `inspectNewChatWorkspace()` to emit the new mode values and summary labels
   - update `NewChatWorkspaceSheet.tsx` copy from "sandbox session" to workspace-first language
@@ -212,22 +212,22 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
 
 ### Tasks
 
-- [ ] **4a. Remove state, keep session.** In `App.tsx`, delete `const [isSandboxMode, setIsSandboxMode] = useState(false)`. All code should already read from `workspaceSession` (Sprint 2). The `handleSandboxMode` callback becomes `handleStartScratchWorkspace` — it sets `workspaceSession = { id: crypto.randomUUID(), kind: 'scratch', sandboxId: null }`. The `handleExitSandboxMode` callback becomes `handleEndWorkspace` — it clears the session and returns to home/onboarding.
+- [x] **4a. Remove state, keep session.** In `App.tsx`, delete `const [isSandboxMode, setIsSandboxMode] = useState(false)`. All code should already read from `workspaceSession` (Sprint 2). The `handleSandboxMode` callback becomes `handleStartScratchWorkspace` — it sets `workspaceSession = { id: crypto.randomUUID(), kind: 'scratch', sandboxId: null }`. The `handleExitSandboxMode` callback becomes `handleEndWorkspace` — it clears the session and returns to home/onboarding.
   - File: `App.tsx` (line 93, lines 427–439)
 
-- [ ] **4b. Simplify screen state machine.** The current machine has a special case for `isSandboxMode` (line 409). With the flag gone, the machine reads from `workspaceSession`:
+- [x] **4b. Simplify screen state machine.** The current machine has a special case for `isSandboxMode` (line 409). With the flag gone, the machine reads from `workspaceSession`:
   - `session !== null` → chat (or file-browser if open)
   - `!token` → onboarding
   - `token && !session` → home (repo picker)
   - File: `App.tsx` (lines 408–415)
   - The auth bypass for scratch workspaces survives: `session?.kind === 'scratch'` skips the token check, same as `isSandboxMode` did.
 
-- [ ] **4c. Remove `isSandboxMode` from all prop chains.** Remove the prop from: `ChatScreen`, `ChatContainer`, `SandboxStatusBanner`, `HomeScreen`. Replace with `workspaceSession` or derived checks where needed.
+- [x] **4c. Remove `isSandboxMode` from all prop chains.** Remove the prop from: `ChatScreen`, `ChatContainer`, `SandboxStatusBanner`, `HomeScreen`. Replace with `workspaceSession` or derived checks where needed.
   - Typecheck will enforce completeness.
 
-- [ ] **4d. Rename `onSandboxMode` callbacks.** Final grep + replace of any remaining `onSandboxMode` references from Sprint 3.
+- [x] **4d. Rename `onSandboxMode` callbacks.** Final grep + replace of any remaining `onSandboxMode` references from Sprint 3.
 
-- [ ] **4e. Update project instruction files.** These reference "Sandbox Mode" as a named concept. Update to describe the workspace session model. Remove references to `isSandboxMode` flag.
+- [x] **4e. Update project instruction files.** These reference "Sandbox Mode" as a named concept. Update to describe the workspace session model. Remove references to `isSandboxMode` flag.
   - `CLAUDE.md` — primary project instructions (checked into repo, read by Claude Code)
   - `AGENTS.md` — project instructions file the app reads from user repos and injects into AI context
   - `GEMINI.md` — Gemini-specific project instructions

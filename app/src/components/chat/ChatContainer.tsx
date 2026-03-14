@@ -1,9 +1,10 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { ArrowDown, RotateCcw, X } from 'lucide-react';
-import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, LoopPhase, CIStatus } from '@/types';
+import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, LoopPhase, CIStatus, QuickPrompt } from '@/types';
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
+import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
@@ -83,8 +84,8 @@ interface ChatContainerProps {
   messages: ChatMessage[];
   agentStatus: AgentStatus;
   activeRepo?: ActiveRepo | null;
-  isSandboxMode?: boolean;
-  onSuggestion?: (text: string) => void;
+  hasSandbox?: boolean;
+  onSuggestion?: (prompt: QuickPrompt) => void;
   onCardAction?: (action: CardAction) => void;
   onPin?: (content: string, messageId: string) => void;
   interruptedCheckpoint?: RunCheckpoint | null;
@@ -100,12 +101,12 @@ const AT_BOTTOM_THRESHOLD_PX = 48;
 
 function EmptyState({
   activeRepo,
-  isSandboxMode,
+  hasSandbox,
   onSuggestion,
 }: {
   activeRepo?: ActiveRepo | null;
-  isSandboxMode?: boolean;
-  onSuggestion?: (text: string) => void;
+  hasSandbox?: boolean;
+  onSuggestion?: (prompt: QuickPrompt) => void;
 }) {
   const [hexTap, setHexTap] = useState(false);
 
@@ -115,27 +116,10 @@ function EmptyState({
     requestAnimationFrame(() => setHexTap(true));
   };
 
-  const suggestions = useMemo(() => {
-    if (isSandboxMode) {
-      return [
-        "I'm not sure what I'm building yet — let's explore",
-        'Help me prototype an idea',
-        'I want to test an idea quickly',
-      ];
-    }
-    if (activeRepo) {
-      return [
-        `Show open PRs on ${activeRepo.name}`,
-        `What changed recently in ${activeRepo.name}?`,
-        `Summarize the ${activeRepo.name} codebase`,
-      ];
-    }
-    return [
-      'Review my latest PR',
-      'What changed in main today?',
-      'Show my open pull requests',
-    ];
-  }, [activeRepo, isSandboxMode]);
+  const suggestions = useMemo(
+    () => getEmptyStateQuickPrompts(activeRepo, hasSandbox),
+    [activeRepo, hasSandbox],
+  );
 
   return (
     <div className="flex flex-1 items-center justify-center px-8">
@@ -163,23 +147,23 @@ function EmptyState({
           </svg>
         </button>
         <h2 className="text-lg font-semibold text-[#fafafa] mb-2.5">
-          {activeRepo ? activeRepo.name : isSandboxMode ? 'Sandbox' : 'Push'}
+          {activeRepo ? activeRepo.name : hasSandbox ? 'Workspace' : 'Push'}
         </h2>
         <p className="text-sm leading-relaxed text-push-fg-secondary">
           {activeRepo
             ? `Focused on ${activeRepo.full_name}. Ask about PRs, recent changes, or the codebase.`
-            : isSandboxMode
+            : hasSandbox
             ? 'Ephemeral workspace — write code, run commands, and prototype ideas from scratch.'
             : 'AI coding agent with direct repo access. Review PRs, explore codebases, and ship changes — all from here.'}
         </p>
         <div className="mt-6 flex flex-col gap-2.5 stagger-in">
           {suggestions.map((suggestion) => (
             <button
-              key={suggestion}
+              key={suggestion.label}
               onClick={() => onSuggestion?.(suggestion)}
               className="cursor-pointer rounded-xl border border-push-edge bg-push-grad-card px-4 py-3 text-left text-sm text-push-fg-secondary shadow-push-card card-hover spring-press hover:border-push-edge-hover hover:text-[#f0f4ff] hover:shadow-push-card-hover"
             >
-              {suggestion}
+              {suggestion.label}
             </button>
           ))}
         </div>
@@ -192,7 +176,7 @@ export function ChatContainer({
   messages,
   agentStatus,
   activeRepo,
-  isSandboxMode,
+  hasSandbox,
   onSuggestion,
   onCardAction,
   onPin,
@@ -278,7 +262,7 @@ export function ChatContainer({
           <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />
         )}
 
-        <EmptyState activeRepo={activeRepo} isSandboxMode={isSandboxMode} onSuggestion={onSuggestion} />
+        <EmptyState activeRepo={activeRepo} hasSandbox={hasSandbox} onSuggestion={onSuggestion} />
       </div>
     );
   }

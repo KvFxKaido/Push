@@ -6,7 +6,7 @@ import { fetchProjectInstructions } from '@/lib/github-tools';
 import { syncProjectInstructionsFromSandbox } from '@/lib/project-instructions-utils';
 import { buildEffectiveProjectInstructions } from '@/lib/push-built-in-context';
 import { buildWorkspaceContext, sanitizeProjectInstructions } from '@/lib/workspace-context';
-import type { ActiveRepo, RepoWithActivity } from '@/types';
+import type { ActiveRepo, RepoWithActivity, WorkspaceContext, WorkspaceSession } from '@/types';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 
 // ---------------------------------------------------------------------------
@@ -68,7 +68,7 @@ export interface ProjectInstructionsManager {
 export function useProjectInstructions(
   activeRepo: ActiveRepo | null,
   repos: RepoWithActivity[],
-  isSandboxMode: boolean,
+  workspaceSession: WorkspaceSession | null,
   sandbox: {
     sandboxId: string | null;
     status: SandboxStatus;
@@ -76,7 +76,7 @@ export function useProjectInstructions(
   },
   setAgentsMd: (content: string | null) => void,
   setInstructionFilename: (filename: string | null) => void,
-  setWorkspaceContext: (ctx: string | null) => void,
+  setWorkspaceContext: (ctx: WorkspaceContext | null) => void,
   sendMessage: (message: string) => void,
   isStreaming: boolean,
   setShowFileBrowser: (show: boolean) => void,
@@ -184,21 +184,31 @@ export function useProjectInstructions(
 
   // Build workspace context
   useEffect(() => {
-    if (isSandboxMode) {
+    if (!workspaceSession) {
+      // No workspace yet (home/onboarding)
       setWorkspaceContext(null);
       return;
     }
+    if (workspaceSession.kind === 'scratch') {
+      // Scratch workspace — provide workspace description, no GitHub tools
+      const description = 'You are working in an ephemeral workspace at /workspace with no GitHub repo connected.'
+        + ' You have full access to the sandbox filesystem and can create, edit, and run files freely.'
+        + ' Nothing is saved or committed unless the user explicitly downloads their work.'
+        + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.';
+      setWorkspaceContext({ description, includeGitHubTools: false });
+      return;
+    }
     if (repos.length > 0) {
-      let ctx = buildWorkspaceContext(repos, activeRepo);
+      let description = buildWorkspaceContext(repos, activeRepo);
       if (agentsMdContent) {
         const safe = sanitizeProjectInstructions(agentsMdContent);
-        ctx += '\n\n[PROJECT INSTRUCTIONS]\n' + safe + '\n[/PROJECT INSTRUCTIONS]';
+        description += '\n\n[PROJECT INSTRUCTIONS]\n' + safe + '\n[/PROJECT INSTRUCTIONS]';
       }
-      setWorkspaceContext(ctx);
+      setWorkspaceContext({ description, includeGitHubTools: true });
     } else {
       setWorkspaceContext(null);
     }
-  }, [repos, activeRepo, agentsMdContent, isSandboxMode, setWorkspaceContext]);
+  }, [repos, activeRepo, agentsMdContent, workspaceSession, setWorkspaceContext]);
 
   // Create template AGENTS.md
   const handleCreateAgentsMd = useCallback(async () => {

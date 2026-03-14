@@ -298,7 +298,7 @@ export function FileBrowser({
       {showScratchActions && scratchActions && (
         <div className="fixed bottom-6 left-4 right-[5.5rem] z-30 rounded-[20px] border border-push-edge bg-push-grad-panel/95 px-3 py-2.5 shadow-[0_16px_40px_rgba(0,0,0,0.42)] backdrop-blur-xl">
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">Scratch</p>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">Workspace</p>
             <p className={`mt-1 truncate text-push-2xs ${scratchActions.tone === 'stale' ? 'text-amber-300' : 'text-push-fg-dim'}`}>
               {scratchActions.statusText}
             </p>
