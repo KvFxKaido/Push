@@ -4,6 +4,7 @@ import {
   getBedrockModelName,
 } from '@/hooks/useExperimentalProviderConfig';
 import { getVertexModelName } from '@/hooks/useVertexConfig';
+import { getModelCapabilities } from './model-capabilities';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-provider';
 
@@ -141,6 +142,7 @@ function makeRoleModels(
     provider,
     role,
     context,
+    capabilities: getModelCapabilities(provider, id),
   }));
 }
 
@@ -280,7 +282,14 @@ export function getModelForRole(
   if (!model) return undefined;
 
   const getter = MODEL_NAME_GETTERS[type];
-  return getter ? { ...model, id: getter() } : model;
+  if (!getter) return model;
+
+  const resolvedId = getter();
+  return {
+    ...model,
+    id: resolvedId,
+    capabilities: getModelCapabilities(type, resolvedId),
+  };
 }
 
 // ---------------------------------------------------------------------------

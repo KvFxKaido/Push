@@ -100,12 +100,23 @@ export type AIProviderType =
   | 'vertex'
   | 'demo';
 
+export type ModelCapabilitySupport = 'supported' | 'unsupported' | 'unknown';
+
+export interface ModelCapabilities {
+  visionInput: ModelCapabilitySupport;
+  imageGeneration: ModelCapabilitySupport;
+  toolCalls: ModelCapabilitySupport;
+  jsonMode: ModelCapabilitySupport;
+  streaming: ModelCapabilitySupport;
+}
+
 export interface AIModel {
   id: string;
   name: string;
   provider: AIProviderType;
   role?: AgentRole;
   context?: number;
+  capabilities: ModelCapabilities;
 }
 
 export interface AIProviderConfig {

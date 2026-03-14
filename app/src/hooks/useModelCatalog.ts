@@ -297,6 +297,7 @@ export function useModelCatalog(): ModelCatalog {
 
   // Auto-fetch models when key becomes available
   useEffect(() => { if (ollamaCfg.hasKey && ollamaModelList.length === 0 && !ollamaLoading) refreshOllamaModels(); }, [ollamaCfg.hasKey, ollamaModelList.length, ollamaLoading, refreshOllamaModels]);
+  useEffect(() => { if (openRouterCfg.hasKey && openRouterModelList.length === 0 && !openRouterLoading) refreshOpenRouterModels(); }, [openRouterCfg.hasKey, openRouterLoading, openRouterModelList.length, refreshOpenRouterModels]);
   useEffect(() => { if (zenCfg.hasKey && zenModelList.length === 0 && !zenLoading) refreshZenModels(); }, [zenCfg.hasKey, zenModelList.length, zenLoading, refreshZenModels]);
   useEffect(() => { if (nvidiaCfg.hasKey && nvidiaModelList.length === 0 && !nvidiaLoading) refreshNvidiaModels(); }, [nvidiaCfg.hasKey, nvidiaModelList.length, nvidiaLoading, refreshNvidiaModels]);
 
@@ -308,6 +309,10 @@ export function useModelCatalog(): ModelCatalog {
 
   // Model option lists (ensure selected model is always included)
   const ollamaModelOptions = useMemo(() => includeSelectedModel(ollamaModelList, ollamaCfg.model), [ollamaModelList, ollamaCfg.model]);
+  const openRouterModelOptions = useMemo(
+    () => includeSelectedModel(openRouterModelList.length > 0 ? openRouterModelList : OPENROUTER_MODELS, openRouterCfg.model),
+    [openRouterCfg.model, openRouterModelList],
+  );
   const zenModelOptions = useMemo(() => includeSelectedModel(zenModelList, zenCfg.model), [zenModelList, zenCfg.model]);
   const nvidiaModelOptions = useMemo(() => includeSelectedModel(nvidiaModelList, nvidiaCfg.model), [nvidiaModelList, nvidiaCfg.model]);
   const vertexModelOptions = useMemo(() => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model), [vertexCfg.modelOptions, vertexCfg.model]);
@@ -409,7 +414,7 @@ export function useModelCatalog(): ModelCatalog {
     nvidiaModels: { models: nvidiaModelList, loading: nvidiaLoading, error: nvidiaError, updatedAt: nvidiaUpdatedAt },
 
     ollamaModelOptions,
-    openRouterModelOptions: openRouterModelList.length > 0 ? openRouterModelList : OPENROUTER_MODELS,
+    openRouterModelOptions,
     zenModelOptions: zenModelList.length > 0 ? zenModelOptions : ZEN_MODELS,
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
 

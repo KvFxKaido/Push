@@ -30,6 +30,7 @@ import type { ProjectInstructionsManager } from '@/hooks/useProjectInstructions'
 import type { RepoOverride } from '@/hooks/useProtectMain';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
+import { getVisionCapabilityNotice } from '@/lib/model-capabilities';
 import { buildQuickPromptMessage } from '@/lib/quick-prompts';
 import type {
   ActiveRepo,
@@ -232,6 +233,17 @@ interface ChatScreenProps {
   ensureSandbox: () => Promise<string | null>;
 }
 
+const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
+  ollama: 'Ollama',
+  openrouter: 'OpenRouter',
+  zen: 'OpenCode Zen',
+  nvidia: 'Nvidia NIM',
+  azure: 'Azure OpenAI',
+  bedrock: 'AWS Bedrock',
+  vertex: 'Google Vertex',
+  demo: 'Demo',
+};
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -422,6 +434,30 @@ export function ChatScreen(props: ChatScreenProps) {
   const headerPillButtonClass =
     `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${headerPlainInteractiveClass}`;
 
+  const selectedComposerProvider: AIProviderType = (() => {
+    if (isProviderLocked && lockedProvider) return lockedProvider;
+    if (selectedChatProvider) return selectedChatProvider;
+    return catalog.availableProviders[0]?.[0] ?? 'demo';
+  })();
+
+  const isDisplayedComposerProviderLocked = Boolean(
+    isProviderLocked &&
+    lockedProvider &&
+    lockedProvider === selectedComposerProvider,
+  );
+
+  const selectedComposerModel = (() => {
+    if (isDisplayedComposerProviderLocked && lockedModel) return lockedModel;
+    if (selectedComposerProvider === 'ollama') return selectedChatModels.ollama;
+    if (selectedComposerProvider === 'openrouter') return selectedChatModels.openrouter;
+    if (selectedComposerProvider === 'zen') return selectedChatModels.zen;
+    if (selectedComposerProvider === 'nvidia') return selectedChatModels.nvidia;
+    if (selectedComposerProvider === 'azure') return selectedChatModels.azure;
+    if (selectedComposerProvider === 'bedrock') return selectedChatModels.bedrock;
+    if (selectedComposerProvider === 'vertex') return selectedChatModels.vertex;
+    return 'demo';
+  })();
+
   // Destructure stable function refs to avoid depending on the whole object
   const { markSnapshotActivity } = snapshots;
 
@@ -435,7 +471,20 @@ export function ChatScreen(props: ChatScreenProps) {
     setEditingUserMessageId(null);
   }, []);
 
+  const validateComposerAttachments = useCallback((attachments?: AttachmentData[]) => {
+    const hasImageAttachments = Boolean(attachments?.some((attachment) => attachment.type === 'image'));
+    if (!hasImageAttachments) return true;
+
+    const visionNotice = getVisionCapabilityNotice(selectedComposerProvider, selectedComposerModel);
+    if (visionNotice.support !== 'unsupported') return true;
+
+    const providerLabel = CHAT_PROVIDER_LABELS[selectedComposerProvider];
+    toast.error(`${providerLabel} · ${selectedComposerModel} cannot read image attachments yet.`);
+    return false;
+  }, [selectedComposerModel, selectedComposerProvider]);
+
   const handleComposerSend = useCallback((message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
+    if (!validateComposerAttachments(attachments)) return;
     markSnapshotActivity();
 
     if (editingUserMessageId) {
@@ -445,7 +494,7 @@ export function ChatScreen(props: ChatScreenProps) {
     }
 
     return sendMessage(message, attachments, options);
-  }, [editMessageAndResend, editingUserMessageId, markSnapshotActivity, sendMessage]);
+  }, [editMessageAndResend, editingUserMessageId, markSnapshotActivity, sendMessage, validateComposerAttachments]);
 
   const handleQuickPrompt = useCallback((quickPrompt: QuickPrompt) => {
     const { text, displayText } = buildQuickPromptMessage(quickPrompt);

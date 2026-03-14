@@ -226,7 +226,7 @@ Push/
 
 ## Credits
 
-Model icons courtesy of [models.dev](https://models.dev/) ([GitHub](https://github.com/anomalyco/models.dev)).
+[models.dev](https://models.dev/) ([GitHub](https://github.com/anomalyco/models.dev)) powers Push's model icons and helps enrich the OpenRouter model catalog with cross-model metadata such as modalities, tool-calling support, reasoning flags, and context limits. Their open model database and API made it much easier to keep the catalog useful without hand-curating every field ourselves.
 
 ## License
 

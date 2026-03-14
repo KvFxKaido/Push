@@ -7,6 +7,7 @@ import { ProviderIcon } from '@/components/ui/provider-icon';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { processFile, getTotalAttachmentSize } from '@/lib/file-processing';
 import type { StagedAttachment } from '@/lib/file-processing';
+import { getVisionCapabilityNotice } from '@/lib/model-capabilities';
 import type { AIProviderType, AttachmentData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
@@ -199,7 +200,7 @@ export function ChatInput({
 
   const hasAttachments = stagedAttachments.length > 0;
   const readyAttachments = stagedAttachments.filter((a) => a.status === 'ready');
-  const canSend = (value.trim().length > 0 || readyAttachments.length > 0) && !isStreaming;
+  const canSendBase = (value.trim().length > 0 || readyAttachments.length > 0) && !isStreaming;
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -255,54 +256,6 @@ export function ChatInput({
     return () => cancelAnimationFrame(frame);
   }, [prefillRequest, adjustHeight]);
 
-  const handleSend = useCallback(() => {
-    if (!canSend) return;
-
-    // Convert staged attachments to AttachmentData (strip status/error fields)
-    const attachments: AttachmentData[] = readyAttachments.map(
-      ({ id, type, filename, mimeType, sizeBytes, content, thumbnail }) => ({
-        id,
-        type,
-        filename,
-        mimeType,
-        sizeBytes,
-        content,
-        thumbnail,
-      }),
-    );
-
-    onSend(value.trim(), attachments.length > 0 ? attachments : undefined);
-    setValue('');
-    setStagedAttachments([]);
-
-    requestAnimationFrame(() => {
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
-      }
-    });
-  }, [canSend, value, readyAttachments, onSend]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      // Only use mobile keyboard behavior (Enter = newline) if BOTH:
-      // 1. Narrow viewport (mobile layout) AND
-      // 2. Touch capability (actual touch device)
-      // This prevents desktop users with narrow windows from losing Enter-to-send
-      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-      const isMobileDevice = isMobile && hasTouch;
-
-      if (e.key === 'Enter' && !e.shiftKey && !isMobileDevice) {
-        e.preventDefault();
-        if (isStreaming) {
-          onStop?.();
-        } else {
-          handleSend();
-        }
-      }
-    },
-    [handleSend, onStop, isStreaming, isMobile],
-  );
-
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -353,18 +306,6 @@ export function ChatInput({
       handleSend();
     }
   };
-
-  const sendButtonLabel = isStreaming
-    ? 'Stop generating'
-    : editState
-      ? 'Save edit and resend'
-      : 'Send message';
-
-  const statusText = isStreaming
-    ? 'Generating...'
-    : readyAttachments.length > 0
-      ? `${readyAttachments.length} attachment${readyAttachments.length > 1 ? 's' : ''} ready`
-      : null;
 
   const selectedProvider: AIProviderType = (() => {
     if (!providerControls) return 'demo';
@@ -421,6 +362,91 @@ export function ChatInput({
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
     if (selectedProvider === 'zen') providerControls.refreshZenModels();
     if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
+  };
+
+  const readyImageAttachments = readyAttachments.filter((attachment) => attachment.type === 'image');
+  const visionNotice = getVisionCapabilityNotice(selectedProvider, selectedModel);
+  const hasUnsupportedImageAttachments =
+    readyImageAttachments.length > 0 && visionNotice.support === 'unsupported';
+  const hasUnknownImageSupport =
+    readyImageAttachments.length > 0 && visionNotice.support === 'unknown';
+  const canSend = canSendBase && !hasUnsupportedImageAttachments;
+
+  const handleSend = () => {
+    if (!canSend) return;
+
+    const attachments: AttachmentData[] = readyAttachments.map(
+      ({ id, type, filename, mimeType, sizeBytes, content, thumbnail }) => ({
+        id,
+        type,
+        filename,
+        mimeType,
+        sizeBytes,
+        content,
+        thumbnail,
+      }),
+    );
+
+    onSend(value.trim(), attachments.length > 0 ? attachments : undefined);
+    setValue('');
+    setStagedAttachments([]);
+
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+    });
+  };
+
+  const sendButtonLabel = isStreaming
+    ? 'Stop generating'
+    : hasUnsupportedImageAttachments
+      ? 'Selected model cannot read image attachments'
+      : editState
+        ? 'Save edit and resend'
+        : 'Send message';
+
+  const statusNotice = (() => {
+    if (isStreaming) {
+      return { tone: 'default' as const, text: 'Generating...' };
+    }
+    if (hasUnsupportedImageAttachments) {
+      return {
+        tone: 'error' as const,
+        text: `${visionNotice.text} Switch models or remove the image attachment${readyImageAttachments.length > 1 ? 's' : ''}.`,
+      };
+    }
+    if (hasUnknownImageSupport) {
+      return {
+        tone: 'warning' as const,
+        text: `${visionNotice.text} It may still work, but this model is not verified yet.`,
+      };
+    }
+    if (readyAttachments.length > 0) {
+      return {
+        tone: 'default' as const,
+        text: `${readyAttachments.length} attachment${readyAttachments.length > 1 ? 's' : ''} ready`,
+      };
+    }
+    return null;
+  })();
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Only use mobile keyboard behavior (Enter = newline) if BOTH:
+    // 1. Narrow viewport (mobile layout) AND
+    // 2. Touch capability (actual touch device)
+    // This prevents desktop users with narrow windows from losing Enter-to-send
+    const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const isMobileDevice = isMobile && hasTouch;
+
+    if (e.key === 'Enter' && !e.shiftKey && !isMobileDevice) {
+      e.preventDefault();
+      if (isStreaming) {
+        onStop?.();
+      } else {
+        handleSend();
+      }
+    }
   };
 
   return (
@@ -805,6 +831,17 @@ export function ChatInput({
                     <p className="px-1 text-push-2xs text-[#7c879b]">
                       Settings controls your defaults. This picker only changes the selected backend/model for this chat.
                     </p>
+                    <p
+                      className={`px-1 text-push-2xs ${
+                        visionNotice.support === 'supported'
+                          ? 'text-emerald-400'
+                          : visionNotice.support === 'unsupported'
+                            ? 'text-amber-400'
+                            : 'text-[#7c879b]'
+                      }`}
+                    >
+                      {visionNotice.text}
+                    </p>
                     {isDisplayedProviderLocked && (
                       <p className="px-1 text-push-2xs text-amber-400">Changing backend/model here will start a new chat.</p>
                     )}
@@ -824,9 +861,17 @@ export function ChatInput({
           />
 
           <div className="min-w-0 flex-1 px-1">
-            {statusText ? (
-              <p className="truncate text-xs text-[#788396]">
-                {statusText}
+            {statusNotice ? (
+              <p
+                className={`truncate text-xs ${
+                  statusNotice.tone === 'error'
+                    ? 'text-red-400'
+                    : statusNotice.tone === 'warning'
+                      ? 'text-amber-400'
+                      : 'text-[#788396]'
+                }`}
+              >
+                {statusNotice.text}
               </p>
             ) : contextUsage && contextUsage.percent >= 5 ? (
               <ContextMeter {...contextUsage} />
