@@ -13,35 +13,52 @@ const MODELS_DEV_NVIDIA_CACHE_KEY = 'push:models-dev:nvidia-models';
 const MODELS_DEV_OLLAMA_CACHE_KEY = 'push:models-dev:ollama-cloud-models';
 const MODELS_DEV_OPENCODE_CACHE_KEY = 'push:models-dev:opencode-models';
 const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
-const OPENROUTER_MAX_CURATED_MODELS = 64;
 const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
 const OPENROUTER_PRIORITY_MODELS = [
-  'anthropic/claude-sonnet-4.6:nitro',
-  'anthropic/claude-opus-4.6:nitro',
-  'anthropic/claude-haiku-4.5:nitro',
+  // Anthropic
+  'anthropic/claude-sonnet-4.6',
+  'anthropic/claude-opus-4.6',
+  'anthropic/claude-haiku-4.5',
+  // OpenAI
   'openai/gpt-5.4-pro',
   'openai/gpt-5.4',
-  'openai/gpt-5-mini:nitro',
   'openai/gpt-5.3-codex',
   'openai/gpt-5.2-codex',
-  'openai/gpt-5.1-codex-mini:nitro',
-  'google/gemini-3.1-pro-preview:nitro',
-  'google/gemini-3-flash-preview:nitro',
-  'google/gemini-2.5-flash:nitro',
+  'openai/gpt-5-mini',
+  // Google
+  'google/gemini-3.1-pro-preview',
+  'google/gemini-3-flash-preview',
+  'google/gemini-2.5-pro',
+  'google/gemini-2.5-flash',
+  // Mistral
   'mistralai/devstral-2512',
+  'mistralai/codestral-2508',
   'mistralai/mistral-large-2512',
-  'qwen/qwen3.5-397b-a17b:nitro',
-  'deepseek/deepseek-v3.2:nitro',
-  'moonshotai/kimi-k2.5:nitro',
+  // Qwen
+  'qwen/qwen3.5-397b-a17b',
+  'qwen/qwen3-coder',
+  // DeepSeek
+  'deepseek/deepseek-v3.2',
+  'deepseek/deepseek-r1',
+  // xAI
+  'x-ai/grok-4.20-beta',
   'x-ai/grok-4.1-fast',
-  'cohere/command-r-plus-08-2024',
+  // Kimi
+  'moonshotai/kimi-k2.5',
+  // Cohere
+  'cohere/command-a',
+  // Perplexity
   'perplexity/sonar-pro',
-  'stepfun/step-3.5-flash:nitro',
-  'stepfun/step-3.5-flash:free',
-  'z-ai/glm-5:nitro',
-  'arcee-ai/trinity-large-preview:nitro',
+  // GLM
+  'z-ai/glm-5',
+  'z-ai/glm-4.7',
+  // Misc
+  'minimax/minimax-m2.5',
+  'meta-llama/llama-4-maverick',
+  'stepfun/step-3.5-flash',
+  'arcee-ai/virtuoso-large',
 ] as const;
 const NVIDIA_PRIORITY_MODELS = [
   'nvidia/llama-3.1-nemotron-70b-instruct',
@@ -148,6 +165,119 @@ function parseOpenRouterModalityString(value: unknown): {
 
 function readCachedModelsDevOpenRouterMetadata(): Record<string, ModelsDevOpenRouterMetadata> | null {
   return readCachedModelsDevMetadata<ModelsDevOpenRouterMetadata>(MODELS_DEV_OPENROUTER_CACHE_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Reasoning effort preference (per-provider, localStorage)
+// ---------------------------------------------------------------------------
+
+export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high';
+const REASONING_EFFORT_KEY_PREFIX = 'push:reasoning-effort:';
+const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'medium';
+const REASONING_EFFORT_CYCLE: ReasoningEffort[] = ['off', 'low', 'medium', 'high'];
+
+export function getReasoningEffort(provider: string): ReasoningEffort {
+  const raw = safeStorageGet(`${REASONING_EFFORT_KEY_PREFIX}${provider}`);
+  if (raw && REASONING_EFFORT_CYCLE.includes(raw as ReasoningEffort)) return raw as ReasoningEffort;
+  return DEFAULT_REASONING_EFFORT;
+}
+
+export function setReasoningEffort(provider: string, effort: ReasoningEffort): void {
+  safeStorageSet(`${REASONING_EFFORT_KEY_PREFIX}${provider}`, effort);
+}
+
+export function cycleReasoningEffort(provider: string): ReasoningEffort {
+  const current = getReasoningEffort(provider);
+  const idx = REASONING_EFFORT_CYCLE.indexOf(current);
+  const next = REASONING_EFFORT_CYCLE[(idx + 1) % REASONING_EFFORT_CYCLE.length];
+  setReasoningEffort(provider, next);
+  return next;
+}
+
+export const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
+  off: 'Off',
+  low: 'Lo',
+  medium: 'Med',
+  high: 'Hi',
+};
+
+// ---------------------------------------------------------------------------
+// Model capabilities
+// ---------------------------------------------------------------------------
+
+/** Model capabilities resolved from cached models.dev metadata. */
+export interface ResolvedModelCapabilities {
+  reasoning: boolean;
+  toolCall: boolean;
+  vision: boolean;
+  imageGen: boolean;
+  contextLimit: number;
+}
+
+const EMPTY_CAPABILITIES: ResolvedModelCapabilities = {
+  reasoning: false,
+  toolCall: false,
+  vision: false,
+  imageGen: false,
+  contextLimit: 0,
+};
+
+function resolveFromOpenRouterMetadata(meta: ModelsDevOpenRouterMetadata): ResolvedModelCapabilities {
+  return {
+    reasoning: meta.reasoning,
+    toolCall: meta.toolCall,
+    vision: meta.inputModalities.includes('image'),
+    imageGen: meta.outputModalities.includes('image'),
+    contextLimit: meta.contextLimit,
+  };
+}
+
+function resolveFromProviderMetadata(meta: ModelsDevProviderMetadata): ResolvedModelCapabilities {
+  return {
+    reasoning: meta.reasoning,
+    toolCall: meta.toolCall,
+    vision: meta.inputModalities.includes('image') || meta.attachment,
+    imageGen: meta.outputModalities.includes('image'),
+    contextLimit: meta.contextLimit,
+  };
+}
+
+/**
+ * Look up cached model capabilities from models.dev metadata.
+ * Works for any provider — checks OpenRouter, Ollama, Nvidia, OpenCode caches.
+ */
+export function getModelCapabilities(provider: string, modelId: string): ResolvedModelCapabilities {
+  if (provider === 'openrouter') {
+    const metadata = readCachedModelsDevOpenRouterMetadata();
+    const meta = metadata?.[modelId];
+    return meta ? resolveFromOpenRouterMetadata(meta) : EMPTY_CAPABILITIES;
+  }
+
+  const cacheKey = provider === 'nvidia' ? MODELS_DEV_NVIDIA_CACHE_KEY
+    : provider === 'ollama' ? MODELS_DEV_OLLAMA_CACHE_KEY
+    : provider === 'zen' ? MODELS_DEV_OPENCODE_CACHE_KEY
+    : null;
+
+  if (!cacheKey) return EMPTY_CAPABILITIES;
+
+  const metadata = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(cacheKey);
+  const meta = metadata?.[modelId];
+  return meta ? resolveFromProviderMetadata(meta) : EMPTY_CAPABILITIES;
+}
+
+/** Shorthand for checking OpenRouter reasoning support (used by orchestrator). */
+export function openRouterModelSupportsReasoning(modelId: string): boolean {
+  return getModelCapabilities('openrouter', modelId).reasoning;
+}
+
+/** Build a short capability label string for display in model pickers. */
+export function formatModelCapabilityHints(caps: ResolvedModelCapabilities): string {
+  const hints: string[] = [];
+  if (caps.reasoning) hints.push('reasoning');
+  if (caps.vision) hints.push('vision');
+  if (caps.imageGen) hints.push('image gen');
+  if (caps.toolCall) hints.push('tools');
+  return hints.join(' · ');
 }
 
 function writeCachedModelsDevOpenRouterMetadata(models: Record<string, ModelsDevOpenRouterMetadata>): void {
@@ -341,100 +471,12 @@ export function parseOpenRouterCatalog(payload: unknown): OpenRouterCatalogModel
   return models;
 }
 
-function isOpenRouterChatModel(
-  model: OpenRouterCatalogModel,
-  metadata?: ModelsDevOpenRouterMetadata,
-): boolean {
-  const outputModalities = new Set([
-    ...model.outputModalities,
-    ...(metadata?.outputModalities ?? []),
-  ]);
-  if (!outputModalities.has('text')) return false;
-
-  if (model.id.includes('gpt-image') || outputModalities.has('image')) {
-    return false;
-  }
-
-  return true;
-}
-
-function scoreOpenRouterModel(
-  model: OpenRouterCatalogModel,
-  metadata?: ModelsDevOpenRouterMetadata,
-): number {
-  const supportedParameters = new Set(model.supportedParameters);
-  const inputModalities = new Set([
-    ...model.inputModalities,
-    ...(metadata?.inputModalities ?? []),
-  ]);
-  const id = model.id.toLowerCase();
-  let score = 0;
-
-  const priorityIndex = OPENROUTER_PRIORITY_MODELS.indexOf(model.id as typeof OPENROUTER_PRIORITY_MODELS[number]);
-  if (priorityIndex >= 0) {
-    score += 10_000 - priorityIndex * 100;
-  }
-
-  if (supportedParameters.has('tools')) score += 120;
-  if (supportedParameters.has('structured_outputs')) score += 60;
-  if (supportedParameters.has('reasoning') || supportedParameters.has('include_reasoning')) score += 35;
-  if (inputModalities.has('image')) score += 20;
-  if (metadata?.toolCall) score += 40;
-  if (metadata?.structuredOutput) score += 25;
-  if (metadata?.reasoning) score += 20;
-  if (metadata?.openWeights) score += 5;
-
-  const contextLength = Math.max(model.contextLength, metadata?.contextLimit ?? 0);
-  if (contextLength >= 1_000_000) score += 25;
-  else if (contextLength >= 200_000) score += 15;
-  else if (contextLength >= 128_000) score += 8;
-
-  if (model.isModerated) score += 2;
-
-  if (id.includes(':free')) score -= 18;
-  if (/(mini|nano|flash-lite|haiku)/.test(id)) score -= 6;
-  if (/(preview|exp|beta)/.test(id)) score -= 2;
-
-  if (id.includes('claude')) score += 22;
-  if (id.includes('opus')) score += 8;
-  if (id.includes('sonnet')) score += 6;
-  if (id.includes('gpt-5')) score += 20;
-  if (id.includes('codex')) score += 10;
-  if (id.includes('gemini')) score += 16;
-  if (id.includes('mistral')) score += 10;
-  if (id.includes('devstral')) score += 8;
-  if (id.includes('qwen')) score += 8;
-  if (id.includes('deepseek')) score += 8;
-  if (id.includes('kimi')) score += 8;
-  if (id.includes('grok')) score += 8;
-  if (id.includes('command-r')) score += 6;
-  if (id.includes('sonar')) score += 5;
-
-  return score;
-}
-
 export function buildCuratedOpenRouterModelList(
   models: OpenRouterCatalogModel[],
-  metadataById: Record<string, ModelsDevOpenRouterMetadata>,
 ): string[] {
-  const candidates = models.filter((model) => isOpenRouterChatModel(model, metadataById[model.id]));
-  if (candidates.length === 0) return [];
-
-  const priority = new Set(OPENROUTER_PRIORITY_MODELS);
-  const preferred = OPENROUTER_PRIORITY_MODELS.filter((id) => candidates.some((model) => model.id === id));
-
-  const ranked = candidates
-    .filter((model) => !priority.has(model.id as typeof OPENROUTER_PRIORITY_MODELS[number]))
-    .sort((a, b) => {
-      const scoreDelta = scoreOpenRouterModel(b, metadataById[b.id]) - scoreOpenRouterModel(a, metadataById[a.id]);
-      if (scoreDelta !== 0) return scoreDelta;
-      const contextDelta = b.contextLength - a.contextLength;
-      if (contextDelta !== 0) return contextDelta;
-      return a.id.localeCompare(b.id);
-    })
-    .map((model) => model.id);
-
-  return [...preferred, ...ranked].slice(0, OPENROUTER_MAX_CURATED_MODELS);
+  // Return only the handpicked curated list, validated against the live catalog
+  const liveIds = new Set(models.map((m) => m.id));
+  return OPENROUTER_PRIORITY_MODELS.filter((id) => liveIds.has(id));
 }
 
 function isProviderTextChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
@@ -451,39 +493,6 @@ function isNvidiaChatModel(id: string, metadata?: ModelsDevProviderMetadata): bo
   return isProviderTextChatModel(id, metadata);
 }
 
-function scoreNvidiaModel(id: string, metadata?: ModelsDevProviderMetadata): number {
-  const normalized = id.toLowerCase();
-  let score = 0;
-
-  const priorityIndex = NVIDIA_PRIORITY_MODELS.indexOf(id as typeof NVIDIA_PRIORITY_MODELS[number]);
-  if (priorityIndex >= 0) {
-    score += 10_000 - priorityIndex * 100;
-  }
-
-  if (metadata?.toolCall) score += 70;
-  if (metadata?.structuredOutput) score += 35;
-  if (metadata?.reasoning) score += 20;
-  if (metadata?.attachment) score += 15;
-  if (metadata?.openWeights) score += 5;
-
-  const contextLimit = metadata?.contextLimit ?? 0;
-  if (contextLimit >= 1_000_000) score += 25;
-  else if (contextLimit >= 200_000) score += 12;
-  else if (contextLimit >= 128_000) score += 6;
-
-  if (normalized.includes('nemotron')) score += 16;
-  if (normalized.includes('llama')) score += 12;
-  if (normalized.includes('deepseek')) score += 12;
-  if (normalized.includes('qwen')) score += 10;
-  if (normalized.includes('coder')) score += 8;
-  if (normalized.includes('mistral')) score += 8;
-  if (normalized.includes('instruct')) score += 4;
-  if (normalized.includes('nano')) score -= 12;
-  if (normalized.includes('vision') || normalized.includes('-vl')) score += 4;
-
-  return score;
-}
-
 export function buildCuratedNvidiaModelList(
   modelIds: string[],
   metadataById: Record<string, ModelsDevProviderMetadata>,
@@ -493,56 +502,16 @@ export function buildCuratedNvidiaModelList(
 
   const priority = new Set(NVIDIA_PRIORITY_MODELS);
   const preferred = NVIDIA_PRIORITY_MODELS.filter((id) => candidates.includes(id));
-  const ranked = candidates
+  const rest = candidates
     .filter((id) => !priority.has(id as typeof NVIDIA_PRIORITY_MODELS[number]))
-    .sort((a, b) => {
-      const scoreDelta = scoreNvidiaModel(b, metadataById[b]) - scoreNvidiaModel(a, metadataById[a]);
-      if (scoreDelta !== 0) return scoreDelta;
-      const contextDelta = (metadataById[b]?.contextLimit ?? 0) - (metadataById[a]?.contextLimit ?? 0);
-      if (contextDelta !== 0) return contextDelta;
-      return a.localeCompare(b);
-    });
+    .sort((a, b) => a.localeCompare(b));
 
-  return [...preferred, ...ranked].slice(0, NVIDIA_MAX_CURATED_MODELS);
+  return [...preferred, ...rest].slice(0, NVIDIA_MAX_CURATED_MODELS);
 }
 
 function isOllamaChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
   if (!isProviderTextChatModel(id, metadata)) return false;
   return true;
-}
-
-function scoreOllamaModel(id: string, metadata?: ModelsDevProviderMetadata): number {
-  const normalized = id.toLowerCase();
-  let score = 0;
-
-  const priorityIndex = OLLAMA_PRIORITY_MODELS.indexOf(id as typeof OLLAMA_PRIORITY_MODELS[number]);
-  if (priorityIndex >= 0) {
-    score += 10_000 - priorityIndex * 100;
-  }
-
-  if (metadata?.toolCall) score += 60;
-  if (metadata?.reasoning) score += 20;
-  if (metadata?.attachment) score += 18;
-  if (metadata?.openWeights) score += 5;
-
-  const contextLimit = metadata?.contextLimit ?? 0;
-  if (contextLimit >= 1_000_000) score += 25;
-  else if (contextLimit >= 200_000) score += 12;
-  else if (contextLimit >= 128_000) score += 6;
-
-  if (normalized.includes('gemini')) score += 16;
-  if (normalized.includes('glm')) score += 14;
-  if (normalized.includes('kimi')) score += 12;
-  if (normalized.includes('deepseek')) score += 10;
-  if (normalized.includes('devstral')) score += 10;
-  if (normalized.includes('qwen')) score += 10;
-  if (normalized.includes('coder')) score += 8;
-  if (normalized.includes('nemotron')) score += 8;
-  if (normalized.includes('gemma')) score += 6;
-  if (normalized.includes('vl')) score += 4;
-  if (normalized.includes('nano') || normalized.includes(':3b') || normalized.includes(':4b')) score -= 10;
-
-  return score;
 }
 
 export function buildCuratedOllamaModelList(
@@ -554,59 +523,16 @@ export function buildCuratedOllamaModelList(
 
   const priority = new Set(OLLAMA_PRIORITY_MODELS);
   const preferred = OLLAMA_PRIORITY_MODELS.filter((id) => candidates.includes(id));
-  const ranked = candidates
+  const rest = candidates
     .filter((id) => !priority.has(id as typeof OLLAMA_PRIORITY_MODELS[number]))
-    .sort((a, b) => {
-      const scoreDelta = scoreOllamaModel(b, metadataById[b]) - scoreOllamaModel(a, metadataById[a]);
-      if (scoreDelta !== 0) return scoreDelta;
-      const contextDelta = (metadataById[b]?.contextLimit ?? 0) - (metadataById[a]?.contextLimit ?? 0);
-      if (contextDelta !== 0) return contextDelta;
-      return a.localeCompare(b);
-    });
+    .sort((a, b) => a.localeCompare(b));
 
-  return [...preferred, ...ranked].slice(0, OLLAMA_MAX_CURATED_MODELS);
+  return [...preferred, ...rest].slice(0, OLLAMA_MAX_CURATED_MODELS);
 }
 
 function isOpencodeChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
   if (!isProviderTextChatModel(id, metadata)) return false;
   return true;
-}
-
-function scoreOpencodeModel(id: string, metadata?: ModelsDevProviderMetadata): number {
-  const normalized = id.toLowerCase();
-  let score = 0;
-
-  const priorityIndex = OPENCODE_PRIORITY_MODELS.indexOf(id as typeof OPENCODE_PRIORITY_MODELS[number]);
-  if (priorityIndex >= 0) {
-    score += 10_000 - priorityIndex * 100;
-  }
-
-  if (metadata?.toolCall) score += 70;
-  if (metadata?.structuredOutput) score += 35;
-  if (metadata?.reasoning) score += 22;
-  if (metadata?.attachment) score += 15;
-  if (metadata?.openWeights) score += 5;
-
-  const contextLimit = metadata?.contextLimit ?? 0;
-  if (contextLimit >= 1_000_000) score += 25;
-  else if (contextLimit >= 200_000) score += 12;
-  else if (contextLimit >= 128_000) score += 6;
-
-  if (normalized.includes('claude')) score += 20;
-  if (normalized.includes('opus')) score += 6;
-  if (normalized.includes('sonnet')) score += 5;
-  if (normalized.includes('gpt-5.4')) score += 16;
-  if (normalized.includes('gpt-5.3')) score += 14;
-  if (normalized.includes('codex')) score += 12;
-  if (normalized.includes('gemini')) score += 12;
-  if (normalized.includes('glm')) score += 10;
-  if (normalized.includes('kimi')) score += 10;
-  if (normalized.includes('qwen')) score += 8;
-  if (normalized.includes('coder')) score += 7;
-  if (normalized.includes(':free') || normalized.endsWith('-free')) score -= 10;
-  if (normalized.includes('nano') || normalized.includes('haiku')) score -= 6;
-
-  return score;
 }
 
 export function buildCuratedOpencodeModelList(
@@ -618,17 +544,11 @@ export function buildCuratedOpencodeModelList(
 
   const priority = new Set(OPENCODE_PRIORITY_MODELS);
   const preferred = OPENCODE_PRIORITY_MODELS.filter((id) => candidates.includes(id));
-  const ranked = candidates
+  const rest = candidates
     .filter((id) => !priority.has(id as typeof OPENCODE_PRIORITY_MODELS[number]))
-    .sort((a, b) => {
-      const scoreDelta = scoreOpencodeModel(b, metadataById[b]) - scoreOpencodeModel(a, metadataById[a]);
-      if (scoreDelta !== 0) return scoreDelta;
-      const contextDelta = (metadataById[b]?.contextLimit ?? 0) - (metadataById[a]?.contextLimit ?? 0);
-      if (contextDelta !== 0) return contextDelta;
-      return a.localeCompare(b);
-    });
+    .sort((a, b) => a.localeCompare(b));
 
-  return [...preferred, ...ranked].slice(0, OPENCODE_MAX_CURATED_MODELS);
+  return [...preferred, ...rest].slice(0, OPENCODE_MAX_CURATED_MODELS);
 }
 
 function normalizeModelList(payload: unknown): string[] {
@@ -729,14 +649,14 @@ export async function fetchOpenRouterModels(): Promise<string[]> {
   const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
 
   try {
-    const [catalogRes, modelsDevMetadata] = await Promise.all([
+    const [catalogRes] = await Promise.all([
       fetch(PROVIDER_URLS.openrouter.models, {
         method: 'GET',
         headers,
         signal: controller.signal,
         cache: 'no-store',
       }),
-      fetchModelsDevOpenRouterMetadata(),
+      fetchModelsDevOpenRouterMetadata(), // side-effect: populates localStorage cache for capability lookups
     ]);
 
     if (!catalogRes.ok) {
@@ -746,7 +666,7 @@ export async function fetchOpenRouterModels(): Promise<string[]> {
 
     const payload = (await catalogRes.json()) as unknown;
     const liveModels = parseOpenRouterCatalog(payload);
-    const curated = buildCuratedOpenRouterModelList(liveModels, modelsDevMetadata);
+    const curated = buildCuratedOpenRouterModelList(liveModels);
     if (curated.length > 0) return curated;
     return normalizeModelList(payload);
   } catch (err) {

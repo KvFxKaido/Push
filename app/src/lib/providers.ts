@@ -31,8 +31,8 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
 // Valid Ollama model names — these must exist on the Ollama server
 export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 
-// OpenRouter default model — Claude Sonnet 4.6 Nitro
-export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
+// OpenRouter default model
+export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 // OpenCode Zen (OpenAI-compatible) default model
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
 // Nvidia NIM (OpenAI-compatible) default model
@@ -44,68 +44,36 @@ export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0'
 export const VERTEX_DEFAULT_MODEL = SHARED_VERTEX_DEFAULT_MODEL;
 
 export const OPENROUTER_MODELS: string[] = [
-  // Claude 4 series
-  'anthropic/claude-sonnet-4.6:nitro',
-  'anthropic/claude-opus-4.6:nitro',
-  'anthropic/claude-haiku-4.5:nitro',
-  'anthropic/claude-3.5-haiku:nitro',
-  'anthropic/claude-3-haiku:nitro',
-  // OpenAI GPT-5.4
+  'anthropic/claude-sonnet-4.6',
+  'anthropic/claude-opus-4.6',
+  'anthropic/claude-haiku-4.5',
   'openai/gpt-5.4-pro',
   'openai/gpt-5.4',
-  'openai/gpt-5-mini:nitro',
-  // OpenAI Codex
-  'openai/gpt-5.1-codex-mini:nitro',
-  'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
-  // Free model picks
-  'stepfun/step-3.5-flash:free',
-  'stepfun/step-3.5-flash:nitro',
-  // Cohere
-  'cohere/command-r-plus-08-2024',
-  'cohere/command-r-08-2024',
-  // Google Gemini
-  'google/gemini-3.1-pro-preview:nitro',
-  'google/gemini-3.1-flash-lite-preview:nitro',
-  'google/gemini-3-flash-preview:nitro',
-  'google/gemini-2.5-flash-lite:nitro',
-  'google/gemini-2.5-flash:nitro',
-  // Mistral
-  'mistralai/mistral-large-2512',
+  'openai/gpt-5.2-codex',
+  'openai/gpt-5-mini',
+  'google/gemini-3.1-pro-preview',
+  'google/gemini-3-flash-preview',
+  'google/gemini-2.5-pro',
+  'google/gemini-2.5-flash',
   'mistralai/devstral-2512',
-  'mistralai/mistral-medium-3.1',
-  // MiniMax
-  'minimax/minimax-m2.5:nitro',
-  'minimax/minimax-m2.1:nitro',
-  // Qwen
-  'qwen/qwen3.5-397b-a17b:nitro',
-  'qwen/qwen3.5-flash-02-23',
-  // Z.AI (GLM)
-  'z-ai/glm-5:nitro',
-  'z-ai/glm-4.6:nitro',
-  'z-ai/glm-4.7:nitro',
-  'z-ai/glm-4.7-flash:nitro',
-  'z-ai/glm-4.5-air:free',
-  // DeepSeek
-  'deepseek/deepseek-v3.2-exp:nitro',
-  'deepseek/deepseek-v3.2:nitro',
-  // Perplexity
-  'perplexity/sonar-reasoning-pro',
-  'perplexity/sonar-pro',
-  'perplexity/sonar',
-  // Arcee Trinity
-  'arcee-ai/trinity-large-preview:nitro',
-  'arcee-ai/trinity-large-preview:free',
-  // Inception (Mercury diffusion LLMs)
-  'inception/mercury-2',
-  'inception/mercury-coder',
-  'inception/mercury',
-  // Others
-  'xiaomi/mimo-v2-flash:nitro',
+  'mistralai/codestral-2508',
+  'mistralai/mistral-large-2512',
+  'qwen/qwen3.5-397b-a17b',
+  'qwen/qwen3-coder',
+  'deepseek/deepseek-v3.2',
+  'deepseek/deepseek-r1',
   'x-ai/grok-4.20-beta',
-  'x-ai/grok-4.20-multi-agent-beta',
   'x-ai/grok-4.1-fast',
-  'moonshotai/kimi-k2.5:nitro',
+  'moonshotai/kimi-k2.5',
+  'cohere/command-a',
+  'perplexity/sonar-pro',
+  'z-ai/glm-5',
+  'z-ai/glm-4.7',
+  'minimax/minimax-m2.5',
+  'meta-llama/llama-4-maverick',
+  'stepfun/step-3.5-flash',
+  'arcee-ai/virtuoso-large',
 ];
 
 export const ZEN_MODELS: string[] = [

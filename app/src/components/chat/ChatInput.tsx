@@ -8,6 +8,14 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { processFile, getTotalAttachmentSize } from '@/lib/file-processing';
 import type { StagedAttachment } from '@/lib/file-processing';
 import { getVisionCapabilityNotice } from '@/lib/model-capabilities';
+import {
+  getModelCapabilities,
+  formatModelCapabilityHints,
+  getReasoningEffort,
+  cycleReasoningEffort,
+  REASONING_EFFORT_LABELS,
+  type ReasoningEffort,
+} from '@/lib/model-catalog';
 import type { AIProviderType, AttachmentData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
@@ -365,6 +373,24 @@ export function ChatInput({
     if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
   };
 
+  // Reasoning effort (per-provider, only for models that support it)
+  const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
+  const [reasoningEffort, setReasoningEffortState] = useState<ReasoningEffort>(() => getReasoningEffort(selectedProvider));
+
+  // Sync reasoning effort when provider changes
+  useEffect(() => {
+    setReasoningEffortState(getReasoningEffort(selectedProvider));
+  }, [selectedProvider]);
+
+  const handleCycleReasoning = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation(); // Don't open the popover
+    const next = cycleReasoningEffort(selectedProvider);
+    setReasoningEffortState(next);
+  }, [selectedProvider]);
+
+  // Display model name: strip provider prefix for OpenRouter, use as-is for others
+  const displayModelName = selectedModel.replace(/^[^/]+\//, '');
+
   const readyImageAttachments = readyAttachments.filter((attachment) => attachment.type === 'image');
   const visionNotice = getVisionCapabilityNotice(selectedProvider, selectedModel);
   const hasUnsupportedImageAttachments =
@@ -554,8 +580,18 @@ export function ChatInput({
                   >
                     <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
                     <ProviderIcon provider={selectedProvider} size={14} className="relative z-10 shrink-0" />
+                    {modelCaps.reasoning && (
+                      <button
+                        type="button"
+                        onClick={handleCycleReasoning}
+                        className="relative z-10 shrink-0 rounded border border-push-edge bg-push-surface/60 px-1 py-px text-push-2xs font-medium text-push-fg-dim hover:text-push-fg-secondary active:scale-95 transition-all"
+                        title={`Reasoning: ${reasoningEffort} (tap to change)`}
+                      >
+                        {REASONING_EFFORT_LABELS[reasoningEffort]}
+                      </button>
+                    )}
                     <span className="relative z-10 truncate">
-                      {PROVIDER_LABELS[selectedProvider]} · {selectedModel}
+                      {displayModelName}
                     </span>
                     {isDisplayedProviderLocked ? (
                       <Lock className="relative z-10 h-3 w-3 shrink-0" />
@@ -632,11 +668,14 @@ export function ChatInput({
                             {(providerControls.ollamaModelOptions.length > 0
                               ? providerControls.ollamaModelOptions
                               : [providerControls.ollamaModel]
-                            ).map((model) => (
-                              <option key={model || '__default'} value={model}>
-                                {model || '(default)'}
-                              </option>
-                            ))}
+                            ).map((model) => {
+                              const hints = model ? formatModelCapabilityHints(getModelCapabilities('ollama', model)) : '';
+                              return (
+                                <option key={model || '__default'} value={model}>
+                                  {model ? (hints ? `${model}  ·  ${hints}` : model) : '(default)'}
+                                </option>
+                              );
+                            })}
                           </select>
                           {providerControls.ollamaModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">Loading Ollama models...</p>
@@ -664,11 +703,15 @@ export function ChatInput({
                             onChange={(e) => providerControls.onSelectOpenRouterModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
-                            {providerControls.openRouterModelOptions.map((model) => (
-                              <option key={model} value={model}>
-                                {model.replace(/^[^/]+\//, '')}
-                              </option>
-                            ))}
+                            {providerControls.openRouterModelOptions.map((model) => {
+                              const hints = formatModelCapabilityHints(getModelCapabilities('openrouter', model));
+                              const label = model.replace(/^[^/]+\//, '');
+                              return (
+                                <option key={model} value={model}>
+                                  {hints ? `${label}  ·  ${hints}` : label}
+                                </option>
+                              );
+                            })}
                           </select>
                           {providerControls.isOpenRouterModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
@@ -687,11 +730,14 @@ export function ChatInput({
                             {(providerControls.zenModelOptions.length > 0
                               ? providerControls.zenModelOptions
                               : [providerControls.zenModel]
-                            ).map((model) => (
-                              <option key={model || '__default'} value={model}>
-                                {model || '(default)'}
-                              </option>
-                            ))}
+                            ).map((model) => {
+                              const hints = model ? formatModelCapabilityHints(getModelCapabilities('zen', model)) : '';
+                              return (
+                                <option key={model || '__default'} value={model}>
+                                  {model ? (hints ? `${model}  ·  ${hints}` : model) : '(default)'}
+                                </option>
+                              );
+                            })}
                           </select>
                           {providerControls.zenModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">Loading OpenCode Zen models...</p>
@@ -722,11 +768,14 @@ export function ChatInput({
                             {(providerControls.nvidiaModelOptions.length > 0
                               ? providerControls.nvidiaModelOptions
                               : [providerControls.nvidiaModel]
-                            ).map((model) => (
-                              <option key={model || '__default'} value={model}>
-                                {model || '(default)'}
-                              </option>
-                            ))}
+                            ).map((model) => {
+                              const hints = model ? formatModelCapabilityHints(getModelCapabilities('nvidia', model)) : '';
+                              return (
+                                <option key={model || '__default'} value={model}>
+                                  {model ? (hints ? `${model}  ·  ${hints}` : model) : '(default)'}
+                                </option>
+                              );
+                            })}
                           </select>
                           {providerControls.nvidiaModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">Loading Nvidia NIM models...</p>

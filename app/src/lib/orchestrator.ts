@@ -5,6 +5,7 @@ import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-t
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
 import { recordContextMetric } from './context-metrics';
 import type { SummarizationCause } from './context-metrics';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
@@ -1414,17 +1415,27 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
   },
   openrouter: {
     getKey: getOpenRouterKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'OpenRouter',
-      apiUrl: PROVIDER_URLS.openrouter.chat,
-      apiKey,
-      model: modelOverride || getOpenRouterModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('OpenRouter'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'openrouter',
-    }),
+    buildConfig: (apiKey, modelOverride) => {
+      const model = modelOverride || getOpenRouterModelName();
+      const supportsReasoning = openRouterModelSupportsReasoning(model);
+      const effort = getReasoningEffort('openrouter');
+      const useReasoning = supportsReasoning && effort !== 'off';
+      return {
+        name: 'OpenRouter',
+        apiUrl: PROVIDER_URLS.openrouter.chat,
+        apiKey,
+        model,
+        ...STANDARD_TIMEOUTS,
+        errorMessages: buildErrorMessages('OpenRouter'),
+        parseError: (p, f) => parseProviderError(p, f, true),
+        checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+        providerType: 'openrouter',
+        shouldResetStallOnReasoning: useReasoning,
+        bodyTransform: useReasoning
+          ? (body) => ({ ...body, reasoning: { effort } })
+          : undefined,
+      };
+    },
   },
   zen: {
     getKey: getZenKey,
