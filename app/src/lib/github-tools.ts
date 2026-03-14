@@ -9,6 +9,12 @@
 import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIOverallStatus, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData, ReviewResult } from '@/types';
 import { asRecord, detectToolFromText } from './utils';
 import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
+import {
+  filterSensitiveDirectoryEntries,
+  formatSensitivePathToolError,
+  isSensitivePath,
+  redactSensitiveText,
+} from './sensitive-data-guard';
 
 // --- Tool types ---
 
@@ -618,6 +624,9 @@ async function executeListCommits(repo: string, count: number = 10): Promise<Too
 }
 
 async function executeReadFile(repo: string, path: string, branch?: string, startLine?: number, endLine?: number): Promise<ToolExecutionResult> {
+  if (isSensitivePath(path)) {
+    return { text: formatSensitivePathToolError(path) };
+  }
   const headers = getGitHubHeaders();
   const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
 
@@ -683,15 +692,18 @@ async function executeReadFile(repo: string, path: string, branch?: string, star
       };
     }
 
+    const safeRange = redactSensitiveText(sliced.join('\n'));
+    const safeRangeLines = safeRange.text.split('\n');
+
     // Add cat -n style line numbers
     const maxLineNum = rangeStart + sliced.length - 1;
     const padWidth = String(maxLineNum).length;
-    const numberedContent = sliced
+    const numberedContent = safeRangeLines
       .map((line, idx) => `${String(rangeStart + idx).padStart(padWidth)}\t${line}`)
       .join('\n');
 
     const rangeDisplayLines = numberedContent.split('\n');
-    const truncatedRange = truncateDisplayLines(sliced, rangeDisplayLines, rangeStart, READ_FILE_RANGE_CHAR_LIMIT);
+    const truncatedRange = truncateDisplayLines(safeRangeLines, rangeDisplayLines, rangeStart, READ_FILE_RANGE_CHAR_LIMIT);
     const truncated = truncatedRange.truncated;
     let displayContent = truncatedRange.displayLines.join('\n');
     if (truncated) {
@@ -706,6 +718,7 @@ async function executeReadFile(repo: string, path: string, branch?: string, star
       `[Tool Result — read_file]`,
       `Lines ${rangeStart}-${Math.min(rangeEnd, totalLines)} of ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''} (${totalLines} lines total)`,
       `Language: ${language}`,
+      safeRange.redacted ? `Redactions: secret-like values hidden.` : '',
       truncated ? `(truncated)\n` : '',
       ...truncationLines,
       displayContent,
@@ -715,14 +728,15 @@ async function executeReadFile(repo: string, path: string, branch?: string, star
       text: lines.join('\n'),
       card: {
         type: 'editor',
-        data: { path, content: truncated ? displayContent : sliced.join('\n'), language, truncated, source: 'github' as const, repo },
+        data: { path, content: truncated ? displayContent : safeRangeLines.join('\n'), language, truncated, source: 'github' as const, repo },
       },
     };
   }
 
   // Full-file read (original behavior)
-  let content = fullContent;
-  const fullSourceLines = fullContent.split('\n');
+  const safeFull = redactSensitiveText(fullContent);
+  let content = safeFull.text;
+  const fullSourceLines = safeFull.text.split('\n');
   const truncatedFull = truncateDisplayLines(fullSourceLines, fullSourceLines, 1, READ_FILE_FULL_CHAR_LIMIT);
   const truncated = truncatedFull.truncated;
   if (truncated) {
@@ -740,6 +754,7 @@ async function executeReadFile(repo: string, path: string, branch?: string, star
     `[Tool Result — read_file]`,
     `File: ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''}`,
     `Size: ${data.size} bytes | Language: ${language}`,
+    safeFull.redacted ? `Redactions: secret-like values hidden.` : '',
     truncated ? `(truncated to 15K chars)\n` : '',
     ...fullTruncationLines,
     `\`\`\`${language}`,
@@ -754,6 +769,9 @@ async function executeReadFile(repo: string, path: string, branch?: string, star
 }
 
 async function executeGrepFile(repo: string, path: string, pattern: string, branch?: string): Promise<ToolExecutionResult> {
+  if (isSensitivePath(path)) {
+    return { text: formatSensitivePathToolError(path) };
+  }
   const headers = getGitHubHeaders();
   const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
 
@@ -779,7 +797,8 @@ async function executeGrepFile(repo: string, path: string, pattern: string, bran
   }
 
   const fullContent = atob(data.content.replace(/\n/g, ''));
-  const allLines = fullContent.split('\n');
+  const safeContent = redactSensitiveText(fullContent);
+  const allLines = safeContent.text.split('\n');
 
   // Try as regex first, fall back to case-insensitive substring
   let matcher: (line: string) => boolean;
@@ -842,6 +861,7 @@ async function executeGrepFile(repo: string, path: string, pattern: string, bran
   const lines: string[] = [
     `[Tool Result — grep_file]`,
     `${matchLineNums.size} match${matchLineNums.size !== 1 ? 'es' : ''} for "${pattern}" in ${path}${branch ? ` (branch: ${branch})` : ''} (${allLines.length} lines total)`,
+    safeContent.redacted ? `Redactions: secret-like values hidden.` : '',
     '',
     ...outputLines,
   ];
@@ -866,6 +886,9 @@ async function executeGrepFile(repo: string, path: string, pattern: string, bran
 }
 
 async function executeListDirectory(repo: string, path: string = '', branch?: string): Promise<ToolExecutionResult> {
+  if (path && isSensitivePath(path)) {
+    return { text: formatSensitivePathToolError(path) };
+  }
   const headers = getGitHubHeaders();
   const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
   const apiPath = path ? encodeURIComponent(path) : '';
@@ -888,13 +911,21 @@ async function executeListDirectory(repo: string, path: string = '', branch?: st
 
   type ContentEntryApi = { name?: string; type?: string; size?: number };
   const entries = data as ContentEntryApi[];
-  const dirs = entries.filter((e) => e.type === 'dir');
-  const files = entries.filter((e) => e.type !== 'dir');
+  const normalizedEntries = entries.map((entry) => ({
+    name: entry.name || '',
+    type: entry.type,
+    size: entry.size,
+    path: `${path ? path.replace(/\/$/, '') : ''}/${entry.name || ''}`.replace(/^\/+/, '/'),
+  }));
+  const filtered = filterSensitiveDirectoryEntries(path || '/', normalizedEntries);
+  const dirs = filtered.entries.filter((e) => e.type === 'dir');
+  const files = filtered.entries.filter((e) => e.type !== 'dir');
 
   const lines: string[] = [
     `[Tool Result — list_directory]`,
     `Directory: ${path || '/'} on ${repo}${branch ? ` (branch: ${branch})` : ''}`,
     `${dirs.length} directories, ${files.length} files\n`,
+    filtered.hiddenCount > 0 ? `(${filtered.hiddenCount} sensitive entr${filtered.hiddenCount === 1 ? 'y' : 'ies'} hidden)\n` : '',
   ];
 
   for (const d of dirs) {
@@ -1041,6 +1072,9 @@ async function executeFetchChecks(repo: string, ref?: string): Promise<ToolExecu
 }
 
 async function executeSearchFiles(repo: string, query: string, path?: string, branch?: string): Promise<ToolExecutionResult> {
+  if (path && isSensitivePath(path)) {
+    return { text: formatSensitivePathToolError(path) };
+  }
   const headers = getGitHubHeaders();
 
   // Use GitHub's code search API
@@ -1150,22 +1184,30 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
   // Parse search results — GitHub returns file info with text_matches fragments
   const matches: FileSearchMatch[] = [];
   const truncated = totalCount > 25;
+  let hiddenResults = 0;
+  let redactedResults = false;
 
   // Track per-file context fragments for richer output
   const fileContexts = new Map<string, string[]>();
 
   for (const item of data.items || []) {
+    if (typeof item.path === 'string' && isSensitivePath(item.path)) {
+      hiddenResults += 1;
+      continue;
+    }
     // Each item has: name, path, sha, html_url, and text_matches (if available)
     const textMatches = item.text_matches || [];
     if (textMatches.length > 0) {
       const fragments: string[] = [];
       for (const tm of textMatches) {
         // text_matches have fragment (surrounding text) and matches (character offsets)
-        const fragment = tm.fragment || '';
-        const fragLines = fragment.split('\n');
+        const fragment = typeof tm.fragment === 'string' ? tm.fragment : '';
+        const safeFragment = redactSensitiveText(fragment);
+        redactedResults ||= safeFragment.redacted;
+        const fragLines = safeFragment.text.split('\n');
         // Keep the full fragment as context
-        if (fragment.trim()) {
-          fragments.push(fragment.trim());
+        if (safeFragment.text.trim()) {
+          fragments.push(safeFragment.text.trim());
         }
         for (let i = 0; i < fragLines.length && matches.length < 80; i++) {
           if (fragLines[i].toLowerCase().includes(query.toLowerCase())) {
@@ -1194,6 +1236,8 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
     `[Tool Result — search_files]`,
     `Found ${totalCount} file${totalCount !== 1 ? 's' : ''} matching "${query}"${path ? ` in ${path}` : ''}`,
     truncated ? `(showing first 25 results)\n` : '\n',
+    hiddenResults > 0 ? `(${hiddenResults} sensitive result${hiddenResults === 1 ? '' : 's'} hidden)\n` : '',
+    redactedResults ? `Redactions: secret-like values hidden.\n` : '',
   ];
 
   // Group by file
@@ -1229,6 +1273,15 @@ async function executeSearchFiles(repo: string, query: string, path?: string, br
     if (fileMatches.length > 5) {
       lines.push(`    ...and ${fileMatches.length - 5} more matches`);
     }
+  }
+
+  if (byFile.size === 0 && hiddenResults > 0) {
+    return {
+      text: [
+        `[Tool Result — search_files]`,
+        `Matches for "${query}" were found only in protected secret files and were hidden.`,
+      ].join('\n'),
+    };
   }
 
   // Add hint for deeper investigation

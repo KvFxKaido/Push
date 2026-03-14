@@ -12,6 +12,7 @@ import {
   setWorkspaceRevisionByKey,
   setSandboxWorkspaceRevision,
 } from './sandbox-file-version-cache';
+import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 
 // --- Types ---
 
@@ -603,11 +604,15 @@ async function sandboxFetch<T>(
   return withRetry(async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const requestId = createRequestId('sandbox');
 
     try {
       const res = await fetch(`${SANDBOX_BASE}/${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          [REQUEST_ID_HEADER]: requestId,
+        },
         body: JSON.stringify(body),
         signal: controller.signal,
       });

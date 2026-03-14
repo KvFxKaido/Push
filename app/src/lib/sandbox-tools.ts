@@ -41,6 +41,12 @@ import { parseDiffStats } from './diff-utils';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger, extractSignatures, extractSignaturesWithLines, type SymbolRead, type SymbolKind } from './file-awareness-ledger';
 import { applyHashlineEdits, calculateLineHash, type HashlineOp } from "./hashline";
+import {
+  filterSensitiveDirectoryEntries,
+  formatSensitivePathToolError,
+  isSensitivePath,
+  redactSensitiveText,
+} from './sensitive-data-guard';
 import { getActiveGitHubToken } from './github-auth';
 import {
   fileVersionKey,
@@ -98,6 +104,12 @@ function formatSandboxDisplayScope(path: string): string {
   if (path === '/workspace') return '/workspace/';
   const formatted = formatSandboxDisplayPath(path);
   return formatted.endsWith('/') ? formatted : `${formatted}/`;
+}
+
+function extractSandboxSearchResultPath(line: string): string | null {
+  const match = line.match(/^(.*?):\d+(?::|$)/);
+  if (!match?.[1]) return null;
+  return normalizeSandboxPath(match[1]);
 }
 
 function prefetchedEditFileKey(sandboxId: string, path: string): string {
@@ -1233,6 +1245,9 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_read_file': {
+        if (isSensitivePath(call.args.path)) {
+          return { text: formatSensitivePathToolError(call.args.path) };
+        }
         const isRangeRead = call.args.start_line !== undefined || call.args.end_line !== undefined;
         const result = await readFromSandbox(sandboxId, call.args.path, call.args.start_line, call.args.end_line) as FileReadResult & { error?: string };
         const cacheKey = fileVersionKey(sandboxId, call.args.path);
@@ -1266,10 +1281,12 @@ export async function executeSandboxToolCall(
         let toolResultContent = '';
         const emptyRangeWarning = '';
         let visibleLineCount = 0;
-        if (result.content) {
-          const contentLines = result.content.split('\n');
+        const safeContentResult = redactSensitiveText(result.content);
+        const safeContent = safeContentResult.text;
+        if (safeContent) {
+          const contentLines = safeContent.split('\n');
           // If content ends with a trailing newline, the last split element is empty — don't number it
-          const hasTrailingNewline = result.content.endsWith('\n') && contentLines.length > 1;
+          const hasTrailingNewline = safeContent.endsWith('\n') && contentLines.length > 1;
           const linesToNumber = hasTrailingNewline ? contentLines.slice(0, -1) : contentLines;
           visibleLineCount = linesToNumber.length;
           const maxLineNum = Math.max(rangeStart, rangeStart + linesToNumber.length - 1);
@@ -1335,6 +1352,7 @@ export async function executeSandboxToolCall(
           fileLabel,
           `Version: ${result.version || 'unknown'}`,
           result.truncated ? `(truncated)` : '',
+          safeContentResult.redacted ? `Redactions: secret-like values hidden.` : '',
           ...truncationLines,
           signatureHint,
           emptyRangeWarning,
@@ -1367,7 +1385,7 @@ export async function executeSandboxToolCall(
             type: 'editor',
             data: {
               path: call.args.path,
-              content: result.content, // Card gets clean content — no line numbers
+              content: safeContent, // Card gets clean content — no line numbers
               language,
               truncated: result.truncated,
               version: typeof result.version === 'string' ? result.version : undefined,
@@ -1385,6 +1403,9 @@ export async function executeSandboxToolCall(
 
         if (!query) {
           return { text: '[Tool Error] sandbox_search requires a non-empty query.' };
+        }
+        if (isSensitivePath(searchPath)) {
+          return { text: formatSensitivePathToolError(searchPath) };
         }
 
         const escapedQuery = shellEscape(query);
@@ -1437,13 +1458,33 @@ export async function executeSandboxToolCall(
           };
         }
 
-        const lines = output
-          .split('\n')
-          .slice(0, 120)
-          .map((line) => line.length > 320 ? `${line.slice(0, 320)}...` : line);
+        const visibleLines: string[] = [];
+        let hiddenMatches = 0;
+        let redactedMatches = false;
+        for (const rawLine of output.split('\n').slice(0, 120)) {
+          const matchPath = extractSandboxSearchResultPath(rawLine);
+          if (matchPath && isSensitivePath(matchPath)) {
+            hiddenMatches += 1;
+            continue;
+          }
+          const safeLine = redactSensitiveText(rawLine);
+          redactedMatches ||= safeLine.redacted;
+          visibleLines.push(safeLine.text.length > 320 ? `${safeLine.text.slice(0, 320)}...` : safeLine.text);
+        }
 
-        const matchCount = lines.length;
-        const truncated = output.split('\n').length > lines.length || result.truncated;
+        if (visibleLines.length === 0 && hiddenMatches > 0) {
+          return {
+            text: [
+              '[Tool Result — sandbox_search]',
+              `Query: ${query}`,
+              `Path: ${searchPath}`,
+              'Matches were found only in protected secret files and were hidden.',
+            ].join('\n'),
+          };
+        }
+
+        const matchCount = visibleLines.length;
+        const truncated = output.split('\n').length > visibleLines.length || result.truncated;
 
         return {
           text: [
@@ -1451,23 +1492,30 @@ export async function executeSandboxToolCall(
             `Query: ${query}`,
             `Path: ${searchPath}`,
             `Matches: ${matchCount}${truncated ? ' (truncated)' : ''}`,
+            hiddenMatches > 0 ? `Hidden matches: ${hiddenMatches} secret-file result${hiddenMatches === 1 ? '' : 's'}` : '',
+            redactedMatches ? 'Redactions: secret-like values hidden.' : '',
             '',
-            ...lines,
+            ...visibleLines,
           ].join('\n'),
         };
       }
 
       case 'sandbox_list_dir': {
         const dirPath = normalizeSandboxPath(call.args.path || '/workspace');
+        if (isSensitivePath(dirPath)) {
+          return { text: formatSensitivePathToolError(dirPath) };
+        }
         const entries = await listDirectory(sandboxId, dirPath);
+        const filtered = filterSensitiveDirectoryEntries(dirPath, entries);
 
-        const dirs = entries.filter((e) => e.type === 'directory');
-        const files = entries.filter((e) => e.type === 'file');
+        const dirs = filtered.entries.filter((e) => e.type === 'directory');
+        const files = filtered.entries.filter((e) => e.type === 'file');
 
         const lines: string[] = [
           `[Tool Result — sandbox_list_dir]`,
           `Directory: ${dirPath}`,
           `${dirs.length} directories, ${files.length} files\n`,
+          filtered.hiddenCount > 0 ? `(${filtered.hiddenCount} sensitive entr${filtered.hiddenCount === 1 ? 'y' : 'ies'} hidden)\n` : '',
         ];
 
         for (const d of dirs) {

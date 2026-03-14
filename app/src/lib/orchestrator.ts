@@ -41,6 +41,7 @@ import { buildExperimentalProxyHeaders, normalizeExperimentalBaseUrl } from './e
 import { extractProviderErrorDetail } from './provider-error-utils';
 import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
 import { buildContextSummaryBlock, compactChatMessage } from './context-compaction';
+import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -1052,7 +1053,8 @@ async function streamSSEChatOnce(
 
   try {
     const requestUrl = apiUrlOverride || apiUrl;
-    console.log(`[Push] POST ${requestUrl} (model: ${model})`);
+    const requestId = createRequestId('chat');
+    console.log(`[Push] POST ${requestUrl} (model: ${model}, request: ${requestId})`);
 
     let requestBody: Record<string, unknown> = {
       model,
@@ -1066,6 +1068,7 @@ async function streamSSEChatOnce(
 
       const requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
+        [REQUEST_ID_HEADER]: requestId,
         ...(extraHeaders ?? {}),
       };
       if (authHeader !== null) {

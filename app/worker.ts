@@ -22,6 +22,12 @@ import {
   normalizeVertexRegion,
   VERTEX_MODEL_OPTIONS,
 } from './src/lib/vertex-provider';
+import {
+  validateAndNormalizeChatRequest,
+  type OpenAIContentPart,
+  type OpenAIChatRequest,
+} from './src/lib/chat-request-guardrails';
+import { REQUEST_ID_HEADER, getOrCreateRequestId } from './src/lib/request-id';
 
 interface Env {
   OLLAMA_API_KEY?: string;
@@ -156,23 +162,44 @@ async function getGoogleAccessToken(serviceAccount: {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
+    const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
+    const requestWithId = withRequestIdOnRequest(request, requestId);
+    const url = new URL(requestWithId.url);
     const exactRoute = matchExactApiRoute(url.pathname, request.method);
     if (exactRoute) {
-      return exactRoute.handler(request, env);
+      return withRequestIdOnResponse(await exactRoute.handler(requestWithId, env), requestId);
     }
 
     // API route: sandbox proxy to Modal
     if (url.pathname.startsWith('/api/sandbox/') && request.method === 'POST') {
       const route = url.pathname.replace('/api/sandbox/', '');
-      return handleSandbox(request, env, url, route);
+      return withRequestIdOnResponse(await handleSandbox(requestWithId, env, url, route), requestId);
     }
 
     // SPA fallback: serve index.html for non-file paths
     // (actual static files like .js/.css are already served by the [assets] layer)
-    return env.ASSETS.fetch(new Request(new URL('/index.html', request.url)));
+    return withRequestIdOnResponse(
+      await env.ASSETS.fetch(new Request(new URL('/index.html', requestWithId.url))),
+      requestId,
+    );
   },
 };
+
+function withRequestIdOnRequest(request: Request, requestId: string): Request {
+  const headers = new Headers(request.headers);
+  headers.set(REQUEST_ID_HEADER, requestId);
+  return new Request(request, { headers });
+}
+
+function withRequestIdOnResponse(response: Response, requestId: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set(REQUEST_ID_HEADER, requestId);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 
 function normalizeOrigin(value: string | null): string | null {
   if (!value || value === 'null') return null;
@@ -286,6 +313,7 @@ type AuthBuilder = (env: Env, request: Request) => Promise<string | null> | (str
 interface PreambleOk {
   authHeader: string;
   bodyText: string;
+  requestId: string;
 }
 
 async function runPreamble(
@@ -298,6 +326,7 @@ async function runPreamble(
     maxBodyBytes?: number;
   },
 ): Promise<Response | PreambleOk> {
+  const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
   const requestUrl = new URL(request.url);
   const originCheck = validateOrigin(request, requestUrl, env);
   if (!originCheck.ok) {
@@ -306,7 +335,11 @@ async function runPreamble(
 
   const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: getClientIp(request) });
   if (!rateLimitOk) {
-    wlog('warn', 'rate_limited', { ip: getClientIp(request), path: new URL(request.url).pathname });
+    wlog('warn', 'rate_limited', {
+      requestId,
+      ip: getClientIp(request),
+      path: new URL(request.url).pathname,
+    });
     return Response.json(
       { error: 'Rate limit exceeded. Try again later.' },
       { status: 429, headers: { 'Retry-After': '60' } },
@@ -330,7 +363,7 @@ async function runPreamble(
     bodyText = bodyResult.text;
   }
 
-  return { authHeader: authHeader ?? '', bodyText };
+  return { authHeader: authHeader ?? '', bodyText, requestId };
 }
 
 function standardAuth(envKey: keyof Env): AuthBuilder {
@@ -354,17 +387,6 @@ function buildVertexPreambleAuth(_env: Env, request: Request): string | null {
     return 'VertexNative';
   }
   return request.headers.get('Authorization');
-}
-
-function parseJsonBody<T>(bodyText: string, errorPrefix: string): { ok: true; parsed: T } | { ok: false; response: Response } {
-  try {
-    return { ok: true, parsed: JSON.parse(bodyText) as T };
-  } catch {
-    return {
-      ok: false,
-      response: Response.json({ error: `${errorPrefix}: invalid JSON body` }, { status: 400 }),
-    };
-  }
 }
 
 interface VertexNativeConfig {
@@ -400,24 +422,6 @@ function getVertexNativeConfig(request: Request): { ok: true; config: VertexNati
       region: region.normalized,
     },
   };
-}
-
-type OpenAIContentPart =
-  | { type: 'text'; text?: string }
-  | { type: 'image_url'; image_url?: { url?: string } };
-
-type OpenAIMessage = {
-  role?: string;
-  content?: string | OpenAIContentPart[];
-};
-
-interface OpenAIChatRequest {
-  model?: string;
-  messages?: OpenAIMessage[];
-  temperature?: number;
-  top_p?: number;
-  max_tokens?: number;
-  stream?: boolean;
 }
 
 function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
@@ -485,7 +489,9 @@ function buildAnthropicVertexRequest(request: OpenAIChatRequest): Record<string,
   const body: Record<string, unknown> = {
     anthropic_version: 'vertex-2023-10-16',
     messages: anthropicMessages,
-    max_tokens: typeof request.max_tokens === 'number' ? request.max_tokens : 8192,
+    max_tokens: typeof request.max_completion_tokens === 'number'
+      ? request.max_completion_tokens
+      : (typeof request.max_tokens === 'number' ? request.max_tokens : 8192),
     stream: Boolean(request.stream),
   };
 
@@ -673,6 +679,7 @@ interface StreamProxyConfig {
   logTag: string;
   upstreamUrl: string | ((request: Request) => string);
   timeoutMs: number;
+  maxOutputTokens: number;
   buildAuth: AuthBuilder;
   keyMissingError: string;
   timeoutError: string;
@@ -691,9 +698,29 @@ function createStreamProxyHandler(
       needsBody: true,
     });
     if (preamble instanceof Response) return preamble;
-    const { authHeader, bodyText } = preamble;
+    const { authHeader, bodyText, requestId } = preamble;
 
-    wlog('info', 'request', { route: config.logTag, bytes: bodyText.length });
+    const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
+      routeLabel: config.name,
+      maxOutputTokens: config.maxOutputTokens,
+    });
+    if (!normalizedRequest.ok) {
+      return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+    }
+    if (normalizedRequest.value.adjustments.length > 0) {
+      wlog('warn', 'chat_request_adjusted', {
+        requestId,
+        route: config.logTag,
+        adjustments: normalizedRequest.value.adjustments,
+      });
+    }
+
+    wlog('info', 'request', {
+      requestId,
+      route: config.logTag,
+      bytes: normalizedRequest.value.bodyText.length,
+      model: normalizedRequest.value.parsed.model,
+    });
 
     const upstreamUrl = typeof config.upstreamUrl === 'function'
       ? config.upstreamUrl(request)
@@ -714,20 +741,26 @@ function createStreamProxyHandler(
           headers: {
             'Content-Type': 'application/json',
             'Authorization': authHeader,
+            [REQUEST_ID_HEADER]: requestId,
             ...extraHeaders,
           },
-          body: bodyText,
+          body: normalizedRequest.value.bodyText,
           signal: controller.signal,
         });
       } finally {
         clearTimeout(timeoutId);
       }
 
-      wlog('info', 'upstream_ok', { route: config.logTag, status: upstream.status });
+      wlog('info', 'upstream_ok', { requestId, route: config.logTag, status: upstream.status });
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
-        wlog('error', 'upstream_error', { route: config.logTag, status: upstream.status, body: errBody.slice(0, 500) });
+        wlog('error', 'upstream_error', {
+          requestId,
+          route: config.logTag,
+          status: upstream.status,
+          body: errBody.slice(0, 500),
+        });
         if (config.formatUpstreamError) {
           const formatted = config.formatUpstreamError(upstream.status, errBody);
           return Response.json(formatted, { status: upstream.status });
@@ -750,6 +783,7 @@ function createStreamProxyHandler(
             'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
             'Cache-Control': 'no-cache, no-transform',
             'Connection': 'keep-alive',
+            [REQUEST_ID_HEADER]: requestId,
             'X-Accel-Buffering': 'no',
           },
         });
@@ -763,6 +797,7 @@ function createStreamProxyHandler(
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
+            [REQUEST_ID_HEADER]: requestId,
           },
         });
       }
@@ -775,7 +810,7 @@ function createStreamProxyHandler(
       const isTimeout = err instanceof Error && err.name === 'AbortError';
       const status = isTimeout ? 504 : 502;
       const error = isTimeout ? config.timeoutError : message;
-      wlog('error', 'unhandled', { route: config.logTag, message, timeout: isTimeout });
+      wlog('error', 'unhandled', { requestId, route: config.logTag, message, timeout: isTimeout });
       return Response.json({ error }, { status });
     }
   };
@@ -812,9 +847,13 @@ function createJsonProxyHandler(
       needsBody,
     });
     if (preamble instanceof Response) return preamble;
-    const { authHeader, bodyText } = preamble;
+    const { authHeader, bodyText, requestId } = preamble;
 
-    wlog('info', 'request', { route: config.logTag, ...(needsBody ? { bytes: bodyText.length } : {}) });
+    wlog('info', 'request', {
+      requestId,
+      route: config.logTag,
+      ...(needsBody ? { bytes: bodyText.length } : {}),
+    });
 
     try {
       const controller = new AbortController();
@@ -826,6 +865,7 @@ function createJsonProxyHandler(
           method,
           headers: {
             'Authorization': authHeader,
+            [REQUEST_ID_HEADER]: requestId,
             ...(needsBody ? { 'Content-Type': 'application/json' } : {}),
             ...(config.extraFetchHeaders ?? {}),
           },
@@ -839,7 +879,12 @@ function createJsonProxyHandler(
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
-        wlog('error', 'upstream_error', { route: config.logTag, status: upstream.status, body: errBody.slice(0, 500) });
+        wlog('error', 'upstream_error', {
+          requestId,
+          route: config.logTag,
+          status: upstream.status,
+          body: errBody.slice(0, 500),
+        });
         if (config.formatUpstreamError) {
           const formatted = config.formatUpstreamError(upstream.status, errBody);
           return Response.json(formatted, { status: upstream.status });
@@ -851,19 +896,22 @@ function createJsonProxyHandler(
       }
 
       const data: unknown = await upstream.json();
-      return Response.json(data);
+      return Response.json(data, {
+        headers: { [REQUEST_ID_HEADER]: requestId },
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const isTimeout = err instanceof Error && err.name === 'AbortError';
       const status = isTimeout ? 504 : 500;
       const error = isTimeout ? config.timeoutError : message;
-      wlog('error', 'unhandled', { route: config.logTag, message, timeout: isTimeout });
+      wlog('error', 'unhandled', { requestId, route: config.logTag, message, timeout: isTimeout });
       return Response.json({ error }, { status });
     }
   };
 }
 
 async function handleSandbox(request: Request, env: Env, requestUrl: URL, route: string): Promise<Response> {
+  const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'sandbox');
   const modalFunction = SANDBOX_ROUTES[route];
   if (!modalFunction) {
     return Response.json({ error: `Unknown sandbox route: ${route}` }, { status: 404 });
@@ -896,7 +944,11 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   // Rate limit
   const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: getClientIp(request) });
   if (!rateLimitOk) {
-    wlog('warn', 'rate_limited', { ip: getClientIp(request), path: `api/sandbox/${route}` });
+    wlog('warn', 'rate_limited', {
+      requestId,
+      ip: getClientIp(request),
+      path: `api/sandbox/${route}`,
+    });
     return Response.json(
       { error: 'Rate limit exceeded. Try again later.' },
       { status: 429, headers: { 'Retry-After': '60' } },
@@ -952,6 +1004,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          [REQUEST_ID_HEADER]: requestId,
         },
         body: forwardBodyText,
         signal: controller.signal,
@@ -959,7 +1012,12 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
-        wlog('error', 'modal_error', { route, status: upstream.status, body: errBody.slice(0, 500) });
+        wlog('error', 'modal_error', {
+          requestId,
+          route,
+          status: upstream.status,
+          body: errBody.slice(0, 500),
+        });
 
         // Provide actionable error messages based on status code
         let code = 'MODAL_ERROR';
@@ -1011,7 +1069,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isTimeout = err instanceof Error && err.name === 'AbortError';
-    wlog('error', 'sandbox_error', { route, message, timeout: isTimeout });
+    wlog('error', 'sandbox_error', { requestId, route, message, timeout: isTimeout });
 
     if (isTimeout) {
       return Response.json({
@@ -1120,6 +1178,7 @@ const handleOllamaChat = createStreamProxyHandler({
   name: 'Ollama Cloud API', logTag: 'api/ollama/chat',
   upstreamUrl: 'https://ollama.com/v1/chat/completions',
   timeoutMs: 180_000,
+  maxOutputTokens: 8_192,
   buildAuth: standardAuth('OLLAMA_API_KEY'),
   keyMissingError: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud request timed out after 180 seconds',
@@ -1133,6 +1192,7 @@ const handleOpenRouterChat = createStreamProxyHandler({
   name: 'OpenRouter API', logTag: 'api/openrouter/chat',
   upstreamUrl: 'https://openrouter.ai/api/v1/chat/completions',
   timeoutMs: 120_000,
+  maxOutputTokens: 12_288,
   buildAuth: standardAuth('OPENROUTER_API_KEY'),
   keyMissingError: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
   timeoutError: 'OpenRouter request timed out after 120 seconds',
@@ -1158,6 +1218,7 @@ const handleZenChat = createStreamProxyHandler({
   name: 'OpenCode Zen API', logTag: 'api/zen/chat',
   upstreamUrl: 'https://opencode.ai/zen/v1/chat/completions',
   timeoutMs: 120_000,
+  maxOutputTokens: 12_288,
   buildAuth: standardAuth('ZEN_API_KEY'),
   keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen request timed out after 120 seconds',
@@ -1179,6 +1240,7 @@ const handleNvidiaChat = createStreamProxyHandler({
   name: 'Nvidia NIM API', logTag: 'api/nvidia/chat',
   upstreamUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
   timeoutMs: 120_000,
+  maxOutputTokens: 8_192,
   buildAuth: standardAuth('NVIDIA_API_KEY'),
   keyMissingError: 'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM request timed out after 120 seconds',
@@ -1210,6 +1272,7 @@ function createExperimentalStreamProxyHandler(
       logTag,
       upstreamUrl: upstream.url,
       timeoutMs: 180_000,
+      maxOutputTokens: 12_288,
       buildAuth: passthroughAuth,
       keyMissingError: `${name} API key not configured. Add it in Advanced AI settings.`,
       timeoutError: `${name} request timed out after 180 seconds`,
@@ -1266,15 +1329,24 @@ async function handleVertexChat(request: Request, env: Env): Promise<Response> {
     needsBody: true,
   });
   if (preamble instanceof Response) return preamble;
-  const { bodyText } = preamble;
+  const { bodyText, requestId } = preamble;
 
-  const parsedRequest = parseJsonBody<OpenAIChatRequest>(bodyText, 'Google Vertex request');
-  if (!parsedRequest.ok) return parsedRequest.response;
-
-  const model = typeof parsedRequest.parsed.model === 'string' ? parsedRequest.parsed.model.trim() : '';
-  if (!model) {
-    return Response.json({ error: 'Google Vertex request is missing "model".' }, { status: 400 });
+  const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
+    routeLabel: 'Google Vertex',
+    maxOutputTokens: 12_288,
+  });
+  if (!normalizedRequest.ok) {
+    return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
   }
+  if (normalizedRequest.value.adjustments.length > 0) {
+    wlog('warn', 'chat_request_adjusted', {
+      requestId,
+      route: 'api/vertex/chat',
+      adjustments: normalizedRequest.value.adjustments,
+    });
+  }
+  const parsedRequest = normalizedRequest.value.parsed;
+  const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
 
   const nativeConfig = getVertexNativeConfig(request);
   if (!nativeConfig.ok) return nativeConfig.response;
@@ -1288,10 +1360,11 @@ async function handleVertexChat(request: Request, env: Env): Promise<Response> {
     )
     : `${buildVertexOpenApiBaseUrl(nativeConfig.config.serviceAccount.projectId, nativeConfig.config.region)}/chat/completions`;
   const upstreamBody = transport === 'anthropic'
-    ? JSON.stringify(buildAnthropicVertexRequest(parsedRequest.parsed))
-    : bodyText;
+    ? JSON.stringify(buildAnthropicVertexRequest(parsedRequest))
+    : normalizedRequest.value.bodyText;
 
   wlog('info', 'request', {
+    requestId,
     route: 'api/vertex/chat',
     mode: 'native',
     transport,
@@ -1311,6 +1384,7 @@ async function handleVertexChat(request: Request, env: Env): Promise<Response> {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          [REQUEST_ID_HEADER]: requestId,
         },
         body: upstreamBody,
         signal: controller.signal,
@@ -1322,6 +1396,7 @@ async function handleVertexChat(request: Request, env: Env): Promise<Response> {
     if (!upstream.ok) {
       const errBody = await upstream.text().catch(() => '');
       wlog('error', 'upstream_error', {
+        requestId,
         route: 'api/vertex/chat',
         mode: 'native',
         transport,
@@ -1344,6 +1419,7 @@ async function handleVertexChat(request: Request, env: Env): Promise<Response> {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive',
+          [REQUEST_ID_HEADER]: requestId,
         },
       });
     }
@@ -1354,6 +1430,7 @@ async function handleVertexChat(request: Request, env: Env): Promise<Response> {
         'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
+        [REQUEST_ID_HEADER]: requestId,
         'X-Accel-Buffering': 'no',
       },
     });
@@ -1361,6 +1438,7 @@ async function handleVertexChat(request: Request, env: Env): Promise<Response> {
     const message = err instanceof Error ? err.message : String(err);
     const isTimeout = err instanceof Error && err.name === 'AbortError';
     wlog('error', 'unhandled', {
+      requestId,
       route: 'api/vertex/chat',
       mode: 'native',
       transport,
