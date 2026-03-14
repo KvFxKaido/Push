@@ -44,7 +44,7 @@ describe('buildCuratedOpenRouterModelList', () => {
     const models = parseOpenRouterCatalog({
       data: [
         {
-          id: 'anthropic/claude-sonnet-4.6:nitro',
+          id: 'anthropic/claude-sonnet-4.6',
           name: 'Claude Sonnet 4.6',
           architecture: {
             input_modalities: ['text', 'image'],
@@ -64,7 +64,7 @@ describe('buildCuratedOpenRouterModelList', () => {
           top_provider: { context_length: 1_050_000, is_moderated: true },
         },
         {
-          id: 'google/gemini-3.1-pro-preview:nitro',
+          id: 'google/gemini-3.1-pro-preview',
           name: 'Gemini 3.1 Pro',
           architecture: {
             input_modalities: ['text', 'image'],
@@ -99,9 +99,9 @@ describe('buildCuratedOpenRouterModelList', () => {
       },
     });
 
-    expect(curated[0]).toBe('anthropic/claude-sonnet-4.6:nitro');
+    expect(curated[0]).toBe('anthropic/claude-sonnet-4.6');
     expect(curated).toContain('openai/gpt-5.4');
-    expect(curated).toContain('google/gemini-3.1-pro-preview:nitro');
+    expect(curated).toContain('google/gemini-3.1-pro-preview');
     expect(curated).not.toContain('openai/gpt-image-1');
   });
 });
