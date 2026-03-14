@@ -17,48 +17,36 @@ const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
 const OPENROUTER_PRIORITY_MODELS = [
-  // Anthropic
-  'anthropic/claude-sonnet-4.6',
-  'anthropic/claude-opus-4.6',
   'anthropic/claude-haiku-4.5',
-  // OpenAI
-  'openai/gpt-5.4-pro',
-  'openai/gpt-5.4',
-  'openai/gpt-5.3-codex',
-  'openai/gpt-5.2-codex',
-  'openai/gpt-5-mini',
-  // Google
-  'google/gemini-3.1-pro-preview',
-  'google/gemini-3-flash-preview',
-  'google/gemini-2.5-pro',
-  'google/gemini-2.5-flash',
-  // Mistral
-  'mistralai/devstral-2512',
-  'mistralai/codestral-2508',
-  'mistralai/mistral-large-2512',
-  // Qwen
-  'qwen/qwen3.5-397b-a17b',
-  'qwen/qwen3-coder',
-  // DeepSeek
-  'deepseek/deepseek-v3.2',
-  'deepseek/deepseek-r1',
-  // xAI
-  'x-ai/grok-4.20-beta',
-  'x-ai/grok-4.1-fast',
-  // Kimi
-  'moonshotai/kimi-k2.5',
-  // Cohere
-  'cohere/command-a',
-  // Perplexity
-  'perplexity/sonar-pro',
-  // GLM
-  'z-ai/glm-5',
-  'z-ai/glm-4.7',
-  // Misc
-  'minimax/minimax-m2.5',
-  'meta-llama/llama-4-maverick',
-  'stepfun/step-3.5-flash',
+  'anthropic/claude-opus-4.6',
+  'anthropic/claude-sonnet-4.6',
   'arcee-ai/virtuoso-large',
+  'cohere/command-a',
+  'deepseek/deepseek-r1',
+  'deepseek/deepseek-v3.2',
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-pro',
+  'google/gemini-3-flash-preview',
+  'google/gemini-3.1-pro-preview',
+  'meta-llama/llama-4-maverick',
+  'minimax/minimax-m2.5',
+  'mistralai/codestral-2508',
+  'mistralai/devstral-2512',
+  'mistralai/mistral-large-2512',
+  'moonshotai/kimi-k2.5',
+  'openai/gpt-5-mini',
+  'openai/gpt-5.2-codex',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.4',
+  'openai/gpt-5.4-pro',
+  'perplexity/sonar-pro',
+  'qwen/qwen3-coder',
+  'qwen/qwen3.5-397b-a17b',
+  'stepfun/step-3.5-flash',
+  'x-ai/grok-4.1-fast',
+  'x-ai/grok-4.20-beta',
+  'z-ai/glm-4.7',
+  'z-ai/glm-5',
 ] as const;
 const NVIDIA_PRIORITY_MODELS = [
   'nvidia/llama-3.1-nemotron-70b-instruct',
