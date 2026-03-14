@@ -1,9 +1,9 @@
 /**
- * FileBrowser — full-screen file browser for the active sandbox.
+ * FileBrowser — full-screen file browser for the active workspace.
  *
  * Shows a directory listing, breadcrumb navigation, upload FAB,
- * and a bottom sheet for file actions (rename/delete/edit).
- * All operations go through the sandbox client — no LLM involvement.
+ * and workspace-specific actions.
+ * All operations go through the workspace runtime — no LLM involvement.
  */
 
 import { useEffect, useState, useCallback } from 'react';
@@ -12,10 +12,13 @@ import {
   File,
   ChevronLeft,
   ChevronRight,
+  Download,
   MessageSquare,
   Loader2,
   AlertCircle,
   RefreshCw,
+  RotateCcw,
+  Save,
   GitCommitHorizontal,
   FileEdit,
 } from 'lucide-react';
@@ -28,18 +31,33 @@ import { FileEditor } from '@/components/filebrowser/FileEditor';
 import { getFileEditability } from '@/lib/file-utils';
 import { writeToSandbox } from '@/lib/sandbox-client';
 import { fileLedger } from '@/lib/file-awareness-ledger';
-import type { AIProviderType, FileEntry } from '@/types';
+import type {
+  AIProviderType,
+  FileEntry,
+  WorkspaceCapabilities,
+  WorkspaceScratchActions,
+} from '@/types';
 import { formatSize } from '@/lib/diff-utils';
 
 interface FileBrowserProps {
   sandboxId: string;
-  repoName: string;
+  workspaceLabel: string;
+  capabilities: Pick<WorkspaceCapabilities, 'canCommitAndPush'>;
+  scratchActions?: WorkspaceScratchActions | null;
   onBack: () => void;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
 }
 
-export function FileBrowser({ sandboxId, repoName, onBack, lockedProvider, lockedModel }: FileBrowserProps) {
+export function FileBrowser({
+  sandboxId,
+  workspaceLabel,
+  capabilities,
+  scratchActions,
+  onBack,
+  lockedProvider,
+  lockedModel,
+}: FileBrowserProps) {
   const {
     currentPath,
     files,
@@ -58,6 +76,8 @@ export function FileBrowser({ sandboxId, repoName, onBack, lockedProvider, locke
   const [sheetOpen, setSheetOpen] = useState(false);
   const [commitSheetOpen, setCommitSheetOpen] = useState(false);
   const [editingFile, setEditingFile] = useState<FileEntry | null>(null);
+  const canCommitAndPush = capabilities.canCommitAndPush;
+  const showScratchActions = !canCommitAndPush && Boolean(scratchActions);
 
   // Load root directory on mount
   useEffect(() => {
@@ -177,7 +197,7 @@ export function FileBrowser({ sandboxId, repoName, onBack, lockedProvider, locke
                     : 'text-push-fg-secondary hover:text-push-fg'
                 }`}
               >
-                {repoName}
+                {workspaceLabel}
               </button>
             </li>
             {breadcrumbs.slice(1).map((crumb, i) => {
@@ -213,7 +233,7 @@ export function FileBrowser({ sandboxId, repoName, onBack, lockedProvider, locke
       </header>
 
       {/* File list */}
-      <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div className="flex-1 overflow-y-auto overscroll-contain pb-28">
         {status === 'loading' && files.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-[#788396]">
             <Loader2 className="h-5 w-5 animate-spin" />
@@ -262,16 +282,61 @@ export function FileBrowser({ sandboxId, repoName, onBack, lockedProvider, locke
         )}
       </div>
 
-      {/* Commit FAB \u2014 positioned left of upload FAB */}
-      <button
-        onClick={() => setCommitSheetOpen(true)}
-        disabled={status === 'loading'}
-        className="fixed bottom-6 right-[4.75rem] z-30 flex h-12 w-12 items-center justify-center rounded-full bg-push-status-success text-white shadow-lg shadow-push-status-success/25 transition-all duration-200 hover:bg-push-status-success active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
-        title="Commit & push"
-        aria-label="Commit and push changes"
-      >
-        <GitCommitHorizontal className="h-5 w-5" />
-      </button>
+      {/* Repo-backed workspaces show commit/push; scratch workspaces show save/restore/download. */}
+      {canCommitAndPush && (
+        <button
+          onClick={() => setCommitSheetOpen(true)}
+          disabled={status === 'loading'}
+          className="fixed bottom-6 right-[4.75rem] z-30 flex h-12 w-12 items-center justify-center rounded-full bg-push-status-success text-white shadow-lg shadow-push-status-success/25 transition-all duration-200 hover:bg-push-status-success active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+          title="Commit & push"
+          aria-label="Commit and push changes"
+        >
+          <GitCommitHorizontal className="h-5 w-5" />
+        </button>
+      )}
+
+      {showScratchActions && scratchActions && (
+        <div className="fixed bottom-6 left-4 right-[5.5rem] z-30 rounded-[20px] border border-push-edge bg-push-grad-panel/95 px-3 py-2.5 shadow-[0_16px_40px_rgba(0,0,0,0.42)] backdrop-blur-xl">
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">Scratch</p>
+            <p className={`mt-1 truncate text-push-2xs ${scratchActions.tone === 'stale' ? 'text-amber-300' : 'text-push-fg-dim'}`}>
+              {scratchActions.statusText}
+            </p>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-1.5">
+            <button
+              onClick={scratchActions.onSaveSnapshot}
+              disabled={!scratchActions.canSaveSnapshot || scratchActions.snapshotRestoring}
+              className="flex items-center justify-center gap-1 rounded-xl border border-push-edge bg-push-surface px-2 py-2 text-push-xs text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:text-push-fg disabled:opacity-40"
+              title="Save snapshot"
+              aria-label="Save snapshot"
+            >
+              {scratchActions.snapshotSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              <span>Save</span>
+            </button>
+            <button
+              onClick={scratchActions.onRestoreSnapshot}
+              disabled={!scratchActions.canRestoreSnapshot || scratchActions.snapshotSaving}
+              className="flex items-center justify-center gap-1 rounded-xl border border-push-edge bg-push-surface px-2 py-2 text-push-xs text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:text-push-fg disabled:opacity-40"
+              title="Restore snapshot"
+              aria-label="Restore snapshot"
+            >
+              {scratchActions.snapshotRestoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+              <span>Restore</span>
+            </button>
+            <button
+              onClick={scratchActions.onDownloadWorkspace}
+              disabled={!scratchActions.canDownloadWorkspace}
+              className="flex items-center justify-center gap-1 rounded-xl border border-push-edge bg-push-surface px-2 py-2 text-push-xs text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:text-push-fg disabled:opacity-40"
+              title="Download workspace"
+              aria-label="Download workspace"
+            >
+              {scratchActions.downloadingWorkspace ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              <span>Download</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Upload FAB */}
       <UploadButton
@@ -288,18 +353,20 @@ export function FileBrowser({ sandboxId, repoName, onBack, lockedProvider, locke
         onEdit={handleEdit}
       />
 
-      {/* Commit & push sheet */}
-      <CommitPushSheet
-        sandboxId={sandboxId}
-        open={commitSheetOpen}
-        onOpenChange={setCommitSheetOpen}
-        lockedProvider={lockedProvider}
-        lockedModel={lockedModel}
-        onSuccess={() => {
-          toast.success('Committed and pushed!');
-          loadDirectory(currentPath);
-        }}
-      />
+      {/* Commit & push is only available when the workspace has Git remote capabilities. */}
+      {canCommitAndPush && (
+        <CommitPushSheet
+          sandboxId={sandboxId}
+          open={commitSheetOpen}
+          onOpenChange={setCommitSheetOpen}
+          lockedProvider={lockedProvider}
+          lockedModel={lockedModel}
+          onSuccess={() => {
+            toast.success('Committed and pushed!');
+            loadDirectory(currentPath);
+          }}
+        />
+      )}
     </div>
   );
 }

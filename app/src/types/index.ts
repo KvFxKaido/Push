@@ -7,6 +7,28 @@ export interface UserProfile {
   bio: string;
 }
 
+export type WorkspaceMode = 'repo' | 'scratch';
+
+export interface WorkspaceCapabilities {
+  canManageBranches: boolean;
+  canBrowsePullRequests: boolean;
+  canCommitAndPush: boolean;
+}
+
+export interface WorkspaceScratchActions {
+  statusText: string;
+  tone: 'default' | 'stale';
+  canSaveSnapshot: boolean;
+  canRestoreSnapshot: boolean;
+  canDownloadWorkspace: boolean;
+  snapshotSaving: boolean;
+  snapshotRestoring: boolean;
+  downloadingWorkspace: boolean;
+  onSaveSnapshot: () => void;
+  onRestoreSnapshot: () => void;
+  onDownloadWorkspace: () => void;
+}
+
 export const USER_PROFILE_DEFAULTS: UserProfile = {
   displayName: '',
   githubLogin: undefined,

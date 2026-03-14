@@ -55,7 +55,15 @@ import type {
 } from '@/components/SettingsSheet';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import type { PinnedArtifact } from '@/hooks/usePinnedArtifacts';
-import type { AIProviderType, AgentStatusEvent, ChatMessage, DiffPreviewCardData } from '@/types';
+import type {
+  AIProviderType,
+  AgentStatusEvent,
+  ChatMessage,
+  DiffPreviewCardData,
+  WorkspaceCapabilities,
+  WorkspaceMode,
+  WorkspaceScratchActions,
+} from '@/types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,7 +74,6 @@ type HubTab = 'scratchpad' | 'kept' | 'console' | 'files' | 'diff' | 'prs' | 're
 type CommitPhase = 'idle' | 'fetching-diff' | 'branching' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
 type CommitTargetMode = 'current' | 'new';
 type DiffViewMode = 'working-tree' | 'review-github' | 'review-sandbox';
-type WorkspaceHubMode = 'repo' | 'scratch';
 
 interface DiffJumpTarget {
   path: string;
@@ -97,26 +104,6 @@ export interface HubBranchProps {
   onDeleteBranch: (branch: string) => Promise<boolean>;
 }
 
-export interface WorkspaceHubCapabilities {
-  canManageBranches: boolean;
-  canBrowsePullRequests: boolean;
-  canCommitAndPush: boolean;
-}
-
-export interface WorkspaceHubScratchActions {
-  statusText: string;
-  tone: 'default' | 'stale';
-  canSaveSnapshot: boolean;
-  canRestoreSnapshot: boolean;
-  canDownloadWorkspace: boolean;
-  snapshotSaving: boolean;
-  snapshotRestoring: boolean;
-  downloadingWorkspace: boolean;
-  onSaveSnapshot: () => void;
-  onRestoreSnapshot: () => void;
-  onDownloadWorkspace: () => void;
-}
-
 interface WorkspaceHubSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -135,9 +122,9 @@ interface WorkspaceHubSheetProps {
   reviewProviderModels: Record<PreferredProvider, string>;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
-  workspaceMode: WorkspaceHubMode;
-  capabilities: WorkspaceHubCapabilities;
-  scratchActions?: WorkspaceHubScratchActions | null;
+  workspaceMode: WorkspaceMode;
+  capabilities: WorkspaceCapabilities;
+  scratchActions?: WorkspaceScratchActions | null;
   repoName?: string;
   /** owner/name format — passed to Review tab for PR detection */
   repoFullName?: string;

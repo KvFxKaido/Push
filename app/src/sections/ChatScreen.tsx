@@ -7,11 +7,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
-import {
-  WorkspaceHubSheet,
-  type WorkspaceHubCapabilities,
-  type WorkspaceHubScratchActions,
-} from '@/components/chat/WorkspaceHubSheet';
+import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
 import { NewChatWorkspaceSheet } from '@/components/chat/NewChatWorkspaceSheet';
@@ -26,7 +22,7 @@ import {
 import type { PreferredProvider } from '@/lib/providers';
 import { getRepoAppearanceColorHex, hexToRgba, type RepoAppearance } from '@/lib/repo-appearance';
 import type { SandboxStatus } from '@/hooks/useSandbox';
-import { formatSnapshotAge, isSnapshotStale, snapshotStagePercent } from '@/hooks/useSnapshotManager';
+import { buildWorkspaceScratchActions, formatSnapshotAge, isSnapshotStale, snapshotStagePercent } from '@/hooks/useSnapshotManager';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import type { SnapshotManager } from '@/hooks/useSnapshotManager';
 import type { BranchManager } from '@/hooks/useBranchManager';
@@ -50,6 +46,8 @@ import type {
   SandboxStateCardData,
   NewChatWorkspaceState,
   AttachmentData,
+  WorkspaceCapabilities,
+  WorkspaceScratchActions,
 } from '@/types';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
@@ -571,35 +569,22 @@ export function ChatScreen(props: ChatScreenProps) {
   const snapshotIsStale = snapshots.latestSnapshot
     ? isSnapshotStale(snapshots.latestSnapshot.createdAt)
     : false;
-  const latestSnapshotLabel = snapshotAgeLabel ?? 'recently';
-  const workspaceHubCapabilities: WorkspaceHubCapabilities = {
+  const workspaceHubCapabilities: WorkspaceCapabilities = {
     canManageBranches: !isSandboxMode && Boolean(activeRepo?.full_name),
     canBrowsePullRequests: !isSandboxMode && Boolean(activeRepo?.full_name),
     canCommitAndPush: !isSandboxMode && Boolean(activeRepo?.full_name),
   };
-  const workspaceHubScratchActions: WorkspaceHubScratchActions | null = isSandboxMode ? {
-    statusText: snapshots.latestSnapshot
-      ? snapshotIsStale
-        ? `Latest snapshot stale (${latestSnapshotLabel})`
-        : `Latest snapshot ${latestSnapshotLabel}`
-      : 'Save a snapshot or download your files from this sandbox.',
-    tone: snapshotIsStale ? 'stale' : 'default',
-    canSaveSnapshot: sandbox.status === 'ready' && !snapshots.snapshotSaving && !snapshots.snapshotRestoring,
-    canRestoreSnapshot: Boolean(snapshots.latestSnapshot) && !snapshots.snapshotSaving && !snapshots.snapshotRestoring && sandbox.status !== 'creating',
-    canDownloadWorkspace: sandbox.status === 'ready' && !sandboxDownloading,
-    snapshotSaving: snapshots.snapshotSaving,
-    snapshotRestoring: snapshots.snapshotRestoring,
-    downloadingWorkspace: sandboxDownloading,
-    onSaveSnapshot: () => {
-      void snapshots.captureSnapshot('manual');
-    },
-    onRestoreSnapshot: () => {
-      void snapshots.handleRestoreFromSnapshot();
-    },
-    onDownloadWorkspace: () => {
-      void handleSandboxDownload();
-    },
-  } : null;
+  const workspaceHubScratchActions: WorkspaceScratchActions | null = isSandboxMode
+    ? buildWorkspaceScratchActions({
+      snapshots,
+      sandboxStatus: sandbox.status,
+      downloadingWorkspace: sandboxDownloading,
+      onDownloadWorkspace: () => {
+        void handleSandboxDownload();
+      },
+      emptyStateText: 'Save a snapshot or download your files from this sandbox.',
+    })
+    : null;
 
   // Provider locked states
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';

@@ -12,7 +12,7 @@ import { useUserProfile } from '@/hooks/useUserProfile';
 import { useProtectMain } from '@/hooks/useProtectMain';
 import { useRepoAppearance } from '@/hooks/useRepoAppearance';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
-import { useSnapshotManager } from '@/hooks/useSnapshotManager';
+import { useSnapshotManager, buildWorkspaceScratchActions } from '@/hooks/useSnapshotManager';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { useProjectInstructions } from '@/hooks/useProjectInstructions';
 import {
@@ -22,7 +22,15 @@ import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestr
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
-import type { AppScreen, AttachmentData, NewChatWorkspaceState, RepoWithActivity, SandboxStateCardData } from '@/types';
+import type {
+  AppScreen,
+  AttachmentData,
+  NewChatWorkspaceState,
+  RepoWithActivity,
+  SandboxStateCardData,
+  WorkspaceCapabilities,
+  WorkspaceScratchActions,
+} from '@/types';
 import './App.css';
 
 function parseSandboxGitStatus(sandboxId: string, stdout: string): SandboxStateCardData {
@@ -722,6 +730,22 @@ function App() {
     }
   }, [sandbox.sandboxId, sandboxDownloading]);
 
+  const fileBrowserCapabilities: Pick<WorkspaceCapabilities, 'canCommitAndPush'> = {
+    canCommitAndPush: !isSandboxMode,
+  };
+
+  const fileBrowserScratchActions: WorkspaceScratchActions | null = isSandboxMode
+    ? buildWorkspaceScratchActions({
+      snapshots,
+      sandboxStatus: sandbox.status,
+      downloadingWorkspace: sandboxDownloading,
+      onDownloadWorkspace: () => {
+        void handleSandboxDownload();
+      },
+      emptyStateText: 'Save a snapshot or download your files from this scratch workspace.',
+    })
+    : null;
+
   // ----- Screen routing -----
 
   const suspenseFallback = <div className="h-dvh bg-[#000]" />;
@@ -776,7 +800,9 @@ function App() {
         <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
           <FileBrowser
             sandboxId={sandbox.sandboxId}
-            repoName={activeRepo?.name || 'Sandbox'}
+            workspaceLabel={activeRepo?.name || 'Scratch'}
+            capabilities={fileBrowserCapabilities}
+            scratchActions={fileBrowserScratchActions}
             onBack={() => setShowFileBrowser(false)}
             lockedProvider={lockedProvider}
             lockedModel={lockedModel}

@@ -9,7 +9,7 @@ import {
   type SnapshotMeta,
   type HydrateProgress,
 } from '@/lib/snapshot-manager';
-import type { ActiveRepo } from '@/types';
+import type { ActiveRepo, WorkspaceScratchActions } from '@/types';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 
 // ---------------------------------------------------------------------------
@@ -64,6 +64,52 @@ export interface SnapshotManager {
   captureSnapshot: (reason: 'manual' | 'interval' | 'idle') => Promise<boolean>;
   handleRestoreFromSnapshot: () => Promise<void>;
   refreshLatestSnapshot: () => Promise<void>;
+}
+
+interface BuildWorkspaceScratchActionsOptions {
+  snapshots: Pick<
+    SnapshotManager,
+    'latestSnapshot' | 'snapshotSaving' | 'snapshotRestoring' | 'captureSnapshot' | 'handleRestoreFromSnapshot'
+  >;
+  sandboxStatus: SandboxStatus;
+  downloadingWorkspace: boolean;
+  onDownloadWorkspace: () => void;
+  emptyStateText: string;
+}
+
+export function buildWorkspaceScratchActions({
+  snapshots,
+  sandboxStatus,
+  downloadingWorkspace,
+  onDownloadWorkspace,
+  emptyStateText,
+}: BuildWorkspaceScratchActionsOptions): WorkspaceScratchActions {
+  const snapshotAgeLabel = snapshots.latestSnapshot ? formatSnapshotAge(snapshots.latestSnapshot.createdAt) : 'recently';
+  const snapshotIsStale = snapshots.latestSnapshot
+    ? isSnapshotStale(snapshots.latestSnapshot.createdAt)
+    : false;
+
+  return {
+    statusText: snapshots.latestSnapshot
+      ? snapshotIsStale
+        ? `Latest snapshot stale (${snapshotAgeLabel})`
+        : `Latest snapshot ${snapshotAgeLabel}`
+      : emptyStateText,
+    tone: snapshotIsStale ? 'stale' : 'default',
+    canSaveSnapshot: sandboxStatus === 'ready' && !snapshots.snapshotSaving && !snapshots.snapshotRestoring,
+    canRestoreSnapshot: Boolean(snapshots.latestSnapshot) && !snapshots.snapshotSaving && !snapshots.snapshotRestoring && sandboxStatus !== 'creating',
+    canDownloadWorkspace: sandboxStatus === 'ready' && !downloadingWorkspace,
+    snapshotSaving: snapshots.snapshotSaving,
+    snapshotRestoring: snapshots.snapshotRestoring,
+    downloadingWorkspace,
+    onSaveSnapshot: () => {
+      void snapshots.captureSnapshot('manual');
+    },
+    onRestoreSnapshot: () => {
+      void snapshots.handleRestoreFromSnapshot();
+    },
+    onDownloadWorkspace,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 /**
- * CommitPushSheet — bottom sheet for the file browser commit + push flow.
+ * CommitPushSheet — bottom sheet for repo workspace commit + push flow.
  *
  * Phase-driven UI:
  * - fetching-diff: Spinner
@@ -236,7 +236,7 @@ export function CommitPushSheet({
             Commit &amp; Push
           </SheetTitle>
           <SheetDescription className="sr-only">
-            Review changes, enter a commit message, and push to remote.
+            Review changes, enter a commit message, and push the current branch to remote.
           </SheetDescription>
         </SheetHeader>
 
