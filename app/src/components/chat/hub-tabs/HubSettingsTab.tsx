@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowLeft, ChevronRight, Sparkles } from 'lucide-react';
+import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { ProviderIcon } from '@/components/ui/provider-icon';
 import { SettingsSectionContent } from '@/components/SettingsSectionContent';
 import { PROVIDER_LABELS, SETTINGS_SECTION_ICONS, type SettingsSectionIcon } from '@/components/settings-shared';
+import { SettingsCellsIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
@@ -224,15 +225,16 @@ export function HubSettingsTab({
           <section className="min-w-0 flex h-full flex-col" style={{ width: `${100 / views.length}%` }}>
             <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-3">
               <div className={`${HUB_PANEL_SURFACE_CLASS} px-4 py-4`}>
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-push-edge/80 bg-white/[0.04] text-push-fg shadow-[0_12px_24px_rgba(0,0,0,0.24)]">
+                    <SettingsCellsIcon className="h-3.5 w-3.5" />
+                  </div>
                   <div className="min-w-0">
-                    <span className={SETTINGS_PILL_CLASS}>Settings</span>
-                    <h2 className="mt-2 text-base font-semibold text-push-fg">Settings</h2>
+                    <h2 className="text-base font-semibold text-push-fg">Settings</h2>
                     <p className="mt-1 text-push-xs leading-5 text-push-fg-muted">
                       Your profile, workspace behavior, and AI defaults live here. Pick a section to tune the details without leaving the hub.
                     </p>
                   </div>
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center gap-2 text-push-2xs text-push-fg-dim">
