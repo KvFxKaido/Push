@@ -585,7 +585,7 @@ export function ChatInput({
                 type="button"
                 onClick={toggleListening}
                 disabled={isStreaming}
-                className={`flex h-10 w-10 items-center justify-center ${
+                className={`flex h-10 w-10 items-center justify-center rounded-full border ${
                   isStreaming
                     ? 'cursor-not-allowed border-[#1f2430] bg-[#151a22] text-[#545c6e] shadow-none'
                     : isListening
@@ -609,7 +609,7 @@ export function ChatInput({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
-              className={`flex h-10 w-10 items-center justify-center text-push-fg-secondary ${
+              className={`flex h-10 w-10 items-center justify-center rounded-full border text-push-fg-secondary ${
                 isStreaming
                   ? 'cursor-not-allowed border-[#1f2430] bg-[#151a22] text-[#545c6e] shadow-none'
                   : `${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
