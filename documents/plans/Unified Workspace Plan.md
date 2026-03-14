@@ -138,11 +138,19 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
   - Or better: accept `WorkspaceSession | null` directly and derive the repo string internally.
   - File: `hooks/useSandbox.ts`, `App.tsx` (line 94)
 
+- [ ] **2f. Resumable checkpoints — add workspace session identity.** Extend the resume/checkpoint model so `RunCheckpoint` carries `workspaceSessionId` alongside the existing runtime checks (`sandboxSessionId`, `activeBranch`, `repoId`). On resume:
+  - old checkpoints without `workspaceSessionId` are treated as unresumable and silently cleared
+  - new checkpoints validate both logical workspace identity and runtime identity
+  - scratch workspace resume can survive runtime restarts as long as the workspace session still exists
+  - Files: `types/index.ts` (`RunCheckpoint`), `hooks/useChat.ts`
+
 ### Verification
 - Remove `isSandboxMode` from hook signatures where possible. Typecheck will catch any remaining references.
 - Verify three states work: (a) no workspace (onboarding/home — no sandbox starts), (b) scratch workspace (auto-start, snapshots, no branches), (c) repo workspace (branch loading, project instructions, no auto-snapshots).
 - Verify snapshot save in scratch session A, restart the sandbox inside session A, restore still sees session A's snapshot.
 - Verify snapshot save in scratch session A, start new scratch session B, restore does NOT load session A's snapshot.
+- Verify an old checkpoint without `workspaceSessionId` shows no resume banner and is cleared safely.
+- Verify a new checkpoint resumes only inside the matching `workspaceSessionId`.
 
 ---
 
@@ -180,12 +188,19 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
   - File: `sections/ChatScreen.tsx`
   - Consider: The snapshot/download controls in the header overlap with the hub scratch action bar. Sprint 0 added the hub actions — the header controls may now be redundant. Evaluate whether to keep both or consolidate to hub-only.
 
+- [ ] **3g. `NewChatWorkspaceSheet` migration.** This sheet should not be a one-line flag swap. Update the full path that feeds it:
+  - change `NewChatWorkspaceState.mode` from `'repo' | 'sandbox'` to workspace-appropriate terminology
+  - update `inspectNewChatWorkspace()` to emit the new mode values and summary labels
+  - update `NewChatWorkspaceSheet.tsx` copy from "sandbox session" to workspace-first language
+  - Files: `types/index.ts`, `App.tsx`, `components/chat/NewChatWorkspaceSheet.tsx`
+
 ### Verification
 - Walk through onboarding cold-start on mobile. Verify the screen clearly presents `Start Workspace` and `Connect GitHub` as the two main paths.
 - Verify advanced auth fallbacks (PAT, installation ID) are still reachable but visually secondary.
 - Walk through onboarding → workspace (no GitHub) → chat. Verify no "sandbox mode" language in the flow.
 - Walk through onboarding → GitHub connect → repo select → chat. Verify identical experience except repo context.
 - Verify launcher, repo picker, and chat selector all work with renamed callbacks.
+- Open "Start new chat?" in both scratch and repo workspaces. Verify the sheet uses workspace-first wording and the correct mode-specific actions.
 
 ---
 
@@ -242,8 +257,8 @@ Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
 
 6. **Header duplication.** Sprint 0 added Save/Restore/Download to the hub scratch action bar. The chat header still has its own snapshot controls and download button for sandbox mode. These overlap. **Decision: consolidate to hub-only in Sprint 3f.** The header is already crowded; the hub is the right surface for workspace-level actions.
 
-7. **`NewChatWorkspaceSheet` branching.** This sheet (lines 58–104) branches on `workspace.mode === 'sandbox'` to show different copy and options ("This sandbox session still has files" vs "This workspace has uncommitted changes"). **Decision: flag swap + copy update in Sprint 3.** Migrate to `workspaceSession.kind` and evolve the language from "sandbox session" to workspace-appropriate framing.
+7. **`NewChatWorkspaceSheet` branching.** This sheet (lines 58–104) branches on `workspace.mode === 'sandbox'` to show different copy and options ("This sandbox session still has files" vs "This workspace has uncommitted changes"). **Decision: explicit Sprint 3g migration.** Update the state type, producer (`inspectNewChatWorkspace()`), and sheet copy together so the terminology change is consistent end-to-end.
 
-8. **Resumable sessions and `WorkspaceSession`.** The app checkpoints tool-loop state to localStorage (`run_checkpoint_${chatId}`). `WorkspaceSession` should be serializable into the checkpoint so resume can reconstruct which workspace the user was in. The checkpoint should carry both `workspaceSessionId` (logical identity) and `sandboxSessionId` (runtime sanity check). **Decision: old checkpoints without `workspaceSessionId` are treated as unresumable — no resume banner shown, clean cut.**
+8. **Resumable sessions and `WorkspaceSession`.** The app checkpoints tool-loop state to localStorage (`run_checkpoint_${chatId}`). `WorkspaceSession` should be serializable into the checkpoint so resume can reconstruct which workspace the user was in. The checkpoint should carry both `workspaceSessionId` (logical identity) and `sandboxSessionId` (runtime sanity check). **Decision: explicit Sprint 2f migration.** Old checkpoints without `workspaceSessionId` are treated as unresumable — no resume banner shown, clean cut.
 
 9. **Session creation vs sandbox start timing.** The `WorkspaceSession` is created when the user clicks "Try it now" or selects a repo — before the container starts. Its stable `id` exists immediately; `sandboxId` is `null` at creation and populated when the container is ready. If sandbox start fails, the session persists in an error state (the user stays on the chat screen with error UI). This prevents startup failures from dumping the user back to onboarding. **Decision: already resolved in plan design, no change.**
