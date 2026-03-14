@@ -21,6 +21,7 @@ import {
 import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
+import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import type {
   AppScreen,
@@ -97,6 +98,37 @@ const ChatScreen = lazyWithRecovery(
 );
 
 const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
+const CHAT_MODEL_MEMORY_STORAGE_KEY = 'push:chat:last-used-models';
+
+const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
+  ollama: '',
+  openrouter: '',
+  zen: '',
+  nvidia: '',
+  azure: '',
+  bedrock: '',
+  vertex: '',
+};
+
+function readStoredChatModelMemory(): Record<PreferredProvider, string> {
+  const raw = safeStorageGet(CHAT_MODEL_MEMORY_STORAGE_KEY);
+  if (!raw) return { ...EMPTY_CHAT_MODEL_MEMORY };
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<Record<PreferredProvider, unknown>>;
+    return {
+      ollama: typeof parsed.ollama === 'string' ? parsed.ollama.trim() : '',
+      openrouter: typeof parsed.openrouter === 'string' ? parsed.openrouter.trim() : '',
+      zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
+      nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
+      azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
+      bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
+      vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
+    };
+  } catch {
+    return { ...EMPTY_CHAT_MODEL_MEMORY };
+  }
+}
 
 type ChatComposerDraft = {
   provider: PreferredProvider | null;
@@ -161,15 +193,33 @@ function App() {
     return catalog.availableProviders[0]?.[0] ?? null;
   }, [availableChatProviders, catalog.activeBackend, catalog.activeProviderLabel, catalog.availableProviders]);
 
+  const [rememberedChatModels, setRememberedChatModels] = useState<Record<PreferredProvider, string>>(
+    () => readStoredChatModelMemory(),
+  );
+
+  useEffect(() => {
+    safeStorageSet(CHAT_MODEL_MEMORY_STORAGE_KEY, JSON.stringify(rememberedChatModels));
+  }, [rememberedChatModels]);
+
+  const rememberChatModel = useCallback((provider: PreferredProvider, model: string | null | undefined) => {
+    const trimmed = model?.trim();
+    if (!trimmed) return;
+    setRememberedChatModels((prev) => (
+      prev[provider] === trimmed
+        ? prev
+        : { ...prev, [provider]: trimmed }
+    ));
+  }, []);
+
   const normalizeChatDraft = useCallback((draft?: Partial<ChatComposerDraft> | null): ChatComposerDraft => {
     const models: Record<PreferredProvider, string> = {
-      ollama: draft?.models?.ollama?.trim() || defaultChatModels.ollama,
-      openrouter: draft?.models?.openrouter?.trim() || defaultChatModels.openrouter,
-      zen: draft?.models?.zen?.trim() || defaultChatModels.zen,
-      nvidia: draft?.models?.nvidia?.trim() || defaultChatModels.nvidia,
-      azure: draft?.models?.azure?.trim() || defaultChatModels.azure,
-      bedrock: draft?.models?.bedrock?.trim() || defaultChatModels.bedrock,
-      vertex: draft?.models?.vertex?.trim() || defaultChatModels.vertex,
+      ollama: draft?.models?.ollama?.trim() || rememberedChatModels.ollama || defaultChatModels.ollama,
+      openrouter: draft?.models?.openrouter?.trim() || rememberedChatModels.openrouter || defaultChatModels.openrouter,
+      zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
+      nvidia: draft?.models?.nvidia?.trim() || rememberedChatModels.nvidia || defaultChatModels.nvidia,
+      azure: draft?.models?.azure?.trim() || rememberedChatModels.azure || defaultChatModels.azure,
+      bedrock: draft?.models?.bedrock?.trim() || rememberedChatModels.bedrock || defaultChatModels.bedrock,
+      vertex: draft?.models?.vertex?.trim() || rememberedChatModels.vertex || defaultChatModels.vertex,
     };
 
     let provider = draft?.provider ?? defaultChatProvider;
@@ -178,7 +228,7 @@ function App() {
     }
 
     return { provider, models };
-  }, [availableChatProviders, defaultChatModels, defaultChatProvider]);
+  }, [availableChatProviders, defaultChatModels, defaultChatProvider, rememberedChatModels]);
 
   const [chatDrafts, setChatDrafts] = useState<Record<string, ChatComposerDraft>>({});
 
@@ -355,12 +405,15 @@ function App() {
   const { repos, loading: reposLoading, error: reposError, sync: syncRepos } = useRepos();
 
   const sendMessageWithChatDraft = useCallback((message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
+    if (activeChatDraft.provider) {
+      rememberChatModel(activeChatDraft.provider, activeChatDraft.models[activeChatDraft.provider]);
+    }
     return sendMessage(message, attachments, {
       provider: activeChatDraft.provider,
       model: activeChatDraft.provider ? activeChatDraft.models[activeChatDraft.provider] : null,
       displayText: options?.displayText,
     });
-  }, [activeChatDraft, sendMessage]);
+  }, [activeChatDraft, rememberChatModel, sendMessage]);
 
   // --- Extracted hooks ---
   const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
@@ -527,39 +580,46 @@ function App() {
   }, [ensureDraftChatForComposerChange, upsertChatDraft]);
 
   const handleSelectOllamaModelFromChat = useCallback((model: string) => {
+    rememberChatModel('ollama', model);
     const chatId = ensureDraftChatForComposerChange();
     upsertChatDraft(chatId, { models: { ollama: model } });
-  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleSelectOpenRouterModelFromChat = useCallback((model: string) => {
+    rememberChatModel('openrouter', model);
     const chatId = ensureDraftChatForComposerChange();
     upsertChatDraft(chatId, { models: { openrouter: model } });
-  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleSelectZenModelFromChat = useCallback((model: string) => {
+    rememberChatModel('zen', model);
     const chatId = ensureDraftChatForComposerChange();
     upsertChatDraft(chatId, { models: { zen: model } });
-  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleSelectNvidiaModelFromChat = useCallback((model: string) => {
+    rememberChatModel('nvidia', model);
     const chatId = ensureDraftChatForComposerChange();
     upsertChatDraft(chatId, { models: { nvidia: model } });
-  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleSelectAzureModelFromChat = useCallback((model: string) => {
+    rememberChatModel('azure', model);
     const chatId = ensureDraftChatForComposerChange();
     upsertChatDraft(chatId, { models: { azure: model } });
-  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleSelectBedrockModelFromChat = useCallback((model: string) => {
+    rememberChatModel('bedrock', model);
     const chatId = ensureDraftChatForComposerChange();
     upsertChatDraft(chatId, { models: { bedrock: model } });
-  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleSelectVertexModelFromChat = useCallback((model: string) => {
+    rememberChatModel('vertex', model);
     const chatId = ensureDraftChatForComposerChange();
     upsertChatDraft(chatId, { models: { vertex: model } });
-  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleDisconnect = useCallback(() => {
     appDisconnect();
@@ -730,10 +790,13 @@ function App() {
   }, [validatedUser?.login, profile.githubLogin, updateProfile]);
 
   const handleCreateNewChat = useCallback(() => {
+    if (activeChatDraft.provider) {
+      rememberChatModel(activeChatDraft.provider, activeChatDraft.models[activeChatDraft.provider]);
+    }
     const id = createNewChat();
     switchChat(id);
     syncRepos();
-  }, [createNewChat, switchChat, syncRepos]);
+  }, [activeChatDraft, createNewChat, rememberChatModel, switchChat, syncRepos]);
 
   const handleDisplayNameBlur = useCallback(() => {
     const nextDisplayName = displayNameDraft.trim();
