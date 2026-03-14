@@ -593,7 +593,7 @@ export function useChat(
       }
       setConversationsLoaded(true);
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- Dirty conversation flush: incremental IndexedDB writes ---
   useEffect(() => {
