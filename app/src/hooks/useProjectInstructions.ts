@@ -174,7 +174,6 @@ export function useProjectInstructions(
         if (cancelled) return;
         setInstructionFilename(filename);
       },
-      instructionPaths: ['/workspace/AGENTS.md'],
     })
       .catch(() => {
         // Sandbox read failed — keep Phase A content

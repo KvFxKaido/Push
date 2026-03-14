@@ -22,6 +22,7 @@ import { detectAllToolCalls } from './tool-dispatch';
 import { fileLedger } from './file-awareness-ledger';
 import { detectToolFromText, asRecord, streamWithTimeout } from './utils';
 import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
+import { buildContextSummaryBlock } from './context-compaction';
 
 const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — resets on each token)
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
@@ -1330,29 +1331,21 @@ ${truncatedResult}
 
       if (dropEnd > dropStart) {
         const dropCount = dropEnd - dropStart;
+        const removed = messages.slice(dropStart, dropEnd);
 
-        // Build a brief summary of what was dropped so the model doesn't lose context
-        const droppedToolNames: string[] = [];
-        for (let di = dropStart; di < dropEnd; di++) {
-          const m = messages[di];
-          if (m.isToolResult) {
-            const toolMatch = m.content.match(/\[Tool Result — (\S+)\]/);
-            if (toolMatch) droppedToolNames.push(toolMatch[1]);
-          }
-        }
-
-        // Include working memory so the model retains plan/state across trimming
+        // Include working memory so the model retains plan/state across trimming.
         const hasState = hasCoderState(workingMemory, round);
-        const stateBlock = hasState ? `\n${formatCoderState(workingMemory, round)}` : '';
+        const stateBlock = hasState ? formatCoderState(workingMemory, round) : '';
 
-        const summaryContent = [
-          `[Context trimmed — ${dropCount} earlier messages removed to stay within context budget]`,
-          droppedToolNames.length > 0
-            ? `Tools executed in trimmed context: ${[...new Set(droppedToolNames)].join(', ')}`
-            : '',
-          `Current round: ${round + 1}. Re-read any files you need before making further edits.`,
-          stateBlock,
-        ].filter(Boolean).join('\n');
+        const summaryContent = buildContextSummaryBlock(removed, {
+          header: `[Context trimmed — ${dropCount} earlier messages removed to stay within context budget]`,
+          intro: 'Earlier work was condensed. Re-read any files you need before making further edits.',
+          maxPoints: 8,
+          footerLines: [
+            `Current round: ${round + 1}. Re-read any files you need before making further edits.`,
+            stateBlock,
+          ],
+        });
 
         // Merge summary into the task message (messages[0]) instead of inserting
         // a separate user message.  messages[0] is always role:'user', and a

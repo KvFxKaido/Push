@@ -40,6 +40,7 @@ import type { PreferredProvider } from './providers';
 import { buildExperimentalProxyHeaders, normalizeExperimentalBaseUrl } from './experimental-providers';
 import { extractProviderErrorDetail } from './provider-error-utils';
 import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
+import { buildContextSummaryBlock, compactChatMessage } from './context-compaction';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -269,73 +270,12 @@ export function estimateContextTokens(messages: ChatMessage[]): number {
 // Smart Context Management — summarize instead of drop, pin first message
 // ---------------------------------------------------------------------------
 
-/**
- * Compress a tool result message into a compact summary.
- * Keeps the tool name and key stats, drops verbose content (file listings,
- * full code, raw diffs) that consumed the most tokens.
- */
-function summarizeToolResult(msg: ChatMessage): ChatMessage {
-  const lines = msg.content.split('\n');
-
-  // Extract tool header line like "[Tool Result — sandbox_exec]"
-  const headerLine = lines.find(l => l.startsWith('[Tool Result')) || lines[0] || '';
-
-  // Keep first 2 non-empty lines after header (usually contain key stats)
-  const statLines: string[] = [];
-  for (const line of lines.slice(1)) {
-    if (statLines.length >= 2) break;
-    const trimmed = line.trim();
-    if (trimmed && !trimmed.startsWith('```')) {
-      statLines.push(trimmed.length > 180 ? trimmed.slice(0, 180) + '...' : trimmed);
-    }
-  }
-
-  const summary = [headerLine, ...statLines, '[...summarized]'].join('\n');
-  return { ...msg, content: summary };
-}
-
-function summarizeVerboseMessage(msg: ChatMessage): ChatMessage {
-  if (msg.content.length < 800) return msg;
-
-  const lines = msg.content.split('\n').map((l) => l.trim()).filter(Boolean);
-  const preview = lines.slice(0, 2).map((l) => (l.length > 180 ? l.slice(0, 180) + '...' : l));
-  const summary = [...preview, '[...summarized]'].join('\n');
-  return { ...msg, content: summary };
-}
-
 function buildContextDigest(removed: ChatMessage[]): string {
-  const points: string[] = [];
-
-  for (const msg of removed) {
-    if (points.length >= 18) break;
-
-    if (msg.isToolResult) {
-      const header = msg.content.split('\n').find((l) => l.startsWith('[Tool Result')) || '';
-      if (header) points.push(`- ${header}`);
-      continue;
-    }
-
-    if (msg.isToolCall) {
-      points.push('- Tool call executed in earlier context.');
-      continue;
-    }
-
-    const firstLine = msg.content.split('\n').map((l) => l.trim()).find(Boolean) || '';
-    if (!firstLine) continue;
-    const snippet = firstLine.length > 200 ? firstLine.slice(0, 200) + '...' : firstLine;
-    points.push(`- ${msg.role === 'user' ? 'User' : 'Assistant'}: ${snippet}`);
-  }
-
-  if (points.length === 0) {
-    points.push('- Earlier context trimmed for token budget.');
-  }
-
-  return [
-    '[CONTEXT DIGEST]',
-    'Earlier messages were condensed to fit the context budget.',
-    ...points,
-    '[/CONTEXT DIGEST]',
-  ].join('\n');
+  return buildContextSummaryBlock(removed, {
+    header: '[CONTEXT DIGEST]',
+    intro: 'Earlier messages were condensed to fit the context budget.',
+    footerLines: ['[/CONTEXT DIGEST]'],
+  });
 }
 
 /**
@@ -394,7 +334,7 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
   for (let i = 0; i < recentBoundary && currentTokens > summarizeThreshold; i++) {
     const msg = result[i];
     const before = estimateMessageTokens(msg);
-    const summarized = msg.isToolResult ? summarizeToolResult(msg) : summarizeVerboseMessage(msg);
+    const summarized = compactChatMessage(msg);
     const after = estimateMessageTokens(summarized);
     result[i] = summarized;
     currentTokens -= (before - after);
