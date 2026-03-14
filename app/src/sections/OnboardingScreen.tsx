@@ -267,7 +267,7 @@ export function OnboardingScreen({
           )}
           </div>
 
-          {/* Divider + sandbox */}
+          {/* Divider + scratch workspace */}
           <div className="mt-8">
             <div className="mb-6 flex items-center gap-3">
             <div className="flex-1 h-px bg-push-edge-subtle" />
@@ -283,7 +283,7 @@ export function OnboardingScreen({
               <span className="relative z-10">Try it now — no account needed</span>
             </button>
             <p className="mt-2 text-center text-xs text-push-fg-dim">
-              Ephemeral sandbox. Nothing is saved unless you choose.
+              Ephemeral workspace. Nothing is saved unless you choose.
             </p>
           </div>
         </div>
