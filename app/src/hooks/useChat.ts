@@ -609,10 +609,10 @@ export function useChat(
 
     for (const id of dirtyIds) {
       const conv = conversations[id];
-      if (conv) void saveConversationToDB(conv);
+      if (conv) void saveConversationToDB(conv).catch(() => { dirty.add(id); });
     }
     for (const id of deletedIds) {
-      void deleteConversationFromDB(id);
+      void deleteConversationFromDB(id).catch(() => { deleted.add(id); });
     }
   }, [conversations, conversationsLoaded]);
 

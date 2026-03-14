@@ -30,7 +30,14 @@ export async function loadUsageEntries(): Promise<UsageEntry[]> {
       (e: unknown): e is UsageEntry =>
         typeof e === 'object' && e !== null &&
         typeof (e as UsageEntry).timestamp === 'number' &&
-        typeof (e as UsageEntry).model === 'string',
+        Number.isFinite((e as UsageEntry).timestamp) &&
+        typeof (e as UsageEntry).model === 'string' &&
+        typeof (e as UsageEntry).inputTokens === 'number' &&
+        Number.isFinite((e as UsageEntry).inputTokens) &&
+        typeof (e as UsageEntry).outputTokens === 'number' &&
+        Number.isFinite((e as UsageEntry).outputTokens) &&
+        typeof (e as UsageEntry).totalTokens === 'number' &&
+        Number.isFinite((e as UsageEntry).totalTokens),
     );
     // Migrate to IndexedDB
     if (entries.length > 0) {

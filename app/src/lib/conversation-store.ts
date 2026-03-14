@@ -12,7 +12,7 @@
 
 import { STORE, getAll, get, put, del, putMany } from './app-db';
 import { safeStorageGet, safeStorageRemove } from './safe-storage';
-import type { Conversation } from '@/types';
+import type { Conversation, ChatMessage } from '@/types';
 
 const LEGACY_CONVERSATIONS_KEY = 'diff_conversations';
 const MIGRATION_FLAG_KEY = 'push:idb-conversations-migrated';
@@ -88,6 +88,35 @@ export async function replaceAllConversations(convs: Record<string, Conversation
 }
 
 // ---------------------------------------------------------------------------
+// Sanitization (mirrors useChat.ts logic so migrated data is clean)
+// ---------------------------------------------------------------------------
+
+const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
+
+function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
+  const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
+  if (
+    message.role === 'assistant' &&
+    sandboxAttachedBanner.test(message.content.trim()) &&
+    cards.length === 0
+  ) {
+    return null;
+  }
+  if (!message.cards) return message;
+  return { ...message, cards };
+}
+
+function sanitizeConversations(convs: Record<string, Conversation>): Record<string, Conversation> {
+  for (const id of Object.keys(convs)) {
+    const cleaned = (convs[id].messages || [])
+      .map(sanitizeSandboxStateCards)
+      .filter((m): m is ChatMessage => m !== null);
+    convs[id] = { ...convs[id], messages: cleaned };
+  }
+  return convs;
+}
+
+// ---------------------------------------------------------------------------
 // Migration from localStorage
 // ---------------------------------------------------------------------------
 
@@ -119,13 +148,13 @@ export async function migrateConversationsToIndexedDB(): Promise<Record<string, 
     return existing;
   }
 
-  // Load from localStorage
-  const legacy = loadConversationsFromLocalStorage();
+  // Load from localStorage and sanitize (strip deprecated cards, etc.)
+  const legacy = sanitizeConversations(loadConversationsFromLocalStorage());
   if (Object.keys(legacy).length === 0) {
     return {};
   }
 
-  // Write to IndexedDB
+  // Write sanitized data to IndexedDB
   const values = Object.values(legacy);
   try {
     await putMany(STORE.conversations, values);
