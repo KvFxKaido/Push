@@ -42,22 +42,18 @@ This session object becomes the single source of truth. `isSandboxMode` is then 
 
 ## What shipped (Sprint 0)
 
-Commit `b70556a` + follow-up worktree changes (pending commit).
+Commit `b70556a` + follow-up cleanup (types extraction, builder helper).
 
-**Committed (`b70556a`):**
-- [x] `WorkspaceHubCapabilities` model: `canManageBranches`, `canBrowsePullRequests`, `canCommitAndPush`
-- [x] `WorkspaceHubMode`: `'repo' | 'scratch'` — hub reads mode explicitly instead of inferring from missing props
-- [x] `WorkspaceHubScratchActions` — sandbox action bar replaces commit/push bar in scratch mode
+- [x] `WorkspaceCapabilities` model: `canManageBranches`, `canBrowsePullRequests`, `canCommitAndPush` — defined in `types/index.ts`
+- [x] `WorkspaceMode`: `'repo' | 'scratch'` — hub reads mode explicitly instead of inferring from missing props — defined in `types/index.ts`
+- [x] `WorkspaceScratchActions` — sandbox action bar replaces commit/push bar in scratch mode — type in `types/index.ts`, builder in `useSnapshotManager.ts`
 - [x] PRs tab filtered out in scratch mode
 - [x] Branch selector hidden in scratch mode
-- [x] Hub + banner terminology: runtime status strings say "sandbox", review tab strings say "workspace"
+- [x] Hub + banner + launcher terminology: runtime status strings say "sandbox", review/workspace strings say "workspace"
+- [x] `RepoLauncherPanel.tsx` runtime status strings fixed: "Sandbox is starting", "Reconnecting to your sandbox", "Sandbox needs attention"
+- [x] User-facing copy in hub action bar uses "Sandbox" (not "Scratch") — internal type/prop names remain `scratch`
+- [x] Scratch actions builder (`buildWorkspaceScratchActions`) extracted from `ChatScreen.tsx` into `useSnapshotManager.ts` with `formatSnapshotAge` and `isSnapshotStale` helpers
 - [x] Typecheck + lint passing
-- Files: `WorkspaceHubSheet.tsx`, `ChatScreen.tsx`, `SandboxStatusBanner.tsx`, `HubReviewTab.tsx`
-
-**Pending commit (worktree):**
-- [x] `RepoLauncherPanel.tsx` runtime status strings: "Workspace is starting" → "Sandbox is starting", "Reconnecting to your workspace" → "Reconnecting to your sandbox", "Workspace needs attention" → "Sandbox needs attention"
-- [x] User-facing copy in hub action bar aligned to "Sandbox" (not "Scratch") — internal type names remain `scratch`
-- [x] Typecheck passing (lint not yet verified on worktree changes)
 
 ---
 
@@ -102,25 +98,29 @@ Commit `b70556a` + follow-up worktree changes (pending commit).
 - [ ] **2a. Define `WorkspaceSession` type.** Add to `types/index.ts`:
   ```typescript
   type WorkspaceSession =
-    | { kind: 'scratch' }
-    | { kind: 'repo'; repo: RepoWithActivity; branch: string };
+    | { kind: 'scratch'; sandboxId: string | null }
+    | { kind: 'repo'; repo: RepoWithActivity; branch: string; sandboxId: string | null };
   ```
+  `sandboxId` is `null` until the container starts — the session represents *intent* (the user is in a workspace), not *container health*. This means a sandbox startup failure keeps the user in the session (showing an error state) rather than dumping them back to onboarding.
+
+  `sandboxId` is also the scoping key for snapshots (Sprint 2d) and for resumable session checkpoints.
+
   In `App.tsx`, compute `workspaceSession` from existing state:
-  - `isSandboxMode === true` → `{ kind: 'scratch' }`
-  - `activeRepo !== null` → `{ kind: 'repo', repo: activeRepo, branch: ... }`
+  - `isSandboxMode === true` → `{ kind: 'scratch', sandboxId: sandbox.sandboxId }`
+  - `activeRepo !== null` → `{ kind: 'repo', repo: activeRepo, branch: ..., sandboxId: sandbox.sandboxId }`
   - Otherwise → `null` (no workspace, user is on onboarding/home)
 
   During the transition, derive `isSandboxMode` from the session: `const isSandboxMode = session?.kind === 'scratch'`. The boolean stays alive but is now computed, not stored.
 
-- [ ] **2b. `useProjectInstructions` — replace guard with session check.** After Sprint 1b makes this hook return a minimal context for no-repo workspaces, the `if (isSandboxMode)` early return is dead code. Replace with `if (!session || session.kind === 'scratch')` to return the minimal workspace context.
+- [ ] **2b. `useProjectInstructions` — replace guard with session check.** After Sprint 1b makes this hook return a minimal context for no-repo workspaces, the `if (isSandboxMode)` early return becomes a session kind check. Replace with `if (!session || session.kind === 'scratch')` to return the minimal workspace context.
   - File: `hooks/useProjectInstructions.ts`
 
 - [ ] **2c. `useBranchManager` — replace sandbox guards with session checks.** Lines 93 and 109 guard on `isSandboxMode`. Replace with `session?.kind !== 'repo'` — this correctly handles both "no workspace" and "scratch workspace" states.
   - File: `hooks/useBranchManager.ts`
 
-- [ ] **2d. `useSnapshotManager` — scope snapshots to session identity.** This hook has 5 `isSandboxMode` guards. Replace with `session?.kind === 'scratch'` checks. Additionally, snapshot storage is currently global ("latest snapshot" state, not workspace-scoped). Before broadening the model, snapshot keys must be scoped to the session — otherwise restoring could cross-contaminate unrelated scratch sessions or leak into repo workspaces.
+- [ ] **2d. `useSnapshotManager` — scope snapshots to session identity.** This hook has 5 `isSandboxMode` guards. Replace with `session?.kind === 'scratch'` checks. Additionally, snapshot storage is currently global ("latest snapshot" state, not workspace-scoped — `snapshot-manager.ts:3`, `snapshot-manager.ts:178`). Before broadening the model, snapshot keys must be scoped to the session — otherwise restoring in session B could load session A's snapshot.
   - File: `hooks/useSnapshotManager.ts`
-  - **Prerequisite:** Scope snapshot storage keys to workspace session identity (e.g. sandbox ID or a session token). This must ship before or with the guard replacement.
+  - **Prerequisite:** Use `session.sandboxId` (from the `WorkspaceSession` type in 2a) as the snapshot storage key. Snapshots saved under one sandbox ID are invisible to other sessions. This must ship before or with the guard replacement.
   - Decision: Snapshots remain scratch-only for now. Repo workspaces use git as persistence. This can be revisited later.
   - The ephemeral sandbox start path (line 145: `sandbox.start('', 'main')`) needs to remain distinct.
 
@@ -191,8 +191,10 @@ Commit `b70556a` + follow-up worktree changes (pending commit).
 
 - [ ] **4d. Rename `onSandboxMode` callbacks.** Final grep + replace of any remaining `onSandboxMode` references from Sprint 3.
 
-- [ ] **4e. Update CLAUDE.md.** The project instructions reference "Sandbox Mode" as a named concept in multiple places. Update to describe the workspace session model. Remove references to `isSandboxMode` flag.
-  - File: `CLAUDE.md`
+- [ ] **4e. Update project instruction files.** These reference "Sandbox Mode" as a named concept. Update to describe the workspace session model. Remove references to `isSandboxMode` flag.
+  - `CLAUDE.md` — primary project instructions (checked into repo, read by Claude Code)
+  - `AGENTS.md` — project instructions file the app reads from user repos and injects into AI context
+  - `GEMINI.md` — Gemini-specific project instructions
 
 ### Verification
 - `grep -r "isSandboxMode" app/src/` returns zero results.
@@ -213,10 +215,14 @@ Commit `b70556a` + follow-up worktree changes (pending commit).
 
 3. **Should snapshots work for repo workspaces?** Today they're scratch-only. Probably not — git is the persistence layer for repos. Keep scratch-only for now, revisit later.
 
-4. **Container lifecycle.** Today scratch mode auto-starts the container. Repo mode starts it on demand. In the unified model, when does the container spin up? Options: (a) always auto-start (simplest, costliest), (b) start on first tool use (current repo behavior), (c) start when user clicks "Start" (current explicit path). Leaning toward (b) as default.
+4. **Container lifecycle.** Today scratch mode auto-starts the container. Repo mode starts it on demand. In the unified model, when does the container spin up? Options: (a) always auto-start (simplest, costliest), (b) start on first tool use (current repo behavior), (c) start when user clicks "Start" (current explicit path). **Decision: preserve status quo** — auto-start for scratch (users expect immediate readiness), on-demand for repo. Don't try to unify container lifecycle in this plan.
 
 5. **Chat history and branch scoping.** Today scratch chats are not branch-scoped (there are no branches). Repo chats are permanently branch-scoped. In the unified model, scratch chats stay unscoped. The promotion question (binding a scratch chat to a branch after connecting a repo) is tied to Open Question 1.
 
-6. **Header duplication.** Sprint 0 added Save/Restore/Download to the hub scratch action bar. The chat header still has its own snapshot controls and download button for sandbox mode. These overlap. Consolidate to hub-only in Sprint 3e, or keep both for quick access?
+6. **Header duplication.** Sprint 0 added Save/Restore/Download to the hub scratch action bar. The chat header still has its own snapshot controls and download button for sandbox mode. These overlap. **Recommendation: consolidate to hub-only** in Sprint 3e. The header is already crowded; the hub is the right surface for workspace-level actions.
 
 7. **`NewChatWorkspaceSheet` branching.** This sheet (lines 58–104) branches on `workspace.mode === 'sandbox'` to show different copy and options ("This sandbox session still has files" vs "This workspace has uncommitted changes"). Should check `workspaceSession.kind` after Sprint 2.
+
+8. **Resumable sessions and `WorkspaceSession`.** The app checkpoints tool-loop state to localStorage (`run_checkpoint_${chatId}`). `WorkspaceSession` should be serializable into the checkpoint so resume can reconstruct which workspace the user was in. If a scratch session is resumed, the session identity (including `sandboxId`) is needed to reconnect to the right container and load the right snapshots.
+
+9. **Session creation vs sandbox start timing.** The `WorkspaceSession` is created when the user clicks "Try it now" or selects a repo — before the container starts. `sandboxId` is `null` at creation and populated when the container is ready. If sandbox start fails, the session persists in an error state (the user stays on the chat screen with error UI). This prevents startup failures from dumping the user back to onboarding.
