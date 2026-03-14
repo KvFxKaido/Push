@@ -1,4 +1,5 @@
 export { HubChatsTab } from './HubChatsTab';
+export { HubNotesTab } from './HubNotesTab';
 export { HubScratchpadTab } from './HubScratchpadTab';
 export { HubKeptTab } from './HubKeptTab';
 export { HubConsoleTab } from './HubConsoleTab';

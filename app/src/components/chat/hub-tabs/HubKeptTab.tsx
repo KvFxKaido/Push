@@ -95,7 +95,7 @@ function KeptCard({
               className="text-push-xs text-push-fg-dim hover:text-push-fg transition-colors truncate max-w-full text-left"
               title="Click to edit label"
             >
-              {artifact.label || 'Untitled pin'}
+              {artifact.label || 'Untitled reference'}
             </button>
           )}
         </div>
@@ -164,9 +164,9 @@ export function HubKeptTab({ artifacts, onUnpin, onUpdateLabel }: HubKeptTabProp
       <div className="flex h-full items-center justify-center px-6">
         <div className="text-center">
           <Pin className="mx-auto mb-3 h-8 w-8 text-push-fg-dim/40" />
-          <p className="text-sm text-push-fg-dim">No pinned items yet</p>
+          <p className="text-sm text-push-fg-dim">No references yet</p>
           <p className="mt-1 text-push-xs text-push-fg-dim/60 leading-relaxed max-w-[240px] mx-auto">
-            Pin important AI responses from chat to keep them accessible here.
+            Pin useful replies from chat to keep them nearby in Notes.
           </p>
         </div>
       </div>

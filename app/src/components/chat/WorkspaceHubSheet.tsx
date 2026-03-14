@@ -39,13 +39,12 @@ import {
   ConsoleTraceIcon,
   DiffSeamIcon,
   FilesStackIcon,
-  KeptCacheIcon,
   NotebookPadIcon,
   PRThreadIcon,
   ReviewLensIcon,
   SettingsCellsIcon,
 } from '@/components/icons/push-custom-icons';
-import { HubScratchpadTab, HubKeptTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab, HubSettingsTab } from './hub-tabs';
+import { HubNotesTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab, HubSettingsTab } from './hub-tabs';
 import type {
   SettingsAIProps,
   SettingsAuthProps,
@@ -69,7 +68,7 @@ import type {
 // Types
 // ---------------------------------------------------------------------------
 
-type HubTab = 'scratchpad' | 'kept' | 'console' | 'files' | 'diff' | 'prs' | 'review' | 'settings';
+type HubTab = 'notes' | 'console' | 'files' | 'diff' | 'prs' | 'review' | 'settings';
 
 type CommitPhase = 'idle' | 'fetching-diff' | 'branching' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
 type CommitTargetMode = 'current' | 'new';
@@ -160,8 +159,7 @@ interface WorkspaceHubSheetProps {
 // ---------------------------------------------------------------------------
 
 const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: ComponentType<SVGProps<SVGSVGElement>> }> = [
-  { key: 'scratchpad', label: 'Pad', icon: NotebookPadIcon },
-  { key: 'kept', label: 'Kept', icon: KeptCacheIcon },
+  { key: 'notes', label: 'Notes', icon: NotebookPadIcon },
   { key: 'console', label: 'Console', icon: ConsoleTraceIcon },
   { key: 'files', label: 'Files', icon: FilesStackIcon },
   { key: 'diff', label: 'Diff', icon: DiffSeamIcon },
@@ -944,7 +942,7 @@ export function WorkspaceHubSheet({
         <SheetHeader className="sr-only">
           <SheetTitle>Workspace Hub</SheetTitle>
           <SheetDescription>
-            Files, review tools, scratchpad, and settings for the current workspace.
+            Files, notes, review tools, and settings for the current workspace.
           </SheetDescription>
         </SheetHeader>
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tl-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
@@ -1340,8 +1338,8 @@ export function WorkspaceHubSheet({
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
           >
-            {activeTab === 'scratchpad' && (
-              <HubScratchpadTab
+            {activeTab === 'notes' && (
+              <HubNotesTab
                 scratchpadContent={scratchpadContent}
                 scratchpadMemories={scratchpadMemories}
                 activeMemoryId={activeMemoryId}
@@ -1352,11 +1350,6 @@ export function WorkspaceHubSheet({
                 onDeleteMemory={onScratchpadDeleteMemory}
                 onExportToRepo={handleExportScratchpadToRepo}
                 sandboxId={sandboxId}
-              />
-            )}
-
-            {activeTab === 'kept' && (
-              <HubKeptTab
                 artifacts={pinnedArtifacts}
                 onUnpin={onUnpinArtifact}
                 onUpdateLabel={onUpdateArtifactLabel}
