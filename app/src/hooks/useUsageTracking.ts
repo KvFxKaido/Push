@@ -1,6 +1,32 @@
 import { useState, useCallback, useEffect } from 'react';
 import { loadUsageEntries, appendUsageEntry, clearUsageEntries } from '@/lib/usage-store';
 
+// --- Parsing (exported for tests) ---
+
+export function parseUsageLog(raw: string | null): UsageEntry[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is UsageEntry =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        typeof entry.timestamp === 'number' &&
+        Number.isFinite(entry.timestamp) &&
+        typeof entry.model === 'string' &&
+        typeof entry.inputTokens === 'number' &&
+        Number.isFinite(entry.inputTokens) &&
+        typeof entry.outputTokens === 'number' &&
+        Number.isFinite(entry.outputTokens) &&
+        typeof entry.totalTokens === 'number' &&
+        Number.isFinite(entry.totalTokens),
+    );
+  } catch {
+    return [];
+  }
+}
+
 // --- Types ---
 
 export interface UsageEntry {
