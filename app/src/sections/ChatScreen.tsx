@@ -415,14 +415,12 @@ export function ChatScreen(props: ChatScreenProps) {
     : isWorkspaceHubOpen
     ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
     : '';
-  const headerSurfaceClass =
-    'relative overflow-hidden rounded-full border border-push-edge-subtle bg-push-grad-input shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl';
-  const headerInteractiveClass =
-    'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 spring-press';
+  const headerPlainInteractiveClass =
+    'relative text-push-fg-secondary transition-colors duration-200 hover:text-push-fg active:scale-[0.98]';
   const headerRoundButtonClass =
-    `relative flex h-9 w-9 items-center justify-center text-push-fg-secondary ${headerSurfaceClass} ${headerInteractiveClass}`;
+    `flex h-9 w-9 items-center justify-center ${headerPlainInteractiveClass}`;
   const headerPillButtonClass =
-    `pointer-events-auto flex h-9 items-center gap-2 px-3 text-push-fg-secondary ${headerSurfaceClass} ${headerInteractiveClass}`;
+    `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${headerPlainInteractiveClass}`;
 
   // Destructure stable function refs to avoid depending on the whole object
   const { markSnapshotActivity } = snapshots;
@@ -904,8 +902,7 @@ export function ChatScreen(props: ChatScreenProps) {
       {/* Top bar */}
       <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
         <div className="relative z-20 flex min-w-0 items-center gap-2">
-          <div className={`flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-2.5 ${headerSurfaceClass}`}>
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+          <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
             <RepoChatDrawer
               open={isHistoryDrawerOpen}
               onOpenChange={setIsHistoryDrawerOpen}
@@ -1016,7 +1013,6 @@ export function ChatScreen(props: ChatScreenProps) {
               aria-label="Open launcher"
               title="Launcher"
             >
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
               <LauncherGridIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-colors group-hover:text-push-fg" />
               <span className="relative z-10 max-w-[92px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg sm:max-w-[128px]">
                 {isScratch ? 'Workspace' : currentBranch}
@@ -1032,7 +1028,6 @@ export function ChatScreen(props: ChatScreenProps) {
               aria-label="Open workspace hub"
               title="Workspace"
             >
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
               <WorkspaceDockIcon className="relative z-10 h-3.5 w-3.5" />
               {(scratchpad.hasContent || agentStatus.active) && (
                 <span
