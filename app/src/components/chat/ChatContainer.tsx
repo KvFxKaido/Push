@@ -93,7 +93,8 @@ interface ChatContainerProps {
   onDismissResume?: () => void;
   ciStatus?: CIStatus | null;
   onDiagnoseCI?: () => void;
-
+  onEditUserMessage?: (messageId: string) => void;
+  onRegenerateLastResponse?: () => void;
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 150;
@@ -184,7 +185,9 @@ export function ChatContainer({
   onResumeRun,
   onDismissResume,
   ciStatus,
-  onDiagnoseCI
+  onDiagnoseCI,
+  onEditUserMessage,
+  onRegenerateLastResponse,
 }: ChatContainerProps) {
 
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -251,6 +254,16 @@ export function ChatContainer({
   };
 
   const showScrollButton = !isAtBottom;
+  const regeneratableAssistantMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (message.role !== 'assistant') continue;
+      if (message.status === 'streaming' || message.status === 'error') continue;
+      if (message.isToolCall || message.isMalformed) continue;
+      return message.id;
+    }
+    return null;
+  }, [messages]);
 
   if (messages.length === 0) {
     return (
@@ -283,7 +296,15 @@ export function ChatContainer({
         <div className="flex-1" />
         <div className="py-4 space-y-1.5">
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} onCardAction={onCardAction} onPin={onPin} />
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              onCardAction={onCardAction}
+              onPin={onPin}
+              onEdit={msg.role === 'user' && !msg.isToolResult ? onEditUserMessage : undefined}
+              canRegenerate={msg.id === regeneratableAssistantMessageId}
+              onRegenerate={msg.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined}
+            />
           ))}
           <AgentStatusBar status={agentStatus} />
         </div>

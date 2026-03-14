@@ -94,6 +94,8 @@ interface ChatScreenProps {
   renameChat: (id: string, name: string) => void;
   deleteChat: (id: string) => void;
   deleteAllChats: () => void;
+  regenerateLastResponse: () => Promise<void> | void;
+  editMessageAndResend: (messageId: string, text: string, attachments?: AttachmentData[], options?: ChatSendOptions) => Promise<void> | void;
   handleCardAction: (action: CardAction) => void;
   contextUsage: { used: number; max: number; percent: number };
   abortStream: () => void;
@@ -257,6 +259,8 @@ export function ChatScreen(props: ChatScreenProps) {
     renameChat,
     deleteChat,
     deleteAllChats,
+    regenerateLastResponse,
+    editMessageAndResend,
     handleCardAction,
     contextUsage,
     abortStream,
@@ -342,6 +346,12 @@ export function ChatScreen(props: ChatScreenProps) {
   const [checkingNewChatWorkspace, setCheckingNewChatWorkspace] = useState(false);
   const [resettingWorkspaceForNewChat, setResettingWorkspaceForNewChat] = useState(false);
   const [hubTabRequest, setHubTabRequest] = useState<{ tab: 'files' | 'diff'; requestKey: number } | null>(null);
+  const [editingUserMessageId, setEditingUserMessageId] = useState<string | null>(null);
+  const [composerPrefillRequest, setComposerPrefillRequest] = useState<{
+    token: number;
+    text: string;
+    attachments?: AttachmentData[];
+  } | null>(null);
   const activeRepoAppearance = activeRepo && !isScratch
     ? resolveRepoAppearance(activeRepo.full_name)
     : null;
@@ -423,10 +433,52 @@ export function ChatScreen(props: ChatScreenProps) {
     return sendMessage(message, attachments, options);
   }, [markSnapshotActivity, sendMessage]);
 
+  const cancelEditingUserMessage = useCallback(() => {
+    setEditingUserMessageId(null);
+  }, []);
+
+  const handleComposerSend = useCallback((message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
+    markSnapshotActivity();
+
+    if (editingUserMessageId) {
+      const targetMessageId = editingUserMessageId;
+      setEditingUserMessageId(null);
+      return editMessageAndResend(targetMessageId, message, attachments, options);
+    }
+
+    return sendMessage(message, attachments, options);
+  }, [editMessageAndResend, editingUserMessageId, markSnapshotActivity, sendMessage]);
+
   const handleQuickPrompt = useCallback((quickPrompt: QuickPrompt) => {
     const { text, displayText } = buildQuickPromptMessage(quickPrompt);
     return sendMessageWithSnapshotHeartbeat(text, undefined, { displayText });
   }, [sendMessageWithSnapshotHeartbeat]);
+
+  const handleEditUserMessage = useCallback((messageId: string) => {
+    const target = messages.find((message) => message.id === messageId && message.role === 'user' && !message.isToolResult);
+    if (!target) return;
+
+    setEditingUserMessageId(messageId);
+    setComposerPrefillRequest({
+      token: Date.now(),
+      text: target.displayContent ?? target.content,
+      attachments: target.attachments,
+    });
+  }, [messages]);
+
+  const handleRegenerateLastResponse = useCallback(() => {
+    setEditingUserMessageId(null);
+    markSnapshotActivity();
+    return regenerateLastResponse();
+  }, [markSnapshotActivity, regenerateLastResponse]);
+
+  useEffect(() => {
+    if (!editingUserMessageId) return;
+    const stillExists = messages.some((message) => message.id === editingUserMessageId && message.role === 'user' && !message.isToolResult);
+    if (!stillExists) {
+      setEditingUserMessageId(null);
+    }
+  }, [editingUserMessageId, messages]);
 
   const handleWorkspaceHubOpenChange = useCallback((open: boolean) => {
     if (open) {
@@ -1078,15 +1130,23 @@ export function ChatScreen(props: ChatScreenProps) {
         onDismissResume={dismissResume}
         ciStatus={ciStatus}
         onDiagnoseCI={diagnoseCIFailure}
+        onEditUserMessage={!isStreaming ? handleEditUserMessage : undefined}
+        onRegenerateLastResponse={!isStreaming ? handleRegenerateLastResponse : undefined}
       />
 
       {/* Input */}
       <ChatInput
-        onSend={sendMessageWithSnapshotHeartbeat}
+        onSend={handleComposerSend}
         onStop={abortStream}
         isStreaming={isStreaming}
         repoName={activeRepo?.name}
         contextUsage={contextUsage}
+        draftKey={activeChatId}
+        prefillRequest={composerPrefillRequest}
+        editState={editingUserMessageId ? {
+          label: 'Editing an earlier message. Sending will replay the chat from here.',
+          onCancel: cancelEditingUserMessage,
+        } : null}
         providerControls={{
           selectedProvider: selectedChatProvider,
           availableProviders: catalog.availableProviders,

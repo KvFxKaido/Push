@@ -44,6 +44,7 @@ import { getModelNameForProvider } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
+import { buildEditedReplay, buildRegeneratedReplay } from '@/lib/chat-replay';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
@@ -546,7 +547,12 @@ interface ChatDraftSelection {
   model: string | null;
 }
 
-type SendMessageOptions = Partial<ChatDraftSelection> & ChatSendOptions;
+type SendMessageOptions = Partial<ChatDraftSelection> & ChatSendOptions & {
+  chatId?: string;
+  baseMessages?: ChatMessage[];
+  existingUserMessage?: ChatMessage;
+  titleOverride?: string;
+};
 
 export function useChat(
   activeRepoFullName: string | null,
@@ -1203,14 +1209,14 @@ export function useChat(
     async (text: string, attachments?: AttachmentData[], options?: SendMessageOptions) => {
       if ((!text.trim() && (!attachments || attachments.length === 0)) || isStreaming) return;
 
-      let chatId = activeChatId;
+      let chatId = options?.chatId || activeChatIdRef.current;
       if (!chatId || !conversations[chatId]) {
         chatId = createNewChat();
       }
 
       const trimmedText = text.trim();
       const displayText = options?.displayText?.trim();
-      const userMessage: ChatMessage = {
+      const userMessage: ChatMessage = options?.existingUserMessage ?? {
         id: createId(),
         role: 'user',
         content: trimmedText,
@@ -1220,11 +1226,11 @@ export function useChat(
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
       };
 
-      const currentMessages = conversations[chatId]?.messages || [];
-      const updatedWithUser = [...currentMessages, userMessage];
+      const currentMessages = options?.baseMessages ?? (conversations[chatId]?.messages || []);
+      const updatedWithUser = options?.existingUserMessage ? currentMessages : [...currentMessages, userMessage];
 
-      const isFirstMessage = currentMessages.length === 0;
-      const newTitle = isFirstMessage ? generateTitle(updatedWithUser) : conversations[chatId]?.title || 'New Chat';
+      const isFirstMessage = currentMessages.length === 0 && !options?.existingUserMessage;
+      const newTitle = options?.titleOverride || (isFirstMessage ? generateTitle(updatedWithUser) : conversations[chatId]?.title || 'New Chat');
 
       const existingConversation = conversations[chatId];
       const requestedProvider = options?.provider || null;
@@ -2443,11 +2449,68 @@ export function useChat(
         }
       }
     },
-    [activeChatId, conversations, isStreaming, createNewChat, updateAgentStatus, flushCheckpoint],
+    [conversations, isStreaming, createNewChat, updateAgentStatus, flushCheckpoint],
   );
 
   // Wire sendMessageRef so resume callback can reach it (defined after sendMessage)
   sendMessageRef.current = sendMessage;
+
+  const regenerateLastResponse = useCallback(async () => {
+    if (isStreaming) return;
+
+    const chatId = activeChatIdRef.current;
+    if (!chatId) return;
+    const conversation = conversations[chatId];
+    if (!conversation) return;
+
+    const replay = buildRegeneratedReplay(conversation.messages);
+    if (!replay) return;
+
+    await sendMessage(
+      replay.existingUserMessage.content,
+      replay.existingUserMessage.attachments,
+      {
+        chatId,
+        baseMessages: replay.baseMessages,
+        existingUserMessage: replay.existingUserMessage,
+        titleOverride: conversation.title,
+      },
+    );
+  }, [conversations, isStreaming, sendMessage]);
+
+  const editMessageAndResend = useCallback(async (
+    messageId: string,
+    text: string,
+    attachments?: AttachmentData[],
+    options?: ChatSendOptions,
+  ) => {
+    if (isStreaming) return;
+
+    const chatId = activeChatIdRef.current;
+    if (!chatId) return;
+    const conversation = conversations[chatId];
+    if (!conversation) return;
+
+    const replay = buildEditedReplay(
+      conversation.messages,
+      messageId,
+      text,
+      attachments,
+      options?.displayText,
+    );
+    if (!replay) return;
+
+    await sendMessage(
+      replay.existingUserMessage.content,
+      replay.existingUserMessage.attachments,
+      {
+        chatId,
+        baseMessages: replay.baseMessages,
+        existingUserMessage: replay.existingUserMessage,
+        titleOverride: conversation.title,
+      },
+    );
+  }, [conversations, isStreaming, sendMessage]);
 
   const diagnoseCIFailure = useCallback(async () => {
     if (!repoRef.current || !ciStatus || ciStatus.overall !== 'failure') return;
@@ -2878,6 +2941,8 @@ export function useChat(
     createNewChat,
     deleteChat,
     deleteAllChats,
+    regenerateLastResponse,
+    editMessageAndResend,
 
     // Workspace context
     setWorkspaceContext,

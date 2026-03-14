@@ -205,6 +205,8 @@ function App() {
     createNewChat,
     deleteChat,
     deleteAllChats,
+    regenerateLastResponse,
+    editMessageAndResend,
     setWorkspaceContext,
     setSandboxId,
     setWorkspaceSessionId,
@@ -895,6 +897,8 @@ function App() {
       renameChat={renameChat}
       deleteChat={deleteChat}
       deleteAllChats={deleteAllChats}
+      regenerateLastResponse={regenerateLastResponse}
+      editMessageAndResend={editMessageAndResend}
       handleCardAction={handleCardAction}
       contextUsage={contextUsage}
       abortStream={abortStream}

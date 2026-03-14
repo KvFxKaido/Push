@@ -1,5 +1,5 @@
 import { memo, useMemo, useState, useCallback } from 'react';
-import { ChevronRight, FileCode, FileText, Copy, Check, Pin } from 'lucide-react';
+import { ChevronRight, FileCode, FileText, Copy, Check, Pin, Pencil, RefreshCw } from 'lucide-react';
 import type { ChatMessage, CardAction, AttachmentData } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 
@@ -7,6 +7,9 @@ interface MessageBubbleProps {
   message: ChatMessage;
   onCardAction?: (action: CardAction) => void;
   onPin?: (content: string, messageId: string) => void;
+  onEdit?: (messageId: string) => void;
+  onRegenerate?: () => void;
+  canRegenerate?: boolean;
 }
 
 function isToolCallObject(value: unknown): boolean {
@@ -477,6 +480,9 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   onCardAction,
   onPin,
+  onEdit,
+  onRegenerate,
+  canRegenerate = false,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isError = message.status === 'error';
@@ -519,8 +525,17 @@ export const MessageBubble = memo(function MessageBubble({
 
     return (
       <div className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up">
-        <div className="opacity-0 group-hover/user:opacity-100 transition-opacity duration-200 flex items-start pt-2 mr-1.5">
+        <div className="opacity-0 group-hover/user:opacity-100 transition-opacity duration-200 flex items-start gap-0.5 pt-2 mr-1.5">
           <CopyButton text={displayContentText} />
+          {onEdit && (
+            <button
+              onClick={() => onEdit(message.id)}
+              className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-[#d1d8e6]"
+              title="Edit and resend"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
         <div className="chat-user-bubble max-w-[85%] rounded-2xl rounded-br-md border px-4 py-3 shadow-push-md">
           {hasAttachments && (
@@ -580,6 +595,15 @@ export const MessageBubble = memo(function MessageBubble({
         {hasContent && !isStreaming && (
           <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-200 mt-1.5 flex items-center gap-0.5">
             <CopyButton text={displayContentText} />
+            {canRegenerate && onRegenerate && (
+              <button
+                onClick={onRegenerate}
+                className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-[#d1d8e6]"
+                title="Regenerate response"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </button>
+            )}
             {onPin && (
               <button
                 onClick={() => onPin(displayContentText, message.id)}

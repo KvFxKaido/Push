@@ -10,6 +10,7 @@ import type { StagedAttachment } from '@/lib/file-processing';
 import type { AIProviderType, AttachmentData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 
 interface ChatInputProps {
   onSend: (message: string, attachments?: AttachmentData[]) => void;
@@ -17,6 +18,16 @@ interface ChatInputProps {
   isStreaming?: boolean;
   repoName?: string;
   contextUsage?: { used: number; max: number; percent: number };
+  draftKey?: string | null;
+  prefillRequest?: {
+    token: number;
+    text: string;
+    attachments?: AttachmentData[];
+  } | null;
+  editState?: {
+    label: string;
+    onCancel: () => void;
+  } | null;
   providerControls?: {
     selectedProvider: PreferredProvider | null;
     availableProviders: readonly (readonly [PreferredProvider, string, boolean])[];
@@ -77,6 +88,7 @@ function formatDeploymentLabel(dep: ExperimentalDeployment): string {
 
 const ACCEPTED_FILES = 'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
 const MAX_PAYLOAD = 750 * 1024; // 750KB total
+const COMPOSER_DRAFT_KEY_PREFIX = 'push:chat-composer-draft:';
 
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
@@ -107,12 +119,36 @@ const COMPOSER_CONTROL_SURFACE_CLASS =
 const COMPOSER_CONTROL_INTERACTIVE_CLASS =
   'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 spring-press';
 
+function composerDraftStorageKey(draftKey: string): string {
+  return `${COMPOSER_DRAFT_KEY_PREFIX}${draftKey}`;
+}
+
+function parseSavedDraft(raw: string | null): string {
+  if (!raw) return '';
+  try {
+    const parsed = JSON.parse(raw) as { value?: unknown };
+    return typeof parsed.value === 'string' ? parsed.value : '';
+  } catch {
+    return '';
+  }
+}
+
+function toStagedAttachments(attachments?: AttachmentData[]): StagedAttachment[] {
+  return (attachments || []).map((attachment) => ({
+    ...attachment,
+    status: 'ready',
+  }));
+}
+
 export function ChatInput({
   onSend,
   onStop,
   isStreaming,
   repoName,
   contextUsage,
+  draftKey,
+  prefillRequest,
+  editState,
   providerControls,
 }: ChatInputProps) {
   const [value, setValue] = useState('');
@@ -178,6 +214,46 @@ export function ChatInput({
   useEffect(() => {
     adjustHeight();
   }, [value, adjustHeight]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const nextValue = draftKey
+        ? parseSavedDraft(safeStorageGet(composerDraftStorageKey(draftKey)))
+        : '';
+      setValue(nextValue);
+      setStagedAttachments([]);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [draftKey, adjustHeight]);
+
+  useEffect(() => {
+    if (!draftKey) return;
+    const storageKey = composerDraftStorageKey(draftKey);
+    if (!value) {
+      safeStorageRemove(storageKey);
+      return;
+    }
+    safeStorageSet(storageKey, JSON.stringify({ value }));
+  }, [draftKey, value]);
+
+  useEffect(() => {
+    if (!prefillRequest) return;
+
+    const frame = requestAnimationFrame(() => {
+      setValue(prefillRequest.text);
+      setStagedAttachments(toStagedAttachments(prefillRequest.attachments));
+
+      requestAnimationFrame(() => {
+        adjustHeight();
+        textareaRef.current?.focus();
+        const cursor = prefillRequest.text.length;
+        textareaRef.current?.setSelectionRange(cursor, cursor);
+      });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [prefillRequest, adjustHeight]);
 
   const handleSend = useCallback(() => {
     if (!canSend) return;
@@ -278,6 +354,12 @@ export function ChatInput({
     }
   };
 
+  const sendButtonLabel = isStreaming
+    ? 'Stop generating'
+    : editState
+      ? 'Save edit and resend'
+      : 'Send message';
+
   const statusText = isStreaming
     ? 'Generating...'
     : readyAttachments.length > 0
@@ -345,6 +427,21 @@ export function ChatInput({
     <div className="safe-area-bottom sticky bottom-0 z-10 px-3 pb-3 mx-auto w-full max-w-2xl">
       <div className="relative overflow-hidden rounded-[24px] border border-[#171c25]/90 bg-push-grad-input shadow-[0_12px_40px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] backdrop-blur-xl">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-white/[0.03] to-transparent" />
+
+        {editState && (
+          <div className="px-3 pt-3">
+            <div className="flex items-center justify-between gap-3 rounded-[18px] border border-amber-500/20 bg-[linear-gradient(180deg,rgba(62,45,16,0.16)_0%,rgba(22,17,7,0.3)_100%)] px-3.5 py-2.5">
+              <p className="text-xs text-amber-100/90">{editState.label}</p>
+              <button
+                type="button"
+                onClick={editState.onCancel}
+                className="rounded-full px-2.5 py-1 text-push-2xs text-amber-100/70 transition-colors hover:bg-white/[0.06] hover:text-amber-100"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Attachment preview */}
         {hasAttachments && (
@@ -748,8 +845,8 @@ export function ChatInput({
                   ? `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
                   : 'cursor-not-allowed rounded-full border border-[#262c38] bg-[#151a22] text-[#576176] shadow-none'
             }`}
-            aria-label={isStreaming ? 'Stop generating' : 'Send message'}
-            title={isStreaming ? 'Stop generating' : 'Send message'}
+            aria-label={sendButtonLabel}
+            title={sendButtonLabel}
           >
             {(isStreaming || canSend) && (
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
