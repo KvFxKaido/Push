@@ -42,6 +42,17 @@ import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import { getModelNameForProvider } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import {
+  migrateConversationsToIndexedDB,
+  saveConversation as saveConversationToDB,
+  deleteConversation as deleteConversationFromDB,
+  replaceAllConversations as replaceAllConversationsInDB,
+} from '@/lib/conversation-store';
+import {
+  saveCheckpoint as saveCheckpointToDB,
+  loadCheckpoint as loadCheckpointFromDB,
+  clearCheckpoint as clearCheckpointFromDB,
+} from '@/lib/checkpoint-store';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 import { buildEditedReplay, buildRegeneratedReplay } from '@/lib/chat-replay';
@@ -54,7 +65,7 @@ const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
 const MAX_PARALLEL_DELEGATE_TASKS = 3;
-const CHECKPOINT_KEY_PREFIX = 'run_checkpoint_';
+// CHECKPOINT_KEY_PREFIX moved to checkpoint-store.ts
 const CHECKPOINT_MAX_AGE_MS = 25 * 60 * 1000; // 25 min — matches sandbox max age
 
 function createId(): string {
@@ -103,37 +114,22 @@ function getGitHubAppCommitIdentity(): { name: string; email: string } | undefin
 // --- Checkpoint helpers (Resumable Sessions Phase 1) ---
 
 function saveCheckpoint(checkpoint: RunCheckpoint): void {
-  try {
-    const trimmed = trimCheckpointDelta(checkpoint);
-    safeStorageSet(`${CHECKPOINT_KEY_PREFIX}${trimmed.chatId}`, JSON.stringify(trimmed));
-  } catch {
-    // Best-effort — don't break the tool loop if storage is full
-    console.warn('[Push] Failed to save run checkpoint');
-  }
+  const trimmed = trimCheckpointDelta(checkpoint);
+  void saveCheckpointToDB(trimmed);
 }
 
 function clearCheckpoint(chatId: string): void {
-  safeStorageRemove(`${CHECKPOINT_KEY_PREFIX}${chatId}`);
+  void clearCheckpointFromDB(chatId);
 }
 
-function loadCheckpoint(chatId: string): RunCheckpoint | null {
-  try {
-    const raw = safeStorageGet(`${CHECKPOINT_KEY_PREFIX}${chatId}`);
-    if (!raw) return null;
-    return JSON.parse(raw) as RunCheckpoint;
-  } catch {
-    return null;
-  }
-}
-
-export function detectInterruptedRun(
+export async function detectInterruptedRun(
   chatId: string,
   currentSandboxId: string | null,
   currentBranch: string | null,
   currentRepoId: string | null,
   currentWorkspaceSessionId?: string | null,
-): RunCheckpoint | null {
-  const checkpoint = loadCheckpoint(chatId);
+): Promise<RunCheckpoint | null> {
+  const checkpoint = await loadCheckpointFromDB(chatId);
   if (!checkpoint) return null;
 
   // Stale check
@@ -331,9 +327,11 @@ export function getResumeEvents(): readonly ResumeEvent[] {
   return resumeEvents;
 }
 
-// --- localStorage helpers ---
+// --- persistence helpers ---
 
-function saveConversations(convs: Record<string, Conversation>) {
+// Legacy sync save — kept only for old-format migration writes.
+// Normal persistence is handled by the dirty-tracking flush effect.
+function saveConversationsLegacy(convs: Record<string, Conversation>) {
   safeStorageSet(CONVERSATIONS_KEY, JSON.stringify(convs));
 }
 
@@ -377,7 +375,7 @@ function loadConversations(): Record<string, Conversation> {
             migrated = true;
           }
         }
-        if (migrated) saveConversations(convs);
+        if (migrated) saveConversationsLegacy(convs);
       }
 
       return convs;
@@ -404,7 +402,7 @@ function loadConversations(): Record<string, Conversation> {
             repoFullName: repoFullName || undefined,
           },
         };
-        saveConversations(migrated);
+        saveConversationsLegacy(migrated);
         saveActiveChatId(id);
         safeStorageRemove(OLD_STORAGE_KEY);
         return migrated;
@@ -564,6 +562,9 @@ export function useChat(
   const [ciStatus, setCiStatus] = useState<CIStatus | null>(null);
   const [conversations, setConversations] = useState<Record<string, Conversation>>(loadConversations);
   const [activeChatId, setActiveChatId] = useState<string>(() => loadActiveChatId(conversations));
+  const [conversationsLoaded, setConversationsLoaded] = useState(false);
+  const dirtyConversationIdsRef = useRef(new Set<string>());
+  const deletedConversationIdsRef = useRef(new Set<string>());
   const [isStreaming, setIsStreaming] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
   const [agentEventsByChat, setAgentEventsByChat] = useState<Record<string, AgentStatusEvent[]>>({});
@@ -578,6 +579,42 @@ export function useChat(
   const workspaceSessionIdRef = useRef<string | null>(null);
   const isMainProtectedRef = useRef(false);
   const autoCreateRef = useRef(false); // Guard against creation loops
+
+  // --- IndexedDB migration: load conversations async, overwrite sync localStorage load ---
+  useEffect(() => {
+    migrateConversationsToIndexedDB().then((convs) => {
+      if (Object.keys(convs).length > 0) {
+        setConversations(convs);
+        setActiveChatId((prev) => {
+          // Re-derive active chat from migrated data if current ID is stale
+          if (prev && convs[prev]) return prev;
+          return loadActiveChatId(convs);
+        });
+      }
+      setConversationsLoaded(true);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // --- Dirty conversation flush: incremental IndexedDB writes ---
+  useEffect(() => {
+    if (!conversationsLoaded) return;
+    const dirty = dirtyConversationIdsRef.current;
+    const deleted = deletedConversationIdsRef.current;
+    if (dirty.size === 0 && deleted.size === 0) return;
+
+    const dirtyIds = [...dirty];
+    const deletedIds = [...deleted];
+    dirty.clear();
+    deleted.clear();
+
+    for (const id of dirtyIds) {
+      const conv = conversations[id];
+      if (conv) void saveConversationToDB(conv);
+    }
+    for (const id of deletedIds) {
+      void deleteConversationFromDB(id);
+    }
+  }, [conversations, conversationsLoaded]);
 
   // --- Resumable Sessions: refs for synchronous checkpoint flushing ---
   // These refs track the latest accumulated state so flushCheckpoint() can
@@ -775,15 +812,13 @@ export function useChat(
     if (isStreaming || loopActiveRef.current) return;
     if (!activeChatId) return;
 
-    const checkpoint = detectInterruptedRun(
+    detectInterruptedRun(
       activeChatId,
       sandboxIdRef.current,
       branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
       repoRef.current,
       workspaceSessionIdRef.current,
-    );
-
-    setInterruptedCheckpoint(checkpoint);
+    ).then(setInterruptedCheckpoint);
   }, [activeChatId, isStreaming]);
 
   const dismissResume = useCallback(() => {
@@ -803,7 +838,7 @@ export function useChat(
 
     // Revalidate checkpoint identity at click-time (sandbox/branch/repo may have
     // changed while the resume banner was visible)
-    const revalidated = detectInterruptedRun(
+    const revalidated = await detectInterruptedRun(
       chatId,
       currentSandboxId,
       branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
@@ -829,7 +864,7 @@ export function useChat(
           status: 'done',
         };
         const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
-        saveConversations(updated);
+        dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
       return;
@@ -854,7 +889,7 @@ export function useChat(
           status: 'done',
         };
         const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
-        saveConversations(updated);
+        dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
       return;
@@ -875,7 +910,7 @@ export function useChat(
           status: 'done',
         };
         const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
-        saveConversations(updated);
+        dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
       return;
@@ -975,7 +1010,7 @@ export function useChat(
         };
         setConversations((prev) => {
           const updated = { ...prev, [id]: newConv };
-          saveConversations(updated);
+          dirtyConversationIdsRef.current.add(id);
           return updated;
         });
         setActiveChatId(id);
@@ -1069,7 +1104,7 @@ export function useChat(
     };
     setConversations((prev) => {
       const updated = { ...prev, [id]: newConv };
-      saveConversations(updated);
+      dirtyConversationIdsRef.current.add(id);
       return updated;
     });
     setActiveChatId(id);
@@ -1103,7 +1138,7 @@ export function useChat(
           title: trimmed,
         },
       };
-      saveConversations(updated);
+      dirtyConversationIdsRef.current.add(id);
       return updated;
     });
   }, []);
@@ -1147,7 +1182,8 @@ export function useChat(
           }
         }
 
-        saveConversations(updated);
+        deletedConversationIdsRef.current.add(id);
+        dirtyConversationIdsRef.current.delete(id);
         return updated;
       });
     },
@@ -1184,7 +1220,8 @@ export function useChat(
 
       setActiveChatId(id);
       saveActiveChatId(id);
-      saveConversations(kept);
+      // Full replace — deleteAllChats nukes and recreates
+      void replaceAllConversationsInDB(kept);
 
       if (removedIds.length > 0) {
         setAgentEventsByChat((prevEvents) => {
@@ -1271,7 +1308,7 @@ export function useChat(
             ...(shouldPersistModel && resolvedModelForChat ? { model: resolvedModelForChat } : {}),
           },
         };
-        saveConversations(updated);
+        dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
 
@@ -1328,7 +1365,7 @@ export function useChat(
             m.status === 'streaming' ? { ...m, content: 'This chat is active in another tab. Please switch tabs or wait for the other session to finish.', status: 'done' as const } : m,
           );
           const updated = { ...prev, [chatId]: { ...existing, messages: msgs, lastMessageAt: Date.now() } };
-          saveConversations(updated);
+          dirtyConversationIdsRef.current.add(chatId);
           return updated;
         });
         return;
@@ -1473,7 +1510,7 @@ export function useChat(
                 };
               }
               const updated = { ...prev, [chatId]: { ...conv, messages: msgs } };
-              saveConversations(updated);
+              dirtyConversationIdsRef.current.add(chatId);
               return updated;
             });
             break;
@@ -1614,7 +1651,7 @@ export function useChat(
                   lastMessageAt: Date.now(),
                 },
               };
-              saveConversations(updated);
+              dirtyConversationIdsRef.current.add(chatId);
               return updated;
             });
 
@@ -1911,7 +1948,7 @@ export function useChat(
                 };
               }
               const updated = { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
-              saveConversations(updated);
+              dirtyConversationIdsRef.current.add(chatId);
               return updated;
             });
             loopCompletedNormally = true;
@@ -2329,7 +2366,7 @@ export function useChat(
                   lastMessageAt: Date.now(),
                 },
               };
-              saveConversations(updated);
+              dirtyConversationIdsRef.current.add(chatId);
               return updated;
             });
 
@@ -2406,7 +2443,7 @@ export function useChat(
             const conv = prev[chatId];
             if (!conv) return prev;
             const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, toolResultMsg] } };
-            saveConversations(updated);
+            dirtyConversationIdsRef.current.add(chatId);
             return updated;
           });
 
@@ -2534,7 +2571,7 @@ export function useChat(
           return { ...msg, cards };
         });
         const updated = { ...prev, [chatId]: { ...conv, messages: msgs } };
-        saveConversations(updated);
+        dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
     },
@@ -2554,7 +2591,7 @@ export function useChat(
         const conv = prev[chatId];
         if (!conv) return prev;
         const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
-        saveConversations(updated);
+        dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
     },
@@ -2578,7 +2615,7 @@ export function useChat(
         const conv = prev[chatId];
         if (!conv) return prev;
         const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
-        saveConversations(updated);
+        dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
     },
@@ -2718,7 +2755,7 @@ export function useChat(
                       const conv = prev[chatId];
                       if (!conv) return prev;
                       const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, ciMsg], lastMessageAt: Date.now() } };
-                      saveConversations(updated);
+                      dirtyConversationIdsRef.current.add(chatId);
                       return updated;
                     });
                   }
@@ -2934,6 +2971,7 @@ export function useChat(
 
     // Multi-chat management
     conversations,
+    conversationsLoaded,
     activeChatId,
     sortedChatIds,
     switchChat,

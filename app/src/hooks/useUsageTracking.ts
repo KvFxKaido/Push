@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { loadUsageEntries, appendUsageEntry, clearUsageEntries } from '@/lib/usage-store';
 
 // --- Types ---
 
@@ -19,51 +19,10 @@ export interface UsageStats {
 
 // --- Constants ---
 
-const USAGE_KEY = 'push_usage_log';
-const MAX_ENTRIES = 1000; // Keep last 1000 entries to avoid storage bloat
-
 // Rough token cost estimates (per 1M tokens) for visibility
 // These are estimates — actual costs depend on the provider/plan
 const COST_PER_1M_INPUT = 0.15;  // $0.15 per 1M input tokens
 const COST_PER_1M_OUTPUT = 0.60; // $0.60 per 1M output tokens
-
-// --- Storage helpers ---
-
-function loadUsageLog(): UsageEntry[] {
-  const stored = safeStorageGet(USAGE_KEY);
-  return parseUsageLog(stored);
-}
-
-export function parseUsageLog(raw: string | null): UsageEntry[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (entry): entry is UsageEntry =>
-        typeof entry === 'object' &&
-        entry !== null &&
-        typeof entry.timestamp === 'number' &&
-        Number.isFinite(entry.timestamp) &&
-        typeof entry.model === 'string' &&
-        typeof entry.inputTokens === 'number' &&
-        Number.isFinite(entry.inputTokens) &&
-        typeof entry.outputTokens === 'number' &&
-        Number.isFinite(entry.outputTokens) &&
-        typeof entry.totalTokens === 'number' &&
-        Number.isFinite(entry.totalTokens),
-    );
-  } catch {
-    // Ignore parse errors
-  }
-  return [];
-}
-
-function saveUsageLog(entries: UsageEntry[]) {
-  // Keep only the most recent entries
-  const trimmed = entries.slice(-MAX_ENTRIES);
-  safeStorageSet(USAGE_KEY, JSON.stringify(trimmed));
-}
 
 // --- Stats calculation ---
 
@@ -123,8 +82,16 @@ export function formatCost(cost: number): string {
 // --- Hook ---
 
 export function useUsageTracking() {
-  const [entries, setEntries] = useState<UsageEntry[]>(loadUsageLog);
-  const [stats, setStats] = useState<UsageStats>(() => calculateStats(entries));
+  const [entries, setEntries] = useState<UsageEntry[]>([]);
+  const [stats, setStats] = useState<UsageStats>(() => calculateStats([]));
+
+  // Load entries from IndexedDB on mount
+  useEffect(() => {
+    loadUsageEntries().then((loaded) => {
+      setEntries(loaded);
+      setStats(calculateStats(loaded));
+    });
+  }, []);
 
   // Recalculate stats when entries change
   useEffect(() => {
@@ -144,16 +111,13 @@ export function useUsageTracking() {
       totalTokens: inputTokens + outputTokens,
     };
 
-    setEntries((prev) => {
-      const updated = [...prev, entry];
-      saveUsageLog(updated);
-      return updated;
-    });
+    setEntries((prev) => [...prev, entry]);
+    void appendUsageEntry(entry);
   }, []);
 
   const clearUsage = useCallback(() => {
     setEntries([]);
-    safeStorageRemove(USAGE_KEY);
+    void clearUsageEntries();
   }, []);
 
   const todayCost = estimateCost(stats.today.inputTokens, stats.today.outputTokens);
