@@ -16,7 +16,7 @@ import { MergeFlowSheet } from '@/components/chat/MergeFlowSheet';
 import { RepoLauncherSheet } from '@/components/launcher/RepoLauncherSheet';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
-  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HUB_TOP_BANNER_STRIP_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import type { PreferredProvider } from '@/lib/providers';
@@ -1128,7 +1128,7 @@ export function ChatScreen(props: ChatScreenProps) {
       )}
 
       {!isScratch && activeRepo && instructions.projectInstructionsChecked && !instructions.projectInstructionsCheckFailed && !instructions.agentsMdContent && (
-        <div className={`mx-4 mt-5 animate-fade-in px-3.5 py-3.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
+        <div className={`mx-4 mt-5 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-push-edge/70`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-medium text-push-fg">No AGENTS.md found</p>

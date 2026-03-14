@@ -2,7 +2,7 @@ import { ShieldAlert, ShieldCheck, Loader2, Wrench } from 'lucide-react';
 import type { CIStatus } from '@/types';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
-  HUB_PANEL_SUBTLE_SURFACE_CLASS,
+  HUB_TOP_BANNER_STRIP_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 
@@ -21,10 +21,10 @@ export function CIStatusBanner({ status, onDiagnose }: CIStatusBannerProps) {
 
   return (
     <div 
-      className={`mx-4 mt-5 mb-1 flex items-center justify-between gap-3 px-3.5 py-3 animate-fade-in ${
+      className={`mx-4 mt-5 mb-1 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} ${
         isFailure 
-          ? 'rounded-[18px] border border-red-500/20 bg-red-500/5' 
-          : `${HUB_PANEL_SUBTLE_SURFACE_CLASS}`
+          ? 'border-red-500/25' 
+          : 'border-blue-500/20'
       }`}
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">
