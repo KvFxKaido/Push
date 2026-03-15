@@ -16,7 +16,7 @@ const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
-const MIN_CONTEXT_TOKENS = 64000;
+export const MIN_CONTEXT_TOKENS = 64000;
 const OPENROUTER_PRIORITY_MODELS = [
   'anthropic/claude-haiku-4.5',
   'anthropic/claude-opus-4.6',
@@ -275,7 +275,7 @@ interface ContextFilterResult {
  * Fail-closed context filter: rejects models with unknown/missing contextLimit.
  * Priority models (whitelist) bypass the filter even if metadata is missing.
  */
-function filterModelByContext(
+export function filterModelByContext(
   modelId: string,
   contextLimit: number | undefined | null,
   prioritySet: Set<string>,
@@ -517,9 +517,10 @@ export function buildCuratedOpenRouterModelList(
     if (!liveIds.has(id)) return false;
     // Priority models bypass context filter but still check if it's a text chat model
     const meta = metadataById?.[id];
+    // Reject if metadata is missing - we can't verify the model's capabilities
+    if (!meta) return false;
     // Exclude image-output-only models
-    if (meta?.outputModalities?.includes('image') && !meta?.outputModalities?.includes('text')) return false;
-
+    if (meta.outputModalities?.includes('image') && !meta.outputModalities?.includes('text')) return false;
     const contextLimit = meta?.contextLimit ?? modelsById[id]?.contextLength;
     const filterResult = filterModelByContext(id, contextLimit, prioritySet);
     return filterResult.allowed;

@@ -4,6 +4,8 @@ import {
   buildCuratedOllamaModelList,
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
+  filterModelByContext,
+  MIN_CONTEXT_TOKENS,
   parseOpenRouterCatalog,
 } from './model-catalog';
 
@@ -349,5 +351,38 @@ describe('buildCuratedOpencodeModelList', () => {
     expect(curated).toContain('qwen3-coder');
     expect(curated).not.toContain('text-embedding-3-large');
     expect(curated).not.toContain('gpt-image-1');
+  });
+});
+
+describe('filterModelByContext', () => {
+  const prioritySet = new Set(['priority-model-1', 'priority-model-2']);
+
+  it('rejects models with missing contextLimit (fail-closed)', () => {
+    const result = filterModelByContext('test-model', undefined, prioritySet);
+    expect(result.allowed).toBe(false);
+    
+    const nullResult = filterModelByContext('test-model', null, prioritySet);
+    expect(nullResult.allowed).toBe(false);
+  });
+
+  it('rejects models with contextLimit below MIN_CONTEXT_TOKENS threshold', () => {
+    const result = filterModelByContext('test-model', MIN_CONTEXT_TOKENS - 1, prioritySet);
+    expect(result.allowed).toBe(false);
+    
+    // Exactly at threshold - should pass
+    const atThreshold = filterModelByContext('test-model', MIN_CONTEXT_TOKENS, prioritySet);
+    expect(atThreshold.allowed).toBe(true);
+    
+    // Above threshold - should pass
+    const above = filterModelByContext('test-model', MIN_CONTEXT_TOKENS + 1000, prioritySet);
+    expect(above.allowed).toBe(true);
+  });
+
+  it('allows priority models to bypass context checks', () => {
+    const result = filterModelByContext('priority-model-1', undefined, prioritySet);
+    expect(result.allowed).toBe(true);
+    
+    const lowContext = filterModelByContext('priority-model-2', 1000, prioritySet);
+    expect(lowContext.allowed).toBe(true);
   });
 });
