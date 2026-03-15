@@ -975,11 +975,11 @@ export function useChat(
   const currentBranch = branchInfo?.currentBranch;
   const defaultBranch = branchInfo?.defaultBranch;
   const sortedChatIds = useMemo(() => {
-    return Object.keys(conversations)
-      .filter((id) => {
-        const conv = conversations[id];
-        if (!activeRepoFullName) return !conv.repoFullName; // demo mode
-        if (conv.repoFullName !== activeRepoFullName) return false;
+      return Object.keys(conversations)
+        .filter((id) => {
+          const conv = conversations[id];
+          if (!activeRepoFullName) return !conv.repoFullName; // repo-less workspace or legacy chat
+          if (conv.repoFullName !== activeRepoFullName) return false;
 
         // Branch filtering: show chats for the current branch.
         // Legacy chats (no branch field) appear when viewing the default branch.

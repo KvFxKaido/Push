@@ -116,7 +116,7 @@ Context uses a token budget with summarization. Older tool-heavy messages are co
 
 ### Project Instructions (Two-Phase Loading)
 
-When the user selects a repo, the app fetches project instruction files via the GitHub REST API (tries `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md` as fallbacks) and injects the content into the Orchestrator and Coder system prompts. When a sandbox becomes ready later, the app currently re-reads `/workspace/AGENTS.md` only, so local edits to the canonical project instructions file can upgrade the content.
+When the user selects a repo, the app fetches project instruction files via the GitHub REST API (tries `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md` as fallbacks) and injects the content into the Orchestrator and Coder system prompts. When a sandbox becomes ready later, it re-reads `/workspace/AGENTS.md`, `/workspace/CLAUDE.md`, then `/workspace/GEMINI.md` in the same fallback order, so local edits to the canonical project instructions file can upgrade the content.
 
 ### Data Flow
 

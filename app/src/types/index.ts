@@ -1,5 +1,3 @@
-export type AppState = 'home' | 'running' | 'results' | 'repos';
-
 // User profile — persisted in localStorage, injected into system prompt
 export interface UserProfile {
   displayName: string;
@@ -10,7 +8,7 @@ export interface UserProfile {
 export type WorkspaceMode = 'repo' | 'scratch';
 
 /**
- * Workspace session identity — replaces the isSandboxMode boolean.
+ * Workspace session identity for the active repo or scratch workspace.
  * `id` is a stable logical identity that survives sandbox restarts.
  * `sandboxId` is the runtime container id (null until the container starts).
  */
@@ -126,58 +124,6 @@ export interface AIProviderConfig {
   models: AIModel[];
   envKey: string;
   envUrl?: string;
-}
-
-export interface PRInput {
-  owner: string;
-  repo: string;
-  prNumber: string;
-}
-
-export interface PRData {
-  title: string;
-  author: string;
-  additions: number;
-  deletions: number;
-  changedFiles: number;
-  diff: string;
-  files: PRFile[];
-  _demo?: boolean;
-}
-
-export interface PRFile {
-  filename: string;
-  status: 'added' | 'removed' | 'modified' | 'renamed';
-  additions: number;
-  deletions: number;
-  patch?: string;
-}
-
-export interface AnalysisResult {
-  summary: string;
-  risks: RiskItem[];
-  diffNotes: DiffNote[];
-  hotspots?: Hotspot[];
-  _demo?: boolean;
-}
-
-export interface RiskItem {
-  level: 'low' | 'medium' | 'high';
-  category: string;
-  description: string;
-}
-
-export interface DiffNote {
-  file: string;
-  line?: number;
-  type: 'logic' | 'mechanical' | 'style';
-  note: string;
-}
-
-export interface Hotspot {
-  file: string;
-  reason: string;
-  complexity: number;
 }
 
 // Phase 1 — Repo Awareness
@@ -571,7 +517,7 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: number;
   lastMessageAt: number;
-  repoFullName?: string;  // "owner/repo". Undefined = unscoped (legacy/demo).
+  repoFullName?: string;  // "owner/repo". Undefined = unscoped (scratch or older chats).
   /** The branch that was active when the conversation was created. Optional for backwards compat. */
   branch?: string;
   /** The AI provider that was used when the first message was sent. Locked for the whole conversation. */

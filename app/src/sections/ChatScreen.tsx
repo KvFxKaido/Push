@@ -160,7 +160,6 @@ interface ChatScreenProps {
   appError: string | null;
   connectApp: () => void;
   installApp: () => void;
-  isDemo: boolean;
 
   // Workspace hub
   isWorkspaceHubOpen: boolean;
@@ -301,7 +300,6 @@ export function ChatScreen(props: ChatScreenProps) {
     appError,
     connectApp,
     installApp,
-    isDemo,
     isWorkspaceHubOpen,
     setIsWorkspaceHubOpen,
     showToolActivity,
@@ -414,7 +412,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleDeleteBranch,
   } = branches;
 
-  const isConnected = Boolean(token) || isDemo || isScratch;
+  const isGitHubConnected = Boolean(token);
   const historyDrawerOffset = 'min(86vw, 24rem)';
   const workspaceHubOffset = '94vw';
   const chatShellTransform = isHistoryDrawerOpen
@@ -719,8 +717,7 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const settingsAuth = {
 
-        isConnected,
-        isDemo,
+        isConnected: isGitHubConnected,
         isAppAuth,
         installationId: installationId ?? '',
         token: token ?? '',

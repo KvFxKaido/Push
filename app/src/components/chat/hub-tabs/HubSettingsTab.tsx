@@ -174,11 +174,11 @@ export function HubSettingsTab({
     {
       title: 'You',
       description: 'Identity and GitHub state available to every chat.',
-      badge: auth.isDemo ? 'demo' : auth.isConnected ? 'linked' : 'offline',
+      badge: auth.isConnected ? 'linked' : 'offline',
       icon: SETTINGS_SECTION_ICONS.you,
       lines: [
         `Push knows you as ${profileName}.`,
-        `GitHub ${auth.isDemo ? 'is in demo mode right now.' : auth.isConnected ? `is connected ${profile.profile.githubLogin || profile.validatedUser?.login ? `as ${profile.profile.githubLogin || profile.validatedUser?.login}.` : 'and ready.'}` : 'is not connected yet.'}`,
+        `GitHub ${auth.isConnected ? `is connected ${profile.profile.githubLogin || profile.validatedUser?.login ? `as ${profile.profile.githubLogin || profile.validatedUser?.login}.` : 'and ready.'}` : 'is not connected yet.'}`,
         `${profile.profile.bio.trim() ? 'Personal context is saved for chats.' : 'No personal context saved yet.'}`,
       ],
       onClick: () => setActiveView('you'),
@@ -242,7 +242,7 @@ export function HubSettingsTab({
                     {workspace.activeRepoFullName?.split('/').pop() || 'Scratch workspace'}
                   </span>
                   <span className={SETTINGS_PILL_CLASS}>
-                    {auth.isConnected ? 'GitHub linked' : auth.isDemo ? 'Demo mode' : 'GitHub not linked'}
+                    {auth.isConnected ? 'GitHub linked' : 'GitHub not linked'}
                   </span>
                   <span className={SETTINGS_PILL_CLASS}>
                     {defaultProvider ? `${PROVIDER_LABELS[defaultProvider]} default` : 'Auto provider'}

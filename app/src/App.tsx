@@ -439,7 +439,6 @@ function App() {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem(TOOL_ACTIVITY_STORAGE_KEY) === '1';
   });
-  const [isDemo, setIsDemo] = useState(false);
   const { profile, updateProfile, clearProfile } = useUserProfile();
   const [displayNameDraft, setDisplayNameDraft] = useState('');
   const [bioDraft, setBioDraft] = useState('');
@@ -498,13 +497,12 @@ function App() {
   // --- Screen state machine ---
   const screen: AppScreen = useMemo(() => {
     if (isScratch) return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
-    if (isDemo) return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
     if (!token) return 'onboarding';
     if (workspaceSession?.kind === 'repo') {
       return showFileBrowser && sandbox.sandboxId ? 'file-browser' : 'chat';
     }
     return 'home';
-  }, [token, isDemo, isScratch, showFileBrowser, sandbox.sandboxId, workspaceSession]);
+  }, [token, isScratch, showFileBrowser, sandbox.sandboxId, workspaceSession]);
 
   // --- Auth & repo handlers ---
   const handleConnect = useCallback(
@@ -626,7 +624,6 @@ function App() {
     patLogout();
     clearActiveRepo();
     deleteAllChats();
-    setIsDemo(false);
     setWorkspaceSession(null);
   }, [appDisconnect, patLogout, clearActiveRepo, deleteAllChats]);
 
@@ -991,7 +988,6 @@ function App() {
       appError={appError}
       connectApp={connectApp}
       installApp={installApp}
-      isDemo={isDemo}
       isWorkspaceHubOpen={isWorkspaceHubOpen}
       setIsWorkspaceHubOpen={setIsWorkspaceHubOpen}
       showToolActivity={showToolActivity}

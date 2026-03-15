@@ -47,7 +47,6 @@ const SETTINGS_TAB_META: Record<SettingsTabKey, { title: string; description: st
 
 export interface SettingsAuthProps {
   isConnected: boolean;
-  isDemo: boolean;
   isAppAuth: boolean;
   installationId: string;
   token: string;

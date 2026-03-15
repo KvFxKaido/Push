@@ -195,7 +195,7 @@ Push/
 *   **Modal Sandbox:** `cd sandbox && python -m modal deploy app.py`
 
 ### Environment
-Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI. When no GitHub token is configured, repo and PR views fall back to mock/demo data. In local development, with no AI keys configured, the app uses the demo-provider path.
+Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI. Without GitHub auth, the app stays on onboarding unless the user starts a scratch workspace. In local development, with no AI keys configured, the app uses the demo-provider path.
 
 Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_VERTEX_SERVICE_ACCOUNT_JSON` / `VITE_VERTEX_REGION` / `VITE_VERTEX_MODEL` (Google Vertex native config), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
 

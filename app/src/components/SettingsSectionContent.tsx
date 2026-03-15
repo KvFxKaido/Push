@@ -102,18 +102,16 @@ export function SettingsSectionContent({
                   }`}
                 />
                 <span className="text-xs text-push-fg-secondary">
-                  {auth.isDemo
-                    ? 'Demo mode'
-                    : auth.isConnected
+                  {auth.isConnected
                     ? `Connected${auth.validatedUser ? ` as ${auth.validatedUser.login}` : ''}`
                     : 'Signed out'}
                 </span>
               </div>
             </div>
 
-            {auth.isConnected && (
-              <div className="space-y-2">
-                {!auth.isDemo && (
+            <div className="space-y-2">
+              {auth.isConnected ? (
+                <>
                   <div className="rounded-lg border border-push-edge-subtle bg-push-surface px-3 py-2">
                     <p className="text-sm text-push-fg-secondary font-mono">
                       {auth.isAppAuth ? (
@@ -125,44 +123,29 @@ export function SettingsSectionContent({
                       )}
                     </p>
                     {auth.isAppAuth && (
-                      <p className="text-xs text-push-fg-dim mt-1">
+                      <p className="mt-1 text-xs text-push-fg-dim">
                         Push keeps this token fresh for you
                       </p>
                     )}
                     {auth.isAppAuth && auth.installationId && (
-                      <p className="text-xs text-push-fg-muted mt-1 font-mono">
+                      <p className="mt-1 font-mono text-xs text-push-fg-muted">
                         Installation ID: {auth.installationId}
                       </p>
                     )}
                   </div>
-                )}
-                {/* Upgrade to GitHub App (shown when using PAT) */}
-                {!auth.isDemo && !auth.isAppAuth && auth.patToken && (
-                  <div className="space-y-2">
-                    {auth.showInstallIdInput ? (
-                      <>
-                        <input
-                          type="text"
-                          value={auth.installIdInput}
-                          onChange={(e) => auth.setInstallIdInput(e.target.value)}
-                          placeholder="Installation ID (e.g., 12345678)"
-                          className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 font-mono"
-                          onKeyDown={async (e) => {
-                            if (e.key === 'Enter' && auth.installIdInput.trim()) {
-                              const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
-                              if (success) {
-                                auth.setInstallIdInput('');
-                                auth.setShowInstallIdInput(false);
-                              }
-                            }
-                          }}
-                        />
-                        <div className="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={async () => {
-                              if (auth.installIdInput.trim()) {
+
+                  {!auth.isAppAuth && auth.patToken && (
+                    <div className="space-y-2">
+                      {auth.showInstallIdInput ? (
+                        <>
+                          <input
+                            type="text"
+                            value={auth.installIdInput}
+                            onChange={(e) => auth.setInstallIdInput(e.target.value)}
+                            placeholder="Installation ID (e.g., 12345678)"
+                            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 font-mono"
+                            onKeyDown={async (e) => {
+                              if (e.key === 'Enter' && auth.installIdInput.trim()) {
                                 const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
                                 if (success) {
                                   auth.setInstallIdInput('');
@@ -170,93 +153,234 @@ export function SettingsSectionContent({
                                 }
                               }
                             }}
-                            disabled={!auth.installIdInput.trim() || auth.appLoading}
-                            className="text-push-link hover:text-push-fg flex-1"
+                          />
+                          <div className="flex gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={async () => {
+                                if (auth.installIdInput.trim()) {
+                                  const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
+                                  if (success) {
+                                    auth.setInstallIdInput('');
+                                    auth.setShowInstallIdInput(false);
+                                  }
+                                }
+                              }}
+                              disabled={!auth.installIdInput.trim() || auth.appLoading}
+                              className="text-push-link hover:text-push-fg flex-1"
+                            >
+                              {auth.appLoading ? 'Connecting...' : 'Connect'}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => auth.setShowInstallIdInput(false)}
+                              className="text-push-fg-dim hover:text-push-fg-secondary"
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                          <p className="text-xs text-push-fg-dim">
+                            Find your ID at github.com/settings/installations
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              auth.connectApp();
+                              onDismiss();
+                            }}
+                            className="text-push-link hover:text-push-fg w-full justify-start"
                           >
-                            {auth.appLoading ? 'Connecting...' : 'Connect'}
+                            ⬆️ Connect with GitHub
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => auth.setShowInstallIdInput(false)}
-                            className="text-push-fg-dim hover:text-push-fg-secondary"
+                            onClick={() => {
+                              auth.installApp();
+                              onDismiss();
+                            }}
+                            className="text-push-fg-dim hover:text-push-fg-secondary w-full justify-start text-xs"
                           >
-                            Cancel
+                            Install GitHub App (first time)
                           </Button>
-                        </div>
-                        <p className="text-xs text-push-fg-dim">
-                          Find your ID at github.com/settings/installations
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            auth.connectApp();
-                            onDismiss();
-                          }}
-                          className="text-push-link hover:text-push-fg w-full justify-start"
-                        >
-                          ⬆️ Connect with GitHub
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            auth.installApp();
-                            onDismiss();
-                          }}
-                          className="text-push-fg-dim hover:text-push-fg-secondary w-full justify-start text-xs"
-                        >
-                          Install GitHub App (first time)
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => auth.setShowInstallIdInput(true)}
-                          className="text-push-fg-dim hover:text-push-fg-secondary w-full justify-start text-xs"
-                        >
-                          Enter installation ID manually
-                        </Button>
-                      </>
-                    )}
-                    {auth.appError && (
-                      <div className="space-y-1">
-                        <p className="text-xs text-red-400">{auth.appError}</p>
-                        {auth.appError.includes('GITHUB_ALLOWED_INSTALLATION_IDS') && (
-                          <div className="text-push-xs text-push-fg-muted">
-                            <p>Ask the deployment admin to run:</p>
-                            <div className="mt-1 flex items-center gap-2">
-                              <code className="font-mono text-push-fg-secondary">{auth.allowlistSecretCmd}</code>
-                              <button
-                                type="button"
-                                onClick={auth.copyAllowlistCommand}
-                                className="rounded border border-push-edge px-2 py-0.5 text-push-2xs text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover"
-                              >
-                                Copy
-                              </button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => auth.setShowInstallIdInput(true)}
+                            className="text-push-fg-dim hover:text-push-fg-secondary w-full justify-start text-xs"
+                          >
+                            Enter installation ID manually
+                          </Button>
+                        </>
+                      )}
+                      {auth.appError && (
+                        <div className="space-y-1">
+                          <p className="text-xs text-red-400">{auth.appError}</p>
+                          {auth.appError.includes('GITHUB_ALLOWED_INSTALLATION_IDS') && (
+                            <div className="text-push-xs text-push-fg-muted">
+                              <p>Ask the deployment admin to run:</p>
+                              <div className="mt-1 flex items-center gap-2">
+                                <code className="font-mono text-push-fg-secondary">{auth.allowlistSecretCmd}</code>
+                                <button
+                                  type="button"
+                                  onClick={auth.copyAllowlistCommand}
+                                  className="rounded border border-push-edge px-2 py-0.5 text-push-2xs text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover"
+                                >
+                                  Copy
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      auth.onDisconnect();
+                      onDismiss();
+                    }}
+                    className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
+                  >
+                    Disconnect
+                  </Button>
+                </>
+              ) : auth.showInstallIdInput ? (
+                <>
+                  <input
+                    type="text"
+                    value={auth.installIdInput}
+                    onChange={(e) => auth.setInstallIdInput(e.target.value)}
+                    placeholder="Installation ID (e.g., 12345678)"
+                    className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 font-mono"
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Enter' && auth.installIdInput.trim()) {
+                        const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
+                        if (success) {
+                          auth.setInstallIdInput('');
+                          auth.setShowInstallIdInput(false);
+                        }
+                      }
+                    }}
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={async () => {
+                        if (auth.installIdInput.trim()) {
+                          const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
+                          if (success) {
+                            auth.setInstallIdInput('');
+                            auth.setShowInstallIdInput(false);
+                          }
+                        }
+                      }}
+                      disabled={!auth.installIdInput.trim() || auth.appLoading}
+                      className="text-push-link hover:text-push-fg flex-1"
+                    >
+                      {auth.appLoading ? 'Connecting...' : 'Connect'}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => auth.setShowInstallIdInput(false)}
+                      className="text-push-fg-dim hover:text-push-fg-secondary"
+                    >
+                      Cancel
+                    </Button>
                   </div>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    auth.onDisconnect();
-                    onDismiss();
-                  }}
-                  className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
-                >
-                  Disconnect
-                </Button>
-              </div>
-            )}
+                  <p className="text-xs text-push-fg-dim">
+                    Find your ID at github.com/settings/installations
+                  </p>
+                  {auth.appError && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-red-400">{auth.appError}</p>
+                      {auth.appError.includes('GITHUB_ALLOWED_INSTALLATION_IDS') && (
+                        <div className="text-push-xs text-push-fg-muted">
+                          <p>Ask the deployment admin to run:</p>
+                          <div className="mt-1 flex items-center gap-2">
+                            <code className="font-mono text-push-fg-secondary">{auth.allowlistSecretCmd}</code>
+                            <button
+                              type="button"
+                              onClick={auth.copyAllowlistCommand}
+                              className="rounded border border-push-edge px-2 py-0.5 text-push-2xs text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-xs leading-relaxed text-push-fg-dim">
+                    Connect GitHub to browse repos, inspect PRs, and work from a repo-backed workspace.
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      auth.connectApp();
+                      onDismiss();
+                    }}
+                    className="text-push-link hover:text-push-fg w-full justify-start"
+                  >
+                    ⬆️ Connect with GitHub
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      auth.installApp();
+                      onDismiss();
+                    }}
+                    className="text-push-fg-dim hover:text-push-fg-secondary w-full justify-start text-xs"
+                  >
+                    Install GitHub App (first time)
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => auth.setShowInstallIdInput(true)}
+                    className="text-push-fg-dim hover:text-push-fg-secondary w-full justify-start text-xs"
+                  >
+                    Enter installation ID manually
+                  </Button>
+                  {auth.appError && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-red-400">{auth.appError}</p>
+                      {auth.appError.includes('GITHUB_ALLOWED_INSTALLATION_IDS') && (
+                        <div className="text-push-xs text-push-fg-muted">
+                          <p>Ask the deployment admin to run:</p>
+                          <div className="mt-1 flex items-center gap-2">
+                            <code className="font-mono text-push-fg-secondary">{auth.allowlistSecretCmd}</code>
+                            <button
+                              type="button"
+                              onClick={auth.copyAllowlistCommand}
+                              className="rounded border border-push-edge px-2 py-0.5 text-push-2xs text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           {/* About You */}

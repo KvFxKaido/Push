@@ -10,7 +10,7 @@
  * cleared.
  */
 
-import { STORE, getAll, get, put, del, putMany } from './app-db';
+import { STORE, clear, getAll, get, put, del, putMany } from './app-db';
 import { safeStorageGet, safeStorageRemove } from './safe-storage';
 import type { Conversation, ChatMessage } from '@/types';
 
@@ -76,7 +76,6 @@ export async function deleteConversation(id: string): Promise<void> {
 export async function replaceAllConversations(convs: Record<string, Conversation>): Promise<void> {
   try {
     // Clear + re-populate is simpler than diff-deleting
-    const { clear } = await import('./app-db');
     await clear(STORE.conversations);
     const values = Object.values(convs);
     if (values.length > 0) {

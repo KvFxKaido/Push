@@ -4,7 +4,6 @@ import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
 import { getActiveGitHubToken, getGitHubAuthHeaders, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 
 const APP_INSTALLATION_ID_KEY = 'github_app_installation_id';
-const SYNC_STORAGE_KEY = 'repo_last_sync';
 const PUSHED_STORAGE_KEY = 'repo_last_pushed';
 
 function getStoredPushedAt(): Record<string, string> {
@@ -33,66 +32,6 @@ function storePushedAt(repos: RepoSummary[]) {
   }
   safeStorageSet(PUSHED_STORAGE_KEY, JSON.stringify(map));
 }
-
-// Mock repos for demo mode
-const MOCK_REPOS: RepoWithActivity[] = [
-  {
-    id: 1,
-    name: 'diff',
-    full_name: 'ishaw/diff',
-    owner: 'ishaw',
-    private: true,
-    description: 'Mobile GitHub command center PWA',
-    open_issues_count: 3,
-    pushed_at: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-    default_branch: 'main',
-    language: 'TypeScript',
-    avatar_url: '',
-    activity: { open_prs: 2, recent_commits: 5, has_new_activity: true, last_synced: null },
-  },
-  {
-    id: 2,
-    name: 'dotfiles',
-    full_name: 'ishaw/dotfiles',
-    owner: 'ishaw',
-    private: false,
-    description: 'Personal dev environment configuration',
-    open_issues_count: 0,
-    pushed_at: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-    default_branch: 'main',
-    language: 'Shell',
-    avatar_url: '',
-    activity: { open_prs: 0, recent_commits: 1, has_new_activity: false, last_synced: null },
-  },
-  {
-    id: 3,
-    name: 'api-gateway',
-    full_name: 'ishaw/api-gateway',
-    owner: 'ishaw',
-    private: true,
-    description: 'Edge proxy and rate limiter',
-    open_issues_count: 7,
-    pushed_at: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString(),
-    default_branch: 'main',
-    language: 'Go',
-    avatar_url: '',
-    activity: { open_prs: 1, recent_commits: 0, has_new_activity: true, last_synced: null },
-  },
-  {
-    id: 4,
-    name: 'blog',
-    full_name: 'ishaw/blog',
-    owner: 'ishaw',
-    private: false,
-    description: null,
-    open_issues_count: 0,
-    pushed_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
-    default_branch: 'main',
-    language: 'MDX',
-    avatar_url: '',
-    activity: { open_prs: 0, recent_commits: 0, has_new_activity: false, last_synced: null },
-  },
-];
 
 async function fetchPRCount(fullName: string, headers: Record<string, string>): Promise<number> {
   try {
@@ -178,10 +117,6 @@ export function useRepos() {
   const [repos, setRepos] = useState<RepoWithActivity[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastSyncTime, setLastSyncTime] = useState<string | null>(() =>
-    safeStorageGet(SYNC_STORAGE_KEY),
-  );
-  const [userInfo, setUserInfo] = useState<{ login: string; avatar_url: string } | null>(null);
 
   const sync = useCallback(async () => {
     setLoading(true);
@@ -194,16 +129,7 @@ export function useRepos() {
       const isGitHubAppAuth = Boolean(appToken && hasInstallationId);
 
       if (!headers['Authorization']) {
-        // No token — use mock data
-        await new Promise((r) => setTimeout(r, 800));
-        const now = new Date().toISOString();
-        setRepos(MOCK_REPOS.map((r) => ({
-          ...r,
-          activity: { ...r.activity, last_synced: now },
-        })));
-        setLastSyncTime(now);
-        safeStorageSet(SYNC_STORAGE_KEY, now);
-        setUserInfo({ login: 'demo-user', avatar_url: '' });
+        setRepos([]);
         return;
       }
 
@@ -211,13 +137,11 @@ export function useRepos() {
       if (isGitHubAppAuth) {
         // Installation tokens are repo-scoped and cannot call /user.
         reposData = await fetchAllInstallationRepos(headers);
-        setUserInfo(null);
       } else {
         // OAuth/PAT path has user context.
         const userRes = await fetch('https://api.github.com/user', { headers });
         if (!userRes.ok) throw new Error('Failed to fetch user');
-        const userData = await userRes.json();
-        setUserInfo({ login: userData.login, avatar_url: userData.avatar_url });
+        await userRes.json();
 
         reposData = await fetchAllUserRepos(headers);
       }
@@ -285,8 +209,6 @@ export function useRepos() {
 
       storePushedAt(summaries);
       setRepos(reposWithActivity);
-      setLastSyncTime(now);
-      safeStorageSet(SYNC_STORAGE_KEY, now);
     } catch (err) {
       const hasAnyToken = Boolean(getActiveGitHubToken());
       if (hasAnyToken) {
@@ -295,19 +217,11 @@ export function useRepos() {
         setRepos([]);
         return;
       }
-      console.log('GitHub API failed, using mock data for demo');
-      const now = new Date().toISOString();
-      setRepos(MOCK_REPOS.map((r) => ({
-        ...r,
-        activity: { ...r.activity, last_synced: now },
-      })));
-      setLastSyncTime(now);
-      safeStorageSet(SYNC_STORAGE_KEY, now);
-      setUserInfo({ login: 'demo-user', avatar_url: '' });
+      setRepos([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  return { repos, loading, error, sync, lastSyncTime, userInfo };
+  return { repos, loading, error, sync };
 }
