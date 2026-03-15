@@ -415,7 +415,7 @@ GIT_DIFF_SCRIPT = """
 import json, subprocess, sys
 
 def run(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace")
+    return subprocess.run(cmd, capture_output=True, text=True, errors="replace", cwd="/workspace")
 
 # Step 1: Clear stale index lock
 try:
@@ -450,12 +450,12 @@ print(json.dumps({"clean": False, "status": status[:2000], "diff": diff[:20000],
 # Tar path validation script — checks archive entries for traversal attacks.
 # Returns JSON: { ok, error? }
 TAR_VALIDATE_PATHS_SCRIPT = """
-import json, subprocess, sys
+import json, subprocess, sys, os.path
 
 archive = sys.argv[1]
-target = sys.argv[2]
+target = os.path.normpath(sys.argv[2])
 
-r = subprocess.run(["tar", "tzf", archive], capture_output=True, text=True)
+r = subprocess.run(["tar", "tzf", archive], capture_output=True, text=True, errors="replace")
 if r.returncode != 0:
     print(json.dumps({"ok": False, "error": f"Invalid archive: {r.stderr.strip()}"}))
     sys.exit(0)
@@ -1041,7 +1041,7 @@ def exec_command(data: dict):
                 "error": revision_error,
             }
 
-        _log_action(str(sandbox_id), "exec", cmd=command[:80], exit_code=p.returncode, stdout_len=len(stdout), duration_ms=round((time.time() - t0) * 1000))
+        _log_action(str(sandbox_id), "exec", exit_code=p.returncode, stdout_len=len(stdout), duration_ms=round((time.time() - t0) * 1000))
         return {
             "stdout": stdout[:10_000],
             "stderr": stderr[:5_000],
@@ -1050,7 +1050,7 @@ def exec_command(data: dict):
             "workspace_revision": workspace_revision,
         }
     except Exception as exc:
-        _log_action(str(sandbox_id), "exec", cmd=command[:80], error=str(exc), duration_ms=round((time.time() - t0) * 1000))
+        _log_action(str(sandbox_id), "exec", error=type(exc).__name__, duration_ms=round((time.time() - t0) * 1000))
         return _sandbox_error_response(exc, {"stdout": "", "stderr": "", "exit_code": -1, "truncated": False})
 
 
