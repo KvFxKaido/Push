@@ -286,8 +286,9 @@ export function filterModelByContext(
     return { allowed: true };
   }
 
-  // Fail closed: unknown/missing contextLimit is rejected
-  if (contextLimit === undefined || contextLimit === null) {
+  // Fail closed: unknown/missing contextLimit is rejected (0 is treated as missing —
+  // a zero-token context is never valid data, only a coercion artifact)
+  if (contextLimit === undefined || contextLimit === null || contextLimit === 0) {
     if (failOpen) {
       console.warn(`[model-catalog] Allowed ${modelId} with missing contextLimit (fail-open)`);
       return { allowed: true };
@@ -725,14 +726,14 @@ export async function fetchOpenRouterModels(): Promise<string[]> {
   const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
 
   try {
-    const [catalogRes] = await Promise.all([
+    const [catalogRes, modelsDevMetadata] = await Promise.all([
       fetch(PROVIDER_URLS.openrouter.models, {
         method: 'GET',
         headers,
         signal: controller.signal,
         cache: 'no-store',
       }),
-      fetchModelsDevOpenRouterMetadata(), // side-effect: populates localStorage cache for capability lookups
+      fetchModelsDevOpenRouterMetadata(),
     ]);
 
     if (!catalogRes.ok) {
@@ -742,9 +743,12 @@ export async function fetchOpenRouterModels(): Promise<string[]> {
 
     const payload = (await catalogRes.json()) as unknown;
     const liveModels = parseOpenRouterCatalog(payload);
-    const curated = buildCuratedOpenRouterModelList(liveModels);
+    const curated = buildCuratedOpenRouterModelList(liveModels, modelsDevMetadata);
     if (curated.length > 0) return curated;
-    return normalizeModelList(payload);
+    // Fallback: use catalog contextLength to apply basic context floor filter
+    return liveModels
+      .filter((m) => m.outputModalities.includes('text') && m.contextLength >= MIN_CONTEXT_TOKENS)
+      .map((m) => m.id);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`OpenRouter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);

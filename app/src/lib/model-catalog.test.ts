@@ -95,6 +95,71 @@ describe('buildCuratedOpenRouterModelList', () => {
     expect(curated).toContain('google/gemini-3.1-pro-preview');
     expect(curated).not.toContain('openai/gpt-image-1');
   });
+
+  it('includes priority models even when metadata is unavailable', () => {
+    const models = parseOpenRouterCatalog({
+      data: [
+        {
+          id: 'anthropic/claude-sonnet-4.6',
+          name: 'Claude Sonnet 4.6',
+          architecture: {
+            input_modalities: ['text', 'image'],
+            output_modalities: ['text'],
+          },
+          supported_parameters: ['tools'],
+          top_provider: { context_length: 400_000, is_moderated: true },
+        },
+        {
+          id: 'openai/gpt-5.4',
+          name: 'GPT-5.4',
+          architecture: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+          },
+          supported_parameters: ['tools'],
+          top_provider: { context_length: 1_050_000, is_moderated: true },
+        },
+      ],
+    });
+
+    // No metadataById — simulates models.dev being down
+    const curated = buildCuratedOpenRouterModelList(models);
+
+    expect(curated).toContain('anthropic/claude-sonnet-4.6');
+    expect(curated).toContain('openai/gpt-5.4');
+  });
+
+  it('excludes image-only priority models when metadata is available', () => {
+    const models = parseOpenRouterCatalog({
+      data: [
+        {
+          id: 'anthropic/claude-sonnet-4.6',
+          name: 'Claude Sonnet 4.6',
+          architecture: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+          },
+          supported_parameters: ['tools'],
+          top_provider: { context_length: 400_000, is_moderated: true },
+        },
+      ],
+    });
+
+    const curated = buildCuratedOpenRouterModelList(models, {
+      'anthropic/claude-sonnet-4.6': {
+        id: 'anthropic/claude-sonnet-4.6',
+        reasoning: false,
+        toolCall: true,
+        structuredOutput: true,
+        openWeights: false,
+        inputModalities: ['text'],
+        outputModalities: ['image'],
+        contextLimit: 400_000,
+      },
+    });
+
+    expect(curated).not.toContain('anthropic/claude-sonnet-4.6');
+  });
 });
 
 describe('buildCuratedNvidiaModelList', () => {
@@ -262,6 +327,41 @@ describe('buildCuratedOllamaModelList', () => {
     expect(curated).not.toContain('nomic-embed-text');
     expect(curated).not.toContain('flux.1-dev');
   });
+
+  it('allows non-priority models with missing context metadata via fail-open', () => {
+    const curated = buildCuratedOllamaModelList(
+      ['gemini-3-flash-preview', 'some-new-model'],
+      {
+        'gemini-3-flash-preview': {
+          id: 'gemini-3-flash-preview',
+          attachment: true,
+          reasoning: false,
+          toolCall: true,
+          structuredOutput: true,
+          openWeights: false,
+          inputModalities: ['text', 'image'],
+          outputModalities: ['text'],
+          contextLimit: 1_000_000,
+        },
+        // Metadata record exists but context was missing → coerced to 0
+        'some-new-model': {
+          id: 'some-new-model',
+          attachment: false,
+          reasoning: false,
+          toolCall: true,
+          structuredOutput: false,
+          openWeights: true,
+          inputModalities: ['text'],
+          outputModalities: ['text'],
+          contextLimit: 0,
+        },
+      },
+    );
+
+    expect(curated).toContain('gemini-3-flash-preview');
+    // contextLimit 0 is treated as "missing" → Ollama's fail-open allows it
+    expect(curated).toContain('some-new-model');
+  });
 });
 
 describe('buildCuratedOpencodeModelList', () => {
@@ -360,9 +460,13 @@ describe('filterModelByContext', () => {
   it('rejects models with missing contextLimit (fail-closed)', () => {
     const result = filterModelByContext('test-model', undefined, prioritySet);
     expect(result.allowed).toBe(false);
-    
+
     const nullResult = filterModelByContext('test-model', null, prioritySet);
     expect(nullResult.allowed).toBe(false);
+
+    // 0 is treated as missing — it's a coercion artifact, not real data
+    const zeroResult = filterModelByContext('test-model', 0, prioritySet);
+    expect(zeroResult.allowed).toBe(false);
   });
 
   it('rejects models with contextLimit below MIN_CONTEXT_TOKENS threshold', () => {
