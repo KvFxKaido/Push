@@ -267,12 +267,8 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
 // Minimum context floor filtering
 // ---------------------------------------------------------------------------
 
-type RejectionReason = 'missing_metadata' | 'insufficient_context' | 'not_chat_model';
-
 interface ContextFilterResult {
   allowed: boolean;
-  reason?: RejectionReason;
-  contextLimit?: number;
 }
 
 /**
@@ -281,8 +277,9 @@ interface ContextFilterResult {
  */
 function filterModelByContext(
   modelId: string,
-  contextLimit: number | undefined,
+  contextLimit: number | undefined | null,
   prioritySet: Set<string>,
+  failOpen: boolean = false,
 ): ContextFilterResult {
   // Whitelist override: priority models always pass
   if (prioritySet.has(modelId)) {
@@ -291,17 +288,21 @@ function filterModelByContext(
 
   // Fail closed: unknown/missing contextLimit is rejected
   if (contextLimit === undefined || contextLimit === null) {
+    if (failOpen) {
+      console.warn(`[model-catalog] Allowed ${modelId} with missing contextLimit (fail-open)`);
+      return { allowed: true };
+    }
     console.debug(`[model-catalog] Rejected ${modelId}: missing contextLimit (metadata unavailable)`);
-    return { allowed: false, reason: 'missing_metadata', contextLimit };
+    return { allowed: false };
   }
 
   // Must meet minimum threshold
   if (contextLimit < MIN_CONTEXT_TOKENS) {
     console.debug(`[model-catalog] Rejected ${modelId}: contextLimit ${contextLimit} < ${MIN_CONTEXT_TOKENS}`);
-    return { allowed: false, reason: 'insufficient_context', contextLimit };
+    return { allowed: false };
   }
 
-  return { allowed: true, contextLimit };
+  return { allowed: true };
 }
 export function formatModelCapabilityHints(caps: ResolvedModelCapabilities): string {
   const icons: string[] = [];
@@ -509,6 +510,8 @@ export function buildCuratedOpenRouterModelList(
 ): string[] {
   const liveIds = new Set(models.map((m) => m.id));
 
+  const prioritySet = new Set<string>(OPENROUTER_PRIORITY_MODELS);
+  const modelsById = Object.fromEntries(models.map((m) => [m.id, m]));
   // Apply context filtering to priority models (they bypass context check but must be in live catalog)
   return OPENROUTER_PRIORITY_MODELS.filter((id) => {
     if (!liveIds.has(id)) return false;
@@ -516,7 +519,10 @@ export function buildCuratedOpenRouterModelList(
     const meta = metadataById?.[id];
     // Exclude image-output-only models
     if (meta?.outputModalities?.includes('image') && !meta?.outputModalities?.includes('text')) return false;
-    return true;
+
+    const contextLimit = meta?.contextLimit ?? modelsById[id]?.contextLength;
+    const filterResult = filterModelByContext(id, contextLimit, prioritySet);
+    return filterResult.allowed;
   });
 }
 
@@ -577,7 +583,7 @@ export function buildCuratedOllamaModelList(
 
     // Apply context floor filtering (whitelist bypass via prioritySet)
     const contextLimit = meta?.contextLimit;
-    const filterResult = filterModelByContext(id, contextLimit, prioritySet);
+    const filterResult = filterModelByContext(id, contextLimit, prioritySet, true);
     return filterResult.allowed;
   });
 
