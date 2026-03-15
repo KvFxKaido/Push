@@ -447,27 +447,30 @@ diff = r.stdout
 print(json.dumps({"clean": False, "status": status[:2000], "diff": diff[:20000], "truncated": len(diff) > 20000}))
 """
 
-# Tar path validation script — checks archive entries for traversal attacks.
+# Tar path validation script — checks archive entries for traversal attacks
+# and rejects symlinks/hardlinks that could escape the target directory.
+# Uses Python tarfile instead of shelling out to tar.
 # Returns JSON: { ok, error? }
 TAR_VALIDATE_PATHS_SCRIPT = """
-import json, subprocess, sys, os.path
+import json, tarfile, sys, os.path
 
 archive = sys.argv[1]
 target = os.path.normpath(sys.argv[2])
 
-r = subprocess.run(["tar", "tzf", archive], capture_output=True, text=True, errors="replace")
-if r.returncode != 0:
-    print(json.dumps({"ok": False, "error": f"Invalid archive: {r.stderr.strip()}"}))
+try:
+    with tarfile.open(archive, "r:gz") as tf:
+        for member in tf.getmembers():
+            # Reject symlinks and hardlinks — they can point outside the target
+            if member.issym() or member.islnk():
+                print(json.dumps({"ok": False, "error": f"Archive contains symlink/hardlink: {member.name}"}))
+                sys.exit(0)
+            resolved = os.path.normpath(os.path.join(target, member.name))
+            if not resolved.startswith(target + "/") and resolved != target:
+                print(json.dumps({"ok": False, "error": f"Archive contains path escaping target: {member.name}"}))
+                sys.exit(0)
+except Exception as e:
+    print(json.dumps({"ok": False, "error": f"Invalid archive: {e}"}))
     sys.exit(0)
-
-import os.path
-for entry in r.stdout.strip().split("\\n"):
-    if not entry:
-        continue
-    resolved = os.path.normpath(os.path.join(target, entry))
-    if not resolved.startswith(target + "/") and resolved != target:
-        print(json.dumps({"ok": False, "error": f"Archive contains path escaping target: {entry}"}))
-        sys.exit(0)
 
 print(json.dumps({"ok": True}))
 """
