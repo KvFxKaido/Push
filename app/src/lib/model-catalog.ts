@@ -706,8 +706,9 @@ export async function fetchOllamaModels(): Promise<string[]> {
     const payload = (await catalogRes.json()) as unknown;
     const liveModels = normalizeModelList(payload);
     const curated = buildCuratedOllamaModelList(liveModels, modelsDevMetadata);
-    if (curated.length > 0) return curated;
-    return liveModels;
+    // The curated list already contains every model that passed chat + context filtering.
+    // Falling back to the raw provider list would bypass those guards.
+    return curated;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`Ollama model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
@@ -785,8 +786,9 @@ export async function fetchZenModels(): Promise<string[]> {
     const payload = (await catalogRes.json()) as unknown;
     const liveModels = normalizeModelList(payload);
     const curated = buildCuratedOpencodeModelList(liveModels, modelsDevMetadata);
-    if (curated.length > 0) return curated;
-    return liveModels;
+    // The curated list already contains every model that passed chat + context filtering.
+    // Falling back to the raw provider list would bypass those guards.
+    return curated;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`OpenCode Zen model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
@@ -823,8 +825,9 @@ export async function fetchNvidiaModels(): Promise<string[]> {
     const payload = (await catalogRes.json()) as unknown;
     const liveModels = normalizeModelList(payload);
     const curated = buildCuratedNvidiaModelList(liveModels, modelsDevMetadata);
-    if (curated.length > 0) return curated;
-    return liveModels;
+    // The curated list already contains every model that passed chat + context filtering.
+    // Falling back to the raw provider list would bypass those guards.
+    return curated;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`Nvidia NIM model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);

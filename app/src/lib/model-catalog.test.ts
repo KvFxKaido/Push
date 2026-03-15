@@ -1,13 +1,46 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildCuratedNvidiaModelList,
   buildCuratedOllamaModelList,
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
+  fetchNvidiaModels,
+  fetchOllamaModels,
+  fetchZenModels,
   filterModelByContext,
   MIN_CONTEXT_TOKENS,
   parseOpenRouterCatalog,
 } from './model-catalog';
+
+function createStorageMock() {
+  return {
+    getItem: vi.fn(() => null),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+  };
+}
+
+function stubWindow() {
+  vi.stubGlobal('window', {
+    setTimeout,
+    clearTimeout,
+    localStorage: createStorageMock(),
+    sessionStorage: createStorageMock(),
+  });
+}
+
+function jsonResponse(payload: unknown) {
+  return {
+    ok: true,
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('parseOpenRouterCatalog', () => {
   it('extracts text/image modalities and supported parameters from the OpenRouter payload', () => {
@@ -451,6 +484,77 @@ describe('buildCuratedOpencodeModelList', () => {
     expect(curated).toContain('qwen3-coder');
     expect(curated).not.toContain('text-embedding-3-large');
     expect(curated).not.toContain('gpt-image-1');
+  });
+});
+
+describe('provider model fetchers', () => {
+  it.each([
+    {
+      name: 'Ollama',
+      fetchModels: fetchOllamaModels,
+      providerMatcher: (url: string) => url.includes('/ollama/') || url.includes('/api/ollama/models'),
+      modelsDevPayload: {
+        'ollama-cloud': {
+          models: {
+            'tiny-context-model': {
+              id: 'tiny-context-model',
+              modalities: { input: ['text'], output: ['text'] },
+              limit: { context: 32_000 },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: 'OpenCode Zen',
+      fetchModels: fetchZenModels,
+      providerMatcher: (url: string) => url.includes('/opencode/zen/') || url.includes('/api/zen/models'),
+      modelsDevPayload: {
+        opencode: {
+          models: {
+            'tiny-context-model': {
+              id: 'tiny-context-model',
+              modalities: { input: ['text'], output: ['text'] },
+              limit: { context: 32_000 },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: 'Nvidia NIM',
+      fetchModels: fetchNvidiaModels,
+      providerMatcher: (url: string) => url.includes('/nvidia/') || url.includes('/api/nvidia/models'),
+      modelsDevPayload: {
+        nvidia: {
+          models: {
+            'tiny-context-model': {
+              id: 'tiny-context-model',
+              modalities: { input: ['text'], output: ['text'] },
+              limit: { context: 32_000 },
+            },
+          },
+        },
+      },
+    },
+  ])('does not fall back to the raw provider list for $name when every model is filtered out', async ({
+    fetchModels,
+    providerMatcher,
+    modelsDevPayload,
+  }) => {
+    stubWindow();
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('models.dev/api.json')) {
+        return jsonResponse(modelsDevPayload);
+      }
+      if (providerMatcher(url)) {
+        return jsonResponse({ data: [{ id: 'tiny-context-model' }] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    await expect(fetchModels()).resolves.toEqual([]);
   });
 });
 
