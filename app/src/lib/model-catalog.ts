@@ -16,6 +16,7 @@ const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
+const MIN_CONTEXT_TOKENS = 64000;
 const OPENROUTER_PRIORITY_MODELS = [
   'anthropic/claude-haiku-4.5',
   'anthropic/claude-opus-4.6',
@@ -261,6 +262,47 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
 }
 
 /** Build a compact icon string for display in model pickers. */
+
+// ---------------------------------------------------------------------------
+// Minimum context floor filtering
+// ---------------------------------------------------------------------------
+
+type RejectionReason = 'missing_metadata' | 'insufficient_context' | 'not_chat_model';
+
+interface ContextFilterResult {
+  allowed: boolean;
+  reason?: RejectionReason;
+  contextLimit?: number;
+}
+
+/**
+ * Fail-closed context filter: rejects models with unknown/missing contextLimit.
+ * Priority models (whitelist) bypass the filter even if metadata is missing.
+ */
+function filterModelByContext(
+  modelId: string,
+  contextLimit: number | undefined,
+  prioritySet: Set<string>,
+): ContextFilterResult {
+  // Whitelist override: priority models always pass
+  if (prioritySet.has(modelId)) {
+    return { allowed: true };
+  }
+
+  // Fail closed: unknown/missing contextLimit is rejected
+  if (contextLimit === undefined || contextLimit === null) {
+    console.debug(`[model-catalog] Rejected ${modelId}: missing contextLimit (metadata unavailable)`);
+    return { allowed: false, reason: 'missing_metadata', contextLimit };
+  }
+
+  // Must meet minimum threshold
+  if (contextLimit < MIN_CONTEXT_TOKENS) {
+    console.debug(`[model-catalog] Rejected ${modelId}: contextLimit ${contextLimit} < ${MIN_CONTEXT_TOKENS}`);
+    return { allowed: false, reason: 'insufficient_context', contextLimit };
+  }
+
+  return { allowed: true, contextLimit };
+}
 export function formatModelCapabilityHints(caps: ResolvedModelCapabilities): string {
   const icons: string[] = [];
   if (caps.reasoning) icons.push('⚡');  // reasoning/thinking
@@ -463,16 +505,25 @@ export function parseOpenRouterCatalog(payload: unknown): OpenRouterCatalogModel
 
 export function buildCuratedOpenRouterModelList(
   models: OpenRouterCatalogModel[],
+  metadataById?: Record<string, ModelsDevOpenRouterMetadata>,
 ): string[] {
-  // Return only the handpicked curated list, validated against the live catalog
   const liveIds = new Set(models.map((m) => m.id));
-  return OPENROUTER_PRIORITY_MODELS.filter((id) => liveIds.has(id));
+
+  // Apply context filtering to priority models (they bypass context check but must be in live catalog)
+  return OPENROUTER_PRIORITY_MODELS.filter((id) => {
+    if (!liveIds.has(id)) return false;
+    // Priority models bypass context filter but still check if it's a text chat model
+    const meta = metadataById?.[id];
+    // Exclude image-output-only models
+    if (meta?.outputModalities?.includes('image') && !meta?.outputModalities?.includes('text')) return false;
+    return true;
+  });
 }
 
 function isProviderTextChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
-  const outputModalities = new Set(metadata?.outputModalities ?? []);
-  if (outputModalities.has('image')) return false;
-  if (outputModalities.size > 0 && !outputModalities.has('text')) return false;
+  // Check for image output or non-text-only modalities
+  if (metadata?.outputModalities?.includes('image')) return false;
+  if ((metadata?.outputModalities?.length ?? 0) > 0 && !metadata?.outputModalities?.includes('text')) return false;
 
   const normalized = id.toLowerCase();
   if (/(embed|embedding|rerank|retriev|nv-rerank|nvolve)/.test(normalized)) return false;
@@ -487,13 +538,23 @@ export function buildCuratedNvidiaModelList(
   modelIds: string[],
   metadataById: Record<string, ModelsDevProviderMetadata>,
 ): string[] {
-  const candidates = modelIds.filter((id) => isNvidiaChatModel(id, metadataById[id]));
+  const prioritySet = new Set<string>(NVIDIA_PRIORITY_MODELS);
+
+  const candidates = modelIds.filter((id) => {
+    const meta = metadataById[id];
+    if (!isNvidiaChatModel(id, meta)) return false;
+
+    // Apply context floor filtering (whitelist bypass via prioritySet)
+    const contextLimit = meta?.contextLimit;
+    const filterResult = filterModelByContext(id, contextLimit, prioritySet);
+    return filterResult.allowed;
+  });
+
   if (candidates.length === 0) return [];
 
-  const priority = new Set(NVIDIA_PRIORITY_MODELS);
   const preferred = NVIDIA_PRIORITY_MODELS.filter((id) => candidates.includes(id));
   const rest = candidates
-    .filter((id) => !priority.has(id as typeof NVIDIA_PRIORITY_MODELS[number]))
+    .filter((id) => !prioritySet.has(id as typeof NVIDIA_PRIORITY_MODELS[number]))
     .sort((a, b) => a.localeCompare(b));
 
   return [...preferred, ...rest].slice(0, NVIDIA_MAX_CURATED_MODELS);
@@ -508,13 +569,23 @@ export function buildCuratedOllamaModelList(
   modelIds: string[],
   metadataById: Record<string, ModelsDevProviderMetadata>,
 ): string[] {
-  const candidates = modelIds.filter((id) => isOllamaChatModel(id, metadataById[id]));
+  const prioritySet = new Set<string>(OLLAMA_PRIORITY_MODELS);
+
+  const candidates = modelIds.filter((id) => {
+    const meta = metadataById[id];
+    if (!isOllamaChatModel(id, meta)) return false;
+
+    // Apply context floor filtering (whitelist bypass via prioritySet)
+    const contextLimit = meta?.contextLimit;
+    const filterResult = filterModelByContext(id, contextLimit, prioritySet);
+    return filterResult.allowed;
+  });
+
   if (candidates.length === 0) return [];
 
-  const priority = new Set(OLLAMA_PRIORITY_MODELS);
   const preferred = OLLAMA_PRIORITY_MODELS.filter((id) => candidates.includes(id));
   const rest = candidates
-    .filter((id) => !priority.has(id as typeof OLLAMA_PRIORITY_MODELS[number]))
+    .filter((id) => !prioritySet.has(id as typeof OLLAMA_PRIORITY_MODELS[number]))
     .sort((a, b) => a.localeCompare(b));
 
   return [...preferred, ...rest].slice(0, OLLAMA_MAX_CURATED_MODELS);
@@ -529,13 +600,23 @@ export function buildCuratedOpencodeModelList(
   modelIds: string[],
   metadataById: Record<string, ModelsDevProviderMetadata>,
 ): string[] {
-  const candidates = modelIds.filter((id) => isOpencodeChatModel(id, metadataById[id]));
+  const prioritySet = new Set<string>(OPENCODE_PRIORITY_MODELS);
+
+  const candidates = modelIds.filter((id) => {
+    const meta = metadataById[id];
+    if (!isOpencodeChatModel(id, meta)) return false;
+
+    // Apply context floor filtering (whitelist bypass via prioritySet)
+    const contextLimit = meta?.contextLimit;
+    const filterResult = filterModelByContext(id, contextLimit, prioritySet);
+    return filterResult.allowed;
+  });
+
   if (candidates.length === 0) return [];
 
-  const priority = new Set(OPENCODE_PRIORITY_MODELS);
   const preferred = OPENCODE_PRIORITY_MODELS.filter((id) => candidates.includes(id));
   const rest = candidates
-    .filter((id) => !priority.has(id as typeof OPENCODE_PRIORITY_MODELS[number]))
+    .filter((id) => !prioritySet.has(id as typeof OPENCODE_PRIORITY_MODELS[number]))
     .sort((a, b) => a.localeCompare(b));
 
   return [...preferred, ...rest].slice(0, OPENCODE_MAX_CURATED_MODELS);
