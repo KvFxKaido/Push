@@ -123,9 +123,9 @@ describe('buildCuratedOpenRouterModelList', () => {
 
     const curated = buildCuratedOpenRouterModelList(models);
 
-    expect(curated[0]).toBe('anthropic/claude-sonnet-4.6');
+    expect(curated[0]).toBe('anthropic/claude-sonnet-4.6:nitro');
     expect(curated).toContain('openai/gpt-5.4');
-    expect(curated).toContain('google/gemini-3.1-pro-preview');
+    expect(curated).toContain('google/gemini-3.1-pro-preview:nitro');
     expect(curated).not.toContain('openai/gpt-image-1');
   });
 
@@ -158,7 +158,7 @@ describe('buildCuratedOpenRouterModelList', () => {
     // No metadataById — simulates models.dev being down
     const curated = buildCuratedOpenRouterModelList(models);
 
-    expect(curated).toContain('anthropic/claude-sonnet-4.6');
+    expect(curated).toContain('anthropic/claude-sonnet-4.6:nitro');
     expect(curated).toContain('openai/gpt-5.4');
   });
 
@@ -178,6 +178,7 @@ describe('buildCuratedOpenRouterModelList', () => {
       ],
     });
 
+    // Metadata keyed by base ID (as models.dev returns)
     const curated = buildCuratedOpenRouterModelList(models, {
       'anthropic/claude-sonnet-4.6': {
         id: 'anthropic/claude-sonnet-4.6',
@@ -191,7 +192,7 @@ describe('buildCuratedOpenRouterModelList', () => {
       },
     });
 
-    expect(curated).not.toContain('anthropic/claude-sonnet-4.6');
+    expect(curated).not.toContain('anthropic/claude-sonnet-4.6:nitro');
   });
 });
 

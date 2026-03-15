@@ -32,7 +32,7 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
 export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 
 // OpenRouter default model
-export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
+export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
 // OpenCode Zen (OpenAI-compatible) default model
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
 // Nvidia NIM (OpenAI-compatible) default model
@@ -44,37 +44,39 @@ export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0'
 export const VERTEX_DEFAULT_MODEL = SHARED_VERTEX_DEFAULT_MODEL;
 
 export const OPENROUTER_MODELS: string[] = [
-  'anthropic/claude-haiku-4.5',
-  'anthropic/claude-opus-4.6',
-  'anthropic/claude-sonnet-4.6',
+  'anthropic/claude-haiku-4.5:nitro',
+  'anthropic/claude-opus-4.6:nitro',
+  'anthropic/claude-sonnet-4.6:nitro',
   'arcee-ai/virtuoso-large',
   'cohere/command-a',
   'deepseek/deepseek-r1',
-  'deepseek/deepseek-v3.2',
-  'google/gemini-2.5-flash',
-  'google/gemini-2.5-pro',
-  'google/gemini-3-flash-preview',
-  'google/gemini-3.1-flash-lite-preview',
-  'google/gemini-3.1-pro-preview',
+  'deepseek/deepseek-v3.2:nitro',
+  'google/gemini-2.5-flash:nitro',
+  'google/gemini-2.5-pro:nitro',
+  'google/gemini-3-flash-preview:nitro',
+  'google/gemini-3.1-flash-lite-preview:nitro',
+  'google/gemini-3.1-pro-preview:nitro',
+  'google/gemini-3.1-pro-preview-customtools:nitro',
   'meta-llama/llama-4-maverick',
   'minimax/minimax-m2.5',
   'mistralai/codestral-2508',
   'mistralai/devstral-2512',
   'mistralai/mistral-large-2512',
-  'moonshotai/kimi-k2.5',
+  'moonshotai/kimi-k2.5:nitro',
   'openai/gpt-5-mini',
   'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
   'openai/gpt-5.4',
   'openai/gpt-5.4-pro',
   'perplexity/sonar-pro',
-  'qwen/qwen3-coder',
-  'qwen/qwen3.5-397b-a17b',
+  'qwen/qwen3-coder-flash',
+  'qwen/qwen3-coder-plus',
+  'qwen/qwen3.5-397b-a17b:nitro',
   'stepfun/step-3.5-flash',
   'x-ai/grok-4.1-fast',
   'x-ai/grok-4.20-beta',
-  'z-ai/glm-4.7',
-  'z-ai/glm-5',
+  'z-ai/glm-4.7:nitro',
+  'z-ai/glm-5:nitro',
 ];
 
 export const ZEN_MODELS: string[] = [
