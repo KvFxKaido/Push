@@ -517,10 +517,8 @@ export function buildCuratedOpenRouterModelList(
     if (!liveIds.has(id)) return false;
     // Priority models bypass context filter but still check if it's a text chat model
     const meta = metadataById?.[id];
-    // Reject if metadata is missing - we can't verify the model's capabilities
-    if (!meta) return false;
-    // Exclude image-output-only models
-    if (meta.outputModalities?.includes('image') && !meta.outputModalities?.includes('text')) return false;
+    // When metadata is available, exclude image-output-only models
+    if (meta?.outputModalities?.includes('image') && !meta.outputModalities?.includes('text')) return false;
     const contextLimit = meta?.contextLimit ?? modelsById[id]?.contextLength;
     const filterResult = filterModelByContext(id, contextLimit, prioritySet);
     return filterResult.allowed;
