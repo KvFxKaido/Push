@@ -14,6 +14,7 @@ import json
 import hmac
 import secrets
 import os
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -405,6 +406,88 @@ try:
 except Exception as exc:
     print(json.dumps({"ok": False, "error": f"Batch write failed: {exc}", "results": []}))
 """
+
+
+# Consolidated git-diff script — runs cleanup, status, add, and diff
+# in a single exec instead of 4 separate container calls.
+# Outputs JSON: { clean, status?, diff?, error? }
+GIT_DIFF_SCRIPT = """
+import json, subprocess, sys
+
+def run(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True, errors="replace", cwd="/workspace")
+
+# Step 1: Clear stale index lock
+try:
+    import os
+    os.remove("/workspace/.git/index.lock")
+except FileNotFoundError:
+    pass
+
+# Step 2: Check status
+r = run(["git", "status", "--porcelain"])
+if r.returncode != 0:
+    print(json.dumps({"error": f"git status failed: {r.stderr.strip()}"}))
+    sys.exit(0)
+
+status = r.stdout.strip()
+if not status:
+    print(json.dumps({"clean": True}))
+    sys.exit(0)
+
+# Step 3: Stage all
+r = run(["git", "add", "-A"])
+if r.returncode != 0:
+    print(json.dumps({"error": f"git add failed: {r.stderr.strip()}"}))
+    sys.exit(0)
+
+# Step 4: Diff
+r = run(["git", "diff", "--cached"])
+diff = r.stdout
+print(json.dumps({"clean": False, "status": status[:2000], "diff": diff[:20000], "truncated": len(diff) > 20000}))
+"""
+
+# Tar path validation script — checks archive entries for traversal attacks
+# and rejects symlinks/hardlinks that could escape the target directory.
+# Uses Python tarfile instead of shelling out to tar.
+# Returns JSON: { ok, error? }
+TAR_VALIDATE_PATHS_SCRIPT = """
+import json, tarfile, sys, os.path
+
+archive = sys.argv[1]
+target = os.path.normpath(sys.argv[2])
+
+try:
+    with tarfile.open(archive, "r:gz") as tf:
+        for member in tf.getmembers():
+            # Reject symlinks and hardlinks — they can point outside the target
+            if member.issym() or member.islnk():
+                print(json.dumps({"ok": False, "error": f"Archive contains symlink/hardlink: {member.name}"}))
+                sys.exit(0)
+            resolved = os.path.normpath(os.path.join(target, member.name))
+            if not resolved.startswith(target + "/") and resolved != target:
+                print(json.dumps({"ok": False, "error": f"Archive contains path escaping target: {member.name}"}))
+                sys.exit(0)
+except Exception as e:
+    print(json.dumps({"ok": False, "error": f"Invalid archive: {e}"}))
+    sys.exit(0)
+
+print(json.dumps({"ok": True}))
+"""
+
+
+def _log_action(sandbox_id: str, action: str, **extra):
+    """Structured logging for sandbox operations.
+
+    Prints a JSON line to stdout which appears in Modal's log viewer.
+    """
+    entry = {
+        "ts": time.time(),
+        "sandbox_id": sandbox_id,
+        "action": action,
+    }
+    entry.update(extra)
+    print(json.dumps(entry), flush=True)
 
 
 def _wait_with_timeout(p, timeout_seconds: int = 55) -> bool:
@@ -831,6 +914,7 @@ def _run_environment_probe(sb):
 @modal.fastapi_endpoint(method="POST")
 def create(data: dict):
     """Clone repo into a new sandbox, return sandbox_id."""
+    t0 = time.time()
     sb = modal.Sandbox.create(
         "sleep",
         "infinity",
@@ -887,6 +971,7 @@ def create(data: dict):
     # Best-effort environment probe — failures don't block sandbox creation
     environment = _run_environment_probe(sb)
 
+    _log_action(sb.object_id, "create", repo=repo or "(scratch)", branch=branch, duration_ms=round((time.time() - t0) * 1000))
     return {"sandbox_id": sb.object_id, "owner_token": owner_token, "status": "ready", "workspace_revision": 0, "environment": environment}
 
 
@@ -926,6 +1011,7 @@ def exec_command(data: dict):
             "truncated": False,
             "error": "Unauthorized sandbox access",
         }
+    t0 = time.time()
     try:
         p = sb.exec("bash", "-c", f"cd {workdir} && {command}")
         completed = _wait_with_timeout(p, timeout_seconds=110)
@@ -958,6 +1044,7 @@ def exec_command(data: dict):
                 "error": revision_error,
             }
 
+        _log_action(str(sandbox_id), "exec", exit_code=p.returncode, stdout_len=len(stdout), duration_ms=round((time.time() - t0) * 1000))
         return {
             "stdout": stdout[:10_000],
             "stderr": stderr[:5_000],
@@ -966,6 +1053,7 @@ def exec_command(data: dict):
             "workspace_revision": workspace_revision,
         }
     except Exception as exc:
+        _log_action(str(sandbox_id), "exec", error=type(exc).__name__, duration_ms=round((time.time() - t0) * 1000))
         return _sandbox_error_response(exc, {"stdout": "", "stderr": "", "exit_code": -1, "truncated": False})
 
 
@@ -1020,9 +1108,13 @@ def file_ops(data: dict):
 
     # Wrap all sandbox operations so Modal gRPC crashes return proper
     # JSON errors instead of raw 500s.
+    t0 = time.time()
     try:
-        return _file_ops_inner(sb, action, path, data)
+        result = _file_ops_inner(sb, action, path, data)
+        _log_action(str(sandbox_id), f"file_ops:{action}", path=path[:120] if path else "", duration_ms=round((time.time() - t0) * 1000))
+        return result
     except Exception as exc:
+        _log_action(str(sandbox_id), f"file_ops:{action}", path=path[:120] if path else "", error=str(exc), duration_ms=round((time.time() - t0) * 1000))
         if action == "batch_write":
             return _sandbox_error_response(exc, {"ok": False, "results": []})
         if action in ("write", "delete", "hydrate"):
@@ -1275,11 +1367,19 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
             stderr = p.stderr.read()
             return {"ok": False, "error": f"Snapshot decode failed: {stderr}"}
 
-        p = sb.exec("tar", "tzf", tmp_archive)
+        # Validate archive integrity AND check for path traversal attacks
+        p = sb.exec("python3", "-c", TAR_VALIDATE_PATHS_SCRIPT, tmp_archive, target)
         p.wait()
         if p.returncode != 0:
             stderr = p.stderr.read()
             return {"ok": False, "error": f"Snapshot validation failed: {stderr}"}
+        validate_out = p.stdout.read().strip()
+        try:
+            validate_result = json.loads(validate_out) if validate_out else {"ok": False, "error": "Empty validation response"}
+        except Exception:
+            validate_result = {"ok": False, "error": f"Invalid validation response: {validate_out[:160]}"}
+        if not validate_result.get("ok"):
+            return {"ok": False, "error": validate_result.get("error", "Snapshot validation failed")}
 
         p = sb.exec("bash", "-lc", f"mkdir -p '{escaped_target}' && find '{escaped_target}' -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +")
         p.wait()
@@ -1287,7 +1387,7 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
             stderr = p.stderr.read()
             return {"ok": False, "error": f"Workspace cleanup failed: {stderr}"}
 
-        p = sb.exec("tar", "xzf", tmp_archive, "-C", target)
+        p = sb.exec("tar", "xzf", tmp_archive, "--no-same-owner", "-C", target)
         p.wait()
         if p.returncode != 0:
             stderr = p.stderr.read()
@@ -1346,6 +1446,25 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
     if path in ("/", "/workspace", "/workspace/"):
         return {"ok": False, "error": "Cannot delete workspace root"}
 
+    # Check workspace revision if provided (prevents drift)
+    expected_workspace_revision = data.get("expected_workspace_revision")
+    if expected_workspace_revision is not None:
+        current_revision, rev_err = _get_workspace_revision(sb)
+        if rev_err:
+            return {"ok": False, "error": rev_err}
+        try:
+            expected_workspace_revision = int(expected_workspace_revision)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": f"Invalid expected_workspace_revision: {expected_workspace_revision}"}
+        if current_revision != expected_workspace_revision:
+            return {
+                "ok": False,
+                "code": "WORKSPACE_CHANGED",
+                "error": "Workspace changed since last read. Re-read before deleting.",
+                "expected_workspace_revision": expected_workspace_revision,
+                "current_workspace_revision": current_revision,
+            }
+
     p = sb.exec("rm", "-rf", path)
     p.wait()
     if p.returncode != 0:
@@ -1372,41 +1491,44 @@ def get_diff(data: dict):
     if not _validate_owner_token(sb, owner_token):
         return {"error": "Unauthorized sandbox access", "diff": ""}
 
+    t0 = time.time()
     try:
-        # Step 1: Clear stale index lock (left by crashed git operations)
-        sb.exec("bash", "-c", "rm -f /workspace/.git/index.lock").wait()
-
-        # Step 2: Check git status first to diagnose "no changes" issues
-        p = sb.exec("bash", "-c", "cd /workspace && git status --porcelain")
-        p.wait()
-        status_output = p.stdout.read().strip()
-        status_stderr = p.stderr.read().strip()
-
-        if status_stderr:
-            return {"error": f"git status failed: {status_stderr}", "diff": ""}
-
-        if not status_output:
-            # No changes detected by git — return empty diff with diagnostic info
-            return {"diff": "", "truncated": False, "git_status": "clean"}
-
-        # Step 3: Stage all changes
-        p = sb.exec("bash", "-c", "cd /workspace && git add -A")
-        p.wait()
+        # Single exec: cleanup + status + add + diff (was 4 separate execs)
+        p = sb.exec("python3", "-c", GIT_DIFF_SCRIPT)
+        if not _wait_with_timeout(p, timeout_seconds=55):
+            _log_action(str(sandbox_id), "get_diff", error="timeout", duration_ms=round((time.time() - t0) * 1000))
+            return {"error": "Diff timed out after 55 seconds", "diff": ""}
         if p.returncode != 0:
             stderr = p.stderr.read()
-            return {"error": f"git add failed: {stderr}", "diff": ""}
+            return {"error": f"Diff failed: {stderr}", "diff": ""}
 
-        # Step 4: Get the diff of staged changes
-        p = sb.exec("bash", "-c", "cd /workspace && git diff --cached")
-        p.wait()
+        stdout = p.stdout.read().strip()
+        if not stdout:
+            return {"error": "Diff script produced no output", "diff": ""}
 
-        diff = p.stdout.read()
+        try:
+            result = json.loads(stdout)
+        except Exception:
+            return {"error": f"Diff script produced invalid JSON: {stdout[:200]}", "diff": ""}
+
+        if result.get("error"):
+            return {"error": result["error"], "diff": ""}
+
+        if result.get("clean"):
+            _log_action(str(sandbox_id), "get_diff", clean=True, duration_ms=round((time.time() - t0) * 1000))
+            return {"diff": "", "truncated": False, "git_status": "clean"}
+
+        workspace_revision, _ = _get_workspace_revision(sb)
+
+        _log_action(str(sandbox_id), "get_diff", diff_len=len(result.get("diff", "")), duration_ms=round((time.time() - t0) * 1000))
         return {
-            "diff": diff[:20_000],
-            "truncated": len(diff) > 20_000,
-            "git_status": status_output[:2_000],
+            "diff": result.get("diff", ""),
+            "truncated": result.get("truncated", False),
+            "git_status": result.get("status", ""),
+            "workspace_revision": workspace_revision,
         }
     except Exception as exc:
+        _log_action(str(sandbox_id), "get_diff", error=str(exc), duration_ms=round((time.time() - t0) * 1000))
         return _sandbox_error_response(exc, {"diff": ""})
 
 
@@ -1433,6 +1555,7 @@ def cleanup(data: dict):
             pass  # Container already gone — that's fine
         else:
             return {"ok": False, "error": f"Termination failed: {type(exc).__name__}"}
+    _log_action(str(sandbox_id), "cleanup")
     return {"ok": True}
 
 
