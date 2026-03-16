@@ -101,11 +101,32 @@ export function shortenPath(cwd, maxWidth = 40) {
   return truncate(shortCwd, maxWidth);
 }
 
+// ── Context meter ────────────────────────────────────────────────────
+
+/**
+ * Build a visual context meter bar showing token usage vs. budget.
+ * Returns a styled string like "▰▰▰▰▱▱▱▱ 42k/100k"
+ */
+export function formatContextMeter(tokens, budget, theme, barWidth = 8) {
+  const maxTokens = budget?.maxTokens || 100_000;
+  const ratio = Math.min(1, tokens / maxTokens);
+  const filled = Math.round(ratio * barWidth);
+  const empty = barWidth - filled;
+
+  // Color based on usage: green < 60%, yellow 60-85%, red > 85%
+  const color = ratio > 0.85 ? 'state.error' : ratio > 0.60 ? 'state.warn' : 'state.success';
+  const filledChar = theme.unicode ? '▰' : '#';
+  const emptyChar = theme.unicode ? '▱' : '-';
+  const bar = theme.style(color, filledChar.repeat(filled)) + theme.style('fg.dim', emptyChar.repeat(empty));
+  const label = `${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)}`;
+  return `${bar} ${theme.style('fg.dim', label)}`;
+}
+
 // ── Status bar rendering ────────────────────────────────────────────
 
 /**
  * Render the enhanced status bar.
- * Shows: git branch | cwd | tokens | [live indicator]
+ * Shows: git branch | cwd | context meter | file awareness | [live indicator]
  */
 export function renderStatusBar(buf, layout, theme, {
   gitStatus = null,
@@ -113,13 +134,16 @@ export function renderStatusBar(buf, layout, theme, {
   tokens = 0,
   isStreaming = false,
   messageCount = 0,
+  contextBudget = null,
+  fileAwareness = null,
+  sessionName = '',
 }) {
   const { top, left, width } = layout.footer;
   const { glyphs } = theme;
-  
+
   // Build status components
   const parts = [];
-  
+
   // Git section
   if (gitStatus) {
     const gitStr = formatGitStatus(gitStatus, 25);
@@ -131,7 +155,7 @@ export function renderStatusBar(buf, layout, theme, {
       width: visibleWidth(gitStr) + (gitStatus.dirty > 0 ? 2 : 0),
     });
   }
-  
+
   // Path section
   const pathStr = shortenPath(cwd, 35);
   parts.push({
@@ -140,31 +164,53 @@ export function renderStatusBar(buf, layout, theme, {
     color: 'fg.secondary',
     width: visibleWidth(pathStr),
   });
-  
-  // Context section
-  const tokenStr = formatTokenCount(tokens);
-  const ctxText = `${messageCount} msgs · ${tokenStr}tk`;
-  parts.push({
-    icon: '',
-    text: ctxText,
-    color: 'fg.dim',
-    width: visibleWidth(ctxText),
-  });
-  
+
+  // Context meter (visual bar + tokens/budget)
+  if (contextBudget) {
+    const meter = formatContextMeter(tokens, contextBudget, theme);
+    parts.push({
+      icon: '',
+      text: meter,
+      color: 'fg.dim',
+      width: visibleWidth(meter),
+      raw: true,
+    });
+  } else {
+    // Fallback: simple token count
+    const tokenStr = formatTokenCount(tokens);
+    const ctxText = `${messageCount} msgs · ${tokenStr}tk`;
+    parts.push({
+      icon: '',
+      text: ctxText,
+      color: 'fg.dim',
+      width: visibleWidth(ctxText),
+    });
+  }
+
+  // File awareness section
+  if (fileAwareness && fileAwareness.total > 0) {
+    const reads = fileAwareness.files.filter(f => f.status === 'fully_read' || f.status === 'partial_read').length;
+    const writes = fileAwareness.files.filter(f => f.status === 'model_authored').length;
+    let fileText = `${fileAwareness.total} files`;
+    if (writes > 0) fileText += ` (${writes}w)`;
+    else if (reads > 0) fileText += ` (${reads}r)`;
+    parts.push({
+      icon: '',
+      text: fileText,
+      color: 'fg.dim',
+      width: visibleWidth(fileText),
+    });
+  }
+
   // Live indicator (only when streaming)
   let liveIndicator = '';
   if (isStreaming) {
     liveIndicator = theme.style('state.warn', ' ● LIVE ');
   }
-  
-  // Calculate spacing
-  const totalContentWidth = parts.reduce((sum, p) => sum + p.width + 3, 0); // +3 for icon and spacing
-  const liveWidth = liveIndicator ? visibleWidth(liveIndicator) : 0;
-  const availableSpace = width - totalContentWidth - liveWidth - 4; // 4 for margins
-  
+
   // Build the line
   let line = '';
-  
+
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     if (i > 0) {
@@ -173,14 +219,19 @@ export function renderStatusBar(buf, layout, theme, {
     if (part.icon) {
       line += theme.style(part.color, part.icon + ' ');
     }
-    line += theme.style(part.color, part.text);
+    if (part.raw) {
+      line += part.text;
+    } else {
+      line += theme.style(part.color, part.text);
+    }
   }
-  
+
   // Pad and add live indicator
   const lineWidth = visibleWidth(line);
+  const liveWidth = liveIndicator ? visibleWidth(liveIndicator) : 0;
   const padding = Math.max(0, width - lineWidth - liveWidth - 2);
   line += ' '.repeat(padding) + liveIndicator;
-  
+
   buf.writeLine(top, left, padTo(line, width));
 }
 
@@ -218,6 +269,7 @@ export function renderKeybindHints(buf, layout, theme, tuiState, keybindHints) {
       theme.style('accent.link', 'Ctrl+O') + theme.style('fg.dim', ' payloads'),
       theme.style('accent.link', 'Ctrl+G') + theme.style('fg.dim', ' reasoning'),
       theme.style('accent.link', 'Ctrl+C') + theme.style('fg.dim', ' cancel'),
+      theme.style('accent.link', 'Ctrl+R') + theme.style('fg.dim', ' sessions'),
       theme.style('accent.link', 'Ctrl+P') + theme.style('fg.dim', ' provider'),
     ].join('  ');
   }
