@@ -641,29 +641,24 @@ def _sandbox_tmp_path(prefix: str, suffix: str = ".json") -> str:
 
 
 def _write_temp_payload(sb: modal.Sandbox, payload: str, tmp_path: str = "/tmp/push_payload.json") -> str | None:
-    """Write a JSON payload to a temp file in the sandbox via chunked printf.
+    """Write a JSON payload to a temp file in the sandbox via stdin piping.
 
     Returns None on success, or an error string on failure.
-    Uses chunked writes to avoid Linux's MAX_ARG_STRLEN (128KB per arg) limit.
+    Uses stdin instead of CLI args to avoid Linux's MAX_ARG_STRLEN (128KB per arg)
+    and ARG_MAX limits that break for large file payloads (100KB+).
     """
     try:
-        p = sb.exec("rm", "-f", tmp_path)
-        if not _wait_with_timeout(p, timeout_seconds=10):
-            return "Temp file cleanup timed out"
-    except Exception as exc:
-        return f"Temp file cleanup failed: {type(exc).__name__}: {exc}"
-    chunk_size = 100_000  # well under 128KB single-arg limit
-    for i in range(0, len(payload), chunk_size):
-        chunk = payload[i : i + chunk_size].replace("'", "'\\''")
-        try:
-            p = sb.exec("bash", "-c", f"printf '%s' '{chunk}' >> {tmp_path}")
-        except Exception as exc:
-            return f"Payload upload exec failed: {type(exc).__name__}: {exc}"
-        if not _wait_with_timeout(p, timeout_seconds=15):
+        p = sb.exec("bash", "-c", f"cat > {tmp_path}")
+        p.stdin.write(payload.encode() if isinstance(payload, str) else payload)
+        p.stdin.write_eof()
+        p.stdin.drain()
+        if not _wait_with_timeout(p, timeout_seconds=30):
             return "Payload upload timed out"
         if p.returncode != 0:
             stderr = p.stderr.read()
             return f"Payload upload failed: {stderr}"
+    except Exception as exc:
+        return f"Payload upload failed: {type(exc).__name__}: {exc}"
     return None
 
 
@@ -1352,14 +1347,17 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
         escaped_target = target.replace("'", "'\\''")
 
         sb.exec("rm", "-f", tmp_b64, tmp_archive).wait()
-        chunk_size = 120_000
-        for i in range(0, len(archive_base64), chunk_size):
-            chunk = archive_base64[i : i + chunk_size].replace("'", "'\\''")
-            p = sb.exec("bash", "-lc", f"printf '%s' '{chunk}' >> {tmp_b64}")
+        try:
+            p = sb.exec("bash", "-c", f"cat > {tmp_b64}")
+            p.stdin.write(archive_base64.encode() if isinstance(archive_base64, str) else archive_base64)
+            p.stdin.write_eof()
+            p.stdin.drain()
             p.wait()
             if p.returncode != 0:
                 stderr = p.stderr.read()
                 return {"ok": False, "error": f"Snapshot upload failed: {stderr}"}
+        except Exception as exc:
+            return {"ok": False, "error": f"Snapshot upload failed: {type(exc).__name__}: {exc}"}
 
         p = sb.exec("bash", "-lc", f"base64 -d {tmp_b64} > {tmp_archive}")
         p.wait()
