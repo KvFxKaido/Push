@@ -292,7 +292,6 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     if (!id) return false;
 
     if (!opts?.silent) setStatus('creating'); // reuse 'creating' as a "checking" state (shows spinner)
-    if (!opts?.silent) setError(null);
 
     try {
       const result = await execInSandbox(id, 'true');
@@ -301,6 +300,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
       if (result.exitCode === 0) {
         setStatus('ready');
+        console.debug(`[useSandbox] Refresh success for ${id}`);
         return true;
       }
       // exitCode -1 or other failure: container is gone
@@ -309,6 +309,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       setError(reason);
       clearTrackedSession(sessionStorageKeyRef.current, id);
       return false;
+      console.debug(`[useSandbox] Refresh failed for ${id}: ${reason}`);
     } catch (err) {
       if (sandboxIdRef.current !== id) return false;
       const msg = err instanceof Error ? err.message : String(err);
@@ -316,6 +317,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       setError(msg);
       clearTrackedSession(sessionStorageKeyRef.current, id);
       return false;
+      console.debug(`[useSandbox] Refresh error for ${id}: ${msg}`);
     }
   }, []);
 
