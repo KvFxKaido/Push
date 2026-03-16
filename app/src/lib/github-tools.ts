@@ -6,7 +6,7 @@
  * result back into the conversation as a synthetic message.
  */
 
-import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIOverallStatus, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData, ReviewResult } from '@/types';
+import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIOverallStatus, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData, ReviewResult, AcceptanceCriterion } from '@/types';
 import { asRecord, detectToolFromText } from './utils';
 import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
 import {
@@ -26,7 +26,7 @@ export type ToolCall =
   | { tool: 'grep_file'; args: { repo: string; path: string; pattern: string; branch?: string } }
   | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string } }
-  | { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[] } }
+  | { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[]; acceptanceCriteria?: AcceptanceCriterion[]; intent?: string; constraints?: string[] } }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
   | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } }
   | { tool: 'list_commit_files'; args: { repo: string; ref: string } }
@@ -323,8 +323,23 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     const task = asString(args.task);
     const tasks = asStringArray(args.tasks);
     const files = asStringArray(args.files);
+    const intent = asString(args.intent);
+    const constraints = asStringArray(args.constraints);
+    let acceptanceCriteria: AcceptanceCriterion[] | undefined;
+    if (Array.isArray(args.acceptanceCriteria)) {
+      acceptanceCriteria = (args.acceptanceCriteria as unknown[]).filter((c): c is AcceptanceCriterion => {
+        const cr = asRecord(c);
+        return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
+      }).map(c => ({
+        id: c.id,
+        check: c.check,
+        exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
+        description: typeof c.description === 'string' ? c.description : undefined,
+      }));
+      if (acceptanceCriteria.length === 0) acceptanceCriteria = undefined;
+    }
     if (task || (tasks && tasks.length > 0)) {
-      return { tool: 'delegate_coder', args: { task, tasks, files } };
+      return { tool: 'delegate_coder', args: { task, tasks, files, acceptanceCriteria, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } };
     }
   }
   if (tool === 'fetch_checks' && repo) {

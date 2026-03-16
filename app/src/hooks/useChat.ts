@@ -72,6 +72,28 @@ function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/** Format milliseconds into a human-friendly duration string (e.g. "1m 23s"). */
+function formatElapsedTime(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+/** Error subtype with optional elapsed time — used to carry timing through Promise.allSettled rejections. */
+interface ErrorWithElapsed extends Error { elapsedMs?: number; }
+
+/**
+ * Derive a status label from coder results. If acceptance criteria were run
+ * and any failed, report CHECKS_FAILED instead of OK to avoid misleading the user.
+ */
+function getTaskStatusLabel(criteriaResults?: import('@/types').CriterionResult[]): string {
+  if (!criteriaResults || criteriaResults.length === 0) return 'OK';
+  const allPassed = criteriaResults.every(r => r.passed);
+  return allPassed ? 'OK' : 'CHECKS_FAILED';
+}
+
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
   const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
@@ -2078,8 +2100,10 @@ export function useChat(
                       // Use allSettled so every worker sandbox ID is tracked
                       // before the finally cleanup runs — prevents orphaned
                       // sandboxes when one task fails while others still set up.
+                      const parallelStartTime = Date.now();
                       const settledResults = await Promise.allSettled(
                         taskList.map(async (task, taskIndex) => {
+                          const taskStartTime = Date.now();
                           const prefix = `[${taskIndex + 1}/${taskList.length}] `;
 
                           // Stagger worker setup to avoid thundering-herd on Modal endpoints.
@@ -2158,58 +2182,84 @@ export function useChat(
                             return answer;
                           };
 
-                          // Pass acceptance criteria to the last task (by index), matching sequential behavior
-                          const isLastTask = taskIndex === taskList.length - 1;
-                          const bi = branchInfoRef.current;
-                          const coderResult = await runCoderAgent(
-                            task,
-                            workerSandboxId,
-                            delegateArgs.files || [],
-                            (phase, detail) => {
-                              updateAgentStatus(
-                                { active: true, phase: `${prefix}${phase}`, detail },
-                                { chatId, source: 'coder' },
-                              );
-                            },
-                            agentsMdRef.current || undefined,
-                            abortControllerRef.current?.signal,
-                            handleCheckpoint,
-                            isLastTask ? delegateArgs.acceptanceCriteria : undefined,
-                            (state) => { lastCoderStateRef.current = state; },
-                            lockedProviderForChat,
-                            resolvedModelForChat || undefined,
-                            {
-                              intent: delegateArgs.intent,
-                              constraints: delegateArgs.constraints,
-                              branchContext: bi?.currentBranch ? {
-                                activeBranch: bi.currentBranch,
-                                defaultBranch: bi.defaultBranch || 'main',
-                                protectMain: isMainProtectedRef.current,
-                              } : undefined,
-                              instructionFilename: instructionFilenameRef.current || undefined,
-                            },
-                          );
+                          // Apply acceptance criteria to every parallel task — each runs
+                          // in its own isolated sandbox so criteria should validate independently.
+                          // Wrap in try/catch to capture elapsed time even on failure.
+                          try {
+                            const bi = branchInfoRef.current;
+                            const coderResult = await runCoderAgent(
+                              task,
+                              workerSandboxId,
+                              delegateArgs.files || [],
+                              (phase, detail) => {
+                                updateAgentStatus(
+                                  { active: true, phase: `${prefix}${phase}`, detail },
+                                  { chatId, source: 'coder' },
+                                );
+                              },
+                              agentsMdRef.current || undefined,
+                              abortControllerRef.current?.signal,
+                              handleCheckpoint,
+                              delegateArgs.acceptanceCriteria,
+                              (state) => { lastCoderStateRef.current = state; },
+                              lockedProviderForChat,
+                              resolvedModelForChat || undefined,
+                              {
+                                intent: delegateArgs.intent,
+                                constraints: delegateArgs.constraints,
+                                branchContext: bi?.currentBranch ? {
+                                  activeBranch: bi.currentBranch,
+                                  defaultBranch: bi.defaultBranch || 'main',
+                                  protectMain: isMainProtectedRef.current,
+                                } : undefined,
+                                instructionFilename: instructionFilenameRef.current || undefined,
+                              },
+                            );
 
-                          return { taskIndex, coderResult };
+                            const taskElapsedMs = Date.now() - taskStartTime;
+                            return { taskIndex, coderResult, elapsedMs: taskElapsedMs };
+                          } catch (taskErr) {
+                            const taskElapsedMs = Date.now() - taskStartTime;
+                            // Re-throw with elapsed time attached for the result collector
+                            const wrapped = new Error(
+                              taskErr instanceof Error ? taskErr.message : String(taskErr),
+                            );
+                            (wrapped as ErrorWithElapsed).elapsedMs = taskElapsedMs;
+                            throw wrapped;
+                          }
                         }),
                       );
+                      const parallelElapsedMs = Date.now() - parallelStartTime;
 
                       // Collect results from all workers (including failures)
+                      let succeededCount = 0;
+                      let failedCount = 0;
 
                       settledResults.forEach((result, taskIndex) => {
                         if (result.status === 'fulfilled') {
-                          const { coderResult } = result.value;
+                          const { coderResult, elapsedMs } = result.value;
                           totalRounds += coderResult.rounds;
                           totalCheckpoints += coderResult.checkpoints;
-                          summaries.push(`Task ${taskIndex + 1}: ${coderResult.summary}`);
+                          const elapsed = formatElapsedTime(elapsedMs);
+                          const statusLabel = getTaskStatusLabel(coderResult.criteriaResults);
+                          if (statusLabel === 'FAILED') failedCount++;
+                          else succeededCount++;
+                          summaries.push(`Task ${taskIndex + 1} [${statusLabel}, ${elapsed}]: ${coderResult.summary}`);
                           allCards.push(...coderResult.cards);
                         } else {
-                          const errorMsg = result.reason instanceof Error ? result.reason.message : String(result.reason);
-                          summaries.push(`Task ${taskIndex + 1} [Stalled/Failed]: ${errorMsg}`);
+                          failedCount++;
+                          const reason = result.reason;
+                          const errorMsg = reason instanceof Error ? reason.message : String(reason);
+                          const elapsedMs = (reason as ErrorWithElapsed)?.elapsedMs;
+                          const elapsed = typeof elapsedMs === 'number' ? `, ${formatElapsedTime(elapsedMs)}` : '';
+                          summaries.push(`Task ${taskIndex + 1} [FAILED${elapsed}]: ${errorMsg}`);
                         }
                       });
 
-                      parallelIsolationNote = '\n[Note] Parallel delegate tasks ran in isolated worker sandboxes and were not auto-merged into the active workspace.';
+                      const wallTime = formatElapsedTime(parallelElapsedMs);
+                      parallelIsolationNote = `\n[Parallel] ${succeededCount} succeeded, ${failedCount} failed — wall time ${wallTime}. Tasks ran in isolated worker sandboxes and were not auto-merged into the active workspace.`;
+
+                      // parallelIsolationNote already set above with stats
                     } catch (err) {
                       console.error('[Parallel Delegation Failure]', err);
                       parallelSetupFailed = true;
@@ -2258,8 +2308,10 @@ export function useChat(
                         return answer;
                       };
 
-                      // Pass acceptance criteria to the last task in the list
-                      const isLastTask = taskIndex === taskList.length - 1;
+                      // Apply acceptance criteria to every task — validates each independently.
+                      // For sequential single-sandbox mode this also catches regressions
+                      // introduced by earlier tasks before they compound.
+                      const seqTaskStart = Date.now();
                       const seqBi = branchInfoRef.current;
                       const coderResult = await runCoderAgent(
                         task,
@@ -2275,7 +2327,7 @@ export function useChat(
                         agentsMdRef.current || undefined,
                         abortControllerRef.current?.signal,
                         handleCheckpoint,
-                        isLastTask ? delegateArgs.acceptanceCriteria : undefined,
+                        delegateArgs.acceptanceCriteria,
                         (state) => { lastCoderStateRef.current = state; },
                         lockedProviderForChat,
                         resolvedModelForChat || undefined,
@@ -2290,13 +2342,15 @@ export function useChat(
                           instructionFilename: instructionFilenameRef.current || undefined,
                         },
                       );
+                      const seqElapsed = formatElapsedTime(Date.now() - seqTaskStart);
+                      const seqStatus = getTaskStatusLabel(coderResult.criteriaResults);
                       totalRounds += coderResult.rounds;
                       totalCheckpoints += coderResult.checkpoints;
-                      summaries.push(
-                        taskList.length > 1
-                          ? `Task ${taskIndex + 1}: ${coderResult.summary}`
-                          : coderResult.summary,
-                      );
+                      if (taskList.length > 1) {
+                        summaries.push(`Task ${taskIndex + 1} [${seqStatus}, ${seqElapsed}]: ${coderResult.summary}`);
+                      } else {
+                        summaries.push(`${coderResult.summary} (${seqElapsed})`);
+                      }
                       allCards.push(...coderResult.cards);
                     }
                   }
