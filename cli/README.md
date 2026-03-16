@@ -37,7 +37,7 @@ Starts the full-screen TUI. This is where most current terminal UX work is landi
 
 ```bash
 ./push
-./push --provider openrouter --model anthropic/claude-sonnet-4.6
+./push --provider openrouter --model anthropic/claude-sonnet-4.6:nitro
 ./push --session sess_abc123   # resume a previous session
 ```
 
@@ -124,7 +124,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
 | `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/chat/completions`) |
 | `PUSH_OPENROUTER_API_KEY` | OpenRouter API key (BYOK-compatible; provider-native keys stay in OpenRouter) |
-| `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6`) |
+| `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6:nitro`) |
 | `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`) |
 | `PUSH_ZEN_API_KEY` | OpenCode Zen API key |
 | `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `big-pickle`) |
@@ -146,7 +146,7 @@ All four providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5
 | Provider | Default model | Requires key |
 |---|---|---|
 | `ollama` | `gemini-3-flash-preview` | Yes |
-| `openrouter` | `anthropic/claude-sonnet-4.6` | Yes |
+| `openrouter` | `anthropic/claude-sonnet-4.6:nitro` | Yes |
 | `zen` | `big-pickle` | Yes |
 | `nvidia` | `nvidia/llama-3.1-nemotron-70b-instruct` | Yes |
 

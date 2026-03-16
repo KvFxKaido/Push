@@ -81,7 +81,7 @@ describe('DEFAULT_MODELS', () => {
   // because those are env-overridable at import time.
   const EXPECTED = {
     ollama: 'gemini-3-flash-preview',
-    openrouter: 'anthropic/claude-sonnet-4.6',
+    openrouter: 'anthropic/claude-sonnet-4.6:nitro',
     zen: 'big-pickle',
     nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
   };

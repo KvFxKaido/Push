@@ -25,7 +25,7 @@ export const PROVIDER_CONFIGS = {
   openrouter: {
     id: 'openrouter',
     url: process.env.PUSH_OPENROUTER_URL || 'https://openrouter.ai/api/v1/chat/completions',
-    defaultModel: process.env.PUSH_OPENROUTER_MODEL || 'anthropic/claude-sonnet-4.6',
+    defaultModel: process.env.PUSH_OPENROUTER_MODEL || 'anthropic/claude-sonnet-4.6:nitro',
     apiKeyEnv: ['PUSH_OPENROUTER_API_KEY', 'OPENROUTER_API_KEY', 'VITE_OPENROUTER_API_KEY'],
     requiresKey: true,
   },
