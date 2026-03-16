@@ -4,7 +4,7 @@
 - Created: 2026-03-15
 - Updated: 2026-03-16
 - Supersedes: Web-CLI Parity Plan (2026-03-11)
-- State: **In Progress** — Track 1 Complete ✅, Track 2 Complete ✅
+- State: **In Progress** — Track 1 Complete ✅, Track 2 Complete ✅, Track 3 Complete ✅
 - Intent: Share core logic between web and CLI to eliminate dual implementations, prioritize TUI usability over feature parity
 
 ## What Changed from v1
@@ -156,24 +156,56 @@ Push/
 
 ---
 
-### Track 3 — TUI Usability (Next)
+### Track 3 — TUI Usability ✅ COMPLETE
 
 Make TUI the preferred surface for terminal-based development.
 
-**Current TUI state:**
-- Enabled via `PUSH_TUI_ENABLED=1`
-- Full-screen interface under active development
-- Goal: muscle-memory workflow that fits terminal development
+**Shipped:**
 
-**Key TUI improvements:**
-- [ ] Session picker on startup (resume previous or start new)
-- [ ] Live tool output in transcript format (readable, not JSON dumps)
-- [ ] Context meter showing token budget usage
-- [ ] File awareness display (what files have been read/edited)
-- [ ] Interrupt handling (Ctrl+C doesn't kill daemon, just stops current tool loop)
-- [ ] Keyboard shortcuts for common actions (accept/reject, retry, switch sessions)
-- [ ] Status line showing active session, branch, dirty files
-- [ ] Scrollback buffer for reviewing previous tool outputs
+#### Session picker on startup
+- [x] Auto-shows session resume modal when previous sessions exist (fresh sessions only, skipped with `--session`)
+- [x] Ctrl+R opens session picker at any time (replaces placeholder)
+- [x] Session picker supports fuzzy search, rename, delete, preview
+
+#### Live tool output in transcript format
+- [x] Tool calls show args preview (path, command, file) inline on the TOOL badge line
+- [x] Tool results show first-line preview text below the tool entry (readable, not raw JSON)
+- [x] Tool pane (Ctrl+T) shows recent tool calls/results with duration and error status
+- [x] Payload inspector (Ctrl+O) for per-block expand/collapse of JSON tool payloads
+
+#### Context meter showing token budget usage
+- [x] Visual bar meter in status bar: `▰▰▰▰▱▱▱▱ 42k/100k` with color coding (green/yellow/red)
+- [x] Uses `getContextBudget()` from `context-manager.mjs` for model-aware budget (Gemini 1M, default 100k)
+- [x] Uses `estimateContextTokens()` for accurate per-message token estimation
+
+#### File awareness display
+- [x] TUI-local file ledger tracks files from tool_call/tool_result events
+- [x] Status bar shows file count with read/write breakdown: `3 files (1w)`
+- [x] Powered by shared `file-ledger.mjs` (same logic as engine)
+
+#### Interrupt handling
+- [x] Ctrl+C cancels the current run (aborts the engine loop), does not kill the process
+- [x] Second Ctrl+C exits the TUI cleanly
+- [x] Signal handlers (SIGTERM, SIGHUP) perform emergency cleanup
+
+#### Keyboard shortcuts
+- [x] Ctrl+Y/y approve, Ctrl+N/n deny, a always-approve, Esc dismiss (approval modal)
+- [x] Ctrl+R session picker, Ctrl+P provider switcher, Ctrl+G reasoning, Ctrl+T tools
+- [x] Ctrl+O payload inspector (j/k move, Enter toggle, a toggle-all)
+- [x] PageUp/PageDown scrollback, Ctrl+L clear viewport
+- [x] Emacs-style editing: Ctrl+A/E/U/K/W, Ctrl+Left/Right word nav
+
+#### Status line
+- [x] Git branch with dirty count, ahead/behind indicators
+- [x] Shortened cwd path
+- [x] Session name displayed in header (with session ID)
+- [x] LIVE indicator during streaming
+- [x] Context-aware keybind hints in footer
+
+#### Scrollback buffer
+- [x] PageUp/PageDown scroll transcript history
+- [x] Auto-scroll on new tokens
+- [x] 2000-line transcript buffer with overflow trimming
 
 ### Track 4 — Daemon Integration (Future)
 
@@ -199,7 +231,7 @@ Not part of this plan's scope, but the natural next step after TUI stabilizes.
 
 **Phase 2 — Core convergence + TUI:**
 3. Track 2: Remaining core modules (diff-utils, error-types, reasoning-tokens, context-budget) ✅
-4. Track 3: TUI usability improvements (parallel with Track 2)
+4. Track 3: TUI usability improvements ✅
 
 **Phase 3 — Polish:**
 5. Performance testing (startup time, local file ops)

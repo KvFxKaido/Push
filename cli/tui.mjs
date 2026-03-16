@@ -12,7 +12,8 @@ import { existsSync, realpathSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
 import { createTheme } from './tui-theme.mjs';
-import { renderStatusBar, renderKeybindHints, getCompactGitStatus, estimateTokens } from './tui-status.mjs';
+import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.mjs';
+import { getContextBudget, estimateContextTokens } from './context-manager.mjs';
 import { filterSessions } from './tui-fuzzy.mjs';
 import { applySingleLineEditKey, getListNavigationAction, moveCursorCircular } from './tui-modal-input.mjs';
 import { drawModalBoxAt, getCenteredModalRect, getWindowedListRange, renderCenteredModalBox } from './tui-widgets.mjs';
@@ -29,6 +30,7 @@ import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-s
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.mjs';
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.mjs';
 import { createTabCompleter } from './tui-completer.mjs';
+import { createFileLedger, updateFileLedger, getLedgerSummary } from './file-ledger.mjs';
 import { appendUserMessageWithFileReferences } from './file-references.mjs';
 import { compactContext } from './context-manager.mjs';
 
@@ -147,6 +149,8 @@ function createTUIState() {
     dirty: new Set(['all']),
     // Git status for status bar
     gitStatus: null,  // { branch, dirty, ahead, behind }
+    // File awareness ledger (accumulated from engine tool_result events)
+    fileAwareness: null,  // { total, files: [{ path, status, reads, writes }] }
   };
 }
 
@@ -409,7 +413,7 @@ function renderAssistantEntryLines(out, text, width, theme, {
   if (fenceLang != null) flushFence();
 }
 
-function renderHeader(buf, layout, theme, { provider, model, session, cwd, runState, branch }) {
+function renderHeader(buf, layout, theme, { provider, model, session, sessionName, cwd, runState, branch }) {
   const { glyphs } = theme;
   const { top, left, width } = layout.header;
 
@@ -458,8 +462,9 @@ function renderHeader(buf, layout, theme, { provider, model, session, cwd, runSt
   buf.writeLine(top + 2, left, bottomBorder);
 
   // ── Session line (indented to align with box inner content) ───
-  const sessLabel = theme.style('fg.dim', `session: ${session}`);
-  const hint = theme.style('accent.link', '/model');
+  const sessDisplay = sessionName ? `${sessionName} (${session})` : session;
+  const sessLabel = theme.style('fg.dim', `session: ${sessDisplay}`);
+  const hint = theme.style('accent.link', 'Ctrl+R sessions');
   buf.writeLine(top + 3, left, padTo(`  ${sessLabel}  ${hint}`, width));
 }
 
@@ -544,12 +549,28 @@ function renderTranscript(buf, layout, theme, tuiState) {
         const badge = makeBadge(theme, 'TOOL', { fg: 'bg.base', bg: 'border.hover', bold: false });
         const dur = entry.duration ? theme.style('fg.dim', ` ${entry.duration}ms`) : '';
         const prefix = `${badge} `;
-        const base = `${status} ${entry.text}${dur}`;
+        // Show tool args preview (path, command, file)
+        const argsHint = summarizeToolArgs(entry.args, Math.max(10, width - 40));
+        const argsStr = argsHint ? theme.style('fg.dim', ` ${argsHint}`) : '';
+        const base = `${status} ${entry.text}${argsStr}${dur}`;
         pushWrappedLines(entryLines, base, width, {
           firstPrefix: prefix,
           nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
           styleFn: (s) => theme.style('fg.secondary', s),
         });
+        // Show result preview (first line of output, readable)
+        if (entry.resultPreview && !pending) {
+          const nextPad = ' '.repeat(Math.max(2, visibleWidth(prefix)));
+          const previewLine = entry.resultPreview.split('\n')[0].trim();
+          if (previewLine) {
+            const previewStr = truncate(previewLine, Math.max(10, width - visibleWidth(nextPad) - 4));
+            pushWrappedLines(entryLines, previewStr, width, {
+              firstPrefix: nextPad,
+              nextPrefix: nextPad,
+              styleFn: (s) => theme.style('fg.dim', s),
+            });
+          }
+        }
       } else if (entry.role === 'status') {
         const badge = makeBadge(theme, 'INFO', { fg: 'bg.base', bg: 'border.default', bold: false });
         const prefix = `${badge} `;
@@ -1542,6 +1563,33 @@ export async function runTUI(options = {}) {
   
   // Git status will be refreshed periodically and after certain events
 
+  // ── File awareness tracking ─────────────────────────────────────
+  // TUI-local file ledger, updated from engine tool_call/tool_result events.
+  const tuiFileLedger = createFileLedger();
+  const pendingToolArgs = new Map(); // map toolName → args[] queue (parallel-safe)
+
+  const FILE_TOOLS = new Set(['read_file', 'write_file', 'edit_file']);
+
+  function updateFileAwarenessFromToolEvent(toolName, args, isResult, isError) {
+    if (!FILE_TOOLS.has(toolName)) return;
+
+    const filePath = args?.path || args?.file;
+    if (!filePath || typeof filePath !== 'string') return;
+
+    if (isResult && !isError) {
+      const simulatedCall = { tool: toolName };
+      const simulatedResult = { ok: true, meta: { path: filePath } };
+
+      if (toolName === 'read_file') {
+        simulatedResult.meta.total_lines = 0; // triggers partial_read
+      }
+
+      updateFileLedger(tuiFileLedger, simulatedCall, simulatedResult);
+      tuiState.fileAwareness = getLedgerSummary(tuiFileLedger);
+      tuiState.dirty.add('footer');
+    }
+  }
+
   // ── Abort controller ─────────────────────────────────────────────
 
   let runAbort = null;
@@ -1625,6 +1673,7 @@ export async function runTUI(options = {}) {
         provider: state.provider,
         model: state.model,
         session: state.sessionId,
+        sessionName: state.sessionName || '',
         cwd: state.cwd,
         runState: tuiState.runState,
         branch,
@@ -1638,12 +1687,16 @@ export async function runTUI(options = {}) {
 
     const renderFooterRegion = () => {
       const isStreaming = tuiState.runState === 'running' && tuiState.streamBuf.length > 0;
+      const tokens = estimateContextTokens(state.messages || []);
+      const budget = getContextBudget(state.provider, state.model);
       renderStatusBar(screenBuf, layout, theme, {
         gitStatus: tuiState.gitStatus,
         cwd: state.cwd,
-        tokens: estimateTokens(state.messages),
+        tokens,
         isStreaming,
         messageCount: state.messages?.length || 0,
+        contextBudget: budget,
+        fileAwareness: tuiState.fileAwareness,
       });
       renderKeybindHints(screenBuf, layout, theme, tuiState);
     };
@@ -1804,7 +1857,10 @@ export async function runTUI(options = {}) {
         scheduler.schedule();
         break;
 
-      case 'tool_call':
+      case 'tool_call': {
+        const argsQueue = pendingToolArgs.get(event.payload.toolName) || [];
+        argsQueue.push(event.payload.args);
+        pendingToolArgs.set(event.payload.toolName, argsQueue);
         addToolFeedEntry(tuiState, {
           type: 'call',
           name: event.payload.toolName,
@@ -1813,11 +1869,13 @@ export async function runTUI(options = {}) {
         pushTranscriptEntry(tuiState, {
           role: 'tool_call',
           text: event.payload.toolName,
+          args: event.payload.args,
           error: false,
           timestamp: Date.now(),
         });
         scheduler.schedule();
         break;
+      }
 
       case 'tool_result': {
         const isError = event.payload.isError;
@@ -1829,12 +1887,23 @@ export async function runTUI(options = {}) {
           error: isError,
           preview: text.slice(0, 100),
         });
-        // Update the last tool_call transcript entry with result info
+        // Track file awareness — shift args from the per-tool queue (parallel-safe)
+        const resultArgsQueue = pendingToolArgs.get(event.payload.toolName);
+        const matchedArgs = resultArgsQueue?.shift() ?? null;
+        if (resultArgsQueue && resultArgsQueue.length === 0) pendingToolArgs.delete(event.payload.toolName);
+        updateFileAwarenessFromToolEvent(
+          event.payload.toolName,
+          matchedArgs,
+          true,
+          isError,
+        );
+        // Update the last tool_call transcript entry with result info and preview
         let updatedTranscriptToolCall = false;
         for (let i = tuiState.transcript.length - 1; i >= 0; i--) {
           if (tuiState.transcript[i].role === 'tool_call' && tuiState.transcript[i].text === event.payload.toolName) {
             tuiState.transcript[i].error = isError;
             tuiState.transcript[i].duration = event.payload.durationMs;
+            tuiState.transcript[i].resultPreview = text.slice(0, 200);
             updatedTranscriptToolCall = true;
             break;
           }
@@ -2154,6 +2223,9 @@ export async function runTUI(options = {}) {
     tuiState.transcriptRenderCache = null;
     tuiState.toolFeed = [];
     tuiState.scrollOffset = 0;
+    tuiState.fileAwareness = null;
+    tuiFileLedger.files = {};
+    pendingToolArgs.clear();
     tuiState.providerModalCursor = 0;
     tuiState.resumeModalState = null;
     tuiState.modelModalState = null;
@@ -2986,6 +3058,7 @@ export async function runTUI(options = {}) {
           '  Ctrl+O        Payload inspector mode (per-block expand/collapse)',
           '  Ctrl+G        Toggle reasoning pane',
           '  Ctrl+C        Cancel run / exit',
+          '  Ctrl+R        Session picker (resume/switch)',
           '  Ctrl+Y        Approve',
           '  Ctrl+N        Deny',
           '  Ctrl+P        Provider switcher',
@@ -3920,9 +3993,7 @@ export async function runTUI(options = {}) {
         clearViewport();
         return;
       case 'reattach':
-        // Phase 1: no-op placeholder for Ctrl+R
-        addTranscriptEntry(tuiState, 'status', 'Re-attach not yet implemented.');
-        scheduler.schedule();
+        runAsync(() => openResumeModal(), 'session picker failed');
         return;
       case 'approve':
         approveAction();
@@ -4142,6 +4213,18 @@ export async function runTUI(options = {}) {
   // ── Initial render ───────────────────────────────────────────────
 
   scheduler.flush();
+
+  // ── Session picker on startup ──────────────────────────────────
+  // When starting a fresh session (no --session flag), auto-show the
+  // session picker if previous sessions exist so the user can resume.
+  if (!options.sessionId) {
+    try {
+      const existingSessions = await listSessions();
+      if (existingSessions.length > 0) {
+        await openResumeModal();
+      }
+    } catch { /* best-effort — just start fresh if listing fails */ }
+  }
 
   // ── Wait for exit ────────────────────────────────────────────────
 

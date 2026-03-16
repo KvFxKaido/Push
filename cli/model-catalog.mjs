@@ -4,35 +4,39 @@
  */
 
 export const OPENROUTER_MODELS = [
-  'anthropic/claude-sonnet-4.6',
-  'anthropic/claude-opus-4.6',
-  'anthropic/claude-haiku-4.5',
-  'openai/gpt-5.4-pro',
-  'openai/gpt-5.4',
+  'anthropic/claude-haiku-4.5:nitro',
+  'anthropic/claude-opus-4.6:nitro',
+  'anthropic/claude-sonnet-4.6:nitro',
+  'arcee-ai/virtuoso-large',
+  'cohere/command-a',
+  'deepseek/deepseek-r1',
+  'deepseek/deepseek-v3.2:nitro',
+  'google/gemini-2.5-flash:nitro',
+  'google/gemini-2.5-pro:nitro',
+  'google/gemini-3-flash-preview:nitro',
+  'google/gemini-3.1-flash-lite-preview:nitro',
+  'google/gemini-3.1-pro-preview:nitro',
+  'google/gemini-3.1-pro-preview-customtools:nitro',
+  'meta-llama/llama-4-maverick',
+  'minimax/minimax-m2.5',
+  'mistralai/codestral-2508',
+  'mistralai/devstral-2512',
+  'mistralai/mistral-large-2512',
+  'moonshotai/kimi-k2.5:nitro',
+  'openai/gpt-5-mini',
   'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
-  'stepfun/step-3.5-flash:free',
-  'google/gemini-3.1-pro-preview',
-  'google/gemini-3.1-pro-preview-customtools',
-  'google/gemini-3.1-flash-lite-preview',
-  // Mistral (via OpenRouter BYOK)
-  'mistralai/mistral-large-2512',
-  'mistralai/devstral-2512',
-  'mistralai/mistral-medium-3.1',
-  // MiniMax (via OpenRouter BYOK)
-  'minimax/minimax-m2.5',
-  'minimax/minimax-m2.1',
-  // Qwen
-  'qwen/qwen3.5-flash-02-23',
-  // Z.AI (via OpenRouter BYOK)
-  'zhipu/glm-4.7',
-  'zhipu/glm-5.0',
-  // Inception (Mercury diffusion LLMs)
-  'inception/mercury-2',
-  'inception/mercury-coder',
-  'inception/mercury',
+  'openai/gpt-5.4',
+  'openai/gpt-5.4-pro',
+  'perplexity/sonar-pro',
+  'qwen/qwen3-coder-flash',
+  'qwen/qwen3-coder-plus',
+  'qwen/qwen3.5-397b-a17b:nitro',
+  'stepfun/step-3.5-flash',
   'x-ai/grok-4.1-fast',
-  'moonshotai/kimi-k2.5',
+  'x-ai/grok-4.20-beta',
+  'z-ai/glm-4.7:nitro',
+  'z-ai/glm-5:nitro',
 ];
 
 export const OLLAMA_MODELS = [
@@ -72,7 +76,7 @@ const CATALOG = {
 /** Default model per provider — must match PROVIDER_CONFIGS defaults. */
 export const DEFAULT_MODELS = {
   ollama: 'gemini-3-flash-preview',
-  openrouter: 'anthropic/claude-sonnet-4.6',
+  openrouter: 'anthropic/claude-sonnet-4.6:nitro',
   zen: 'big-pickle',
   nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
 };
