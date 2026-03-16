@@ -2223,6 +2223,9 @@ export async function runTUI(options = {}) {
     tuiState.transcriptRenderCache = null;
     tuiState.toolFeed = [];
     tuiState.scrollOffset = 0;
+    tuiState.fileAwareness = null;
+    tuiFileLedger.files = {};
+    pendingToolArgs.clear();
     tuiState.providerModalCursor = 0;
     tuiState.resumeModalState = null;
     tuiState.modelModalState = null;
