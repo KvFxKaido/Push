@@ -88,7 +88,7 @@ Ephemeral workspace with no GitHub repo. Entry via onboarding or the launcher/ho
 
 ### Active Branch Model
 
-There is always exactly one Active Branch per repo session — it is the commit target, push target, diff base, and chat context. Switching branches is atomic and explicit — it tears down the sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the history drawer, launcher/home, and the workspace branch selector. Branch creation is an explicit UI action available from the launcher/home surface and the Workspace Hub commit/push sheet; the assistant does not create branches itself. The Workspace Hub is the coding notebook for the active branch. On feature branches, the primary workspace action becomes "Merge into main". Non-default inactive branches can be deleted from the workspace branch selector.
+There is always exactly one Active Branch per repo session — it is the commit target, push target, diff base, and chat context. Switching branches is atomic and explicit — it tears down the sandbox and creates a fresh one on the target branch (clean state, no carryover). Branch switching is available in the Chats drawer, launcher/home, and the workspace branch selector. Branch creation is an explicit UI action available from the launcher/home surface and the Workspace Hub commit/push sheet; the assistant does not create branches itself. The Workspace Hub is the coding notebook for the active branch. On feature branches, the primary workspace action becomes "Merge into main". Non-default inactive branches can be deleted from the workspace branch selector.
 
 ### Merge Flow (GitHub PR Merge)
 
@@ -100,7 +100,7 @@ Optional setting that blocks direct commits to `main`, requiring a branch for al
 
 ### Branch-Scoped Chats
 
-Conversations are permanently bound to the branch on which they were created. The history drawer groups chats by branch. Switching to a branch with existing chats lets the user resume any of them. After merge, branch chats receive a closure message; deleted branches are marked `(Merged + Deleted)` in history. Chats are never duplicated or rebound.
+Conversations are permanently bound to the branch on which they were created. The Chats drawer groups chats by branch. Switching to a branch with existing chats lets the user resume any of them. After merge, branch chats receive a closure message; deleted branches are marked `(Merged + Deleted)` in the chats list. Chats are never duplicated or rebound.
 
 ### Resumable Sessions
 

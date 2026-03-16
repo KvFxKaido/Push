@@ -336,7 +336,7 @@ export function RepoChatDrawer({
             <SheetHeader className="border-b border-push-edge pb-3">
               <SheetTitle className="flex items-center gap-2 text-push-fg">
                 <HistoryStackIcon className="h-4 w-4 text-push-fg-dim" />
-                <span>History</span>
+                <span>Chats</span>
               </SheetTitle>
               <SheetDescription className="text-push-fg-muted">
                 Repos and chats

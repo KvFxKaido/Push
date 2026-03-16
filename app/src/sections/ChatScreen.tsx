@@ -350,7 +350,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const isScratch = workspaceSession?.kind === 'scratch';
   const pinnedArtifacts = usePinnedArtifacts(activeRepo?.full_name ?? null);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
-  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
+  const [isChatsDrawerOpen, setIsChatsDrawerOpen] = useState(false);
   const [newChatSheetOpen, setNewChatSheetOpen] = useState(false);
   const [newChatWorkspaceState, setNewChatWorkspaceState] = useState<NewChatWorkspaceState | null>(null);
   const [checkingNewChatWorkspace, setCheckingNewChatWorkspace] = useState(false);
@@ -413,14 +413,14 @@ export function ChatScreen(props: ChatScreenProps) {
   } = branches;
 
   const isGitHubConnected = Boolean(token);
-  const historyDrawerOffset = 'min(86vw, 24rem)';
+  const chatsDrawerOffset = 'min(86vw, 24rem)';
   const workspaceHubOffset = '94vw';
-  const chatShellTransform = isHistoryDrawerOpen
-    ? `translateX(${historyDrawerOffset})`
+  const chatShellTransform = isChatsDrawerOpen
+    ? `translateX(${chatsDrawerOffset})`
     : isWorkspaceHubOpen
     ? `translateX(-${workspaceHubOffset})`
     : 'translateX(0px)';
-  const chatShellShadow = isHistoryDrawerOpen
+  const chatShellShadow = isChatsDrawerOpen
     ? 'shadow-[-24px_0_56px_rgba(0,0,0,0.42)]'
     : isWorkspaceHubOpen
     ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
@@ -527,18 +527,18 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const handleWorkspaceHubOpenChange = useCallback((open: boolean) => {
     if (open) {
-      setIsHistoryDrawerOpen(false);
+      setIsChatsDrawerOpen(false);
     }
     setIsWorkspaceHubOpen(open);
   }, [setIsWorkspaceHubOpen]);
 
   const openWorkspaceHub = useCallback(() => {
-    setIsHistoryDrawerOpen(false);
+    setIsChatsDrawerOpen(false);
     setIsWorkspaceHubOpen(true);
   }, [setIsWorkspaceHubOpen]);
 
   const openLauncher = useCallback(() => {
-    setIsHistoryDrawerOpen(false);
+    setIsChatsDrawerOpen(false);
     setIsWorkspaceHubOpen(false);
     setIsLauncherOpen(true);
   }, [setIsWorkspaceHubOpen]);
@@ -598,7 +598,7 @@ export function ChatScreen(props: ChatScreenProps) {
       requestKey: Date.now(),
     });
     setIsLauncherOpen(false);
-    setIsHistoryDrawerOpen(false);
+    setIsChatsDrawerOpen(false);
     handleWorkspaceHubOpenChange(true);
   }, [handleWorkspaceHubOpenChange, newChatWorkspaceState]);
 
@@ -950,8 +950,8 @@ export function ChatScreen(props: ChatScreenProps) {
         <div className="relative z-20 flex min-w-0 items-center gap-2">
           <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
             <RepoChatDrawer
-              open={isHistoryDrawerOpen}
-              onOpenChange={setIsHistoryDrawerOpen}
+              open={isChatsDrawerOpen}
+              onOpenChange={setIsChatsDrawerOpen}
               repos={repos}
               activeRepo={activeRepo}
               conversations={conversations}
