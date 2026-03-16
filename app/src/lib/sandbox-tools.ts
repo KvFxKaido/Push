@@ -106,6 +106,33 @@ function formatSandboxDisplayScope(path: string): string {
   return formatted.endsWith('/') ? formatted : `${formatted}/`;
 }
 
+/**
+ * Normalize Unicode for fuzzy comparison — collapses smart quotes, em-dashes,
+ * ellipses, mojibake sequences, and other typographic variants into their
+ * ASCII equivalents. Used to detect encoding mismatches in search strings.
+ */
+function normalizeUnicode(s: string): string {
+  return s
+    // Mojibake sequences (UTF-8 bytes decoded as Latin-1/Windows-1252)
+    .replace(/\u00e2\u0080\u0093/g, '-')   // â€" → - (em-dash mojibake)
+    .replace(/\u00e2\u0080\u0094/g, '-')   // â€" → - (em-dash mojibake variant)
+    .replace(/\u00e2\u0080\u0099/g, "'")   // â€™ → ' (right single quote mojibake)
+    .replace(/\u00e2\u0080\u009c/g, '"')   // â€œ → " (left double quote mojibake)
+    .replace(/\u00e2\u0080\u009d/g, '"')   // â€ → " (right double quote mojibake)
+    .replace(/\u00e2\u0080\u00a6/g, '...') // â€¦ → ... (ellipsis mojibake)
+    .replace(/\u00e2\u0080\u0098/g, "'")   // â€˜ → ' (left single quote mojibake)
+    .replace(/\u00e2\u0086\u0092/g, '->')  // â†' → -> (arrow mojibake)
+    // Actual Unicode typographic characters
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'") // smart single quotes → '
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"') // smart double quotes → "
+    .replace(/[\u2013\u2014]/g, '-')              // en-dash, em-dash → -
+    .replace(/\u2026/g, '...')                     // ellipsis → ...
+    .replace(/\u2192/g, '->')                      // → arrow → ->
+    .replace(/\u00A0/g, ' ')                       // non-breaking space → space
+    // NFC normalization for accented characters
+    .normalize('NFC');
+}
+
 function extractSandboxSearchResultPath(line: string): string | null {
   const match = line.match(/^(.*?):\d+(?::|$)/);
   if (!match?.[1]) return null;
@@ -2022,6 +2049,35 @@ export async function executeSandboxToolCall(
           .filter(i => i !== -1);
 
         if (matchingIndices.length === 0) {
+          // Before giving up, check if the mismatch is due to Unicode encoding
+          // artifacts (smart quotes, em-dashes, mojibake like â€" etc.).
+          const normalized = normalizeUnicode(search);
+          const fuzzyMatches = visibleLines
+            .map((line, i) => normalizeUnicode(line).includes(normalized) ? i : -1)
+            .filter(i => i !== -1);
+
+          if (fuzzyMatches.length > 0) {
+            const shown = fuzzyMatches.slice(0, 3).map(i => `  L${i + 1}: ${visibleLines[i].trim().slice(0, 80)}`);
+            const err: StructuredToolError = {
+              type: 'EDIT_CONTENT_NOT_FOUND',
+              retryable: true,
+              message: `Search string has encoding mismatches (smart quotes, em-dashes, or mojibake). Found ${fuzzyMatches.length} line(s) that match after Unicode normalization.`,
+              detail: `Your search contains characters that don't match the file exactly (e.g. â€" vs —, â€™ vs ', " vs ").\nMatching lines after normalization:\n${shown.join('\n')}\n\nRe-read the file with sandbox_read_file and copy the exact characters.`,
+            };
+            return {
+              text: formatStructuredError(err, [
+                `[Tool Error — sandbox_search_replace]`,
+                `Encoding mismatch in search string for ${path}.`,
+                `Your search contains Unicode artifacts (e.g. mojibake, smart quotes, or em-dashes that don't match the file).`,
+                `These lines match after normalization:`,
+                ...shown,
+                ``,
+                `Re-read the file with sandbox_read_file and use the exact characters from the output.`,
+              ].join('\n')),
+              structuredError: err,
+            };
+          }
+
           const err: StructuredToolError = { type: 'EDIT_CONTENT_NOT_FOUND', retryable: false, message: `Search string not found in ${path}.`, detail: `"${search.slice(0, 80)}" matched no lines.` };
           return {
             text: formatStructuredError(err, [
