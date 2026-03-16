@@ -137,6 +137,8 @@ When the user selects a repo, the app fetches project instruction files via the 
 
 Local coding agent for the terminal. Same role-based agent architecture as the web app, operating directly on the filesystem instead of through a sandbox. Current terminal work is going into the full-screen TUI, while the classic REPL and headless mode remain supported.
 
+Current implementation note: the CLI still runs plain Node ESM `.mjs` entrypoints today (`./push` shells to `node cli/cli.mjs`; `pushd` is `node cli/pushd.mjs`). Shared root `lib/` modules and `cli/tsconfig.json` exist, but the file-by-file CLI TypeScript migration is still in progress.
+
 ### Modes
 *   **TUI** (`./push` or `./push tui` when `PUSH_TUI_ENABLED=1`) — Full-screen terminal UI and current focus for terminal UX work.
 *   **Interactive fallback** (`./push` with TUI disabled) — REPL with streaming responses, tool execution, and Ctrl+C per-prompt cancellation. High-risk commands prompt for approval, with one-shot, session-trust, and saved-prefix trust options.

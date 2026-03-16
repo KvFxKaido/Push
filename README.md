@@ -127,6 +127,8 @@ Provider keys can also be pasted into Settings at runtime. Azure OpenAI and Bedr
 
 Push also ships with a local terminal agent that uses the same role-based architecture on your filesystem. Current terminal work is going into the full-screen TUI, while the classic REPL and headless `push run` flow remain supported.
 
+Current implementation note: the CLI still runs plain Node ESM entrypoints today. `./push` shells to `node cli/cli.mjs`, and `pushd` still runs as `node cli/pushd.mjs`. Shared root `lib/` modules and `cli/tsconfig.json` exist, but the file-by-file CLI TypeScript migration is still in progress; see `documents/plans/Web-CLI Parity Plan.md`.
+
 ```bash
 # from repo root
 ./push config init

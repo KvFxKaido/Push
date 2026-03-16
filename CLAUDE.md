@@ -112,6 +112,8 @@ push                 # Bash launcher (repo root)
 wrangler.jsonc       # Cloudflare Workers config (repo root)
 ```
 
+Current CLI runtime note: the launcher still executes plain Node ESM `.mjs` entrypoints (`./push` shells to `node cli/cli.mjs`; `pushd` remains `node cli/pushd.mjs`). Shared root `lib/` modules and `cli/tsconfig.json` exist, but file-by-file CLI TypeScript migration is still in progress.
+
 ## Key Files
 
 - `lib/orchestrator.ts` — System prompt, multi-backend streaming, provider routing (including native Vertex headers), think-token parsing, token-budget context management, `buildUserIdentityBlock()` (user identity injection)

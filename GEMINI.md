@@ -55,6 +55,8 @@ Local coding agent for the terminal. Same role-based agent architecture as the w
 
 Current roadmap focus is the full-screen TUI and surrounding terminal/session ergonomics around `push`, while keeping the classic REPL and `push run` flow working.
 
+Current implementation note: the CLI still runs plain Node ESM `.mjs` entrypoints today (`./push` shells to `node cli/cli.mjs`; `pushd` is `node cli/pushd.mjs`). Shared root `lib/` modules and `cli/tsconfig.json` exist, but the file-by-file CLI TypeScript migration is still in progress.
+
 ### Quick Start
 ```bash
 PUSH_TUI_ENABLED=1 ./push           # TUI

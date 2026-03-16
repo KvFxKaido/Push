@@ -4,31 +4,42 @@
 - Created: 2026-03-15
 - Updated: 2026-03-16
 - Supersedes: Web-CLI Parity Plan (2026-03-11)
-- State: **In Progress** — Track 1 Complete ✅, Track 2 Complete ✅, Track 3 Complete ✅, Track 4 Complete ✅
+- State: **In Progress** — shared root modules plus TUI/daemon work are shipped; CLI runtime TypeScript cutover is the next tranche
 - Intent: Share core logic between web and CLI to eliminate dual implementations, prioritize TUI usability over feature parity
 
 ## What Changed from v1
 
 **v1 assumed:** CLI stays vanilla `.mjs` + JSDoc, feature parity across surfaces, full role separation (Orchestrator/Coder/Reviewer/Auditor) in both environments.
 
-**v2 commits to:** CLI becomes TypeScript, shares `lib/` with web at the repo root, focuses on TUI ergonomics over role completeness. Most of Track A (safety gates), Track B (agent roles), and Track E (reverse parity) are cut or deferred.
+**v2 direction:** CLI converges toward TypeScript and shared root `lib/`, while still running plain Node `.mjs` entrypoints today. The focus stays on TUI ergonomics over role completeness. Most of Track A (safety gates), Track B (agent roles), and Track E (reverse parity) are cut or deferred.
+
+## Current Reality Check
+
+Before planning the migration tranche, anchor on what is true today:
+
+- `./push` still shells to `node cli/cli.mjs`; `pushd` is still started as `node cli/pushd.mjs`.
+- `cli/tsconfig.json` and the `@push/lib/*` path mapping exist, but the live CLI source does not yet import those aliases.
+- Shared root `lib/` modules are real and already used by the web app. CLI-side TypeScript validation scripts prove they can be imported, but most CLI runtime modules still consume local `.mjs` implementations.
+- `node:test` files currently import `.mjs` modules directly, so file-by-file migration needs an explicit runtime/test bridge rather than ad hoc renames.
 
 ## Why Converge on TypeScript
 
-The web app and CLI currently share zero imports. Every shared concept (hashline, tool protocol, error classification, context management) is reimplemented twice. This creates maintenance drag and protocol drift.
+The web app and CLI still duplicate too much runtime logic. Shared root `lib/` modules now exist for some cross-surface code, but the live CLI runtime is only partially converged. That still creates maintenance drag and protocol drift.
 
 **The original plan (v1) tried to solve this with `shared/*.mjs` + JSDoc types**, preserving CLI's zero-dependency story. That approach works but:
 - Still requires manual porting and testing for protocol changes
 - JSDoc types are weaker than real TypeScript
 - Creates a third location (`shared/`) that neither surface "owns"
 
-**TypeScript convergence eliminates the problem entirely:**
+**TypeScript convergence is still the clearest end state:**
 - CLI imports directly from `lib/` (same canonical code web uses)
 - Protocol changes only need to be made once
 - Real type safety across both surfaces
 - One canonical implementation
 
 **The cost:** CLI gains a build step (`tsx` runtime or `tsc` compilation) and loses the "zero dependencies" story.
+
+**Important caveat:** the repo has not already paid that runtime cost. Today the launcher still executes plain `.mjs` through Node, so the migration must choose a bridge (`tsx` for development/tests, compiled `dist/`, or equivalent) before the first `.mjs` → `.ts` rename.
 
 **The trade is worth it because:**
 1. CLI isn't being distributed to external users (no install simplicity requirement)
@@ -40,6 +51,7 @@ The web app and CLI currently share zero imports. Every shared concept (hashline
 ### What This Plan Ships
 
 **Phase 1 — TypeScript Migration Foundation**
+- Establish the runtime/test bridge before the first `.mjs` → `.ts` rename
 - Migrate CLI from `.mjs` to `.ts`
 - Create `lib/` at the repo root and extract web's `lib/` modules into it (hashline, diff-utils, tool protocol, context budget)
 - Create filesystem/git adapters so CLI can use shared tool logic on local files
@@ -82,20 +94,22 @@ Push/
 
 ### Track 1 — TypeScript Migration Spike ✅ COMPLETE
 
-**Goal:** Prove the shared module approach works end-to-end with one module (hashline).
+**Goal:** Prove the shared module approach works end-to-end with one module (hashline) without cutting over the live CLI runtime yet.
 
 **Shipped:**
 - [x] Created `lib/hashline.ts` — universal hashline implementation with Node.js (`node:crypto`) and browser (`crypto.subtle`) runtime detection
 - [x] Optimized batch hashing for larger files (>2k lines) in Node
 - [x] Created `cli/tsconfig.json` with `@push/lib/*` path mapping
-- [x] CLI test suite (`cli/test-hashline.ts`) validates convergence
+- [x] CLI validation script (`cli/test-hashline.ts`) proves the shared module can be imported from CLI-side TypeScript
 - [x] Both surfaces can import from the same canonical source
+
+**Note:** The live CLI runtime still imports `cli/hashline.mjs`; Track 1 proved the convergence path and tooling, not the runtime cutover.
 
 ---
 
 ### Track 2 — Core Module Extraction ✅ COMPLETE
 
-**Goal:** Extract remaining shared logic into runtime-agnostic modules in `lib/`.
+**Goal:** Extract remaining shared logic into runtime-agnostic modules in `lib/` and validate those modules from CLI-side TypeScript.
 
 **Shipped:**
 
@@ -153,6 +167,8 @@ Push/
 - [x] Web app: `@push/lib/*` path alias in `vite.config.ts`, `tsconfig.json`, `tsconfig.app.json`
 - [x] CLI: existing `@push/lib/*` path mapping in `cli/tsconfig.json`
 - [x] Test suite: `cli/test-track2.ts` — 125 tests, all passing
+
+**Note:** These modules are now canonical shared implementations, but the live CLI runtime still mostly consumes local `.mjs` modules. Runtime import cutover remains a separate migration step.
 
 ---
 
@@ -249,21 +265,23 @@ TUI connects to pushd over Unix socket. Background sessions survive TUI close/de
 
 ## Execution Order
 
-**Phase 1 — Validate TypeScript convergence:**
+**Shipped foundation:**
 1. Track 1: Migration spike (hashline only) ✅
 2. Decision: proceed or fall back to v1 shared modules ✅ (proceeding)
-
-**Phase 2 — Core convergence + TUI:**
 3. Track 2: Remaining core modules (diff-utils, error-types, reasoning-tokens, context-budget) ✅
 4. Track 3: TUI usability improvements ✅
+5. Track 4: Daemon integration (pushd enhancements, client library, TUI daemon mode) ✅
 
-**Phase 3 — Polish:**
-5. Performance testing (startup time, local file ops)
-6. Error handling parity (both surfaces should classify errors identically)
-7. Documentation (CLI README update, architecture decision record)
+**Recommended next tranche — CLI runtime migration:**
+6. Choose the runtime/test bridge before any file rename.
+7. Convert `session-store.mjs` → `.ts` and introduce protocol/session types.
+8. Convert `daemon-client.mjs`, then `pushd.mjs`, around shared discriminated request/response/event unions.
+9. Convert `provider.mjs`.
+10. Convert `engine.mjs`.
+11. Revisit `tools.mjs` and `cli.mjs` once the protocol/runtime pieces stabilize.
+12. Extract more submodules from `tui.mjs`, then migrate it last.
 
-**Phase 3 — Daemon integration:**
-6. Track 4: Daemon integration (pushd enhancements, client library, TUI daemon mode) ✅
+Each step should leave the CLI runnable and the affected tests passing before the next rename.
 
 **Later (separate plans):**
 - Safety gates (Protect Main, Auditor) if terminal workflow proves valuable
@@ -272,10 +290,12 @@ TUI connects to pushd over Unix socket. Background sessions survive TUI close/de
 ## Success Criteria
 
 **Technical:**
-- CLI and web use identical hashline, diff parsing, and tool dispatch code ✅ (hashline, diff, errors, reasoning, context, tool-protocol, working-memory)
-- Protocol changes only need to be made once ✅
+- Shared root modules exist for hashline, diff parsing, errors, reasoning tokens, context budgets, tool protocol, and working memory ✅
+- Web app imports those canonical shared modules ✅
+- CLI-side TypeScript validation scripts can import and exercise those shared modules ✅
+- Protocol-heavy CLI runtime modules migrate to shared types and exhaustive unions without regressing behavior
 - No runtime performance regressions in CLI
-- TypeScript compilation passes for both surfaces ✅
+- TypeScript compilation passes for the shared modules and web app ✅
 
 **Product:**
 - Shawn reaches for TUI during development instead of web chat
@@ -283,11 +303,11 @@ TUI connects to pushd over Unix socket. Background sessions survive TUI close/de
 - Terminal workflow integrates naturally with tmux/vim/git habits
 - Session resumption works reliably
 
-## Open Architecture Decisions (Resolved)
+## Architecture Decisions (Updated)
 
-1. **Runtime choice:** `tsx` is the recommended starting point for development simplicity. We can optimize with `tsc` later if startup time becomes painful.
+1. **Runtime bridge:** Not active yet. The current CLI runtime is plain Node ESM (`node cli/cli.mjs`). `tsx` remains the recommended first bridge for development/tests; `tsc` output can follow later if startup time becomes painful.
 2. **Shared module ownership:** `lib/` MUST live at the repo root. Root makes the "shared" intent clearer and prevents the CLI from being littered with fragile `../../app/src/lib` imports.
-3. **ESM Strictness:** Node natively running ESM is strict about file extensions (e.g., `import { foo } from './bar.js'`). This will be the main friction point in Track 1 to ensure compatibility with Vite's looser resolution.
+3. **ESM strictness + tests:** Node natively running ESM is strict about file extensions (e.g., `import { foo } from './bar.js'`), and the CLI tests currently import `.mjs` sources directly. That makes the bridge strategy a prerequisite for incremental renames, not an afterthought.
 
 ## Migration from v1 Plan
 
@@ -305,4 +325,4 @@ TUI connects to pushd over Unix socket. Background sessions survive TUI close/de
 **What to add:**
 - Explicit TypeScript migration path ✅
 - TUI usability as a first-class track
-- Daemon integration as future work (not current scope)
+- Daemon integration track ✅
