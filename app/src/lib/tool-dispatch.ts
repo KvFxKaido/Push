@@ -468,6 +468,13 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
     }
   }
 
+  // Phase 2.5: Unknown tool name — well-formed JSON with {"tool": "<name>", "args": {...}}
+  // but the tool name isn't in KNOWN_TOOL_NAMES. This happens when models hallucinate
+  // tools (e.g. "edit" instead of "sandbox_edit_file"). Return actionable feedback
+  // listing the correct tools so the model can retry.
+  const unknownToolDiagnosis = detectUnknownToolName(text);
+  if (unknownToolDiagnosis) return unknownToolDiagnosis;
+
   // Phase 3: Malformed JSON — the text contains something that looks like a tool call
   // (has "tool": "<known_name>" or similar) but is structurally broken JSON that
   // repair couldn't fix. Return a specific syntax-error diagnosis so the model
@@ -726,6 +733,80 @@ function extractKnownToolName(text: string): string | null {
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.5: Unknown tool name detection — catches well-formed JSON tool
+// calls where the tool name isn't recognized. Suggests the closest match.
+// ---------------------------------------------------------------------------
+
+/** Common aliases models use for tools that don't exist, mapped to suggestions. */
+const TOOL_NAME_SUGGESTIONS: Record<string, string[]> = {
+  edit: ['sandbox_edit_file', 'sandbox_search_replace', 'sandbox_edit_range'],
+  edit_file: ['sandbox_edit_file', 'sandbox_search_replace'],
+  write_file: ['sandbox_write_file'],
+  write: ['sandbox_write_file'],
+  read: ['sandbox_read_file', 'read_file'],
+  exec: ['sandbox_exec'],
+  run: ['sandbox_exec'],
+  execute: ['sandbox_exec'],
+  search: ['sandbox_search', 'search_files'],
+  grep: ['grep_file', 'sandbox_search'],
+  diff: ['sandbox_diff'],
+  commit: ['sandbox_prepare_commit'],
+  push: ['sandbox_push'],
+  list: ['sandbox_list_dir', 'list_directory'],
+  ls: ['sandbox_list_dir', 'list_directory'],
+  replace: ['sandbox_search_replace'],
+  patch: ['sandbox_apply_patchset'],
+  download: ['sandbox_download'],
+};
+
+function detectUnknownToolName(text: string): ToolCallDiagnosis | null {
+  // Only check fenced code blocks — these are high-signal tool-call contexts.
+  // Bare JSON with unknown tool names in prose (docs, examples, spec output)
+  // should not trigger retry loops.
+  const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
+  let fenceMatch;
+  while ((fenceMatch = fenceRegex.exec(text)) !== null) {
+    const result = extractUnknownToolName(fenceMatch[1].trim());
+    if (result) return buildUnknownToolDiagnosis(result);
+  }
+
+  return null;
+}
+
+function extractUnknownToolName(text: string): string | null {
+  try {
+    const parsed = JSON.parse(text);
+    const obj = asRecord(parsed);
+    if (obj && typeof obj.tool === 'string' && !KNOWN_TOOL_NAMES.has(obj.tool) && obj.args !== undefined) {
+      return obj.tool;
+    }
+  } catch {
+    const repaired = repairToolJson(text);
+    if (repaired && typeof repaired.tool === 'string' && !KNOWN_TOOL_NAMES.has(repaired.tool) && repaired.args !== undefined) {
+      return repaired.tool;
+    }
+  }
+  return null;
+}
+
+function buildUnknownToolDiagnosis(toolName: string): ToolCallDiagnosis {
+  const suggestions = TOOL_NAME_SUGGESTIONS[toolName.toLowerCase()];
+  const suggestionBlock = suggestions
+    ? `\n\nDid you mean one of these?\n${suggestions.map(s => {
+        const hint = TOOL_ARG_HINTS[s];
+        return hint ? `- ${s}: \`${hint}\`` : `- ${s}`;
+      }).join('\n')}`
+    : `\n\nAvailable tools: ${Array.from(KNOWN_TOOL_NAMES).sort().join(', ')}`;
+
+  return {
+    reason: 'validation_failed',
+    toolName,
+    errorMessage: `Tool "${toolName}" does not exist.${suggestionBlock}`,
+    source: 'sandbox',
+  };
 }
 
 // ---------------------------------------------------------------------------
