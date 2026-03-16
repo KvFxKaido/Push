@@ -1551,6 +1551,71 @@ export async function runTUI(options = {}) {
   // Initial git status
   await refreshGitStatus();
 
+  // ── Daemon mode (connect to pushd if running) ───────────────────
+  let daemonClient = null;
+  let daemonSessionId = null;
+  let daemonAttachToken = null;
+
+  async function tryDaemonConnect() {
+    try {
+      const { tryConnect } = await import('./daemon-client.mjs');
+      const { getSocketPath } = await import('./pushd.mjs');
+      const socketPath = getSocketPath();
+      const client = await tryConnect(socketPath, 500);
+      if (!client) return false;
+
+      // Verify protocol with hello
+      const hello = await client.request('hello', {}, null, 500);
+      if (!hello.ok) { client.close(); return false; }
+
+      daemonClient = client;
+
+      // Register event handler — bridge daemon events to TUI
+      client.onEvent((event) => {
+        if (event.kind !== 'event') return;
+        handleEngineEvent(event);
+      });
+
+      // Handle daemon disconnect gracefully
+      client._socket.on('close', () => {
+        if (daemonClient === client) {
+          daemonClient = null;
+          addTranscriptEntry(tuiState, 'warning', 'Daemon disconnected. Falling back to inline mode.');
+          tuiState.dirty.add('all');
+          scheduler?.schedule();
+        }
+      });
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function ensureDaemonSession() {
+    if (!daemonClient || daemonSessionId) return;
+    try {
+      const res = await daemonClient.request('start_session', {
+        provider: state.provider,
+        model: state.model,
+        repo: { rootPath: state.cwd },
+        mode: 'tui',
+      });
+      daemonSessionId = res.payload.sessionId;
+      daemonAttachToken = res.payload.attachToken;
+    } catch (err) {
+      addTranscriptEntry(tuiState, 'warning', `Daemon session failed: ${err.message}. Using inline mode.`);
+      daemonClient.close();
+      daemonClient = null;
+    }
+  }
+
+  // Try daemon on startup (fast probe — 500ms connect + 500ms hello max)
+  const daemonConnected = await tryDaemonConnect();
+  if (daemonConnected) {
+    addTranscriptEntry(tuiState, 'status', 'Connected to pushd daemon. Sessions persist in background.');
+  }
+
   const runtimeOriginWarning = getRuntimeOriginWarning(state.cwd);
   if (runtimeOriginWarning) {
     addTranscriptEntry(tuiState, 'warning', runtimeOriginWarning);
@@ -1938,6 +2003,41 @@ export async function runTUI(options = {}) {
         scheduler.schedule();
         break;
 
+      case 'approval_required':
+        // Daemon mode: show approval modal and send decision back
+        if (daemonClient?.connected && event.payload?.approvalId) {
+          const approvalId = event.payload.approvalId;
+          tuiState.runState = 'awaiting_approval';
+          tuiState.approval = {
+            kind: event.payload.kind || 'action',
+            summary: event.payload.summary || event.payload.title,
+            patternIndex: -1,
+            suggestedPrefix: null,
+            daemonApprovalId: approvalId,
+          };
+          approvalResolve = (approved) => {
+            daemonClient?.request('submit_approval', {
+              sessionId: daemonSessionId,
+              approvalId,
+              decision: approved ? 'approve' : 'deny',
+            }, daemonSessionId).catch(() => {});
+          };
+          tuiState.dirty.add('all');
+          scheduler.flush();
+        }
+        break;
+
+      case 'approval_received':
+        // Daemon mode: approval was processed, resume display
+        if (tuiState.runState === 'awaiting_approval') {
+          tuiState.runState = 'running';
+          tuiState.approval = null;
+          approvalResolve = null;
+          tuiState.dirty.add('all');
+          scheduler.schedule();
+        }
+        break;
+
       case 'run_complete':
         tuiState.runState = 'idle';
         // assistant_done normally flushes the stream; this is a fallback for
@@ -2108,6 +2208,67 @@ export async function runTUI(options = {}) {
     tuiState.dirty.add('all');
     scheduler.flush();
 
+    // ── Daemon mode: delegate to pushd over socket ──
+    if (daemonClient?.connected) {
+      await ensureDaemonSession();
+      if (daemonClient?.connected && daemonSessionId) {
+        runAbort = new AbortController();
+        try {
+          // Register listener BEFORE sending the request to avoid missing
+          // a fast run_complete that arrives before the listener is attached.
+          let runId = null;
+          const completionPromise = new Promise((resolve) => {
+            const unsub = daemonClient.onEvent((event) => {
+              // Filter by sessionId; also by runId once known
+              if (event.sessionId !== daemonSessionId) return;
+              if (runId && event.runId && event.runId !== runId) return;
+              if (event.type === 'run_complete') {
+                unsub();
+                resolve();
+              }
+            });
+            // On user-initiated abort (Ctrl+C), cancel the daemon run.
+            // On TUI exit/teardown, just detach — let the run continue.
+            runAbort.signal.addEventListener('abort', () => {
+              if (runAbort?._userInitiated) {
+                daemonClient?.request('cancel_run', {
+                  sessionId: daemonSessionId,
+                  runId,
+                }, daemonSessionId).catch(() => {});
+              }
+              unsub();
+              resolve();
+            }, { once: true });
+          });
+
+          const res = await daemonClient.request('send_user_message', {
+            sessionId: daemonSessionId,
+            text,
+            attachToken: daemonAttachToken,
+          }, daemonSessionId);
+          if (!res.ok) {
+            addTranscriptEntry(tuiState, 'error', res.error?.message || 'Daemon rejected message');
+          } else {
+            runId = res.payload?.runId;
+          }
+
+          await completionPromise;
+        } catch (err) {
+          if (err.name !== 'AbortError') {
+            addTranscriptEntry(tuiState, 'error', `Daemon error: ${err.message}`);
+          }
+        } finally {
+          tuiState.runState = 'idle';
+          runAbort = null;
+          tuiState.dirty.add('all');
+          scheduler.flush();
+        }
+        return;
+      }
+      // Fall through to inline mode if daemon session failed
+    }
+
+    // ── Inline mode: run engine directly ──
     await ensureSessionPersisted();
     await appendUserMessageWithFileReferences(state, text, state.cwd, {
       referenceSourceText: options.referenceSourceText,
@@ -3191,6 +3352,7 @@ export async function runTUI(options = {}) {
 
   function cancelRun() {
     if (runAbort) {
+      runAbort._userInitiated = true;
       runAbort.abort();
       addTranscriptEntry(tuiState, 'status', 'Run cancelled.');
     }
@@ -4241,6 +4403,12 @@ export async function runTUI(options = {}) {
     process.removeListener('uncaughtException', onUncaughtException);
 
     if (runAbort) runAbort.abort();
+
+    // Disconnect from daemon (session continues in background)
+    if (daemonClient) {
+      daemonClient.close();
+      daemonClient = null;
+    }
 
     process.stdout.write(ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset);
     if (process.stdin.isTTY) {

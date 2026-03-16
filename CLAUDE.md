@@ -101,7 +101,8 @@ cli/                 # Push CLI — local coding agent
   hashline.mjs       # Hashline edit protocol (anchored line refs, multi-line content)
   file-ledger.mjs    # File awareness ledger (per-file path/status tracking)
   tool-call-metrics.mjs # Malformed tool-call observability
-  pushd.mjs          # Daemon skeleton (Unix socket, NDJSON IPC)
+  pushd.mjs          # Daemon server (Unix socket, NDJSON IPC, multi-client fan-out, approval gate)
+  daemon-client.mjs  # Reusable NDJSON socket client for pushd (connect, request, onEvent)
   AGENT-WISHLIST.md  # Agent experience wishlist (shipped — 10 items)
   tests/             # node:test suite
 sandbox/app.py       # Modal Python App — sandbox web endpoints (file ops, exec/git, archive download)

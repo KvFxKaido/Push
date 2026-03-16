@@ -4,7 +4,7 @@
 - Created: 2026-03-15
 - Updated: 2026-03-16
 - Supersedes: Web-CLI Parity Plan (2026-03-11)
-- State: **In Progress** — Track 1 Complete ✅, Track 2 Complete ✅, Track 3 Complete ✅
+- State: **In Progress** — Track 1 Complete ✅, Track 2 Complete ✅, Track 3 Complete ✅, Track 4 Complete ✅
 - Intent: Share core logic between web and CLI to eliminate dual implementations, prioritize TUI usability over feature parity
 
 ## What Changed from v1
@@ -207,21 +207,45 @@ Make TUI the preferred surface for terminal-based development.
 - [x] Auto-scroll on new tokens
 - [x] 2000-line transcript buffer with overflow trimming
 
-### Track 4 — Daemon Integration (Future)
+### Track 4 — Daemon Integration ✅ COMPLETE
 
-Not part of this plan's scope, but the natural next step after TUI stabilizes.
+TUI connects to pushd over Unix socket. Background sessions survive TUI close/detach. Multiple clients can observe the same session.
 
-**Vision:**
-- `pushd` runs as persistent background daemon
-- TUI becomes a client that attaches/detaches
-- Background sessions continue when TUI closes
-- Multiple TUI clients can observe same session (mob programming)
+**Shipped:**
 
-**Deferred because:**
-- Requires Unix socket IPC or HTTP server
-- Session state persistence and recovery
-- Multi-client coordination
-- Not blocking TUI usability for solo development
+#### Daemon enhancements (`pushd.mjs`)
+- [x] All 8 protocol request types implemented: `hello`, `ping`, `list_sessions`, `start_session`, `send_user_message`, `attach_session`, `submit_approval`, `cancel_run`
+- [x] Multi-client fan-out: `sessionClients` Map tracks attached sockets per session, `broadcastEvent()` delivers to all observers
+- [x] Per-session `AbortController` for run cancellation via `cancel_run`
+- [x] Approval gate: `pendingApprovals` per session with Promise-based blocking, 5-minute timeout, resolved by `submit_approval`
+- [x] Auto-attach: clients automatically registered for events on `start_session` and `send_user_message`
+- [x] Graceful shutdown aborts all active runs and resolves pending approvals
+- [x] `RUN_IN_PROGRESS` guard prevents concurrent runs per session
+- [x] Version bumped to 0.2.0 with capabilities `stream_tokens`, `approvals`, `replay_attach`, `multi_client`
+
+#### Daemon client library (`daemon-client.mjs`)
+- [x] `connect(socketPath)` — NDJSON socket client with request/response correlation
+- [x] `client.request(type, payload, sessionId, timeoutMs)` — Promise-based request with timeout
+- [x] `client.onEvent(callback)` — event listener with unsubscribe function
+- [x] `tryConnect(socketPath, timeoutMs)` — non-blocking connection attempt (returns null on failure)
+- [x] `waitForReady(socketPath, options)` — poll with ping for daemon startup readiness
+
+#### CLI daemon commands (`cli.mjs`)
+- [x] `push daemon start` waits for ready (polls with ping, 3s timeout, 200ms interval)
+- [x] `push daemon status` shows live responsiveness via ping
+- [x] `push attach` refactored to use `daemon-client.mjs` (cleaner error handling, state display)
+
+#### TUI daemon mode (`tui.mjs`)
+- [x] On startup, TUI probes for running pushd via `tryConnect`
+- [x] If daemon available: `send_user_message` over socket instead of inline `runAssistantLoop`
+- [x] Daemon events bridged to existing `handleEngineEvent` (same event types)
+- [x] `approval_required` events show TUI approval modal, decisions sent via `submit_approval`
+- [x] Ctrl+C sends `cancel_run` over socket (aborts daemon-side run)
+- [x] TUI close disconnects socket — daemon session continues in background
+- [x] Graceful fallback: if daemon unavailable or session fails, falls back to inline engine mode
+
+#### Tests (`daemon-integration.test.mjs`)
+- [x] 24 tests covering: path helpers, protocol compliance, token validation, client library, request format, approval events, multi-client structure, version/capabilities verification
 
 ## Execution Order
 
@@ -238,8 +262,10 @@ Not part of this plan's scope, but the natural next step after TUI stabilizes.
 6. Error handling parity (both surfaces should classify errors identically)
 7. Documentation (CLI README update, architecture decision record)
 
+**Phase 3 — Daemon integration:**
+6. Track 4: Daemon integration (pushd enhancements, client library, TUI daemon mode) ✅
+
 **Later (separate plans):**
-- Track 4: Daemon integration
 - Safety gates (Protect Main, Auditor) if terminal workflow proves valuable
 - Reverse parity (CLI features → web)
 
