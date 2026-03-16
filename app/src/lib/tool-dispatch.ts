@@ -7,7 +7,8 @@
  * to the correct implementation.
  */
 
-import type { ToolExecutionResult, AcceptanceCriterion, StructuredToolError } from '@/types';
+import type { ToolExecutionResult, AcceptanceCriterion, StructuredToolError, ToolHookContext } from '@/types';
+import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, IMPLEMENTED_SANDBOX_TOOLS, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
@@ -216,6 +217,44 @@ export type AnyToolCall =
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall };
 
+function getHookToolName(toolCall: AnyToolCall): string {
+  return toolCall.call.tool;
+}
+
+function getHookToolArgs(toolCall: AnyToolCall): Record<string, unknown> {
+  switch (toolCall.source) {
+    case 'github':
+    case 'sandbox':
+    case 'delegate':
+    case 'web-search':
+    case 'ask-user':
+      return { ...toolCall.call.args };
+    case 'scratchpad':
+      return toolCall.call.content ? { content: toolCall.call.content } : {};
+    default:
+      return {};
+  }
+}
+
+function applyHookToolArgs(toolCall: AnyToolCall, modifiedArgs: Record<string, unknown>): void {
+  switch (toolCall.source) {
+    case 'github':
+    case 'sandbox':
+    case 'delegate':
+    case 'web-search':
+    case 'ask-user':
+      Object.assign(toolCall.call.args, modifiedArgs);
+      return;
+    case 'scratchpad':
+      if (typeof modifiedArgs.content === 'string') {
+        toolCall.call.content = modifiedArgs.content;
+      }
+      return;
+    default:
+      return;
+  }
+}
+
 /**
  * Scan assistant output for any tool call (GitHub, Sandbox, Scratchpad, or delegation).
  * Returns the first match, or null if no tool call is detected.
@@ -288,7 +327,30 @@ export async function executeAnyToolCall(
   defaultBranch?: string,
   activeProvider?: ActiveProvider,
   activeModel?: string,
+  hooks?: ToolHookRegistry,
 ): Promise<ToolExecutionResult> {
+  const toolName = getHookToolName(toolCall);
+  const toolArgs = getHookToolArgs(toolCall);
+
+  // --- Pre-hooks evaluation ---
+  if (hooks && hooks.pre.length > 0) {
+    const hookContext: ToolHookContext = { sandboxId, allowedRepo, activeProvider, activeModel };
+    const preResult = await evaluatePreHooks(hooks, toolName, toolArgs, hookContext);
+
+    if (preResult?.decision === 'deny') {
+      const result: ToolExecutionResult = {
+        text: `[Tool Blocked] ${preResult.reason || 'Blocked by pre-execution hook.'}`,
+      };
+      return result;
+    }
+
+    // Apply modified args if a hook rewrote them
+    if (preResult?.modifiedArgs) {
+      Object.assign(toolArgs, preResult.modifiedArgs);
+      applyHookToolArgs(toolCall, preResult.modifiedArgs);
+    }
+  }
+
   // Enforce Protect Main: block commit/push tools when on the default branch
   if (isMainProtected && toolCall.source === 'sandbox' && PROTECTED_MAIN_TOOLS.has(toolCall.call.tool) && sandboxId) {
     const currentBranch = await getSandboxBranch(sandboxId);
@@ -302,9 +364,13 @@ export async function executeAnyToolCall(
     }
   }
 
+  // Execute through the appropriate handler
+  let result: ToolExecutionResult;
+
   switch (toolCall.source) {
     case 'github':
-      return executeToolCall(toolCall.call, allowedRepo);
+      result = await executeToolCall(toolCall.call, allowedRepo);
+      break;
 
     case 'sandbox':
       if (!sandboxId) {
@@ -314,41 +380,58 @@ export async function executeAnyToolCall(
           message: 'No active sandbox session',
           detail: `Attempted tool: ${toolCall.call.tool}`,
         };
-        return {
+        result = {
           text: `[Tool Error] No active sandbox. The sandbox may still be starting — wait a moment and retry. If this persists, the user needs to start a sandbox from the UI.\nerror_type: ${err.type}\nretryable: ${err.retryable}`,
           structuredError: err,
         };
+        break;
       }
-      return executeSandboxToolCall(toolCall.call, sandboxId, {
+      result = await executeSandboxToolCall(toolCall.call, sandboxId, {
         auditorProviderOverride: activeProvider,
         auditorModelOverride: activeModel,
       });
+      break;
 
     case 'delegate':
-      // Delegation is handled at a higher level (useChat), not here.
-      // Return a placeholder — useChat intercepts this before it reaches here.
-      return { text: '[Tool Error] Delegation must be handled by the chat hook.' };
+      result = { text: '[Tool Error] Delegation must be handled by the chat hook.' };
+      break;
 
     case 'scratchpad':
-      // Scratchpad is handled at a higher level (useChat), not here.
-      // Return a placeholder — useChat intercepts this before it reaches here.
-      return { text: '[Tool Error] Scratchpad must be handled by the chat hook.' };
+      result = { text: '[Tool Error] Scratchpad must be handled by the chat hook.' };
+      break;
 
     case 'web-search': {
-      // Route through unified search: Tavily (if key set) → provider-native → DuckDuckGo free
       const provider = activeProvider || getActiveProvider();
-      return executeWebSearch(toolCall.call.args.query, provider);
+      result = await executeWebSearch(toolCall.call.args.query, provider);
+      break;
     }
 
     case 'ask-user':
-      return {
+      result = {
         text: '[Tool Result] Question sent to user. The system will wait for their response.',
         card: { type: 'ask-user', data: toolCall.call.args }
       };
+      break;
 
     default:
-      return { text: '[Tool Error] Unknown tool source.' };
+      result = { text: '[Tool Error] Unknown tool source.' };
   }
+
+  // --- Post-hooks evaluation ---
+  if (hooks && hooks.post.length > 0) {
+    const hookContext: ToolHookContext = { sandboxId, allowedRepo, activeProvider, activeModel };
+    const postResult = await evaluatePostHooks(hooks, toolName, toolArgs, result, hookContext);
+
+    if (postResult?.resultOverride) {
+      result = { ...result, text: postResult.resultOverride };
+    }
+    // systemMessage is returned to the caller for injection into the conversation
+    if (postResult?.systemMessage) {
+      result = { ...result, text: `${result.text}\n\n[Hook] ${postResult.systemMessage}` };
+    }
+  }
+
+  return result;
 }
 
 /**

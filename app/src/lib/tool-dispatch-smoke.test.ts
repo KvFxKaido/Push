@@ -25,6 +25,7 @@ import { detectAnyToolCall, executeAnyToolCall } from './tool-dispatch';
 import * as sandboxClient from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { fileLedger } from './file-awareness-ledger';
+import { createToolHookRegistry } from './tool-hooks';
 
 describe('tool-dispatch smoke -- sandbox_search_replace', () => {
   beforeEach(() => {
@@ -147,5 +148,112 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
         modelOverride: 'anthropic/claude-sonnet-4.6:nitro',
       }),
     );
+  });
+
+  it('applies pre-hook arg rewrites before executing ask_user', async () => {
+    const hooks = createToolHookRegistry();
+    hooks.pre.push({
+      matcher: 'ask_user',
+      hook: () => ({
+        decision: 'allow',
+        modifiedArgs: { question: 'Rewritten question' },
+      }),
+    });
+
+    const result = await executeAnyToolCall(
+      {
+        source: 'ask-user',
+        call: {
+          tool: 'ask_user',
+          args: {
+            question: 'Original question',
+            options: [{ id: 'a', label: 'A' }],
+            multiSelect: false,
+          },
+        },
+      },
+      'KvFxKaido/Push',
+      null,
+      false,
+      'main',
+      undefined,
+      undefined,
+      hooks,
+    );
+
+    expect(result.card?.type).toBe('ask-user');
+    if (result.card?.type !== 'ask-user') {
+      throw new Error('Expected ask-user card');
+    }
+    expect(result.card.data.question).toBe('Rewritten question');
+  });
+
+  it('short-circuits execution when a pre-hook denies a tool', async () => {
+    const hooks = createToolHookRegistry();
+    hooks.pre.push({
+      matcher: 'ask_user',
+      hook: () => ({
+        decision: 'deny',
+        reason: 'Blocked by test hook.',
+      }),
+    });
+
+    const result = await executeAnyToolCall(
+      {
+        source: 'ask-user',
+        call: {
+          tool: 'ask_user',
+          args: {
+            question: 'Original question',
+            options: [{ id: 'a', label: 'A' }],
+            multiSelect: false,
+          },
+        },
+      },
+      'KvFxKaido/Push',
+      null,
+      false,
+      'main',
+      undefined,
+      undefined,
+      hooks,
+    );
+
+    expect(result.text).toContain('[Tool Blocked]');
+    expect(result.card).toBeUndefined();
+  });
+
+  it('applies post-hook result overrides after tool execution', async () => {
+    const hooks = createToolHookRegistry();
+    hooks.post.push({
+      matcher: 'ask_user',
+      hook: () => ({
+        resultOverride: '[Tool Result] Hook override applied.',
+      }),
+    });
+
+    const result = await executeAnyToolCall(
+      {
+        source: 'ask-user',
+        call: {
+          tool: 'ask_user',
+          args: {
+            question: 'Original question',
+            options: [{ id: 'a', label: 'A' }],
+            multiSelect: false,
+          },
+        },
+      },
+      'KvFxKaido/Push',
+      null,
+      false,
+      'main',
+      undefined,
+      undefined,
+      hooks,
+    );
+
+    expect(result.text).toBe('[Tool Result] Hook override applied.');
+    expect(result.card?.type).toBe('ask-user');
   });
 });

@@ -307,7 +307,12 @@ function classifySummarizationCause(messages: ChatMessage[], recentBoundary: num
  * 3. Summarize old tool results (biggest token consumers)
  * 4. If still over budget, start dropping oldest summarized pairs
  */
-function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_CONTEXT_BUDGET, provider?: string): ChatMessage[] {
+function manageContext(
+  messages: ChatMessage[],
+  budget: ContextBudget = DEFAULT_CONTEXT_BUDGET,
+  provider?: string,
+  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
+): ChatMessage[] {
   if (getContextMode() === 'none') {
     return messages;
   }
@@ -324,6 +329,13 @@ function manageContext(messages: ChatMessage[], budget: ContextBudget = DEFAULT_
   if (totalTokens <= summarizeThreshold) {
     return messages;
   }
+
+  // Fire PreCompact event before any compaction begins
+  onPreCompact?.({
+    totalTokens,
+    budgetThreshold: summarizeThreshold,
+    messageCount: messages.length,
+  });
 
   // Find first user message index (to pin it)
   const firstUserIdx = messages.findIndex(m => m.role === 'user' && !m.isToolResult);
@@ -602,6 +614,7 @@ function toLLMMessages(
   scratchpadContent?: string,
   providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'azure' | 'bedrock' | 'vertex',
   providerModel?: string,
+  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
 ): LLMMessage[] {
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
@@ -682,7 +695,7 @@ function toLLMMessages(
 
   // Smart context management — summarize old messages instead of dropping
   const contextBudget = getContextBudget(providerType, providerModel);
-  const windowedMessages = manageContext(messages, contextBudget, providerType);
+  const windowedMessages = manageContext(messages, contextBudget, providerType, onPreCompact);
 
   for (const msg of windowedMessages) {
     // Check for attachments (multimodal message)
@@ -952,6 +965,7 @@ async function streamSSEChat(
   scratchpadContent?: string,
   signal?: AbortSignal,
   autoRetry?: AutoRetryConfig,
+  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
 ): Promise<void> {
   const maxAttempts = autoRetry?.maxAttempts ?? 1;
   const backoffMs = autoRetry?.backoffMs ?? 1000;
@@ -962,7 +976,7 @@ async function streamSSEChat(
     try {
       return await streamSSEChatOnce(
         config, messages, onToken, onDone, onError, onThinkingToken,
-        workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal,
+        workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal, onPreCompact,
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -1001,6 +1015,7 @@ async function streamSSEChatOnce(
   systemPromptOverride?: string,
   scratchpadContent?: string,
   signal?: AbortSignal,
+  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
 ): Promise<void> {
   const {
     name,
@@ -1072,7 +1087,7 @@ async function streamSSEChatOnce(
 
     let requestBody: Record<string, unknown> = {
       model,
-      messages: toLLMMessages(messages, workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, providerType, model),
+      messages: toLLMMessages(messages, workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, providerType, model, onPreCompact),
       stream: true,
     };
 
@@ -1518,6 +1533,7 @@ async function streamProviderChat(
   systemPromptOverride?: string,
   scratchpadContent?: string,
   signal?: AbortSignal,
+  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
 ): Promise<void> {
   const entry = PROVIDER_STREAM_CONFIGS[providerType];
   if (!entry) {
@@ -1541,7 +1557,7 @@ async function streamProviderChat(
 
   return streamSSEChat(
     config, messages, onToken, onDone, onError, onThinkingToken,
-    workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal,
+    workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal, undefined, onPreCompact,
   );
 }
 
@@ -1559,6 +1575,7 @@ type StreamChatFn = (
   systemPromptOverride?: string,
   scratchpadContent?: string,
   signal?: AbortSignal,
+  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
 ) => Promise<void>;
 
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
@@ -1659,6 +1676,7 @@ export async function streamChat(
   signal?: AbortSignal,
   providerOverride?: ActiveProvider,
   modelOverride?: string,
+  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
 ): Promise<void> {
   const provider = providerOverride || getActiveProvider();
 
@@ -1676,32 +1694,32 @@ export async function streamChat(
   }
 
   if (provider === 'ollama') {
-    return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+    return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
   }
 
   if (provider === 'openrouter') {
-    return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+    return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
   }
 
   if (provider === 'zen') {
-    return streamZenChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+    return streamZenChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
   }
 
   if (provider === 'nvidia') {
-    return streamNvidiaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+    return streamNvidiaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
   }
 
   if (provider === 'azure') {
-    return streamAzureChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+    return streamAzureChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
   }
 
   if (provider === 'bedrock') {
-    return streamBedrockChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+    return streamBedrockChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
   }
 
   if (provider === 'vertex') {
-    return streamVertexChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+    return streamVertexChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
   }
 
-  return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal);
+  return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
 }

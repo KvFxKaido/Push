@@ -11,7 +11,7 @@
  * endlessly on errors or ambiguity.
  */
 
-import type { ChatMessage, ChatCard, AcceptanceCriterion, CriterionResult, CoderObservation, CoderWorkingMemory } from '@/types';
+import type { ChatMessage, ChatCard, AcceptanceCriterion, CriterionResult, CoderObservation, CoderWorkingMemory, DelegationEnvelope, CoderCallbacks, CoderResult } from '@/types';
 import { parseDiffStats } from './diff-utils';
 import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
@@ -667,11 +667,18 @@ ${sandboxBlock}`;
 // Main Coder agent loop
 // ---------------------------------------------------------------------------
 
+/**
+ * Run the Coder agent.
+ *
+ * Accepts either:
+ * - A `DelegationEnvelope` + sandboxId + `CoderCallbacks` (structured contract)
+ * - Legacy positional parameters (backwards-compatible)
+ */
 export async function runCoderAgent(
-  task: string,
+  taskOrEnvelope: string | DelegationEnvelope,
   sandboxId: string,
-  files: string[],
-  onStatus: (phase: string, detail?: string) => void,
+  filesOrCallbacks: string[] | CoderCallbacks,
+  onStatus?: (phase: string, detail?: string) => void,
   agentsMd?: string,
   signal?: AbortSignal,
   onCheckpoint?: (question: string, context: string) => Promise<string>,
@@ -685,16 +692,64 @@ export async function runCoderAgent(
     branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
     instructionFilename?: string;
   },
-): Promise<{ summary: string; cards: ChatCard[]; rounds: number; checkpoints: number; criteriaResults?: CriterionResult[] }> {
+): Promise<CoderResult> {
+  // Normalise: envelope-based call → unified locals
+  let task: string;
+  let files: string[];
+  let statusFn: (phase: string, detail?: string) => void;
+  let effectiveAgentsMd: string | undefined;
+  let effectiveSignal: AbortSignal | undefined;
+  let effectiveOnCheckpoint: ((question: string, context: string) => Promise<string>) | undefined;
+  let effectiveAcceptanceCriteria: AcceptanceCriterion[] | undefined;
+  let effectiveOnWorkingMemoryUpdate: ((state: CoderWorkingMemory) => void) | undefined;
+  let effectiveProviderOverride: ActiveProvider | undefined;
+  let effectiveModelOverride: string | undefined;
+  let effectiveDelegationContext: typeof delegationContext;
+
+  if (typeof taskOrEnvelope === 'object') {
+    // Envelope-based invocation
+    const envelope = taskOrEnvelope;
+    const callbacks = filesOrCallbacks as CoderCallbacks;
+    task = envelope.task;
+    files = envelope.files;
+    statusFn = callbacks.onStatus;
+    effectiveAgentsMd = envelope.projectInstructions;
+    effectiveSignal = callbacks.signal;
+    effectiveOnCheckpoint = callbacks.onCheckpoint;
+    effectiveAcceptanceCriteria = envelope.acceptanceCriteria;
+    effectiveOnWorkingMemoryUpdate = callbacks.onWorkingMemoryUpdate;
+    effectiveProviderOverride = envelope.provider === 'demo' ? undefined : envelope.provider as ActiveProvider;
+    effectiveModelOverride = envelope.model;
+    effectiveDelegationContext = {
+      intent: envelope.intent,
+      constraints: envelope.constraints,
+      branchContext: envelope.branchContext,
+      instructionFilename: envelope.instructionFilename,
+    };
+  } else {
+    // Legacy positional invocation
+    task = taskOrEnvelope;
+    files = filesOrCallbacks as string[];
+    statusFn = onStatus!;
+    effectiveAgentsMd = agentsMd;
+    effectiveSignal = signal;
+    effectiveOnCheckpoint = onCheckpoint;
+    effectiveAcceptanceCriteria = acceptanceCriteria;
+    effectiveOnWorkingMemoryUpdate = onWorkingMemoryUpdate;
+    effectiveProviderOverride = providerOverride;
+    effectiveModelOverride = modelOverride;
+    effectiveDelegationContext = delegationContext;
+  }
+
   // Resolve provider/model for the Coder. Delegated chat tasks can pin the
   // Coder to the chat-locked provider/model instead of the app-global default.
-  const activeProvider = providerOverride || getActiveProvider();
+  const activeProvider = effectiveProviderOverride || getActiveProvider();
   if (activeProvider === 'demo') {
     throw new Error('No AI provider configured. Add an API key in Settings.');
   }
   const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'coder');
-  const coderModelId = modelOverride || roleModel?.id; // undefined falls back to provider default
+  const coderModelId = effectiveModelOverride || roleModel?.id; // undefined falls back to provider default
 
   // Build system prompt, optionally including user identity and effective
   // project instructions (repo file plus any built-in app context).
@@ -710,19 +765,19 @@ export async function runCoderAgent(
     systemPrompt += '\n\n' + identityBlock;
     if (import.meta.env.DEV) _promptSizes.identity = identityBlock.length;
   }
-  if (agentsMd) {
-    const truncatedAgentsMd = truncateContent(agentsMd, MAX_AGENTS_MD_SIZE, 'project instructions');
+  if (effectiveAgentsMd) {
+    const truncatedAgentsMd = truncateContent(effectiveAgentsMd, MAX_AGENTS_MD_SIZE, 'project instructions');
     systemPrompt += `\n\nPROJECT INSTRUCTIONS — Repository instructions and built-in app context:\n${truncatedAgentsMd}`;
     if (import.meta.env.DEV) _promptSizes.instructions = truncatedAgentsMd.length;
     // Item 1C: If content was truncated, tell the Coder where to find the full file
-    if (agentsMd.length > MAX_AGENTS_MD_SIZE) {
-      const filename = delegationContext?.instructionFilename || 'AGENTS.md';
+    if (effectiveAgentsMd.length > MAX_AGENTS_MD_SIZE) {
+      const filename = effectiveDelegationContext?.instructionFilename || 'AGENTS.md';
       systemPrompt += `\n\nFull file available at /workspace/${filename} — use sandbox_read_file if you need details not shown above.`;
     }
   }
   // Item 1A: Inject branch metadata when available
-  if (delegationContext?.branchContext) {
-    const bc = delegationContext.branchContext;
+  if (effectiveDelegationContext?.branchContext) {
+    const bc = effectiveDelegationContext.branchContext;
     systemPrompt += `\n\n[WORKSPACE CONTEXT]\nActive branch: ${bc.activeBranch}\nDefault branch: ${bc.defaultBranch}\nProtect main: ${bc.protectMain ? 'on' : 'off'}`;
   }
   // Web search tool — prompt-engineered, all providers use client-side dispatch
@@ -753,11 +808,11 @@ export async function runCoderAgent(
 
   // Build initial messages — include intent/constraints from structured delegation brief (Item 1B)
   let taskPreamble = `Task: ${task}`;
-  if (delegationContext?.intent) {
-    taskPreamble += `\n\nIntent: ${delegationContext.intent}`;
+  if (effectiveDelegationContext?.intent) {
+    taskPreamble += `\n\nIntent: ${effectiveDelegationContext.intent}`;
   }
-  if (delegationContext?.constraints && delegationContext.constraints.length > 0) {
-    taskPreamble += `\n\nConstraints:\n${delegationContext.constraints.map(c => `- ${c}`).join('\n')}`;
+  if (effectiveDelegationContext?.constraints && effectiveDelegationContext.constraints.length > 0) {
+    taskPreamble += `\n\nConstraints:\n${effectiveDelegationContext.constraints.map(c => `- ${c}`).join('\n')}`;
   }
   if (files.length > 0) {
     taskPreamble += `\n\nRelevant files: ${files.join(', ')}`;
@@ -772,13 +827,13 @@ export async function runCoderAgent(
   ];
 
   for (let round = 0; ; round++) {
-    if (signal?.aborted) {
+    if (effectiveSignal?.aborted) {
       throw new DOMException('Coder cancelled by user.', 'AbortError');
     }
 
     // Circuit breaker: prevent runaway delegation loops
     if (round >= MAX_CODER_ROUNDS) {
-      onStatus('Coder stopped', `Hit ${MAX_CODER_ROUNDS} round limit`);
+      statusFn('Coder stopped', `Hit ${MAX_CODER_ROUNDS} round limit`);
       // Auto-fetch sandbox state for Orchestrator context
       const sandboxState = await fetchSandboxStateSummary(sandboxId);
       return {
@@ -791,7 +846,7 @@ export async function runCoderAgent(
 
     rounds = round + 1;
     fileLedger.advanceRound();
-    onStatus('Coder working...', `Round ${rounds}`);
+    statusFn('Coder working...', `Round ${rounds}`);
 
     // Stream Coder response via the active provider, with a per-round timeout
     // to prevent indefinite hangs (e.g., Ollama keep-alives with no content)
@@ -810,7 +865,7 @@ export async function runCoderAgent(
           coderModelId,
           systemPrompt,
           undefined, // no scratchpad needed
-          signal,
+          effectiveSignal,
         );
       },
     );
@@ -838,7 +893,7 @@ export async function runCoderAgent(
     });
     const reasoningSnippet = reasoningLines.slice(0, 2).join(' ').slice(0, 150).trim();
     if (reasoningSnippet) {
-      onStatus('Coder reasoning', reasoningSnippet);
+      statusFn('Coder reasoning', reasoningSnippet);
     }
 
     // Check for multiple tool calls (parallel reads + optional trailing mutation)
@@ -847,14 +902,14 @@ export async function runCoderAgent(
     const trailingMutation = detected.mutating?.source === 'sandbox' ? detected.mutating : null;
 
     if (parallelCalls.length >= 2 || (parallelCalls.length >= 1 && trailingMutation)) {
-      if (signal?.aborted) throw new DOMException('Coder cancelled by user.', 'AbortError');
+      if (effectiveSignal?.aborted) throw new DOMException('Coder cancelled by user.', 'AbortError');
       // Valid tool calls — reset drift counter
       consecutiveDriftRounds = 0;
 
       const statusLabel = trailingMutation
         ? `${parallelCalls.length} parallel reads + 1 mutation`
         : `${parallelCalls.length} parallel reads`;
-      onStatus('Coder executing...', statusLabel);
+      statusFn('Coder executing...', statusLabel);
 
       // Execute read-only calls in parallel
       const parallelResults = await Promise.all(
@@ -893,7 +948,7 @@ ${truncatedResult}
 
       // Execute trailing mutation after reads complete
       // Re-check cancellation — user may have aborted while reads were in flight
-      if (trailingMutation && signal?.aborted) {
+      if (trailingMutation && effectiveSignal?.aborted) {
         throw new DOMException('Coder cancelled by user.', 'AbortError');
       }
       if (trailingMutation) {
@@ -913,7 +968,7 @@ ${truncatedResult}
           const nextObservations = invalidateObservationDependencies(workingMemory.observations, mutFilePaths, round);
           if (nextObservations !== workingMemory.observations) {
             workingMemory.observations = nextObservations;
-            if (onWorkingMemoryUpdate) onWorkingMemoryUpdate(workingMemory);
+            if (effectiveOnWorkingMemoryUpdate) effectiveOnWorkingMemoryUpdate(workingMemory);
           }
         }
 
@@ -950,7 +1005,7 @@ ${truncatedResult}
 
           // Sandbox Health Check (parallel path)
           if (mutResult.structuredError.type === 'SANDBOX_UNREACHABLE') {
-            onStatus('Health check', 'Sandbox unreachable — validating...');
+            statusFn('Health check', 'Sandbox unreachable — validating...');
             try {
               const status = await sandboxStatus(sandboxId);
               const healthMsg = status.error
@@ -963,7 +1018,7 @@ ${truncatedResult}
                 timestamp: Date.now(),
               });
             } catch {
-              onStatus('Coder stopped', 'Sandbox unreachable');
+              statusFn('Coder stopped', 'Sandbox unreachable');
               return {
                 summary: `[Coder stopped — sandbox is unreachable. Container may have expired or terminated. Task is incomplete.]`,
                 cards: allCards,
@@ -975,7 +1030,7 @@ ${truncatedResult}
 
           // Hard Failure Threshold (parallel path)
           if (entry.count >= MAX_CONSECUTIVE_MUTATION_FAILURES) {
-            onStatus('Coder stopped', `${entry.tool} failed ${entry.count}x on ${entry.file || 'unknown'}`);
+            statusFn('Coder stopped', `${entry.tool} failed ${entry.count}x on ${entry.file || 'unknown'}`);
             messages.push({
               id: `coder-hard-failure-${round}`,
               role: 'user',
@@ -1006,8 +1061,8 @@ ${truncatedResult}
       }
 
       // Notify caller of latest working memory state (for checkpoint capture)
-      if (onWorkingMemoryUpdate) {
-        onWorkingMemoryUpdate(workingMemory);
+      if (effectiveOnWorkingMemoryUpdate) {
+        effectiveOnWorkingMemoryUpdate(workingMemory);
       }
 
       // If only a state update was emitted (no sandbox tool AND no checkpoint), inject ack and continue
@@ -1038,16 +1093,16 @@ ${truncatedResult}
       // Check for interactive checkpoint (Coder asking Orchestrator for guidance)
       const checkpoint = detectCheckpointCall(accumulated);
       if (checkpoint) {
-        if (signal?.aborted) {
+        if (effectiveSignal?.aborted) {
           throw new DOMException('Coder cancelled by user.', 'AbortError');
         }
 
-        if (onCheckpoint && checkpointCount < MAX_CHECKPOINTS) {
+        if (effectiveOnCheckpoint && checkpointCount < MAX_CHECKPOINTS) {
           checkpointCount++;
-          onStatus('Coder checkpoint', checkpoint.args.question);
+          statusFn('Coder checkpoint', checkpoint.args.question);
 
           try {
-            const answer = await onCheckpoint(
+            const answer = await effectiveOnCheckpoint(
               checkpoint.args.question,
               checkpoint.args.context || '',
             );
@@ -1061,12 +1116,12 @@ ${truncatedResult}
               timestamp: Date.now(),
             });
 
-            onStatus('Coder resuming...', `After checkpoint ${checkpointCount}`);
+            statusFn('Coder resuming...', `After checkpoint ${checkpointCount}`);
             continue;
           } catch (cpErr) {
             // Propagate AbortError to allow proper task cancellation
             const isAbort = cpErr instanceof DOMException && cpErr.name === 'AbortError';
-            if (isAbort || signal?.aborted) {
+            if (isAbort || effectiveSignal?.aborted) {
               throw new DOMException('Coder cancelled by user.', 'AbortError');
             }
             // For non-abort errors, inject a generic fallback so the Coder can continue
@@ -1089,16 +1144,16 @@ ${truncatedResult}
           });
           continue;
         }
-        // If no onCheckpoint callback, fall through to treat as "done" (backward compatible)
+        // If no effectiveOnCheckpoint callback, fall through to treat as "done" (backward compatible)
       }
 
       // Check for web search tool call (Ollama only — Mistral handles search natively)
       const webSearch = detectWebSearchToolCall(accumulated);
       if (webSearch) {
-        if (signal?.aborted) {
+        if (effectiveSignal?.aborted) {
           throw new DOMException('Coder cancelled by user.', 'AbortError');
         }
-        onStatus('Coder searching...', webSearch.args.query);
+        statusFn('Coder searching...', webSearch.args.query);
         const searchResult = await executeWebSearch(webSearch.args.query, activeProvider);
         if (searchResult.card) allCards.push(searchResult.card);
         const awarenessSummary = fileLedger.getAwarenessSummary();
@@ -1122,11 +1177,11 @@ ${truncatedResult}
       const driftReason = detectCognitiveDrift(accumulated);
       if (driftReason) {
         consecutiveDriftRounds++;
-        onStatus('Drift detected', driftReason.slice(0, 80));
+        statusFn('Drift detected', driftReason.slice(0, 80));
 
         if (consecutiveDriftRounds >= MAX_CONSECUTIVE_DRIFT_ROUNDS) {
           // Hard stop — model has drifted for too many consecutive rounds
-          onStatus('Coder stopped', 'Cognitive drift — halted');
+          statusFn('Coder stopped', 'Cognitive drift — halted');
           const sandboxState = await fetchSandboxStateSummary(sandboxId);
           return {
             summary: `[Coder stopped — cognitive drift detected for ${consecutiveDriftRounds} consecutive rounds. ${driftReason}. Task may be incomplete.]${sandboxState}`,
@@ -1152,12 +1207,12 @@ ${truncatedResult}
       // No tool call — Coder is done, accumulated is the summary
       // Run acceptance criteria if provided
       let criteriaResults: CriterionResult[] | undefined;
-      if (acceptanceCriteria && acceptanceCriteria.length > 0) {
-        onStatus('Running acceptance checks...');
+      if (effectiveAcceptanceCriteria && effectiveAcceptanceCriteria.length > 0) {
+        statusFn('Running acceptance checks...');
         criteriaResults = [];
-        for (const criterion of acceptanceCriteria) {
-          if (signal?.aborted) break;
-          onStatus('Checking...', criterion.description || criterion.id);
+        for (const criterion of effectiveAcceptanceCriteria) {
+          if (effectiveSignal?.aborted) break;
+          statusFn('Checking...', criterion.description || criterion.id);
           try {
             const checkResult = await execInSandbox(sandboxId, criterion.check);
             const expectedExit = criterion.exitCode ?? 0;
@@ -1203,13 +1258,13 @@ ${truncatedResult}
     }
 
     // Execute sandbox tool
-    if (signal?.aborted) {
+    if (effectiveSignal?.aborted) {
       throw new DOMException('Coder cancelled by user.', 'AbortError');
     }
     // Valid tool call — reset drift counter
     consecutiveDriftRounds = 0;
 
-    onStatus('Coder executing...', toolCall.tool);
+    statusFn('Coder executing...', toolCall.tool);
     const result = await executeSandboxToolCall(toolCall, sandboxId, {
       auditorProviderOverride: activeProvider,
       auditorModelOverride: coderModelId,
@@ -1232,7 +1287,7 @@ ${truncatedResult}
       const nextObservations = invalidateObservationDependencies(workingMemory.observations, toolFilePaths, round);
       if (nextObservations !== workingMemory.observations) {
         workingMemory.observations = nextObservations;
-        if (onWorkingMemoryUpdate) onWorkingMemoryUpdate(workingMemory);
+        if (effectiveOnWorkingMemoryUpdate) effectiveOnWorkingMemoryUpdate(workingMemory);
       }
     }
 
@@ -1277,7 +1332,7 @@ ${truncatedResult}
       // On SANDBOX_UNREACHABLE, pause and revalidate sandbox before continuing.
       // TOOL_RESULT is already injected above so the model sees the error context.
       if (result.structuredError.type === 'SANDBOX_UNREACHABLE') {
-        onStatus('Health check', 'Sandbox unreachable — validating...');
+        statusFn('Health check', 'Sandbox unreachable — validating...');
         try {
           const status = await sandboxStatus(sandboxId);
           const healthMsg = status.error
@@ -1291,7 +1346,7 @@ ${truncatedResult}
           });
         } catch {
           // Health check itself failed — sandbox is truly unreachable
-          onStatus('Coder stopped', 'Sandbox unreachable');
+          statusFn('Coder stopped', 'Sandbox unreachable');
           return {
             summary: `[Coder stopped — sandbox is unreachable. Container may have expired or terminated. Task is incomplete.]`,
             cards: allCards,
@@ -1303,7 +1358,7 @@ ${truncatedResult}
 
       // --- Guardrail: Hard Failure Threshold ---
       if (entry.count >= MAX_CONSECUTIVE_MUTATION_FAILURES) {
-        onStatus('Coder stopped', `${entry.tool} failed ${entry.count}x on ${entry.file || 'unknown'}`);
+        statusFn('Coder stopped', `${entry.tool} failed ${entry.count}x on ${entry.file || 'unknown'}`);
         messages.push({
           id: `coder-hard-failure-${round}`,
           role: 'user',

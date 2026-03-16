@@ -680,6 +680,98 @@ export interface AskUserCardData {
 
 export type LoopPhase = 'streaming_llm' | 'executing_tools' | 'delegating_coder';
 
+// ---------------------------------------------------------------------------
+// Tool hooks — pre/post execution interception
+// ---------------------------------------------------------------------------
+
+/** Context passed to tool hooks for decision-making. */
+export interface ToolHookContext {
+  sandboxId: string | null;
+  allowedRepo: string;
+  activeProvider?: string;
+  activeModel?: string;
+}
+
+/** Result from a PreToolUse hook. */
+export interface PreToolUseResult {
+  /** 'deny' blocks execution, 'allow' permits (and may carry modifiedArgs), 'passthrough' defers to next hook. */
+  decision: 'allow' | 'deny' | 'passthrough';
+  reason?: string;
+  /** Replacement args — applied when decision is 'allow'. */
+  modifiedArgs?: Record<string, unknown>;
+  /** Appended to the tool result text after execution. */
+  systemMessage?: string;
+}
+
+/** Result from a PostToolUse hook. */
+export interface PostToolUseResult {
+  /** Appended to the tool result text after execution. */
+  systemMessage?: string;
+  /** When set, replaces the tool result text sent to the model. */
+  resultOverride?: string;
+}
+
+// ---------------------------------------------------------------------------
+// PreCompact event — fired before context window compaction
+// ---------------------------------------------------------------------------
+
+/** Emitted before the orchestrator summarizes or drops old messages. */
+export interface PreCompactEvent {
+  /** Estimated total tokens before compaction. */
+  totalTokens: number;
+  /** Token threshold that triggered compaction. */
+  budgetThreshold: number;
+  /** Number of messages in the window before compaction. */
+  messageCount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Delegation envelope — structured contract between Orchestrator and Coder
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything the Orchestrator sends to the Coder in a single typed envelope.
+ * Captures the task spec and context — runtime plumbing (callbacks, signals)
+ * lives in CoderCallbacks.
+ */
+export interface DelegationEnvelope {
+  task: string;
+  files: string[];
+  acceptanceCriteria?: AcceptanceCriterion[];
+  intent?: string;
+  constraints?: string[];
+  branchContext?: {
+    activeBranch: string;
+    defaultBranch: string;
+    protectMain: boolean;
+  };
+  /** Explicit provider for this delegation (not inherited from chat). */
+  provider: AIProviderType;
+  /** Explicit model override (not inherited from chat). */
+  model?: string;
+  /** Project instructions (AGENTS.md / CLAUDE.md content). */
+  projectInstructions?: string;
+  /** Filename of the instructions file (for sandbox_read_file hint). */
+  instructionFilename?: string;
+}
+
+/** Runtime callbacks for the Coder agent loop. */
+export interface CoderCallbacks {
+  onStatus: (phase: string, detail?: string) => void;
+  signal?: AbortSignal;
+  onCheckpoint?: (question: string, context: string) => Promise<string>;
+  onWorkingMemoryUpdate?: (state: CoderWorkingMemory) => void;
+}
+
+/** Return value from a Coder agent run. */
+export interface CoderResult {
+  summary: string;
+  cards: ChatCard[];
+  rounds: number;
+  checkpoints: number;
+  criteriaResults?: CriterionResult[];
+}
+
 export interface RunCheckpoint {
   chatId: string;
   round: number;
