@@ -140,15 +140,24 @@ export function connect(socketPath) {
  * Returns the client or null if connection fails.
  */
 export async function tryConnect(socketPath, timeoutMs = 2000) {
+  let timer;
+  let connectPromise;
   try {
+    connectPromise = connect(socketPath);
     const client = await Promise.race([
-      connect(socketPath),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Connection timeout')), timeoutMs)
-      ),
+      connectPromise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Connection timeout')), timeoutMs);
+      }),
     ]);
+    clearTimeout(timer);
     return client;
   } catch {
+    clearTimeout(timer);
+    // If connect resolves late, close the leaked socket
+    if (connectPromise) {
+      connectPromise.then((client) => client.close()).catch(() => {});
+    }
     return null;
   }
 }

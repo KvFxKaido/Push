@@ -400,7 +400,10 @@ async function handleSendUserMessage(req, emitEvent) {
     } finally {
       entry.activeRunId = null;
       entry.abortController = null;
-      entry.pendingApproval = null;
+      if (entry.pendingApproval) {
+        clearTimeout(entry.pendingApproval.timer);
+        entry.pendingApproval = null;
+      }
     }
   })();
 
