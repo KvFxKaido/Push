@@ -17,7 +17,9 @@ function makeRequestId() {
 
 /**
  * Connect to a pushd Unix socket. Returns a client object with:
- *   request(type, payload, sessionId?) → Promise<response payload>
+ *   request(type, payload, sessionId?, timeoutMs?) → Promise<response envelope>
+ *     Resolves the full response envelope ({ v, kind, requestId, type, sessionId, ok, payload, error }).
+ *     Rejects with an Error (with .code and .retryable) on non-ok responses.
  *   onEvent(callback) → unsubscribe function
  *   close() → disconnect
  *   connected (boolean getter)

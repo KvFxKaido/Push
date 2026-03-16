@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { promises as fs } from 'node:fs';
@@ -19,30 +19,6 @@ function makeRequest(type, payload = {}, sessionId = null) {
     type,
     sessionId,
     payload,
-  };
-}
-
-/**
- * Minimal in-process daemon server for testing.
- * Imports handlers directly to avoid spawning a child process.
- */
-async function createTestServer() {
-  const socketPath = path.join(os.tmpdir(), `pushd-test-${randomBytes(4).toString('hex')}.sock`);
-
-  // Set env so pushd uses our test socket path
-  const origSocket = process.env.PUSHD_SOCKET;
-  process.env.PUSHD_SOCKET = socketPath;
-
-  // Dynamic import to pick up the env
-  const pushd = await import('../pushd.mjs');
-
-  return {
-    socketPath,
-    cleanup: async () => {
-      if (origSocket !== undefined) process.env.PUSHD_SOCKET = origSocket;
-      else delete process.env.PUSHD_SOCKET;
-      try { await fs.unlink(socketPath); } catch { /* ignore */ }
-    },
   };
 }
 

@@ -2214,18 +2214,14 @@ export async function runTUI(options = {}) {
       if (daemonClient?.connected && daemonSessionId) {
         runAbort = new AbortController();
         try {
-          const res = await daemonClient.request('send_user_message', {
-            sessionId: daemonSessionId,
-            text,
-            attachToken: daemonAttachToken,
-          }, daemonSessionId);
-          if (!res.ok) {
-            addTranscriptEntry(tuiState, 'error', res.error?.message || 'Daemon rejected message');
-          }
-          // Events arrive asynchronously via the onEvent handler.
-          // Wait for run_complete event before returning control.
-          await new Promise((resolve) => {
+          // Register listener BEFORE sending the request to avoid missing
+          // a fast run_complete that arrives before the listener is attached.
+          let runId = null;
+          const completionPromise = new Promise((resolve) => {
             const unsub = daemonClient.onEvent((event) => {
+              // Filter by sessionId; also by runId once known
+              if (event.sessionId !== daemonSessionId) return;
+              if (runId && event.runId && event.runId !== runId) return;
               if (event.type === 'run_complete') {
                 unsub();
                 resolve();
@@ -2235,12 +2231,25 @@ export async function runTUI(options = {}) {
             runAbort.signal.addEventListener('abort', () => {
               daemonClient?.request('cancel_run', {
                 sessionId: daemonSessionId,
-                runId: res.payload?.runId,
+                runId,
               }, daemonSessionId).catch(() => {});
               unsub();
               resolve();
             }, { once: true });
           });
+
+          const res = await daemonClient.request('send_user_message', {
+            sessionId: daemonSessionId,
+            text,
+            attachToken: daemonAttachToken,
+          }, daemonSessionId);
+          if (!res.ok) {
+            addTranscriptEntry(tuiState, 'error', res.error?.message || 'Daemon rejected message');
+          } else {
+            runId = res.payload?.runId;
+          }
+
+          await completionPromise;
         } catch (err) {
           if (err.name !== 'AbortError') {
             addTranscriptEntry(tuiState, 'error', `Daemon error: ${err.message}`);

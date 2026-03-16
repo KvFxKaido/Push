@@ -306,7 +306,16 @@ async function handleSendUserMessage(req, emitEvent) {
     });
 
     // Emit approval_required to all clients
-    const approvalEvent = {
+    const approvalPayload = {
+      approvalId,
+      kind: tool?.tool || 'tool_execution',
+      title: `Approve ${tool?.tool || 'action'}`,
+      summary: typeof detail === 'string' ? detail : JSON.stringify(detail || {}),
+      options: ['approve', 'deny'],
+    };
+    await appendSessionEvent(state, 'approval_required', approvalPayload, runId);
+    // Build envelope after appendSessionEvent so seq matches the persisted event
+    broadcastEvent(sessionId, {
       v: PROTOCOL_VERSION,
       kind: 'event',
       sessionId,
@@ -314,16 +323,8 @@ async function handleSendUserMessage(req, emitEvent) {
       seq: state.eventSeq,
       ts: Date.now(),
       type: 'approval_required',
-      payload: {
-        approvalId,
-        kind: tool?.tool || 'tool_execution',
-        title: `Approve ${tool?.tool || 'action'}`,
-        summary: typeof detail === 'string' ? detail : JSON.stringify(detail || {}),
-        options: ['approve', 'deny'],
-      },
-    };
-    await appendSessionEvent(state, 'approval_required', approvalEvent.payload, runId);
-    broadcastEvent(sessionId, approvalEvent);
+      payload: approvalPayload,
+    });
 
     try {
       const decision = await approvalPromise;
@@ -483,7 +484,10 @@ async function handleSubmitApproval(req) {
   pending.resolve(decision);
 
   // Emit approval_received to all clients
-  const event = {
+  const eventPayload = { approvalId, decision, by: 'client' };
+  await appendSessionEvent(entry.state, 'approval_received', eventPayload, entry.activeRunId);
+  // Build envelope after appendSessionEvent so seq matches the persisted event
+  broadcastEvent(sessionId, {
     v: PROTOCOL_VERSION,
     kind: 'event',
     sessionId,
@@ -491,10 +495,8 @@ async function handleSubmitApproval(req) {
     seq: entry.state.eventSeq,
     ts: Date.now(),
     type: 'approval_received',
-    payload: { approvalId, decision, by: 'client' },
-  };
-  await appendSessionEvent(entry.state, 'approval_received', event.payload, entry.activeRunId);
-  broadcastEvent(sessionId, event);
+    payload: eventPayload,
+  });
 
   return makeResponse(req.requestId, 'submit_approval', sessionId, true, {
     accepted: true,
