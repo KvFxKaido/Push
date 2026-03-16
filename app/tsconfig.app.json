@@ -12,6 +12,9 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@push/lib/*": [
+        "../lib/*"
       ]
     },
     /* Bundler mode */

@@ -124,9 +124,17 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@push/lib": path.resolve(__dirname, "../lib"),
     },
   },
   server: {
+    fs: {
+      allow: [
+        path.resolve(__dirname, './src'),
+        path.resolve(__dirname, '../lib'),
+        path.resolve(__dirname, './node_modules'),
+      ],
+    },
     allowedHosts: ['.trycloudflare.com'],
     proxy: {
       '/ollama': {
