@@ -2210,7 +2210,6 @@ export function useChat(
                       });
 
                       parallelIsolationNote = '\n[Note] Parallel delegate tasks ran in isolated worker sandboxes and were not auto-merged into the active workspace.';
-                    }
                     } catch (err) {
                       console.error('[Parallel Delegation Failure]', err);
                       parallelSetupFailed = true;
