@@ -100,14 +100,14 @@ export const NVIDIA_MODELS: string[] = [
   'mistralai/mistral-large-2-instruct',
 ];
 
-/** Build the standard orchestrator/coder/auditor model triple for a provider. */
+/** Build the standard role model set for a provider. */
 function makeRoleModels(
   id: string,
   displayName: string,
   provider: AIProviderType,
   context: number,
 ): AIModel[] {
-  return (['orchestrator', 'coder', 'auditor', 'reviewer'] as const).map((role) => ({
+  return (['orchestrator', 'coder', 'explorer', 'auditor', 'reviewer'] as const).map((role) => ({
     id,
     name: `${displayName} (${role.charAt(0).toUpperCase() + role.slice(1)})`,
     provider,

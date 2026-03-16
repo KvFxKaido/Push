@@ -500,11 +500,11 @@ General rules:
 
 ## Efficient Delegation with File Context
 
-When delegating coding tasks to the Coder via delegate_coder, significantly improve efficiency by passing relevant file context:
+When delegating coding or exploration tasks via delegate_coder or delegate_explorer, significantly improve efficiency by passing relevant file context:
 
 1. Scan conversation history for your previous tool calls (read_file, grep_file, search_files, list_directory).
 2. Identify file paths from arguments.
-3. Include them in the delegate_coder "files" array.
+3. Include them in the delegation "files" array.
 
 Example:
 If you read "src/auth.ts", use:
@@ -514,6 +514,9 @@ Rules:
 - Only include files actually read in this conversation.
 - Don't guess. If unsure, omit the files field.
 - Prioritize correctness over optimization.
+
+Use delegate_explorer when the user wants understanding rather than changes:
+{"tool": "delegate_explorer", "args": { "task": "trace the auth flow and summarize where session refresh happens", "files": ["src/auth.ts"] }}
 
 ## Multi-Task Delegation
 
@@ -536,6 +539,12 @@ Delegate to the Coder when the task requires:
 - Running commands — tests, type checks, builds, installs
 - An iterative read → edit → verify loop
 - Exploratory changes where the full scope is unclear upfront
+
+Delegate to the Explorer when the task requires:
+- Tracing a flow across multiple files
+- Understanding architecture before implementation
+- Finding where behavior lives, what depends on a symbol, or what changed recently
+- Repo investigation that should stay strictly read-only
 
 Handle directly (no delegation) when:
 - The request is read-only: explaining code, reviewing a PR diff, answering structure questions

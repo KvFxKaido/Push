@@ -12,7 +12,7 @@ Push is a personal AI coding notebook backed by role-based AI agents that read y
 
 Try it free with provider free tiers: OpenCode Zen or Ollama Cloud.
 Bring your own provider: Ollama Cloud, OpenRouter, OpenCode Zen, or Nvidia NIM. Advanced Settings also expose opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex.
-Set provider/model defaults in Settings, then choose active chat and review models separately. Delegated Coder runs inherit the current chat's locked provider/model, and Auditor now follows that same chat lock when one exists.
+Set provider/model defaults in Settings, then choose active chat and review models separately. Delegated Coder and Explorer runs inherit the current chat's locked provider/model, and Auditor now follows that same chat lock when one exists.
 
 ## What It Does
 
@@ -20,6 +20,7 @@ Push is an execution control plane for developers who need to keep shipping when
 
 - Review fast with structured cards for PRs, diffs, checks, and repo state
 - Run on-demand Reviewer feedback on branch diffs, last commits, or local working trees, then send findings to chat or post PR-backed reviews to GitHub
+- Delegate read-only investigation from Orchestrator to Explorer for code tracing and architecture discovery
 - Delegate implementation from Orchestrator to Coder in a live sandbox
 - Gate risky changes with Auditor SAFE/UNSAFE pre-commit verdicts
 - Keep context repo-locked to one repo and one active branch
@@ -32,7 +33,7 @@ Push is an execution control plane for developers who need to keep shipping when
 
 - Runtime-selectable AI backends, no single-vendor lock-in
 - Zero-barrier entry with free-tier-capable providers
-- Full role-separated architecture: Orchestrator, Coder, Reviewer, Auditor
+- Full role-separated architecture: Orchestrator, Explorer, Coder, Reviewer, Auditor
 - Branch-scoped chat memory tied to the branch where each chat starts
 
 ## Who It's For

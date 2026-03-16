@@ -24,6 +24,8 @@ function getSourceLabel(source: AgentStatusSource): string {
   switch (source) {
     case 'coder':
       return 'Coder';
+    case 'explorer':
+      return 'Explorer';
     case 'auditor':
       return 'Auditor';
     case 'system':

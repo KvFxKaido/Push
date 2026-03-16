@@ -2,14 +2,14 @@
 
 **Mobile-native AI coding agent with direct GitHub repo access.**
 
-Push is a personal AI coding notebook backed by role-based AI agents (Orchestrator, Coder, Reviewer, Auditor) designed for reviewing PRs, exploring codebases, and shipping changes from a mobile device.
+Push is a personal AI coding notebook backed by role-based AI agents (Orchestrator, Explorer, Coder, Reviewer, Auditor) designed for reviewing PRs, exploring codebases, and shipping changes from a mobile device.
 
 ## Project Overview
 
 *   **Type:** AI Coding Agent — Mobile PWA + Local CLI
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** The web app ships with four built-in providers (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) plus opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex. The built-ins, Azure, and Bedrock use OpenAI-compatible SSE streaming. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex OpenAPI, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into the app's OpenAI-style SSE stream; legacy raw Vertex OpenAPI config still works as a fallback. Settings stores default backend/model picks and the app's active backend preference, chat keeps its own current selection, delegated Coder runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor now follows the same chat lock when available. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
+*   **AI Backend:** The web app ships with four built-in providers (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) plus opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex. The built-ins, Azure, and Bedrock use OpenAI-compatible SSE streaming. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex OpenAPI, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into the app's OpenAI-style SSE stream; legacy raw Vertex OpenAPI config still works as a fallback. Settings stores default backend/model picks and the app's active backend preference, chat keeps its own current selection, delegated Coder and Explorer runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor now follows the same chat lock when available. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
 *   **Current Product Focus:** CLI/TUI terminal UX improvements, with most active terminal work going into the full-screen TUI while REPL and headless flows remain supported.
 
 ## Tech Stack
@@ -26,7 +26,8 @@ Push is a personal AI coding notebook backed by role-based AI agents (Orchestrat
 ## Architecture
 
 ### Role-Based Agents
-*   **Orchestrator:** Conversational lead, interprets intent, delegates to Coder.
+*   **Orchestrator:** Conversational lead, interprets intent, and delegates to Explorer or Coder as needed.
+*   **Explorer:** Autonomous read-only investigation for code tracing, architecture discovery, and evidence gathering.
 *   **Coder:** Autonomous code implementation and execution in the sandbox (up to 30 rounds, 60s inactivity timeout per round, ~120k-char context cap).
 *   **Reviewer:** On-demand advisory diff review in the Workspace Hub. Can review Branch diff, Last commit, or Working tree changes, send findings into chat as fix requests, and post PR-backed Branch diff reviews to GitHub.
 *   **Auditor:** Pre-commit safety gate. Reviews diffs and issues a binary SAFE/UNSAFE verdict.
@@ -37,6 +38,7 @@ Push is a personal AI coding notebook backed by role-based AI agents (Orchestrat
 *   **Scratch Workspace:** Ephemeral workspace (no GitHub repo). Entry via onboarding or the launcher/home surface. GitHub tools blocked; 30-min lifetime with expiry warning. Download as tar.gz.
 *   **Web Search Tools:** Mid-conversation web search via Tavily (premium), Ollama native search, or DuckDuckGo fallback. Prompt-engineered JSON format, client-side dispatch.
 *   **Coder Delegation:** Orchestrator delegates via `delegate_coder`. Supports `acceptanceCriteria[]` (shell commands run post-task). Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state` — survives context trimming.
+*   **Explorer Delegation:** Orchestrator delegates via `delegate_explorer`. Explorer is read-only, can inspect GitHub data, sandbox read tools, and web search, and returns a concise report without editing files.
 *   **Reviewer:** The Workspace Hub `Review` tab has three sources: `Branch diff` reviews the pushed branch against the default branch or the open PR diff without starting a sandbox, `Last commit` reviews the diff of the most recent pushed commit on the active branch, and `Working tree` reviews uncommitted sandbox edits. It adds line anchors when possible, can jump findings into Diff or chat, and only PR-backed Branch diff reviews can be posted back as a GitHub PR review.
 *   **Harness Priority:** Push still prioritizes harness reliability over model churn, but the major checklist is shipped. `documents/plans/Harness Reliability Plan.md` is now reference/planning history rather than an active checklist in the product docs. **Agent Experience Wishlist shipped** (`documents/analysis/Agent Experience Wishlist.md`): error taxonomy, structured malformed-call feedback, edit result diffs, multi-tool per turn, meta envelope, acceptance criteria, working memory, `sandbox_read_symbols`, `sandbox_apply_patchset`, plus edit convenience wrappers (`sandbox_edit_range`, `sandbox_search_replace`) on top of hashline editing.
 *   **User Identity:** Display name, bio, and GitHub login set in Settings. Stored in localStorage via `useUserProfile` hook. Injected into Orchestrator and Coder system prompts via `buildUserIdentityBlock()`.

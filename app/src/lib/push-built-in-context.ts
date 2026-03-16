@@ -20,12 +20,14 @@ Current terminal work is focused on the CLI's full-screen TUI, while classic REP
 Core roles:
 - Orchestrator: primary conversational lead
 - Coder: autonomous sandbox implementer
+- Explorer: autonomous read-only investigator for codebase understanding
 - Reviewer: advisory diff reviewer
 - Auditor: binary SAFE/UNSAFE gate for standard commits and merge flow
 
 Backend routing:
 - Chat locks the Orchestrator to a per-chat provider/model on first send
 - Delegated Coder runs inherit that chat-locked provider/model
+- Delegated Explorer runs inherit that chat-locked provider/model
 - Reviewer keeps its own sticky provider/model selection
 - Auditor follows the current chat's locked provider/model when available, otherwise the active backend
 

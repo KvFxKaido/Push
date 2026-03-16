@@ -188,6 +188,14 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
     expect(result?.telemetryOnly).toBeUndefined();
   });
 
+  it('detects delegate intent phrased with explorer agent', () => {
+    const result = diagnoseToolCallFailure("Let me delegate this to the explorer agent first.");
+
+    expect(result?.reason).toBe('natural_language_intent');
+    expect(result?.toolName).toBe('delegate_explorer');
+    expect(result?.telemetryOnly).toBeUndefined();
+  });
+
   it('does not flag explanatory prose as tool intent', () => {
     const result = diagnoseToolCallFailure(
       'The orchestrator may delegate this task to the coder agent when it is complex.'
@@ -198,6 +206,18 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
 });
 
 describe('detectAllToolCalls', () => {
+  it('detects delegate_explorer JSON blocks as delegation tool calls', () => {
+    const text = '```json\n{"tool":"delegate_explorer","args":{"task":"trace auth flow","files":["src/auth.ts"]}}\n```';
+
+    const detected = detectAnyToolCall(text);
+    expect(detected?.source).toBe('delegate');
+    if (detected?.source === 'delegate') {
+      expect(detected.call.tool).toBe('delegate_explorer');
+      expect(detected.call.args.task).toBe('trace auth flow');
+      expect(detected.call.args.files).toEqual(['src/auth.ts']);
+    }
+  });
+
   it('detects mixed explicit + bare read-only calls in one response', () => {
     const text = [
       '{"tool":"search_files","args":{"repo":"KvFxKaido/Push","query":"async function runConfigInit","path":"scripts/push/cli.mjs"}}',
@@ -257,6 +277,24 @@ describe('detectAllToolCalls', () => {
     expect(detected.mutating?.source).toBe('sandbox');
     if (detected.mutating?.source === 'sandbox') {
       expect(detected.mutating.call.tool).toBe('sandbox_prepare_commit');
+    }
+  });
+
+  it('treats grep_file as read-only when a mutation follows', () => {
+    const text = [
+      '{"tool":"grep_file","args":{"repo":"KvFxKaido/Push","path":"app/src/lib/tool-dispatch.ts","pattern":"delegate_explorer"}}',
+      '{"tool":"delegate_explorer","args":{"task":"summarize the dispatch flow"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(1);
+    expect(detected.readOnly[0].source).toBe('github');
+    if (detected.readOnly[0].source === 'github') {
+      expect(detected.readOnly[0].call.tool).toBe('grep_file');
+    }
+    expect(detected.mutating?.source).toBe('delegate');
+    if (detected.mutating?.source === 'delegate') {
+      expect(detected.mutating.call.tool).toBe('delegate_explorer');
     }
   });
 
@@ -360,6 +398,24 @@ describe('detectAllToolCalls', () => {
     }
     if (detected.extraMutations[0]?.source === 'delegate') {
       expect(detected.extraMutations[0].call.tool).toBe('delegate_coder');
+    }
+  });
+
+  it('captures extra delegate_explorer mutations so the caller can reject them', () => {
+    const text = [
+      '{"tool":"delegate_explorer","args":{"task":"task one"}}',
+      '{"tool":"delegate_explorer","args":{"task":"task two"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.mutating?.source).toBe('delegate');
+    expect(detected.extraMutations).toHaveLength(1);
+    if (detected.mutating?.source === 'delegate') {
+      expect(detected.mutating.call.tool).toBe('delegate_explorer');
+    }
+    if (detected.extraMutations[0]?.source === 'delegate') {
+      expect(detected.extraMutations[0].call.tool).toBe('delegate_explorer');
     }
   });
 });

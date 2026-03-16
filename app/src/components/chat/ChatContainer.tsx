@@ -20,6 +20,7 @@ function phaseLabel(phase: LoopPhase): string {
     case 'streaming_llm': return 'mid-response';
     case 'executing_tools': return 'mid-tool-execution';
     case 'delegating_coder': return 'during Coder delegation';
+    case 'delegating_explorer': return 'during Explorer delegation';
   }
 }
 

@@ -26,7 +26,7 @@ export { extractBareToolJsonObjects };
 // ---------------------------------------------------------------------------
 
 export const PARALLEL_READ_ONLY_GITHUB_TOOLS = new Set([
-  'fetch_pr', 'list_prs', 'list_commits', 'read_file', 'list_directory',
+  'fetch_pr', 'list_prs', 'list_commits', 'read_file', 'grep_file', 'list_directory',
   'list_branches', 'fetch_checks', 'search_files', 'list_commit_files',
   'get_workflow_runs', 'get_workflow_logs', 'check_pr_mergeable', 'find_existing_pr',
 ]);
@@ -135,7 +135,7 @@ function getToolCallName(toolCall: AnyToolCall): string {
   switch (toolCall.source) {
     case 'github': return toolCall.call.tool;
     case 'sandbox': return toolCall.call.tool;
-    case 'delegate': return 'delegate_coder';
+    case 'delegate': return toolCall.call.tool;
     case 'scratchpad': return toolCall.call.tool;
     case 'web-search': return 'web_search';
     default: return 'unknown';
@@ -212,7 +212,7 @@ function normalizeJsonValue(value: unknown): unknown {
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
-  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[]; acceptanceCriteria?: AcceptanceCriterion[]; intent?: string; constraints?: string[] } } }
+  | { source: 'delegate'; call: { tool: 'delegate_coder' | 'delegate_explorer'; args: { task?: string; tasks?: string[]; files?: string[]; acceptanceCriteria?: AcceptanceCriterion[]; intent?: string; constraints?: string[] } } }
   | { source: 'scratchpad'; call: ScratchpadToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall };
@@ -260,8 +260,8 @@ function applyHookToolArgs(toolCall: AnyToolCall, modifiedArgs: Record<string, u
  * Returns the first match, or null if no tool call is detected.
  */
 export function detectAnyToolCall(text: string): AnyToolCall | null {
-  // Check for delegate_coder first (it's a special dispatch, not a repo tool)
-  const delegateMatch = detectDelegateCoder(text);
+  // Check delegation tools first (special dispatch, not repo tools)
+  const delegateMatch = detectDelegationTool(text);
   if (delegateMatch) return delegateMatch;
 
   // Check scratchpad tools (set_scratchpad, append_scratchpad)
@@ -467,7 +467,7 @@ const GITHUB_TOOL_NAMES = new Set([
 ]);
 
 const OTHER_TOOL_NAMES = new Set([
-  'delegate_coder', 'set_scratchpad', 'append_scratchpad', 'read_scratchpad', 'web_search', 'ask_user',
+  'delegate_coder', 'delegate_explorer', 'set_scratchpad', 'append_scratchpad', 'read_scratchpad', 'web_search', 'ask_user',
 ]);
 
 export const KNOWN_TOOL_NAMES = new Set([
@@ -484,7 +484,7 @@ export function getToolSource(toolName: string | null): AnyToolCall['source'] {
   if (!toolName) return 'sandbox';
   if (GITHUB_TOOL_NAMES.has(toolName)) return 'github';
   if (IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) return 'sandbox';
-  if (toolName === 'delegate_coder') return 'delegate';
+  if (toolName === 'delegate_coder' || toolName === 'delegate_explorer') return 'delegate';
   if (toolName === 'web_search') return 'web-search';
   if (toolName === 'ask_user') return 'ask-user';
   if (['set_scratchpad', 'append_scratchpad', 'read_scratchpad'].includes(toolName)) return 'scratchpad';
@@ -626,6 +626,7 @@ const TOOL_ARG_HINTS: Record<string, string> = {
   sandbox_prepare_commit: '{"tool": "sandbox_prepare_commit", "args": {"message": "commit message"}}',
   sandbox_push: '{"tool": "sandbox_push", "args": {}}',
   delegate_coder: '{"tool": "delegate_coder", "args": {"task": "describe the task", "files": ["src/relevant.ts"]}}',
+  delegate_explorer: '{"tool": "delegate_explorer", "args": {"task": "trace the auth flow", "files": ["src/auth.ts"]}}',
   web_search: '{"tool": "web_search", "args": {"query": "search query"}}',
   ask_user: '{"tool": "ask_user", "args": {"question": "...?", "options": [{"id": "1", "label": "..."}]}}',
 };
@@ -1037,9 +1038,9 @@ function tryRecoverBareToolArgs(text: string): AnyToolCall | null {
   return null;
 }
 
-// --- delegate_coder detection ---
+// --- Delegation tool detection ---
 
-function detectDelegateCoder(text: string): AnyToolCall | null {
+function detectDelegationTool(text: string): AnyToolCall | null {
   return detectToolFromText<AnyToolCall>(text, (parsed) => {
     const parsedObj = asRecord(parsed);
     const args = asRecord(parsedObj?.args);
@@ -1066,6 +1067,12 @@ function detectDelegateCoder(text: string): AnyToolCall | null {
       return {
         source: 'delegate',
         call: { tool: 'delegate_coder', args: { task, tasks, files, acceptanceCriteria, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } },
+      };
+    }
+    if (parsedObj?.tool === 'delegate_explorer' && task) {
+      return {
+        source: 'delegate',
+        call: { tool: 'delegate_explorer', args: { task, files, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } },
       };
     }
     return null;
@@ -1108,11 +1115,21 @@ const NL_INTENT_PATTERNS: NLIntentPattern[] = [
     toolName: 'delegate_coder',
     exampleJson: '{"tool": "delegate_coder", "args": {"task": "describe the task here"}}',
   },
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:to\\s+)?(?:the\\s+)?explorer`, 'i'),
+    toolName: 'delegate_explorer',
+    exampleJson: '{"tool": "delegate_explorer", "args": {"task": "describe what to investigate"}}',
+  },
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:task\\s+)?(?:to\\s+)?(?:the\\s+)?explorer(?:\\s+agent)?`, 'i'),
+    toolName: 'delegate_explorer',
+    exampleJson: '{"tool": "delegate_explorer", "args": {"task": "describe what to investigate"}}',
+  },
   // Generic: model mentions a known tool name by its exact name without JSON
   // e.g. "I'll use sandbox_exec to run the tests"
   // This is safe because it requires the actual tool identifier in the text.
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:use|call|invoke|try)\\s+(sandbox_\\w+|read_file|list_directory|search_files|grep_file|delegate_coder|web_search|fetch_pr|list_prs|list_commits|list_branches)`, 'i'),
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:use|call|invoke|try)\\s+(sandbox_\\w+|read_file|list_directory|search_files|grep_file|delegate_coder|delegate_explorer|web_search|fetch_pr|list_prs|list_commits|list_branches)`, 'i'),
     toolName: '', // filled dynamically from capture group
     exampleJson: '', // filled dynamically
   },

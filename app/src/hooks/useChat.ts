@@ -28,6 +28,7 @@ import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget,
 import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, detectAllToolCalls, getToolSource, CANONICAL_SANDBOX_TOOL_NAMES } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent, generateCheckpointAnswer } from '@/lib/coder-agent';
+import { runExplorerAgent } from '@/lib/explorer-agent';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import {
   execInSandbox,
@@ -434,6 +435,9 @@ function buildReconciliationMessage(
       header += `Last known Coder state:\n${checkpoint.lastCoderState}\n`;
     }
     header += `The Coder's work may be partially complete. Check the sandbox state above.\nDecide whether to re-delegate the remaining work or proceed based on what's done.\n`;
+  } else if (checkpoint.phase === 'delegating_explorer') {
+    header += `\nInterruption: connection dropped during Explorer delegation (round ${checkpoint.round}).\n`;
+    header += `The Explorer may have gathered partial findings already. Check the sandbox state above and the recent conversation before re-running the investigation.\n`;
   }
 
   header += `\nDo not repeat work that is already reflected in the sandbox.`;
@@ -673,7 +677,7 @@ function getToolStatusLabel(toolCall: AnyToolCall): string {
       }
     }
     case 'delegate':
-      return 'Delegating to Coder...';
+      return toolCall.call.tool === 'delegate_explorer' ? 'Delegating to Explorer...' : 'Delegating to Coder...';
     case 'scratchpad':
       return 'Updating scratchpad...';
     case 'web-search':
@@ -688,7 +692,7 @@ function getToolName(toolCall: AnyToolCall): string {
   switch (toolCall.source) {
     case 'github': return toolCall.call.tool;
     case 'sandbox': return toolCall.call.tool;
-    case 'delegate': return 'delegate_coder';
+    case 'delegate': return toolCall.call.tool;
     case 'scratchpad': return toolCall.call.tool;
     case 'web-search': return 'web_search';
     default: return 'unknown';
@@ -1974,7 +1978,7 @@ export function useChat(
               updateAgentStatus({ active: true, phase: getToolStatusLabel(mutCall) }, { chatId });
 
               // Auto-spin sandbox if needed
-              if ((mutCall.source === 'sandbox' || mutCall.source === 'delegate') && !sandboxIdRef.current && ensureSandboxRef.current) {
+              if ((mutCall.source === 'sandbox' || (mutCall.source === 'delegate' && mutCall.call.tool === 'delegate_coder')) && !sandboxIdRef.current && ensureSandboxRef.current) {
                 updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
                 const newId = await ensureSandboxRef.current();
                 if (newId) sandboxIdRef.current = newId;
@@ -2276,8 +2280,8 @@ export function useChat(
 
           let toolExecResult: ToolExecutionResult;
 
-          // Lazy auto-spin: create sandbox on demand when a sandbox/delegate tool is needed
-          if ((toolCall.source === 'sandbox' || toolCall.source === 'delegate') && !sandboxIdRef.current) {
+          // Lazy auto-spin: create sandbox on demand when a sandbox tool or Coder delegation needs one.
+          if ((toolCall.source === 'sandbox' || (toolCall.source === 'delegate' && toolCall.call.tool === 'delegate_coder')) && !sandboxIdRef.current) {
             if (ensureSandboxRef.current) {
               updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
               const newId = await ensureSandboxRef.current();
@@ -2316,25 +2320,95 @@ export function useChat(
               toolExecResult = { text: result.text };
             }
           } else if (toolCall.source === 'delegate') {
-            // Handle Coder delegation (Phase 3b)
-            checkpointPhaseRef.current = 'delegating_coder';
-            lastCoderStateRef.current = null; // Will be populated by onWorkingMemoryUpdate callback
-            const currentSandboxId = sandboxIdRef.current;
-            if (!currentSandboxId) {
-              toolExecResult = { text: '[Tool Error] Failed to start sandbox automatically. Try again.' };
-            } else {
-              try {
-                const delegateArgs = toolCall.call.args;
-                const taskList = Array.isArray(delegateArgs.tasks)
-                  ? delegateArgs.tasks.filter((t) => typeof t === 'string' && t.trim())
-                  : [];
-                if (delegateArgs.task?.trim()) {
-                  taskList.unshift(delegateArgs.task.trim());
-                }
+            if (toolCall.call.tool === 'delegate_explorer') {
+              checkpointPhaseRef.current = 'delegating_explorer';
+              const explorerTask = toolCall.call.args.task?.trim();
+              if (!explorerTask) {
+                toolExecResult = { text: '[Tool Error] delegate_explorer requires a non-empty "task" string.' };
+              } else {
+                try {
+                  const explorerResult = await runExplorerAgent(
+                    {
+                      task: explorerTask,
+                      files: toolCall.call.args.files || [],
+                      intent: toolCall.call.args.intent,
+                      constraints: toolCall.call.args.constraints,
+                      branchContext: branchInfoRef.current?.currentBranch ? {
+                        activeBranch: branchInfoRef.current.currentBranch,
+                        defaultBranch: branchInfoRef.current.defaultBranch || 'main',
+                        protectMain: isMainProtectedRef.current,
+                      } : undefined,
+                      provider: lockedProviderForChat,
+                      model: resolvedModelForChat || undefined,
+                      projectInstructions: agentsMdRef.current || undefined,
+                      instructionFilename: instructionFilenameRef.current || undefined,
+                    },
+                    sandboxIdRef.current,
+                    repoRef.current || '',
+                    {
+                      onStatus: (phase, detail) => {
+                        updateAgentStatus(
+                          { active: true, phase, detail },
+                          { chatId, source: 'explorer' },
+                        );
+                      },
+                      signal: abortControllerRef.current?.signal,
+                    },
+                  );
 
-                if (taskList.length === 0) {
-                  toolExecResult = { text: '[Tool Error] delegate_coder requires "task" or non-empty "tasks" array.' };
-                } else {
+                  if (explorerResult.cards.length > 0) {
+                    setConversations((prev) => {
+                      const conv = prev[chatId];
+                      if (!conv) return prev;
+                      const msgs = [...conv.messages];
+                      const safeCards = explorerResult.cards.filter((card) => card.type !== 'sandbox-state');
+                      if (safeCards.length === 0) return prev;
+                      for (let i = msgs.length - 1; i >= 0; i--) {
+                        if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
+                          msgs[i] = {
+                            ...msgs[i],
+                            cards: [...(msgs[i].cards || []), ...safeCards],
+                          };
+                          break;
+                        }
+                      }
+                      return { ...prev, [chatId]: { ...conv, messages: msgs } };
+                    });
+                  }
+
+                  toolExecResult = {
+                    text: `[Tool Result — delegate_explorer]\n${explorerResult.summary}\n(${explorerResult.rounds} round${explorerResult.rounds !== 1 ? 's' : ''})`,
+                  };
+                } catch (err) {
+                  const isAbort = err instanceof DOMException && err.name === 'AbortError';
+                  if (isAbort || abortRef.current) {
+                    toolExecResult = { text: '[Tool Result — delegate_explorer]\nExplorer cancelled by user.' };
+                  } else {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    toolExecResult = { text: `[Tool Error] Explorer failed: ${msg}` };
+                  }
+                }
+              }
+            } else {
+              // Handle Coder delegation (Phase 3b)
+              checkpointPhaseRef.current = 'delegating_coder';
+              lastCoderStateRef.current = null; // Will be populated by onWorkingMemoryUpdate callback
+              const currentSandboxId = sandboxIdRef.current;
+              if (!currentSandboxId) {
+                toolExecResult = { text: '[Tool Error] Failed to start sandbox automatically. Try again.' };
+              } else {
+                try {
+                  const delegateArgs = toolCall.call.args;
+                  const taskList = Array.isArray(delegateArgs.tasks)
+                    ? delegateArgs.tasks.filter((t) => typeof t === 'string' && t.trim())
+                    : [];
+                  if (delegateArgs.task?.trim()) {
+                    taskList.unshift(delegateArgs.task.trim());
+                  }
+
+                  if (taskList.length === 0) {
+                    toolExecResult = { text: '[Tool Error] delegate_coder requires "task" or non-empty "tasks" array.' };
+                  } else {
                   const allCards: ChatCard[] = [];
                   const summaries: string[] = [];
                   let totalRounds = 0;
@@ -2751,13 +2825,14 @@ export function useChat(
                     text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})${parallelIsolationNote}`,
                   };
                 }
-              } catch (err) {
-                const isAbort = err instanceof DOMException && err.name === 'AbortError';
-                if (isAbort || abortRef.current) {
-                  toolExecResult = { text: '[Tool Result — delegate_coder]\nCoder cancelled by user.' };
-                } else {
-                  const msg = err instanceof Error ? err.message : String(err);
-                  toolExecResult = { text: `[Tool Error] Coder failed: ${msg}` };
+                } catch (err) {
+                  const isAbort = err instanceof DOMException && err.name === 'AbortError';
+                  if (isAbort || abortRef.current) {
+                    toolExecResult = { text: '[Tool Result — delegate_coder]\nCoder cancelled by user.' };
+                  } else {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    toolExecResult = { text: `[Tool Error] Coder failed: ${msg}` };
+                  }
                 }
               }
             }

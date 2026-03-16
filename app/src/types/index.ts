@@ -60,7 +60,7 @@ export const USER_PROFILE_DEFAULTS: UserProfile = {
   bio: '',
 };
 
-export type AgentRole = 'orchestrator' | 'coder' | 'auditor' | 'reviewer';
+export type AgentRole = 'orchestrator' | 'coder' | 'explorer' | 'auditor' | 'reviewer';
 
 // ---------------------------------------------------------------------------
 // Reviewer agent types
@@ -501,7 +501,7 @@ export interface AgentStatus {
   detail?: string;
 }
 
-export type AgentStatusSource = 'orchestrator' | 'coder' | 'auditor' | 'system';
+export type AgentStatusSource = 'orchestrator' | 'coder' | 'explorer' | 'auditor' | 'system';
 
 export interface AgentStatusEvent {
   id: string;
@@ -678,7 +678,7 @@ export interface AskUserCardData {
 
 // --- Resumable Sessions ---
 
-export type LoopPhase = 'streaming_llm' | 'executing_tools' | 'delegating_coder';
+export type LoopPhase = 'streaming_llm' | 'executing_tools' | 'delegating_coder' | 'delegating_explorer';
 
 // ---------------------------------------------------------------------------
 // Tool hooks — pre/post execution interception
@@ -770,6 +770,33 @@ export interface CoderResult {
   rounds: number;
   checkpoints: number;
   criteriaResults?: CriterionResult[];
+}
+
+export interface ExplorerDelegationEnvelope {
+  task: string;
+  files: string[];
+  intent?: string;
+  constraints?: string[];
+  branchContext?: {
+    activeBranch: string;
+    defaultBranch: string;
+    protectMain: boolean;
+  };
+  provider: AIProviderType;
+  model?: string;
+  projectInstructions?: string;
+  instructionFilename?: string;
+}
+
+export interface ExplorerCallbacks {
+  onStatus: (phase: string, detail?: string) => void;
+  signal?: AbortSignal;
+}
+
+export interface ExplorerResult {
+  summary: string;
+  cards: ChatCard[];
+  rounds: number;
 }
 
 export interface RunCheckpoint {

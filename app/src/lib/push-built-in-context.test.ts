@@ -15,6 +15,7 @@ describe('push built-in project context', () => {
   it('provides built-in instructions for the Push repo even without repo docs', () => {
     const builtIn = getBuiltInProjectInstructions('KvFxKaido/Push');
     expect(builtIn).toContain('Push is an AI coding agent with a web app plus a local CLI/TUI');
+    expect(builtIn).toContain('Explorer: autonomous read-only investigator for codebase understanding');
     expect(builtIn).toContain('Branch creation is UI-owned');
   });
 
