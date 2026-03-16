@@ -1,6 +1,10 @@
 {
   "name": "push",
   "main": "./app/worker.ts",
+  "build": {
+    "command": "cd app && npm install && npm run build",
+    "watch_dir": "./app/src"
+  },
   "compatibility_date": "2026-02-01",
   "assets": {
     "directory": "./app/dist"
