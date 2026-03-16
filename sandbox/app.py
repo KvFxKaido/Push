@@ -648,8 +648,8 @@ def _write_temp_payload(sb: modal.Sandbox, payload: str, tmp_path: str = "/tmp/p
     and ARG_MAX limits that break for large file payloads (100KB+).
     """
     try:
-        p = sb.exec("bash", "-c", f"cat > {tmp_path}")
-        p.stdin.write(payload.encode() if isinstance(payload, str) else payload)
+        p = sb.exec("bash", "-c", f"cat > '{tmp_path}'")
+        p.stdin.write(payload.encode())
         p.stdin.write_eof()
         p.stdin.drain()
         if not _wait_with_timeout(p, timeout_seconds=30):
@@ -1348,8 +1348,8 @@ def _file_ops_inner(sb, action: str, path: str, data: dict):
 
         sb.exec("rm", "-f", tmp_b64, tmp_archive).wait()
         try:
-            p = sb.exec("bash", "-c", f"cat > {tmp_b64}")
-            p.stdin.write(archive_base64.encode() if isinstance(archive_base64, str) else archive_base64)
+            p = sb.exec("bash", "-c", f"cat > '{tmp_b64}'")
+            p.stdin.write(archive_base64.encode())
             p.stdin.write_eof()
             p.stdin.drain()
             p.wait()
