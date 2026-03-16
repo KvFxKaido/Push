@@ -287,11 +287,11 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
    * If dead  → transition to 'error' with an actionable message.
    * No-op if no sandbox is active.
    */
-  const refresh = useCallback(async (): Promise<boolean> => {
+  const refresh = useCallback(async (opts?: { silent?: boolean }): Promise<boolean> => {
     const id = sandboxIdRef.current;
     if (!id) return false;
 
-    setStatus('creating'); // reuse 'creating' as a "checking" state (shows spinner)
+    if (!opts?.silent) setStatus('creating'); // reuse 'creating' as a "checking" state (shows spinner)
     setError(null);
 
     try {
@@ -301,7 +301,6 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
       if (result.exitCode === 0) {
         setStatus('ready');
-        console.log('[useSandbox] Refresh succeeded — sandbox is alive:', id);
         return true;
       }
       // exitCode -1 or other failure: container is gone
@@ -309,7 +308,6 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       setStatus('error');
       setError(reason);
       clearTrackedSession(sessionStorageKeyRef.current, id);
-      console.log('[useSandbox] Refresh failed — sandbox is dead:', id, reason);
       return false;
     } catch (err) {
       if (sandboxIdRef.current !== id) return false;
@@ -317,7 +315,6 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       setStatus('error');
       setError(msg);
       clearTrackedSession(sessionStorageKeyRef.current, id);
-      console.log('[useSandbox] Refresh failed — error:', id, msg);
       return false;
     }
   }, []);
@@ -332,6 +329,63 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     setStatus('error');
     setError(reason);
   }, []);
+
+  // Track when the page was hidden to detect "returned from background"
+  const hiddenAtRef = useRef<number | null>(null);
+  const healthCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Re-validate sandbox when user returns from background
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Page hidden — record timestamp
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+
+      // Page visible again — check if we need to validate
+      const id = sandboxIdRef.current;
+      if (!id || statusRef.current !== 'ready') return;
+
+      // If we were hidden for more than 10s, the sandbox might have died
+      const wasHiddenFor = hiddenAtRef.current ? Date.now() - hiddenAtRef.current : 0;
+      if (wasHiddenFor > 10_000) {
+        refresh({ silent: true });
+      }
+      hiddenAtRef.current = null;
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [refresh]);
+
+  // Periodic health check while sandbox is ready (catches expiration while tab is visible but idle)
+  useEffect(() => {
+    // Only poll when sandbox is ready
+    if (status !== 'ready' || !sandboxId) {
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+        healthCheckIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // Check every 60s while visible
+    healthCheckIntervalRef.current = setInterval(() => {
+      // Skip if page is hidden — visibility handler will catch it on return
+      if (document.hidden) return;
+
+      refresh({ silent: true });
+    }, 60_000);
+
+    return () => {
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+        healthCheckIntervalRef.current = null;
+      }
+    };
+  }, [status, sandboxId, refresh]);
+
 
   return {
     sandboxId,
