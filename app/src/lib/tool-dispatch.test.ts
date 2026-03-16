@@ -497,3 +497,49 @@ describe('diagnoseToolCallFailure malformed JSON', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// diagnoseToolCallFailure — unknown tool name diagnosis (Phase 2.5)
+// ---------------------------------------------------------------------------
+
+describe('diagnoseToolCallFailure unknown tool names', () => {
+  it('detects hallucinated "edit" tool in fenced block and suggests alternatives', () => {
+    const text = '```json\n{"tool": "edit", "args": {"repo": "owner/repo", "path": "src/app.ts", "old_string": "foo", "new_string": "bar"}}\n```';
+    const result = diagnoseToolCallFailure(text);
+
+    expect(result).not.toBeNull();
+    expect(result!.reason).toBe('validation_failed');
+    expect(result!.toolName).toBe('edit');
+    expect(result!.errorMessage).toContain('does not exist');
+    expect(result!.errorMessage).toContain('sandbox_edit_file');
+  });
+
+  it('detects hallucinated "write" tool and suggests sandbox_write_file', () => {
+    const text = '```json\n{"tool": "write", "args": {"path": "/workspace/test.ts", "content": "hello"}}\n```';
+    const result = diagnoseToolCallFailure(text);
+
+    expect(result).not.toBeNull();
+    expect(result!.errorMessage).toContain('does not exist');
+    expect(result!.errorMessage).toContain('sandbox_write_file');
+  });
+
+  it('does not flag unknown tool names in bare prose JSON (only fenced blocks)', () => {
+    // Model returning example JSON in prose — should NOT trigger diagnosis
+    const text = 'Here is an example tool call:\n{"tool": "my_custom_tool", "args": {"param": "value"}}\nThis shows the expected format.';
+    const result = diagnoseToolCallFailure(text);
+
+    // Should either be null or not flagged as unknown tool
+    if (result) {
+      expect(result.toolName).not.toBe('my_custom_tool');
+    }
+  });
+
+  it('lists available tools when no suggestion mapping exists', () => {
+    const text = '```json\n{"tool": "completely_made_up", "args": {"x": 1}}\n```';
+    const result = diagnoseToolCallFailure(text);
+
+    expect(result).not.toBeNull();
+    expect(result!.errorMessage).toContain('does not exist');
+    expect(result!.errorMessage).toContain('Available tools');
+  });
+});

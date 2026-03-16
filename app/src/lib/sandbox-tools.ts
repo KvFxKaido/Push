@@ -110,24 +110,29 @@ function formatSandboxDisplayScope(path: string): string {
  * Normalize Unicode for fuzzy comparison — collapses smart quotes, em-dashes,
  * ellipses, mojibake sequences, and other typographic variants into their
  * ASCII equivalents. Used to detect encoding mismatches in search strings.
+ *
+ * Mojibake occurs when UTF-8 bytes are decoded as Windows-1252 (CP1252).
+ * The middle byte 0x80 maps to U+20AC (€) in CP1252, or stays as U+0080
+ * in ISO-8859-1. We match both variants with a character class.
  */
 function normalizeUnicode(s: string): string {
   return s
-    // Mojibake sequences (UTF-8 bytes decoded as Latin-1/Windows-1252)
-    .replace(/\u00e2\u0080\u0093/g, '-')   // â€" → - (em-dash mojibake)
-    .replace(/\u00e2\u0080\u0094/g, '-')   // â€" → - (em-dash mojibake variant)
-    .replace(/\u00e2\u0080\u0099/g, "'")   // â€™ → ' (right single quote mojibake)
-    .replace(/\u00e2\u0080\u009c/g, '"')   // â€œ → " (left double quote mojibake)
-    .replace(/\u00e2\u0080\u009d/g, '"')   // â€ → " (right double quote mojibake)
-    .replace(/\u00e2\u0080\u00a6/g, '...') // â€¦ → ... (ellipsis mojibake)
-    .replace(/\u00e2\u0080\u0098/g, "'")   // â€˜ → ' (left single quote mojibake)
-    .replace(/\u00e2\u0086\u0092/g, '->')  // â†' → -> (arrow mojibake)
+    // Mojibake: UTF-8 bytes decoded as CP1252 (common) or ISO-8859-1 (rare)
+    // â + €/\x80 + CP1252(byte3)  →  original character
+    .replace(/\u00e2[\u20ac\u0080]\u201c/g, '-')   // â€" (en-dash U+2013)
+    .replace(/\u00e2[\u20ac\u0080]\u201d/g, '-')   // â€" (em-dash U+2014)
+    .replace(/\u00e2[\u20ac\u0080]\u2122/g, "'")   // â€™ (right single quote U+2019)
+    .replace(/\u00e2[\u20ac\u0080]\u02dc/g, "'")   // â€˜ (left single quote U+2018)
+    .replace(/\u00e2[\u20ac\u0080]\u0153/g, '"')   // â€œ (left double quote U+201C)
+    .replace(/\u00e2[\u20ac\u0080][\u009d\u201d]/g, '"') // â€\x9d (right double quote U+201D)
+    .replace(/\u00e2[\u20ac\u0080]\u00a6/g, '...') // â€¦ (ellipsis U+2026)
+    .replace(/\u00e2[\u2020\u0086][\u2019\u0092]/g, '->') // â†' (right arrow U+2192)
     // Actual Unicode typographic characters
     .replace(/[\u2018\u2019\u201A\u201B]/g, "'") // smart single quotes → '
     .replace(/[\u201C\u201D\u201E\u201F]/g, '"') // smart double quotes → "
     .replace(/[\u2013\u2014]/g, '-')              // en-dash, em-dash → -
     .replace(/\u2026/g, '...')                     // ellipsis → ...
-    .replace(/\u2192/g, '->')                      // → arrow → ->
+    .replace(/\u2192/g, '->')                      // right arrow → ->
     .replace(/\u00A0/g, ' ')                       // non-breaking space → space
     // NFC normalization for accented characters
     .normalize('NFC');
@@ -2062,7 +2067,7 @@ export async function executeSandboxToolCall(
               type: 'EDIT_CONTENT_NOT_FOUND',
               retryable: true,
               message: `Search string has encoding mismatches (smart quotes, em-dashes, or mojibake). Found ${fuzzyMatches.length} line(s) that match after Unicode normalization.`,
-              detail: `Your search contains characters that don't match the file exactly (e.g. â€" vs —, â€™ vs ', " vs ").\nMatching lines after normalization:\n${shown.join('\n')}\n\nRe-read the file with sandbox_read_file and copy the exact characters.`,
+              detail: `Your search contains characters that don't match the file exactly — common mismatches include mojibake (e.g. "\\u00e2\\u20ac\\u201c" instead of an em-dash), smart quotes (\\u201c/\\u201d instead of ASCII "), and typographic dashes (\\u2013/\\u2014 instead of -).\nMatching lines after normalization:\n${shown.join('\n')}\n\nRe-read the file with sandbox_read_file and copy the exact characters.`,
             };
             return {
               text: formatStructuredError(err, [

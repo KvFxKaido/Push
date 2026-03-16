@@ -2069,4 +2069,43 @@ describe('sandbox_search_replace', () => {
       'v1',
     );
   });
+
+  it('detects encoding mismatch when search contains smart quotes instead of ASCII', async () => {
+    const path = '/workspace/src/app.ts';
+    // File has ASCII double quotes
+    const fileContent = 'const msg = "hello world";\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+    const result = await executeSandboxToolCall(
+      // Search uses smart double quotes (U+201C / U+201D) instead of ASCII "
+      { tool: 'sandbox_search_replace', args: { path, search: '\u201chello world\u201d', replace: 'goodbye' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error \u2014 sandbox_search_replace]');
+    expect(result.text).toContain('Encoding mismatch');
+    expect(result.text).toContain('normalization');
+    expect(result.structuredError?.type).toBe('EDIT_CONTENT_NOT_FOUND');
+    expect(result.structuredError?.retryable).toBe(true);
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('detects encoding mismatch with CP1252 mojibake em-dash', async () => {
+    const path = '/workspace/src/app.ts';
+    // File has a real em-dash (U+2014)
+    const fileContent = 'Does not ping \u2014 just updates UI state\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+    const result = await executeSandboxToolCall(
+      // Search uses CP1252 mojibake for em-dash: â€" = U+00E2 U+20AC U+201D
+      { tool: 'sandbox_search_replace', args: { path, search: 'Does not ping \u00e2\u20ac\u201d just updates', replace: 'fixed' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Encoding mismatch');
+    expect(result.structuredError?.retryable).toBe(true);
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
 });

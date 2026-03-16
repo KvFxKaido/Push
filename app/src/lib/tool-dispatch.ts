@@ -763,20 +763,14 @@ const TOOL_NAME_SUGGESTIONS: Record<string, string[]> = {
 };
 
 function detectUnknownToolName(text: string): ToolCallDiagnosis | null {
-  // Check fenced code blocks first
+  // Only check fenced code blocks — these are high-signal tool-call contexts.
+  // Bare JSON with unknown tool names in prose (docs, examples, spec output)
+  // should not trigger retry loops.
   const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
   let fenceMatch;
   while ((fenceMatch = fenceRegex.exec(text)) !== null) {
     const result = extractUnknownToolName(fenceMatch[1].trim());
     if (result) return buildUnknownToolDiagnosis(result);
-  }
-
-  // Check bare JSON objects
-  for (const parsed of extractBareToolJsonObjects(text)) {
-    const obj = asRecord(parsed);
-    if (obj && typeof obj.tool === 'string' && !KNOWN_TOOL_NAMES.has(obj.tool) && obj.args !== undefined) {
-      return buildUnknownToolDiagnosis(obj.tool);
-    }
   }
 
   return null;
