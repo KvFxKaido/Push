@@ -5,7 +5,16 @@ import { runReviewer } from '@/lib/reviewer-agent';
 import { executePostPRReview, fetchGitHubReviewDiff, fetchLatestCommitDiff } from '@/lib/github-tools';
 import { parseDiffStats } from '@/lib/diff-utils';
 import type { ActiveProvider } from '@/lib/orchestrator';
-import type { PreferredProvider } from '@/lib/providers';
+import {
+  OLLAMA_DEFAULT_MODEL,
+  OPENROUTER_DEFAULT_MODEL,
+  ZEN_DEFAULT_MODEL,
+  NVIDIA_DEFAULT_MODEL,
+  AZURE_DEFAULT_MODEL,
+  BEDROCK_DEFAULT_MODEL,
+  VERTEX_DEFAULT_MODEL,
+  type PreferredProvider,
+} from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import {
   HUB_MATERIAL_INPUT_CLASS,
@@ -23,7 +32,7 @@ interface HubReviewTabProps {
   ensureSandbox: () => Promise<string | null>;
   availableProviders: readonly (readonly [PreferredProvider, string, boolean])[];
   activeProvider: ActiveProvider;
-  providerModels: Record<PreferredProvider, string>;
+  providerModelOptions?: Partial<Record<PreferredProvider, string[]>>;
   /** owner/name — undefined in Sandbox Mode or when no repo is selected */
   repoFullName?: string;
   /** active branch name — used to find an open PR */
@@ -87,6 +96,16 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   vertex: 'push:review:model:vertex',
 };
 
+const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
+  ollama: OLLAMA_DEFAULT_MODEL,
+  openrouter: OPENROUTER_DEFAULT_MODEL,
+  zen: ZEN_DEFAULT_MODEL,
+  nvidia: NVIDIA_DEFAULT_MODEL,
+  azure: AZURE_DEFAULT_MODEL,
+  bedrock: BEDROCK_DEFAULT_MODEL,
+  vertex: VERTEX_DEFAULT_MODEL,
+};
+
 function readStoredReviewProvider(): PreferredProvider | null {
   const stored = safeStorageGet(REVIEW_PROVIDER_KEY);
   if (
@@ -115,15 +134,15 @@ function isPreferredProvider(value: string): value is PreferredProvider {
   );
 }
 
-function readStoredReviewModels(providerModels: Record<PreferredProvider, string>): Record<PreferredProvider, string> {
+function readStoredReviewModels(): Record<PreferredProvider, string> {
   return {
-    ollama: safeStorageGet(REVIEW_MODEL_KEYS.ollama) || providerModels.ollama,
-    openrouter: safeStorageGet(REVIEW_MODEL_KEYS.openrouter) || providerModels.openrouter,
-    zen: safeStorageGet(REVIEW_MODEL_KEYS.zen) || providerModels.zen,
-    nvidia: safeStorageGet(REVIEW_MODEL_KEYS.nvidia) || providerModels.nvidia,
-    azure: safeStorageGet(REVIEW_MODEL_KEYS.azure) || providerModels.azure,
-    bedrock: safeStorageGet(REVIEW_MODEL_KEYS.bedrock) || providerModels.bedrock,
-    vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || providerModels.vertex,
+    ollama: safeStorageGet(REVIEW_MODEL_KEYS.ollama) || REVIEW_DEFAULT_MODELS.ollama,
+    openrouter: safeStorageGet(REVIEW_MODEL_KEYS.openrouter) || REVIEW_DEFAULT_MODELS.openrouter,
+    zen: safeStorageGet(REVIEW_MODEL_KEYS.zen) || REVIEW_DEFAULT_MODELS.zen,
+    nvidia: safeStorageGet(REVIEW_MODEL_KEYS.nvidia) || REVIEW_DEFAULT_MODELS.nvidia,
+    azure: safeStorageGet(REVIEW_MODEL_KEYS.azure) || REVIEW_DEFAULT_MODELS.azure,
+    bedrock: safeStorageGet(REVIEW_MODEL_KEYS.bedrock) || REVIEW_DEFAULT_MODELS.bedrock,
+    vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || REVIEW_DEFAULT_MODELS.vertex,
   };
 }
 
@@ -269,7 +288,7 @@ export function HubReviewTab({
   ensureSandbox,
   availableProviders,
   activeProvider,
-  providerModels,
+  providerModelOptions,
   repoFullName,
   activeBranch,
   defaultBranch,
@@ -288,7 +307,7 @@ export function HubReviewTab({
   const hasCommitSource = Boolean(repoFullName && activeBranch);
   const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(() => readStoredReviewProvider());
   const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(hasGitHubSource ? 'github' : hasCommitSource ? 'commit' : 'sandbox');
-  const [selectedModels, setSelectedModels] = useState<Record<PreferredProvider, string>>(() => readStoredReviewModels(providerModels));
+  const [selectedModels, setSelectedModels] = useState<Record<PreferredProvider, string>>(readStoredReviewModels);
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [reviewContext, setReviewContext] = useState<ReviewContext | null>(null);
@@ -330,38 +349,6 @@ export function HubReviewTab({
     setSavedReviewNotice(null);
   }, [reviewStorageKey]);
 
-  useEffect(() => {
-    setSelectedModels((prev) => {
-      const next = {
-        ollama: prev.ollama || providerModels.ollama,
-        openrouter: prev.openrouter || providerModels.openrouter,
-        zen: prev.zen || providerModels.zen,
-        nvidia: prev.nvidia || providerModels.nvidia,
-        azure: prev.azure || providerModels.azure,
-        bedrock: prev.bedrock || providerModels.bedrock,
-        vertex: prev.vertex || providerModels.vertex,
-      };
-      return (
-        next.ollama === prev.ollama &&
-        next.openrouter === prev.openrouter &&
-        next.zen === prev.zen &&
-        next.nvidia === prev.nvidia &&
-        next.azure === prev.azure &&
-        next.bedrock === prev.bedrock &&
-        next.vertex === prev.vertex
-      )
-        ? prev
-        : next;
-    });
-  }, [
-    providerModels.azure,
-    providerModels.bedrock,
-    providerModels.nvidia,
-    providerModels.ollama,
-    providerModels.openrouter,
-    providerModels.vertex,
-    providerModels.zen,
-  ]);
 
   useEffect(() => {
     if (selectedProvider) {
@@ -448,11 +435,25 @@ export function HubReviewTab({
     });
   }, [onOpenDiff, reviewContext, reviewDiffData]);
 
-  const selectedDefaultModel = selectedProvider ? providerModels[selectedProvider] : '';
+  const selectedDefaultModel = selectedProvider ? REVIEW_DEFAULT_MODELS[selectedProvider] : '';
   const selectedReviewModelInput = selectedProvider ? selectedModels[selectedProvider] ?? '' : '';
   const selectedReviewModel = selectedProvider
     ? (selectedModels[selectedProvider]?.trim() || selectedDefaultModel)
     : '';
+
+  const modelOptionsForProvider = useMemo(() => {
+    if (!selectedProvider || !providerModelOptions) return [];
+    const options = providerModelOptions[selectedProvider] ?? [];
+    const active = selectedModels[selectedProvider]?.trim() || REVIEW_DEFAULT_MODELS[selectedProvider];
+    if (!active || options.includes(active)) return options;
+    return [active, ...options];
+  }, [selectedProvider, providerModelOptions, selectedModels]);
+
+  const [useCustomModel, setUseCustomModel] = useState(false);
+
+  useEffect(() => {
+    setUseCustomModel(false);
+  }, [selectedProvider]);
   const isCurrentReviewSaved = Boolean(result && savedReview && savedReview.result.reviewedAt === result.reviewedAt);
 
   const applySavedReview = useCallback((payload: SavedReviewPayload) => {
@@ -755,15 +756,45 @@ export function HubReviewTab({
               ))}
             </div>
 
-            {/* Model input */}
+            {/* Model selector */}
             <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={selectedReviewModelInput}
-                onChange={(e) => handleModelChange(e.target.value)}
-                placeholder={selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'}
-                className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1 px-2.5 py-1.5`}
-              />
+              {modelOptionsForProvider.length > 0 && !useCustomModel ? (
+                <select
+                  value={selectedReviewModel}
+                  onChange={(e) => {
+                    if (e.target.value === '__custom__') {
+                      setUseCustomModel(true);
+                    } else {
+                      handleModelChange(e.target.value);
+                    }
+                  }}
+                  disabled={running}
+                  className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1 px-2.5 py-1.5`}
+                >
+                  {modelOptionsForProvider.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  <option value="__custom__">Custom model…</option>
+                </select>
+              ) : (
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={selectedReviewModelInput}
+                    onChange={(e) => handleModelChange(e.target.value)}
+                    placeholder={selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'}
+                    className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1 px-2.5 py-1.5`}
+                  />
+                  {modelOptionsForProvider.length > 0 && (
+                    <button
+                      onClick={() => setUseCustomModel(false)}
+                      className="flex-shrink-0 rounded border border-push-edge px-1.5 py-1 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
+                    >
+                      <ChevronDown className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              )}
               <button
                 onClick={() => void handleRunReview()}
                 disabled={!canRunReview}
@@ -778,12 +809,6 @@ export function HubReviewTab({
                 <span className="relative z-10">{running ? 'Reviewing…' : 'Run review'}</span>
               </button>
             </div>
-            {selectedDefaultModel && (
-              <p className="text-push-2xs text-push-fg-dim">
-                Review model: <span className="text-push-fg-secondary">{selectedReviewModel}</span>
-                {selectedReviewModelInput.trim() ? '' : ' (using Settings default)'}
-              </p>
-            )}
           </>
         )}
 

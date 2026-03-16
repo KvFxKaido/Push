@@ -1270,14 +1270,12 @@ export function ChatScreen(props: ChatScreenProps) {
         }}
         reviewProviders={catalog.availableProviders}
         reviewActiveProvider={catalog.activeProviderLabel}
-        reviewProviderModels={{
-          ollama: catalog.ollama.model,
-          openrouter: catalog.openRouter.model,
-          zen: catalog.zen.model,
-          nvidia: catalog.nvidia.model,
-          azure: catalog.azure.model,
-          bedrock: catalog.bedrock.model,
-          vertex: catalog.vertex.model,
+        reviewModelOptions={{
+          ollama: catalog.ollamaModelOptions,
+          openrouter: catalog.openRouterModelOptions,
+          zen: catalog.zenModelOptions,
+          nvidia: catalog.nvidiaModelOptions,
+          vertex: catalog.vertex.modelOptions,
         }}
         lockedProvider={lockedProvider}
         lockedModel={lockedModel}

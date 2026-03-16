@@ -118,7 +118,7 @@ interface WorkspaceHubSheetProps {
   onNewSandbox: () => void;
   reviewProviders: readonly (readonly [PreferredProvider, string, boolean])[];
   reviewActiveProvider: ReturnType<typeof getActiveProvider>;
-  reviewProviderModels: Record<PreferredProvider, string>;
+  reviewModelOptions?: Partial<Record<PreferredProvider, string[]>>;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
   workspaceMode: WorkspaceMode;
@@ -289,7 +289,7 @@ export function WorkspaceHubSheet({
   onNewSandbox,
   reviewProviders,
   reviewActiveProvider,
-  reviewProviderModels,
+  reviewModelOptions,
   lockedProvider,
   lockedModel,
   workspaceMode,
@@ -1407,7 +1407,7 @@ export function WorkspaceHubSheet({
                 ensureSandbox={ensureSandbox}
                 availableProviders={reviewProviders}
                 activeProvider={reviewActiveProvider}
-                providerModels={reviewProviderModels}
+                providerModelOptions={reviewModelOptions}
                 repoFullName={repoFullName}
                 activeBranch={branchProps.currentBranch}
                 defaultBranch={branchProps.defaultBranch}
