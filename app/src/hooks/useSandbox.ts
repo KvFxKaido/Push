@@ -292,7 +292,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     if (!id) return false;
 
     if (!opts?.silent) setStatus('creating'); // reuse 'creating' as a "checking" state (shows spinner)
-    setError(null);
+    if (!opts?.silent) setError(null);
 
     try {
       const result = await execInSandbox(id, 'true');
