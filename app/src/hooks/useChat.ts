@@ -81,6 +81,19 @@ function formatElapsedTime(ms: number): string {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
+/** Error subtype with optional elapsed time — used to carry timing through Promise.allSettled rejections. */
+interface ErrorWithElapsed extends Error { elapsedMs?: number; }
+
+/**
+ * Derive a status label from coder results. If acceptance criteria were run
+ * and any failed, report CHECKS_FAILED instead of OK to avoid misleading the user.
+ */
+function getTaskStatusLabel(criteriaResults?: import('@/types').CriterionResult[]): string {
+  if (!criteriaResults || criteriaResults.length === 0) return 'OK';
+  const allPassed = criteriaResults.every(r => r.passed);
+  return allPassed ? 'OK' : 'CHECKS_FAILED';
+}
+
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
   const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
@@ -2171,38 +2184,49 @@ export function useChat(
 
                           // Apply acceptance criteria to every parallel task — each runs
                           // in its own isolated sandbox so criteria should validate independently.
-                          const bi = branchInfoRef.current;
-                          const coderResult = await runCoderAgent(
-                            task,
-                            workerSandboxId,
-                            delegateArgs.files || [],
-                            (phase, detail) => {
-                              updateAgentStatus(
-                                { active: true, phase: `${prefix}${phase}`, detail },
-                                { chatId, source: 'coder' },
-                              );
-                            },
-                            agentsMdRef.current || undefined,
-                            abortControllerRef.current?.signal,
-                            handleCheckpoint,
-                            delegateArgs.acceptanceCriteria,
-                            (state) => { lastCoderStateRef.current = state; },
-                            lockedProviderForChat,
-                            resolvedModelForChat || undefined,
-                            {
-                              intent: delegateArgs.intent,
-                              constraints: delegateArgs.constraints,
-                              branchContext: bi?.currentBranch ? {
-                                activeBranch: bi.currentBranch,
-                                defaultBranch: bi.defaultBranch || 'main',
-                                protectMain: isMainProtectedRef.current,
-                              } : undefined,
-                              instructionFilename: instructionFilenameRef.current || undefined,
-                            },
-                          );
+                          // Wrap in try/catch to capture elapsed time even on failure.
+                          try {
+                            const bi = branchInfoRef.current;
+                            const coderResult = await runCoderAgent(
+                              task,
+                              workerSandboxId,
+                              delegateArgs.files || [],
+                              (phase, detail) => {
+                                updateAgentStatus(
+                                  { active: true, phase: `${prefix}${phase}`, detail },
+                                  { chatId, source: 'coder' },
+                                );
+                              },
+                              agentsMdRef.current || undefined,
+                              abortControllerRef.current?.signal,
+                              handleCheckpoint,
+                              delegateArgs.acceptanceCriteria,
+                              (state) => { lastCoderStateRef.current = state; },
+                              lockedProviderForChat,
+                              resolvedModelForChat || undefined,
+                              {
+                                intent: delegateArgs.intent,
+                                constraints: delegateArgs.constraints,
+                                branchContext: bi?.currentBranch ? {
+                                  activeBranch: bi.currentBranch,
+                                  defaultBranch: bi.defaultBranch || 'main',
+                                  protectMain: isMainProtectedRef.current,
+                                } : undefined,
+                                instructionFilename: instructionFilenameRef.current || undefined,
+                              },
+                            );
 
-                          const taskElapsedMs = Date.now() - taskStartTime;
-                          return { taskIndex, coderResult, elapsedMs: taskElapsedMs };
+                            const taskElapsedMs = Date.now() - taskStartTime;
+                            return { taskIndex, coderResult, elapsedMs: taskElapsedMs };
+                          } catch (taskErr) {
+                            const taskElapsedMs = Date.now() - taskStartTime;
+                            // Re-throw with elapsed time attached for the result collector
+                            const wrapped = new Error(
+                              taskErr instanceof Error ? taskErr.message : String(taskErr),
+                            );
+                            (wrapped as ErrorWithElapsed).elapsedMs = taskElapsedMs;
+                            throw wrapped;
+                          }
                         }),
                       );
                       const parallelElapsedMs = Date.now() - parallelStartTime;
@@ -2214,16 +2238,21 @@ export function useChat(
                       settledResults.forEach((result, taskIndex) => {
                         if (result.status === 'fulfilled') {
                           const { coderResult, elapsedMs } = result.value;
-                          succeededCount++;
                           totalRounds += coderResult.rounds;
                           totalCheckpoints += coderResult.checkpoints;
                           const elapsed = formatElapsedTime(elapsedMs);
-                          summaries.push(`Task ${taskIndex + 1} [OK, ${elapsed}]: ${coderResult.summary}`);
+                          const statusLabel = getTaskStatusLabel(coderResult.criteriaResults);
+                          if (statusLabel === 'FAILED') failedCount++;
+                          else succeededCount++;
+                          summaries.push(`Task ${taskIndex + 1} [${statusLabel}, ${elapsed}]: ${coderResult.summary}`);
                           allCards.push(...coderResult.cards);
                         } else {
                           failedCount++;
-                          const errorMsg = result.reason instanceof Error ? result.reason.message : String(result.reason);
-                          summaries.push(`Task ${taskIndex + 1} [FAILED]: ${errorMsg}`);
+                          const reason = result.reason;
+                          const errorMsg = reason instanceof Error ? reason.message : String(reason);
+                          const elapsedMs = (reason as ErrorWithElapsed)?.elapsedMs;
+                          const elapsed = typeof elapsedMs === 'number' ? `, ${formatElapsedTime(elapsedMs)}` : '';
+                          summaries.push(`Task ${taskIndex + 1} [FAILED${elapsed}]: ${errorMsg}`);
                         }
                       });
 
@@ -2282,6 +2311,7 @@ export function useChat(
                       // Apply acceptance criteria to every task — validates each independently.
                       // For sequential single-sandbox mode this also catches regressions
                       // introduced by earlier tasks before they compound.
+                      const seqTaskStart = Date.now();
                       const seqBi = branchInfoRef.current;
                       const coderResult = await runCoderAgent(
                         task,
@@ -2312,13 +2342,15 @@ export function useChat(
                           instructionFilename: instructionFilenameRef.current || undefined,
                         },
                       );
+                      const seqElapsed = formatElapsedTime(Date.now() - seqTaskStart);
+                      const seqStatus = getTaskStatusLabel(coderResult.criteriaResults);
                       totalRounds += coderResult.rounds;
                       totalCheckpoints += coderResult.checkpoints;
-                      summaries.push(
-                        taskList.length > 1
-                          ? `Task ${taskIndex + 1}: ${coderResult.summary}`
-                          : coderResult.summary,
-                      );
+                      if (taskList.length > 1) {
+                        summaries.push(`Task ${taskIndex + 1} [${seqStatus}, ${seqElapsed}]: ${coderResult.summary}`);
+                      } else {
+                        summaries.push(`${coderResult.summary} (${seqElapsed})`);
+                      }
                       allCards.push(...coderResult.cards);
                     }
                   }

@@ -506,14 +506,14 @@ Rules:
 ## Multi-Task Delegation
 
 For multiple independent coding tasks in a single request, use the "tasks" array instead of "task":
-{"tool": "delegate_coder", "args": { "tasks": ["implement feature X in foo.ts", "add tests for feature X in foo.test.ts"], "files": ["src/foo.ts"] }}
+{"tool": "delegate_coder", "args": { "tasks": ["add dark mode toggle to SettingsPage", "refactor logger utility to support log levels"], "files": ["src/settings.tsx", "src/lib/logger.ts"] }}
 
 Rules for multi-task delegation:
-- Each task must be independently completable — no task should depend on another task's output.
-- Maximum 3 tasks per delegation call. If more tasks are needed, split into separate delegate_coder calls.
-- When tasks > 1 and a repo is available, tasks run in parallel in isolated worker sandboxes (snapshot-based). Results are NOT auto-merged — the user will see a note about this.
-- If parallel setup fails (e.g. sandbox quota), the system falls back to sequential execution in the main sandbox automatically.
-- Acceptance criteria (if provided) run against every task, not just the last one.
+- Each task must be independently completable — no task should depend on another task's output. If tasks have dependencies, use separate sequential delegate_coder calls instead.
+- Up to 3 tasks run in parallel in isolated worker sandboxes (snapshot-based). More than 3 tasks fall back to sequential execution in the main sandbox.
+- Parallel results are NOT auto-merged — the user will see a note about this.
+- If parallel setup fails (e.g. sandbox quota), the system falls back to sequential execution automatically.
+- Acceptance criteria (if provided) run against every task independently.
 - All tasks share the same "files", "intent", and "constraints" context.
 
 ## When to Delegate vs Handle Directly
