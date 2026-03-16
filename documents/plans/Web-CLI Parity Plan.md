@@ -4,8 +4,7 @@
 - Created: 2026-03-15
 - Updated: 2026-03-16
 - Supersedes: Web-CLI Parity Plan (2026-03-11)
-- State: **In Progress** — Track 1 Complete ✅
-- Intent: Share core logic between web and CLI to eliminate dual implementations, prioritize TUI usability over feature parity
+- State: **In Progress** — Track 1 Complete ✅, Track 2 Complete ✅
 - Intent: Share core logic between web and CLI to eliminate dual implementations, prioritize TUI usability over feature parity
 
 ## What Changed from v1
@@ -65,3 +64,163 @@ The web app and CLI currently share zero imports. Every shared concept (hashline
 
 ## Architecture After Convergence
 
+```
+Push/
+  lib/                  # Shared modules (canonical, both surfaces import)
+    hashline.ts         # Hashline edit protocol (Track 1) ✅
+    diff-utils.ts       # Diff parsing, file classification, budget packing (Track 2) ✅
+    error-types.ts      # Error taxonomy, classifyError, formatStructuredError (Track 2) ✅
+    reasoning-tokens.ts # Think-token parser (<think> tags + native reasoning_content) (Track 2) ✅
+    context-budget.ts   # Token estimation, context budget resolution (Track 2) ✅
+  app/src/lib/          # Web-specific modules (import from lib/ for shared logic)
+  cli/                  # CLI-specific modules (import from lib/ for shared logic)
+```
+
+## Tracks
+
+### Track 1 — TypeScript Migration Spike ✅ COMPLETE
+
+**Goal:** Prove the shared module approach works end-to-end with one module (hashline).
+
+**Shipped:**
+- [x] Created `lib/hashline.ts` — universal hashline implementation with Node.js (`node:crypto`) and browser (`crypto.subtle`) runtime detection
+- [x] Optimized batch hashing for larger files (>2k lines) in Node
+- [x] Created `cli/tsconfig.json` with `@push/lib/*` path mapping
+- [x] CLI test suite (`cli/test-hashline.ts`) validates convergence
+- [x] Both surfaces can import from the same canonical source
+
+---
+
+### Track 2 — Core Module Extraction ✅ COMPLETE
+
+**Goal:** Extract remaining shared logic into runtime-agnostic modules in `lib/`.
+
+**Shipped:**
+
+#### diff-utils.ts
+- [x] `parseDiffStats()` — count files/additions/deletions from unified diff
+- [x] `parseDiffIntoFiles()` — split unified diff into per-file sections
+- [x] `classifyFilePath()` — production/tooling/test/fixture classification
+- [x] `chunkDiffByFile()` — budget-aware diff packing with priority sorting
+- [x] `formatSize()` — human-friendly byte size label
+- [x] Web app re-exports from `@push/lib/diff-utils` (zero-change for consumers)
+
+#### error-types.ts
+- [x] `ToolErrorType` union type (13 error types)
+- [x] `StructuredToolError` interface
+- [x] `classifyError()` — pattern-matching error classifier (superset of both web and CLI patterns)
+- [x] `formatStructuredError()` — text block formatter for tool results
+- [x] CLI-specific patterns (PATH_ESCAPE, non-zero exit) mapped to canonical types
+
+#### reasoning-tokens.ts
+- [x] `createReasoningTokenParser()` — unified parser handling both `<think>` tags and native `reasoning_content` deltas
+- [x] Based on CLI's more complete implementation (web version lacked native reasoning_content support)
+- [x] Full TypeScript types (`ReasoningTokenParser` interface)
+
+#### context-budget.ts
+- [x] `ContextBudget` interface with maxTokens/targetTokens/summarizeTokens
+- [x] `getContextBudget()` — model-aware budget resolution (default, Gemini, Claude, GPT-5.4, Grok)
+- [x] `estimateTokens()` — content-aware heuristic (code/prose/CJK detection via sampling)
+- [x] `estimateMessageTokens()` / `estimateContextTokens()` — message-level estimation
+- [x] `TokenEstimationMessage` interface (decoupled from app-specific ChatMessage type)
+- [x] Runtime-agnostic (no localStorage dependency)
+
+**Build integration:**
+- [x] Web app: `@push/lib/*` path alias in `vite.config.ts`, `tsconfig.json`, `tsconfig.app.json`
+- [x] CLI: existing `@push/lib/*` path mapping in `cli/tsconfig.json`
+- [x] Test suite: `cli/test-track2.ts` — 65 tests, all passing
+
+---
+
+### Track 3 — TUI Usability (Next)
+
+Make TUI the preferred surface for terminal-based development.
+
+**Current TUI state:**
+- Enabled via `PUSH_TUI_ENABLED=1`
+- Full-screen interface under active development
+- Goal: muscle-memory workflow that fits terminal development
+
+**Key TUI improvements:**
+- [ ] Session picker on startup (resume previous or start new)
+- [ ] Live tool output in transcript format (readable, not JSON dumps)
+- [ ] Context meter showing token budget usage
+- [ ] File awareness display (what files have been read/edited)
+- [ ] Interrupt handling (Ctrl+C doesn't kill daemon, just stops current tool loop)
+- [ ] Keyboard shortcuts for common actions (accept/reject, retry, switch sessions)
+- [ ] Status line showing active session, branch, dirty files
+- [ ] Scrollback buffer for reviewing previous tool outputs
+
+### Track 4 — Daemon Integration (Future)
+
+Not part of this plan's scope, but the natural next step after TUI stabilizes.
+
+**Vision:**
+- `pushd` runs as persistent background daemon
+- TUI becomes a client that attaches/detaches
+- Background sessions continue when TUI closes
+- Multiple TUI clients can observe same session (mob programming)
+
+**Deferred because:**
+- Requires Unix socket IPC or HTTP server
+- Session state persistence and recovery
+- Multi-client coordination
+- Not blocking TUI usability for solo development
+
+## Execution Order
+
+**Phase 1 — Validate TypeScript convergence:**
+1. Track 1: Migration spike (hashline only) ✅
+2. Decision: proceed or fall back to v1 shared modules ✅ (proceeding)
+
+**Phase 2 — Core convergence + TUI:**
+3. Track 2: Remaining core modules (diff-utils, error-types, reasoning-tokens, context-budget) ✅
+4. Track 3: TUI usability improvements (parallel with Track 2)
+
+**Phase 3 — Polish:**
+5. Performance testing (startup time, local file ops)
+6. Error handling parity (both surfaces should classify errors identically)
+7. Documentation (CLI README update, architecture decision record)
+
+**Later (separate plans):**
+- Track 4: Daemon integration
+- Safety gates (Protect Main, Auditor) if terminal workflow proves valuable
+- Reverse parity (CLI features → web)
+
+## Success Criteria
+
+**Technical:**
+- CLI and web use identical hashline, diff parsing, and tool dispatch code ✅ (hashline, diff, errors, reasoning, context)
+- Protocol changes only need to be made once ✅
+- No runtime performance regressions in CLI
+- TypeScript compilation passes for both surfaces ✅
+
+**Product:**
+- Shawn reaches for TUI during development instead of web chat
+- Local file operations feel instant
+- Terminal workflow integrates naturally with tmux/vim/git habits
+- Session resumption works reliably
+
+## Open Architecture Decisions (Resolved)
+
+1. **Runtime choice:** `tsx` is the recommended starting point for development simplicity. We can optimize with `tsc` later if startup time becomes painful.
+2. **Shared module ownership:** `lib/` MUST live at the repo root. Root makes the "shared" intent clearer and prevents the CLI from being littered with fragile `../../app/src/lib` imports.
+3. **ESM Strictness:** Node natively running ESM is strict about file extensions (e.g., `import { foo } from './bar.js'`). This will be the main friction point in Track 1 to ensure compatibility with Vite's looser resolution.
+
+## Migration from v1 Plan
+
+**What to preserve:**
+- Track F0's validation-first approach (prove it works with one module before going all-in) ✅
+- Adapter pattern for execution differences
+- "Port proven patterns, don't reinvent" principle
+
+**What to drop:**
+- Track A (Safety Guards) — deferred, not MVP
+- Track B (Agent Roles) — CLI doesn't need full role separation for v1
+- Track E (Reverse Parity) — separate plan
+- Private connector auth complexity
+
+**What to add:**
+- Explicit TypeScript migration path ✅
+- TUI usability as a first-class track
+- Daemon integration as future work (not current scope)

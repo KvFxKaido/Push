@@ -124,6 +124,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@push/lib": path.resolve(__dirname, "../lib"),
     },
   },
   server: {
