@@ -43,14 +43,14 @@ export function diagnoseJsonSyntaxError(text: string): JsonSyntaxDiagnosis | nul
 
   if (/^["']?tool["']?\s*:/.test(trimmed)) {
     return {
-      message: 'Missing opening brace `{` — JSON object must start with `{`.',
+      message: 'Missing opening brace — JSON value must start with `{` or `[`.',
       position: 0,
     };
   }
 
   if (trimmed[0] !== '{' && trimmed[0] !== '[') {
     return {
-      message: `Unexpected character \`${trimmed[0]}\` at start — JSON object must start with \`{\`.`,
+      message: `Unexpected character \`${trimmed[0]}\` at start — JSON value must start with \`{\` or \`[\`.`,
       position: 0,
     };
   }

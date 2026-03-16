@@ -12,29 +12,29 @@ import {
   classifyFilePath,
   chunkDiffByFile,
   formatSize,
-} from '../lib/diff-utils.js';
+} from '../lib/diff-utils';
 
 import {
   classifyError,
   formatStructuredError,
-} from '../lib/error-types.js';
+} from '../lib/error-types';
 
-import type { ToolErrorType, StructuredToolError } from '../lib/error-types.js';
+import type { ToolErrorType, StructuredToolError } from '../lib/error-types';
 
 import {
   createReasoningTokenParser,
-} from '../lib/reasoning-tokens.js';
+} from '../lib/reasoning-tokens';
 
-import type { ReasoningTokenParser } from '../lib/reasoning-tokens.js';
+import type { ReasoningTokenParser } from '../lib/reasoning-tokens';
 
 import {
   getContextBudget,
   estimateTokens,
   estimateMessageTokens,
   estimateContextTokens,
-} from '../lib/context-budget.js';
+} from '../lib/context-budget';
 
-import type { ContextBudget } from '../lib/context-budget.js';
+import type { ContextBudget } from '../lib/context-budget';
 
 import {
   asRecord,
@@ -45,7 +45,7 @@ import {
   detectToolFromText,
   stableJsonStringify,
   isInsideInlineCode,
-} from '../lib/tool-protocol.js';
+} from '../lib/tool-protocol';
 
 import {
   createWorkingMemory,
@@ -56,9 +56,9 @@ import {
   hasCoderState,
   formatCoderState,
   detectUpdateStateCall,
-} from '../lib/working-memory.js';
+} from '../lib/working-memory';
 
-import type { CoderWorkingMemory, CoderObservation } from '../lib/working-memory.js';
+import type { CoderWorkingMemory, CoderObservation } from '../lib/working-memory';
 
 let passed = 0;
 let failed = 0;
