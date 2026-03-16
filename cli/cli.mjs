@@ -1169,11 +1169,24 @@ async function runDaemonSubcommand(positionals) {
     const pid = await readPidFile();
     const socketPath = getSocketPath();
     if (pid && isProcessRunning(pid)) {
-      process.stdout.write(`pushd is running (pid: ${pid})\nsocket: ${socketPath}\n`);
+      // Also try a live ping to confirm responsiveness
+      const { tryConnect } = await import('./daemon-client.mjs');
+      const client = await tryConnect(socketPath, 1000);
+      if (client) {
+        try {
+          const res = await client.request('ping', {}, null, 1000);
+          client.close();
+          process.stdout.write(`pushd is running (pid: ${pid})\nsocket: ${socketPath}\nstatus: responsive\n`);
+        } catch {
+          client.close();
+          process.stdout.write(`pushd is running (pid: ${pid})\nsocket: ${socketPath}\nstatus: not responding to ping\n`);
+        }
+      } else {
+        process.stdout.write(`pushd is running (pid: ${pid})\nsocket: ${socketPath}\nstatus: socket not reachable\n`);
+      }
     } else {
       process.stdout.write('pushd is not running\n');
       if (pid) {
-        // Stale PID file
         try { await fs.unlink(getPidPath()); } catch { /* ignore */ }
       }
     }
@@ -1196,7 +1209,17 @@ async function runDaemonSubcommand(positionals) {
       env: { ...process.env },
     });
     child.unref();
-    process.stdout.write(`pushd started (pid: ${child.pid})\nsocket: ${getSocketPath()}\n`);
+
+    // Wait for daemon to become ready
+    const socketPath = getSocketPath();
+    const { waitForReady } = await import('./daemon-client.mjs');
+    const ready = await waitForReady(socketPath, { maxWaitMs: 3000, intervalMs: 200 });
+
+    if (ready) {
+      process.stdout.write(`pushd started (pid: ${child.pid})\nsocket: ${socketPath}\n`);
+    } else {
+      process.stdout.write(`pushd spawned (pid: ${child.pid}) but not yet responsive\nsocket: ${socketPath}\n`);
+    }
     return 0;
   }
 
@@ -1221,71 +1244,42 @@ async function runAttach(sessionId) {
   }
 
   const socketPath = getSocketPath();
-  const net = await import('node:net');
-  const { PROTOCOL_VERSION } = await import('./session-store.mjs');
+  const { connect } = await import('./daemon-client.mjs');
 
-  return new Promise((resolve, reject) => {
-    const socket = net.connect(socketPath, () => {
-      // Send attach request
-      const req = {
-        v: PROTOCOL_VERSION,
-        kind: 'request',
-        requestId: `req_${Date.now().toString(36)}`,
-        type: 'attach_session',
-        payload: { sessionId, lastSeenSeq: 0 },
-      };
-      socket.write(JSON.stringify(req) + '\n');
-    });
+  let client;
+  try {
+    client = await connect(socketPath);
+  } catch (err) {
+    process.stderr.write(`${fmt.error('Connection error:')} ${err.message}\n`);
+    return 1;
+  }
 
-    let buffer = '';
-    const onEvent = makeCLIEventHandler();
-    let attached = false;
+  const onEvent = makeCLIEventHandler();
+  client.onEvent(onEvent);
 
-    socket.on('data', (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+  try {
+    const res = await client.request('attach_session', { sessionId, lastSeenSeq: 0 });
+    process.stdout.write(
+      `Attached to ${sessionId}\n` +
+      `State: ${res.payload.state}${res.payload.activeRunId ? ` (run: ${res.payload.activeRunId})` : ''}\n` +
+      `Replay: seq ${res.payload.replay.fromSeq}–${res.payload.replay.toSeq}\n`,
+    );
+  } catch (err) {
+    process.stderr.write(`${fmt.error('Attach failed:')} ${err.message}\n`);
+    client.close();
+    return 1;
+  }
 
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const msg = JSON.parse(line);
-
-          if (msg.kind === 'response' && msg.type === 'attach_session') {
-            if (!msg.ok) {
-              process.stderr.write(`${fmt.error('Attach failed:')} ${msg.error?.message || 'unknown error'}\n`);
-              socket.end();
-              resolve(1);
-              return;
-            }
-            attached = true;
-            process.stdout.write(
-              `Attached to ${sessionId}\n` +
-              `Replay: seq ${msg.payload.replay.fromSeq}–${msg.payload.replay.toSeq}\n`,
-            );
-          } else if (msg.kind === 'event') {
-            onEvent(msg);
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-    });
-
-    socket.on('end', () => {
+  // Stay attached until Ctrl+C or disconnect
+  return new Promise((resolve) => {
+    client._socket.on('close', () => {
       process.stdout.write('\n[disconnected]\n');
-      resolve(attached ? 0 : 1);
+      resolve(0);
     });
 
-    socket.on('error', (err) => {
-      process.stderr.write(`${fmt.error('Connection error:')} ${err.message}\n`);
-      resolve(1);
-    });
-
-    // Allow Ctrl+C to detach
     process.on('SIGINT', () => {
       process.stdout.write('\n[detached]\n');
-      socket.end();
+      client.close();
       resolve(0);
     });
   });

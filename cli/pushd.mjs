@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 /**
- * pushd — Push daemon skeleton (W4)
+ * pushd — Push daemon (Track 4)
  *
- * Minimal local IPC daemon that reuses the same engine as the CLI.
+ * Persistent background daemon that reuses the same engine as the CLI.
  * Transport: Unix domain socket, NDJSON (one JSON object per line).
  *
  * Supported request types:
  *   hello            — handshake + capability negotiation
+ *   ping             — health check
+ *   list_sessions    — discover resumable sessions
  *   start_session    — create a new session
  *   send_user_message — start a run from user input
- *   attach_session   — attach to existing session (replay stub)
+ *   attach_session   — attach to existing session + event replay
+ *   submit_approval  — respond to an approval_required pause
+ *   cancel_run       — abort active run
  */
 import net from 'node:net';
 import { promises as fs } from 'node:fs';
@@ -25,14 +29,17 @@ import {
   saveSessionState,
   appendSessionEvent,
   loadSessionState,
+  loadSessionEvents,
   listSessions,
   PROTOCOL_VERSION,
 } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { appendUserMessageWithFileReferences } from './file-references.mjs';
 
-const VERSION = '0.1.0';
-const CAPABILITIES = ['stream_tokens', 'approvals'];
+const VERSION = '0.2.0';
+const CAPABILITIES = ['stream_tokens', 'approvals', 'replay_attach', 'multi_client'];
+
+const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 // ─── Socket path ─────────────────────────────────────────────────
 
@@ -70,7 +77,7 @@ async function cleanStaleSocket(socketPath) {
   }
 }
 
-// ─── Request ID ──────────────────────────────────────────────────
+// ─── ID generators ──────────────────────────────────────────────
 
 function makeRequestId() {
   return `req_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
@@ -78,6 +85,10 @@ function makeRequestId() {
 
 function makeAttachToken() {
   return `att_${randomBytes(8).toString('hex')}`;
+}
+
+function makeApprovalId() {
+  return `appr_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
 }
 
 // ─── Envelope helpers ────────────────────────────────────────────
@@ -105,19 +116,44 @@ function makeErrorResponse(requestId, type, code, message, retryable = false) {
 
 // ─── Token validation ─────────────────────────────────────────────
 
-/**
- * Validate an attach token against a session entry.
- * Returns true if token matches or if the entry has no token set (legacy/internal).
- */
 export function validateAttachToken(entry, providedToken) {
-  if (!entry || !entry.attachToken) return true; // no token set — allow (legacy)
+  if (!entry || !entry.attachToken) return true;
   if (typeof providedToken !== 'string' || !providedToken) return false;
   return entry.attachToken === providedToken;
 }
 
 // ─── Session registry (in-memory) ────────────────────────────────
 
-const activeSessions = new Map(); // sessionId → { state, attachToken }
+// sessionId → { state, attachToken, abortController?, activeRunId?, pendingApproval? }
+const activeSessions = new Map();
+
+// ─── Multi-client fan-out ────────────────────────────────────────
+
+// sessionId → Set<emitFn>
+const sessionClients = new Map();
+
+function addSessionClient(sessionId, emitFn) {
+  if (!sessionClients.has(sessionId)) {
+    sessionClients.set(sessionId, new Set());
+  }
+  sessionClients.get(sessionId).add(emitFn);
+}
+
+function removeSessionClient(sessionId, emitFn) {
+  const clients = sessionClients.get(sessionId);
+  if (clients) {
+    clients.delete(emitFn);
+    if (clients.size === 0) sessionClients.delete(sessionId);
+  }
+}
+
+function broadcastEvent(sessionId, event) {
+  const clients = sessionClients.get(sessionId);
+  if (!clients) return;
+  for (const emitFn of clients) {
+    try { emitFn(event); } catch { /* client may have disconnected */ }
+  }
+}
 
 // ─── Request handlers ────────────────────────────────────────────
 
@@ -130,6 +166,33 @@ async function handleHello(req) {
   });
 }
 
+async function handlePing(req) {
+  return makeResponse(req.requestId, 'ping', null, true, {
+    pong: true,
+    ts: Date.now(),
+  });
+}
+
+async function handleListSessions(req) {
+  const limit = req.payload?.limit || 20;
+  const sessions = await listSessions();
+  const limited = sessions.slice(0, limit);
+
+  // Enrich with active run state
+  const enriched = limited.map((s) => {
+    const entry = activeSessions.get(s.sessionId);
+    return {
+      ...s,
+      state: entry?.activeRunId ? 'running' : 'idle',
+      activeRunId: entry?.activeRunId || null,
+    };
+  });
+
+  return makeResponse(req.requestId, 'list_sessions', null, true, {
+    sessions: enriched,
+  });
+}
+
 async function handleStartSession(req) {
   const payload = req.payload || {};
   const provider = payload.provider || 'ollama';
@@ -139,7 +202,7 @@ async function handleStartSession(req) {
   }
 
   const cwd = payload.repo?.rootPath || process.cwd();
-  const model = PROVIDER_CONFIGS[provider].defaultModel;
+  const model = payload.model || PROVIDER_CONFIGS[provider].defaultModel;
   const sessionId = makeSessionId();
   const attachToken = makeAttachToken();
   const now = Date.now();
@@ -184,7 +247,6 @@ async function handleSendUserMessage(req, emitEvent) {
 
   let entry = activeSessions.get(sessionId);
   if (!entry) {
-    // Try loading from disk
     try {
       const state = await loadSessionState(sessionId);
       entry = { state, attachToken: makeAttachToken() };
@@ -194,7 +256,11 @@ async function handleSendUserMessage(req, emitEvent) {
     }
   }
 
-  // Validate attach token
+  // Reject if a run is already in progress
+  if (entry.activeRunId) {
+    return makeErrorResponse(req.requestId, 'send_user_message', 'RUN_IN_PROGRESS', `Run ${entry.activeRunId} is already active`);
+  }
+
   const providedToken = req.payload?.attachToken;
   if (!validateAttachToken(entry, providedToken)) {
     return makeErrorResponse(req.requestId, 'send_user_message', 'INVALID_TOKEN', 'Invalid or missing attach token');
@@ -202,6 +268,10 @@ async function handleSendUserMessage(req, emitEvent) {
 
   const { state } = entry;
   const runId = makeRunId();
+  const abortController = new AbortController();
+
+  entry.activeRunId = runId;
+  entry.abortController = abortController;
 
   // Acknowledge immediately
   const ack = makeResponse(req.requestId, 'send_user_message', sessionId, true, {
@@ -209,7 +279,6 @@ async function handleSendUserMessage(req, emitEvent) {
     accepted: true,
   });
 
-  // Run the assistant loop asynchronously
   await appendUserMessageWithFileReferences(state, text, state.cwd);
   await appendSessionEvent(state, 'user_message', { chars: text.length, preview: text.slice(0, 280) }, runId);
 
@@ -218,22 +287,67 @@ async function handleSendUserMessage(req, emitEvent) {
   try {
     apiKey = resolveApiKey(providerConfig);
   } catch (err) {
+    entry.activeRunId = null;
+    entry.abortController = null;
     return makeErrorResponse(req.requestId, 'send_user_message', 'PROVIDER_NOT_CONFIGURED', err.message);
   }
 
-  // Run in background — emit events as they happen
+  // Approval function that emits approval_required and awaits client decision
+  const approvalFn = async (tool, detail) => {
+    const approvalId = makeApprovalId();
+
+    const approvalPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        entry.pendingApproval = null;
+        reject(new Error('Approval timed out'));
+      }, APPROVAL_TIMEOUT_MS);
+
+      entry.pendingApproval = { approvalId, resolve, reject, timer };
+    });
+
+    // Emit approval_required to all clients
+    const approvalEvent = {
+      v: PROTOCOL_VERSION,
+      kind: 'event',
+      sessionId,
+      runId,
+      seq: state.eventSeq,
+      ts: Date.now(),
+      type: 'approval_required',
+      payload: {
+        approvalId,
+        kind: tool?.tool || 'tool_execution',
+        title: `Approve ${tool?.tool || 'action'}`,
+        summary: typeof detail === 'string' ? detail : JSON.stringify(detail || {}),
+        options: ['approve', 'deny'],
+      },
+    };
+    await appendSessionEvent(state, 'approval_required', approvalEvent.payload, runId);
+    broadcastEvent(sessionId, approvalEvent);
+
+    try {
+      const decision = await approvalPromise;
+      return decision === 'approve';
+    } catch {
+      return false;
+    }
+  };
+
+  // Run in background — broadcast events to all attached clients
   (async () => {
     let sawError = false;
     let sawRunComplete = false;
     try {
       await runAssistantLoop(state, providerConfig, apiKey, DEFAULT_MAX_ROUNDS, {
         runId,
+        signal: abortController.signal,
+        approvalFn,
         emit: (event) => {
           const seq = state.eventSeq;
           if (event.type === 'error') sawError = true;
           if (event.type === 'run_complete') sawRunComplete = true;
 
-          emitEvent({
+          broadcastEvent(sessionId, {
             v: PROTOCOL_VERSION,
             kind: 'event',
             sessionId: event.sessionId,
@@ -241,9 +355,9 @@ async function handleSendUserMessage(req, emitEvent) {
             seq,
             ts: Date.now(),
             type: event.type,
-            payload: event.payload
+            payload: event.payload,
           });
-        }
+        },
       });
       await saveSessionState(state);
     } catch (err) {
@@ -254,7 +368,7 @@ async function handleSendUserMessage(req, emitEvent) {
           message,
           retryable: false,
         }, runId);
-        emitEvent({
+        broadcastEvent(sessionId, {
           v: PROTOCOL_VERSION,
           kind: 'event',
           sessionId,
@@ -271,7 +385,7 @@ async function handleSendUserMessage(req, emitEvent) {
           outcome: 'failed',
           summary: message.slice(0, 500),
         }, runId);
-        emitEvent({
+        broadcastEvent(sessionId, {
           v: PROTOCOL_VERSION,
           kind: 'event',
           sessionId,
@@ -283,6 +397,10 @@ async function handleSendUserMessage(req, emitEvent) {
         });
       }
       await saveSessionState(state);
+    } finally {
+      entry.activeRunId = null;
+      entry.abortController = null;
+      entry.pendingApproval = null;
     }
   })();
 
@@ -306,10 +424,12 @@ async function handleAttachSession(req, emitEvent) {
     }
   }
 
-  // Validate attach token
   if (!validateAttachToken(entry, providedToken)) {
     return makeErrorResponse(req.requestId, 'attach_session', 'INVALID_TOKEN', 'Invalid or missing attach token');
   }
+
+  // Register this client for multi-client fan-out
+  addSessionClient(sessionId, emitEvent);
 
   const { state } = entry;
   const currentSeq = state.eventSeq;
@@ -317,7 +437,6 @@ async function handleAttachSession(req, emitEvent) {
 
   // Replay missed events from disk
   try {
-    const { loadSessionEvents } = await import('./session-store.mjs');
     const allEvents = await loadSessionEvents(sessionId);
     const missed = allEvents.filter(e => e.seq >= fromSeq && e.seq <= currentSeq);
     for (const event of missed) {
@@ -329,7 +448,8 @@ async function handleAttachSession(req, emitEvent) {
 
   return makeResponse(req.requestId, 'attach_session', sessionId, true, {
     sessionId,
-    state: 'idle',
+    state: entry.activeRunId ? 'running' : 'idle',
+    activeRunId: entry.activeRunId || null,
     replay: {
       fromSeq,
       toSeq: currentSeq,
@@ -339,13 +459,92 @@ async function handleAttachSession(req, emitEvent) {
   });
 }
 
+async function handleSubmitApproval(req) {
+  const { sessionId, approvalId, decision } = req.payload || {};
+  if (!sessionId || !approvalId || !decision) {
+    return makeErrorResponse(req.requestId, 'submit_approval', 'INVALID_REQUEST', 'sessionId, approvalId, and decision are required');
+  }
+
+  const entry = activeSessions.get(sessionId);
+  if (!entry) {
+    return makeErrorResponse(req.requestId, 'submit_approval', 'SESSION_NOT_FOUND', `Session not found: ${sessionId}`);
+  }
+
+  const pending = entry.pendingApproval;
+  if (!pending || pending.approvalId !== approvalId) {
+    return makeErrorResponse(req.requestId, 'submit_approval', 'APPROVAL_NOT_FOUND', `No pending approval with id: ${approvalId}`);
+  }
+
+  clearTimeout(pending.timer);
+  entry.pendingApproval = null;
+  pending.resolve(decision);
+
+  // Emit approval_received to all clients
+  const event = {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId,
+    runId: entry.activeRunId,
+    seq: entry.state.eventSeq,
+    ts: Date.now(),
+    type: 'approval_received',
+    payload: { approvalId, decision, by: 'client' },
+  };
+  await appendSessionEvent(entry.state, 'approval_received', event.payload, entry.activeRunId);
+  broadcastEvent(sessionId, event);
+
+  return makeResponse(req.requestId, 'submit_approval', sessionId, true, {
+    accepted: true,
+  });
+}
+
+async function handleCancelRun(req) {
+  const { sessionId, runId } = req.payload || {};
+  if (!sessionId) {
+    return makeErrorResponse(req.requestId, 'cancel_run', 'INVALID_REQUEST', 'sessionId is required');
+  }
+
+  const entry = activeSessions.get(sessionId);
+  if (!entry) {
+    return makeErrorResponse(req.requestId, 'cancel_run', 'SESSION_NOT_FOUND', `Session not found: ${sessionId}`);
+  }
+
+  if (!entry.activeRunId) {
+    return makeErrorResponse(req.requestId, 'cancel_run', 'NO_ACTIVE_RUN', 'No active run to cancel');
+  }
+
+  if (runId && entry.activeRunId !== runId) {
+    return makeErrorResponse(req.requestId, 'cancel_run', 'NO_ACTIVE_RUN', `Run ${runId} is not the active run`);
+  }
+
+  // Abort the run
+  if (entry.abortController) {
+    entry.abortController.abort();
+  }
+
+  // Also resolve any pending approval as denied
+  if (entry.pendingApproval) {
+    clearTimeout(entry.pendingApproval.timer);
+    entry.pendingApproval.resolve('deny');
+    entry.pendingApproval = null;
+  }
+
+  return makeResponse(req.requestId, 'cancel_run', sessionId, true, {
+    accepted: true,
+  });
+}
+
 // ─── Request dispatcher ──────────────────────────────────────────
 
 const HANDLERS = {
   hello: handleHello,
+  ping: handlePing,
+  list_sessions: handleListSessions,
   start_session: handleStartSession,
   send_user_message: handleSendUserMessage,
   attach_session: handleAttachSession,
+  submit_approval: handleSubmitApproval,
+  cancel_run: handleCancelRun,
 };
 
 async function handleRequest(req, emitEvent) {
@@ -389,8 +588,8 @@ async function handleRequest(req, emitEvent) {
 
 function handleConnection(socket) {
   let buffer = '';
+  const attachedSessions = new Set(); // track which sessions this socket is observing
 
-  // Event emitter for this connection
   const emitEvent = (event) => {
     try {
       socket.write(JSON.stringify(event) + '\n');
@@ -410,6 +609,19 @@ function handleConnection(socket) {
         const req = JSON.parse(line);
         const response = await handleRequest(req, emitEvent);
         socket.write(JSON.stringify(response) + '\n');
+
+        // Track attach for cleanup on disconnect
+        if (req.type === 'attach_session' && response.ok) {
+          attachedSessions.add(req.payload?.sessionId);
+        }
+        // Auto-attach when starting a session or sending a message
+        if ((req.type === 'start_session' || req.type === 'send_user_message') && response.ok) {
+          const sid = response.sessionId || response.payload?.sessionId || req.sessionId || req.payload?.sessionId;
+          if (sid) {
+            addSessionClient(sid, emitEvent);
+            attachedSessions.add(sid);
+          }
+        }
       } catch (err) {
         const errResponse = makeErrorResponse(
           makeRequestId(),
@@ -422,31 +634,39 @@ function handleConnection(socket) {
     }
   });
 
+  socket.on('close', () => {
+    for (const sessionId of attachedSessions) {
+      removeSessionClient(sessionId, emitEvent);
+    }
+    attachedSessions.clear();
+  });
+
   socket.on('error', () => {
-    // silently close on error
+    for (const sessionId of attachedSessions) {
+      removeSessionClient(sessionId, emitEvent);
+    }
+    attachedSessions.clear();
   });
 }
 
 // ─── Main ────────────────────────────────────────────────────────
 
-async function main() {
+export async function main() {
   const socketPath = getSocketPath();
   await ensureSocketDir(socketPath);
   await cleanStaleSocket(socketPath);
 
   const server = net.createServer(handleConnection);
 
-  // Set restrictive umask before listen() so socket is born with 0o600
   const oldUmask = process.umask(0o077);
   server.listen(socketPath, () => {
-    process.umask(oldUmask); // restore original umask
+    process.umask(oldUmask);
     process.stdout.write(`pushd listening on ${socketPath}\n`);
     process.stdout.write(`protocol: ${PROTOCOL_VERSION}\n`);
     process.stdout.write(`version: ${VERSION}\n`);
     process.stdout.write(`pid: ${process.pid}\n`);
   });
 
-  // Write PID file + belt-and-suspenders chmod
   server.on('listening', async () => {
     try {
       await writePidFile();
@@ -456,9 +676,20 @@ async function main() {
     }
   });
 
-  // Graceful shutdown
   const shutdown = async () => {
     process.stdout.write('\nshutting down...\n');
+
+    // Abort all active runs
+    for (const [, entry] of activeSessions) {
+      if (entry.abortController) {
+        entry.abortController.abort();
+      }
+      if (entry.pendingApproval) {
+        clearTimeout(entry.pendingApproval.timer);
+        entry.pendingApproval.resolve('deny');
+      }
+    }
+
     server.close();
     await cleanStaleSocket(socketPath);
     await cleanPidFile();
