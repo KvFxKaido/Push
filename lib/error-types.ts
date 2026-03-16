@@ -68,9 +68,6 @@ export function classifyError(error: string, context?: string): StructuredToolEr
   if (lower.includes('hash mismatch') || lower.includes('hash_mismatch')) {
     return { type: 'EDIT_HASH_MISMATCH', retryable: false, message: error, detail: context };
   }
-  if (lower.includes('content not found') || lower.includes('search string not found')) {
-    return { type: 'EDIT_CONTENT_NOT_FOUND', retryable: false, message: error, detail: context };
-  }
   if (lower.includes('permission denied') || lower.includes('eacces')) {
     return { type: 'AUTH_FAILURE', retryable: false, message: error, detail: context };
   }

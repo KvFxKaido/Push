@@ -8,7 +8,7 @@
  * during Track 2 convergence.
  */
 
-import { detectToolFromText, asRecord } from './tool-protocol.js';
+import { detectToolFromText, asRecord } from './tool-protocol';
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -83,7 +83,8 @@ function uniqueStrings(values: unknown[]): string[] {
 }
 
 /**
- * Apply a partial update to working memory (additive for arrays).
+ * Apply a partial update to working memory.
+ * Array fields are replaced (not merged) with deduplication via uniqueStrings.
  * Returns the updated memory object.
  */
 export function applyWorkingMemoryUpdate(

@@ -139,7 +139,8 @@ export function repairToolJson(candidate: string): JsonRecord | null {
   // eslint-disable-next-line no-control-regex
   repaired = repaired.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
 
-  if (tryParseToolJson(repaired)) return tryParseToolJson(repaired);
+  const parsed = tryParseToolJson(repaired);
+  if (parsed) return parsed;
 
   // 7. Auto-close truncated JSON
   const autoClosed = tryAutoCloseJson(repaired);
