@@ -531,7 +531,7 @@ const TOOL_ARG_HINTS: Record<string, string> = {
   sandbox_diff: '{"tool": "sandbox_diff", "args": {}}',
   sandbox_prepare_commit: '{"tool": "sandbox_prepare_commit", "args": {"message": "commit message"}}',
   sandbox_push: '{"tool": "sandbox_push", "args": {}}',
-  delegate_coder: '{"tool": "delegate_coder", "args": {"task": "describe the task"}}',
+  delegate_coder: '{"tool": "delegate_coder", "args": {"task": "describe the task"}} or {"tool": "delegate_coder", "args": {"tasks": ["task 1", "task 2"], "files": ["src/foo.ts"]}}',
   web_search: '{"tool": "web_search", "args": {"query": "search query"}}',
   ask_user: '{"tool": "ask_user", "args": {"question": "...?", "options": [{"id": "1", "label": "..."}]}}',
 };
