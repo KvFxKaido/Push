@@ -336,8 +336,30 @@ describe('detectAllToolCalls', () => {
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(1);
     expect(detected.mutating).not.toBeNull();
+    expect(detected.extraMutations).toHaveLength(1);
     if (detected.mutating?.source === 'sandbox') {
       expect(detected.mutating.call.tool).toBe('sandbox_exec');
+    }
+    if (detected.extraMutations[0]?.source === 'sandbox') {
+      expect(detected.extraMutations[0].call.tool).toBe('sandbox_write_file');
+    }
+  });
+
+  it('captures extra delegate_coder mutations so the caller can reject them', () => {
+    const text = [
+      '{"tool":"delegate_coder","args":{"task":"task one"}}',
+      '{"tool":"delegate_coder","args":{"task":"task two"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.mutating?.source).toBe('delegate');
+    expect(detected.extraMutations).toHaveLength(1);
+    if (detected.mutating?.source === 'delegate') {
+      expect(detected.mutating.call.tool).toBe('delegate_coder');
+    }
+    if (detected.extraMutations[0]?.source === 'delegate') {
+      expect(detected.extraMutations[0].call.tool).toBe('delegate_coder');
     }
   });
 });

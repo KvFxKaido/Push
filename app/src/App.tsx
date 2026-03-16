@@ -152,7 +152,10 @@ function App() {
   const isScratch = workspaceSession?.kind === 'scratch';
   const workspaceRepo = workspaceSession?.kind === 'repo' ? workspaceSession.repo : null;
   const scratchpad = useScratchpad(workspaceRepo?.full_name ?? null);
-  const sandbox = useSandbox(isScratch ? '' : (workspaceRepo?.full_name ?? null));
+  const sandbox = useSandbox(
+    isScratch ? '' : (workspaceRepo?.full_name ?? null),
+    isScratch ? 'main' : (workspaceRepo?.current_branch || workspaceRepo?.default_branch || null),
+  );
   const catalog = useModelCatalog();
   const {
     resolveRepoAppearance,
@@ -516,10 +519,11 @@ function App() {
 
   const handleStartScratchWorkspace = useCallback(() => {
     if (isStreaming) abortStream();
+    if (workspaceSession) void sandbox.stop();
     clearActiveRepo();
     setWorkspaceSession({ id: crypto.randomUUID(), kind: 'scratch', sandboxId: null });
     createNewChat();
-  }, [isStreaming, abortStream, createNewChat, clearActiveRepo]);
+  }, [isStreaming, abortStream, clearActiveRepo, createNewChat, sandbox, workspaceSession]);
 
   const handleEndWorkspace = useCallback(() => {
     if (isStreaming) abortStream();
@@ -544,19 +548,21 @@ function App() {
         current_branch: branch || repo.default_branch,
         private: repo.private,
       };
+      const switchingFromScratch = workspaceSession?.kind === 'scratch';
+      const switchingRepos = workspaceSession?.kind === 'repo'
+        && workspaceSession.repo.full_name !== repoData.full_name;
+      if (switchingFromScratch || switchingRepos) {
+        void sandbox.stop();
+      }
       setActiveRepo(repoData);
       setWorkspaceSession({ id: crypto.randomUUID(), kind: 'repo', repo: repoData, sandboxId: null });
     },
-    [setActiveRepo],
+    [sandbox, setActiveRepo, workspaceSession],
   );
 
   const handleSelectRepoFromDrawer = useCallback((repo: RepoWithActivity, branch?: string) => {
-    if (isScratch) {
-      setWorkspaceSession(null);
-      void sandbox.stop();
-    }
     handleSelectRepo(repo, branch);
-  }, [isScratch, sandbox, handleSelectRepo]);
+  }, [handleSelectRepo]);
 
   const handleResumeConversationFromHome = useCallback((chatId: string) => {
     const conv = conversations[chatId];

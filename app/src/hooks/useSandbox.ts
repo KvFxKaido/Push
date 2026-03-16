@@ -23,25 +23,21 @@ import {
   probeSandboxEnvironment,
 } from '@/lib/sandbox-client';
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
-import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { safeStorageGet } from '@/lib/safe-storage';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { clearFileVersionCache, clearSandboxWorkspaceRevision } from '@/lib/sandbox-file-version-cache';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
+import {
+  buildSandboxSessionStorageKey,
+  clearSandboxSessionByStorageKey,
+  loadSandboxSession,
+  saveSandboxSession,
+} from '@/lib/sandbox-session';
 
 export type SandboxStatus = 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
 
 const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
-
-const SANDBOX_SESSION_KEY = 'sandbox_session';
 const SANDBOX_MAX_AGE_MS = 25 * 60 * 1000; // 25 min (conservative vs Modal's 30 min)
-
-interface PersistedSandboxSession {
-  sandboxId: string;
-  ownerToken: string;
-  repoFullName: string;
-  branch: string;
-  createdAt: number;
-}
 
 function getGitHubToken(): string {
   return getActiveGitHubToken();
@@ -62,40 +58,28 @@ function getGitHubAppCommitIdentity(): GitCommitIdentity | undefined {
   }
 }
 
-function saveSession(session: PersistedSandboxSession): void {
-  safeStorageSet(SANDBOX_SESSION_KEY, JSON.stringify(session));
-}
-
-function loadSession(): PersistedSandboxSession | null {
-  try {
-    const raw = safeStorageGet(SANDBOX_SESSION_KEY);
-    if (!raw) return null;
-    const session = JSON.parse(raw) as PersistedSandboxSession;
-    // repoFullName can be '' for sandbox mode (ephemeral, no repo)
-    if (!session.sandboxId || !session.ownerToken || !session.createdAt) return null;
-    return session;
-  } catch {
-    return null;
-  }
-}
-
-function clearSession(sandboxId?: string): void {
-  safeStorageRemove(SANDBOX_SESSION_KEY);
+function clearTrackedSession(sessionStorageKey?: string | null, sandboxId?: string): void {
+  clearSandboxSessionByStorageKey(sessionStorageKey, sandboxId);
   if (sandboxId) {
     setSandboxOwnerToken(null, sandboxId);
   }
   setSandboxOwnerToken(null);
 }
 
-export function useSandbox(activeRepoFullName?: string | null) {
+export function useSandbox(activeRepoFullName?: string | null, activeBranch?: string | null) {
   const [sandboxId, setSandboxId] = useState<string | null>(null);
   const [status, setStatus] = useState<SandboxStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const sandboxIdRef = useRef<string | null>(null);
+  const sessionStorageKeyRef = useRef<string | null>(null);
   const statusRef = useRef<SandboxStatus>('idle');
   const reconnectingRef = useRef(false);
   const reconnectPromiseRef = useRef<Promise<string | null> | null>(null);
   const startPromiseRef = useRef<Promise<string | null> | null>(null);
+  const activeSessionStorageKey = useMemo(
+    () => buildSandboxSessionStorageKey(activeRepoFullName, activeBranch),
+    [activeRepoFullName, activeBranch],
+  );
 
   // Keep ref in sync for cleanup
   useEffect(() => {
@@ -110,20 +94,15 @@ export function useSandbox(activeRepoFullName?: string | null) {
   useEffect(() => {
     if (status !== 'idle') return;
     // null/undefined = no sandbox context yet; '' = sandbox mode (ephemeral)
-    if (activeRepoFullName == null) return;
+    if (activeRepoFullName == null || !activeSessionStorageKey) return;
     if (sandboxIdRef.current) return;
 
-    const saved = loadSession();
+    const saved = loadSandboxSession(activeRepoFullName, activeBranch);
     if (!saved) return;
-
-    if (saved.repoFullName !== activeRepoFullName) {
-      clearSession(saved.sandboxId);
-      return;
-    }
 
     const ageMs = Date.now() - saved.createdAt;
     if (ageMs > SANDBOX_MAX_AGE_MS) {
-      clearSession(saved.sandboxId);
+      clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
       return;
     }
 
@@ -140,6 +119,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
         if (result.exitCode === 0) {
           setSandboxId(saved.sandboxId);
           sandboxIdRef.current = saved.sandboxId;
+          sessionStorageKeyRef.current = activeSessionStorageKey;
           setActiveSandboxEnvironment(saved.sandboxId);
           setStatus('ready');
           // Fire-and-forget environment probe on reconnect
@@ -147,13 +127,13 @@ export function useSandbox(activeRepoFullName?: string | null) {
           console.log('[useSandbox] Reconnected to saved sandbox:', saved.sandboxId);
           return saved.sandboxId;
         }
-        clearSession(saved.sandboxId);
+        clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
         setStatus('idle');
         return null;
       })
       .catch(() => {
         if (!cancelled) {
-          clearSession(saved.sandboxId);
+          clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
           setStatus('idle');
         }
         return null;
@@ -172,26 +152,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
       reconnectingRef.current = false;
       reconnectPromiseRef.current = null;
     };
-  }, [activeRepoFullName, status]);
-
-  // Invalidate saved session when active repo changes
-  useEffect(() => {
-    if (activeRepoFullName == null) return;
-    const saved = loadSession();
-    if (saved && saved.repoFullName !== activeRepoFullName) {
-      clearSession(saved.sandboxId);
-      // Reset file awareness ledger, version cache, and environment — different repo = different files
-      fileLedger.reset();
-      clearFileVersionCache(saved.sandboxId);
-      clearSandboxWorkspaceRevision(saved.sandboxId);
-      clearSandboxEnvironment(saved.sandboxId);
-      if (sandboxIdRef.current && status === 'ready') {
-        sandboxIdRef.current = null;
-        setSandboxId(null);
-        setStatus('idle');
-      }
-    }
-  }, [activeRepoFullName, status]);
+  }, [activeBranch, activeRepoFullName, activeSessionStorageKey, status]);
 
   const start = useCallback(async (repo: string, branch?: string): Promise<string | null> => {
     if (startPromiseRef.current) return startPromiseRef.current;
@@ -227,13 +188,15 @@ export function useSandbox(activeRepoFullName?: string | null) {
         setActiveSandboxEnvironment(session.sandboxId);
         setSandboxOwnerToken(session.ownerToken || null);
 
-        saveSession({
+        const normalizedBranch = branch || 'main';
+        saveSandboxSession(repo, normalizedBranch, {
           sandboxId: session.sandboxId,
           ownerToken: session.ownerToken || '',
           repoFullName: repo,
-          branch: branch || 'main',
+          branch: normalizedBranch,
           createdAt: Date.now(),
         });
+        sessionStorageKeyRef.current = buildSandboxSessionStorageKey(repo, normalizedBranch);
 
         return session.sandboxId;
       } catch (err) {
@@ -255,6 +218,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
 
   const stop = useCallback(async () => {
     const id = sandboxIdRef.current;
+    const sessionStorageKey = sessionStorageKeyRef.current;
     if (!id) return;
 
     try {
@@ -262,7 +226,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
     } catch {
       // Best effort — container will auto-terminate anyway
     } finally {
-      clearSession(id);
+      clearTrackedSession(sessionStorageKey, id);
     }
 
     // Reset file awareness ledger, version cache, and environment — new sandbox = clean slate
@@ -271,6 +235,8 @@ export function useSandbox(activeRepoFullName?: string | null) {
     clearSandboxWorkspaceRevision(id);
     clearSandboxEnvironment(id);
 
+    sandboxIdRef.current = null;
+    sessionStorageKeyRef.current = null;
     setSandboxId(null);
     setStatus('idle');
     setError(null);
@@ -278,27 +244,42 @@ export function useSandbox(activeRepoFullName?: string | null) {
 
   const rebindSessionRepo = useCallback((repoFullName: string, branch: string = 'main') => {
     const id = sandboxIdRef.current;
+    const currentSessionStorageKey = sessionStorageKeyRef.current;
     if (!id) return;
     const ownerToken = getSandboxOwnerToken();
     if (!ownerToken) return;
 
-    const existing = loadSession();
-    const createdAt = existing?.createdAt ?? Date.now();
-    saveSession({
+    const existing = currentSessionStorageKey ? safeStorageGet(currentSessionStorageKey) : null;
+    let createdAt = Date.now();
+    if (existing) {
+      try {
+        const parsed = JSON.parse(existing) as { createdAt?: unknown };
+        if (typeof parsed.createdAt === 'number') createdAt = parsed.createdAt;
+      } catch {
+        // Ignore malformed storage and keep the fresh timestamp.
+      }
+    }
+
+    saveSandboxSession(repoFullName, branch, {
       sandboxId: id,
       ownerToken,
       repoFullName,
       branch,
       createdAt,
     });
+    const nextSessionStorageKey = buildSandboxSessionStorageKey(repoFullName, branch);
+    if (currentSessionStorageKey && currentSessionStorageKey !== nextSessionStorageKey) {
+      clearSandboxSessionByStorageKey(currentSessionStorageKey, id);
+    }
+    sessionStorageKeyRef.current = nextSessionStorageKey;
   }, []);
 
   // Expose session createdAt for expiry warnings
   const createdAt = useMemo(() => {
-    const saved = loadSession();
+    const saved = loadSandboxSession(activeRepoFullName, activeBranch);
     return saved?.createdAt ?? null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sandboxId]);
+  }, [activeRepoFullName, activeBranch, sandboxId]);
 
   /**
    * Ping the current sandbox to verify it's still alive.
@@ -327,7 +308,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
       const reason = result.error || 'Sandbox is no longer reachable';
       setStatus('error');
       setError(reason);
-      clearSession(id);
+      clearTrackedSession(sessionStorageKeyRef.current, id);
       console.log('[useSandbox] Refresh failed — sandbox is dead:', id, reason);
       return false;
     } catch (err) {
@@ -335,7 +316,7 @@ export function useSandbox(activeRepoFullName?: string | null) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus('error');
       setError(msg);
-      clearSession(id);
+      clearTrackedSession(sessionStorageKeyRef.current, id);
       console.log('[useSandbox] Refresh failed — error:', id, msg);
       return false;
     }

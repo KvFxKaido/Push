@@ -231,6 +231,33 @@ describe('readFromSandbox', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 5. deleteFromSandbox client function
+// ---------------------------------------------------------------------------
+
+describe('deleteFromSandbox', () => {
+  it('sends delete requests with optional workspace revision and returns the new revision', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, workspace_revision: 12 }),
+    });
+
+    const { deleteFromSandbox } = await import('./sandbox-client');
+    const revision = await deleteFromSandbox('sb-123', '/workspace/old.txt', 11);
+
+    expect(mockFetch).toHaveBeenCalled();
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/sandbox/delete');
+    expect(options.method).toBe('POST');
+
+    const body = JSON.parse(options.body);
+    expect(body.sandbox_id).toBe('sb-123');
+    expect(body.path).toBe('/workspace/old.txt');
+    expect(body.expected_workspace_revision).toBe(11);
+    expect(revision).toBe(12);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 5. readSymbolsFromSandbox helper
 // ---------------------------------------------------------------------------
 

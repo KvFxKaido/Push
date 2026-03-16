@@ -1113,17 +1113,28 @@ export async function listDirectory(
 export async function deleteFromSandbox(
   sandboxId: string,
   path: string,
-): Promise<void> {
-  const data = await sandboxFetch<{ ok: boolean; error?: string; workspace_revision?: number }>('delete', {
+  expectedWorkspaceRevision?: number,
+): Promise<number | undefined> {
+  const data = await sandboxFetch<{
+    ok: boolean;
+    error?: string;
+    workspace_revision?: number;
+    current_workspace_revision?: number;
+  }>('delete', {
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
+    expected_workspace_revision: expectedWorkspaceRevision,
   });
   if (typeof data.workspace_revision === 'number') {
     setSandboxWorkspaceRevision(sandboxId, data.workspace_revision);
     deleteFileVersion(sandboxId, path);
   }
+  if (typeof data.current_workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(sandboxId, data.current_workspace_revision);
+  }
   if (!data.ok) throw new Error(data.error || 'Delete failed');
+  return data.workspace_revision;
 }
 
 export async function renameInSandbox(

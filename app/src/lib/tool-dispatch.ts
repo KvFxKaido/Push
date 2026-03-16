@@ -53,6 +53,8 @@ export interface DetectedToolCalls {
   readOnly: AnyToolCall[];
   /** Optional trailing mutating call that must execute after reads. */
   mutating: AnyToolCall | null;
+  /** Additional mutating calls that were rejected to preserve single-mutation safety. */
+  extraMutations: AnyToolCall[];
 }
 
 /**
@@ -62,12 +64,12 @@ export interface DetectedToolCalls {
  */
 export function detectAllToolCalls(text: string): DetectedToolCalls {
   const explicitToolObjects = extractBareToolJsonObjects(text);
-  if (explicitToolObjects.length === 0) return { readOnly: [], mutating: null };
+  if (explicitToolObjects.length === 0) return { readOnly: [], mutating: null, extraMutations: [] };
 
   // Preserve current safety behavior: only do broad bare-object scanning
   // when the response already contains at least one explicit tool wrapper.
   const parsedObjects = extractAllBareJsonObjects(text);
-  if (parsedObjects.length === 0) return { readOnly: [], mutating: null };
+  if (parsedObjects.length === 0) return { readOnly: [], mutating: null, extraMutations: [] };
 
   const allCalls: AnyToolCall[] = [];
   const seen = new Set<string>();
@@ -83,14 +85,14 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + 1) break; // +1 for possible trailing mutation
   }
 
-  if (allCalls.length === 0) return { readOnly: [], mutating: null };
+  if (allCalls.length === 0) return { readOnly: [], mutating: null, extraMutations: [] };
 
   // Single call — classify as read or mutation
   if (allCalls.length === 1) {
     if (isReadOnlyToolCall(allCalls[0])) {
-      return { readOnly: allCalls, mutating: null };
+      return { readOnly: allCalls, mutating: null, extraMutations: [] };
     }
-    return { readOnly: [], mutating: allCalls[0] };
+    return { readOnly: [], mutating: allCalls[0], extraMutations: [] };
   }
 
   // Multiple calls — split into reads + optional trailing mutation.
@@ -100,6 +102,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   // but discard anything after.
   const readOnly: AnyToolCall[] = [];
   let mutating: AnyToolCall | null = null;
+  const extraMutations: AnyToolCall[] = [];
 
   for (let i = 0; i < allCalls.length; i++) {
     if (isReadOnlyToolCall(allCalls[i])) {
@@ -111,6 +114,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     } else {
       if (mutating) {
         // Second mutation — stop here, keep what we have
+        extraMutations.push(allCalls[i]);
         break;
       }
       mutating = allCalls[i];
@@ -122,7 +126,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     readOnly.length = MAX_PARALLEL_TOOL_CALLS;
   }
 
-  return { readOnly, mutating };
+  return { readOnly, mutating, extraMutations };
 }
 
 /** Extract the tool name from a unified tool call. */
