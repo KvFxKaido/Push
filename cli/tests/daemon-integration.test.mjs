@@ -182,7 +182,7 @@ describe('validateAttachToken', () => {
     assert.equal(validateAttachToken({ state: {}, attachToken: null }, undefined), true);
   });
 
-  it('rejects when entry is null/undefined', () => {
+  it('allows when entry is null/undefined (no entry = no token requirement)', () => {
     assert.equal(validateAttachToken(null, 'token'), true);
     assert.equal(validateAttachToken(undefined, 'token'), true);
   });

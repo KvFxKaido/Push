@@ -1561,11 +1561,11 @@ export async function runTUI(options = {}) {
       const { tryConnect } = await import('./daemon-client.mjs');
       const { getSocketPath } = await import('./pushd.mjs');
       const socketPath = getSocketPath();
-      const client = await tryConnect(socketPath, 1000);
+      const client = await tryConnect(socketPath, 500);
       if (!client) return false;
 
       // Verify protocol with hello
-      const hello = await client.request('hello', {}, null, 2000);
+      const hello = await client.request('hello', {}, null, 500);
       if (!hello.ok) { client.close(); return false; }
 
       daemonClient = client;
@@ -1610,7 +1610,7 @@ export async function runTUI(options = {}) {
     }
   }
 
-  // Try daemon on startup (non-blocking)
+  // Try daemon on startup (fast probe — 500ms connect + 500ms hello max)
   const daemonConnected = await tryDaemonConnect();
   if (daemonConnected) {
     addTranscriptEntry(tuiState, 'status', 'Connected to pushd daemon. Sessions persist in background.');
@@ -2227,12 +2227,15 @@ export async function runTUI(options = {}) {
                 resolve();
               }
             });
-            // Also resolve on abort
+            // On user-initiated abort (Ctrl+C), cancel the daemon run.
+            // On TUI exit/teardown, just detach — let the run continue.
             runAbort.signal.addEventListener('abort', () => {
-              daemonClient?.request('cancel_run', {
-                sessionId: daemonSessionId,
-                runId,
-              }, daemonSessionId).catch(() => {});
+              if (runAbort?._userInitiated) {
+                daemonClient?.request('cancel_run', {
+                  sessionId: daemonSessionId,
+                  runId,
+                }, daemonSessionId).catch(() => {});
+              }
               unsub();
               resolve();
             }, { once: true });
@@ -3349,6 +3352,7 @@ export async function runTUI(options = {}) {
 
   function cancelRun() {
     if (runAbort) {
+      runAbort._userInitiated = true;
       runAbort.abort();
       addTranscriptEntry(tuiState, 'status', 'Run cancelled.');
     }
