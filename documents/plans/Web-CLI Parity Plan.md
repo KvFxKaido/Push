@@ -66,14 +66,16 @@ The web app and CLI currently share zero imports. Every shared concept (hashline
 
 ```
 Push/
-  lib/                  # Shared modules (canonical, both surfaces import)
-    hashline.ts         # Hashline edit protocol (Track 1) ✅
-    diff-utils.ts       # Diff parsing, file classification, budget packing (Track 2) ✅
-    error-types.ts      # Error taxonomy, classifyError, formatStructuredError (Track 2) ✅
-    reasoning-tokens.ts # Think-token parser (<think> tags + native reasoning_content) (Track 2) ✅
-    context-budget.ts   # Token estimation, context budget resolution (Track 2) ✅
-  app/src/lib/          # Web-specific modules (import from lib/ for shared logic)
-  cli/                  # CLI-specific modules (import from lib/ for shared logic)
+  lib/                      # Shared modules (canonical, both surfaces import)
+    hashline.ts             # Two-phase hash resolution, edit application (Track 1) ✅
+    diff-utils.ts           # Diff parsing, file classification, budget packing (Track 2) ✅
+    error-types.ts          # Error taxonomy, classifyError, formatStructuredError (Track 2) ✅
+    reasoning-tokens.ts     # Think-token parser (<think> tags + native reasoning_content) (Track 2) ✅
+    context-budget.ts       # Token estimation, context budget resolution (Track 2) ✅
+    tool-protocol.ts        # Tool detection, JSON repair, diagnosis, dedup (Track 2) ✅
+    working-memory.ts       # Agent state management, observations, staleness (Track 2) ✅
+  app/src/lib/              # Web-specific modules (import from lib/ for shared logic)
+  cli/                      # CLI-specific modules (import from lib/ for shared logic)
 ```
 
 ## Tracks
@@ -125,10 +127,32 @@ Push/
 - [x] `TokenEstimationMessage` interface (decoupled from app-specific ChatMessage type)
 - [x] Runtime-agnostic (no localStorage dependency)
 
+#### tool-protocol.ts
+- [x] `asRecord()` / `JsonRecord` — safe object coercion
+- [x] `diagnoseJsonSyntaxError()` — pinpoints structural JSON errors (missing brace, unterminated string, unbalanced brackets)
+- [x] `repairToolJson()` — best-effort recovery for common LLM garbling (trailing commas, unquoted keys, single quotes, Python literals, auto-close truncated)
+- [x] `detectTruncatedToolCall()` — detects JSON cut off mid-stream (unbalanced braces after tool pattern)
+- [x] `extractBareToolJsonObjects()` — brace-counting extraction of `{"tool":..}` objects from prose
+- [x] `detectToolFromText()` — generic fenced-JSON + bare-JSON tool detection factory
+- [x] `stableJsonStringify()` — canonical key generation for dedup (sorted keys, normalized values)
+- [x] `isInsideInlineCode()`, `findPrecedingBrace()`, `findFollowingBrace()` — region extraction helpers
+- [x] `ToolCallDiagnosis` type — diagnosis result structure
+
+#### working-memory.ts
+- [x] `CoderWorkingMemory` / `CoderObservation` types — full type system with staleness tracking
+- [x] `createWorkingMemory()` — factory for fresh empty state
+- [x] `applyWorkingMemoryUpdate()` — partial update with array dedup (unifies CLI's `applyWorkingMemoryUpdate` and web's per-field merge)
+- [x] `applyObservationUpdates()` — add/update/remove observations with round tracking
+- [x] `invalidateObservationDependencies()` — mark observations stale when file dependencies are modified
+- [x] `getVisibleObservations()` — filter expired stale observations (5-round auto-expiry)
+- [x] `hasCoderState()` / `formatCoderState()` — check non-emptiness and format `[CODER_STATE]` blocks
+- [x] `detectUpdateStateCall()` — parse `coder_update_state` tool calls from model output
+- [x] Imports `detectToolFromText` from `tool-protocol.ts` — validates shared module cross-imports
+
 **Build integration:**
 - [x] Web app: `@push/lib/*` path alias in `vite.config.ts`, `tsconfig.json`, `tsconfig.app.json`
 - [x] CLI: existing `@push/lib/*` path mapping in `cli/tsconfig.json`
-- [x] Test suite: `cli/test-track2.ts` — 65 tests, all passing
+- [x] Test suite: `cli/test-track2.ts` — 125 tests, all passing
 
 ---
 
@@ -190,7 +214,7 @@ Not part of this plan's scope, but the natural next step after TUI stabilizes.
 ## Success Criteria
 
 **Technical:**
-- CLI and web use identical hashline, diff parsing, and tool dispatch code ✅ (hashline, diff, errors, reasoning, context)
+- CLI and web use identical hashline, diff parsing, and tool dispatch code ✅ (hashline, diff, errors, reasoning, context, tool-protocol, working-memory)
 - Protocol changes only need to be made once ✅
 - No runtime performance regressions in CLI
 - TypeScript compilation passes for both surfaces ✅

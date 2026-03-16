@@ -2,7 +2,8 @@
 /**
  * Test script for Track 2: Validate shared lib modules work from CLI
  *
- * Tests: diff-utils, error-types, reasoning-tokens, context-budget
+ * Tests: diff-utils, error-types, reasoning-tokens, context-budget,
+ *        tool-protocol, working-memory
  */
 
 import {
@@ -34,6 +35,30 @@ import {
 } from '../lib/context-budget.js';
 
 import type { ContextBudget } from '../lib/context-budget.js';
+
+import {
+  asRecord,
+  diagnoseJsonSyntaxError,
+  repairToolJson,
+  detectTruncatedToolCall,
+  extractBareToolJsonObjects,
+  detectToolFromText,
+  stableJsonStringify,
+  isInsideInlineCode,
+} from '../lib/tool-protocol.js';
+
+import {
+  createWorkingMemory,
+  applyWorkingMemoryUpdate,
+  applyObservationUpdates,
+  invalidateObservationDependencies,
+  getVisibleObservations,
+  hasCoderState,
+  formatCoderState,
+  detectUpdateStateCall,
+} from '../lib/working-memory.js';
+
+import type { CoderWorkingMemory, CoderObservation } from '../lib/working-memory.js';
 
 let passed = 0;
 let failed = 0;
@@ -320,6 +345,211 @@ function testContextBudget(): void {
 }
 
 // ---------------------------------------------------------------------------
+// tool-protocol tests
+// ---------------------------------------------------------------------------
+
+function testToolProtocol(): void {
+  console.log('\n=== tool-protocol ===\n');
+
+  // asRecord
+  console.log('asRecord:');
+  assert(asRecord({ a: 1 }) !== null, 'object → JsonRecord');
+  assert(asRecord(null) === null, 'null → null');
+  assert(asRecord('string') === null, 'string → null');
+  assert(asRecord(42) === null, 'number → null');
+
+  // diagnoseJsonSyntaxError
+  console.log('\ndiagnoseJsonSyntaxError:');
+  assert(diagnoseJsonSyntaxError('{"valid": true}') === null, 'valid JSON → null');
+  const missingBrace = diagnoseJsonSyntaxError('"tool": "test"');
+  assert(missingBrace !== null && missingBrace.message.includes('Missing opening brace'), 'missing opening brace');
+  const unterminated = diagnoseJsonSyntaxError('{"tool": "test');
+  assert(unterminated !== null && unterminated.message.includes('Unterminated string'), 'unterminated string');
+  const unbalanced = diagnoseJsonSyntaxError('{"tool": "test", "args": {');
+  assert(unbalanced !== null && unbalanced.message.includes('Unbalanced'), 'unbalanced braces');
+
+  // repairToolJson
+  console.log('\nrepairToolJson:');
+  const repaired1 = repairToolJson('{"tool": "test", "args": {"a": 1},}');
+  assert(repaired1 !== null && repaired1.tool === 'test', 'trailing comma repaired');
+  const repaired2 = repairToolJson("{tool: 'test', args: {}}");
+  assert(repaired2 !== null && repaired2.tool === 'test', 'unquoted keys + single quotes repaired');
+  const repaired3 = repairToolJson('{"tool": "test", "args": {"val": True}}');
+  assert(repaired3 !== null, 'Python True repaired');
+  const repaired4 = repairToolJson('"tool": "test", "args": {}');
+  assert(repaired4 !== null && repaired4.tool === 'test', 'missing opening brace repaired');
+  assert(repairToolJson('not json at all') === null, 'non-JSON → null');
+
+  // detectTruncatedToolCall
+  console.log('\ndetectTruncatedToolCall:');
+  const truncated = detectTruncatedToolCall('{"tool": "sandbox_exec", "args": {"command": "npm test"');
+  assert(truncated !== null && truncated.toolName === 'sandbox_exec', 'truncated tool detected');
+  assert(detectTruncatedToolCall('{"tool": "test", "args": {}}') === null, 'complete tool → null');
+
+  // extractBareToolJsonObjects
+  console.log('\nextractBareToolJsonObjects:');
+  const extracted = extractBareToolJsonObjects('Here is a tool call: {"tool": "read_file", "args": {"path": "test.ts"}} and some text');
+  assert(extracted.length === 1, `extracted ${extracted.length} tool objects`);
+  const obj = asRecord(extracted[0]);
+  assert(obj !== null && obj.tool === 'read_file', 'extracted correct tool');
+
+  // detectToolFromText
+  console.log('\ndetectToolFromText:');
+  const detected = detectToolFromText<{ tool: string }>(
+    'Some text\n```json\n{"tool": "test_tool", "args": {}}\n```\nMore text',
+    (parsed) => {
+      const o = asRecord(parsed);
+      return o && typeof o.tool === 'string' ? { tool: o.tool as string } : null;
+    },
+  );
+  assert(detected !== null && detected.tool === 'test_tool', 'detected tool from fenced JSON');
+
+  const noTool = detectToolFromText<{ tool: string }>(
+    'Just regular text with no JSON',
+    (parsed) => {
+      const o = asRecord(parsed);
+      return o && typeof o.tool === 'string' ? { tool: o.tool as string } : null;
+    },
+  );
+  assert(noTool === null, 'no tool in plain text');
+
+  // stableJsonStringify
+  console.log('\nstableJsonStringify:');
+  const key1 = stableJsonStringify({ b: 2, a: 1 });
+  const key2 = stableJsonStringify({ a: 1, b: 2 });
+  assert(key1 === key2, 'stable stringify produces same key regardless of key order');
+  assert(stableJsonStringify(null) === 'null', 'null → "null"');
+  assert(stableJsonStringify(undefined) === 'null', 'undefined → "null"');
+
+  // isInsideInlineCode
+  console.log('\nisInsideInlineCode:');
+  assert(isInsideInlineCode('hello `world` test', 8) === true, 'inside inline code');
+  assert(isInsideInlineCode('hello `world` test', 14) === false, 'after inline code');
+  assert(isInsideInlineCode('hello world test', 6) === false, 'no code spans');
+}
+
+// ---------------------------------------------------------------------------
+// working-memory tests
+// ---------------------------------------------------------------------------
+
+function testWorkingMemory(): void {
+  console.log('\n=== working-memory ===\n');
+
+  // createWorkingMemory
+  console.log('createWorkingMemory:');
+  const mem = createWorkingMemory();
+  assert(mem.plan === '', 'initial plan is empty');
+  assert(Array.isArray(mem.openTasks) && mem.openTasks.length === 0, 'initial openTasks is empty array');
+  assert(mem.observations === undefined, 'initial observations is undefined');
+
+  // applyWorkingMemoryUpdate
+  console.log('\napplyWorkingMemoryUpdate:');
+  applyWorkingMemoryUpdate(mem, {
+    plan: 'Fix the bug',
+    openTasks: ['Read file', 'Edit file'],
+    filesTouched: ['src/app.ts'],
+    currentPhase: 'investigation',
+  });
+  assert(mem.plan === 'Fix the bug', 'plan updated');
+  assert(mem.openTasks!.length === 2, 'openTasks updated');
+  assert(mem.filesTouched!.includes('src/app.ts'), 'filesTouched updated');
+  assert(mem.currentPhase === 'investigation', 'currentPhase updated');
+
+  // dedup
+  applyWorkingMemoryUpdate(mem, {
+    filesTouched: ['src/app.ts', 'src/app.ts', 'src/utils.ts'],
+  });
+  assert(mem.filesTouched!.length === 2, 'filesTouched deduped');
+
+  // applyObservationUpdates
+  console.log('\napplyObservationUpdates:');
+  const obs = applyObservationUpdates(undefined, [
+    { id: 'obs-1', text: 'Uses adapter pattern' },
+    { id: 'obs-2', text: 'Has circular dep', dependsOn: ['src/a.ts'] },
+  ], 1);
+  assert(obs !== undefined && obs.length === 2, '2 observations added');
+  assert(obs![0].id === 'obs-1', 'first observation id');
+  assert(obs![0].addedAtRound === 1, 'addedAtRound set');
+
+  // update existing observation
+  const obs2 = applyObservationUpdates(obs, [
+    { id: 'obs-1', text: 'Uses adapter pattern (confirmed)' },
+  ], 3);
+  assert(obs2![0].text === 'Uses adapter pattern (confirmed)', 'observation updated');
+  assert(obs2![0].addedAtRound === 1, 'addedAtRound preserved on update');
+
+  // remove observation
+  const obs3 = applyObservationUpdates(obs2, [{ id: 'obs-1', remove: true }], 4);
+  assert(obs3!.length === 1, 'observation removed');
+  assert(obs3![0].id === 'obs-2', 'remaining observation is obs-2');
+
+  // invalidateObservationDependencies
+  console.log('\ninvalidateObservationDependencies:');
+  const withDeps: CoderObservation[] = [
+    { id: 'a', text: 'Observation A', dependsOn: ['src/a.ts'] },
+    { id: 'b', text: 'Observation B' }, // no deps
+    { id: 'c', text: 'Observation C', dependsOn: ['src/c.ts'] },
+  ];
+  const invalidated = invalidateObservationDependencies(withDeps, 'src/a.ts', 5);
+  assert(invalidated![0].stale === true, 'obs A stale after dependency modified');
+  assert(invalidated![1].stale === undefined, 'obs B unchanged (no deps)');
+  assert(invalidated![2].stale === undefined, 'obs C unchanged (different dep)');
+
+  // workspace path normalization
+  const invalidated2 = invalidateObservationDependencies(
+    [{ id: 'x', text: 'Test', dependsOn: ['src/foo.ts'] }],
+    '/workspace/src/foo.ts',
+    6,
+  );
+  assert(invalidated2![0].stale === true, 'workspace path normalization works');
+
+  // getVisibleObservations
+  console.log('\ngetVisibleObservations:');
+  const staleObs: CoderObservation[] = [
+    { id: 'fresh', text: 'Fresh obs' },
+    { id: 'stale-recent', text: 'Stale recent', stale: true, staleAtRound: 8 },
+    { id: 'stale-old', text: 'Stale old', stale: true, staleAtRound: 1 },
+  ];
+  const visible = getVisibleObservations(staleObs, 10);
+  assert(visible.length === 2, `${visible.length} visible (fresh + stale-recent, old expired)`);
+  assert(visible.some(o => o.id === 'fresh'), 'fresh is visible');
+  assert(visible.some(o => o.id === 'stale-recent'), 'stale-recent is visible (within 5 rounds)');
+  assert(!visible.some(o => o.id === 'stale-old'), 'stale-old is expired');
+
+  // hasCoderState
+  console.log('\nhasCoderState:');
+  assert(hasCoderState(createWorkingMemory(), 0) === false, 'empty memory → false');
+  assert(hasCoderState({ plan: 'Do stuff' }, 0) === true, 'memory with plan → true');
+
+  // formatCoderState
+  console.log('\nformatCoderState:');
+  const formatted = formatCoderState({
+    plan: 'Fix the bug',
+    openTasks: ['Read file', 'Edit file'],
+    filesTouched: ['src/app.ts'],
+  });
+  assert(formatted.includes('[CODER_STATE]'), 'contains opening tag');
+  assert(formatted.includes('[/CODER_STATE]'), 'contains closing tag');
+  assert(formatted.includes('Fix the bug'), 'contains plan');
+  assert(formatted.includes('src/app.ts'), 'contains file');
+
+  // detectUpdateStateCall
+  console.log('\ndetectUpdateStateCall:');
+  const stateCall = detectUpdateStateCall('```json\n{"tool": "coder_update_state", "args": {"plan": "New plan", "openTasks": ["task1"]}}\n```');
+  assert(stateCall !== null, 'detected update state call');
+  assert(stateCall!.plan === 'New plan', 'parsed plan');
+  assert(stateCall!.openTasks!.length === 1, 'parsed openTasks');
+
+  const noState = detectUpdateStateCall('Just regular text');
+  assert(noState === null, 'no state call in plain text');
+
+  // with observations
+  const obsCall = detectUpdateStateCall('```json\n{"tool": "coder_update_state", "args": {"observations": [{"id": "test", "text": "Found pattern"}]}}\n```');
+  assert(obsCall !== null && obsCall.observations!.length === 1, 'parsed observation updates');
+  assert(obsCall!.observations![0].id === 'test', 'observation id parsed');
+}
+
+// ---------------------------------------------------------------------------
 // Run all tests
 // ---------------------------------------------------------------------------
 
@@ -329,6 +559,8 @@ testDiffUtils();
 testErrorTypes();
 testReasoningTokens();
 testContextBudget();
+testToolProtocol();
+testWorkingMemory();
 
 console.log(`\n${'='.repeat(50)}`);
 console.log(`Results: ${passed} passed, ${failed} failed`);
@@ -344,4 +576,6 @@ if (failed > 0) {
   console.log('  - lib/error-types.ts');
   console.log('  - lib/reasoning-tokens.ts');
   console.log('  - lib/context-budget.ts');
+  console.log('  - lib/tool-protocol.ts');
+  console.log('  - lib/working-memory.ts');
 }
