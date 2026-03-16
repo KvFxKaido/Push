@@ -109,7 +109,7 @@ export function shortenPath(cwd, maxWidth = 40) {
  */
 export function formatContextMeter(tokens, budget, theme, barWidth = 8) {
   const maxTokens = budget?.maxTokens || 100_000;
-  const ratio = Math.min(1, tokens / maxTokens);
+  const ratio = Math.max(0, Math.min(1, (tokens || 0) / maxTokens));
   const filled = Math.round(ratio * barWidth);
   const empty = barWidth - filled;
 

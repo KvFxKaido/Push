@@ -1566,7 +1566,7 @@ export async function runTUI(options = {}) {
   // ── File awareness tracking ─────────────────────────────────────
   // TUI-local file ledger, updated from engine tool_call/tool_result events.
   const tuiFileLedger = createFileLedger();
-  let lastToolCallArgs = null; // stash args from tool_call to pair with tool_result
+  const pendingToolArgs = new Map(); // map toolName → args[] queue (parallel-safe)
 
   const FILE_TOOLS = new Set(['read_file', 'write_file', 'edit_file']);
 
@@ -1857,8 +1857,10 @@ export async function runTUI(options = {}) {
         scheduler.schedule();
         break;
 
-      case 'tool_call':
-        lastToolCallArgs = event.payload.args;
+      case 'tool_call': {
+        const argsQueue = pendingToolArgs.get(event.payload.toolName) || [];
+        argsQueue.push(event.payload.args);
+        pendingToolArgs.set(event.payload.toolName, argsQueue);
         addToolFeedEntry(tuiState, {
           type: 'call',
           name: event.payload.toolName,
@@ -1873,6 +1875,7 @@ export async function runTUI(options = {}) {
         });
         scheduler.schedule();
         break;
+      }
 
       case 'tool_result': {
         const isError = event.payload.isError;
@@ -1884,14 +1887,16 @@ export async function runTUI(options = {}) {
           error: isError,
           preview: text.slice(0, 100),
         });
-        // Track file awareness
+        // Track file awareness — shift args from the per-tool queue (parallel-safe)
+        const resultArgsQueue = pendingToolArgs.get(event.payload.toolName);
+        const matchedArgs = resultArgsQueue?.shift() ?? null;
+        if (resultArgsQueue && resultArgsQueue.length === 0) pendingToolArgs.delete(event.payload.toolName);
         updateFileAwarenessFromToolEvent(
           event.payload.toolName,
-          lastToolCallArgs,
+          matchedArgs,
           true,
           isError,
         );
-        lastToolCallArgs = null;
         // Update the last tool_call transcript entry with result info and preview
         let updatedTranscriptToolCall = false;
         for (let i = tuiState.transcript.length - 1; i >= 0; i--) {
