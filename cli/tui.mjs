@@ -12,7 +12,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
 import { createTheme } from './tui-theme.mjs';
-import { renderStatusBar, renderKeybindHints, getCompactGitStatus, estimateTokens, formatContextMeter } from './tui-status.mjs';
+import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.mjs';
 import { getContextBudget, estimateContextTokens } from './context-manager.mjs';
 import { filterSessions } from './tui-fuzzy.mjs';
 import { applySingleLineEditKey, getListNavigationAction, moveCursorCircular } from './tui-modal-input.mjs';
@@ -1568,17 +1568,18 @@ export async function runTUI(options = {}) {
   const tuiFileLedger = createFileLedger();
   let lastToolCallArgs = null; // stash args from tool_call to pair with tool_result
 
+  const FILE_TOOLS = new Set(['read_file', 'write_file', 'edit_file']);
+
   function updateFileAwarenessFromToolEvent(toolName, args, isResult, isError) {
-    // Extract file path from tool call args
+    if (!FILE_TOOLS.has(toolName)) return;
+
     const filePath = args?.path || args?.file;
     if (!filePath || typeof filePath !== 'string') return;
 
     if (isResult && !isError) {
-      // Simulate the result format that updateFileLedger expects
       const simulatedCall = { tool: toolName };
       const simulatedResult = { ok: true, meta: { path: filePath } };
 
-      // For read_file, mark as partial_read (we don't have line range info)
       if (toolName === 'read_file') {
         simulatedResult.meta.total_lines = 0; // triggers partial_read
       }
@@ -1696,7 +1697,6 @@ export async function runTUI(options = {}) {
         messageCount: state.messages?.length || 0,
         contextBudget: budget,
         fileAwareness: tuiState.fileAwareness,
-        sessionName: state.sessionName || '',
       });
       renderKeybindHints(screenBuf, layout, theme, tuiState);
     };

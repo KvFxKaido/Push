@@ -136,7 +136,6 @@ export function renderStatusBar(buf, layout, theme, {
   messageCount = 0,
   contextBudget = null,
   fileAwareness = null,
-  sessionName = '',
 }) {
   const { top, left, width } = layout.footer;
   const { glyphs } = theme;
