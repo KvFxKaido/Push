@@ -2048,6 +2048,7 @@ export function useChat(
                   let totalCheckpoints = 0;
                   let parallelIsolationNote = '';
 
+                  let parallelSetupFailed = false;
                   const canRunParallelDelegates = (
                     taskList.length > 1
                     && taskList.length <= MAX_PARALLEL_DELEGATE_TASKS
@@ -2065,14 +2066,15 @@ export function useChat(
                       { chatId, source: 'coder' },
                     );
 
-                    const snapshot = await downloadFromSandbox(currentSandboxId, '/workspace');
-                    if (!snapshot.ok || !snapshot.archiveBase64) {
-                      throw new Error(snapshot.error || 'Failed to capture workspace snapshot for parallel delegation.');
-                    }
-                    const snapshotArchiveBase64 = snapshot.archiveBase64;
 
                     const workerSandboxIds: string[] = [];
                     try {
+                      // Worker setup: capture snapshot and spin up isolated containers
+                      const snapshot = await downloadFromSandbox(currentSandboxId, '/workspace');
+                      if (!snapshot.ok || !snapshot.archiveBase64) {
+                        throw new Error(snapshot.error || 'Failed to capture workspace snapshot for parallel delegation.');
+                      }
+                      const snapshotArchiveBase64 = snapshot.archiveBase64;
                       // Use allSettled so every worker sandbox ID is tracked
                       // before the finally cleanup runs — prevents orphaned
                       // sandboxes when one task fails while others still set up.
@@ -2192,22 +2194,30 @@ export function useChat(
                         }),
                       );
 
-                      // Rethrow first failure — allSettled guarantees all worker
-                      // IDs are registered in workerSandboxIds before finally runs.
-                      const rejected = settledResults.find(r => r.status === 'rejected');
-                      if (rejected && rejected.status === 'rejected') throw rejected.reason;
+                      // Collect results from all workers (including failures)
 
-                      settledResults
-                        .filter((r): r is PromiseFulfilledResult<{ taskIndex: number; coderResult: { summary: string; cards: ChatCard[]; rounds: number; checkpoints: number } }> => r.status === 'fulfilled')
-                        .map(r => r.value)
-                        .sort((a, b) => a.taskIndex - b.taskIndex)
-                        .forEach(({ taskIndex, coderResult }) => {
+                      settledResults.forEach((result, taskIndex) => {
+                        if (result.status === 'fulfilled') {
+                          const { coderResult } = result.value;
                           totalRounds += coderResult.rounds;
                           totalCheckpoints += coderResult.checkpoints;
                           summaries.push(`Task ${taskIndex + 1}: ${coderResult.summary}`);
-                        });
+                          allCards.push(...coderResult.cards);
+                        } else {
+                          const errorMsg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+                          summaries.push(`Task ${taskIndex + 1} [Stalled/Failed]: ${errorMsg}`);
+                        }
+                      });
 
                       parallelIsolationNote = '\n[Note] Parallel delegate tasks ran in isolated worker sandboxes and were not auto-merged into the active workspace.';
+                    }
+                    } catch (err) {
+                      console.error('[Parallel Delegation Failure]', err);
+                      parallelSetupFailed = true;
+                      updateAgentStatus(
+                        { active: true, phase: 'Worker setup failed, falling back to sequential execution...' },
+                        { chatId, source: 'coder' },
+                      );
                     } finally {
                       await Promise.all(workerSandboxIds.map(async (id) => {
                         try {
@@ -2217,7 +2227,9 @@ export function useChat(
                         }
                       }));
                     }
-                  } else {
+                  }
+
+                  if (!canRunParallelDelegates || parallelSetupFailed) {
                     for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
                       const task = taskList[taskIndex];
 
