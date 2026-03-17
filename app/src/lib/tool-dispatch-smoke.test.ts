@@ -101,6 +101,7 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
       exitCode: 0,
       stdout: '',
       stderr: '',
+      truncated: false,
     });
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
       diff: 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n',

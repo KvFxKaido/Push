@@ -279,6 +279,81 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
       }),
     );
   });
+
+  it('blocks commit preparation when the pre-commit hook fails', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n',
+      truncated: false,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'lint failed',
+      stderr: 'src/app.ts:1 error',
+      exitCode: 1,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'test commit' } },
+      'sb-123',
+    );
+
+    expect(runAuditor).not.toHaveBeenCalled();
+    expect(result.text).toContain('Commit BLOCKED by pre-commit hook');
+    expect(result.card?.type).toBe('audit-verdict');
+    if (result.card?.type === 'audit-verdict') {
+      expect(result.card.data.summary).toContain('Pre-commit hook failed');
+    }
+  });
+
+  it('audits the post-hook diff when the pre-commit hook rewrites files', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff)
+      .mockResolvedValueOnce({
+        diff: 'diff --git a/src/app.ts b/src/app.ts\n-console.log("before");\n+console.log("during hook");\n',
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        diff: 'diff --git a/src/app.ts b/src/app.ts\n-console.log("before");\n+console.log("after hook");\n',
+        truncated: false,
+      });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'formatted files',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    vi.mocked(runAuditor).mockResolvedValue({
+      verdict: 'safe',
+      card: {
+        verdict: 'safe',
+        summary: 'No issues found.',
+        risks: [],
+        filesReviewed: 1,
+      },
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'test commit' } },
+      'sb-123',
+    );
+
+    expect(runAuditor).toHaveBeenCalledWith(
+      'diff --git a/src/app.ts b/src/app.ts\n-console.log("before");\n+console.log("after hook");\n',
+      expect.any(Function),
+      expect.objectContaining({
+        source: 'sandbox-prepare-commit',
+      }),
+      expect.objectContaining({
+        exitCode: 0,
+        output: 'formatted files',
+      }),
+      expect.any(Object),
+    );
+    expect(result.card?.type).toBe('commit-review');
+    if (result.card?.type === 'commit-review') {
+      expect(result.card.data.diff.diff).toContain('after hook');
+      expect(result.card.data.diff.diff).not.toContain('during hook');
+    }
+  });
 });
 
 describe('executeSandboxToolCall -- read metrics', () => {

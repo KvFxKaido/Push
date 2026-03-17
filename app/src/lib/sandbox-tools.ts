@@ -12,6 +12,7 @@ import type {
   ToolExecutionResult,
   StructuredToolError,
   ActiveRepo,
+  AuditVerdictCardData,
   SandboxCardData,
   DiffPreviewCardData,
   CommitReviewCardData,
@@ -2456,11 +2457,55 @@ export async function executeSandboxToolCall(
           return { text: lines.join('\n') };
         }
 
-        // Step 2: Run Auditor
+        // Step 2: Run pre-commit hook before auditing so the review reflects
+        // the exact tree the user would commit.
         const hookResult = await execInSandbox(sandboxId, 'if [ -x .git/hooks/pre-commit ]; then .git/hooks/pre-commit 2>&1 || exit $?; fi', '/workspace');
+        const hookOutput = [hookResult.stdout, hookResult.stderr]
+          .filter((part): part is string => typeof part === 'string' && part.length > 0)
+          .join('\n')
+          .trim();
 
+        if ((hookResult.exitCode ?? 0) !== 0) {
+          const outputPreview = hookOutput
+            ? hookOutput.slice(0, 1200)
+            : 'The hook exited without any output.';
+          const verdictCard: AuditVerdictCardData = {
+            verdict: 'unsafe',
+            summary: 'Pre-commit hook failed. Fix the hook errors before preparing this commit.',
+            risks: [
+              {
+                level: 'medium',
+                description: `pre-commit exited with code ${hookResult.exitCode}. ${outputPreview}`,
+              },
+            ],
+            filesReviewed: parseDiffStats(diffResult.diff).filesChanged,
+          };
+          return {
+            text: `[Tool Result — sandbox_prepare_commit]\nCommit BLOCKED by pre-commit hook (exit ${hookResult.exitCode}).\n${outputPreview}`,
+            card: { type: 'audit-verdict', data: verdictCard },
+          };
+        }
+
+        const postHookDiffResult = await getSandboxDiff(sandboxId);
+        if (postHookDiffResult.error) {
+          const commitDiffErr = classifyError(postHookDiffResult.error, 'sandbox_prepare_commit');
+          return { text: formatStructuredError(commitDiffErr, `[Tool Error — sandbox_prepare_commit]\n${postHookDiffResult.error}`), structuredError: commitDiffErr };
+        }
+
+        if (!postHookDiffResult.diff) {
+          const lines = [`[Tool Result — sandbox_prepare_commit]\nNo changes to commit after running the pre-commit hook.`];
+          if (postHookDiffResult.git_status) {
+            lines.push(`git status shows: ${postHookDiffResult.git_status}`);
+          }
+          if (hookOutput) {
+            lines.push(`pre-commit output:\n${hookOutput.slice(0, 1200)}`);
+          }
+          return { text: lines.join('\n') };
+        }
+
+        // Step 3: Run Auditor on the post-hook diff.
         const auditResult = await runAuditor(
-          diffResult.diff,
+          postHookDiffResult.diff,
           (phase) => console.log(`[Push] Auditor: ${phase}`),
           {
             source: 'sandbox-prepare-commit',
@@ -2484,15 +2529,15 @@ export async function executeSandboxToolCall(
           };
         }
 
-        // Step 3: SAFE — return a review card for user approval (do NOT commit)
-        const stats = parseDiffStats(diffResult.diff);
+        // Step 4: SAFE — return a review card for user approval (do NOT commit)
+        const stats = parseDiffStats(postHookDiffResult.diff);
         const reviewData: CommitReviewCardData = {
           diff: {
-            diff: diffResult.diff,
+            diff: postHookDiffResult.diff,
             filesChanged: stats.filesChanged,
             additions: stats.additions,
             deletions: stats.deletions,
-            truncated: diffResult.truncated,
+            truncated: postHookDiffResult.truncated,
           },
           auditVerdict: auditResult.card,
           commitMessage: call.args.message,
@@ -3762,7 +3807,7 @@ Additional tools available when sandbox is active:
 - sandbox_search_replace(path, search, replace, expected_version?) — Find the unique line in path containing search (case-sensitive substring) and replace that substring with replace. Errors if search matches zero lines (not found) or multiple lines (ambiguous — add more context). replace may contain newlines to expand one line into several. Best for targeted one-line edits when you can name a distinctive string without knowing the hash.
 - sandbox_edit_file(path, edits, expected_version?) — Edit a file using content hashes as line references. edits is an array of HashlineOp: { op: "replace_line" | "insert_after" | "insert_before" | "delete_line", ref: string, content: string }. The ref can be a bare hash ("abc1234", 7-12 hex chars) or a line-qualified ref ("42:abc1234" — 1-indexed line number + colon + hash). Read results show "[hash] lineNo" per line; use those in refs. For unique lines, bare hashes work fine. When lines have duplicate content (same hash), use a line-qualified ref to target the exact line — this always resolves unambiguously. If an edit fails with an ambiguity error, the error shows matching line numbers — retry with a line-qualified ref. After a successful edit, a fast syntax check runs automatically and appends [DIAGNOSTICS] if errors are found (syntax only, not type errors).
 - sandbox_diff() — Get the git diff of all uncommitted changes
-- sandbox_prepare_commit(message) — Prepare a commit for review. Gets diff, runs Auditor. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
+- sandbox_prepare_commit(message) — Prepare a commit for review. Gets diff, runs a pre-commit hook if present, then runs Auditor on the post-hook diff. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
 - sandbox_push() — Retry a failed push. Use this only if a push failed after approval. No Auditor needed (commit was already audited).
 - sandbox_run_tests(framework?) — Run the test suite. Auto-detects npm/pytest/cargo/go if framework not specified. Returns pass/fail counts and output.
 - sandbox_check_types() — Run type checker (tsc for TypeScript, pyright/mypy for Python). Auto-detects from config files. Returns errors with file:line locations.
@@ -3796,12 +3841,11 @@ Sandbox rules:
 - You may emit multiple tool calls in one message. Read-only calls (sandbox_read_file, sandbox_search, sandbox_list_dir, sandbox_diff) run in parallel. Place any mutating call (sandbox_exec, sandbox_write_file, sandbox_edit_range, sandbox_search_replace, sandbox_edit_file, sandbox_prepare_commit, sandbox_push, sandbox_apply_patchset, etc.) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
 - Prefer read → write flows for edits. Use expected_version from sandbox_read_file to avoid stale overwrites. For large files, use start_line/end_line to read only the relevant section before editing.
 - sandbox_diff shows what you've changed — review before committing
-- sandbox_prepare_commit triggers the Auditor for safety review, then presents a review card. The user approves or rejects via the UI.
+- sandbox_prepare_commit runs a pre-commit hook if present, then triggers the Auditor on the post-hook diff and presents a review card. The user approves or rejects via the UI.
 - If the push fails after a successful commit, use sandbox_push() to retry
 - Keep commands focused — avoid long-running servers or background processes
 - IMPORTANT: sandbox_read_file only works on files, not directories. To explore the project structure, use sandbox_list_dir first, then read specific files.
 - Before delegating code changes, prefer sandbox_search to quickly locate relevant files/functions and provide precise context.
-- LOOK-BEFORE-YOU-LEAP: Before delegating changes, use delegate_explorer to map out dependencies and logic flows. This prevents 'coding blind' and ensures the implementation plan is evidence-based.
 - Search strategy: Start with short, distinctive substrings. If no results, broaden the term or drop the path filter. Use sandbox_list_dir to verify paths exist. Use sandbox_read_symbols(path) to discover function/class names in a specific file without reading the whole file. Regex patterns can sharpen results: "^export function" (definitions only), "class \\w+Card" (class declarations), "^import.*from" (imports). Use anchors (^, $) to avoid matching comments or strings.
 - Use sandbox_run_tests BEFORE committing to catch regressions early. It's faster than sandbox_exec("npm test") and gives structured results.
 - Use sandbox_check_types to validate TypeScript/Python code before committing. Catches type errors that tests might miss.`;

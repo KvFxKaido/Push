@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { evaluatePreHooks } from './tool-hooks';
-import { createExplorerToolHooks } from './explorer-agent';
+import { buildExplorerSystemPrompt, createExplorerToolHooks } from './explorer-agent';
 
 const TEST_CONTEXT = {
   sandboxId: 'sb-123',
@@ -51,5 +51,18 @@ describe('createExplorerToolHooks', () => {
 
     expect(result?.decision).toBe('deny');
     expect(result?.reason).toContain('delegate_coder');
+  });
+});
+
+describe('buildExplorerSystemPrompt', () => {
+  it('keeps Explorer focused on read-only tools', () => {
+    const prompt = buildExplorerSystemPrompt();
+
+    expect(prompt).toContain('sandbox_read_file');
+    expect(prompt).toContain('web_search');
+    expect(prompt).toContain('You may use only these read-only tools');
+    expect(prompt).toContain('Do NOT call delegate_coder, delegate_explorer');
+    expect(prompt).not.toContain('{"tool": "sandbox_exec"');
+    expect(prompt).not.toContain('{"tool": "delegate_coder"');
   });
 });

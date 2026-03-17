@@ -27,8 +27,6 @@ import {
 } from './orchestrator';
 import { streamWithTimeout } from './utils';
 
-import { TOOL_PROTOCOL } from './github-tools';
-import { getSandboxToolProtocol } from './sandbox-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 
 const MAX_EXPLORER_ROUNDS = 10;
@@ -79,11 +77,32 @@ Recommended next step:
 
 Keep the report concise, evidence-based, and focused on helping the Orchestrator decide what to do next.`;
 
+const EXPLORER_TOOL_PROTOCOL = `
+## Explorer Tool Protocol
+
+You may use only these read-only tools:
+
+- GitHub: fetch_pr, list_prs, list_commits, read_file, grep_file, list_directory, list_branches, fetch_checks, search_files, list_commit_files, get_workflow_runs, get_workflow_logs, check_pr_mergeable, find_existing_pr
+- Sandbox: sandbox_read_file, sandbox_search, sandbox_list_dir, sandbox_diff, sandbox_read_symbols, sandbox_find_references
+- Web: web_search
+
+Usage:
+\`\`\`json
+{"tool": "read_file", "args": {"repo": "owner/repo", "path": "src/example.ts"}}
+\`\`\`
+
+Rules:
+- Output ONLY the fenced JSON block when requesting a tool.
+- Use only the tools listed above.
+- Do NOT call delegate_coder, delegate_explorer, create_pr, merge_pr, delete_branch, trigger_workflow, sandbox_exec, sandbox_write_file, sandbox_edit_range, sandbox_search_replace, sandbox_edit_file, sandbox_prepare_commit, sandbox_push, sandbox_apply_patchset, scratchpad tools, or ask_user.
+- Prefer search/symbol tools before large file reads.
+- If no sandbox is available, skip sandbox tools and investigate via GitHub tools instead.
+`.trim();
+
 export function buildExplorerSystemPrompt(): string {
   return [
     EXPLORER_SYSTEM_PROMPT,
-    TOOL_PROTOCOL,
-    getSandboxToolProtocol(),
+    EXPLORER_TOOL_PROTOCOL,
     WEB_SEARCH_TOOL_PROTOCOL,
   ].join('\n\n');
 }

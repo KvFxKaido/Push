@@ -178,6 +178,8 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+export const SANDBOX_TS_ARROW_FUNCTION_REGEX = String.raw`^(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:\s*[^=]+)?\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>`;
+
 const SANDBOX_READ_SYMBOLS_SCRIPT = `
 import sys, json, os
 
@@ -234,9 +236,9 @@ else:
         if m:
             symbols.append({"name": m.group(1), "kind": "type", "line": i, "signature": stripped.split('=')[0].strip()})
             continue
-        m = re.match(r'^(?:export\\s+)?(?:(const|let|var|async)\\s+)?(\\w+)\\s*[:=]\\s*(?:async\\s+)?(?:\\(.*?\\)|function)?\\s*=>', stripped)
+        m = re.match(r'${SANDBOX_TS_ARROW_FUNCTION_REGEX}', stripped)
         if m:
-            symbols.append({"name": m.group(2), "kind": "function", "line": i, "signature": stripped.split('=')[0].strip().rstrip(':')})
+            symbols.append({"name": m.group(1), "kind": "function", "line": i, "signature": stripped.split('=')[0].strip().rstrip(':')})
             continue
         m = re.match(r'^(?:export\\s+)?(const|let|var)\\s+(\\w+)', stripped)
         if m:

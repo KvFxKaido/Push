@@ -23,7 +23,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 // We need to set the owner token before each test since the client
 // checks for it on every request.
-import { setSandboxOwnerToken, parseEnvironmentProbe } from './sandbox-client';
+import { setSandboxOwnerToken, parseEnvironmentProbe, SANDBOX_TS_ARROW_FUNCTION_REGEX } from './sandbox-client';
 
 beforeEach(() => {
   mockFetch.mockReset();
@@ -262,6 +262,14 @@ describe('deleteFromSandbox', () => {
 // ---------------------------------------------------------------------------
 
 describe('readSymbolsFromSandbox', () => {
+  it('matches arrow assignments without treating function-typed variables as functions', () => {
+    const arrowFunctionRegex = new RegExp(SANDBOX_TS_ARROW_FUNCTION_REGEX);
+
+    expect(arrowFunctionRegex.test('const renderRow = (row: Row) => row.id')).toBe(true);
+    expect(arrowFunctionRegex.test('export const loadUser: Loader = async () => ({ ok: true })')).toBe(true);
+    expect(arrowFunctionRegex.test('const onSelect: (id: string) => void = noop')).toBe(false);
+  });
+
   it('executes the symbol extractor and parses structured output', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
