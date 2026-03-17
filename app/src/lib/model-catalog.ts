@@ -22,6 +22,9 @@ const OPENROUTER_PRIORITY_MODELS = [
   'anthropic/claude-opus-4.6:nitro',
   'anthropic/claude-sonnet-4.6:nitro',
   'arcee-ai/virtuoso-large',
+  'inception/mercury-2',
+  'inception/mercury-coder',
+
   'cohere/command-a',
   'deepseek/deepseek-r1',
   'deepseek/deepseek-v3.2:nitro',
@@ -36,12 +39,17 @@ const OPENROUTER_PRIORITY_MODELS = [
   'mistralai/codestral-2508',
   'mistralai/devstral-2512',
   'mistralai/mistral-large-2512',
+  'mistralai/mistral-small-2603',
+
   'moonshotai/kimi-k2.5:nitro',
   'openai/gpt-5-mini',
   'openai/gpt-5.2-codex',
   'openai/gpt-5.3-codex',
   'openai/gpt-5.4',
   'openai/gpt-5.4-pro',
+  'openai/gpt-5.4-mini',
+  'openai/gpt-5.4-nano',
+
   'perplexity/sonar-pro',
   'qwen/qwen3-coder-flash',
   'qwen/qwen3-coder-plus',
