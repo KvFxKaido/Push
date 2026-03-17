@@ -552,7 +552,7 @@ async function createGitHubRepo(
 // --- Tool types ---
 
 export type SandboxToolCall =
-  | { tool: 'sandbox_exec'; args: { command: string; workdir?: string } }
+  | { tool: 'sandbox_exec'; args: { command: string; workdir?: string; allowDirectGit?: boolean } }
   | { tool: 'sandbox_read_file'; args: { path: string; start_line?: number; end_line?: number } }
   | { tool: 'sandbox_search'; args: { query: string; path?: string } }
   | { tool: 'sandbox_find_references'; args: { symbol: string; scope?: string } }
@@ -604,7 +604,11 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
   const args = asRecord(parsedObj.args) || {};
 
   if (tool === 'sandbox_exec' && typeof args.command === 'string') {
-    return { tool: 'sandbox_exec', args: { command: args.command, workdir: normalizeSandboxWorkdir(typeof args.workdir === 'string' ? args.workdir : undefined) } };
+    return { tool: 'sandbox_exec', args: {
+      command: args.command,
+      workdir: normalizeSandboxWorkdir(typeof args.workdir === 'string' ? args.workdir : undefined),
+      ...(args.allowDirectGit === true ? { allowDirectGit: true } : {}),
+    } };
   }
   if ((tool === 'sandbox_read_file' || tool === 'read_sandbox_file') && typeof args.path === 'string') {
     const startLine = parsePositiveIntegerArg(args.start_line);
@@ -830,6 +834,28 @@ function isLikelyMutatingSandboxExec(command: string): boolean {
     || /\bcargo\s+(add|remove)\b/.test(normalized)
     || /\bsed\s+-i\b/.test(normalized)
     || /\bperl\s+-pi\b/.test(normalized);
+}
+
+// ---------------------------------------------------------------------------
+// Git guard — block direct git mutations in sandbox_exec
+// ---------------------------------------------------------------------------
+
+const GIT_MUTATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bgit\s+commit\b/i, label: 'git commit' },
+  { pattern: /\bgit\s+push\b/i, label: 'git push' },
+  { pattern: /\bgit\s+merge\b/i, label: 'git merge' },
+  { pattern: /\bgit\s+rebase\b/i, label: 'git rebase' },
+];
+
+/**
+ * Detect git mutation commands that should go through the audited flow.
+ * Returns the matched command label, or null if the command is safe.
+ */
+function detectBlockedGitCommand(command: string): string | null {
+  for (const { pattern, label } of GIT_MUTATION_PATTERNS) {
+    if (pattern.test(command)) return label;
+  }
+  return null;
 }
 
 function isUnknownSymbolGuardReason(reason: string): boolean {
@@ -1200,6 +1226,23 @@ export async function executeSandboxToolCall(
   try {
     switch (call.tool) {
       case 'sandbox_exec': {
+        // Git guard: block direct git mutations unless user explicitly approved
+        const blockedGitOp = detectBlockedGitCommand(call.args.command);
+        if (blockedGitOp && !call.args.allowDirectGit) {
+          return {
+            text: [
+              `[Tool Blocked — sandbox_exec]`,
+              `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
+              ``,
+              `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
+              `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
+              ``,
+              `error_type: GIT_GUARD_BLOCKED`,
+              `retryable: false`,
+            ].join('\n'),
+          };
+        }
+
         const start = Date.now();
         const markWorkspaceMutated = isLikelyMutatingSandboxExec(call.args.command);
         const normalizedWorkdir = normalizeSandboxWorkdir(call.args.workdir);
@@ -3843,6 +3886,7 @@ Sandbox rules:
 - sandbox_diff shows what you've changed — review before committing
 - sandbox_prepare_commit runs a pre-commit hook if present, then triggers the Auditor on the post-hook diff and presents a review card. The user approves or rejects via the UI.
 - If the push fails after a successful commit, use sandbox_push() to retry
+- IMPORTANT: Direct git commit, git push, git merge, and git rebase commands in sandbox_exec are blocked. Always use sandbox_prepare_commit + sandbox_push for the audited commit flow. If the standard flow fails repeatedly, use ask_user to explain the problem and ask the user for permission. Only if the user explicitly approves, retry with "allowDirectGit": true in your sandbox_exec args.
 - Keep commands focused — avoid long-running servers or background processes
 - IMPORTANT: sandbox_read_file only works on files, not directories. To explore the project structure, use sandbox_list_dir first, then read specific files.
 - Before delegating code changes, prefer sandbox_search to quickly locate relevant files/functions and provide precise context.

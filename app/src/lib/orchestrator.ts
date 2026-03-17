@@ -491,6 +491,7 @@ Error types and how to respond:
 - AUTH_FAILURE → Inform the user; don't retry.
 - RATE_LIMITED (retryable: true) → Wait briefly, then retry once.
 - SANDBOX_UNREACHABLE → Inform the user the sandbox may have expired.
+- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in sandbox_exec is blocked. Use sandbox_prepare_commit + sandbox_push. If the standard flow fails, use ask_user to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.
 
 General rules:
 - If retryable: false, pivot to a different approach — don't repeat the same call.

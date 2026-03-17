@@ -309,6 +309,7 @@ export type ToolErrorType =
   | 'RATE_LIMITED'
   | 'STALE_FILE'
   | 'EDIT_GUARD_BLOCKED'
+  | 'GIT_GUARD_BLOCKED'
   | 'WRITE_FAILED'
   | 'UNKNOWN';
 
