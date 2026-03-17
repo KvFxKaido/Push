@@ -515,8 +515,17 @@ Rules:
 - Don't guess. If unsure, omit the files field.
 - Prioritize correctness over optimization.
 
-Use delegate_explorer when the user wants understanding rather than changes:
-{"tool": "delegate_explorer", "args": { "task": "trace the auth flow and summarize where session refresh happens", "files": ["src/auth.ts"] }}
+## Explorer Task Template
+
+When delegating to the Explorer, structure your "task" argument to be extremely precise and evidence-based. Use the following format:
+
+Objective: [clear goal]
+Look at: [target paths]
+Search for: [exact keywords/regex]
+Report: [explicit output requirements like file paths and line numbers]
+
+Example:
+{"tool": "delegate_explorer", "args": { "task": "Objective: Trace the auth flow and summarize where session refresh happens\nLook at: src/auth.ts, src/middleware.ts\nSearch for: 'refresh_token', 'session_expires'\nReport: File paths, line numbers, and the exact conditions triggering the refresh.", "files": ["src/auth.ts"] }}
 
 ## Multi-Task Delegation
 
