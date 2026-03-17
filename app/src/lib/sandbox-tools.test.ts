@@ -237,6 +237,8 @@ describe('executeSandboxToolCall -- stale write handling', () => {
 describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', () => {
   beforeEach(() => {
     vi.mocked(sandboxClient.getSandboxDiff).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
     vi.mocked(runAuditor).mockReset();
   });
 
@@ -270,6 +272,7 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
       expect.objectContaining({
         source: 'sandbox-prepare-commit',
       }),
+      expect.any(Object),
       expect.objectContaining({
         providerOverride: 'vertex',
         modelOverride: 'google/gemini-2.5-pro',

@@ -120,7 +120,7 @@ export function useCommitPush(
       const auditResult = await runAuditor(diffText, () => {}, {
         source: 'working-tree-commit',
         sourceLabel: 'Working tree diff before commit/push',
-      }, {
+      }, undefined, {
         providerOverride: effectiveAuditorProvider,
         modelOverride: effectiveAuditorModel,
       });

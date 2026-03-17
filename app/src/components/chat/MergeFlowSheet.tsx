@@ -440,7 +440,7 @@ function MergeFlowSheet({
           prNumber: pr.number,
           sourceLabel: `PR #${pr.number}: ${pr.title}`,
           projectInstructions,
-        }, {
+        }, undefined, {
           providerOverride: lockedProvider || undefined,
           modelOverride: lockedModel || undefined,
         });

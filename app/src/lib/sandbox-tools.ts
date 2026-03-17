@@ -2457,12 +2457,18 @@ export async function executeSandboxToolCall(
         }
 
         // Step 2: Run Auditor
+        const hookResult = await execInSandbox(sandboxId, 'if [ -x .git/hooks/pre-commit ]; then .git/hooks/pre-commit 2>&1 || exit $?; fi', '/workspace');
+
         const auditResult = await runAuditor(
           diffResult.diff,
           (phase) => console.log(`[Push] Auditor: ${phase}`),
           {
             source: 'sandbox-prepare-commit',
             sourceLabel: 'sandbox_prepare_commit preflight',
+          },
+          {
+            exitCode: hookResult.exitCode ?? 0,
+            output: hookResult.stdout + hookResult.stderr,
           },
           {
             providerOverride: options?.auditorProviderOverride,

@@ -20,6 +20,11 @@ import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils'
 
 const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
 
+export interface HookResult {
+  exitCode: number;
+  output: string;
+}
+
 export interface AuditorRunOptions {
   providerOverride?: ActiveProvider;
   modelOverride?: string | null;
@@ -58,6 +63,7 @@ export async function runAuditor(
   diff: string,
   onStatus: (phase: string) => void,
   context?: AuditorPromptContext,
+  hookResult?: HookResult | null,
   options?: AuditorRunOptions,
 ): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
   const filesReviewed = parseDiffStats(diff).filesChanged;
@@ -101,7 +107,7 @@ export async function runAuditor(
     {
       id: 'audit-request',
       role: 'user',
-      content: `Review this diff for security issues:\n\n${fileHintsBlock}\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\``,
+      content: `Review this diff for security issues:\n\n${fileHintsBlock}\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\`${hookResult ? `\n\n[PRE-COMMIT HOOK RESULT]\nExit Code: ${hookResult.exitCode}\nOutput:\n${hookResult.output}\n\nIf non-zero, you MUST return UNSAFE...\n[/PRE-COMMIT HOOK RESULT]` : ''}`,
       timestamp: Date.now(),
     },
   ];

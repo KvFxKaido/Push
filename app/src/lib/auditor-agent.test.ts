@@ -67,6 +67,7 @@ describe('runAuditor', () => {
       'diff --git a/src/app.ts b/src/app.ts\n+const x = 1;\n',
       () => {},
       undefined,
+      undefined,
       {
         providerOverride: 'vertex',
         modelOverride: 'google/gemini-2.5-pro',

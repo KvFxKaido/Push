@@ -143,6 +143,7 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
       expect.objectContaining({
         source: 'sandbox-prepare-commit',
       }),
+      expect.any(Object),
       expect.objectContaining({
         providerOverride: 'openrouter',
         modelOverride: 'anthropic/claude-sonnet-4.6:nitro',

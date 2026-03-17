@@ -545,7 +545,7 @@ export function WorkspaceHubSheet({
           ? `Working tree commit after branching to ${targetBranchName}`
           : `Working tree commit on ${targetBranchName}`,
         projectInstructions,
-      }, {
+      }, undefined, {
         providerOverride: lockedProvider || undefined,
         modelOverride: lockedModel || undefined,
       });
