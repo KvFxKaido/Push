@@ -234,7 +234,7 @@ else:
         if m:
             symbols.append({"name": m.group(1), "kind": "type", "line": i, "signature": stripped.split('=')[0].strip()})
             continue
-        m = re.match(r'^(?:export\s+)?(?:(const|let|var|async)\s+)?(\w+)\s*[:=]\s*(?:async\s+)?(?:\(.*?\)|function)?\s*=>', stripped)
+        m = re.match(r'^(?:export\\s+)?(?:(const|let|var|async)\\s+)?(\\w+)\\s*[:=]\\s*(?:async\\s+)?(?:\\(.*?\\)|function)?\\s*=>', stripped)
         if m:
             symbols.append({"name": m.group(2), "kind": "function", "line": i, "signature": stripped.split('=')[0].strip().rstrip(':')})
             continue
