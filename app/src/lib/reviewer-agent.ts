@@ -28,7 +28,7 @@ const REVIEWER_FILE_STRUCTURE_MAX_FILES = 3;
  * advance the counter silently. This gives the model explicit anchors instead
  * of asking it to count lines itself.
  */
-function annotateDiffWithLineNumbers(diff: string): string {
+export function annotateDiffWithLineNumbers(diff: string): string {
   const lines = diff.split('\n');
   const out: string[] = [];
   let newLine = 0;
@@ -65,6 +65,25 @@ function annotateDiffWithLineNumbers(diff: string): string {
   return out.join('\n');
 }
 
+/** Shared severity guide + review checklist — used by both quick and deep reviewer. */
+export const REVIEWER_CRITERIA_BLOCK = `Severity guide:
+- critical: correctness bugs, data loss risk, broken functionality, security vulnerabilities
+- warning: potential bugs, missing error handling, risky patterns, unhandled edge cases
+- suggestion: better approaches, refactoring opportunities, performance improvements
+- note: genuinely useful informational comments only; avoid low-value nits
+
+Review for:
+- Correctness: logic errors, off-by-ones, null/undefined handling, race conditions
+- Regressions: user-visible behavior changes, broken flows, or subtle changes from previous behavior
+- Testing: missing tests, insufficient coverage for risky logic, or assertions that should be added
+- Compatibility: API contract drift, schema/localStorage changes, migration assumptions, versioning risk
+- State/async edges: loading, resume, reconnect, branch switching, stale state, ordering, and cancellation issues
+- Security: injection vectors, auth issues, secret exposure (flag but don't block — that is the Auditor's job)
+- Code quality: readability, maintainability, appropriate abstractions, dead code
+- Conventions: consistency with surrounding code patterns visible in the diff
+- Performance: obvious inefficiencies, unnecessary re-renders, expensive operations in hot paths
+- Documentation: README/doc changes that contradict the code diff, outdated examples, missing docs for new public APIs or changed behavior, unclear or misleading prose in comments or markdown files`;
+
 const REVIEWER_SYSTEM_PROMPT = `You are the Reviewer agent for Push, a mobile AI coding assistant. Your role is to provide advisory code review feedback on diffs.
 
 You MUST respond with ONLY a valid JSON object. No other text, no markdown fences.
@@ -84,23 +103,7 @@ Schema:
 
 Added lines in the diff are annotated with [Lxxx] indicating their line number in the new file. When your comment targets a specific added line, include "line": <that number>. Omit "line" for file-level or general comments that span multiple lines or the whole file.
 
-Severity guide:
-- critical: correctness bugs, data loss risk, broken functionality, security vulnerabilities
-- warning: potential bugs, missing error handling, risky patterns, unhandled edge cases
-- suggestion: better approaches, refactoring opportunities, performance improvements
-- note: genuinely useful informational comments only; avoid low-value nits
-
-Review for:
-- Correctness: logic errors, off-by-ones, null/undefined handling, race conditions
-- Regressions: user-visible behavior changes, broken flows, or subtle changes from previous behavior
-- Testing: missing tests, insufficient coverage for risky logic, or assertions that should be added
-- Compatibility: API contract drift, schema/localStorage changes, migration assumptions, versioning risk
-- State/async edges: loading, resume, reconnect, branch switching, stale state, ordering, and cancellation issues
-- Security: injection vectors, auth issues, secret exposure (flag but don't block — that is the Auditor's job)
-- Code quality: readability, maintainability, appropriate abstractions, dead code
-- Conventions: consistency with surrounding code patterns visible in the diff
-- Performance: obvious inefficiencies, unnecessary re-renders, expensive operations in hot paths
-- Documentation: README/doc changes that contradict the code diff, outdated examples, missing docs for new public APIs or changed behavior, unclear or misleading prose in comments or markdown files
+${REVIEWER_CRITERIA_BLOCK}
 
 Keep comments specific and actionable. Prefer 0-5 high-signal comments total. Use "note" sparingly, and skip low-value style nits unless they materially affect maintainability or correctness. If the diff does not give you enough context to assess something, skip it rather than guessing. One precise comment is worth more than three vague ones.`;
 

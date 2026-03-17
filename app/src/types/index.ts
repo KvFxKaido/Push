@@ -88,6 +88,14 @@ export interface ReviewResult {
   reviewedAt: number;
 }
 
+export type ReviewDepth = 'quick' | 'deep';
+
+/** Runtime callbacks for the Deep Reviewer agent loop. */
+export interface DeepReviewCallbacks {
+  onStatus: (phase: string, detail?: string) => void;
+  signal?: AbortSignal;
+}
+
 export type AIProviderType =
   | 'ollama'
   | 'openrouter'

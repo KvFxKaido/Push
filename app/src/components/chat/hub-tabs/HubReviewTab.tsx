@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, RefreshCw, Sparkles, X } from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
+import { runDeepReviewer } from '@/lib/deep-reviewer-agent';
 import { executePostPRReview, fetchGitHubReviewDiff, fetchLatestCommitDiff } from '@/lib/github-tools';
 import { parseDiffStats } from '@/lib/diff-utils';
 import type { ActiveProvider } from '@/lib/orchestrator';
@@ -23,7 +24,7 @@ import {
   HUB_TAG_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
-import type { DiffPreviewCardData, ReviewResult, ReviewComment } from '@/types';
+import type { DiffPreviewCardData, ReviewResult, ReviewComment, ReviewDepth } from '@/types';
 import { DiffSeamIcon, SendLiftIcon } from '@/components/icons/push-custom-icons';
 
 interface HubReviewTabProps {
@@ -41,6 +42,8 @@ interface HubReviewTabProps {
   defaultBranch?: string;
   /** project instructions loaded for this repo, if available */
   projectInstructions?: string | null;
+  /** Whether Protect Main is enabled for the current repo context */
+  protectMain?: boolean;
   onOpenDiff: (payload: {
     diffData: DiffPreviewCardData;
     label: string;
@@ -293,6 +296,7 @@ export function HubReviewTab({
   activeBranch,
   defaultBranch,
   projectInstructions,
+  protectMain,
   onOpenDiff,
   onFixFinding,
 }: HubReviewTabProps) {
@@ -316,7 +320,10 @@ export function HubReviewTab({
   const [savedReviewNotice, setSavedReviewNotice] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [loadedSavedReviewMeta, setLoadedSavedReviewMeta] = useState<{ savedAt: number; diffStorageTruncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reviewDepth, setReviewDepth] = useState<ReviewDepth>('quick');
   const [running, setRunning] = useState(false);
+  const [runningReviewDepth, setRunningReviewDepth] = useState<ReviewDepth | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [postState, setPostState] = useState<'idle' | 'posting' | 'posted' | 'error'>('idle');
   const [postError, setPostError] = useState<string | null>(null);
@@ -543,7 +550,9 @@ export function HubReviewTab({
   const handleRunReview = useCallback(async () => {
     if (running || !selectedProvider) return;
 
+    const requestedReviewDepth = reviewDepth;
     setRunning(true);
+    setRunningReviewDepth(requestedReviewDepth);
     setError(null);
     setResult(null);
     setReviewContext(null);
@@ -621,23 +630,58 @@ export function HubReviewTab({
           ? sandboxId || undefined
           : undefined;
 
-      const reviewResult = await runReviewer(
-        diff,
-        {
-          provider: selectedProvider,
-          model: selectedReviewModel || undefined,
-          sandboxId: reviewerSandboxId,
-          context: {
-            repoFullName,
-            activeBranch,
-            defaultBranch,
-            source: reviewSourceForPrompt,
-            sourceLabel: nextContext.label,
-            projectInstructions,
+      let reviewResult: ReviewResult;
+
+      if (requestedReviewDepth === 'deep') {
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+        reviewResult = await runDeepReviewer(
+          diff,
+          {
+            provider: selectedProvider,
+            model: selectedReviewModel || undefined,
+            sandboxId: reviewerSandboxId,
+            context: {
+              repoFullName,
+              activeBranch,
+              defaultBranch,
+              source: reviewSourceForPrompt,
+              sourceLabel: nextContext.label,
+              projectInstructions,
+            },
+            allowedRepo: repoFullName || '',
+            branchContext: activeBranch && defaultBranch ? {
+              activeBranch,
+              defaultBranch,
+              protectMain: protectMain ?? false,
+            } : undefined,
+            projectInstructions: projectInstructions ?? undefined,
           },
-        },
-        (phase) => setStatus(phase),
-      );
+          {
+            onStatus: (phase, detail) => setStatus(detail ? `${phase} — ${detail}` : phase),
+            signal: abortController.signal,
+          },
+        );
+        abortControllerRef.current = null;
+      } else {
+        reviewResult = await runReviewer(
+          diff,
+          {
+            provider: selectedProvider,
+            model: selectedReviewModel || undefined,
+            sandboxId: reviewerSandboxId,
+            context: {
+              repoFullName,
+              activeBranch,
+              defaultBranch,
+              source: reviewSourceForPrompt,
+              sourceLabel: nextContext.label,
+              projectInstructions,
+            },
+          },
+          (phase) => setStatus(phase),
+        );
+      }
       const stats = parseDiffStats(diff);
 
       setResult(reviewResult);
@@ -651,8 +695,15 @@ export function HubReviewTab({
       });
       setExpandedFiles(buildAutoExpandFiles(reviewResult.comments));
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setSavedReviewNotice({ tone: 'info', text: 'Deep review cancelled.' });
+        setError(null);
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Review failed.');
     } finally {
+      abortControllerRef.current = null;
+      setRunningReviewDepth(null);
       setRunning(false);
       setStatus(null);
     }
@@ -660,7 +711,9 @@ export function HubReviewTab({
     activeBranch,
     defaultBranch,
     ensureSandbox,
+    protectMain,
     repoFullName,
+    reviewDepth,
     reviewSource,
     running,
     sandboxId,
@@ -670,7 +723,13 @@ export function HubReviewTab({
     projectInstructions,
   ]);
 
+  const handleCancelDeepReview = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }, []);
+
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
+  const activeReviewDepth = runningReviewDepth ?? reviewDepth;
   const canRunReview =
     !running &&
     Boolean(selectedProvider) &&
@@ -739,6 +798,37 @@ export function HubReviewTab({
               </div>
             )}
 
+            {/* Review depth — Quick vs Deep */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                onClick={() => setReviewDepth('quick')}
+                disabled={running}
+                className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
+                  reviewDepth === 'quick'
+                    ? 'border-push-edge-hover bg-white/[0.05] text-push-fg'
+                    : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
+                }`}
+              >
+                Quick
+              </button>
+              <button
+                onClick={() => setReviewDepth('deep')}
+                disabled={running}
+                className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
+                  reviewDepth === 'deep'
+                    ? 'border-push-edge-hover bg-white/[0.05] text-push-fg'
+                    : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
+                }`}
+              >
+                Deep
+              </button>
+              <span className="text-push-2xs text-push-fg-dim">
+                {reviewDepth === 'deep'
+                  ? 'Investigates the codebase before reviewing.'
+                  : 'Single-pass review of the diff.'}
+              </span>
+            </div>
+
             {/* Provider pills — only configured providers */}
             <div className="flex items-center gap-1.5 flex-wrap">
               {providerOptions.map(({ type, label }) => (
@@ -806,8 +896,23 @@ export function HubReviewTab({
                 ) : (
                   <RefreshCw className="relative z-10 h-3 w-3" />
                 )}
-                <span className="relative z-10">{running ? 'Reviewing…' : 'Run review'}</span>
+                <span className="relative z-10">
+                  {running
+                    ? (activeReviewDepth === 'deep' ? 'Investigating…' : 'Reviewing…')
+                    : (reviewDepth === 'deep' ? 'Run deep review' : 'Run review')}
+                </span>
               </button>
+              {running && runningReviewDepth === 'deep' && (
+                <button
+                  onClick={handleCancelDeepReview}
+                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-dim`}
+                  title="Cancel deep review"
+                >
+                  <HubControlGlow />
+                  <X className="relative z-10 h-3 w-3" />
+                  <span className="relative z-10">Cancel</span>
+                </button>
+              )}
             </div>
           </>
         )}

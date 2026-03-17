@@ -1412,6 +1412,7 @@ export function WorkspaceHubSheet({
                 activeBranch={branchProps.currentBranch}
                 defaultBranch={branchProps.defaultBranch}
                 projectInstructions={projectInstructions}
+                protectMain={protectMainEnabled}
                 onOpenDiff={handleOpenReviewDiff}
                 onFixFinding={onFixReviewFinding}
               />
