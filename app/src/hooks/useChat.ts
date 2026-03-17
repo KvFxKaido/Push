@@ -46,15 +46,27 @@ import {
   replaceAllConversations as replaceAllConversationsInDB,
 } from '@/lib/conversation-store';
 import {
-  saveCheckpoint as saveCheckpointToDB,
-  loadCheckpoint as loadCheckpointFromDB,
-  clearCheckpoint as clearCheckpointFromDB,
-} from '@/lib/checkpoint-store';
+  acquireRunTabLock,
+  buildCheckpointReconciliationMessage,
+  buildRunCheckpoint,
+  clearRunCheckpoint,
+  detectInterruptedRun as detectInterruptedRunFromManager,
+  getResumeEvents as getResumeEventsFromManager,
+  heartbeatRunTabLock,
+  recordResumeEvent,
+  releaseRunTabLock,
+  saveRunCheckpoint,
+} from '@/lib/checkpoint-manager';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 import { buildEditedReplay, buildRegeneratedReplay } from '@/lib/chat-replay';
 import { runParallelDelegation, MAX_PARALLEL_DELEGATE_TASKS } from '@/lib/parallel-delegation';
 import { formatElapsedTime } from '@/lib/utils';
+
+export {
+  detectInterruptedRunFromManager as detectInterruptedRun,
+  getResumeEventsFromManager as getResumeEvents,
+};
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
@@ -63,8 +75,6 @@ const ACTIVE_REPO_KEY = 'active_repo';
 const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
-// CHECKPOINT_KEY_PREFIX moved to checkpoint-store.ts
-const CHECKPOINT_MAX_AGE_MS = 25 * 60 * 1000; // 25 min — matches sandbox max age
 
 function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -126,225 +136,6 @@ function getGitHubAppCommitIdentity(): { name: string; email: string } | undefin
   } catch {
     return undefined;
   }
-}
-
-// --- Checkpoint helpers (Resumable Sessions Phase 1) ---
-
-function saveCheckpoint(checkpoint: RunCheckpoint): void {
-  const trimmed = trimCheckpointDelta(checkpoint);
-  void saveCheckpointToDB(trimmed);
-}
-
-function clearCheckpoint(chatId: string): void {
-  void clearCheckpointFromDB(chatId);
-}
-
-export async function detectInterruptedRun(
-  chatId: string,
-  currentSandboxId: string | null,
-  currentBranch: string | null,
-  currentRepoId: string | null,
-  currentWorkspaceSessionId?: string | null,
-): Promise<RunCheckpoint | null> {
-  const checkpoint = await loadCheckpointFromDB(chatId);
-  if (!checkpoint) return null;
-
-  // Stale check
-  const age = Date.now() - checkpoint.savedAt;
-  if (age > CHECKPOINT_MAX_AGE_MS) {
-    clearCheckpoint(chatId);
-    return null;
-  }
-
-  // User had requested abort — don't offer resume
-  if (checkpoint.userAborted) {
-    clearCheckpoint(chatId);
-    return null;
-  }
-
-  // Old checkpoints without workspaceSessionId are unresumable
-  if (currentWorkspaceSessionId && !checkpoint.workspaceSessionId) {
-    clearCheckpoint(chatId);
-    return null;
-  }
-
-  // Workspace session identity must match
-  if (currentWorkspaceSessionId && checkpoint.workspaceSessionId &&
-      checkpoint.workspaceSessionId !== currentWorkspaceSessionId) {
-    clearCheckpoint(chatId);
-    return null;
-  }
-
-  // Identity check: checkpoint must match current sandbox, branch, and repo
-  if (currentSandboxId && checkpoint.sandboxSessionId !== currentSandboxId) {
-    clearCheckpoint(chatId);
-    return null;
-  }
-  if (currentBranch && checkpoint.activeBranch !== currentBranch) {
-    clearCheckpoint(chatId);
-    return null;
-  }
-  if (currentRepoId && checkpoint.repoId !== currentRepoId) {
-    clearCheckpoint(chatId);
-    return null;
-  }
-
-  return checkpoint;
-}
-
-// --- Resumable Sessions Phase 2: reconciliation message builder ---
-
-function buildReconciliationMessage(
-  checkpoint: RunCheckpoint,
-  status: SandboxStatusResult,
-): string {
-  const dirtyList = status.dirtyFiles.length > 0
-    ? status.dirtyFiles.join('\n')
-    : 'clean';
-  const changedList = status.changedFiles.length > 0
-    ? status.changedFiles.join('\n')
-    : 'none';
-
-  let header = `[SESSION_RESUMED]\nSandbox state at recovery:\n- HEAD: ${status.head}\n- Dirty files: ${dirtyList}\n- Diff summary: ${status.diffStat || 'none'}\n- Changed files: ${changedList}\n`;
-
-  if (checkpoint.phase === 'streaming_llm') {
-    header += `\nInterruption: connection dropped while you were generating a response (round ${checkpoint.round}).\n`;
-    if (checkpoint.accumulated) {
-      header += `Your partial response before disconnection:\n---\n${checkpoint.accumulated}\n---\nResume your response. The sandbox state above reflects the current truth.\n`;
-    } else {
-      header += `No partial response was captured. The sandbox state above reflects the current truth. Continue where you left off.\n`;
-    }
-  } else if (checkpoint.phase === 'executing_tools') {
-    header += `\nInterruption: connection dropped while executing tool calls (round ${checkpoint.round}).\nThe tool batch may or may not have completed. Check the sandbox state above\nagainst what the tools were supposed to do. If the expected changes are present,\nproceed to the next step. If not, re-attempt the tool calls.\n`;
-  } else if (checkpoint.phase === 'delegating_coder') {
-    header += `\nInterruption: connection dropped during Coder delegation (round ${checkpoint.round}).\n`;
-    if (checkpoint.lastCoderState) {
-      header += `Last known Coder state:\n${checkpoint.lastCoderState}\n`;
-    }
-    header += `The Coder's work may be partially complete. Check the sandbox state above.\nDecide whether to re-delegate the remaining work or proceed based on what's done.\n`;
-  } else if (checkpoint.phase === 'delegating_explorer') {
-    header += `\nInterruption: connection dropped during Explorer delegation (round ${checkpoint.round}).\n`;
-    header += `The Explorer may have gathered partial findings already. Check the sandbox state above and the recent conversation before re-running the investigation.\n`;
-  }
-
-  header += `\nDo not repeat work that is already reflected in the sandbox.`;
-  return header;
-}
-
-// --- Multi-tab lock helpers (Resumable Sessions Phase 4) ---
-
-const RUN_ACTIVE_PREFIX = 'run_active_';
-const TAB_LOCK_STALE_MS = 60_000; // Consider lock stale after 60s without heartbeat
-
-function acquireTabLock(chatId: string): string | null {
-  const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
-  const existing = safeStorageGet(key);
-  if (existing) {
-    try {
-      const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
-      // If the heartbeat is recent, another tab owns this run
-      if (Date.now() - lock.heartbeat < TAB_LOCK_STALE_MS) {
-        return null;
-      }
-    } catch {
-      // Malformed lock, take it over
-    }
-  }
-  const tabId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  safeStorageSet(key, JSON.stringify({ tabId, heartbeat: Date.now() }));
-  // Verify we won the race (another tab may have written simultaneously)
-  const verify = safeStorageGet(key);
-  if (verify) {
-    try {
-      const parsed = JSON.parse(verify) as { tabId: string };
-      return parsed.tabId === tabId ? tabId : null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function releaseTabLock(chatId: string, ownerTabId: string | null): void {
-  if (!ownerTabId) return;
-  const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
-  const existing = safeStorageGet(key);
-  if (existing) {
-    try {
-      const lock = JSON.parse(existing) as { tabId: string };
-      if (lock.tabId !== ownerTabId) return; // Not our lock
-    } catch {
-      // Malformed — safe to remove
-    }
-  }
-  safeStorageRemove(key);
-}
-
-function heartbeatTabLock(chatId: string, ownerTabId: string | null): void {
-  if (!ownerTabId) return;
-  const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
-  const existing = safeStorageGet(key);
-  if (existing) {
-    try {
-      const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
-      if (lock.tabId !== ownerTabId) return; // Not our lock
-      safeStorageSet(key, JSON.stringify({ ...lock, heartbeat: Date.now() }));
-    } catch {
-      // Ignore
-    }
-  }
-}
-
-// --- Checkpoint size management (Resumable Sessions Phase 4) ---
-
-const CHECKPOINT_DELTA_WARN_SIZE = 50 * 1024; // 50KB warning threshold
-
-function trimCheckpointDelta(checkpoint: RunCheckpoint): RunCheckpoint {
-  const deltaJson = JSON.stringify(checkpoint.deltaMessages);
-  if (deltaJson.length <= CHECKPOINT_DELTA_WARN_SIZE) return checkpoint;
-
-  console.warn(`[Push] Checkpoint deltaMessages exceeds ${CHECKPOINT_DELTA_WARN_SIZE / 1024}KB (${Math.round(deltaJson.length / 1024)}KB), trimming oldest deltas`);
-
-  // Keep the most recent messages, trim from the front
-  const trimmed = [...checkpoint.deltaMessages];
-  while (JSON.stringify(trimmed).length > CHECKPOINT_DELTA_WARN_SIZE && trimmed.length > 2) {
-    trimmed.shift();
-  }
-
-  return { ...checkpoint, deltaMessages: trimmed };
-}
-
-// --- Resumable Sessions Phase 4: telemetry ---
-
-interface ResumeEvent {
-  phase: LoopPhase;
-  round: number;
-  timeSinceInterrupt: number;
-  provider: string;
-  hadAccumulated: boolean;
-  hadCoderState: boolean;
-}
-
-const resumeEvents: ResumeEvent[] = [];
-
-function recordResumeEvent(checkpoint: RunCheckpoint): void {
-  const event: ResumeEvent = {
-    phase: checkpoint.phase,
-    round: checkpoint.round,
-    timeSinceInterrupt: Date.now() - checkpoint.savedAt,
-    provider: checkpoint.provider,
-    hadAccumulated: Boolean(checkpoint.accumulated),
-    hadCoderState: Boolean(checkpoint.lastCoderState),
-  };
-  resumeEvents.push(event);
-  // Keep only last 50 events in memory
-  if (resumeEvents.length > 50) resumeEvents.shift();
-  console.log('[Push] Session resumed:', event);
-}
-
-/** Expose resume telemetry for debugging / operator visibility */
-export function getResumeEvents(): readonly ResumeEvent[] {
-  return resumeEvents;
 }
 
 // --- persistence helpers ---
@@ -714,25 +505,15 @@ export function useChat(
     const chatId = checkpointChatIdRef.current;
     if (!chatId || !loopActiveRef.current) return;
 
-    // Compute deltaMessages: messages in apiMessages beyond the base count
-    const apiMessages = checkpointApiMessagesRef.current;
-    const base = checkpointBaseMessageCountRef.current;
-    const deltaMessages = apiMessages.slice(base).map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    const checkpoint: RunCheckpoint = {
+    const checkpoint = buildRunCheckpoint({
       chatId,
       round: checkpointRoundRef.current,
       phase: checkpointPhaseRef.current,
-      baseMessageCount: base,
-      deltaMessages,
+      baseMessageCount: checkpointBaseMessageCountRef.current,
+      apiMessages: checkpointApiMessagesRef.current,
       accumulated: checkpointAccumulatedRef.current,
       thinkingAccumulated: checkpointThinkingRef.current,
-      coderDelegationActive: checkpointPhaseRef.current === 'delegating_coder',
-      lastCoderState: checkpointPhaseRef.current === 'delegating_coder' && lastCoderStateRef.current ? JSON.stringify(lastCoderStateRef.current) : null,
-      savedAt: Date.now(),
+      lastCoderState: lastCoderStateRef.current,
       provider: checkpointProviderRef.current as AIProviderType,
       model: checkpointModelRef.current,
       sandboxSessionId: sandboxIdRef.current || '',
@@ -740,9 +521,9 @@ export function useChat(
       repoId: repoRef.current || '',
       userAborted: abortRef.current || undefined,
       workspaceSessionId: workspaceSessionIdRef.current || undefined,
-    };
+    });
 
-    saveCheckpoint(checkpoint);
+    saveRunCheckpoint(checkpoint);
   }, []);
 
   // Ref for Phase 3: last Coder working memory state
@@ -832,7 +613,7 @@ export function useChat(
     if (isStreaming || loopActiveRef.current) return;
     if (!activeChatId) return;
 
-    detectInterruptedRun(
+    detectInterruptedRunFromManager(
       activeChatId,
       sandboxIdRef.current,
       branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
@@ -843,7 +624,7 @@ export function useChat(
 
   const dismissResume = useCallback(() => {
     if (interruptedCheckpoint) {
-      clearCheckpoint(interruptedCheckpoint.chatId);
+      clearRunCheckpoint(interruptedCheckpoint.chatId);
     }
     setInterruptedCheckpoint(null);
   }, [interruptedCheckpoint]);
@@ -858,7 +639,7 @@ export function useChat(
 
     // Revalidate checkpoint identity at click-time (sandbox/branch/repo may have
     // changed while the resume banner was visible)
-    const revalidated = await detectInterruptedRun(
+    const revalidated = await detectInterruptedRunFromManager(
       chatId,
       currentSandboxId,
       branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || null,
@@ -872,7 +653,7 @@ export function useChat(
 
     if (!currentSandboxId) {
       // Sandbox not available — can't reconcile. Clear and inform user.
-      clearCheckpoint(chatId);
+      clearRunCheckpoint(chatId);
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
@@ -896,7 +677,7 @@ export function useChat(
     try {
       sbStatus = await sandboxStatus(currentSandboxId);
     } catch (err) {
-      clearCheckpoint(chatId);
+      clearRunCheckpoint(chatId);
       updateAgentStatus({ active: false, phase: '' });
       setConversations((prev) => {
         const conv = prev[chatId];
@@ -917,7 +698,7 @@ export function useChat(
 
     // Guard: if sandbox git commands failed, don't build reconciliation from bad data
     if (sbStatus.error) {
-      clearCheckpoint(chatId);
+      clearRunCheckpoint(chatId);
       updateAgentStatus({ active: false, phase: '' });
       setConversations((prev) => {
         const conv = prev[chatId];
@@ -937,17 +718,17 @@ export function useChat(
     }
 
     // Build reconciliation message
-    const reconciliationContent = buildReconciliationMessage(checkpoint, sbStatus);
+    const reconciliationContent = buildCheckpointReconciliationMessage(checkpoint, sbStatus);
 
     const conv = conversations[chatId];
     if (!conv) {
-      clearCheckpoint(chatId);
+      clearRunCheckpoint(chatId);
       updateAgentStatus({ active: false, phase: '' });
       return;
     }
 
     // Clear the checkpoint — the loop will create new checkpoints
-    clearCheckpoint(chatId);
+    clearRunCheckpoint(chatId);
 
     // Track resume event
     recordResumeEvent(checkpoint);
@@ -1372,7 +1153,7 @@ export function useChat(
       loopActiveRef.current = true;
 
       // Acquire multi-tab lock — abort if another tab already holds it
-      const acquiredTabId = acquireTabLock(chatId);
+      const acquiredTabId = acquireRunTabLock(chatId);
       if (!acquiredTabId) {
         loopActiveRef.current = false;
         setIsStreaming(false);
@@ -1393,7 +1174,10 @@ export function useChat(
       tabLockIdRef.current = acquiredTabId;
       // Heartbeat every 15s to keep the lock alive
       if (tabLockIntervalRef.current) clearInterval(tabLockIntervalRef.current);
-      tabLockIntervalRef.current = setInterval(() => heartbeatTabLock(chatId, acquiredTabId), 15_000);
+      tabLockIntervalRef.current = setInterval(
+        () => heartbeatRunTabLock(chatId, acquiredTabId),
+        15_000,
+      );
 
       let loopCompletedNormally = false;
       try {
@@ -2527,11 +2311,11 @@ export function useChat(
         loopActiveRef.current = false;
         checkpointChatIdRef.current = null;
         if (loopCompletedNormally) {
-          clearCheckpoint(chatId);
+          clearRunCheckpoint(chatId);
         }
 
         // Release multi-tab lock (only if we own it)
-        releaseTabLock(chatId, tabLockIdRef.current);
+        releaseRunTabLock(chatId, tabLockIdRef.current);
         tabLockIdRef.current = null;
         if (tabLockIntervalRef.current) {
           clearInterval(tabLockIntervalRef.current);
