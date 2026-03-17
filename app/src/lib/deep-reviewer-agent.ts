@@ -14,7 +14,6 @@ import type {
 } from '@/types';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import {
-  CANONICAL_SANDBOX_TOOL_NAMES,
   detectAllToolCalls,
   detectAnyToolCall,
   detectUnimplementedToolCall,
@@ -31,6 +30,10 @@ import {
   formatAgentParseError,
   executeReadOnlyTool,
 } from './agent-loop-utils';
+import {
+  buildToolCallParseErrorBlock,
+  buildUnimplementedToolErrorText,
+} from './tool-call-recovery';
 import {
   buildUserIdentityBlock,
   getActiveProvider,
@@ -411,12 +414,11 @@ export async function runDeepReviewer(
         id: `deep-review-parse-error-${round}`,
         role: 'user',
         content: formatAgentParseError(
-          [
-            '[TOOL_CALL_PARSE_ERROR]',
-            'error_type: multiple_mutating_calls',
-            'problem: Deep Reviewer only supports read-only inspection tools and at most one trailing call per turn.',
-            'hint: Use one or more read-only tools, then finish with a plain-text analysis or emit ' + REVIEW_COMPLETE_MARKER + '.',
-          ].join('\n'),
+          buildToolCallParseErrorBlock({
+            errorType: 'multiple_mutating_calls',
+            problem: 'Deep Reviewer only supports read-only inspection tools and at most one trailing call per turn.',
+            hint: `Use one or more read-only tools, then finish with a plain-text analysis or emit ${REVIEW_COMPLETE_MARKER}.`,
+          }),
         ),
         timestamp: Date.now(),
         isToolResult: true,
@@ -499,7 +501,10 @@ export async function runDeepReviewer(
         id: `deep-review-unimplemented-${round}`,
         role: 'user',
         content: formatAgentParseError(
-          `[Tool Error] "${unimplementedTool}" is not an available tool. Available sandbox inspection tools: ${CANONICAL_SANDBOX_TOOL_NAMES.join(', ')}.`,
+          buildUnimplementedToolErrorText(unimplementedTool, {
+            availableToolsLabel: 'Available sandbox inspection tools',
+            guidanceLines: [],
+          }),
         ),
         timestamp: Date.now(),
         isToolResult: true,
@@ -513,12 +518,11 @@ export async function runDeepReviewer(
         id: `deep-review-diagnosis-${round}`,
         role: 'user',
         content: formatAgentParseError(
-          [
-            '[TOOL_CALL_PARSE_ERROR]',
-            `error_type: ${diagnosis.reason}`,
-            diagnosis.toolName ? `detected_tool: ${diagnosis.toolName}` : null,
-            `problem: ${diagnosis.errorMessage}`,
-          ].filter(Boolean).join('\n'),
+          buildToolCallParseErrorBlock({
+            errorType: diagnosis.reason,
+            detectedTool: diagnosis.toolName,
+            problem: diagnosis.errorMessage,
+          }),
         ),
         timestamp: Date.now(),
         isToolResult: true,
