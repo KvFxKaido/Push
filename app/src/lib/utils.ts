@@ -549,6 +549,17 @@ export function detectToolFromText<T>(
 // Streaming timeout helper (previously duplicated in auditor/coder agents)
 // ---------------------------------------------------------------------------
 
+/** Format milliseconds into a human-friendly duration string (e.g. "1m 23s"). */
+export function formatElapsedTime(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+// ---------------------------------------------------------------------------
+
 /**
  * Wraps a streaming call with a timeout. Returns an Error if timed out or
  * the stream errored, otherwise null.

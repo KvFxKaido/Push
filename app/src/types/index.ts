@@ -808,6 +808,72 @@ export interface ExplorerResult {
   rounds: number;
 }
 
+// ---------------------------------------------------------------------------
+// Parallel delegation — multi-task Coder fan-out with merge
+// ---------------------------------------------------------------------------
+
+export type ParallelDelegationOutcome =
+  | 'merged'
+  | 'merge_conflicts'
+  | 'merge_checks_failed'
+  | 'active_changed'
+  | 'merge_error'
+  | 'partial_failure'
+  | 'setup_failed';
+
+export interface ParallelDelegationTaskResult {
+  taskIndex: number;
+  status: 'OK' | 'CHECKS_FAILED' | 'FAILED';
+  summary: string;
+  elapsedMs: number;
+  cards: ChatCard[];
+  rounds: number;
+  checkpoints: number;
+  criteriaResults?: CriterionResult[];
+}
+
+export interface ParallelDelegationEnvelope {
+  tasks: string[];
+  files: string[];
+  acceptanceCriteria?: AcceptanceCriterion[];
+  intent?: string;
+  constraints?: string[];
+  branchContext?: {
+    activeBranch: string;
+    defaultBranch: string;
+    protectMain: boolean;
+  };
+  provider: AIProviderType;
+  model?: string;
+  projectInstructions?: string;
+  instructionFilename?: string;
+  activeSandboxId: string;
+  sourceRepo: string;
+  sourceBranch: string;
+  authToken: string;
+  appCommitIdentity?: { name: string; email: string };
+  recentChatHistory: ChatMessage[];
+}
+
+export interface ParallelDelegationCallbacks {
+  onStatus: (phase: string, detail?: string) => void;
+  signal?: AbortSignal;
+  onWorkingMemoryUpdate?: (state: CoderWorkingMemory) => void;
+  getActiveSandboxId?: () => string | null;
+}
+
+export interface ParallelDelegationResult {
+  outcome: ParallelDelegationOutcome;
+  tasks: ParallelDelegationTaskResult[];
+  totalRounds: number;
+  totalCheckpoints: number;
+  cards: ChatCard[];
+  mergeNote: string;
+  wallTimeMs: number;
+  mergeCheckResults?: CriterionResult[];
+  filesMerged: number;
+}
+
 export interface RunCheckpoint {
   chatId: string;
   round: number;

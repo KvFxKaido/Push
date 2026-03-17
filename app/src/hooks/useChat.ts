@@ -21,8 +21,6 @@ import type {
   CoderWorkingMemory,
   WorkspaceContext,
   ChatSendOptions,
-  AcceptanceCriterion,
-  CriterionResult,
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, diagnoseToolCallFailure, detectUnimplementedToolCall, detectAllToolCalls, getToolSource, CANONICAL_SANDBOX_TOOL_NAMES } from '@/lib/tool-dispatch';
@@ -33,14 +31,7 @@ import { fileLedger } from '@/lib/file-awareness-ledger';
 import {
   execInSandbox,
   writeToSandbox,
-  batchWriteToSandbox,
-  createSandbox,
-  cleanupSandbox,
-  downloadFromSandbox,
-  downloadFileFromSandbox,
-  hydrateSnapshotInSandbox,
   sandboxStatus,
-  deleteFromSandbox,
   type SandboxStatusResult,
 } from '@/lib/sandbox-client';
 import { executeToolCall } from '@/lib/github-tools';
@@ -62,10 +53,8 @@ import {
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 import { buildEditedReplay, buildRegeneratedReplay } from '@/lib/chat-replay';
-import {
-  buildParallelDelegationMergePlan,
-  parseParallelDelegationStatus,
-} from '@/lib/parallel-delegation-merge';
+import { runParallelDelegation, MAX_PARALLEL_DELEGATE_TASKS } from '@/lib/parallel-delegation';
+import { formatElapsedTime } from '@/lib/utils';
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
@@ -74,7 +63,6 @@ const ACTIVE_REPO_KEY = 'active_repo';
 const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
-const MAX_PARALLEL_DELEGATE_TASKS = 3;
 // CHECKPOINT_KEY_PREFIX moved to checkpoint-store.ts
 const CHECKPOINT_MAX_AGE_MS = 25 * 60 * 1000; // 25 min — matches sandbox max age
 
@@ -82,215 +70,14 @@ function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/** Format milliseconds into a human-friendly duration string (e.g. "1m 23s"). */
-function formatElapsedTime(ms: number): string {
-  const totalSeconds = Math.round(ms / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-}
+// formatElapsedTime moved to lib/utils.ts
 
-/** Error subtype with optional elapsed time — used to carry timing through Promise.allSettled rejections. */
-interface ErrorWithElapsed extends Error { elapsedMs?: number; }
+// Parallel delegation helpers moved to lib/parallel-delegation.ts
 
-interface SandboxWorkspaceFingerprint {
-  head: string;
-  status: string;
-  workspaceRevision: number | null;
-}
 
-interface ParallelMergeWritePayload {
-  path: string;
-  content: string;
-  workerIndex: number;
-}
 
-function parseSandboxWorkspaceFingerprint(
-  stdout: string,
-  workspaceRevision?: number,
-): SandboxWorkspaceFingerprint {
-  const sections: Record<string, string[]> = {};
-  let currentSection: 'head' | 'status' | null = null;
 
-  for (const line of stdout.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '---HEAD---') {
-      currentSection = 'head';
-      sections.head = [];
-      continue;
-    }
-    if (trimmed === '---STATUS---') {
-      currentSection = 'status';
-      sections.status = [];
-      continue;
-    }
-    if (currentSection) {
-      sections[currentSection].push(line.replace(/\r$/, ''));
-    }
-  }
 
-  return {
-    head: (sections.head || []).join('\n').trim(),
-    status: (sections.status || []).join('\n').trim(),
-    workspaceRevision: typeof workspaceRevision === 'number' ? workspaceRevision : null,
-  };
-}
-
-async function getSandboxWorkspaceFingerprint(sandboxId: string): Promise<SandboxWorkspaceFingerprint> {
-  const result = await execInSandbox(
-    sandboxId,
-    'cd /workspace && echo "---HEAD---" && git rev-parse --short HEAD 2>/dev/null && echo "---STATUS---" && git status --porcelain=1 --untracked-files=all 2>/dev/null',
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.error || 'Failed to read sandbox workspace fingerprint.');
-  }
-  return parseSandboxWorkspaceFingerprint(result.stdout || '', result.workspaceRevision);
-}
-
-function sameSandboxWorkspaceFingerprint(
-  left: SandboxWorkspaceFingerprint,
-  right: SandboxWorkspaceFingerprint,
-): boolean {
-  return left.head === right.head
-    && left.status === right.status
-    && left.workspaceRevision === right.workspaceRevision;
-}
-
-async function collectParallelWorkerChanges(
-  sandboxId: string,
-): Promise<ReturnType<typeof parseParallelDelegationStatus>> {
-  const result = await execInSandbox(
-    sandboxId,
-    'cd /workspace && git status --porcelain=1 --untracked-files=all 2>/dev/null',
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.error || 'Failed to inspect worker sandbox changes.');
-  }
-  return parseParallelDelegationStatus(result.stdout || '');
-}
-
-function decodeSandboxTextFile(base64: string): string {
-  const binary = atob(base64);
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-}
-
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
-
-async function loadParallelMergeWritePayloads(
-  workerSandboxIds: string[],
-  writes: Array<{ path: string; workerIndex: number }>,
-): Promise<ParallelMergeWritePayload[]> {
-  const payloads: ParallelMergeWritePayload[] = [];
-
-  for (const write of writes) {
-    const sandboxId = workerSandboxIds[write.workerIndex];
-    if (!sandboxId) {
-      throw new Error(`Missing worker sandbox for task ${write.workerIndex + 1}.`);
-    }
-    const download = await downloadFileFromSandbox(sandboxId, write.path);
-    if (!download.ok || !download.fileBase64) {
-      throw new Error(download.error || `Failed to fetch ${write.path} from worker sandbox.`);
-    }
-    let content: string;
-    try {
-      content = decodeSandboxTextFile(download.fileBase64);
-    } catch {
-      throw new Error(`Parallel merge only supports UTF-8 text files today; ${write.path} could not be decoded safely.`);
-    }
-    payloads.push({ path: write.path, content, workerIndex: write.workerIndex });
-  }
-
-  return payloads;
-}
-
-async function applyParallelMergeWrites(
-  sandboxId: string,
-  writes: ParallelMergeWritePayload[],
-  expectedWorkspaceRevision?: number,
-): Promise<number | undefined> {
-  let currentWorkspaceRevision = expectedWorkspaceRevision;
-
-  for (const chunk of chunkArray(writes, 20)) {
-    const result = await batchWriteToSandbox(
-      sandboxId,
-      chunk.map((entry) => ({ path: entry.path, content: entry.content })),
-      currentWorkspaceRevision,
-    );
-    if (!result.ok) {
-      const errorEntry = result.results.find((entry) => !entry.ok);
-      throw new Error(errorEntry?.error || result.error || 'Parallel merge write failed.');
-    }
-    currentWorkspaceRevision = result.workspace_revision;
-  }
-  return currentWorkspaceRevision;
-}
-
-async function applyParallelMergeDeletes(
-  sandboxId: string,
-  deletes: Array<{ path: string; workerIndex: number }>,
-  expectedWorkspaceRevision?: number,
-): Promise<number | undefined> {
-  let currentWorkspaceRevision = expectedWorkspaceRevision;
-  for (const entry of deletes) {
-    currentWorkspaceRevision = await deleteFromSandbox(sandboxId, entry.path, currentWorkspaceRevision);
-  }
-  return currentWorkspaceRevision;
-}
-
-async function runParallelMergeChecks(
-  sandboxId: string,
-  acceptanceCriteria?: AcceptanceCriterion[],
-): Promise<CriterionResult[]> {
-  const checks: AcceptanceCriterion[] = [
-    {
-      id: 'merge_diff_check',
-      check: 'cd /workspace && git diff --check --no-color',
-      description: 'Merged workspace passes git diff --check',
-    },
-    ...(acceptanceCriteria || []),
-  ];
-
-  const results: CriterionResult[] = [];
-  for (const criterion of checks) {
-    try {
-      const checkResult = await execInSandbox(sandboxId, criterion.check);
-      const expectedExit = criterion.exitCode ?? 0;
-      results.push({
-        id: criterion.id,
-        passed: checkResult.exitCode === expectedExit,
-        exitCode: checkResult.exitCode,
-        output: (checkResult.stdout + '\n' + checkResult.stderr).trim().slice(0, 2000),
-      });
-    } catch (err) {
-      results.push({
-        id: criterion.id,
-        passed: false,
-        exitCode: -1,
-        output: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  return results;
-}
-
-function formatParallelMergeChecks(results: CriterionResult[]): string {
-  if (results.length === 0) return 'No combined checks were run.';
-  const passed = results.filter((result) => result.passed).length;
-  const lines = [`Combined checks: ${passed}/${results.length} passed.`];
-  for (const result of results) {
-    lines.push(`- ${result.passed ? 'PASS' : 'FAIL'} ${result.id} (exit=${result.exitCode})${result.passed || !result.output ? '' : `: ${result.output.slice(0, 200)}`}`);
-  }
-  return lines.join('\n');
-}
 
 /**
  * Derive a status label from coder results. If acceptance criteria were run
@@ -2423,300 +2210,58 @@ export function useChat(
                   );
 
 	                  if (canRunParallelDelegates) {
-	                    const sourceRepo = repoRef.current!;
-	                    const sourceBranch = branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || 'main';
-	                    const authToken = getActiveGitHubToken();
-	                    const appCommitIdentity = getGitHubAppCommitIdentity();
-
-	                    updateAgentStatus(
-	                      { active: true, phase: 'Preparing parallel coder workers...' },
-	                      { chatId, source: 'coder' },
-	                    );
-
-	                    const workerSandboxIds: string[] = [];
-	                    const workerSandboxIdsByTask: string[] = [];
-	                    let mergeSandboxId: string | null = null;
-	                    try {
-	                      const baseFingerprint = await getSandboxWorkspaceFingerprint(currentSandboxId);
-	                      // Worker setup: capture snapshot and spin up isolated containers
-	                      const snapshot = await downloadFromSandbox(currentSandboxId, '/workspace');
-	                      if (!snapshot.ok || !snapshot.archiveBase64) {
-	                        throw new Error(snapshot.error || 'Failed to capture workspace snapshot for parallel delegation.');
-	                      }
-                      const snapshotArchiveBase64 = snapshot.archiveBase64;
-                      // Use allSettled so every worker sandbox ID is tracked
-                      // before the finally cleanup runs — prevents orphaned
-                      // sandboxes when one task fails while others still set up.
-                      const parallelStartTime = Date.now();
-                      const settledResults = await Promise.allSettled(
-                        taskList.map(async (task, taskIndex) => {
-                          const taskStartTime = Date.now();
-                          const prefix = `[${taskIndex + 1}/${taskList.length}] `;
-
-                          // Stagger worker setup to avoid thundering-herd on Modal endpoints.
-                          // Concurrent sandbox creates + restores can overwhelm Modal's web
-                          // endpoint cold-start capacity, causing 500s.
-                          if (taskIndex > 0) {
-                            await new Promise<void>(r => setTimeout(r, taskIndex * 1500));
-                          }
-
+                    const bi = branchInfoRef.current;
+                    const parallelResult = await runParallelDelegation(
+                      {
+                        tasks: taskList,
+                        files: delegateArgs.files || [],
+                        acceptanceCriteria: delegateArgs.acceptanceCriteria,
+                        intent: delegateArgs.intent,
+                        constraints: delegateArgs.constraints,
+                        branchContext: bi?.currentBranch ? {
+                          activeBranch: bi.currentBranch,
+                          defaultBranch: bi.defaultBranch || 'main',
+                          protectMain: isMainProtectedRef.current,
+                        } : undefined,
+                        provider: lockedProviderForChat,
+                        model: resolvedModelForChat || undefined,
+                        projectInstructions: agentsMdRef.current || undefined,
+                        instructionFilename: instructionFilenameRef.current || undefined,
+                        activeSandboxId: currentSandboxId,
+                        sourceRepo: repoRef.current!,
+                        sourceBranch: bi?.currentBranch || bi?.defaultBranch || 'main',
+                        authToken: getActiveGitHubToken(),
+                        appCommitIdentity: getGitHubAppCommitIdentity(),
+                        recentChatHistory: apiMessages.slice(-6),
+                      },
+                      {
+                        onStatus: (phase, detail) => {
                           updateAgentStatus(
-                            { active: true, phase: `${prefix}Starting worker sandbox...` },
+                            { active: true, phase, detail },
                             { chatId, source: 'coder' },
                           );
+                        },
+                        signal: abortControllerRef.current?.signal,
+                        onWorkingMemoryUpdate: (state) => { lastCoderStateRef.current = state; },
+                        getActiveSandboxId: () => sandboxIdRef.current,
+                      },
+                    );
 
-                          // Create worker sandbox + restore snapshot.
-                          // If restore fails (e.g. Modal 500 under load), retry once with
-                          // a fresh sandbox before giving up.
-                          let workerSandboxId = '';
-                          for (let setupAttempt = 0; setupAttempt < 2; setupAttempt++) {
-                            const workerSession = await createSandbox(sourceRepo, sourceBranch, authToken, appCommitIdentity);
-                            if (workerSession.status === 'error' || !workerSession.sandboxId) {
-                              throw new Error(workerSession.error || `Failed to create worker sandbox for task ${taskIndex + 1}.`);
-	                            }
-	                            const candidateId = workerSession.sandboxId;
-	                            workerSandboxIds.push(candidateId);
-
-	                            try {
-                              const restore = await hydrateSnapshotInSandbox(candidateId, snapshotArchiveBase64, '/workspace');
-                              if (!restore.ok) {
-                                throw new Error(restore.error || `Failed to restore worker snapshot for task ${taskIndex + 1}.`);
-	                              }
-	                              workerSandboxId = candidateId;
-	                              workerSandboxIdsByTask[taskIndex] = candidateId;
-	                              break; // Restore succeeded
-	                            } catch (restoreErr) {
-                              // Best-effort cleanup of the failed worker sandbox.
-                              // Keep the ID in workerSandboxIds — if this cleanup
-                              // fails, the finally block will retry it.
-                              try { await cleanupSandbox(candidateId); } catch { /* best effort */ }
-
-                              if (setupAttempt === 0) {
-                                // First attempt failed — retry with a fresh sandbox
-                                updateAgentStatus(
-                                  { active: true, phase: `${prefix}Retrying worker setup...` },
-                                  { chatId, source: 'coder' },
-                                );
-                                continue;
-                              }
-                              // Second attempt also failed — propagate
-                              throw restoreErr;
-                            }
-                          }
-
-                          if (!workerSandboxId) {
-                            throw new Error(`Worker sandbox setup failed for task ${taskIndex + 1} after retries.`);
-                          }
-
-                          const handleCheckpoint = async (question: string, context: string): Promise<string> => {
-                            updateAgentStatus(
-                              { active: true, phase: `${prefix}Coder checkpoint`, detail: question },
-                              { chatId, source: 'coder' },
-                            );
-
-                            const answer = await generateCheckpointAnswer(
-                              question,
-                              context,
-                              apiMessages.slice(-6),
-                              abortControllerRef.current?.signal,
-                              lockedProviderForChat,
-                              resolvedModelForChat || undefined,
-                            );
-
-                            updateAgentStatus(
-                              { active: true, phase: `${prefix}Coder resuming...` },
-                              { chatId, source: 'coder' },
-                            );
-                            return answer;
-                          };
-
-                          // Apply acceptance criteria to every parallel task — each runs
-                          // in its own isolated sandbox so criteria should validate independently.
-                          // Wrap in try/catch to capture elapsed time even on failure.
-	                          try {
-	                            const bi = branchInfoRef.current;
-	                            const coderResult = await runCoderAgent(
-                              task,
-                              workerSandboxId,
-                              delegateArgs.files || [],
-                              (phase, detail) => {
-                                updateAgentStatus(
-                                  { active: true, phase: `${prefix}${phase}`, detail },
-                                  { chatId, source: 'coder' },
-                                );
-                              },
-                              agentsMdRef.current || undefined,
-                              abortControllerRef.current?.signal,
-                              handleCheckpoint,
-                              delegateArgs.acceptanceCriteria,
-                              (state) => { lastCoderStateRef.current = state; },
-                              lockedProviderForChat,
-                              resolvedModelForChat || undefined,
-                              {
-                                intent: delegateArgs.intent,
-                                constraints: delegateArgs.constraints,
-                                branchContext: bi?.currentBranch ? {
-                                  activeBranch: bi.currentBranch,
-                                  defaultBranch: bi.defaultBranch || 'main',
-                                  protectMain: isMainProtectedRef.current,
-                                } : undefined,
-	                                instructionFilename: instructionFilenameRef.current || undefined,
-	                              },
-	                            );
-	                            const workerChanges = await collectParallelWorkerChanges(workerSandboxId);
-
-	                            const taskElapsedMs = Date.now() - taskStartTime;
-	                            return { taskIndex, workerSandboxId, coderResult, elapsedMs: taskElapsedMs, workerChanges };
-	                          } catch (taskErr) {
-                            const taskElapsedMs = Date.now() - taskStartTime;
-                            // Re-throw with elapsed time attached for the result collector
-                            const wrapped = new Error(
-                              taskErr instanceof Error ? taskErr.message : String(taskErr),
-                            );
-                            (wrapped as ErrorWithElapsed).elapsedMs = taskElapsedMs;
-                            throw wrapped;
-                          }
-                        }),
-                      );
-                      const parallelElapsedMs = Date.now() - parallelStartTime;
-
-	                      // Collect results from all workers (including failures)
-	                      let succeededCount = 0;
-	                      let failedCount = 0;
-	                      const successfulWorkers: Array<{
-	                        taskIndex: number;
-	                        workerSandboxId: string;
-	                        elapsedMs: number;
-	                        coderResult: Awaited<ReturnType<typeof runCoderAgent>>;
-	                        workerChanges: ReturnType<typeof parseParallelDelegationStatus>;
-	                      }> = [];
-	                      let canAutoMerge = true;
-
-	                      settledResults.forEach((result, taskIndex) => {
-	                        if (result.status === 'fulfilled') {
-	                          const { coderResult, elapsedMs, workerSandboxId, workerChanges } = result.value;
-	                          totalRounds += coderResult.rounds;
-	                          totalCheckpoints += coderResult.checkpoints;
-	                          const elapsed = formatElapsedTime(elapsedMs);
-	                          const statusLabel = getTaskStatusLabel(coderResult.criteriaResults);
-	                          if (statusLabel === 'OK') {
-	                            succeededCount++;
-	                            successfulWorkers.push({ taskIndex, workerSandboxId, elapsedMs, coderResult, workerChanges });
-	                          } else {
-	                            failedCount++;
-	                            canAutoMerge = false;
-	                          }
-	                          summaries.push(`Task ${taskIndex + 1} [${statusLabel}, ${elapsed}]: ${coderResult.summary}`);
-	                          allCards.push(...coderResult.cards);
-	                        } else {
-	                          failedCount++;
-	                          canAutoMerge = false;
-	                          const reason = result.reason;
-	                          const errorMsg = reason instanceof Error ? reason.message : String(reason);
-	                          const elapsedMs = (reason as ErrorWithElapsed)?.elapsedMs;
-	                          const elapsed = typeof elapsedMs === 'number' ? `, ${formatElapsedTime(elapsedMs)}` : '';
-	                          summaries.push(`Task ${taskIndex + 1} [FAILED${elapsed}]: ${errorMsg}`);
-	                        }
-	                      });
-
-	                      const wallTime = formatElapsedTime(parallelElapsedMs);
-	                      const mergePrefix = `\n[Parallel] ${succeededCount} succeeded, ${failedCount} failed — wall time ${wallTime}.`;
-	                      if (canAutoMerge) {
-	                        const mergePlan = buildParallelDelegationMergePlan(
-	                          successfulWorkers.map(({ taskIndex, workerChanges }) => ({
-	                            workerIndex: taskIndex,
-	                            changes: workerChanges.changes,
-	                            unsupported: workerChanges.unsupported,
-	                          })),
-	                        );
-
-	                        if (!mergePlan.mergeable) {
-	                          const reasons = [
-	                            ...mergePlan.conflicts.map((path) => `overlap: ${path}`),
-	                            ...mergePlan.unsupported,
-	                          ];
-	                          parallelIsolationNote = `${mergePrefix} Auto-merge skipped because the worker results were not safely disjoint.\n${reasons.map((reason) => `- ${reason}`).join('\n')}`;
-	                        } else {
-	                          try {
-	                            updateAgentStatus(
-	                              { active: true, phase: 'Preparing merge sandbox...' },
-	                              { chatId, source: 'coder' },
-	                            );
-	                            const mergeSession = await createSandbox(sourceRepo, sourceBranch, authToken, appCommitIdentity);
-	                            if (mergeSession.status === 'error' || !mergeSession.sandboxId) {
-	                              throw new Error(mergeSession.error || 'Failed to create merge sandbox.');
-	                            }
-	                            mergeSandboxId = mergeSession.sandboxId;
-
-	                            const restore = await hydrateSnapshotInSandbox(mergeSandboxId, snapshotArchiveBase64, '/workspace');
-	                            if (!restore.ok) {
-	                              throw new Error(restore.error || 'Failed to hydrate merge sandbox.');
-	                            }
-
-	                            const mergeWrites = await loadParallelMergeWritePayloads(workerSandboxIdsByTask, mergePlan.writes);
-
-	                            updateAgentStatus(
-	                              { active: true, phase: 'Applying disjoint worker changes...' },
-	                              { chatId, source: 'coder' },
-	                            );
-	                            let mergeWorkspaceRevision = restore.workspaceRevision ?? mergeSession.workspaceRevision;
-	                            mergeWorkspaceRevision = await applyParallelMergeWrites(mergeSandboxId, mergeWrites, mergeWorkspaceRevision);
-	                            await applyParallelMergeDeletes(mergeSandboxId, mergePlan.deletes, mergeWorkspaceRevision);
-
-	                            updateAgentStatus(
-	                              { active: true, phase: 'Verifying merged workspace...' },
-	                              { chatId, source: 'coder' },
-	                            );
-	                            const mergeChecks = await runParallelMergeChecks(mergeSandboxId, delegateArgs.acceptanceCriteria);
-	                            const mergeChecksPassed = mergeChecks.every((result) => result.passed);
-	                            if (!mergeChecksPassed) {
-	                              parallelIsolationNote = `${mergePrefix} Auto-merge verification failed in the merge sandbox, so nothing was applied to the active workspace.\n${formatParallelMergeChecks(mergeChecks)}`;
-	                            } else {
-	                              const activeFingerprint = await getSandboxWorkspaceFingerprint(currentSandboxId);
-	                              if (sandboxIdRef.current !== currentSandboxId || !sameSandboxWorkspaceFingerprint(baseFingerprint, activeFingerprint)) {
-	                                parallelIsolationNote = `${mergePrefix} Merge sandbox verification passed, but the active workspace changed during fan-out, so the merged result was not applied automatically.\n${formatParallelMergeChecks(mergeChecks)}`;
-	                              } else {
-	                                updateAgentStatus(
-	                                  { active: true, phase: 'Applying merged workspace...' },
-	                                  { chatId, source: 'coder' },
-	                                );
-	                                let activeWorkspaceRevision = baseFingerprint.workspaceRevision ?? undefined;
-	                                activeWorkspaceRevision = await applyParallelMergeWrites(currentSandboxId, mergeWrites, activeWorkspaceRevision);
-	                                await applyParallelMergeDeletes(currentSandboxId, mergePlan.deletes, activeWorkspaceRevision);
-	                                const mergedPaths = mergePlan.writes.length + mergePlan.deletes.length;
-	                                parallelIsolationNote = `${mergePrefix} Auto-merged ${mergedPaths} file${mergedPaths === 1 ? '' : 's'} into the active workspace through a dedicated merge sandbox.\n${formatParallelMergeChecks(mergeChecks)}`;
-	                              }
-	                            }
-	                          } catch (mergeErr) {
-	                            const message = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
-	                            parallelIsolationNote = `${mergePrefix} Auto-merge failed after fan-in, so the worker results were left isolated.\n- ${message}`;
-	                          }
-	                        }
-	                      } else {
-	                        parallelIsolationNote = `${mergePrefix} Tasks remained isolated because at least one worker failed or did not pass its own checks.`;
-	                      }
-	                    } catch (err) {
-	                      console.error('[Parallel Delegation Failure]', err);
-	                      parallelSetupFailed = true;
+                    if (parallelResult.outcome === 'setup_failed') {
+                      parallelSetupFailed = true;
                       updateAgentStatus(
                         { active: true, phase: 'Worker setup failed, falling back to sequential execution...' },
                         { chatId, source: 'coder' },
                       );
-	                    } finally {
-	                      if (mergeSandboxId) {
-	                        try {
-	                          await cleanupSandbox(mergeSandboxId);
-	                        } catch {
-	                          // Best effort cleanup for merge sandbox.
-	                        }
-	                      }
-	                      await Promise.all(workerSandboxIds.map(async (id) => {
-	                        try {
-	                          await cleanupSandbox(id);
-                        } catch {
-                          // Best effort cleanup for worker sandboxes.
-                        }
-                      }));
+                    } else {
+                      totalRounds = parallelResult.totalRounds;
+                      totalCheckpoints = parallelResult.totalCheckpoints;
+                      allCards.push(...parallelResult.cards);
+                      for (const taskResult of parallelResult.tasks) {
+                        const elapsed = formatElapsedTime(taskResult.elapsedMs);
+                        summaries.push(`Task ${taskResult.taskIndex + 1} [${taskResult.status}, ${elapsed}]: ${taskResult.summary}`);
+                      }
+                      parallelIsolationNote = parallelResult.mergeNote;
                     }
                   }
 
