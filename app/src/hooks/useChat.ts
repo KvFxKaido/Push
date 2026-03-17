@@ -15,7 +15,6 @@ import type {
   AIProviderType,
   SandboxStateCardData,
   ActiveRepo,
-  ToolMeta,
   LoopPhase,
   RunCheckpoint,
   CoderWorkingMemory,
@@ -24,10 +23,18 @@ import type {
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
-import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { runCoderAgent, generateCheckpointAnswer } from '@/lib/coder-agent';
 import { runExplorerAgent } from '@/lib/explorer-agent';
 import { fileLedger } from '@/lib/file-awareness-ledger';
+import {
+  appendCardsToLatestToolCall,
+  buildToolMeta,
+  buildToolResultMessage,
+  buildToolResultMetaLine,
+  getToolName,
+  getToolStatusLabel,
+  markLastAssistantToolCall,
+} from '@/lib/chat-tool-messages';
 import {
   execInSandbox,
   writeToSandbox,
@@ -240,87 +247,6 @@ function loadActiveChatId(conversations: Record<string, Conversation>): string {
   const ids = Object.keys(conversations);
   if (ids.length === 0) return '';
   return ids.sort((a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt)[0];
-}
-
-// --- Agent status label helper ---
-
-function getToolStatusLabel(toolCall: AnyToolCall): string {
-  switch (toolCall.source) {
-    case 'github':
-      return 'Fetching from GitHub...';
-    case 'sandbox': {
-      switch (toolCall.call.tool) {
-        case 'sandbox_exec': return 'Executing in sandbox...';
-        case 'sandbox_read_file': return 'Reading file...';
-        case 'sandbox_list_dir': return 'Listing directory...';
-        case 'sandbox_write_file': return 'Writing file...';
-        case 'sandbox_diff': return 'Getting diff...';
-        case 'sandbox_prepare_commit': return 'Reviewing commit...';
-        case 'sandbox_push': return 'Pushing to remote...';
-        case 'promote_to_github': return 'Promoting sandbox to GitHub...';
-        default: return 'Sandbox operation...';
-      }
-    }
-    case 'delegate':
-      return toolCall.call.tool === 'delegate_explorer' ? 'Delegating to Explorer...' : 'Delegating to Coder...';
-    case 'scratchpad':
-      return 'Updating scratchpad...';
-    case 'web-search':
-      return 'Searching the web...';
-    default:
-      return 'Processing...';
-  }
-}
-
-/** Extract the tool name from a unified tool call for provenance tracking. */
-function getToolName(toolCall: AnyToolCall): string {
-  switch (toolCall.source) {
-    case 'github': return toolCall.call.tool;
-    case 'sandbox': return toolCall.call.tool;
-    case 'delegate': return toolCall.call.tool;
-    case 'scratchpad': return toolCall.call.tool;
-    case 'web-search': return 'web_search';
-    default: return 'unknown';
-  }
-}
-
-// isParallelReadOnlyToolCall and detectParallelReadOnlyToolCalls moved to tool-dispatch.ts
-// as isReadOnlyToolCall and detectAllToolCalls respectively.
-
-/**
- * Build a [meta] line to prepend to tool results, giving the model
- * awareness of loop state and context budget.
- */
-function buildMetaLine(
-  round: number,
-  apiMessages: ChatMessage[],
-  provider: ActiveProvider,
-  model: string | null | undefined,
-  sandboxStatusCache?: { dirty: boolean; files: number } | null,
-): string {
-  const contextChars = apiMessages.reduce((sum, m) => sum + m.content.length, 0);
-  const contextKb = Math.round(contextChars / 1024);
-  const contextTokens = estimateContextTokens(apiMessages);
-  const budget = getContextBudget(provider, model || undefined);
-  const parts = [
-    `[meta] round=${round} ctx=${contextKb}kb tok=${Math.round(contextTokens / 1000)}k/${Math.round(budget.maxTokens / 1000)}k`,
-  ];
-  if (sandboxStatusCache) {
-    parts.push(`dirty=${sandboxStatusCache.dirty} files=${sandboxStatusCache.files}`);
-    // Append mutation provenance counts when available (Harness Ergonomics 1D)
-    const prov = fileLedger.getDirtyFilesWithProvenance();
-    if (prov.length > 0) {
-      const agentCount = prov.filter(p => p.modifiedBy === 'agent').length;
-      const userCount = prov.filter(p => p.modifiedBy === 'user').length;
-      const unknownCount = prov.filter(p => p.modifiedBy === 'unknown').length;
-      const provParts: string[] = [];
-      if (agentCount) provParts.push(`agent=${agentCount}`);
-      if (userCount) provParts.push(`user=${userCount}`);
-      if (unknownCount) provParts.push(`unknown=${unknownCount}`);
-      if (provParts.length) parts.push(`by:[${provParts.join(',')}]`);
-    }
-  }
-  return parts.join(' ');
 }
 
 function shouldPrewarmSandbox(text: string, attachments?: AttachmentData[]): boolean {
@@ -1351,39 +1277,31 @@ export function useChat(
               timestamp: Date.now(),
               status: 'done',
               isToolResult: true,
-              toolMeta: {
+              toolMeta: buildToolMeta({
                 toolName: rejectedToolNames[0] || 'unknown',
                 source: primaryMutation?.source || 'sandbox',
                 provider: lockedProviderForChat,
                 durationMs: 0,
                 isError: true,
-                triggeredBy: 'assistant',
-              },
+              }),
             };
 
             setConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
-              const msgs = [...conv.messages];
-              const lastIdx = msgs.length - 1;
-              if (msgs[lastIdx]?.role === 'assistant') {
-                msgs[lastIdx] = {
-                  ...msgs[lastIdx],
-                  content: accumulated,
-                  thinking: thinkingAccumulated || undefined,
-                  status: 'done',
-                  isToolCall: true,
-                  isMalformed: true,
-                  toolMeta: {
-                    toolName: rejectedToolNames[0] || 'unknown',
-                    source: primaryMutation?.source || 'sandbox',
-                    provider: lockedProviderForChat,
-                    durationMs: 0,
-                    isError: true,
-                    triggeredBy: 'assistant',
-                  },
-                };
-              }
+              const toolMeta = buildToolMeta({
+                toolName: rejectedToolNames[0] || 'unknown',
+                source: primaryMutation?.source || 'sandbox',
+                provider: lockedProviderForChat,
+                durationMs: 0,
+                isError: true,
+              });
+              const msgs = markLastAssistantToolCall(conv.messages, {
+                content: accumulated,
+                thinking: thinkingAccumulated,
+                malformed: true,
+                toolMeta,
+              });
               return { ...prev, [chatId]: { ...conv, messages: [...msgs, errorMsg] } };
             });
 
@@ -1403,17 +1321,10 @@ export function useChat(
             setConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
-              const msgs = [...conv.messages];
-              const lastIdx = msgs.length - 1;
-              if (msgs[lastIdx]?.role === 'assistant') {
-                msgs[lastIdx] = {
-                  ...msgs[lastIdx],
-                  content: accumulated,
-                  thinking: thinkingAccumulated || undefined,
-                  status: 'done',
-                  isToolCall: true,
-                };
-              }
+              const msgs = markLastAssistantToolCall(conv.messages, {
+                content: accumulated,
+                thinking: thinkingAccumulated,
+              });
               return { ...prev, [chatId]: { ...conv, messages: msgs } };
             });
 
@@ -1473,44 +1384,34 @@ export function useChat(
               setConversations((prev) => {
                 const conv = prev[chatId];
                 if (!conv) return prev;
-                const msgs = [...conv.messages];
-                for (let i = msgs.length - 1; i >= 0; i--) {
-                  if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
-                    msgs[i] = {
-                      ...msgs[i],
-                      cards: [...(msgs[i].cards || []), ...cards],
-                    };
-                    break;
-                  }
-                }
+                const msgs = appendCardsToLatestToolCall(conv.messages, cards);
                 return { ...prev, [chatId]: { ...conv, messages: msgs } };
               });
             }
 
             const parallelSandboxStatus = await getRoundSandboxStatus();
-            const parallelMetaLine = buildMetaLine(
+            const parallelMetaLine = buildToolResultMetaLine(
               round,
               apiMessages,
               lockedProviderForChat,
               resolvedModelForChat,
               parallelSandboxStatus,
             );
-            const toolResultMessages: ChatMessage[] = parallelResults.map(({ call, result, durationMs }) => ({
-              id: createId(),
-              role: 'user',
-              content: formatToolResultEnvelope(result.text, parallelMetaLine),
-              timestamp: Date.now(),
-              status: 'done',
-              isToolResult: true,
-              toolMeta: {
-                toolName: getToolName(call),
-                source: call.source,
-                provider: lockedProviderForChat,
-                durationMs,
-                isError: result.text.includes('[Tool Error]'),
-                triggeredBy: 'assistant',
-              },
-            }));
+            const toolResultMessages: ChatMessage[] = parallelResults.map(({ call, result, durationMs }) =>
+              buildToolResultMessage({
+                id: createId(),
+                timestamp: Date.now(),
+                text: result.text,
+                metaLine: parallelMetaLine,
+                toolMeta: buildToolMeta({
+                  toolName: getToolName(call),
+                  source: call.source,
+                  provider: lockedProviderForChat,
+                  durationMs,
+                  isError: result.text.includes('[Tool Error]'),
+                }),
+              }),
+            );
 
             setConversations((prev) => {
               const conv = prev[chatId];
@@ -1577,44 +1478,36 @@ export function useChat(
               }
 
               if (mutResult.card) {
+                const mutCard = mutResult.card;
                 setConversations((prev) => {
                   const conv = prev[chatId];
                   if (!conv) return prev;
-                  const msgs = [...conv.messages];
-                  for (let i = msgs.length - 1; i >= 0; i--) {
-                    if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
-                      msgs[i] = { ...msgs[i], cards: [...(msgs[i].cards || []), mutResult.card!] };
-                      break;
-                    }
-                  }
+                  const msgs = appendCardsToLatestToolCall(conv.messages, [mutCard]);
                   return { ...prev, [chatId]: { ...conv, messages: msgs } };
                 });
               }
 
               const mutSandboxStatus = await getRoundSandboxStatus();
-              const mutMetaLine = buildMetaLine(
+              const mutMetaLine = buildToolResultMetaLine(
                 round,
                 apiMessages,
                 lockedProviderForChat,
                 resolvedModelForChat,
                 mutSandboxStatus,
               );
-              const mutResultMsg: ChatMessage = {
+              const mutResultMsg = buildToolResultMessage({
                 id: createId(),
-                role: 'user',
-                content: formatToolResultEnvelope(mutResult.text, mutMetaLine),
                 timestamp: Date.now(),
-                status: 'done',
-                isToolResult: true,
-                toolMeta: {
+                text: mutResult.text,
+                metaLine: mutMetaLine,
+                toolMeta: buildToolMeta({
                   toolName: getToolName(mutCall),
                   source: mutCall.source,
                   provider: lockedProviderForChat,
                   durationMs: mutDuration,
                   isError: mutResult.text.includes('[Tool Error]'),
-                  triggeredBy: 'assistant',
-                },
-              };
+                }),
+              });
 
               setConversations((prev) => {
                 const conv = prev[chatId];
@@ -1671,43 +1564,34 @@ export function useChat(
                 timestamp: Date.now(),
                 status: 'done',
                 isToolResult: true,
-                toolMeta: {
+                toolMeta: buildToolMeta({
                   toolName: recoveryResult.feedback.toolName,
                   source: recoveryResult.feedback.source,
                   provider: lockedProviderForChat,
                   durationMs: 0,
                   isError: true,
-                  triggeredBy: 'assistant',
-                },
+                }),
               };
 
               setConversations((prev) => {
                 const conv = prev[chatId];
                 if (!conv) return prev;
-                const msgs = [...conv.messages];
-                const lastIdx = msgs.length - 1;
-                if (msgs[lastIdx]?.role === 'assistant') {
-                  const assistantToolMeta =
-                    recoveryResult.feedback.mode === 'unimplemented_tool'
-                      ? undefined
-                      : {
-                          toolName: recoveryResult.feedback.toolName,
-                          source: recoveryResult.feedback.source,
-                          provider: lockedProviderForChat,
-                          durationMs: 0,
-                          isError: true,
-                          triggeredBy: 'assistant' as const,
-                        };
-                  msgs[lastIdx] = {
-                    ...msgs[lastIdx],
-                    content: accumulated,
-                    thinking: thinkingAccumulated || undefined,
-                    status: 'done',
-                    isToolCall: true,
-                    isMalformed: recoveryResult.feedback.markMalformed || undefined,
-                    ...(assistantToolMeta ? { toolMeta: assistantToolMeta } : {}),
-                  };
-                }
+                const assistantToolMeta =
+                  recoveryResult.feedback.mode === 'unimplemented_tool'
+                    ? undefined
+                    : buildToolMeta({
+                        toolName: recoveryResult.feedback.toolName,
+                        source: recoveryResult.feedback.source,
+                        provider: lockedProviderForChat,
+                        durationMs: 0,
+                        isError: true,
+                      });
+                const msgs = markLastAssistantToolCall(conv.messages, {
+                  content: accumulated,
+                  thinking: thinkingAccumulated,
+                  malformed: recoveryResult.feedback.markMalformed,
+                  toolMeta: assistantToolMeta,
+                });
                 return { ...prev, [chatId]: { ...conv, messages: [...msgs, feedbackMsg] } };
               });
 
@@ -1751,17 +1635,10 @@ export function useChat(
           setConversations((prev) => {
             const conv = prev[chatId];
             if (!conv) return prev;
-            const msgs = [...conv.messages];
-            const lastIdx = msgs.length - 1;
-            if (msgs[lastIdx]?.role === 'assistant') {
-              msgs[lastIdx] = {
-                ...msgs[lastIdx],
-                content: accumulated,
-                thinking: thinkingAccumulated || undefined,
-                status: 'done',
-                isToolCall: true,
-              };
-            }
+            const msgs = markLastAssistantToolCall(conv.messages, {
+              content: accumulated,
+              thinking: thinkingAccumulated,
+            });
             return { ...prev, [chatId]: { ...conv, messages: msgs } };
           });
 
@@ -1852,18 +1729,7 @@ export function useChat(
                     setConversations((prev) => {
                       const conv = prev[chatId];
                       if (!conv) return prev;
-                      const msgs = [...conv.messages];
-                      const safeCards = explorerResult.cards.filter((card) => card.type !== 'sandbox-state');
-                      if (safeCards.length === 0) return prev;
-                      for (let i = msgs.length - 1; i >= 0; i--) {
-                        if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
-                          msgs[i] = {
-                            ...msgs[i],
-                            cards: [...(msgs[i].cards || []), ...safeCards],
-                          };
-                          break;
-                        }
-                      }
+                      const msgs = appendCardsToLatestToolCall(conv.messages, explorerResult.cards);
                       return { ...prev, [chatId]: { ...conv, messages: msgs } };
                     });
                   }
@@ -2052,18 +1918,7 @@ export function useChat(
                     setConversations((prev) => {
                       const conv = prev[chatId];
                       if (!conv) return prev;
-                      const msgs = [...conv.messages];
-                      const safeCards = allCards.filter((card) => card.type !== 'sandbox-state');
-                      if (safeCards.length === 0) return prev;
-                      for (let i = msgs.length - 1; i >= 0; i--) {
-                        if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
-                          msgs[i] = {
-                            ...msgs[i],
-                            cards: [...(msgs[i].cards || []), ...safeCards],
-                          };
-                          break;
-                        }
-                      }
+                      const msgs = appendCardsToLatestToolCall(conv.messages, allCards);
                       return { ...prev, [chatId]: { ...conv, messages: msgs } };
                     });
                   }
@@ -2151,19 +2006,11 @@ export function useChat(
               // No longer render or persist sandbox state cards in chat.
               continue;
             }
+            const toolCard = toolExecResult.card;
             setConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
-              const msgs = [...conv.messages];
-              for (let i = msgs.length - 1; i >= 0; i--) {
-                if (msgs[i].role === 'assistant' && msgs[i].isToolCall) {
-                  msgs[i] = {
-                    ...msgs[i],
-                    cards: [...(msgs[i].cards || []), toolExecResult.card!],
-                  };
-                  break;
-                }
-              }
+              const msgs = appendCardsToLatestToolCall(conv.messages, [toolCard]);
               return { ...prev, [chatId]: { ...conv, messages: msgs } };
             });
           }
@@ -2171,31 +2018,26 @@ export function useChat(
           // Create tool result message with provenance metadata + meta envelope
           const toolExecDurationMs = Date.now() - toolExecStart;
           const sandboxStatus = await getRoundSandboxStatus();
-          const metaLine = buildMetaLine(
+          const metaLine = buildToolResultMetaLine(
             round,
             apiMessages,
             lockedProviderForChat,
             resolvedModelForChat,
             sandboxStatus,
           );
-          const wrappedToolResult = formatToolResultEnvelope(toolExecResult.text, metaLine);
-          const toolMeta: ToolMeta = {
-            toolName: getToolName(toolCall),
-            source: toolCall.source,
-            provider: lockedProviderForChat,
-            durationMs: toolExecDurationMs,
-            isError: toolExecResult.text.includes('[Tool Error]'),
-            triggeredBy: 'assistant',
-          };
-          const toolResultMsg: ChatMessage = {
+          const toolResultMsg = buildToolResultMessage({
             id: createId(),
-            role: 'user',
-            content: wrappedToolResult,
             timestamp: Date.now(),
-            status: 'done',
-            isToolResult: true,
-            toolMeta,
-          };
+            text: toolExecResult.text,
+            metaLine,
+            toolMeta: buildToolMeta({
+              toolName: getToolName(toolCall),
+              source: toolCall.source,
+              provider: lockedProviderForChat,
+              durationMs: toolExecDurationMs,
+              isError: toolExecResult.text.includes('[Tool Error]'),
+            }),
+          });
 
           setConversations((prev) => {
             const conv = prev[chatId];
