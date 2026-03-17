@@ -1001,22 +1001,43 @@ async function streamSSEChat(
       lastError = err instanceof Error ? err : new Error(String(err));
       
       // Don't retry on auth errors or user aborts
-      if (lastError.message.includes('key') || lastError.message.includes('auth') || 
+      if (lastError.message.includes('key') || lastError.message.includes('auth') ||
           lastError.message.includes('Unauthorized') || signal?.aborted) {
         throw lastError;
       }
-      
-      // Check if this is a timeout error worth retrying
-      const isTimeout = lastError.message.includes('timeout') || 
+
+      // Check if this is a retryable error (timeout or rate limit)
+      const isTimeout = lastError.message.includes('timeout') ||
                         lastError.message.includes('stall') ||
                         lastError.message.includes('no data');
-      
-      if (attempt < maxAttempts && isTimeout) {
-        console.log(`[Push] Retry attempt ${attempt}/${maxAttempts} after ${backoffMs}ms...`);
-        await new Promise(r => setTimeout(r, backoffMs * attempt));
+      const isRateLimit = (lastError as any).status === 429 ||
+                          lastError.message.includes('429') ||
+                          lastError.message.includes('rate limit') ||
+                          lastError.message.includes('Rate limit') ||
+                          lastError.message.includes('too many requests') ||
+                          lastError.message.includes('Too Many Requests');
+
+      if (attempt < maxAttempts && (isTimeout || isRateLimit)) {
+        // For rate limits, respect Retry-After header or use longer backoff
+        let delayMs: number;
+        if (isRateLimit) {
+          const retryAfter = (lastError as any).retryAfter;
+          if (retryAfter && !isNaN(Number(retryAfter))) {
+            // Retry-After is in seconds — cap at 120s to avoid excessively long waits
+            delayMs = Math.min(Number(retryAfter) * 1000, 120_000);
+          } else {
+            // Exponential backoff: 2s, 4s, 8s, 16s
+            delayMs = 2000 * Math.pow(2, attempt - 1);
+          }
+          console.log(`[Push] Rate limited — retry ${attempt}/${maxAttempts} after ${delayMs}ms...`);
+        } else {
+          delayMs = backoffMs * attempt;
+          console.log(`[Push] Retry attempt ${attempt}/${maxAttempts} after ${delayMs}ms...`);
+        }
+        await new Promise(r => setTimeout(r, delayMs));
         continue;
       }
-      
+
       throw lastError;
     }
   }
@@ -1150,7 +1171,13 @@ async function streamSSEChatOnce(
       }
       console.error(`[Push] ${name} error: ${response.status}`, detail);
       const alreadyPrefixed = detail.toLowerCase().startsWith(name.toLowerCase());
-      throw new Error(alreadyPrefixed ? detail : `${name} ${response.status}: ${detail}`);
+      const errMsg = alreadyPrefixed ? detail : `${name} ${response.status}: ${detail}`;
+      const err = new Error(errMsg);
+      // Attach status and Retry-After so the retry wrapper can use them
+      (err as any).status = response.status;
+      const retryAfterHeader = response.headers.get('Retry-After');
+      if (retryAfterHeader) (err as any).retryAfter = retryAfterHeader;
+      throw err;
     }
 
     const reader = response.body?.getReader();
@@ -1576,7 +1603,9 @@ async function streamProviderChat(
 
   return streamSSEChat(
     config, messages, onToken, onDone, onError, onThinkingToken,
-    workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal, undefined, onPreCompact,
+    workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal,
+    { maxAttempts: 4, backoffMs: 1000 },
+    onPreCompact,
   );
 }
 
