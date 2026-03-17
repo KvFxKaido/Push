@@ -55,7 +55,7 @@ The web app has four built-in providers, all using OpenAI-compatible SSE streami
 
 Tools are prompt-engineered — the system prompt defines available tools and JSON format. The agent emits JSON tool blocks, the client executes them, injects results as synthetic messages, and re-calls the LLM. The Orchestrator tool loop is unbounded. The Coder loop is bounded by safety nets: up to 30 rounds, 60s inactivity timeout per round, and ~120k-char context cap.
 
-Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message, splits them into parallel read-only calls and an optional trailing mutation — reads execute via `Promise.all()`, then the mutation runs. Tool results include structured error fields (`error_type`, `retryable`) via `classifyError()`, a `[meta]` envelope with round number, context size, and sandbox dirty state, and malformed-call feedback includes a `[TOOL_CALL_PARSE_ERROR]` header with structured diagnosis.
+Multi-tool dispatch: `detectAllToolCalls()` scans for all tool calls per message, splits them into parallel read-only calls and an optional trailing mutation — reads execute via `Promise.all()`, then the mutation runs. Tool results include structured error fields (`error_type`, `retryable`) via `classifyError()`, a `[meta]` envelope with round number, context size, and sandbox dirty state, and malformed-call feedback includes a `[TOOL_CALL_PARSE_ERROR]` header with structured diagnosis. Shared orchestrator loop helpers now live in `lib/tool-call-recovery.ts`, `lib/chat-tool-messages.ts`, and `lib/checkpoint-manager.ts`, keeping `useChat.ts` focused on execution wiring and UI state.
 
 The Orchestrator can delegate complex coding tasks to the Coder sub-agent via `delegate_coder`. The Coder runs autonomously with its own tool loop in the sandbox, then returns results to the Orchestrator. Delegation supports optional `acceptanceCriteria[]` — shell commands run post-task to verify success. The Coder maintains internal working memory (`CoderWorkingMemory`) via `coder_update_state`, injected as a `[CODER_STATE]` block into every tool result to survive context trimming.
 
@@ -107,7 +107,7 @@ Conversations are permanently bound to the branch on which they were created. Th
 
 ### Resumable Sessions
 
-When the user locks their phone or switches apps mid-tool-loop, the app checkpoints run state to localStorage (`run_checkpoint_${chatId}`). On return, a `ResumeBanner` offers to resume. Resume revalidates sandbox/branch/repo identity, fetches `sandboxStatus()` (HEAD, dirty files, diff summary), injects a phase-specific `[SESSION_RESUMED]` reconciliation message, and re-enters the normal loop. Coder delegation state is captured via `onWorkingMemoryUpdate` callback. Multi-tab coordination uses localStorage locks (not BroadcastChannel). Checkpoint delta payload is trimmed/capped at 50KB, and resume telemetry is recorded via `getResumeEvents()`. See `documents/design/Resumable Sessions Design.md`.
+When the user locks their phone or switches apps mid-tool-loop, the app checkpoints run state through `lib/checkpoint-manager.ts`, backed by `lib/checkpoint-store.ts` (IndexedDB with legacy localStorage fallback/migration). On return, a `ResumeBanner` offers to resume. Resume revalidates sandbox/branch/repo identity, fetches `sandboxStatus()` (HEAD, dirty files, diff summary), injects a phase-specific `[SESSION_RESUMED]` reconciliation message, and re-enters the normal loop. Coder delegation state is captured via `onWorkingMemoryUpdate` callback. Multi-tab coordination uses localStorage locks (not BroadcastChannel). Checkpoint delta payload is trimmed/capped at 50KB, and resume telemetry is recorded via `getResumeEvents()`. See `documents/design/Resumable Sessions Design.md`.
 
 ### PR Awareness
 
@@ -248,7 +248,11 @@ Push/
 | `lib/tool-call-metrics.ts` | In-memory observability for malformed tool-call attempts by provider/model/reason |
 | `lib/scratchpad-tools.ts` | Scratchpad tools, prompt injection escaping |
 | `lib/sandbox-client.ts` | HTTP client for `/api/sandbox/*` endpoints, `mapSandboxErrorCode()`, `sandboxStatus()` (HEAD/dirty/diff snapshot for resume reconciliation) |
+| `lib/checkpoint-store.ts` | IndexedDB-backed checkpoint persistence with legacy localStorage fallback/migration for resumable sessions |
+| `lib/checkpoint-manager.ts` | Resumable-session helpers: checkpoint snapshot building, interrupted-run detection, reconciliation messages, resume telemetry, and multi-tab lock helpers |
 | `lib/tool-dispatch.ts` | Unified dispatch for all tools, `detectAllToolCalls()` (multi-tool with read/mutate split), `isReadOnlyToolCall()` |
+| `lib/tool-call-recovery.ts` | Shared malformed/unimplemented tool-call retry logic, parse-error blocks, and tool-result envelope helpers for orchestrator loops |
+| `lib/chat-tool-messages.ts` | Pure chat-message helpers for tool status labels, `[meta]` lines, tool result messages, and assistant/card transforms around tool calls |
 | `lib/tool-hooks.ts` | Pre/post tool execution interception layer; `ToolHookRegistry`, matcher-based hook entries; used by Explorer for read-only enforcement |
 | `lib/coder-agent.ts` | Coder autonomous loop (delegated runs inherit the chat-locked provider/model), working memory (`coder_update_state`), acceptance criteria, parallel reads, `onWorkingMemoryUpdate` callback for resumable checkpoints; accepts `DelegationEnvelope` or legacy positional params |
 | `lib/explorer-agent.ts` | Explorer read-only sub-agent loop (up to 10 rounds), tool-hook-enforced read-only constraint, structured evidence-based reports |
@@ -272,7 +276,7 @@ Push/
 
 | File | Purpose |
 |------|---------|
-| `hooks/useChat.ts` | Chat state, message history, tool execution loop (multi-tool dispatch, `[meta]` envelope, structured malformed-call feedback), Coder and Explorer delegation with `acceptanceCriteria`, resumable sessions (`detectInterruptedRun()`, `resumeInterruptedRun`, `dismissResume`, checkpoint persistence, multi-tab lock, `getResumeEvents()`) |
+| `hooks/useChat.ts` | Chat state, message history, and orchestrator execution wiring; owns tool execution, delegation, scratchpad integration, and resumable-session UI while relying on `checkpoint-manager.ts`, `tool-call-recovery.ts`, and `chat-tool-messages.ts` for extracted loop helpers |
 | `hooks/useSandbox.ts` | Sandbox session lifecycle |
 | `hooks/useScratchpad.ts` | Shared notepad state, localStorage persistence |
 | `hooks/useGitHubAuth.ts` | PAT validation, OAuth flow |

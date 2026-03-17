@@ -84,7 +84,7 @@ Push prioritizes harness reliability over raw model capability. Core shipped cap
 - **Garbled tool-call recovery** — three-phase diagnosis, JSON repair, and truncation detection so models self-correct in one retry
 
 **Session Reliability**
-- **Resumable sessions** — interrupted runs checkpoint to localStorage and resume with sandbox reconciliation (`[SESSION_RESUMED]`) plus multi-tab lock safety
+- **Resumable sessions** — interrupted runs checkpoint through an IndexedDB-backed checkpoint store (with legacy localStorage fallback/migration) and resume with sandbox reconciliation (`[SESSION_RESUMED]`) plus multi-tab lock safety
 
 Harness reliability remains a core product priority. `documents/plans/Harness Reliability Plan.md` is kept as planning/reference history, not an active README checklist.
 
