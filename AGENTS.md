@@ -129,12 +129,13 @@ When the user selects a repo, the app fetches project instruction files via the 
 4. **Tools** → JSON tool blocks → execute against GitHub API or sandbox
 5. **Scratchpad** → Shared notepad for ideas/requirements (user + AI can edit)
 6. **Sandbox** → Clone repo to container, run commands, edit files
-7. **Coder** → Autonomous coding task execution (delegated runs inherit the current chat's locked provider/model)
-8. **Branch** → Create branches, switch context (tears down sandbox), commit to active branch
-9. **Reviewer** → Run advisory review on a Branch diff, Last commit, or sandbox Working tree; findings can jump to Diff or be sent to chat, and PR posting is only available for PR-backed Branch diff reviews
-10. **Auditor** → Standard commits (`sandbox_prepare_commit` path) get a safety verdict using the chat-locked provider/model when available
-11. **Merge** → PR creation + Auditor review + GitHub merge (merge commit strategy)
-12. **Cards** → Structured results render as inline cards
+7. **Explorer** → Read-only investigation delegation (inherits the current chat's locked provider/model)
+8. **Coder** → Autonomous coding task execution (inherits the current chat's locked provider/model)
+9. **Branch** → Create branches, switch context (tears down sandbox), commit to active branch
+10. **Reviewer** → Run advisory review on a Branch diff, Last commit, or sandbox Working tree; findings can jump to Diff or be sent to chat, and PR posting is only available for PR-backed Branch diff reviews
+11. **Auditor** → Standard commits (`sandbox_prepare_commit` path) run pre-commit hooks then get a safety verdict using the chat-locked provider/model when available
+12. **Merge** → PR creation + Auditor review + GitHub merge (merge commit strategy)
+13. **Cards** → Structured results render as inline cards
 
 ## Push CLI
 
@@ -248,9 +249,11 @@ Push/
 | `lib/scratchpad-tools.ts` | Scratchpad tools, prompt injection escaping |
 | `lib/sandbox-client.ts` | HTTP client for `/api/sandbox/*` endpoints, `mapSandboxErrorCode()`, `sandboxStatus()` (HEAD/dirty/diff snapshot for resume reconciliation) |
 | `lib/tool-dispatch.ts` | Unified dispatch for all tools, `detectAllToolCalls()` (multi-tool with read/mutate split), `isReadOnlyToolCall()` |
-| `lib/coder-agent.ts` | Coder autonomous loop (delegated runs inherit the chat-locked provider/model), working memory (`coder_update_state`), acceptance criteria, parallel reads, `onWorkingMemoryUpdate` callback for resumable checkpoints |
+| `lib/tool-hooks.ts` | Pre/post tool execution interception layer; `ToolHookRegistry`, matcher-based hook entries; used by Explorer for read-only enforcement |
+| `lib/coder-agent.ts` | Coder autonomous loop (delegated runs inherit the chat-locked provider/model), working memory (`coder_update_state`), acceptance criteria, parallel reads, `onWorkingMemoryUpdate` callback for resumable checkpoints; accepts `DelegationEnvelope` or legacy positional params |
+| `lib/explorer-agent.ts` | Explorer read-only sub-agent loop (up to 10 rounds), tool-hook-enforced read-only constraint, structured evidence-based reports |
 | `lib/reviewer-agent.ts` | Reviewer advisory diff review, line-anchored findings, and structured review result parsing |
-| `lib/auditor-agent.ts` | Auditor review + verdict (fail-safe, uses active backend) |
+| `lib/auditor-agent.ts` | Auditor review + verdict (fail-safe, uses active backend), receives pre-commit hook output |
 | `lib/workspace-context.ts` | Active repo context builder |
 | `lib/providers.ts` | AI provider config and role model mapping |
 | `lib/vertex-provider.ts` | Google Vertex model catalog, service-account validation, region normalization, and native endpoint helpers |
@@ -269,7 +272,7 @@ Push/
 
 | File | Purpose |
 |------|---------|
-| `hooks/useChat.ts` | Chat state, message history, tool execution loop (multi-tool dispatch, `[meta]` envelope, structured malformed-call feedback), Coder delegation with `acceptanceCriteria`, resumable sessions (`detectInterruptedRun()`, `resumeInterruptedRun`, `dismissResume`, checkpoint persistence, multi-tab lock, `getResumeEvents()`) |
+| `hooks/useChat.ts` | Chat state, message history, tool execution loop (multi-tool dispatch, `[meta]` envelope, structured malformed-call feedback), Coder and Explorer delegation with `acceptanceCriteria`, resumable sessions (`detectInterruptedRun()`, `resumeInterruptedRun`, `dismissResume`, checkpoint persistence, multi-tab lock, `getResumeEvents()`) |
 | `hooks/useSandbox.ts` | Sandbox session lifecycle |
 | `hooks/useScratchpad.ts` | Shared notepad state, localStorage persistence |
 | `hooks/useGitHubAuth.ts` | PAT validation, OAuth flow |

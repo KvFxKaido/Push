@@ -126,9 +126,11 @@ Push/
 │   │   ├── hooks/         # React hooks (useChat, useSandbox, useGitHubAuth, useGitHubAppAuth, useUserProfile, useFileBrowser, useCodeMirror, useCommitPush, useProtectMain, useVertexConfig, useTavilyConfig, useUsageTracking, etc.)
 │   │   ├── lib/           # Core Logic
 │   │   │   ├── orchestrator.ts    # Agent coordination & streaming
-│   │   │   ├── coder-agent.ts     # Coder sub-agent loop, working memory, acceptance criteria, onWorkingMemoryUpdate
+│   │   │   ├── coder-agent.ts     # Coder sub-agent loop, working memory, acceptance criteria, DelegationEnvelope
+│   │   │   ├── explorer-agent.ts  # Explorer read-only sub-agent loop, tool-hook-enforced read-only
 │   │   │   ├── reviewer-agent.ts  # Reviewer advisory diff review + line anchors
-│   │   │   ├── auditor-agent.ts   # Auditor safety gate
+│   │   │   ├── auditor-agent.ts   # Auditor safety gate, pre-commit hook integration
+│   │   │   ├── tool-hooks.ts      # Pre/post tool execution interception layer
 │   │   │   ├── github-tools.ts    # GitHub API tools, branch/merge/PR operations
 │   │   │   ├── sandbox-tools.ts   # Sandbox tools, error taxonomy, sandbox_edit_range, sandbox_search_replace, sandbox_read_symbols, sandbox_apply_patchset
 │   │   │   ├── sandbox-client.ts  # Sandbox HTTP client, mapSandboxErrorCode(), sandboxStatus() for resume reconciliation
