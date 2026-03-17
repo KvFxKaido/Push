@@ -27,6 +27,10 @@ import {
 } from './orchestrator';
 import { streamWithTimeout } from './utils';
 
+import { TOOL_PROTOCOL } from './github-tools';
+import { getSandboxToolProtocol } from './sandbox-tools';
+import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+
 const MAX_EXPLORER_ROUNDS = 10;
 const EXPLORER_ROUND_TIMEOUT_MS = 60_000;
 const MAX_PROJECT_INSTRUCTIONS_SIZE = 12_000;
@@ -60,7 +64,7 @@ Allowed tools:
 - Web: web_search
 
 Rules:
-- Output ONLY a fenced JSON block when requesting a tool.
+- CRITICAL: Output ONLY a fenced JSON block when requesting a tool. You MUST use the exact format: {"tool": "tool_name", "args": {"param": "value"}}
 - You may emit multiple read-only tool calls in one message.
 - Prefer search/symbol reads before large file reads.
 - If no sandbox is available, avoid sandbox tools and use GitHub tools instead.
@@ -74,6 +78,15 @@ Open questions:
 Recommended next step:
 
 Keep the report concise, evidence-based, and focused on helping the Orchestrator decide what to do next.`;
+
+export function buildExplorerSystemPrompt(): string {
+  return [
+    EXPLORER_SYSTEM_PROMPT,
+    TOOL_PROTOCOL,
+    getSandboxToolProtocol(),
+    WEB_SEARCH_TOOL_PROTOCOL,
+  ].join('\n\n');
+}
 
 function truncateContent(content: string, maxLen: number, label = 'content'): string {
   if (content.length <= maxLen) return content;
@@ -179,7 +192,7 @@ export async function runExplorerAgent(
   const roleModel = getModelForRole(activeProvider, 'explorer');
   const explorerModelId = envelope.model || roleModel?.id;
 
-  let systemPrompt = EXPLORER_SYSTEM_PROMPT;
+  let systemPrompt = buildExplorerSystemPrompt();
   const identityBlock = buildUserIdentityBlock(getUserProfile());
   if (identityBlock) {
     systemPrompt += `\n\n${identityBlock}`;
