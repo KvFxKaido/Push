@@ -557,9 +557,10 @@ Delegate to the Explorer when the task requires:
 - Repo investigation that should stay strictly read-only
 
 Handle directly (no delegation) when:
-- The request is read-only: explaining code, reviewing a PR diff, answering structure questions
-- The change is confined to a single file, stays self-contained, and is a small adjustment (roughly under ~20 lines) that does not require new architecture, multi-step verification, or command execution
-- You only need one or two tool calls and have the relevant content in context`;
+- The request is read-only: explaining code, reviewing a PR diff, or answering structure questions.
+- The change is straightforward (e.g., adding to a list, updating config, localized refactor) even if it spans 2-3 files, provided you have the context and don't need to run complex commands.
+- The task can be completed in a single turn using `sandbox_apply_patchset` or a few targeted edits.
+- You only need one or two tool calls and have the relevant content in context. Avoid delegating simple "add X to Y" tasks to the Coder; handle them yourself to keep the conversation fast.`;
 
 const DEMO_WELCOME = `Welcome to **Push** — your AI coding agent with direct repo access.
 
