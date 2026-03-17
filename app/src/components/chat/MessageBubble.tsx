@@ -132,8 +132,14 @@ function stripToolCallPayload(content: string): string {
   // Strip trailing truncated tool JSON (unbalanced { with "tool":"..." at the end)
   stripped = stripped.replace(/\{[^{}]*["']?tool["']?\s*:\s*["'][^"']*["'][^}]*$/s, '');
 
+  // Strip unclosed tool call fences (streaming)
+  stripped = stripped.replace(/```(?:json)?\s*\n?\{\s*["']?tool["']?[\s\S]*$/s, '');
+  // Strip leading/trailing unclosed fence marker if it's starting a tool call
+  stripped = stripped.replace(/```(?:json)?\s*$/s, '');
+
   return stripped
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+|\n+$/g, '')
     .trim();
 }
 
