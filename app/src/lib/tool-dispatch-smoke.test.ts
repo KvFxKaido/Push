@@ -97,6 +97,11 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
   });
 
   it('passes the chat-locked provider/model into sandbox_prepare_commit audits', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    });
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
       diff: 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n',
       truncated: false,
