@@ -432,6 +432,9 @@ export function classifyError(error: string, context?: string): StructuredToolEr
   if (lower.includes('edit guard') || lower.includes('edit_guard_blocked')) {
     return { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: error, detail: context };
   }
+  if (lower.includes('git guard') || lower.includes('git_guard_blocked')) {
+    return { type: 'GIT_GUARD_BLOCKED', retryable: false, message: error, detail: context };
+  }
   if (lower.includes('hash mismatch') || lower.includes('hash_mismatch')) {
     return { type: 'EDIT_HASH_MISMATCH', retryable: false, message: error, detail: context };
   }
@@ -1229,17 +1232,21 @@ export async function executeSandboxToolCall(
         // Git guard: block direct git mutations unless user explicitly approved
         const blockedGitOp = detectBlockedGitCommand(call.args.command);
         if (blockedGitOp && !call.args.allowDirectGit) {
+          const guardErr: StructuredToolError = {
+            type: 'GIT_GUARD_BLOCKED',
+            retryable: false,
+            message: `Direct "${blockedGitOp}" is blocked`,
+            detail: 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.',
+          };
           return {
-            text: [
+            text: formatStructuredError(guardErr, [
               `[Tool Blocked — sandbox_exec]`,
               `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
               ``,
               `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
               `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
-              ``,
-              `error_type: GIT_GUARD_BLOCKED`,
-              `retryable: false`,
-            ].join('\n'),
+            ].join('\n')),
+            structuredError: guardErr,
           };
         }
 

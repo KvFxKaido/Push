@@ -46,6 +46,7 @@ vi.mock('./tool-dispatch', async () => {
 });
 
 import {
+  classifyError,
   validateSandboxToolCall,
   executeSandboxToolCall,
 } from './sandbox-tools';
@@ -134,6 +135,17 @@ describe('validateSandboxToolCall -- sandbox_edit_range', () => {
     });
 
     expect(result).toBeNull();
+  });
+});
+
+describe('classifyError', () => {
+  it('recognizes git guard failures', () => {
+    expect(classifyError('git_guard_blocked: direct git push is blocked', 'sandbox_exec')).toEqual({
+      type: 'GIT_GUARD_BLOCKED',
+      retryable: false,
+      message: 'git_guard_blocked: direct git push is blocked',
+      detail: 'sandbox_exec',
+    });
   });
 });
 
@@ -996,6 +1008,26 @@ describe('sandbox path normalization', () => {
       'pwd',
       undefined,
     );
+  });
+
+  it('returns a structured git guard error when direct git mutations are blocked', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git push origin main' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Blocked — sandbox_exec]');
+    expect(result.text).toContain('error_type: GIT_GUARD_BLOCKED');
+    expect(result.text).toContain('retryable: false');
+    expect(result.structuredError).toEqual({
+      type: 'GIT_GUARD_BLOCKED',
+      retryable: false,
+      message: 'Direct "git push" is blocked',
+      detail: 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.',
+    });
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
   });
 });
 
