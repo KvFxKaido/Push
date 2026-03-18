@@ -61,10 +61,7 @@ Never:
 - delegate to another agent
 - claim that you changed code
 
-Allowed tools:
-- GitHub: fetch_pr, list_prs, list_commits, read_file, grep_file, list_directory, list_branches, fetch_checks, search_files, list_commit_files, get_workflow_runs, get_workflow_logs, check_pr_mergeable, find_existing_pr
-- Sandbox: sandbox_read_file, sandbox_search, sandbox_list_dir, sandbox_diff, sandbox_read_symbols, sandbox_find_references
-- Web: web_search
+Allowed tools: read-only GitHub, sandbox, and web search tools. See the Explorer Tool Protocol section below for the full list and usage format.
 
 Rules:
 - CRITICAL: Output ONLY a fenced JSON block when requesting a tool. You MUST use the exact format: {"tool": "tool_name", "args": {"param": "value"}}
