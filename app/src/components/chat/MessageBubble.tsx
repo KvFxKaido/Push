@@ -3,6 +3,7 @@ import { ChevronRight, FileCode, FileText, Copy, Check, Pin, Pencil, RefreshCw }
 import type { ChatMessage, CardAction, AttachmentData } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
+import { repairToolJson } from '@/lib/utils';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -80,7 +81,10 @@ function stripBareToolCallJson(text: string): string {
         ranges.push({ start: braceIdx, end: end + 1 });
       }
     } catch {
-      // Not valid JSON, keep scanning.
+      // Malformed JSON — try repair (matches detection path in extractBareToolJsonObjects)
+      if (repairToolJson(candidate)) {
+        ranges.push({ start: braceIdx, end: end + 1 });
+      }
     }
 
     i = end + 1;
@@ -520,13 +524,14 @@ export const MessageBubble = memo(function MessageBubble({
       let text = message.content;
       // Always strip leaked tool-result envelopes (safe — only targets our exact format)
       text = stripToolResultEnvelopes(text);
-      // Aggressive tool-call JSON stripping only for messages flagged as tool calls
-      if (message.isToolCall) {
+      // Aggressive tool-call JSON stripping for flagged tool calls AND streaming
+      // messages (prevents visual flash of raw JSON while model is still outputting)
+      if (message.isToolCall || message.status === 'streaming') {
         text = stripToolCallPayload(text);
       }
       return text;
     },
-    [isUser, message.content, message.displayContent, message.isToolCall],
+    [isUser, message.content, message.displayContent, message.isToolCall, message.status],
   );
   const hasContent = Boolean(displayContentText.trim());
 
