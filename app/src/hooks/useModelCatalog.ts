@@ -312,13 +312,16 @@ export function useModelCatalog(): ModelCatalog {
   useEffect(() => { if (!openRouterCfg.hasKey) { setOpenRouterModelList([]); setOpenRouterError(null); setOpenRouterUpdatedAt(null); } }, [openRouterCfg.hasKey]);
   useEffect(() => { if (!zenCfg.hasKey) { setZenModelList([]); setZenError(null); setZenUpdatedAt(null); } }, [zenCfg.hasKey]);
   useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
-  // Clear fetched list when Go mode toggles so the new mode's static fallback shows immediately.
-  // Skip the initial mount — the list is already empty and firing here would kick off an
-  // unnecessary fetch cycle that keeps the picker disabled while loading.
-  const zenGoModeInitRef = useRef(true);
+  // Clear fetched list when Go mode actually changes so the new mode's static fallback
+  // shows immediately. Tracks the previous value to avoid running on mount or Strict Mode
+  // remount — the list is already empty at that point and clearing would just trigger an
+  // unnecessary fetch/loading churn cycle.
+  const prevGoModeRef = useRef(zenCfg.goMode);
   useEffect(() => {
-    if (zenGoModeInitRef.current) { zenGoModeInitRef.current = false; return; }
-    setZenModelList([]); setZenError(null); setZenUpdatedAt(null);
+    if (prevGoModeRef.current !== zenCfg.goMode) {
+      prevGoModeRef.current = zenCfg.goMode;
+      setZenModelList([]); setZenError(null); setZenUpdatedAt(null);
+    }
   }, [zenCfg.goMode]);
 
   // Model option lists (ensure selected model is always included)
