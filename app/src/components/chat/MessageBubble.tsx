@@ -137,6 +137,14 @@ function stripToolCallPayload(content: string): string {
   // Strip leading/trailing unclosed fence marker if it's starting a tool call
   stripped = stripped.replace(/```(?:json)?\s*$/s, '');
 
+  // Strip [TOOL_RESULT] / [Tool Result] envelopes the model may echo back
+  stripped = stripped.replace(
+    /\[(?:TOOL_RESULT|Tool Result)[^\]]*\][\s\S]*?\[\/(?:TOOL_RESULT|Tool Result)\]/g,
+    '',
+  );
+  // Strip unclosed/streaming tool result envelope at the end
+  stripped = stripped.replace(/\[(?:TOOL_RESULT|Tool Result)[^\]]*\][\s\S]*$/g, '');
+
   return stripped
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\n+|\n+$/g, '')
@@ -500,9 +508,9 @@ export const MessageBubble = memo(function MessageBubble({
       if (isUser) {
         return message.displayContent ?? message.content;
       }
-      return message.isToolCall ? stripToolCallPayload(message.content) : message.content;
+      return stripToolCallPayload(message.content);
     },
-    [isUser, message.content, message.displayContent, message.isToolCall],
+    [isUser, message.content, message.displayContent],
   );
   const hasContent = Boolean(displayContentText.trim());
 
