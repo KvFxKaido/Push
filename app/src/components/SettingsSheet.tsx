@@ -108,6 +108,8 @@ export interface SettingsBuiltInProvider {
   setKeyInput: (value: string) => void;
   setKey: (value: string) => void;
   clearKey: () => void;
+  goMode?: boolean;
+  setGoMode?: (enabled: boolean) => void;
 }
 
 export interface SettingsExperimentalProvider {

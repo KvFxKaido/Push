@@ -37,6 +37,8 @@ import {
   getZenModelName,
   getNvidiaModelName,
   PROVIDER_URLS,
+  ZEN_GO_URLS,
+  getZenGoMode,
 } from './providers';
 import type { PreferredProvider } from './providers';
 import { buildExperimentalProxyHeaders, normalizeExperimentalBaseUrl } from './experimental-providers';
@@ -1510,7 +1512,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
     getKey: getZenKey,
     buildConfig: (apiKey, modelOverride) => ({
       name: 'OpenCode Zen',
-      apiUrl: PROVIDER_URLS.zen.chat,
+      apiUrl: getZenGoMode() ? ZEN_GO_URLS.chat : PROVIDER_URLS.zen.chat,
       apiKey,
       model: modelOverride || getZenModelName(),
       ...STANDARD_TIMEOUTS,

@@ -820,6 +820,8 @@ export function ChatScreen(props: ChatScreenProps) {
         setKeyInput: catalog.zen.setKeyInput,
         setKey: catalog.zen.setKey,
         clearKey: catalog.zen.clearKey,
+        goMode: catalog.zenGoMode,
+        setGoMode: catalog.setZenGoMode,
       },
     },
     experimentalProviders: {

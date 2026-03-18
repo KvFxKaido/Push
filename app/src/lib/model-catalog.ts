@@ -3,7 +3,7 @@ import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
-import { PROVIDER_URLS } from './providers';
+import { PROVIDER_URLS, ZEN_GO_URLS } from './providers';
 import { asRecord } from './utils';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
@@ -812,6 +812,38 @@ export async function fetchZenModels(): Promise<string[]> {
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`OpenCode Zen model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchZenGoModels(): Promise<string[]> {
+  const key = getZenKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const catalogRes = await fetch(ZEN_GO_URLS.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!catalogRes.ok) {
+      const detail = await catalogRes.text().catch(() => '');
+      throw new Error(`OpenCode Zen Go model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await catalogRes.json()) as unknown;
+    return normalizeModelList(payload);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`OpenCode Zen Go model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
     }
     throw err;
   } finally {

@@ -5,6 +5,7 @@ import {
   clearPreferredProvider,
   OPENROUTER_MODELS,
   ZEN_MODELS,
+  ZEN_GO_MODELS,
   NVIDIA_MODELS,
   type PreferredProvider,
 } from '@/lib/providers';
@@ -13,6 +14,7 @@ import {
   fetchOllamaModels,
   fetchOpenRouterModels,
   fetchZenModels,
+  fetchZenGoModels,
   fetchNvidiaModels,
 } from '@/lib/model-catalog';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
@@ -136,6 +138,10 @@ export interface ModelCatalog {
   openRouterModelOptions: string[];
   zenModelOptions: string[];
   nvidiaModelOptions: string[];
+
+  // Zen Go tier
+  zenGoMode: boolean;
+  setZenGoMode: (enabled: boolean) => void;
 
   // Refresh callbacks
   refreshOllamaModels: () => Promise<void>;
@@ -278,11 +284,11 @@ export function useModelCatalog(): ModelCatalog {
       hasKey: zenCfg.hasKey, isLoading: zenLoading,
       setLoading: setZenLoading, setError: setZenError,
       setModels: setZenModelList, setUpdatedAt: setZenUpdatedAt,
-      fetchModels: fetchZenModels,
+      fetchModels: zenCfg.goMode ? fetchZenGoModels : fetchZenModels,
       emptyMessage: 'No models returned by OpenCode Zen.',
       failureMessage: 'Failed to load OpenCode Zen models.',
     });
-  }, [zenCfg.hasKey, zenLoading, refreshModels]);
+  }, [zenCfg.hasKey, zenCfg.goMode, zenLoading, refreshModels]);
 
   const refreshNvidiaModels = useCallback(async () => {
     await refreshModels({
@@ -306,6 +312,8 @@ export function useModelCatalog(): ModelCatalog {
   useEffect(() => { if (!openRouterCfg.hasKey) { setOpenRouterModelList([]); setOpenRouterError(null); setOpenRouterUpdatedAt(null); } }, [openRouterCfg.hasKey]);
   useEffect(() => { if (!zenCfg.hasKey) { setZenModelList([]); setZenError(null); setZenUpdatedAt(null); } }, [zenCfg.hasKey]);
   useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
+  // Clear fetched list when Go mode toggles so the new mode's static fallback shows immediately
+  useEffect(() => { setZenModelList([]); setZenError(null); setZenUpdatedAt(null); }, [zenCfg.goMode]);
 
   // Model option lists (ensure selected model is always included)
   const ollamaModelOptions = useMemo(() => includeSelectedModel(ollamaModelList, ollamaCfg.model), [ollamaModelList, ollamaCfg.model]);
@@ -313,7 +321,11 @@ export function useModelCatalog(): ModelCatalog {
     () => includeSelectedModel(openRouterModelList.length > 0 ? openRouterModelList : OPENROUTER_MODELS, openRouterCfg.model),
     [openRouterCfg.model, openRouterModelList],
   );
-  const zenModelOptions = useMemo(() => includeSelectedModel(zenModelList, zenCfg.model), [zenModelList, zenCfg.model]);
+  const zenStaticFallback = zenCfg.goMode ? ZEN_GO_MODELS : ZEN_MODELS;
+  const zenModelOptions = useMemo(
+    () => includeSelectedModel(zenModelList.length > 0 ? zenModelList : zenStaticFallback, zenCfg.model),
+    [zenModelList, zenStaticFallback, zenCfg.model],
+  );
   const nvidiaModelOptions = useMemo(() => includeSelectedModel(nvidiaModelList, nvidiaCfg.model), [nvidiaModelList, nvidiaCfg.model]);
   const vertexModelOptions = useMemo(() => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model), [vertexCfg.modelOptions, vertexCfg.model]);
 
@@ -415,8 +427,11 @@ export function useModelCatalog(): ModelCatalog {
 
     ollamaModelOptions,
     openRouterModelOptions,
-    zenModelOptions: zenModelList.length > 0 ? zenModelOptions : ZEN_MODELS,
+    zenModelOptions,
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
+
+    zenGoMode: zenCfg.goMode,
+    setZenGoMode: zenCfg.setGoMode,
 
     refreshOllamaModels,
     refreshOpenRouterModels,

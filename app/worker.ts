@@ -1239,6 +1239,28 @@ const handleZenModels = createJsonProxyHandler({
   timeoutError: 'OpenCode Zen model list timed out after 30 seconds',
 });
 
+// --- OpenCode Zen Go tier (OpenAI-compatible endpoint) ---
+
+const handleZenGoChat = createStreamProxyHandler({
+  name: 'OpenCode Zen Go API', logTag: 'api/zen/go/chat',
+  upstreamUrl: 'https://opencode.ai/zen/go/v1/chat/completions',
+  timeoutMs: 120_000,
+  maxOutputTokens: 12_288,
+  buildAuth: standardAuth('ZEN_API_KEY'),
+  keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+  timeoutError: 'OpenCode Zen Go request timed out after 120 seconds',
+});
+
+const handleZenGoModels = createJsonProxyHandler({
+  name: 'OpenCode Zen Go API', logTag: 'api/zen/go/models',
+  upstreamUrl: 'https://opencode.ai/zen/go/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('ZEN_API_KEY'),
+  keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+  timeoutError: 'OpenCode Zen Go model list timed out after 30 seconds',
+});
+
 // --- Nvidia NIM (OpenAI-compatible endpoint) ---
 
 const handleNvidiaChat = createStreamProxyHandler({
@@ -1935,6 +1957,8 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/openrouter/models', method: 'GET', handler: handleOpenRouterModels },
   { path: '/api/zen/chat', method: 'POST', handler: handleZenChat },
   { path: '/api/zen/models', method: 'GET', handler: handleZenModels },
+  { path: '/api/zen/go/chat', method: 'POST', handler: handleZenGoChat },
+  { path: '/api/zen/go/models', method: 'GET', handler: handleZenGoModels },
   { path: '/api/nvidia/chat', method: 'POST', handler: handleNvidiaChat },
   { path: '/api/nvidia/models', method: 'GET', handler: handleNvidiaModels },
   { path: '/api/azure/chat', method: 'POST', handler: handleAzureChat },

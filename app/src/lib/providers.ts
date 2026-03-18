@@ -94,6 +94,17 @@ export const ZEN_MODELS: string[] = [
   'big-pickle',
 ];
 
+export const ZEN_GO_MODELS: string[] = [
+  'glm-5',
+  'kimi-k2.5',
+  'minimax-m2.5',
+];
+
+export const ZEN_GO_URLS = {
+  chat: providerUrl('/opencode/zen/go/v1/chat/completions', '/api/zen/go/chat'),
+  models: providerUrl('/opencode/zen/go/v1/models', '/api/zen/go/models'),
+};
+
 export const NVIDIA_MODELS: string[] = [
   'nvidia/llama-3.1-nemotron-70b-instruct',
   'meta/llama-3.3-70b-instruct',
@@ -217,6 +228,15 @@ export const setOpenRouterModelName = openRouterModel.set;
 const zenModel = createModelNameStorage('zen_model', ZEN_DEFAULT_MODEL);
 export const getZenModelName = zenModel.get;
 export const setZenModelName = zenModel.set;
+
+const ZEN_GO_MODE_KEY = 'zen_go_mode';
+export function getZenGoMode(): boolean {
+  return safeStorageGet(ZEN_GO_MODE_KEY) === 'true';
+}
+export function setZenGoMode(enabled: boolean): void {
+  if (enabled) safeStorageSet(ZEN_GO_MODE_KEY, 'true');
+  else safeStorageRemove(ZEN_GO_MODE_KEY);
+}
 
 const nvidiaModel = createModelNameStorage('nvidia_model', NVIDIA_DEFAULT_MODEL);
 export const getNvidiaModelName = nvidiaModel.get;
