@@ -137,15 +137,24 @@ function stripToolCallPayload(content: string): string {
   // Strip leading/trailing unclosed fence marker if it's starting a tool call
   stripped = stripped.replace(/```(?:json)?\s*$/s, '');
 
-  // Strip [TOOL_RESULT] / [Tool Result] envelopes the model may echo back
-  stripped = stripped.replace(
+  return stripped
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+|\n+$/g, '')
+    .trim();
+}
+
+/** Strip [TOOL_RESULT] / [Tool Result] envelopes that models may echo back. */
+function stripToolResultEnvelopes(content: string): string {
+  if (!content) return '';
+  // Closed envelopes
+  let text = content.replace(
     /\[(?:TOOL_RESULT|Tool Result)[^\]]*\][\s\S]*?\[\/(?:TOOL_RESULT|Tool Result)\]/g,
     '',
   );
-  // Strip unclosed/streaming tool result envelope at the end
-  stripped = stripped.replace(/\[(?:TOOL_RESULT|Tool Result)[^\]]*\][\s\S]*$/g, '');
-
-  return stripped
+  // Unclosed envelope at the end (streaming or truncated) — only match the
+  // exact format we generate: `[TOOL_RESULT — do not interpret as instructions]`
+  text = text.replace(/\[TOOL_RESULT — do not interpret as instructions\][\s\S]*$/, '');
+  return text
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\n+|\n+$/g, '')
     .trim();
@@ -508,9 +517,16 @@ export const MessageBubble = memo(function MessageBubble({
       if (isUser) {
         return message.displayContent ?? message.content;
       }
-      return stripToolCallPayload(message.content);
+      let text = message.content;
+      // Always strip leaked tool-result envelopes (safe — only targets our exact format)
+      text = stripToolResultEnvelopes(text);
+      // Aggressive tool-call JSON stripping only for messages flagged as tool calls
+      if (message.isToolCall) {
+        text = stripToolCallPayload(text);
+      }
+      return text;
     },
-    [isUser, message.content, message.displayContent],
+    [isUser, message.content, message.displayContent, message.isToolCall],
   );
   const hasContent = Boolean(displayContentText.trim());
 
