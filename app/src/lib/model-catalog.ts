@@ -49,6 +49,8 @@ const OPENROUTER_PRIORITY_MODELS = [
   'openai/gpt-5.4-pro',
   'openai/gpt-5.4-mini',
   'openai/gpt-5.4-nano',
+  'openrouter/healer-alpha',
+  'openrouter/hunter-alpha',
 
   'perplexity/sonar-pro',
   'qwen/qwen3-coder-flash',

@@ -28,6 +28,8 @@ export const OPENROUTER_MODELS = [
   'openai/gpt-5.3-codex',
   'openai/gpt-5.4',
   'openai/gpt-5.4-pro',
+  'openrouter/healer-alpha',
+  'openrouter/hunter-alpha',
   'perplexity/sonar-pro',
   'qwen/qwen3-coder-flash',
   'qwen/qwen3-coder-plus',
