@@ -476,6 +476,30 @@ except Exception as e:
 print(json.dumps({"ok": True}))
 """
 
+# Consolidated archive-creation script — tar + size check + base64 encode in one exec.
+# argv[1]: JSON array of tar arguments; argv[2]: max allowed bytes (int).
+# Returns JSON: { ok, size_bytes?, archive_base64?, error? }
+CREATE_ARCHIVE_SCRIPT = """
+import base64, json, os, subprocess, sys
+
+archive_path = "/tmp/archive.tar.gz"
+tar_args = json.loads(sys.argv[1])
+max_bytes = int(sys.argv[2])
+
+r = subprocess.run(tar_args, capture_output=True)
+if r.returncode != 0:
+    print(json.dumps({"ok": False, "error": f"Archive creation failed: {r.stderr.decode('utf-8', errors='replace')}"}))
+    sys.exit(0)
+
+size_bytes = os.path.getsize(archive_path)
+if size_bytes > max_bytes:
+    print(json.dumps({"ok": False, "error": f"Archive exceeds max size of {max_bytes} bytes"}))
+    sys.exit(0)
+
+archive_base64 = base64.b64encode(open(archive_path, "rb").read()).decode("ascii")
+print(json.dumps({"ok": True, "size_bytes": size_bytes, "archive_base64": archive_base64}))
+"""
+
 
 def _log_action(sandbox_id: str, action: str, **extra):
     """Structured logging for sandbox operations.
@@ -916,7 +940,7 @@ def create(data: dict):
         "infinity",
         app=app,
         image=sandbox_image,
-        timeout=1800,
+        timeout=3600,
     )
 
     github_token = data.get("github_token", "")
@@ -1651,34 +1675,30 @@ def create_archive(data: dict):
                 ".",
             ]
 
-        p = sb.exec(*tar_args)
-        p.wait()
+        # Consolidate tar + size-check + base64 into one exec to avoid 3 gRPC round trips.
+        # tar_args and max_bytes are passed as argv to avoid shell quoting issues.
+        # Outputs JSON: { ok, size_bytes?, archive_base64?, error? }
+        p = sb.exec(
+            "python3", "-c", CREATE_ARCHIVE_SCRIPT,
+            json.dumps(tar_args),
+            str(MAX_ARCHIVE_BYTES),
+        )
+        if not _wait_with_timeout(p, timeout_seconds=55):
+            return {"ok": False, "error": "Archive creation timed out after 55 seconds"}
         if p.returncode != 0:
             stderr = p.stderr.read()
             return {"ok": False, "error": f"Archive creation failed: {stderr}"}
 
-        p = sb.exec("bash", "-c", "wc -c < /tmp/archive.tar.gz")
-        p.wait()
-        if p.returncode != 0:
-            stderr = p.stderr.read()
-            return {"ok": False, "error": f"Archive size check failed: {stderr}"}
+        stdout = p.stdout.read().strip()
+        try:
+            result = json.loads(stdout) if stdout else {"ok": False, "error": "Archive script produced no output"}
+        except Exception:
+            return {"ok": False, "error": f"Archive script produced invalid JSON: {stdout[:200]}"}
 
-        size_raw = p.stdout.read().strip()
-        size_bytes = int(size_raw) if size_raw.isdigit() else 0
-        if size_bytes > MAX_ARCHIVE_BYTES:
-            return {"ok": False, "error": f"Archive exceeds max size of {MAX_ARCHIVE_BYTES} bytes"}
-
-        p = sb.exec("base64", "/tmp/archive.tar.gz")
-        p.wait()
-        if p.returncode != 0:
-            stderr = p.stderr.read()
-            return {"ok": False, "error": f"Archive encoding failed: {stderr}"}
-
-        archive_base64 = p.stdout.read().replace("\n", "")
-        return {
+        return result if not result.get("ok") else {
             "ok": True,
-            "archive_base64": archive_base64,
-            "size_bytes": size_bytes,
+            "archive_base64": result["archive_base64"],
+            "size_bytes": int(result.get("size_bytes", 0)),
             "format": "tar.gz",
         }
     except Exception as exc:
