@@ -830,7 +830,7 @@ export function SettingsSectionContent({
                       : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
                   }`}
                 >
-                  Auto (Zen first)
+                  Auto
                 </button>
                 {ai.availableProviders.length === 0 ? (
                   <div className="col-span-1 rounded-lg border border-push-edge bg-push-surface px-3 py-1.5 text-xs text-push-fg-dim">
@@ -838,7 +838,6 @@ export function SettingsSectionContent({
                   </div>
                 ) : (
                   ai.availableProviders.map(([value, label]) => {
-                    const isRecommended = value === 'zen';
                     return (
                       <button
                         key={value}
@@ -854,14 +853,14 @@ export function SettingsSectionContent({
                         }`}
                       >
                         <ProviderIcon provider={value as AIProviderType} size={12} />
-                        {label}{isRecommended ? ' (Recommended)' : ''}
+                        {label}
                       </button>
                     );
                   })
                 )}
               </div>
               <p className="text-push-xs text-push-fg-dim">
-                Auto sticks with OpenCode Zen when it&apos;s available.
+                Auto uses the last provider you picked.
               </p>
             </div>
 

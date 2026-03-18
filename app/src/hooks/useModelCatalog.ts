@@ -190,11 +190,11 @@ export function useModelCatalog(): ModelCatalog {
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
   const activeProviderLabel = getActiveProvider();
 
-  // Available providers (filtered by key presence), Zen first
+  // Available providers (filtered by key presence)
   const availableProviders = ([
-    ['zen', 'OpenCode Zen', zenCfg.hasKey],
     ['ollama', 'Ollama', ollamaCfg.hasKey],
     ['openrouter', 'OpenRouter', openRouterCfg.hasKey],
+    ['zen', 'OpenCode Zen', zenCfg.hasKey],
     ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
     ['azure', 'Azure OpenAI', azureCfg.isConfigured],
     ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],

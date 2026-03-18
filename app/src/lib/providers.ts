@@ -297,8 +297,33 @@ export function getPreferredProvider(): PreferredProvider | null {
 
 export function setPreferredProvider(provider: PreferredProvider): void {
   safeStorageSet(PREFERRED_PROVIDER_KEY, provider);
+  setLastUsedProvider(provider);
 }
 
 export function clearPreferredProvider(): void {
   safeStorageRemove(PREFERRED_PROVIDER_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Last-used provider — remembered by auto mode
+// ---------------------------------------------------------------------------
+
+const LAST_USED_PROVIDER_KEY = 'last_used_provider';
+
+export function getLastUsedProvider(): PreferredProvider | null {
+  const stored = safeStorageGet(LAST_USED_PROVIDER_KEY);
+  if (
+    stored === 'ollama'
+    || stored === 'openrouter'
+    || stored === 'zen'
+    || stored === 'nvidia'
+    || stored === 'azure'
+    || stored === 'bedrock'
+    || stored === 'vertex'
+  ) return stored;
+  return null;
+}
+
+export function setLastUsedProvider(provider: PreferredProvider): void {
+  safeStorageSet(LAST_USED_PROVIDER_KEY, provider);
 }

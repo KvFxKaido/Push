@@ -44,7 +44,7 @@ import {
 import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
-import { getModelNameForProvider } from '@/lib/providers';
+import { getModelNameForProvider, setLastUsedProvider, type PreferredProvider } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import {
   migrateConversationsToIndexedDB,
@@ -1045,6 +1045,11 @@ export function useChat(
         dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
+
+      // Remember this provider for auto mode (skip demo — not a real choice).
+      if (shouldPersistProvider && lockedProviderForChat !== 'demo') {
+        setLastUsedProvider(lockedProviderForChat as PreferredProvider);
+      }
 
       setIsStreaming(true);
       abortRef.current = false;
