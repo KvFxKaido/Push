@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   getPreferredProvider,
   setPreferredProvider,
@@ -312,8 +312,14 @@ export function useModelCatalog(): ModelCatalog {
   useEffect(() => { if (!openRouterCfg.hasKey) { setOpenRouterModelList([]); setOpenRouterError(null); setOpenRouterUpdatedAt(null); } }, [openRouterCfg.hasKey]);
   useEffect(() => { if (!zenCfg.hasKey) { setZenModelList([]); setZenError(null); setZenUpdatedAt(null); } }, [zenCfg.hasKey]);
   useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
-  // Clear fetched list when Go mode toggles so the new mode's static fallback shows immediately
-  useEffect(() => { setZenModelList([]); setZenError(null); setZenUpdatedAt(null); }, [zenCfg.goMode]);
+  // Clear fetched list when Go mode toggles so the new mode's static fallback shows immediately.
+  // Skip the initial mount — the list is already empty and firing here would kick off an
+  // unnecessary fetch cycle that keeps the picker disabled while loading.
+  const zenGoModeInitRef = useRef(true);
+  useEffect(() => {
+    if (zenGoModeInitRef.current) { zenGoModeInitRef.current = false; return; }
+    setZenModelList([]); setZenError(null); setZenUpdatedAt(null);
+  }, [zenCfg.goMode]);
 
   // Model option lists (ensure selected model is always included)
   const ollamaModelOptions = useMemo(() => includeSelectedModel(ollamaModelList, ollamaCfg.model), [ollamaModelList, ollamaCfg.model]);
@@ -321,10 +327,12 @@ export function useModelCatalog(): ModelCatalog {
     () => includeSelectedModel(openRouterModelList.length > 0 ? openRouterModelList : OPENROUTER_MODELS, openRouterCfg.model),
     [openRouterCfg.model, openRouterModelList],
   );
-  const zenStaticFallback = zenCfg.goMode ? ZEN_GO_MODELS : ZEN_MODELS;
   const zenModelOptions = useMemo(
-    () => includeSelectedModel(zenModelList.length > 0 ? zenModelList : zenStaticFallback, zenCfg.model),
-    [zenModelList, zenStaticFallback, zenCfg.model],
+    () => includeSelectedModel(
+      zenModelList.length > 0 ? zenModelList : (zenCfg.goMode ? ZEN_GO_MODELS : ZEN_MODELS),
+      zenCfg.model,
+    ),
+    [zenModelList, zenCfg.goMode, zenCfg.model],
   );
   const nvidiaModelOptions = useMemo(() => includeSelectedModel(nvidiaModelList, nvidiaCfg.model), [nvidiaModelList, nvidiaCfg.model]);
   const vertexModelOptions = useMemo(() => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model), [vertexCfg.modelOptions, vertexCfg.model]);

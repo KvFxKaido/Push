@@ -772,7 +772,7 @@ export function ChatInput({
                         <>
                           <select
                             value={providerControls.zenModel}
-                            disabled={!canChangeModel || providerControls.zenModelsLoading || providerControls.zenModelOptions.length === 0}
+                            disabled={!canChangeModel || providerControls.zenModelOptions.length === 0}
                             onChange={(e) => providerControls.onSelectZenModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
