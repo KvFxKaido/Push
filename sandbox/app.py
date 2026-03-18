@@ -14,6 +14,7 @@ import json
 import hmac
 import secrets
 import os
+import shlex
 import time
 import urllib.request
 import urllib.parse
@@ -24,7 +25,7 @@ app = modal.App("push-sandbox")
 # Image for sandbox containers (cloned repos run here)
 sandbox_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("git", "curl")
+    .apt_install("git", "curl", "ripgrep", "jq")
     .pip_install("ruff", "pytest")
     .run_commands(
         "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
@@ -1008,7 +1009,7 @@ def exec_command(data: dict):
         }
     t0 = time.time()
     try:
-        p = sb.exec("bash", "-c", f"cd {workdir} && {command}")
+        p = sb.exec("bash", "-c", f"cd {shlex.quote(workdir)} && {command}")
         completed = _wait_with_timeout(p, timeout_seconds=110)
 
         if not completed:
