@@ -995,9 +995,14 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
   // Modal web endpoints follow pattern: {base}-{function_name}.modal.run
   const modalUrl = `${resolvedBase.base}-${modalFunction}.modal.run`;
 
+  // exec can run arbitrary shell commands (npm install, test suites, builds) that
+  // legitimately take 2+ minutes. Modal's exec_command waits up to 110s internally,
+  // so give it 120s here to receive that response. All other routes stay at 60s.
+  const routeTimeoutMs = route === 'exec' ? 120_000 : 60_000;
+
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60_000);
+    const timeoutId = setTimeout(() => controller.abort(), routeTimeoutMs);
 
     try {
       const upstream = await fetch(modalUrl, {
@@ -1075,7 +1080,7 @@ async function handleSandbox(request: Request, env: Env, requestUrl: URL, route:
       return Response.json({
         error: 'Sandbox request timed out',
         code: 'MODAL_TIMEOUT',
-        details: 'The sandbox took longer than 60 seconds to respond. Try a simpler operation or check Modal dashboard for issues.',
+        details: `The sandbox took longer than ${routeTimeoutMs / 1000} seconds to respond. Try a simpler operation or check Modal dashboard for issues.`,
       }, { status: 504 });
     }
 
