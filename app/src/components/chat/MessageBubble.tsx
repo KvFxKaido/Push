@@ -82,6 +82,13 @@ function stripBareToolCallJson(text: string): string {
       }
     } catch {
       // Malformed JSON — try repair (matches detection path in extractBareToolJsonObjects)
+      const repaired = repairToolJson(candidate);
+      // We only care whether repair succeeded — the range will be stripped from display.
+      // The actual tool-call parsing happens elsewhere, so we don't need the repaired object.
+      if (repaired) {
+        ranges.push({ start: braceIdx, end: end + 1 });
+      }
+      // Malformed JSON — try repair (matches detection path in extractBareToolJsonObjects)
       if (repairToolJson(candidate)) {
         ranges.push({ start: braceIdx, end: end + 1 });
       }
@@ -118,9 +125,12 @@ function looksLikeToolCall(text: string): boolean {
   if (afterBrace !== -1) return true;
   const afterBraceSingle = text.indexOf("'tool'", braceIdx);
   if (afterBraceSingle !== -1) return true;
-  // Unquoted key variant: `tool:`
+  // Unquoted key variant: `tool:` (word boundary avoids 'mytool:' false positives)
   const toolColon = text.indexOf('tool:', braceIdx);
-  if (toolColon !== -1) return true;
+  if (toolColon !== -1) {
+    const prevChar = text[toolColon - 1];
+    if (!prevChar || !/[a-zA-Z0-9_]/.test(prevChar)) return true;
+  }
   return false;
 }
 
@@ -545,12 +555,12 @@ export const MessageBubble = memo(function MessageBubble({
       // messages (prevents visual flash of raw JSON while model is still outputting).
       // For streaming, gate on a cheap marker check to avoid regex/brace-scan cost
       // on every token update when the response is just plain text.
-      if (message.isToolCall || (message.status === 'streaming' && looksLikeToolCall(text))) {
+      if (message.isToolCall || (isStreaming && looksLikeToolCall(text))) {
         text = stripToolCallPayload(text);
       }
       return text;
     },
-    [isUser, message.content, message.displayContent, message.isToolCall, message.status],
+    [isUser, message.content, message.displayContent, message.isToolCall, isStreaming],
   );
   const hasContent = Boolean(displayContentText.trim());
 
