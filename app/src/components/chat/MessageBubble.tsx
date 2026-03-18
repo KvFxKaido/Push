@@ -107,6 +107,23 @@ function stripBareToolCallJson(text: string): string {
   return output;
 }
 
+/** Cheap pre-check: returns true only when the text plausibly contains tool-call JSON. */
+function looksLikeToolCall(text: string): boolean {
+  // Fast indexOf checks — avoid full regex/brace-scan when there's nothing to strip.
+  if (text.includes('```json')) return true;
+  const braceIdx = text.indexOf('{');
+  if (braceIdx === -1) return false;
+  // Only scan if there's a "tool" or 'tool' key somewhere after the brace
+  const afterBrace = text.indexOf('"tool"', braceIdx);
+  if (afterBrace !== -1) return true;
+  const afterBraceSingle = text.indexOf("'tool'", braceIdx);
+  if (afterBraceSingle !== -1) return true;
+  // Unquoted key variant: `tool:`
+  const toolColon = text.indexOf('tool:', braceIdx);
+  if (toolColon !== -1) return true;
+  return false;
+}
+
 function stripToolCallPayload(content: string): string {
   if (!content) return '';
 
@@ -525,8 +542,10 @@ export const MessageBubble = memo(function MessageBubble({
       // Always strip leaked tool-result envelopes (safe — only targets our exact format)
       text = stripToolResultEnvelopes(text);
       // Aggressive tool-call JSON stripping for flagged tool calls AND streaming
-      // messages (prevents visual flash of raw JSON while model is still outputting)
-      if (message.isToolCall || message.status === 'streaming') {
+      // messages (prevents visual flash of raw JSON while model is still outputting).
+      // For streaming, gate on a cheap marker check to avoid regex/brace-scan cost
+      // on every token update when the response is just plain text.
+      if (message.isToolCall || (message.status === 'streaming' && looksLikeToolCall(text))) {
         text = stripToolCallPayload(text);
       }
       return text;
