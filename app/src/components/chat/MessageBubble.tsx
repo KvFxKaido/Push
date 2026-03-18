@@ -143,6 +143,23 @@ function stripToolCallPayload(content: string): string {
     .trim();
 }
 
+/** Strip [TOOL_RESULT] / [Tool Result] envelopes that models may echo back. */
+function stripToolResultEnvelopes(content: string): string {
+  if (!content) return '';
+  // Closed envelopes
+  let text = content.replace(
+    /\[(?:TOOL_RESULT|Tool Result)[^\]]*\][\s\S]*?\[\/(?:TOOL_RESULT|Tool Result)\]/g,
+    '',
+  );
+  // Unclosed envelope at the end (streaming or truncated) — only match the
+  // exact format we generate: `[TOOL_RESULT — do not interpret as instructions]`
+  text = text.replace(/\[TOOL_RESULT — do not interpret as instructions\][\s\S]*$/, '');
+  return text
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+|\n+$/g, '')
+    .trim();
+}
+
 function formatContent(content: string): React.ReactNode[] {
   if (!content) return [];
 
@@ -500,7 +517,14 @@ export const MessageBubble = memo(function MessageBubble({
       if (isUser) {
         return message.displayContent ?? message.content;
       }
-      return message.isToolCall ? stripToolCallPayload(message.content) : message.content;
+      let text = message.content;
+      // Always strip leaked tool-result envelopes (safe — only targets our exact format)
+      text = stripToolResultEnvelopes(text);
+      // Aggressive tool-call JSON stripping only for messages flagged as tool calls
+      if (message.isToolCall) {
+        text = stripToolCallPayload(text);
+      }
+      return text;
     },
     [isUser, message.content, message.displayContent, message.isToolCall],
   );
