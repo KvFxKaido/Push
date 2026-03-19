@@ -82,13 +82,6 @@ function stripBareToolCallJson(text: string): string {
       }
     } catch {
       // Malformed JSON — try repair (matches detection path in extractBareToolJsonObjects)
-      const repaired = repairToolJson(candidate);
-      // We only care whether repair succeeded — the range will be stripped from display.
-      // The actual tool-call parsing happens elsewhere, so we don't need the repaired object.
-      if (repaired) {
-        ranges.push({ start: braceIdx, end: end + 1 });
-      }
-      // Malformed JSON — try repair (matches detection path in extractBareToolJsonObjects)
       if (repairToolJson(candidate)) {
         ranges.push({ start: braceIdx, end: end + 1 });
       }
@@ -102,6 +95,7 @@ function stripBareToolCallJson(text: string): string {
   let output = '';
   let cursor = 0;
   for (const range of ranges) {
+    if (range.start < cursor) continue; // skip duplicate ranges
     output += text.slice(cursor, range.start);
     const prev = output[output.length - 1];
     const next = text[range.end];
@@ -118,15 +112,11 @@ function stripBareToolCallJson(text: string): string {
 function looksLikeToolCall(text: string): boolean {
   // Fast indexOf checks — avoid full regex/brace-scan when there's nothing to strip.
   if (text.includes('```json')) return true;
-  const braceIdx = text.indexOf('{');
-  if (braceIdx === -1) return false;
-  // Only scan if there's a "tool" or 'tool' key somewhere after the brace
-  const afterBrace = text.indexOf('"tool"', braceIdx);
-  if (afterBrace !== -1) return true;
-  const afterBraceSingle = text.indexOf("'tool'", braceIdx);
-  if (afterBraceSingle !== -1) return true;
+  // Check for "tool" key pattern — require colon after to avoid matching prose containing "tool".
+  // Handles both braced (`{"tool": ...`) and brace-less (`"tool": ...`) tool calls.
+  if (/["']tool["']\s*:/.test(text)) return true;
   // Unquoted key variant: `tool:` (word boundary avoids 'mytool:' false positives)
-  const toolColon = text.indexOf('tool:', braceIdx);
+  const toolColon = text.indexOf('tool:');
   if (toolColon !== -1) {
     const prevChar = text[toolColon - 1];
     if (!prevChar || !/[a-zA-Z0-9_]/.test(prevChar)) return true;
@@ -153,7 +143,28 @@ function stripToolCallPayload(content: string): string {
     },
   );
 
-  let stripped = stripBareToolCallJson(withoutToolFences);
+  // Handle brace-less tool calls: some models emit `"tool": "x", "args": {...}}`
+  // without the opening `{`. repairToolJson handles this for detection, but
+  // stripBareToolCallJson only scans {…} pairs and misses the surrounding text.
+  // Prepend `{` so the brace scanner can find the full tool call object.
+  let textForBraceStrip = withoutToolFences;
+  const bracelessToolPattern = /^([\s\S]*?)(?=["']?tool["']?\s*:\s*["'])/;
+  const bracelessMatch = withoutToolFences.match(bracelessToolPattern);
+  if (bracelessMatch) {
+    const prefixLen = bracelessMatch[1].length;
+    const toolFragment = withoutToolFences.slice(prefixLen);
+    // Only apply the repair if the tool fragment doesn't already start with `{`
+    if (!toolFragment.trimStart().startsWith('{')) {
+      const testFragment = '{' + toolFragment;
+      const strippedFragment = stripBareToolCallJson(testFragment);
+      // Verify the prepended `{` was actually consumed (not just a later match)
+      if (strippedFragment.length < testFragment.length && !strippedFragment.startsWith('{')) {
+        textForBraceStrip = bracelessMatch[1] + strippedFragment;
+      }
+    }
+  }
+
+  let stripped = stripBareToolCallJson(textForBraceStrip);
 
   // Strip leftover array wrappers that held tool calls (now empty brackets/commas)
   stripped = stripped.replace(/\[[\s,]*\]/g, '');
@@ -162,6 +173,11 @@ function stripToolCallPayload(content: string): string {
 
   // Strip trailing truncated tool JSON (unbalanced { with "tool":"..." at the end)
   stripped = stripped.replace(/\{[^{}]*["']?tool["']?\s*:\s*["'][^"']*["'][^}]*$/s, '');
+
+  // Strip brace-less trailing truncated tool JSON (streaming, no opening `{`).
+  // Requires JSON-ish structure after the tool name (comma + "args" key) to avoid
+  // stripping prose like `I will use the tool: "search" now`.
+  stripped = stripped.replace(/["']?tool["']?\s*:\s*["'][^"']*["']\s*,\s*["']?args["']?\s*:[\s\S]*$/s, '');
 
   // Strip unclosed tool call fences (streaming)
   stripped = stripped.replace(/```(?:json)?\s*\n?\{\s*["']?tool["']?[\s\S]*$/s, '');
