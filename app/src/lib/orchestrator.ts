@@ -558,9 +558,7 @@ For multiple independent coding tasks in a single request, use the "tasks" array
 
 Rules for multi-task delegation:
 - Each task must be independently completable — no task should depend on another task's output. If tasks have dependencies, use separate sequential delegate_coder calls instead.
-- Up to 3 tasks run in parallel in isolated worker sandboxes (snapshot-based). More than 3 tasks fall back to sequential execution in the main sandbox.
-- Parallel results are NOT auto-merged — the user will see a note about this.
-- If parallel setup fails (e.g. sandbox quota), the system falls back to sequential execution automatically.
+- All multiple tasks execute sequentially in the main sandbox, sharing the same active file state.
 - Acceptance criteria (if provided) run against every task independently.
 - All tasks share the same "files", "intent", and "constraints" context.
 

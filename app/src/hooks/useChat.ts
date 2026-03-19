@@ -74,7 +74,6 @@ import {
 } from '@/lib/tool-call-recovery';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 import { buildEditedReplay, buildRegeneratedReplay } from '@/lib/chat-replay';
-import { runParallelDelegation, MAX_PARALLEL_DELEGATE_TASKS } from '@/lib/parallel-delegation';
 import { formatElapsedTime } from '@/lib/utils';
 
 export {
@@ -1776,72 +1775,6 @@ export function useChat(
                   const summaries: string[] = [];
                   let totalRounds = 0;
                   let totalCheckpoints = 0;
-                  let parallelIsolationNote = '';
-
-                  let parallelSetupFailed = false;
-                  const canRunParallelDelegates = (
-                    taskList.length > 1
-                    && taskList.length <= MAX_PARALLEL_DELEGATE_TASKS
-                    && Boolean(repoRef.current)
-                  );
-
-	                  if (canRunParallelDelegates) {
-                    const bi = branchInfoRef.current;
-                    const parallelResult = await runParallelDelegation(
-                      {
-                        tasks: taskList,
-                        files: delegateArgs.files || [],
-                        acceptanceCriteria: delegateArgs.acceptanceCriteria,
-                        intent: delegateArgs.intent,
-                        constraints: delegateArgs.constraints,
-                        branchContext: bi?.currentBranch ? {
-                          activeBranch: bi.currentBranch,
-                          defaultBranch: bi.defaultBranch || 'main',
-                          protectMain: isMainProtectedRef.current,
-                        } : undefined,
-                        provider: lockedProviderForChat,
-                        model: resolvedModelForChat || undefined,
-                        projectInstructions: agentsMdRef.current || undefined,
-                        instructionFilename: instructionFilenameRef.current || undefined,
-                        activeSandboxId: currentSandboxId,
-                        sourceRepo: repoRef.current!,
-                        sourceBranch: bi?.currentBranch || bi?.defaultBranch || 'main',
-                        authToken: getActiveGitHubToken(),
-                        appCommitIdentity: getGitHubAppCommitIdentity(),
-                        recentChatHistory: apiMessages.slice(-6),
-                      },
-                      {
-                        onStatus: (phase, detail) => {
-                          updateAgentStatus(
-                            { active: true, phase, detail },
-                            { chatId, source: 'coder' },
-                          );
-                        },
-                        signal: abortControllerRef.current?.signal,
-                        onWorkingMemoryUpdate: (state) => { lastCoderStateRef.current = state; },
-                        getActiveSandboxId: () => sandboxIdRef.current,
-                      },
-                    );
-
-                    if (parallelResult.outcome === 'setup_failed') {
-                      parallelSetupFailed = true;
-                      updateAgentStatus(
-                        { active: true, phase: 'Worker setup failed, falling back to sequential execution...' },
-                        { chatId, source: 'coder' },
-                      );
-                    } else {
-                      totalRounds = parallelResult.totalRounds;
-                      totalCheckpoints = parallelResult.totalCheckpoints;
-                      allCards.push(...parallelResult.cards);
-                      for (const taskResult of parallelResult.tasks) {
-                        const elapsed = formatElapsedTime(taskResult.elapsedMs);
-                        summaries.push(`Task ${taskResult.taskIndex + 1} [${taskResult.status}, ${elapsed}]: ${taskResult.summary}`);
-                      }
-                      parallelIsolationNote = parallelResult.mergeNote;
-                    }
-                  }
-
-                  if (!canRunParallelDelegates || parallelSetupFailed) {
                     for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
                       const task = taskList[taskIndex];
 
@@ -1932,7 +1865,7 @@ export function useChat(
                     ? `, ${totalCheckpoints} checkpoint${totalCheckpoints !== 1 ? 's' : ''}`
                     : '';
                   toolExecResult = {
-                    text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})${parallelIsolationNote}`,
+                    text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})`,
                   };
                 }
                 } catch (err) {
