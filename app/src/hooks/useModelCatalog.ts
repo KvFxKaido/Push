@@ -14,7 +14,6 @@ import {
   fetchOllamaModels,
   fetchOpenRouterModels,
   fetchZenModels,
-  fetchZenGoModels,
   fetchNvidiaModels,
 } from '@/lib/model-catalog';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
@@ -213,25 +212,21 @@ export function useModelCatalog(): ModelCatalog {
   const [ollamaModelList, setOllamaModelList] = useState<string[]>([]);
   const [openRouterModelList, setOpenRouterModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
-  const [zenGoModelList, setZenGoModelList] = useState<string[]>([]);
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
 
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
-  const [zenGoLoading, setZenGoLoading] = useState(false);
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
 
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
-  const [zenGoError, setZenGoError] = useState<string | null>(null);
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
 
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
-  const [zenGoUpdatedAt, setZenGoUpdatedAt] = useState<number | null>(null);
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
 
   // Generic refresh helper
@@ -295,24 +290,13 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [zenCfg.hasKey, zenLoading, refreshModels]);
 
-  const refreshZenGoModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: zenCfg.hasKey, isLoading: zenGoLoading,
-      setLoading: setZenGoLoading, setError: setZenGoError,
-      setModels: setZenGoModelList, setUpdatedAt: setZenGoUpdatedAt,
-      fetchModels: fetchZenGoModels,
-      emptyMessage: 'No Go-compatible OpenCode Zen models returned.',
-      failureMessage: 'Failed to load OpenCode Zen Go models.',
-    });
-  }, [zenCfg.hasKey, zenGoLoading, refreshModels]);
-
   const refreshZenModels = useCallback(async () => {
     if (zenCfg.goMode) {
-      await refreshZenGoModels();
+      setZenError(null);
       return;
     }
     await refreshZenStandardModels();
-  }, [refreshZenGoModels, refreshZenStandardModels, zenCfg.goMode]);
+  }, [refreshZenStandardModels, zenCfg.goMode]);
 
   const refreshNvidiaModels = useCallback(async () => {
     await refreshModels({
@@ -351,14 +335,6 @@ export function useModelCatalog(): ModelCatalog {
     })) refreshZenStandardModels();
   }, [refreshZenStandardModels, zenCfg.goMode, zenCfg.hasKey, zenError, zenLoading, zenModelList.length]);
   useEffect(() => {
-    if (zenCfg.goMode && shouldAutoFetchProviderModels({
-      hasKey: zenCfg.hasKey,
-      modelCount: zenGoModelList.length,
-      loading: zenGoLoading,
-      error: zenGoError,
-    })) refreshZenGoModels();
-  }, [refreshZenGoModels, zenCfg.goMode, zenCfg.hasKey, zenGoError, zenGoLoading, zenGoModelList.length]);
-  useEffect(() => {
     if (shouldAutoFetchProviderModels({
       hasKey: nvidiaCfg.hasKey,
       modelCount: nvidiaModelList.length,
@@ -373,15 +349,17 @@ export function useModelCatalog(): ModelCatalog {
   useEffect(() => {
     if (!zenCfg.hasKey) {
       setZenModelList([]); setZenError(null); setZenUpdatedAt(null); setZenLoading(false);
-      setZenGoModelList([]); setZenGoError(null); setZenGoUpdatedAt(null); setZenGoLoading(false);
     }
   }, [zenCfg.hasKey]);
   useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
 
-  const activeZenModelList = zenCfg.goMode ? zenGoModelList : zenModelList;
-  const activeZenLoading = zenCfg.goMode ? zenGoLoading : zenLoading;
-  const activeZenError = zenCfg.goMode ? zenGoError : zenError;
-  const activeZenUpdatedAt = zenCfg.goMode ? zenGoUpdatedAt : zenUpdatedAt;
+  const activeZenModelList = useMemo(
+    () => (zenCfg.goMode ? [] : zenModelList),
+    [zenCfg.goMode, zenModelList],
+  );
+  const activeZenLoading = zenCfg.goMode ? false : zenLoading;
+  const activeZenError = zenCfg.goMode ? null : zenError;
+  const activeZenUpdatedAt = zenCfg.goMode ? null : zenUpdatedAt;
 
   // Model option lists (ensure selected model is always included)
   const ollamaModelOptions = useMemo(() => includeSelectedModel(ollamaModelList, ollamaCfg.model), [ollamaModelList, ollamaCfg.model]);
