@@ -570,7 +570,7 @@ describe('diagnoseToolCallFailure malformed JSON', () => {
     const result = diagnoseToolCallFailure(text);
 
     if (result && result.reason === 'malformed_json') {
-      expect(result.errorMessage).toContain('sandbox_exec');
+      expect(result.errorMessage).toContain('exec');
       expect(result.errorMessage).toContain('JSON syntax error');
     }
   });
@@ -581,24 +581,24 @@ describe('diagnoseToolCallFailure malformed JSON', () => {
 // ---------------------------------------------------------------------------
 
 describe('diagnoseToolCallFailure unknown tool names', () => {
-  it('detects hallucinated "edit" tool in fenced block and suggests alternatives', () => {
+  it('treats short "edit" as a real tool name and returns a validation hint', () => {
     const text = '```json\n{"tool": "edit", "args": {"repo": "owner/repo", "path": "src/app.ts", "old_string": "foo", "new_string": "bar"}}\n```';
     const result = diagnoseToolCallFailure(text);
 
     expect(result).not.toBeNull();
     expect(result!.reason).toBe('validation_failed');
-    expect(result!.toolName).toBe('edit');
-    expect(result!.errorMessage).toContain('does not exist');
-    expect(result!.errorMessage).toContain('sandbox_edit_file');
+    expect(result!.toolName).toBe('sandbox_edit_file');
+    expect(result!.errorMessage).toContain('Expected format');
+    expect(result!.errorMessage).toContain('"tool": "edit"');
   });
 
-  it('detects hallucinated "write" tool and suggests sandbox_write_file', () => {
-    const text = '```json\n{"tool": "write", "args": {"path": "/workspace/test.ts", "content": "hello"}}\n```';
+  it('detects hallucinated "write_file" tool and suggests write', () => {
+    const text = '```json\n{"tool": "write_file", "args": {"path": "/workspace/test.ts", "content": "hello"}}\n```';
     const result = diagnoseToolCallFailure(text);
 
     expect(result).not.toBeNull();
     expect(result!.errorMessage).toContain('does not exist');
-    expect(result!.errorMessage).toContain('sandbox_write_file');
+    expect(result!.errorMessage).toContain('write');
   });
 
   it('does not flag unknown tool names in bare prose JSON (only fenced blocks)', () => {

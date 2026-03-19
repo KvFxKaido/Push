@@ -10,13 +10,25 @@
 import type { ToolExecutionResult, AcceptanceCriterion, StructuredToolError, ToolHookContext } from '@/types';
 import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
-import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, IMPLEMENTED_SANDBOX_TOOLS, type SandboxToolCall } from './sandbox-tools';
+import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
 import { detectWebSearchToolCall, executeWebSearch, type WebSearchToolCall } from './web-search-tools';
 import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { execInSandbox } from './sandbox-client';
 import { asRecord, detectToolFromText, extractBareToolJsonObjects, repairToolJson, detectTruncatedToolCall, diagnoseJsonSyntaxError } from './utils';
+import {
+  escapeToolNameForRegex,
+  getToolArgHint,
+  getToolCanonicalNames,
+  getToolPublicName,
+  getToolPublicNames,
+  KNOWN_PUBLIC_TOOL_NAMES,
+  getToolSourceFromName,
+  getRecognizedToolNames,
+  isReadOnlyToolName,
+  resolveToolName,
+} from './tool-registry';
 
 // Re-export for backwards compatibility — other modules import from here
 export { extractBareToolJsonObjects };
@@ -25,27 +37,19 @@ export { extractBareToolJsonObjects };
 // Parallel read-only tool detection
 // ---------------------------------------------------------------------------
 
-export const PARALLEL_READ_ONLY_GITHUB_TOOLS = new Set([
-  'fetch_pr', 'list_prs', 'list_commits', 'read_file', 'grep_file', 'list_directory',
-  'list_branches', 'fetch_checks', 'search_files', 'list_commit_files',
-  'get_workflow_runs', 'get_workflow_logs', 'check_pr_mergeable', 'find_existing_pr',
-]);
+export const PARALLEL_READ_ONLY_GITHUB_TOOLS = new Set(
+  getToolCanonicalNames({ source: 'github', readOnly: true }),
+);
 
-export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set([
-  'sandbox_read_file', 'sandbox_search', 'sandbox_list_dir', 'sandbox_diff', 'sandbox_read_symbols', 'sandbox_find_references',
-]);
+export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set(
+  getToolCanonicalNames({ source: 'sandbox', readOnly: true }),
+);
 
 export const MAX_PARALLEL_TOOL_CALLS = 6;
 
 /** Check whether a tool call is read-only (safe for parallel execution). */
 export function isReadOnlyToolCall(toolCall: AnyToolCall): boolean {
-  if (toolCall.source === 'github') {
-    return PARALLEL_READ_ONLY_GITHUB_TOOLS.has(toolCall.call.tool);
-  }
-  if (toolCall.source === 'sandbox') {
-    return PARALLEL_READ_ONLY_SANDBOX_TOOLS.has(toolCall.call.tool);
-  }
-  return false;
+  return isReadOnlyToolName(toolCall.call.tool);
 }
 
 /** Result of scanning a response for all tool calls. */
@@ -132,14 +136,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
 
 /** Extract the tool name from a unified tool call. */
 function getToolCallName(toolCall: AnyToolCall): string {
-  switch (toolCall.source) {
-    case 'github': return toolCall.call.tool;
-    case 'sandbox': return toolCall.call.tool;
-    case 'delegate': return toolCall.call.tool;
-    case 'scratchpad': return toolCall.call.tool;
-    case 'web-search': return 'web_search';
-    default: return 'unknown';
-  }
+  return toolCall.call.tool;
 }
 
 /**
@@ -443,38 +440,15 @@ export function detectUnimplementedToolCall(text: string): string | null {
   return getUnrecognizedSandboxToolName(text);
 }
 
-const SANDBOX_COMPAT_ALIASES = new Set([
-  'read_sandbox_file',
-  'search_sandbox',
-  'list_sandbox_dir',
-  'sandbox_commit',
-]);
-
-export const CANONICAL_SANDBOX_TOOL_NAMES = Array.from(IMPLEMENTED_SANDBOX_TOOLS)
-  .filter((toolName) => !SANDBOX_COMPAT_ALIASES.has(toolName))
-  .sort();
+export const PUBLIC_SANDBOX_TOOL_NAMES = getToolPublicNames({ source: 'sandbox' }).sort();
 
 // ---------------------------------------------------------------------------
 // Known tool names — union of all tool subsystems
 // ---------------------------------------------------------------------------
 
-const GITHUB_TOOL_NAMES = new Set([
-  'fetch_pr', 'list_prs', 'list_commits', 'read_file', 'grep_file', 'list_directory',
-  'list_branches', 'fetch_checks', 'search_files', 'list_commit_files',
-  'trigger_workflow', 'get_workflow_runs', 'get_workflow_logs',
-  'create_pr', 'merge_pr', 'delete_branch',
-  'check_pr_mergeable', 'find_existing_pr',
-]);
+const GITHUB_TOOL_NAMES = new Set(getRecognizedToolNames({ source: 'github' }));
 
-const OTHER_TOOL_NAMES = new Set([
-  'delegate_coder', 'delegate_explorer', 'set_scratchpad', 'append_scratchpad', 'read_scratchpad', 'web_search', 'ask_user',
-]);
-
-export const KNOWN_TOOL_NAMES = new Set([
-  ...IMPLEMENTED_SANDBOX_TOOLS,
-  ...GITHUB_TOOL_NAMES,
-  ...OTHER_TOOL_NAMES,
-]);
+export const KNOWN_TOOL_NAMES = new Set(getRecognizedToolNames());
 
 // ---------------------------------------------------------------------------
 // Tool source resolution — maps a tool name to its subsystem source
@@ -482,13 +456,8 @@ export const KNOWN_TOOL_NAMES = new Set([
 
 export function getToolSource(toolName: string | null): AnyToolCall['source'] {
   if (!toolName) return 'sandbox';
-  if (GITHUB_TOOL_NAMES.has(toolName)) return 'github';
-  if (IMPLEMENTED_SANDBOX_TOOLS.has(toolName)) return 'sandbox';
-  if (toolName === 'delegate_coder' || toolName === 'delegate_explorer') return 'delegate';
-  if (toolName === 'web_search') return 'web-search';
-  if (toolName === 'ask_user') return 'ask-user';
-  if (['set_scratchpad', 'append_scratchpad', 'read_scratchpad'].includes(toolName)) return 'scratchpad';
-  if (toolName === 'ask_user') return 'ask-user';
+  const source = getToolSourceFromName(toolName);
+  if (source) return source;
   return 'sandbox'; // Fallback
 }
 
@@ -523,7 +492,7 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
       reason: 'truncated',
       toolName: truncated.toolName,
       source: getToolSource(truncated.toolName),
-      errorMessage: `Your tool call for "${truncated.toolName}" was truncated (JSON cut off). Please retry with the complete JSON block.`,
+      errorMessage: `Your tool call for "${getToolPublicName(truncated.toolName)}" was truncated (JSON cut off). Please retry with the complete JSON block.`,
     };
   }
 
@@ -545,12 +514,13 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
 
   for (const parsed of extractBareToolJsonObjects(text)) {
     const obj = asRecord(parsed);
-    if (obj && typeof obj.tool === 'string' && KNOWN_TOOL_NAMES.has(obj.tool)) {
+    const toolName = typeof obj?.tool === 'string' ? resolveToolName(obj.tool) ?? obj.tool : null;
+    if (toolName && KNOWN_TOOL_NAMES.has(toolName)) {
       return {
         reason: 'validation_failed',
-        toolName: obj.tool,
-        errorMessage: buildValidationErrorMessage(obj.tool),
-        source: getToolSource(obj.tool),
+        toolName,
+        errorMessage: buildValidationErrorMessage(toolName),
+        source: getToolSource(toolName),
       };
     }
   }
@@ -579,9 +549,9 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
       return {
         reason: 'validation_failed',
         toolName: inferred,
-        errorMessage: `Your response contains what looks like "${inferred}" arguments but is missing the required wrapper format. Use this structure:\n\n`
+        errorMessage: `Your response contains what looks like "${getToolPublicName(inferred)}" arguments but is missing the required wrapper format. Use this structure:\n\n`
           + '```json\n'
-          + `{"tool": "${inferred}", "args": ${JSON.stringify(obj)}}\n`
+          + `{"tool": "${getToolPublicName(inferred)}", "args": ${JSON.stringify(obj)}}\n`
           + '```\n\n'
           + 'Always wrap tool calls in {"tool": "...", "args": {...}} format.',
         telemetryOnly: true,
@@ -603,45 +573,18 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
 // Arg hints for common tools — shown in validation error messages
 // ---------------------------------------------------------------------------
 
-const TOOL_ARG_HINTS: Record<string, string> = {
-  // GitHub tools
-  read_file: '{"tool": "read_file", "args": {"repo": "owner/name", "path": "path/to/file"}}',
-  list_directory: '{"tool": "list_directory", "args": {"repo": "owner/name", "path": "optional/path"}}',
-  search_files: '{"tool": "search_files", "args": {"repo": "owner/name", "query": "search term"}}',
-  grep_file: '{"tool": "grep_file", "args": {"repo": "owner/name", "path": "path/to/file", "pattern": "regex"}}',
-  fetch_pr: '{"tool": "fetch_pr", "args": {"repo": "owner/name", "pr": 123}}',
-  list_prs: '{"tool": "list_prs", "args": {"repo": "owner/name"}}',
-  list_commits: '{"tool": "list_commits", "args": {"repo": "owner/name"}}',
-  list_branches: '{"tool": "list_branches", "args": {"repo": "owner/name"}}',
-  fetch_checks: '{"tool": "fetch_checks", "args": {"repo": "owner/name", "ref": "branch-or-sha"}}',
-  create_pr: '{"tool": "create_pr", "args": {"repo": "owner/name", "title": "PR title", "body": "description", "head": "feature-branch", "base": "main"}}',
-  // Sandbox tools
-  sandbox_exec: '{"tool": "sandbox_exec", "args": {"command": "your command"}}',
-  sandbox_read_file: '{"tool": "sandbox_read_file", "args": {"path": "/workspace/path/to/file"}}',
-  sandbox_write_file: '{"tool": "sandbox_write_file", "args": {"path": "/workspace/path/to/file", "content": "file content"}}',
-  sandbox_edit_file: '{"tool": "sandbox_edit_file", "args": {"path": "/workspace/path/to/file", "edits": [{"op": "replace_line", "ref": "abc1234", "content": "replacement"}]}}',
-  sandbox_list_dir: '{"tool": "sandbox_list_dir", "args": {"path": "/workspace"}}',
-  sandbox_search: '{"tool": "sandbox_search", "args": {"query": "search term"}}',
-  sandbox_diff: '{"tool": "sandbox_diff", "args": {}}',
-  sandbox_prepare_commit: '{"tool": "sandbox_prepare_commit", "args": {"message": "commit message"}}',
-  sandbox_push: '{"tool": "sandbox_push", "args": {}}',
-  delegate_coder: '{"tool": "delegate_coder", "args": {"task": "describe the task", "files": ["src/relevant.ts"]}}',
-  delegate_explorer: '{"tool": "delegate_explorer", "args": {"task": "trace the auth flow", "files": ["src/auth.ts"]}}',
-  web_search: '{"tool": "web_search", "args": {"query": "search query"}}',
-  ask_user: '{"tool": "ask_user", "args": {"question": "...?", "options": [{"id": "1", "label": "..."}]}}',
-};
-
 /** Build an actionable validation error message, including arg hints when available. */
 function buildValidationErrorMessage(toolName: string): string {
-  const hint = TOOL_ARG_HINTS[toolName];
+  const publicName = getToolPublicName(toolName);
+  const hint = getToolArgHint(toolName);
   if (hint) {
-    return `Your call to "${toolName}" has invalid or missing arguments. Expected format:\n\n`
+    return `Your call to "${publicName}" has invalid or missing arguments. Expected format:\n\n`
       + '```json\n'
       + `${hint}\n`
       + '```\n\n'
       + 'Check required fields and retry.';
   }
-  return `Your call to "${toolName}" has invalid or missing arguments. Check the tool protocol and retry with the correct argument format.`;
+  return `Your call to "${publicName}" has invalid or missing arguments. Check the tool protocol and retry with the correct argument format.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -677,7 +620,7 @@ function diagnoseMalformedToolJson(text: string): ToolCallDiagnosis | null {
   const toolPattern = /["']?tool["']?\s*:\s*["'](\w+)["']/g;
   let toolMatch;
   while ((toolMatch = toolPattern.exec(text)) !== null) {
-    const toolName = toolMatch[1];
+    const toolName = resolveToolName(toolMatch[1]) ?? toolMatch[1];
     if (!KNOWN_TOOL_NAMES.has(toolName)) continue;
 
     // Skip matches inside inline code (backticks) — these are explanatory prose
@@ -719,14 +662,14 @@ function tryDiagnoseFragment(fragment: string): ToolCallDiagnosis | null {
   // Extract tool name from the fragment
   const nameMatch = fragment.match(/["']?tool["']?\s*:\s*["'](\w+)["']/);
   if (!nameMatch) return null;
-  const toolName = nameMatch[1];
+  const toolName = resolveToolName(nameMatch[1]) ?? nameMatch[1];
   if (!KNOWN_TOOL_NAMES.has(toolName)) return null;
 
   // Get the specific syntax error
   const syntaxError = diagnoseJsonSyntaxError(fragment);
   if (!syntaxError) return null;
 
-  const hint = TOOL_ARG_HINTS[toolName];
+  const hint = getToolArgHint(toolName);
   const hintBlock = hint
     ? `\n\nExpected format:\n\`\`\`json\n${hint}\n\`\`\``
     : '';
@@ -734,7 +677,7 @@ function tryDiagnoseFragment(fragment: string): ToolCallDiagnosis | null {
   return {
     reason: 'malformed_json',
     toolName,
-    errorMessage: `Your call to "${toolName}" has a JSON syntax error: ${syntaxError.message}${hintBlock}\n\nPlease output a valid JSON block with balanced braces and proper quoting.`,
+    errorMessage: `Your call to "${getToolPublicName(toolName)}" has a JSON syntax error: ${syntaxError.message}${hintBlock}\n\nPlease output a valid JSON block with balanced braces and proper quoting.`,
     source: getToolSource(toolName),
   };
 }
@@ -810,14 +753,16 @@ function extractKnownToolName(text: string): string | null {
   try {
     const parsed = JSON.parse(text);
     const obj = asRecord(parsed);
-    if (obj && typeof obj.tool === 'string' && KNOWN_TOOL_NAMES.has(obj.tool)) {
-      return obj.tool;
+    const toolName = typeof obj?.tool === 'string' ? resolveToolName(obj.tool) ?? obj.tool : null;
+    if (toolName && KNOWN_TOOL_NAMES.has(toolName)) {
+      return toolName;
     }
   } catch {
     // Try repair
     const repaired = repairToolJson(text);
-    if (repaired && typeof repaired.tool === 'string' && KNOWN_TOOL_NAMES.has(repaired.tool)) {
-      return repaired.tool;
+    const toolName = typeof repaired?.tool === 'string' ? resolveToolName(repaired.tool) ?? repaired.tool : null;
+    if (toolName && KNOWN_TOOL_NAMES.has(toolName)) {
+      return toolName;
     }
   }
   return null;
@@ -830,24 +775,13 @@ function extractKnownToolName(text: string): string | null {
 
 /** Common aliases models use for tools that don't exist, mapped to suggestions. */
 const TOOL_NAME_SUGGESTIONS: Record<string, string[]> = {
-  edit: ['sandbox_edit_file', 'sandbox_search_replace', 'sandbox_edit_range'],
-  edit_file: ['sandbox_edit_file', 'sandbox_search_replace'],
-  write_file: ['sandbox_write_file'],
-  write: ['sandbox_write_file'],
-  read: ['sandbox_read_file', 'read_file'],
-  exec: ['sandbox_exec'],
-  run: ['sandbox_exec'],
-  execute: ['sandbox_exec'],
-  search: ['sandbox_search', 'search_files'],
-  grep: ['grep_file', 'sandbox_search'],
-  diff: ['sandbox_diff'],
-  commit: ['sandbox_prepare_commit'],
-  push: ['sandbox_push'],
-  list: ['sandbox_list_dir', 'list_directory'],
-  ls: ['sandbox_list_dir', 'list_directory'],
-  replace: ['sandbox_search_replace'],
-  patch: ['sandbox_apply_patchset'],
-  download: ['sandbox_download'],
+  edit_file: ['edit', 'replace'],
+  write_file: ['write'],
+  run: ['exec'],
+  execute: ['exec'],
+  grep: ['repo_grep', 'search'],
+  list: ['ls', 'repo_ls'],
+  download: ['download'],
 };
 
 function detectUnknownToolName(text: string): ToolCallDiagnosis | null {
@@ -884,10 +818,11 @@ function buildUnknownToolDiagnosis(toolName: string): ToolCallDiagnosis {
   const suggestions = TOOL_NAME_SUGGESTIONS[toolName.toLowerCase()];
   const suggestionBlock = suggestions
     ? `\n\nDid you mean one of these?\n${suggestions.map(s => {
-        const hint = TOOL_ARG_HINTS[s];
-        return hint ? `- ${s}: \`${hint}\`` : `- ${s}`;
+        const hint = getToolArgHint(s);
+        const publicName = getToolPublicName(s);
+        return hint ? `- ${publicName}: \`${hint}\`` : `- ${publicName}`;
       }).join('\n')}`
-    : `\n\nAvailable tools: ${Array.from(KNOWN_TOOL_NAMES).sort().join(', ')}`;
+    : `\n\nAvailable tools: ${KNOWN_PUBLIC_TOOL_NAMES.slice().sort().join(', ')}`;
 
   return {
     reason: 'validation_failed',
@@ -1026,7 +961,7 @@ function tryRecoverBareToolArgs(text: string): AnyToolCall | null {
     if (GITHUB_TOOL_NAMES.has(toolName)) {
       const call = detectToolCall(wrappedJson);
       if (call) return { source: 'github', call };
-    } else if (toolName.startsWith('sandbox_')) {
+    } else if (getToolSource(toolName) === 'sandbox') {
       const call = detectSandboxToolCall(wrappedJson);
       if (call) return { source: 'sandbox', call };
     } else if (toolName === 'web_search') {
@@ -1043,6 +978,7 @@ function tryRecoverBareToolArgs(text: string): AnyToolCall | null {
 function detectDelegationTool(text: string): AnyToolCall | null {
   return detectToolFromText<AnyToolCall>(text, (parsed) => {
     const parsedObj = asRecord(parsed);
+    const toolName = typeof parsedObj?.tool === 'string' ? resolveToolName(parsedObj.tool) ?? parsedObj.tool : '';
     const args = asRecord(parsedObj?.args);
     const task = typeof args?.task === 'string' ? args.task : undefined;
     const tasks = Array.isArray(args?.tasks) ? args.tasks.filter((v): v is string => typeof v === 'string') : undefined;
@@ -1063,13 +999,13 @@ function detectDelegationTool(text: string): AnyToolCall | null {
       }));
       if (acceptanceCriteria.length === 0) acceptanceCriteria = undefined;
     }
-    if (parsedObj?.tool === 'delegate_coder' && (task || (tasks && tasks.length > 0))) {
+    if (toolName === 'delegate_coder' && (task || (tasks && tasks.length > 0))) {
       return {
         source: 'delegate',
         call: { tool: 'delegate_coder', args: { task, tasks, files, acceptanceCriteria, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } },
       };
     }
-    if (parsedObj?.tool === 'delegate_explorer' && task) {
+    if (toolName === 'delegate_explorer' && task) {
       return {
         source: 'delegate',
         call: { tool: 'delegate_explorer', args: { task, files, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } },
@@ -1108,28 +1044,31 @@ const NL_INTENT_PATTERNS: NLIntentPattern[] = [
   {
     regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:to\\s+)?(?:the\\s+)?coder`, 'i'),
     toolName: 'delegate_coder',
-    exampleJson: '{"tool": "delegate_coder", "args": {"task": "describe the task here"}}',
+    exampleJson: getToolArgHint('delegate_coder') ?? '{"tool": "coder", "args": {"task": "describe the task here"}}',
   },
   {
     regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:task\\s+)?(?:to\\s+)?(?:the\\s+)?coder(?:\\s+agent)?`, 'i'),
     toolName: 'delegate_coder',
-    exampleJson: '{"tool": "delegate_coder", "args": {"task": "describe the task here"}}',
+    exampleJson: getToolArgHint('delegate_coder') ?? '{"tool": "coder", "args": {"task": "describe the task here"}}',
   },
   {
     regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:to\\s+)?(?:the\\s+)?explorer`, 'i'),
     toolName: 'delegate_explorer',
-    exampleJson: '{"tool": "delegate_explorer", "args": {"task": "describe what to investigate"}}',
+    exampleJson: getToolArgHint('delegate_explorer') ?? '{"tool": "explorer", "args": {"task": "describe what to investigate"}}',
   },
   {
     regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:task\\s+)?(?:to\\s+)?(?:the\\s+)?explorer(?:\\s+agent)?`, 'i'),
     toolName: 'delegate_explorer',
-    exampleJson: '{"tool": "delegate_explorer", "args": {"task": "describe what to investigate"}}',
+    exampleJson: getToolArgHint('delegate_explorer') ?? '{"tool": "explorer", "args": {"task": "describe what to investigate"}}',
   },
   // Generic: model mentions a known tool name by its exact name without JSON
   // e.g. "I'll use sandbox_exec to run the tests"
   // This is safe because it requires the actual tool identifier in the text.
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:use|call|invoke|try)\\s+(sandbox_\\w+|read_file|list_directory|search_files|grep_file|delegate_coder|delegate_explorer|web_search|fetch_pr|list_prs|list_commits|list_branches)`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+(?:use|call|invoke|try)\\s+(${getRecognizedToolNames().map(escapeToolNameForRegex).join('|')})`,
+      'i',
+    ),
     toolName: '', // filled dynamically from capture group
     exampleJson: '', // filled dynamically
   },
@@ -1157,10 +1096,10 @@ function detectNaturalLanguageToolIntent(text: string): ToolCallDiagnosis | null
     let toolName = pattern.toolName;
     let exampleJson = pattern.exampleJson;
     if (!toolName && match[1]) {
-      toolName = match[1];
+      toolName = resolveToolName(match[1]) ?? match[1];
       // Build a generic example for the matched tool
       if (KNOWN_TOOL_NAMES.has(toolName)) {
-        exampleJson = `{"tool": "${toolName}", "args": {}}`;
+        exampleJson = getToolArgHint(toolName) ?? `{"tool": "${getToolPublicName(toolName)}", "args": {}}`;
       } else {
         continue; // Not a real tool name — skip
       }
@@ -1171,7 +1110,7 @@ function detectNaturalLanguageToolIntent(text: string): ToolCallDiagnosis | null
     return {
       reason: 'natural_language_intent',
       toolName,
-      errorMessage: `You described wanting to use "${toolName}" but didn't output the required JSON tool block. `
+      errorMessage: `You described wanting to use "${getToolPublicName(toolName)}" but didn't output the required JSON tool block. `
         + `To call a tool, output ONLY a fenced JSON block like this:\n\n`
         + '```json\n'
         + `${exampleJson}\n`

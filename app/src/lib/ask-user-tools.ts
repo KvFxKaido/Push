@@ -1,5 +1,6 @@
 import { detectToolFromText } from './utils';
 import type { AskUserCardData } from '@/types';
+import { getToolArgHint, getToolPublicName, resolveToolName } from './tool-registry';
 
 export interface AskUserToolCall {
   tool: 'ask_user';
@@ -11,21 +12,13 @@ export const ASK_USER_TOOL_PROTOCOL = `
 
 Use this tool to ask the user a question with structured options. This is preferred over prose questions when there are limited valid choices, as it allows the user to simply tap an option on their mobile device.
 
-### ask_user
+### ${getToolPublicName('ask_user')}
 Ask a question with 2-4 defined options.
 \`\`\`json
-{
-  "tool": "ask_user",
-  "args": {
-    "question": "Which authentication method should I implement?",
-    "options": [
-      { "id": "apiKey", "label": "API Key", "description": "Simple header-based auth" },
-      { "id": "oauth", "label": "OAuth 2.0", "description": "Standard secure flow" }
-    ],
-    "multiSelect": false
-  }
-}
+${getToolArgHint('ask_user')}
 \`\`\`
+
+Prefer the short name \`${getToolPublicName('ask_user')}\`. The long name still works for compatibility.
 
 **When to use:**
 - Choosing between specific implementation approaches.
@@ -42,7 +35,12 @@ Ask a question with 2-4 defined options.
 
 export function detectAskUserToolCall(text: string): AskUserToolCall | null {
   return detectToolFromText<AskUserToolCall>(text, (parsed) => {
-    if (typeof parsed === 'object' && parsed !== null && 'tool' in parsed && parsed.tool === 'ask_user') {
+    if (
+      typeof parsed === 'object'
+      && parsed !== null
+      && 'tool' in parsed
+      && resolveToolName((parsed as { tool?: string }).tool) === 'ask_user'
+    ) {
       const p = parsed as Record<string, unknown>;
       const args = p.args as Record<string, unknown> | undefined;
       if (args && typeof args.question === 'string' && Array.isArray(args.options)) {

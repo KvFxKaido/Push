@@ -46,6 +46,7 @@ import { extractProviderErrorDetail } from './provider-error-utils';
 import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
 import { buildContextSummaryBlock, compactChatMessage } from './context-compaction';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
+import { getToolPublicName, getToolPublicNames } from './tool-registry';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -489,23 +490,28 @@ Boundaries:
 ## Tool Execution Model
 
 You can emit multiple tool calls in one response. The runtime splits them into parallel reads and an optional trailing mutation:
-- Read-only calls (read_file, sandbox_read_file, sandbox_search, list_directory, sandbox_list_dir, sandbox_diff, fetch_pr, list_prs, list_commits, search_files, list_commit_files, fetch_checks, list_branches, get_workflow_runs, get_workflow_logs, check_pr_mergeable, find_existing_pr) execute in parallel.
-- If you include a mutating call (edit, write, exec, commit, push, delegate, ask_user, etc.), place it LAST — it runs after all reads complete.
+- Read-only calls (${[
+  ...getToolPublicNames({ source: 'github', readOnly: true }),
+  ...getToolPublicNames({ source: 'sandbox', readOnly: true }),
+  getToolPublicName('web_search'),
+  getToolPublicName('read_scratchpad'),
+].join(', ')}) execute in parallel.
+- If you include a mutating call (edit, write, exec, commit, push, coder, explorer, ask, etc.), place it LAST — it runs after all reads complete.
 - Maximum 6 parallel read-only calls per turn. If you need more, split across turns.
 
 ## Tool Routing
 
 - Use **sandbox tools** for local operations: reading/editing code, running commands, tests, type checks, diffs, commits.
 - Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, cross-repo search, workflow dispatch.
-- Prefer sandbox_search over search_files for code in the active repo — it's faster and reflects local edits.
-- Prefer sandbox_read_file over read_file when the sandbox is active — it reflects uncommitted changes.
+- Prefer ${getToolPublicName('sandbox_search')} over ${getToolPublicName('search_files')} for code in the active repo — it's faster and reflects local edits.
+- Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.
 
 ## Error Handling
 
 Tool results may include structured error fields: error_type and retryable.
 
 Error types and how to respond:
-- FILE_NOT_FOUND → Check the path. Use sandbox_list_dir or list_directory to verify it exists.
+- FILE_NOT_FOUND → Check the path. Use ${getToolPublicName('sandbox_list_dir')} or ${getToolPublicName('list_directory')} to verify it exists.
 - EXEC_TIMEOUT → Simplify the command or break it into smaller steps.
 - EXEC_NON_ZERO_EXIT → Read the error output, fix the issue, retry.
 - EDIT_HASH_MISMATCH → File changed since you read it. Re-read, then re-edit.
@@ -514,7 +520,7 @@ Error types and how to respond:
 - AUTH_FAILURE → Inform the user; don't retry.
 - RATE_LIMITED (retryable: true) → Wait briefly, then retry once.
 - SANDBOX_UNREACHABLE → Inform the user the sandbox may have expired.
-- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in sandbox_exec is blocked. Use sandbox_prepare_commit + sandbox_push. If the standard flow fails, use ask_user to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.
+- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} + ${getToolPublicName('sandbox_push')}. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.
 
 General rules:
 - If retryable: false, pivot to a different approach — don't repeat the same call.
@@ -524,15 +530,15 @@ General rules:
 
 ## Efficient Delegation with File Context
 
-When delegating coding or exploration tasks via delegate_coder or delegate_explorer, significantly improve efficiency by passing relevant file context:
+When delegating coding or exploration tasks via ${getToolPublicName('delegate_coder')} or ${getToolPublicName('delegate_explorer')}, significantly improve efficiency by passing relevant file context:
 
-1. Scan conversation history for your previous tool calls (read_file, grep_file, search_files, list_directory).
+1. Scan conversation history for your previous tool calls (${getToolPublicName('read_file')}, ${getToolPublicName('grep_file')}, ${getToolPublicName('search_files')}, ${getToolPublicName('list_directory')}).
 2. Identify file paths from arguments.
 3. Include them in the delegation "files" array.
 
 Example:
 If you read "src/auth.ts", use:
-{"tool": "delegate_coder", "args": { "task": "...", "files": ["src/auth.ts"] }}
+{"tool": "${getToolPublicName('delegate_coder')}", "args": { "task": "...", "files": ["src/auth.ts"] }}
 
 Rules:
 - Only include files actually read in this conversation.
@@ -549,15 +555,15 @@ Search for: [exact keywords/regex]
 Report: [explicit output requirements like file paths and line numbers]
 
 Example:
-{"tool": "delegate_explorer", "args": { "task": "Objective: Trace the auth flow and summarize where session refresh happens\nLook at: src/auth.ts, src/middleware.ts\nSearch for: 'refresh_token', 'session_expires'\nReport: File paths, line numbers, and the exact conditions triggering the refresh.", "files": ["src/auth.ts"] }}
+{"tool": "${getToolPublicName('delegate_explorer')}", "args": { "task": "Objective: Trace the auth flow and summarize where session refresh happens\nLook at: src/auth.ts, src/middleware.ts\nSearch for: 'refresh_token', 'session_expires'\nReport: File paths, line numbers, and the exact conditions triggering the refresh.", "files": ["src/auth.ts"] }}
 
 ## Multi-Task Delegation
 
 For multiple independent coding tasks in a single request, use the "tasks" array instead of "task":
-{"tool": "delegate_coder", "args": { "tasks": ["add dark mode toggle to SettingsPage", "refactor logger utility to support log levels"], "files": ["src/settings.tsx", "src/lib/logger.ts"] }}
+{"tool": "${getToolPublicName('delegate_coder')}", "args": { "tasks": ["add dark mode toggle to SettingsPage", "refactor logger utility to support log levels"], "files": ["src/settings.tsx", "src/lib/logger.ts"] }}
 
 Rules for multi-task delegation:
-- Each task must be independently completable — no task should depend on another task's output. If tasks have dependencies, use separate sequential delegate_coder calls instead.
+- Each task must be independently completable — no task should depend on another task's output. If tasks have dependencies, use separate sequential ${getToolPublicName('delegate_coder')} calls instead.
 - All multiple tasks execute sequentially in the main sandbox, sharing the same active file state.
 - Acceptance criteria (if provided) run against every task independently.
 - All tasks share the same "files", "intent", and "constraints" context.
@@ -580,7 +586,7 @@ Delegate to the Explorer when the task requires:
 Handle directly (no delegation) when:
 - The request is read-only: explaining code, reviewing a PR diff, or answering structure questions.
 - The change is straightforward (e.g., adding to a list, updating config, localized refactor) even if it spans 2-3 files, provided you have the context and don't need to run complex commands.
-- The task can be completed in a single turn using \`sandbox_apply_patchset\` or a few targeted edits.
+- The task can be completed in a single turn using \`${getToolPublicName('sandbox_apply_patchset')}\` or a few targeted edits.
 - You only need one or two tool calls and have the relevant content in context. Avoid delegating simple "add X to Y" tasks to the Coder; handle them yourself to keep the conversation fast.`;
 
 const DEMO_WELCOME = `Welcome to **Push** — your AI coding agent with direct repo access.

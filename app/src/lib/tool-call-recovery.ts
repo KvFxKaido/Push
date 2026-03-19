@@ -1,11 +1,12 @@
 import {
-  CANONICAL_SANDBOX_TOOL_NAMES,
   detectUnimplementedToolCall,
   diagnoseToolCallFailure,
   getToolSource,
+  PUBLIC_SANDBOX_TOOL_NAMES,
   type AnyToolCall,
   type ToolCallDiagnosis,
 } from './tool-dispatch';
+import { getToolPublicName } from './tool-registry';
 
 export const MAX_TOOL_CALL_DIAGNOSIS_RETRIES = 2;
 
@@ -78,12 +79,12 @@ export function buildUnimplementedToolErrorText(
   toolName: string,
   options: UnimplementedToolErrorOptions = {},
 ): string {
-  const availableTools = options.availableTools ?? CANONICAL_SANDBOX_TOOL_NAMES;
+  const availableTools = options.availableTools ?? PUBLIC_SANDBOX_TOOL_NAMES;
   const availableToolsLabel = options.availableToolsLabel ?? 'Available sandbox tools';
   const guidanceLines =
     options.guidanceLines ??
     [
-      'Use sandbox_write_file to write complete file contents, or sandbox_exec to run patch/sed commands for edits.',
+      `Use ${getToolPublicName('sandbox_write_file')} to write complete file contents, or ${getToolPublicName('sandbox_exec')} to run patch/sed commands for edits.`,
     ];
 
   return [

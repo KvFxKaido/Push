@@ -17,6 +17,7 @@ import type { ToolExecutionResult, WebSearchResult, WebSearchCardData } from '@/
 import { detectToolFromText } from './utils';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getTavilyKey } from '@/hooks/useTavilyConfig';
+import { getToolArgHint, getToolPublicName, resolveToolName } from './tool-registry';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,8 +38,10 @@ export const WEB_SEARCH_TOOL_PROTOCOL = `
 You can search the web for current information by outputting a JSON tool block:
 
 \`\`\`json
-{"tool": "web_search", "args": {"query": "search terms here"}}
+${getToolArgHint('web_search')}
 \`\`\`
+
+Prefer the short name \`${getToolPublicName('web_search')}\`. The long name still works for compatibility.
 
 **When to use:**
 - User asks about current events, recent releases, or real-time data
@@ -79,7 +82,7 @@ function isWebSearchTool(obj: unknown): obj is { tool: 'web_search'; args: { que
     typeof obj === 'object' &&
     obj !== null &&
     'tool' in obj &&
-    (obj as { tool: unknown }).tool === 'web_search' &&
+    resolveToolName((obj as { tool: string }).tool) === 'web_search' &&
     'args' in obj &&
     typeof (obj as { args: unknown }).args === 'object' &&
     (obj as { args: unknown }).args !== null &&

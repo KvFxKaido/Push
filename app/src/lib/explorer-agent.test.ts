@@ -58,11 +58,12 @@ describe('buildExplorerSystemPrompt', () => {
   it('keeps Explorer focused on read-only tools', () => {
     const prompt = buildExplorerSystemPrompt();
 
-    expect(prompt).toContain('sandbox_read_file');
-    expect(prompt).toContain('web_search');
+    expect(prompt).toContain('repo_read');
+    expect(prompt).toContain('read');
+    expect(prompt).toContain('web');
     expect(prompt).toContain('You may use only these read-only tools');
-    expect(prompt).toContain('Do NOT call delegate_coder, delegate_explorer');
-    expect(prompt).not.toContain('{"tool": "sandbox_exec"');
-    expect(prompt).not.toContain('{"tool": "delegate_coder"');
+    expect(prompt).toContain('Do NOT call coder, explorer');
+    expect(prompt).not.toContain('{"tool": "exec"');
+    expect(prompt).not.toContain('{"tool": "coder"');
   });
 });

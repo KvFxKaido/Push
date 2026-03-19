@@ -43,6 +43,7 @@ import {
 import { getModelForRole } from './providers';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
 import { asRecord, streamWithTimeout } from './utils';
+import { getToolPublicName, getToolPublicNames } from './tool-registry';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,6 +54,26 @@ const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
 const REVIEW_COMPLETE_MARKER = '[REVIEW_COMPLETE]';
 const MAX_PROJECT_INSTRUCTIONS_SIZE = 12_000;
 const DIFF_LIMIT = 40_000;
+const REVIEWER_GITHUB_TOOL_NAMES = getToolPublicNames({ source: 'github', readOnly: true }).join(', ');
+const REVIEWER_SANDBOX_TOOL_NAMES = getToolPublicNames({ source: 'sandbox', readOnly: true }).join(', ');
+const REVIEWER_WEB_TOOL_NAME = getToolPublicName('web_search');
+const REVIEWER_MUTATION_BLOCKLIST = [
+  getToolPublicName('delegate_coder'),
+  getToolPublicName('delegate_explorer'),
+  getToolPublicName('create_pr'),
+  getToolPublicName('merge_pr'),
+  getToolPublicName('delete_branch'),
+  getToolPublicName('trigger_workflow'),
+  getToolPublicName('sandbox_exec'),
+  getToolPublicName('sandbox_write_file'),
+  getToolPublicName('sandbox_edit_range'),
+  getToolPublicName('sandbox_search_replace'),
+  getToolPublicName('sandbox_edit_file'),
+  getToolPublicName('sandbox_prepare_commit'),
+  getToolPublicName('sandbox_push'),
+  getToolPublicName('sandbox_apply_patchset'),
+  getToolPublicName('ask_user'),
+].join(', ');
 
 // ---------------------------------------------------------------------------
 // Options
@@ -78,19 +99,19 @@ const EXPLORER_TOOL_PROTOCOL_FOR_REVIEWER = `
 
 You may use only these read-only tools:
 
-- GitHub: fetch_pr, list_prs, list_commits, read_file, grep_file, list_directory, list_branches, fetch_checks, search_files, list_commit_files, get_workflow_runs, get_workflow_logs, check_pr_mergeable, find_existing_pr
-- Sandbox: sandbox_read_file, sandbox_search, sandbox_list_dir, sandbox_diff, sandbox_read_symbols, sandbox_find_references
-- Web: web_search
+- GitHub: ${REVIEWER_GITHUB_TOOL_NAMES}
+- Sandbox: ${REVIEWER_SANDBOX_TOOL_NAMES}
+- Web: ${REVIEWER_WEB_TOOL_NAME}
 
 Usage:
 \`\`\`json
-{"tool": "read_file", "args": {"repo": "owner/repo", "path": "src/example.ts"}}
+{"tool": "${getToolPublicName('read_file')}", "args": {"repo": "owner/repo", "path": "src/example.ts"}}
 \`\`\`
 
 Rules:
 - Output ONLY the fenced JSON block when requesting a tool.
 - Use only the tools listed above.
-- Do NOT call delegate_coder, delegate_explorer, create_pr, merge_pr, delete_branch, trigger_workflow, sandbox_exec, sandbox_write_file, sandbox_edit_range, sandbox_search_replace, sandbox_edit_file, sandbox_prepare_commit, sandbox_push, sandbox_apply_patchset, scratchpad tools, or ask_user.
+- Do NOT call ${REVIEWER_MUTATION_BLOCKLIST}, scratchpad tools, or any other mutating tool.
 - Prefer search/symbol tools before large file reads.
 - If no sandbox is available, skip sandbox tools and investigate via GitHub tools instead.
 `.trim();

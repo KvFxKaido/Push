@@ -1256,7 +1256,7 @@ export function useChat(
             const parseErrorHeader = buildToolCallParseErrorBlock({
               errorType: 'multiple_mutating_calls',
               problem: `Only one mutating tool call can run per turn. Received ${rejectedToolNames.length}: ${rejectedToolNames.join(', ')}.`,
-              hint: 'Put read-only tools first and one mutating tool last. For multiple coding tasks, use one delegate_coder call with "tasks".',
+              hint: 'Put read-only tools first and one mutating tool last. For multiple coding tasks, use one coder call with "tasks".',
             });
             const primaryMutation = rejectedMutations[0];
             const errorMsg: ChatMessage = {

@@ -83,7 +83,7 @@ describe('chat-tool-messages', () => {
       call: { tool: 'web_search', args: { query: 'latest React 19 changes' } },
     };
 
-    expect(getToolName(webSearch)).toBe('web_search');
+    expect(getToolName(webSearch)).toBe('web');
   });
 
   it('builds meta lines with dirty-file provenance counts', () => {

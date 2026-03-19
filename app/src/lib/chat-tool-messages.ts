@@ -12,6 +12,7 @@ import {
 import { fileLedger } from './file-awareness-ledger';
 import type { AnyToolCall } from './tool-dispatch';
 import { formatToolResultEnvelope } from './tool-call-recovery';
+import { getToolStatusLabelFromName, getToolPublicName } from './tool-registry';
 
 export interface ToolResultMetaSnapshot {
   dirty: boolean;
@@ -43,59 +44,11 @@ export interface MarkAssistantToolCallOptions {
 }
 
 export function getToolStatusLabel(toolCall: AnyToolCall): string {
-  switch (toolCall.source) {
-    case 'github':
-      return 'Fetching from GitHub...';
-    case 'sandbox': {
-      switch (toolCall.call.tool) {
-        case 'sandbox_exec':
-          return 'Executing in sandbox...';
-        case 'sandbox_read_file':
-          return 'Reading file...';
-        case 'sandbox_list_dir':
-          return 'Listing directory...';
-        case 'sandbox_write_file':
-          return 'Writing file...';
-        case 'sandbox_diff':
-          return 'Getting diff...';
-        case 'sandbox_prepare_commit':
-          return 'Reviewing commit...';
-        case 'sandbox_push':
-          return 'Pushing to remote...';
-        case 'promote_to_github':
-          return 'Promoting sandbox to GitHub...';
-        default:
-          return 'Sandbox operation...';
-      }
-    }
-    case 'delegate':
-      return toolCall.call.tool === 'delegate_explorer'
-        ? 'Delegating to Explorer...'
-        : 'Delegating to Coder...';
-    case 'scratchpad':
-      return 'Updating scratchpad...';
-    case 'web-search':
-      return 'Searching the web...';
-    default:
-      return 'Processing...';
-  }
+  return getToolStatusLabelFromName(toolCall.call.tool) ?? 'Processing...';
 }
 
 export function getToolName(toolCall: AnyToolCall): string {
-  switch (toolCall.source) {
-    case 'github':
-      return toolCall.call.tool;
-    case 'sandbox':
-      return toolCall.call.tool;
-    case 'delegate':
-      return toolCall.call.tool;
-    case 'scratchpad':
-      return toolCall.call.tool;
-    case 'web-search':
-      return 'web_search';
-    default:
-      return 'unknown';
-  }
+  return getToolPublicName(toolCall.call.tool) || 'unknown';
 }
 
 export function buildToolResultMetaLine(

@@ -11,6 +11,7 @@
  */
 
 import { detectToolFromText } from './utils';
+import { getToolArgHint, getToolPublicName, resolveToolName } from './tool-registry';
 
 // Max scratchpad content size (50KB) — prevents localStorage exhaustion and context bloat
 const MAX_CONTENT_LENGTH = 50_000;
@@ -30,23 +31,25 @@ You have access to a shared scratchpad — a persistent notepad that both you an
 
 The user can open the scratchpad anytime via the UI. You can update it with these tools:
 
-### set_scratchpad
+### ${getToolPublicName('set_scratchpad')}
 Replace the entire scratchpad content:
 \`\`\`json
-{"tool": "set_scratchpad", "content": "## Requirements\\n- Feature A\\n- Feature B\\n\\n## Decisions\\n- Use approach X"}
+${getToolArgHint('set_scratchpad')}
 \`\`\`
 
-### append_scratchpad
+### ${getToolPublicName('append_scratchpad')}
 Add to the existing content (good for incremental updates):
 \`\`\`json
-{"tool": "append_scratchpad", "content": "## New Section\\n- Added item"}
+${getToolArgHint('append_scratchpad')}
 \`\`\`
 
-### read_scratchpad
+### ${getToolPublicName('read_scratchpad')}
 Read the current scratchpad content (useful to verify before overwriting):
 \`\`\`json
-{"tool": "read_scratchpad"}
+${getToolArgHint('read_scratchpad')}
 \`\`\`
+
+Legacy long names still work for compatibility, but prefer the short names above.
 
 **When to use:**
 - User says "add this to the scratchpad" or "note this down"
@@ -68,16 +71,26 @@ Read the current scratchpad content (useful to verify before overwriting):
  */
 export function detectScratchpadToolCall(text: string): ScratchpadToolCall | null {
   return detectToolFromText<ScratchpadToolCall>(text, (parsed) => {
+    const rawTool = typeof parsed === 'object' && parsed !== null && 'tool' in parsed
+      ? (parsed as { tool?: unknown }).tool
+      : undefined;
+    const resolvedTool = resolveToolName(typeof rawTool === 'string' ? rawTool : undefined);
     // read_scratchpad — no content needed
-    if (isReadScratchpadTool(parsed)) {
+    if (resolvedTool === 'read_scratchpad' || isReadScratchpadTool(parsed)) {
       return { tool: 'read_scratchpad', content: '' };
     }
     if (isScratchpadTool(parsed)) {
-      return { tool: parsed.tool, content: parsed.content };
+      return {
+        tool: resolveToolName(parsed.tool) as ScratchpadToolCall['tool'] ?? parsed.tool,
+        content: parsed.content,
+      };
     }
     // Handle args-wrapped format: {"tool": "set_scratchpad", "args": {"content": "..."}}
     if (isScratchpadToolWrapped(parsed)) {
-      return { tool: parsed.tool, content: (parsed.args as { content: string }).content };
+      return {
+        tool: resolveToolName(parsed.tool) as ScratchpadToolCall['tool'] ?? parsed.tool,
+        content: (parsed.args as { content: string }).content,
+      };
     }
     return null;
   });
@@ -88,19 +101,24 @@ function isScratchpadTool(obj: unknown): obj is { tool: 'set_scratchpad' | 'appe
     typeof obj === 'object' &&
     obj !== null &&
     'tool' in obj &&
-    (obj.tool === 'set_scratchpad' || obj.tool === 'append_scratchpad') &&
+    (resolveToolName((obj as { tool?: string }).tool) === 'set_scratchpad'
+      || resolveToolName((obj as { tool?: string }).tool) === 'append_scratchpad') &&
     'content' in obj &&
     typeof (obj as { content: unknown }).content === 'string'
   );
 }
 
 function isReadScratchpadTool(obj: unknown): obj is { tool: 'read_scratchpad' } {
-  return typeof obj === 'object' && obj !== null && 'tool' in obj && obj.tool === 'read_scratchpad';
+  return typeof obj === 'object'
+    && obj !== null
+    && 'tool' in obj
+    && resolveToolName((obj as { tool?: string }).tool) === 'read_scratchpad';
 }
 
 function isScratchpadToolWrapped(obj: unknown): obj is { tool: 'set_scratchpad' | 'append_scratchpad'; args: { content: string } } {
   if (typeof obj !== 'object' || obj === null) return false;
-  if (!('tool' in obj) || (obj.tool !== 'set_scratchpad' && obj.tool !== 'append_scratchpad')) return false;
+  const toolName = !('tool' in obj) ? null : resolveToolName((obj as { tool?: string }).tool);
+  if (toolName !== 'set_scratchpad' && toolName !== 'append_scratchpad') return false;
   if (!('args' in obj) || typeof (obj as { args: unknown }).args !== 'object' || (obj as { args: unknown }).args === null) return false;
   const args = (obj as { args: { content?: unknown } }).args;
   return typeof args.content === 'string';
