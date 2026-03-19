@@ -95,9 +95,8 @@ export const ZEN_MODELS: string[] = [
 ];
 
 export const ZEN_GO_MODELS: string[] = [
-  'glm-5',
   'kimi-k2.5',
-  'minimax-m2.5',
+  'glm-5',
 ];
 
 export const ZEN_GO_URLS = {

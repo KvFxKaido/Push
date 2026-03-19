@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   getPreferredProvider,
   setPreferredProvider,
@@ -25,6 +25,7 @@ import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProvide
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { useVertexConfig, type VertexConfiguredMode } from '@/hooks/useVertexConfig';
+import { shouldAutoFetchProviderModels } from './model-catalog-utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -212,21 +213,25 @@ export function useModelCatalog(): ModelCatalog {
   const [ollamaModelList, setOllamaModelList] = useState<string[]>([]);
   const [openRouterModelList, setOpenRouterModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
+  const [zenGoModelList, setZenGoModelList] = useState<string[]>([]);
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
 
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
+  const [zenGoLoading, setZenGoLoading] = useState(false);
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
 
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
+  const [zenGoError, setZenGoError] = useState<string | null>(null);
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
 
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
+  const [zenGoUpdatedAt, setZenGoUpdatedAt] = useState<number | null>(null);
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
 
   // Generic refresh helper
@@ -279,16 +284,35 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [openRouterCfg.hasKey, openRouterLoading, refreshModels]);
 
-  const refreshZenModels = useCallback(async () => {
+  const refreshZenStandardModels = useCallback(async () => {
     await refreshModels({
       hasKey: zenCfg.hasKey, isLoading: zenLoading,
       setLoading: setZenLoading, setError: setZenError,
       setModels: setZenModelList, setUpdatedAt: setZenUpdatedAt,
-      fetchModels: zenCfg.goMode ? fetchZenGoModels : fetchZenModels,
+      fetchModels: fetchZenModels,
       emptyMessage: 'No models returned by OpenCode Zen.',
       failureMessage: 'Failed to load OpenCode Zen models.',
     });
-  }, [zenCfg.hasKey, zenCfg.goMode, zenLoading, refreshModels]);
+  }, [zenCfg.hasKey, zenLoading, refreshModels]);
+
+  const refreshZenGoModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: zenCfg.hasKey, isLoading: zenGoLoading,
+      setLoading: setZenGoLoading, setError: setZenGoError,
+      setModels: setZenGoModelList, setUpdatedAt: setZenGoUpdatedAt,
+      fetchModels: fetchZenGoModels,
+      emptyMessage: 'No Go-compatible OpenCode Zen models returned.',
+      failureMessage: 'Failed to load OpenCode Zen Go models.',
+    });
+  }, [zenCfg.hasKey, zenGoLoading, refreshModels]);
+
+  const refreshZenModels = useCallback(async () => {
+    if (zenCfg.goMode) {
+      await refreshZenGoModels();
+      return;
+    }
+    await refreshZenStandardModels();
+  }, [refreshZenGoModels, refreshZenStandardModels, zenCfg.goMode]);
 
   const refreshNvidiaModels = useCallback(async () => {
     await refreshModels({
@@ -302,27 +326,62 @@ export function useModelCatalog(): ModelCatalog {
   }, [nvidiaCfg.hasKey, nvidiaLoading, refreshModels]);
 
   // Auto-fetch models when key becomes available
-  useEffect(() => { if (ollamaCfg.hasKey && ollamaModelList.length === 0 && !ollamaLoading) refreshOllamaModels(); }, [ollamaCfg.hasKey, ollamaModelList.length, ollamaLoading, refreshOllamaModels]);
-  useEffect(() => { if (openRouterCfg.hasKey && openRouterModelList.length === 0 && !openRouterLoading) refreshOpenRouterModels(); }, [openRouterCfg.hasKey, openRouterLoading, openRouterModelList.length, refreshOpenRouterModels]);
-  useEffect(() => { if (zenCfg.hasKey && zenModelList.length === 0 && !zenLoading) refreshZenModels(); }, [zenCfg.hasKey, zenModelList.length, zenLoading, refreshZenModels]);
-  useEffect(() => { if (nvidiaCfg.hasKey && nvidiaModelList.length === 0 && !nvidiaLoading) refreshNvidiaModels(); }, [nvidiaCfg.hasKey, nvidiaModelList.length, nvidiaLoading, refreshNvidiaModels]);
+  useEffect(() => {
+    if (shouldAutoFetchProviderModels({
+      hasKey: ollamaCfg.hasKey,
+      modelCount: ollamaModelList.length,
+      loading: ollamaLoading,
+      error: ollamaError,
+    })) refreshOllamaModels();
+  }, [ollamaCfg.hasKey, ollamaError, ollamaLoading, ollamaModelList.length, refreshOllamaModels]);
+  useEffect(() => {
+    if (shouldAutoFetchProviderModels({
+      hasKey: openRouterCfg.hasKey,
+      modelCount: openRouterModelList.length,
+      loading: openRouterLoading,
+      error: openRouterError,
+    })) refreshOpenRouterModels();
+  }, [openRouterCfg.hasKey, openRouterError, openRouterLoading, openRouterModelList.length, refreshOpenRouterModels]);
+  useEffect(() => {
+    if (!zenCfg.goMode && shouldAutoFetchProviderModels({
+      hasKey: zenCfg.hasKey,
+      modelCount: zenModelList.length,
+      loading: zenLoading,
+      error: zenError,
+    })) refreshZenStandardModels();
+  }, [refreshZenStandardModels, zenCfg.goMode, zenCfg.hasKey, zenError, zenLoading, zenModelList.length]);
+  useEffect(() => {
+    if (zenCfg.goMode && shouldAutoFetchProviderModels({
+      hasKey: zenCfg.hasKey,
+      modelCount: zenGoModelList.length,
+      loading: zenGoLoading,
+      error: zenGoError,
+    })) refreshZenGoModels();
+  }, [refreshZenGoModels, zenCfg.goMode, zenCfg.hasKey, zenGoError, zenGoLoading, zenGoModelList.length]);
+  useEffect(() => {
+    if (shouldAutoFetchProviderModels({
+      hasKey: nvidiaCfg.hasKey,
+      modelCount: nvidiaModelList.length,
+      loading: nvidiaLoading,
+      error: nvidiaError,
+    })) refreshNvidiaModels();
+  }, [nvidiaCfg.hasKey, nvidiaError, nvidiaLoading, nvidiaModelList.length, refreshNvidiaModels]);
 
   // Clear models when key is removed
   useEffect(() => { if (!ollamaCfg.hasKey) { setOllamaModelList([]); setOllamaError(null); setOllamaUpdatedAt(null); } }, [ollamaCfg.hasKey]);
   useEffect(() => { if (!openRouterCfg.hasKey) { setOpenRouterModelList([]); setOpenRouterError(null); setOpenRouterUpdatedAt(null); } }, [openRouterCfg.hasKey]);
-  useEffect(() => { if (!zenCfg.hasKey) { setZenModelList([]); setZenError(null); setZenUpdatedAt(null); } }, [zenCfg.hasKey]);
-  useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
-  // Clear fetched list when Go mode actually changes so the new mode's static fallback
-  // shows immediately. Tracks the previous value to avoid running on mount or Strict Mode
-  // remount — the list is already empty at that point and clearing would just trigger an
-  // unnecessary fetch/loading churn cycle.
-  const prevGoModeRef = useRef(zenCfg.goMode);
   useEffect(() => {
-    if (prevGoModeRef.current !== zenCfg.goMode) {
-      prevGoModeRef.current = zenCfg.goMode;
-      setZenModelList([]); setZenError(null); setZenUpdatedAt(null);
+    if (!zenCfg.hasKey) {
+      setZenModelList([]); setZenError(null); setZenUpdatedAt(null); setZenLoading(false);
+      setZenGoModelList([]); setZenGoError(null); setZenGoUpdatedAt(null); setZenGoLoading(false);
     }
-  }, [zenCfg.goMode]);
+  }, [zenCfg.hasKey]);
+  useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
+
+  const activeZenModelList = zenCfg.goMode ? zenGoModelList : zenModelList;
+  const activeZenLoading = zenCfg.goMode ? zenGoLoading : zenLoading;
+  const activeZenError = zenCfg.goMode ? zenGoError : zenError;
+  const activeZenUpdatedAt = zenCfg.goMode ? zenGoUpdatedAt : zenUpdatedAt;
 
   // Model option lists (ensure selected model is always included)
   const ollamaModelOptions = useMemo(() => includeSelectedModel(ollamaModelList, ollamaCfg.model), [ollamaModelList, ollamaCfg.model]);
@@ -332,10 +391,10 @@ export function useModelCatalog(): ModelCatalog {
   );
   const zenModelOptions = useMemo(
     () => includeSelectedModel(
-      zenModelList.length > 0 ? zenModelList : (zenCfg.goMode ? ZEN_GO_MODELS : ZEN_MODELS),
+      activeZenModelList.length > 0 ? activeZenModelList : (zenCfg.goMode ? ZEN_GO_MODELS : ZEN_MODELS),
       zenCfg.model,
     ),
-    [zenModelList, zenCfg.goMode, zenCfg.model],
+    [activeZenModelList, zenCfg.goMode, zenCfg.model],
   );
   const nvidiaModelOptions = useMemo(() => includeSelectedModel(nvidiaModelList, nvidiaCfg.model), [nvidiaModelList, nvidiaCfg.model]);
   const vertexModelOptions = useMemo(() => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model), [vertexCfg.modelOptions, vertexCfg.model]);
@@ -433,7 +492,7 @@ export function useModelCatalog(): ModelCatalog {
 
     ollamaModels: { models: ollamaModelList, loading: ollamaLoading, error: ollamaError, updatedAt: ollamaUpdatedAt },
     openRouterModels: { models: openRouterModelList, loading: openRouterLoading, error: openRouterError, updatedAt: openRouterUpdatedAt },
-    zenModels: { models: zenModelList, loading: zenLoading, error: zenError, updatedAt: zenUpdatedAt },
+    zenModels: { models: activeZenModelList, loading: activeZenLoading, error: activeZenError, updatedAt: activeZenUpdatedAt },
     nvidiaModels: { models: nvidiaModelList, loading: nvidiaLoading, error: nvidiaError, updatedAt: nvidiaUpdatedAt },
 
     ollamaModelOptions,

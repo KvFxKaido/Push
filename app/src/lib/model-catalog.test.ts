@@ -6,6 +6,7 @@ import {
   buildCuratedOpenRouterModelList,
   fetchNvidiaModels,
   fetchOllamaModels,
+  fetchZenGoModels,
   fetchZenModels,
   filterModelByContext,
   MIN_CONTEXT_TOKENS,
@@ -556,6 +557,48 @@ describe('provider model fetchers', () => {
     }));
 
     await expect(fetchModels()).resolves.toEqual([]);
+  });
+
+  it('filters out Zen Go models that require the unsupported messages transport', async () => {
+    stubWindow();
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('models.dev/api.json')) {
+        return jsonResponse({
+          opencode: {
+            models: {
+              'glm-5': {
+                id: 'glm-5',
+                modalities: { input: ['text'], output: ['text'] },
+                limit: { context: 128_000 },
+              },
+              'kimi-k2.5': {
+                id: 'kimi-k2.5',
+                modalities: { input: ['text'], output: ['text'] },
+                limit: { context: 128_000 },
+              },
+              'minimax-m2.5': {
+                id: 'minimax-m2.5',
+                modalities: { input: ['text'], output: ['text'] },
+                limit: { context: 128_000 },
+              },
+            },
+          },
+        });
+      }
+      if (url.includes('/opencode/zen/go/') || url.includes('/api/zen/go/models')) {
+        return jsonResponse({
+          data: [
+            { id: 'glm-5' },
+            { id: 'kimi-k2.5' },
+            { id: 'minimax-m2.5' },
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    await expect(fetchZenGoModels()).resolves.toEqual(['kimi-k2.5', 'glm-5']);
   });
 });
 

@@ -2,6 +2,7 @@ import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
+import { filterPushSupportedZenGoModels } from '@/hooks/model-catalog-utils';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 import { PROVIDER_URLS, ZEN_GO_URLS } from './providers';
 import { asRecord } from './utils';
@@ -845,7 +846,8 @@ export async function fetchZenGoModels(): Promise<string[]> {
 
     const payload = (await catalogRes.json()) as unknown;
     const liveModels = normalizeModelList(payload);
-    return buildCuratedOpencodeModelList(liveModels, modelsDevMetadata);
+    const curated = buildCuratedOpencodeModelList(liveModels, modelsDevMetadata);
+    return filterPushSupportedZenGoModels(curated);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`OpenCode Zen Go model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
