@@ -15,6 +15,10 @@ import {
   formatVertexProviderHttpError,
 } from './src/lib/provider-error-utils';
 import {
+  buildAnthropicMessagesRequest,
+  createAnthropicTranslatedStream,
+} from './src/lib/openai-anthropic-bridge';
+import {
   buildVertexAnthropicEndpoint,
   buildVertexOpenApiBaseUrl,
   decodeVertexServiceAccountHeader,
@@ -24,10 +28,9 @@ import {
 } from './src/lib/vertex-provider';
 import {
   validateAndNormalizeChatRequest,
-  type OpenAIContentPart,
-  type OpenAIChatRequest,
 } from './src/lib/chat-request-guardrails';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from './src/lib/request-id';
+import { getZenGoTransport, ZEN_GO_MODELS } from './src/lib/zen-go';
 
 interface Env {
   OLLAMA_API_KEY?: string;
@@ -422,232 +425,6 @@ function getVertexNativeConfig(request: Request): { ok: true; config: VertexNati
       region: region.normalized,
     },
   };
-}
-
-function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
-  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-  if (!match) return null;
-  return {
-    type: 'image',
-    source: {
-      type: 'base64',
-      media_type: match[1],
-      data: match[2],
-    },
-  };
-}
-
-function convertOpenAIContentToAnthropic(content: string | OpenAIContentPart[] | undefined): Array<Record<string, unknown>> {
-  if (typeof content === 'string') {
-    return [{ type: 'text', text: content }];
-  }
-
-  if (!Array.isArray(content)) {
-    return [{ type: 'text', text: '' }];
-  }
-
-  const parts: Array<Record<string, unknown>> = [];
-  for (const part of content) {
-    if (!part || typeof part !== 'object') continue;
-    if (part.type === 'text' && typeof part.text === 'string') {
-      parts.push({ type: 'text', text: part.text });
-      continue;
-    }
-    if (part.type === 'image_url' && typeof part.image_url?.url === 'string') {
-      const imagePart = dataUrlToAnthropicImagePart(part.image_url.url);
-      if (imagePart) parts.push(imagePart);
-    }
-  }
-
-  return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
-}
-
-function buildAnthropicVertexRequest(request: OpenAIChatRequest): Record<string, unknown> {
-  const messages = Array.isArray(request.messages) ? request.messages : [];
-
-  const systemSegments: string[] = [];
-  const anthropicMessages: Array<Record<string, unknown>> = [];
-
-  for (const message of messages) {
-    const role = typeof message.role === 'string' ? message.role : 'user';
-    if (role === 'system') {
-      const systemParts = convertOpenAIContentToAnthropic(message.content)
-        .map((part) => typeof part.text === 'string' ? part.text : '')
-        .filter(Boolean);
-      if (systemParts.length > 0) {
-        systemSegments.push(systemParts.join('\n\n'));
-      }
-      continue;
-    }
-
-    anthropicMessages.push({
-      role,
-      content: convertOpenAIContentToAnthropic(message.content),
-    });
-  }
-
-  const body: Record<string, unknown> = {
-    anthropic_version: 'vertex-2023-10-16',
-    messages: anthropicMessages,
-    max_tokens: typeof request.max_completion_tokens === 'number'
-      ? request.max_completion_tokens
-      : (typeof request.max_tokens === 'number' ? request.max_tokens : 8192),
-    stream: Boolean(request.stream),
-  };
-
-  if (systemSegments.length > 0) {
-    body.system = systemSegments.join('\n\n');
-  }
-  if (typeof request.temperature === 'number') {
-    body.temperature = request.temperature;
-  }
-  if (typeof request.top_p === 'number') {
-    body.top_p = request.top_p;
-  }
-
-  return body;
-}
-
-function buildOpenAISseChunk(params: {
-  model: string;
-  content?: string;
-  finishReason?: string | null;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
-}): string {
-  const payload: Record<string, unknown> = {
-    id: `chatcmpl-${crypto.randomUUID()}`,
-    object: 'chat.completion.chunk',
-    created: Math.floor(Date.now() / 1000),
-    model: params.model,
-    choices: [
-      {
-        index: 0,
-        delta: params.content ? { content: params.content } : {},
-        finish_reason: params.finishReason ?? null,
-      },
-    ],
-  };
-
-  if (params.usage) {
-    payload.usage = {
-      prompt_tokens: params.usage.prompt_tokens ?? 0,
-      completion_tokens: params.usage.completion_tokens ?? 0,
-      total_tokens: params.usage.total_tokens ?? 0,
-    };
-  }
-
-  return `data: ${JSON.stringify(payload)}\n\n`;
-}
-
-function mapAnthropicStopReason(stopReason: string | null | undefined): string {
-  switch (stopReason) {
-    case 'max_tokens':
-      return 'length';
-    case 'tool_use':
-      return 'tool_calls';
-    default:
-      return 'stop';
-  }
-}
-
-function createVertexTranslatedStream(upstream: Response, model: string): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = upstream.body?.getReader();
-      if (!reader) {
-        controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, finishReason: 'stop' })));
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-        controller.close();
-        return;
-      }
-
-      let buffer = '';
-      let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line.startsWith('data:')) continue;
-            const jsonStr = line[5] === ' ' ? line.slice(6) : line.slice(5);
-            if (jsonStr === '[DONE]') {
-              controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-              controller.close();
-              return;
-            }
-
-            let parsed: Record<string, unknown>;
-            try {
-              parsed = JSON.parse(jsonStr) as Record<string, unknown>;
-            } catch {
-              continue;
-            }
-
-            const eventType = typeof parsed.type === 'string' ? parsed.type : '';
-            if (eventType === 'content_block_delta') {
-              const delta = parsed.delta as Record<string, unknown> | undefined;
-              if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
-                controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, content: delta.text })));
-              }
-              continue;
-            }
-
-            if (eventType === 'message_start' || eventType === 'message_delta' || eventType === 'message_stop') {
-              const message = parsed.message as Record<string, unknown> | undefined;
-              const delta = parsed.delta as Record<string, unknown> | undefined;
-              const usageRec = (parsed.usage as Record<string, unknown> | undefined)
-                || (message?.usage as Record<string, unknown> | undefined)
-                || (delta?.usage as Record<string, unknown> | undefined);
-              if (usageRec) {
-                const promptTokens = typeof usageRec.input_tokens === 'number' ? usageRec.input_tokens : usage?.prompt_tokens ?? 0;
-                const completionTokens = typeof usageRec.output_tokens === 'number' ? usageRec.output_tokens : usage?.completion_tokens ?? 0;
-                usage = {
-                  prompt_tokens: promptTokens,
-                  completion_tokens: completionTokens,
-                  total_tokens: promptTokens + completionTokens,
-                };
-              }
-
-              if (eventType === 'message_delta' || eventType === 'message_stop') {
-                const stopReason = typeof delta?.stop_reason === 'string'
-                  ? delta.stop_reason
-                  : (typeof message?.stop_reason === 'string' ? message.stop_reason : null);
-                if (stopReason || eventType === 'message_stop') {
-                  controller.enqueue(encoder.encode(buildOpenAISseChunk({
-                    model,
-                    finishReason: mapAnthropicStopReason(stopReason),
-                    usage,
-                  })));
-                  controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-                  controller.close();
-                  return;
-                }
-              }
-            }
-          }
-        }
-
-        controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, finishReason: 'stop', usage })));
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-        controller.close();
-      } catch (err) {
-        controller.error(err);
-      }
-    },
-  });
 }
 
 function getExperimentalUpstreamUrl(
@@ -1239,27 +1016,168 @@ const handleZenModels = createJsonProxyHandler({
   timeoutError: 'OpenCode Zen model list timed out after 30 seconds',
 });
 
-// --- OpenCode Zen Go tier (OpenAI-compatible endpoint) ---
+// --- OpenCode Zen Go tier (mixed OpenAI + Anthropic transports) ---
 
-const handleZenGoChat = createStreamProxyHandler({
-  name: 'OpenCode Zen Go API', logTag: 'api/zen/go/chat',
-  upstreamUrl: 'https://opencode.ai/zen/go/v1/chat/completions',
-  timeoutMs: 120_000,
-  maxOutputTokens: 12_288,
-  buildAuth: standardAuth('ZEN_API_KEY'),
-  keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
-  timeoutError: 'OpenCode Zen Go request timed out after 120 seconds',
-});
+function getZenGoAuthHeaders(authHeader: string, requestId: string, transport: 'openai' | 'anthropic'): Record<string, string> {
+  if (transport === 'anthropic') {
+    const bearerPrefix = 'Bearer ';
+    const bearerToken = authHeader.startsWith(bearerPrefix) ? authHeader.slice(bearerPrefix.length).trim() : '';
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': authHeader,
+      'anthropic-version': '2023-06-01',
+      ...(bearerToken ? { 'x-api-key': bearerToken } : {}),
+      [REQUEST_ID_HEADER]: requestId,
+    };
+  }
 
-const handleZenGoModels = createJsonProxyHandler({
-  name: 'OpenCode Zen Go API', logTag: 'api/zen/go/models',
-  upstreamUrl: 'https://opencode.ai/zen/go/v1/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('ZEN_API_KEY'),
-  keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
-  timeoutError: 'OpenCode Zen Go model list timed out after 30 seconds',
-});
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': authHeader,
+    [REQUEST_ID_HEADER]: requestId,
+  };
+}
+
+async function handleZenGoChat(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: standardAuth('ZEN_API_KEY'),
+    keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { authHeader, bodyText, requestId } = preamble;
+
+  const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
+    routeLabel: 'OpenCode Zen Go',
+    maxOutputTokens: 12_288,
+  });
+  if (!normalizedRequest.ok) {
+    return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+  }
+  if (normalizedRequest.value.adjustments.length > 0) {
+    wlog('warn', 'chat_request_adjusted', {
+      requestId,
+      route: 'api/zen/go/chat',
+      adjustments: normalizedRequest.value.adjustments,
+    });
+  }
+
+  const parsedRequest = normalizedRequest.value.parsed;
+  const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
+  const transport = getZenGoTransport(model);
+  const upstreamUrl = transport === 'anthropic'
+    ? 'https://opencode.ai/zen/go/v1/messages'
+    : 'https://opencode.ai/zen/go/v1/chat/completions';
+  const upstreamBody = transport === 'anthropic'
+    ? JSON.stringify(buildAnthropicMessagesRequest(parsedRequest))
+    : normalizedRequest.value.bodyText;
+
+  wlog('info', 'request', {
+    requestId,
+    route: 'api/zen/go/chat',
+    transport,
+    model,
+    bytes: upstreamBody.length,
+  });
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120_000);
+    let upstream: Response;
+
+    try {
+      upstream = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers: getZenGoAuthHeaders(authHeader, requestId, transport),
+        body: upstreamBody,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    wlog('info', 'upstream_ok', {
+      requestId,
+      route: 'api/zen/go/chat',
+      transport,
+      status: upstream.status,
+    });
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      wlog('error', 'upstream_error', {
+        requestId,
+        route: 'api/zen/go/chat',
+        transport,
+        status: upstream.status,
+        body: errBody.slice(0, 500),
+      });
+
+      const isHtml = /<\s*html[\s>]/i.test(errBody) || /<\s*!doctype/i.test(errBody);
+      const errDetail = isHtml
+        ? `HTTP ${upstream.status} (the server returned an HTML error page instead of JSON)`
+        : errBody.slice(0, 200);
+      return Response.json(
+        { error: `OpenCode Zen Go API error ${upstream.status}: ${errDetail}` },
+        { status: upstream.status },
+      );
+    }
+
+    if (transport === 'anthropic') {
+      return new Response(createAnthropicTranslatedStream(upstream, model), {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          [REQUEST_ID_HEADER]: requestId,
+        },
+      });
+    }
+
+    return new Response(upstream.body, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        [REQUEST_ID_HEADER]: requestId,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('error', 'unhandled', {
+      requestId,
+      route: 'api/zen/go/chat',
+      transport,
+      message,
+      timeout: isTimeout,
+    });
+    return Response.json(
+      { error: isTimeout ? 'OpenCode Zen Go request timed out after 120 seconds' : message },
+      { status: isTimeout ? 504 : 502 },
+    );
+  }
+}
+
+async function handleZenGoModels(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: standardAuth('ZEN_API_KEY'),
+    keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+
+  return Response.json({
+    object: 'list',
+    data: ZEN_GO_MODELS.map((id) => ({
+      id,
+      object: 'model',
+      transport: getZenGoTransport(id),
+    })),
+  });
+}
 
 // --- Nvidia NIM (OpenAI-compatible endpoint) ---
 
@@ -1387,7 +1305,7 @@ async function handleVertexChat(request: Request, env: Env): Promise<Response> {
     )
     : `${buildVertexOpenApiBaseUrl(nativeConfig.config.serviceAccount.projectId, nativeConfig.config.region)}/chat/completions`;
   const upstreamBody = transport === 'anthropic'
-    ? JSON.stringify(buildAnthropicVertexRequest(parsedRequest))
+    ? JSON.stringify(buildAnthropicMessagesRequest(parsedRequest, { anthropicVersion: 'vertex-2023-10-16' }))
     : normalizedRequest.value.bodyText;
 
   wlog('info', 'request', {
@@ -1440,7 +1358,7 @@ async function handleVertexChat(request: Request, env: Env): Promise<Response> {
     }
 
     if (transport === 'anthropic') {
-      return new Response(createVertexTranslatedStream(upstream, model), {
+      return new Response(createAnthropicTranslatedStream(upstream, model), {
         status: 200,
         headers: {
           'Content-Type': 'text/event-stream',

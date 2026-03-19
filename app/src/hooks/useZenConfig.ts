@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ZEN_DEFAULT_MODEL, ZEN_MODELS, ZEN_GO_MODELS, getZenGoMode, setZenGoMode as persistZenGoMode } from '@/lib/providers';
-import { isPushSupportedZenGoModel } from './model-catalog-utils';
 import { createModelProviderConfig } from './useApiKeyConfig';
 
 const KEY_STORAGE = 'zen_api_key';
@@ -20,7 +19,7 @@ export function useZenConfig() {
   const [goMode, setGoModeState] = useState(() => getZenGoMode());
 
   useEffect(() => {
-    if (goMode && !isPushSupportedZenGoModel(config.model)) {
+    if (goMode && !ZEN_GO_MODELS.includes(config.model)) {
       setModel(ZEN_GO_MODELS[0]);
     }
   }, [config.model, goMode, setModel]);

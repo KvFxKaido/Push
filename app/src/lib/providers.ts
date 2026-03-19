@@ -7,6 +7,7 @@ import { getVertexModelName } from '@/hooks/useVertexConfig';
 import { getModelCapabilities } from './model-capabilities';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-provider';
+import { ZEN_GO_MODELS as SHARED_ZEN_GO_MODELS } from './zen-go';
 
 // ---------------------------------------------------------------------------
 // Provider URL registry — single source of truth for dev/prod endpoints
@@ -94,10 +95,7 @@ export const ZEN_MODELS: string[] = [
   'big-pickle',
 ];
 
-export const ZEN_GO_MODELS: string[] = [
-  'kimi-k2.5',
-  'glm-5',
-];
+export const ZEN_GO_MODELS: string[] = [...SHARED_ZEN_GO_MODELS];
 
 export const ZEN_GO_URLS = {
   chat: providerUrl('/opencode/zen/go/v1/chat/completions', '/api/zen/go/chat'),
