@@ -1851,6 +1851,7 @@ export function useChat(
                   toolExecResult = {
                     text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})`,
                   };
+                  }
 
                 } catch (err) {
                   const isAbort = err instanceof DOMException && err.name === 'AbortError';
