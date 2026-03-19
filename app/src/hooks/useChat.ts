@@ -72,7 +72,7 @@ import {
   resolveToolCallRecovery,
   type ToolCallRecoveryState,
 } from '@/lib/tool-call-recovery';
-import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
+
 import { buildEditedReplay, buildRegeneratedReplay } from '@/lib/chat-replay';
 import { formatElapsedTime } from '@/lib/utils';
 
@@ -85,7 +85,6 @@ const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
 const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
-const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
 
@@ -136,20 +135,6 @@ function generateTitle(messages: ChatMessage[]): string {
   return content.length > 30 ? content.slice(0, 30) + '...' : content;
 }
 
-function getGitHubAppCommitIdentity(): { name: string; email: string } | undefined {
-  const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY);
-  if (!appToken) return undefined;
-  try {
-    const raw = safeStorageGet(APP_COMMIT_IDENTITY_KEY);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as { name?: unknown; email?: unknown };
-    if (typeof parsed.name !== 'string' || !parsed.name.trim()) return undefined;
-    if (typeof parsed.email !== 'string' || !parsed.email.trim()) return undefined;
-    return { name: parsed.name, email: parsed.email };
-  } catch {
-    return undefined;
-  }
-}
 
 // --- persistence helpers ---
 
@@ -1849,7 +1834,6 @@ export function useChat(
                       }
                       allCards.push(...coderResult.cards);
                     }
-                  }
 
                   // Attach all Coder cards to the assistant message
                   if (allCards.length > 0) {
@@ -1867,7 +1851,8 @@ export function useChat(
                   toolExecResult = {
                     text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})`,
                   };
-                }
+                  }
+
                 } catch (err) {
                   const isAbort = err instanceof DOMException && err.name === 'AbortError';
                   if (isAbort || abortRef.current) {
