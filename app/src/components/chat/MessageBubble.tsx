@@ -114,7 +114,7 @@ function looksLikeToolCall(text: string): boolean {
   if (text.includes('```json')) return true;
   // Check for "tool" key pattern — require colon after to avoid matching prose containing "tool".
   // Handles both braced (`{"tool": ...`) and brace-less (`"tool": ...`) tool calls.
-  if (/["']tool["']\s*:/.test(text)) return true;
+  if (/(?:^|\n)\s*(?:["']?tool["']?\s*:\s*["'][^"']*["']|["']?tool["']?\s*:\s*[^,\n]+)\s*,\s*(?:["']?args["']?\s*:)/s.test(text)) return true;
   // Unquoted key variant: `tool:` (word boundary avoids 'mytool:' false positives)
   const toolColon = text.indexOf('tool:');
   if (toolColon !== -1) {
@@ -177,7 +177,7 @@ function stripToolCallPayload(content: string): string {
   // Strip brace-less trailing truncated tool JSON (streaming, no opening `{`).
   // Requires JSON-ish structure after the tool name (comma + "args" key) to avoid
   // stripping prose like `I will use the tool: "search" now`.
-  stripped = stripped.replace(/["']?tool["']?\s*:\s*["'][^"']*["']\s*,\s*["']?args["']?\s*:[\s\S]*$/s, '');
+  stripped = stripped.replace(/(?:^|\n)\s*(?:["']?tool["']?\s*:\s*["'][^"']*["']|["']?tool["']?\s*:\s*[^,\n]+)\s*,\s*(?:["']?args["']?\s*:)\s*[\s\S]*$/s, '');
 
   // Strip unclosed tool call fences (streaming)
   stripped = stripped.replace(/```(?:json)?\s*\n?\{\s*["']?tool["']?[\s\S]*$/s, '');
