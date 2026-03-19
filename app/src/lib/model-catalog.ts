@@ -828,12 +828,15 @@ export async function fetchZenGoModels(): Promise<string[]> {
   const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
 
   try {
-    const catalogRes = await fetch(ZEN_GO_URLS.models, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-      cache: 'no-store',
-    });
+    const [catalogRes, modelsDevMetadata] = await Promise.all([
+      fetch(ZEN_GO_URLS.models, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+        cache: 'no-store',
+      }),
+      fetchModelsDevOpencodeMetadata(),
+    ]);
 
     if (!catalogRes.ok) {
       const detail = await catalogRes.text().catch(() => '');
@@ -841,7 +844,8 @@ export async function fetchZenGoModels(): Promise<string[]> {
     }
 
     const payload = (await catalogRes.json()) as unknown;
-    return normalizeModelList(payload);
+    const liveModels = normalizeModelList(payload);
+    return buildCuratedOpencodeModelList(liveModels, modelsDevMetadata);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`OpenCode Zen Go model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
