@@ -112,12 +112,9 @@ function stripBareToolCallJson(text: string): string {
 function looksLikeToolCall(text: string): boolean {
   // Fast indexOf checks — avoid full regex/brace-scan when there's nothing to strip.
   if (text.includes('```json')) return true;
-  // Check for "tool" key pattern — handles both braced and brace-less tool calls.
-  // Some models emit `"tool": "name", "args": {...}` without the outer `{`.
-  const toolDoubleQuote = text.indexOf('"tool"');
-  if (toolDoubleQuote !== -1) return true;
-  const toolSingleQuote = text.indexOf("'tool'");
-  if (toolSingleQuote !== -1) return true;
+  // Check for "tool" key pattern — require colon after to avoid matching prose containing "tool".
+  // Handles both braced (`{"tool": ...`) and brace-less (`"tool": ...`) tool calls.
+  if (/["']tool["']\s*:/.test(text)) return true;
   // Unquoted key variant: `tool:` (word boundary avoids 'mytool:' false positives)
   const toolColon = text.indexOf('tool:');
   if (toolColon !== -1) {
@@ -158,11 +155,11 @@ function stripToolCallPayload(content: string): string {
     const toolFragment = withoutToolFences.slice(prefixLen);
     // Only apply the repair if the tool fragment doesn't already start with `{`
     if (!toolFragment.trimStart().startsWith('{')) {
-      const testInput = bracelessMatch[1] + '{' + toolFragment;
-      const testResult = stripBareToolCallJson(testInput);
-      if (testResult.length < testInput.length) {
-        // The added `{` caused a successful strip — use this result
-        textForBraceStrip = testResult;
+      const testFragment = '{' + toolFragment;
+      const strippedFragment = stripBareToolCallJson(testFragment);
+      // Verify the prepended `{` was actually consumed (not just a later match)
+      if (strippedFragment.length < testFragment.length && !strippedFragment.startsWith('{')) {
+        textForBraceStrip = bracelessMatch[1] + strippedFragment;
       }
     }
   }
@@ -177,11 +174,10 @@ function stripToolCallPayload(content: string): string {
   // Strip trailing truncated tool JSON (unbalanced { with "tool":"..." at the end)
   stripped = stripped.replace(/\{[^{}]*["']?tool["']?\s*:\s*["'][^"']*["'][^}]*$/s, '');
 
-  // Strip brace-less trailing truncated tool JSON (streaming, no opening `{`)
-  stripped = stripped.replace(/["']?tool["']?\s*:\s*["'][^"']*["'][\s\S]*$/s, '');
-
-  // Strip orphaned trailing closing braces left after tool call removal
-  stripped = stripped.replace(/^\s*\}+\s*$/gm, '');
+  // Strip brace-less trailing truncated tool JSON (streaming, no opening `{`).
+  // Requires JSON-ish structure after the tool name (comma + "args" key) to avoid
+  // stripping prose like `I will use the tool: "search" now`.
+  stripped = stripped.replace(/["']?tool["']?\s*:\s*["'][^"']*["']\s*,\s*["']?args["']?\s*:[\s\S]*$/s, '');
 
   // Strip unclosed tool call fences (streaming)
   stripped = stripped.replace(/```(?:json)?\s*\n?\{\s*["']?tool["']?[\s\S]*$/s, '');
