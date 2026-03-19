@@ -8,8 +8,9 @@
  *   - A broad mutation occurs (sandbox_exec that marks all files stale)
  *   - The sandbox is torn down / branch is switched
  *
- * Storage: IndexedDB via app-db (`symbol_ledger` store). In-memory Map for
- * synchronous fast-path lookups; IndexedDB is the durable backing store.
+ * Storage: standalone IndexedDB database (`push-symbol-ledger`, `symbols`
+ * store). In-memory Map for synchronous fast-path lookups; IndexedDB is the
+ * durable backing store.
  */
 
 import type { SandboxSymbol } from './sandbox-client';
@@ -19,9 +20,9 @@ import type { SandboxSymbol } from './sandbox-client';
 // ---------------------------------------------------------------------------
 
 export interface SymbolLedgerEntry {
-  /** Compound key: `${repoFullName}:${filePath}` */
+  /** Compound key: `${repo}:${branch}:${filePath}` */
   key: string;
-  /** Repository full name (owner/repo) or 'scratch' */
+  /** Repository full name (owner/repo) or 'scratch', includes branch */
   repo: string;
   /** Absolute file path in the sandbox (e.g. /workspace/src/lib/foo.ts) */
   filePath: string;
@@ -71,20 +72,6 @@ function openSymbolDb(): Promise<IDBDatabase> {
   });
 
   return dbPromise;
-}
-
-async function idbGet(key: string): Promise<SymbolLedgerEntry | undefined> {
-  try {
-    const db = await openSymbolDb();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const req = tx.objectStore(STORE_NAME).get(key);
-      tx.oncomplete = () => resolve(req.result as SymbolLedgerEntry | undefined);
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {
-    return undefined;
-  }
 }
 
 async function idbPut(entry: SymbolLedgerEntry): Promise<void> {
@@ -138,6 +125,24 @@ async function idbDeleteByRepo(repo: string): Promise<void> {
   }
 }
 
+async function idbDeleteKeys(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  try {
+    const db = await openSymbolDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      for (const key of keys) {
+        store.delete(key);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // Best-effort
+  }
+}
+
 async function idbGetAllForRepo(repo: string): Promise<SymbolLedgerEntry[]> {
   try {
     const db = await openSymbolDb();
@@ -159,6 +164,11 @@ async function idbGetAllForRepo(repo: string): Promise<SymbolLedgerEntry[]> {
 
 /** Maximum age for a cached entry before it's considered stale (1 hour). */
 const MAX_AGE_MS = 60 * 60 * 1000;
+
+/** Maximum files to include in the system prompt summary. */
+const MAX_SUMMARY_FILES = 200;
+/** Maximum characters for the summary body. */
+const MAX_SUMMARY_CHARS = 4000;
 
 export class SymbolPersistenceLedger {
   /** In-memory fast-path cache. */
@@ -187,20 +197,34 @@ export class SymbolPersistenceLedger {
   // Lifecycle
   // -----------------------------------------------------------------------
 
-  /** Set the active repo context. Call on repo selection / sandbox creation. */
+  /**
+   * Set the active repo+branch context. Call on repo selection / sandbox creation.
+   * Key format: `${repoFullName}:${branch}` or `'scratch'`.
+   */
   setRepo(repo: string): void {
     this.currentRepo = repo;
   }
 
-  /** Load all entries for the current repo from IndexedDB into the in-memory cache. */
+  /**
+   * Load all entries for the current repo from IndexedDB into the in-memory
+   * cache. Expired entries are deleted from IndexedDB during hydration to
+   * keep the persisted store bounded.
+   */
   async hydrate(): Promise<void> {
     if (!this.currentRepo) return;
     const entries = await idbGetAllForRepo(this.currentRepo);
     const now = Date.now();
+    const expiredKeys: string[] = [];
     for (const entry of entries) {
-      // Skip expired entries
-      if (now - entry.cachedAt > MAX_AGE_MS) continue;
+      if (now - entry.cachedAt > MAX_AGE_MS) {
+        expiredKeys.push(entry.key);
+        continue;
+      }
       this.cache.set(entry.key, entry);
+    }
+    // Compact expired entries from IndexedDB
+    if (expiredKeys.length > 0) {
+      void idbDeleteKeys(expiredKeys);
     }
   }
 
@@ -254,6 +278,7 @@ export class SymbolPersistenceLedger {
 
   /**
    * Cache symbols for a file. Called after a successful `sandbox_read_symbols`.
+   * Caches empty results too so files with no symbols don't keep hitting the sandbox.
    */
   store(filePath: string, symbols: SandboxSymbol[], totalLines: number): void {
     const path = this.normalizePath(filePath);
@@ -274,33 +299,37 @@ export class SymbolPersistenceLedger {
   // Invalidation
   // -----------------------------------------------------------------------
 
-  /** Invalidate a single file's cached symbols (on edit/write). */
+  /**
+   * Invalidate a single file's cached symbols (on edit/write).
+   * Always deletes from IndexedDB regardless of in-memory cache state,
+   * since hydrate() may not have completed yet.
+   */
   invalidate(filePath: string): void {
     const path = this.normalizePath(filePath);
     const key = this.makeKey(path);
     if (this.cache.has(key)) {
       this.cache.delete(key);
-      void idbDelete(key);
       this._metrics.invalidations++;
     }
+    // Always delete from IndexedDB — cache may not be fully hydrated
+    void idbDelete(key);
   }
 
   /**
    * Invalidate all cached symbols for the current repo.
    * Used after broad mutations (sandbox_exec, etc.).
+   * Always clears IndexedDB regardless of in-memory cache state.
    */
   invalidateAll(): void {
-    let count = 0;
+    if (!this.currentRepo) return;
     for (const [key, entry] of this.cache.entries()) {
       if (entry.repo === this.currentRepo) {
         this.cache.delete(key);
-        count++;
       }
     }
-    if (count > 0) {
-      this._metrics.bulkInvalidations++;
-      void idbDeleteByRepo(this.currentRepo);
-    }
+    this._metrics.bulkInvalidations++;
+    // Always clear IndexedDB — cache may not be fully hydrated
+    void idbDeleteByRepo(this.currentRepo);
   }
 
   // -----------------------------------------------------------------------
@@ -328,19 +357,37 @@ export class SymbolPersistenceLedger {
 
   /**
    * Get a summary of all cached files and their symbol counts.
-   * Useful for injecting into system prompts or working memory.
+   * Capped at MAX_SUMMARY_FILES / MAX_SUMMARY_CHARS to prevent prompt bloat.
    */
   getSummary(): string | null {
     const lines: string[] = [];
     const now = Date.now();
+    let bodyCharCount = 0;
+    let truncated = false;
+
     for (const entry of this.cache.values()) {
       if (entry.repo !== this.currentRepo) continue;
       if (now - entry.cachedAt > MAX_AGE_MS) continue;
+
+      if (lines.length >= MAX_SUMMARY_FILES) {
+        truncated = true;
+        break;
+      }
+
       const displayPath = entry.filePath.replace(/^\/workspace\//, '');
-      lines.push(`  ${displayPath}: ${entry.symbols.length} symbols (${entry.totalLines} lines)`);
+      const line = `  ${displayPath}: ${entry.symbols.length} symbols (${entry.totalLines} lines)`;
+
+      if (bodyCharCount + line.length + 1 > MAX_SUMMARY_CHARS) {
+        truncated = true;
+        break;
+      }
+
+      lines.push(line);
+      bodyCharCount += line.length + 1;
     }
+
     if (lines.length === 0) return null;
-    return `Symbol cache (${lines.length} files):\n${lines.join('\n')}`;
+    return `Symbol cache (${lines.length} files${truncated ? ', truncated' : ''}):\n${lines.join('\n')}`;
   }
 
   // -----------------------------------------------------------------------

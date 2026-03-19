@@ -123,8 +123,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           sessionStorageKeyRef.current = activeSessionStorageKey;
           setActiveSandboxEnvironment(saved.sandboxId);
           setStatus('ready');
-          // Hydrate the symbol persistence ledger on reconnect
-          symbolLedger.setRepo(saved.repoFullName || 'scratch');
+          // Hydrate the symbol persistence ledger scoped to repo+branch on reconnect
+          const symbolKey = saved.repoFullName ? `${saved.repoFullName}:${saved.branch || 'main'}` : 'scratch';
+          symbolLedger.setRepo(symbolKey);
           void symbolLedger.hydrate();
           // Fire-and-forget environment probe on reconnect
           probeSandboxEnvironment(saved.sandboxId).catch(() => {});
@@ -192,11 +193,12 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         setActiveSandboxEnvironment(session.sandboxId);
         setSandboxOwnerToken(session.ownerToken || null);
 
-        // Hydrate the symbol persistence ledger for this repo
-        symbolLedger.setRepo(repo || 'scratch');
-        void symbolLedger.hydrate();
-
         const normalizedBranch = branch || 'main';
+
+        // Hydrate the symbol persistence ledger scoped to repo+branch
+        const symbolRepoKey = repo ? `${repo}:${normalizedBranch}` : 'scratch';
+        symbolLedger.setRepo(symbolRepoKey);
+        void symbolLedger.hydrate();
         saveSandboxSession(repo, normalizedBranch, {
           sandboxId: session.sandboxId,
           ownerToken: session.ownerToken || '',
@@ -239,6 +241,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
     // Reset file awareness ledger, symbol cache, version cache, and environment — new sandbox = clean slate
     fileLedger.reset();
+    void symbolLedger.clearRepo();
     symbolLedger.reset();
     clearFileVersionCache(id);
     clearSandboxWorkspaceRevision(id);

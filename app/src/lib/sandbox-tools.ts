@@ -3158,10 +3158,9 @@ export async function executeSandboxToolCall(
             symbols = result.symbols;
             totalLines = result.totalLines;
 
-            // Cache the result in the symbol persistence ledger
-            if (symbols.length > 0) {
-              symbolLedger.store(filePath, result.symbols, totalLines);
-            }
+            // Cache the result in the symbol persistence ledger (including empty
+            // results so files with no symbols don't keep hitting the sandbox)
+            symbolLedger.store(filePath, result.symbols, totalLines);
           }
           const lang = ['py'].includes(ext) ? 'Python' : ['ts', 'tsx', 'js', 'jsx'].includes(ext) ? 'TypeScript/JavaScript' : ext;
 
