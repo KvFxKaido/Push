@@ -130,6 +130,7 @@ export default defineConfig({
   server: {
     fs: {
       allow: [
+        path.resolve(__dirname, '.'),
         path.resolve(__dirname, './src'),
         path.resolve(__dirname, '../lib'),
         path.resolve(__dirname, './node_modules'),
