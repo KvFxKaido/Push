@@ -25,6 +25,7 @@ import {
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet } from '@/lib/safe-storage';
 import { fileLedger } from '@/lib/file-awareness-ledger';
+import { symbolLedger } from '@/lib/symbol-persistence-ledger';
 import { clearFileVersionCache, clearSandboxWorkspaceRevision } from '@/lib/sandbox-file-version-cache';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 import {
@@ -122,6 +123,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           sessionStorageKeyRef.current = activeSessionStorageKey;
           setActiveSandboxEnvironment(saved.sandboxId);
           setStatus('ready');
+          // Hydrate the symbol persistence ledger scoped to repo+branch on reconnect
+          const symbolKey = saved.repoFullName ? `${saved.repoFullName}:${saved.branch || 'main'}` : 'scratch';
+          symbolLedger.setRepo(symbolKey);
+          void symbolLedger.hydrate();
           // Fire-and-forget environment probe on reconnect
           probeSandboxEnvironment(saved.sandboxId).catch(() => {});
           console.log('[useSandbox] Reconnected to saved sandbox:', saved.sandboxId);
@@ -189,6 +194,11 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         setSandboxOwnerToken(session.ownerToken || null);
 
         const normalizedBranch = branch || 'main';
+
+        // Hydrate the symbol persistence ledger scoped to repo+branch
+        const symbolRepoKey = repo ? `${repo}:${normalizedBranch}` : 'scratch';
+        symbolLedger.setRepo(symbolRepoKey);
+        void symbolLedger.hydrate();
         saveSandboxSession(repo, normalizedBranch, {
           sandboxId: session.sandboxId,
           ownerToken: session.ownerToken || '',
@@ -229,8 +239,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       clearTrackedSession(sessionStorageKey, id);
     }
 
-    // Reset file awareness ledger, version cache, and environment — new sandbox = clean slate
+    // Reset file awareness ledger, symbol cache, version cache, and environment — new sandbox = clean slate
     fileLedger.reset();
+    void symbolLedger.clearRepo();
+    symbolLedger.reset();
     clearFileVersionCache(id);
     clearSandboxWorkspaceRevision(id);
     clearSandboxEnvironment(id);

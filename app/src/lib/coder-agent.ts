@@ -20,6 +20,7 @@ import { detectSandboxToolCall, executeSandboxToolCall, getSandboxToolProtocol }
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { detectAllToolCalls } from './tool-dispatch';
 import { fileLedger } from './file-awareness-ledger';
+import { symbolLedger } from './symbol-persistence-ledger';
 import { detectToolFromText, asRecord, streamWithTimeout } from './utils';
 import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
 import { buildContextSummaryBlock } from './context-compaction';
@@ -783,6 +784,12 @@ export async function runCoderAgent(
     const bc = effectiveDelegationContext.branchContext;
     systemPrompt += `\n\n[WORKSPACE CONTEXT]\nActive branch: ${bc.activeBranch}\nDefault branch: ${bc.defaultBranch}\nProtect main: ${bc.protectMain ? 'on' : 'off'}`;
   }
+  // Inject symbol cache summary so the Coder knows what's already been mapped
+  const symbolSummary = symbolLedger.getSummary();
+  if (symbolSummary) {
+    systemPrompt += `\n\n[SYMBOL_CACHE]\n${symbolSummary}\nUse sandbox_read_symbols on cached files to get instant results (no sandbox round-trip).\n[/SYMBOL_CACHE]`;
+  }
+
   // Web search tool — prompt-engineered, all providers use client-side dispatch
   systemPrompt += '\n' + WEB_SEARCH_TOOL_PROTOCOL;
   if (import.meta.env.DEV) _promptSizes.websearch = WEB_SEARCH_TOOL_PROTOCOL.length;

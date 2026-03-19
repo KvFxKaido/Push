@@ -35,6 +35,7 @@ import {
   buildUnimplementedToolErrorText,
 } from './tool-call-recovery';
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
+import { symbolLedger } from './symbol-persistence-ledger';
 
 const MAX_EXPLORER_ROUNDS = 10;
 const EXPLORER_ROUND_TIMEOUT_MS = 60_000;
@@ -220,6 +221,12 @@ export async function runExplorerAgent(
   if (envelope.branchContext) {
     const branch = envelope.branchContext;
     systemPrompt += `\n\n[WORKSPACE CONTEXT]\nActive branch: ${branch.activeBranch}\nDefault branch: ${branch.defaultBranch}\nProtect main: ${branch.protectMain ? 'on' : 'off'}`;
+  }
+
+  // Inject symbol cache summary so the Explorer knows what's already been mapped
+  const symbolSummary = symbolLedger.getSummary();
+  if (symbolSummary) {
+    systemPrompt += `\n\n[SYMBOL_CACHE]\n${symbolSummary}\nUse sandbox_read_symbols on cached files to get instant results (no sandbox round-trip).\n[/SYMBOL_CACHE]`;
   }
 
   const messages: ChatMessage[] = [
