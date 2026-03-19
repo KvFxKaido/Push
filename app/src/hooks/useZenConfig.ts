@@ -31,3 +31,4 @@ export function useZenConfig() {
   }, [setModel, config.model]);
 
   return { ...config, setModel, goMode, setGoMode };
+}
