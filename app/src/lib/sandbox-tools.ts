@@ -41,6 +41,7 @@ import { runAuditor } from './auditor-agent';
 import { parseDiffStats } from './diff-utils';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger, extractSignatures, extractSignaturesWithLines, type SymbolRead, type SymbolKind } from './file-awareness-ledger';
+import { symbolLedger } from './symbol-persistence-ledger';
 import { applyHashlineEdits, calculateLineHash, type HashlineOp } from "./hashline";
 import {
   filterSensitiveDirectoryEntries,
@@ -222,6 +223,7 @@ function invalidateWorkspaceSnapshots(sandboxId: string, currentWorkspaceRevisio
   }
   clearFileVersionCache(sandboxId);
   clearPrefetchedEditFileCache(sandboxId);
+  symbolLedger.invalidateAll();
   return fileLedger.markAllStale();
 }
 
@@ -886,6 +888,7 @@ function recordPatchsetStaleConflict(
     versionCacheDelete(cacheKey);
   }
   fileLedger.markStale(path);
+  symbolLedger.invalidate(path);
   const expected = expectedVersion || 'unknown';
   const current = currentVersion || 'missing';
   return `${path}: stale write rejected (expected=${expected} current=${current})`;
@@ -1904,6 +1907,7 @@ export async function executeSandboxToolCall(
               versionCacheDelete(editCacheKey);
             }
             fileLedger.markStale(path);
+            symbolLedger.invalidate(path);
             const expected = editWriteResult.expected_version || editWriteVersion || 'unknown';
             const current = editWriteResult.current_version || 'missing';
             const staleErr: StructuredToolError = {
@@ -1933,6 +1937,7 @@ export async function executeSandboxToolCall(
         }
         fileLedger.recordCreation(path);
         fileLedger.recordMutation(path, 'agent');
+        symbolLedger.invalidate(path);
 
         // 4. Get the diff hunks for this file
         const escapedPath = path.replace(/'/g, "'\\''");
@@ -2271,6 +2276,7 @@ export async function executeSandboxToolCall(
               if (errMsg.includes('no such file') || errMsg.includes('not found') || errMsg.includes('does not exist')) {
                 fileLedger.recordCreation(call.args.path);
                 fileLedger.recordMutation(call.args.path, 'agent');
+                symbolLedger.invalidate(call.args.path);
                 fileLedger.recordAutoExpandSuccess();
                 console.debug(`[edit-guard] File "${call.args.path}" does not exist — allowing new file creation.`);
               } else {
@@ -2362,6 +2368,7 @@ export async function executeSandboxToolCall(
                 versionCacheDelete(cacheKey);
               }
               fileLedger.markStale(call.args.path);
+              symbolLedger.invalidate(call.args.path);
               recordWriteFileMetric({
                 durationMs: Date.now() - writeStart,
                 outcome: 'stale',
@@ -2427,6 +2434,7 @@ export async function executeSandboxToolCall(
           // Record successful write — model now "owns" this file content
           fileLedger.recordCreation(call.args.path);
           fileLedger.recordMutation(call.args.path, 'agent');
+          symbolLedger.invalidate(call.args.path);
 
           recordWriteFileMetric({
             durationMs: Date.now() - writeStart,
@@ -3137,7 +3145,24 @@ export async function executeSandboxToolCall(
         const ext = filePath.split('.').pop()?.toLowerCase() || '';
 
         try {
-          const { symbols, totalLines } = await readSymbolsFromSandbox(sandboxId, filePath);
+          // Check the symbol persistence ledger first (cache-first read)
+          const cached = symbolLedger.lookup(filePath);
+          let symbols: { name: string; kind: string; line: number; signature: string }[];
+          let totalLines: number;
+
+          if (cached) {
+            symbols = cached.symbols;
+            totalLines = cached.totalLines;
+          } else {
+            const result = await readSymbolsFromSandbox(sandboxId, filePath);
+            symbols = result.symbols;
+            totalLines = result.totalLines;
+
+            // Cache the result in the symbol persistence ledger
+            if (symbols.length > 0) {
+              symbolLedger.store(filePath, result.symbols, totalLines);
+            }
+          }
           const lang = ['py'].includes(ext) ? 'Python' : ['ts', 'tsx', 'js', 'jsx'].includes(ext) ? 'TypeScript/JavaScript' : ext;
 
           // Record symbol reads in the ledger so edit guards can verify coverage
@@ -3587,6 +3612,7 @@ export async function executeSandboxToolCall(
               }
               fileLedger.recordCreation(entry.path);
               fileLedger.recordMutation(entry.path, 'agent');
+              symbolLedger.invalidate(entry.path);
               writeResults.push(`${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`);
             } else {
               if (entry.code === 'STALE_FILE') {
@@ -3661,6 +3687,7 @@ export async function executeSandboxToolCall(
                 }
                 fileLedger.recordCreation(r.path);
                 fileLedger.recordMutation(r.path, 'agent');
+                symbolLedger.invalidate(r.path);
                 writeResults.push(`${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`);
               }
             } catch (e) {
