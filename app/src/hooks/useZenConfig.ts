@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { ZEN_DEFAULT_MODEL, ZEN_GO_MODELS, getZenGoMode, setZenGoMode as persistZenGoMode } from '@/lib/providers';
+import { ZEN_DEFAULT_MODEL, ZEN_MODELS, ZEN_GO_MODELS, getZenGoMode, setZenGoMode as persistZenGoMode } from '@/lib/providers';
 import { createModelProviderConfig } from './useApiKeyConfig';
 
 const KEY_STORAGE = 'zen_api_key';
@@ -24,7 +24,7 @@ export function useZenConfig() {
     // Only swap the model if the current one is incompatible with the
     // target tier — avoids silently overwriting an explicit user choice.
     const currentModel = config.model;
-    const compatibleWithTarget = enabled ? ZEN_GO_MODELS : [ZEN_DEFAULT_MODEL];
+    const compatibleWithTarget = enabled ? ZEN_GO_MODELS : ZEN_MODELS;
     if (!compatibleWithTarget.includes(currentModel)) {
       setModel(enabled ? ZEN_GO_MODELS[0] : ZEN_DEFAULT_MODEL);
     }

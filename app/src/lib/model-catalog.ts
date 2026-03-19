@@ -86,18 +86,18 @@ const OLLAMA_PRIORITY_MODELS = [
   'minimax-m2.5',
 ] as const;
 const OPENCODE_PRIORITY_MODELS = [
-  'gpt-5.3-codex',
-  'gpt-5.2-codex',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.2-codex',
   'claude-sonnet-4-6',
   'claude-opus-4-6',
   'gemini-3.1-pro',
   'gemini-3-flash',
-  'gpt-5.4',
-  'gpt-5.4-pro',
+  'openai/gpt-5.4',
+  'openai/gpt-5.4-pro',
   'qwen3-coder',
   'kimi-k2.5',
   'glm-5',
-  'gpt-5.1-codex-mini',
+  'openai/gpt-5.1-codex-mini',
 ] as const;
 
 export interface OpenRouterCatalogModel {
