@@ -7,7 +7,14 @@
  * to the correct implementation.
  */
 
-import type { ToolExecutionResult, AcceptanceCriterion, StructuredToolError, ToolHookContext } from '@/types';
+import type {
+  ToolExecutionResult,
+  AcceptanceCriterion,
+  StructuredToolError,
+  ToolHookContext,
+  CoderDelegationArgs,
+  ExplorerDelegationArgs,
+} from '@/types';
 import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, type SandboxToolCall } from './sandbox-tools';
@@ -209,7 +216,7 @@ function normalizeJsonValue(value: unknown): unknown {
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
-  | { source: 'delegate'; call: { tool: 'delegate_coder' | 'delegate_explorer'; args: { task?: string; tasks?: string[]; files?: string[]; acceptanceCriteria?: AcceptanceCriterion[]; intent?: string; constraints?: string[] } } }
+  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: CoderDelegationArgs } | { tool: 'delegate_explorer'; args: ExplorerDelegationArgs } }
   | { source: 'scratchpad'; call: ScratchpadToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall };
@@ -984,6 +991,10 @@ function detectDelegationTool(text: string): AnyToolCall | null {
     const tasks = Array.isArray(args?.tasks) ? args.tasks.filter((v): v is string => typeof v === 'string') : undefined;
     const files = Array.isArray(args?.files) ? args.files.filter((v): v is string => typeof v === 'string') : undefined;
     const intent = typeof args?.intent === 'string' ? args.intent : undefined;
+    const deliverable = typeof args?.deliverable === 'string' ? args.deliverable : undefined;
+    const knownContext = Array.isArray(args?.knownContext)
+      ? args.knownContext.filter((v): v is string => typeof v === 'string')
+      : undefined;
     const constraints = Array.isArray(args?.constraints) ? args.constraints.filter((v): v is string => typeof v === 'string') : undefined;
     // Parse acceptance criteria if provided
     let acceptanceCriteria: AcceptanceCriterion[] | undefined;
@@ -1002,13 +1013,35 @@ function detectDelegationTool(text: string): AnyToolCall | null {
     if (toolName === 'delegate_coder' && (task || (tasks && tasks.length > 0))) {
       return {
         source: 'delegate',
-        call: { tool: 'delegate_coder', args: { task, tasks, files, acceptanceCriteria, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } },
+        call: {
+          tool: 'delegate_coder',
+          args: {
+            task,
+            tasks,
+            files,
+            acceptanceCriteria,
+            intent,
+            deliverable,
+            knownContext: knownContext && knownContext.length > 0 ? knownContext : undefined,
+            constraints: constraints && constraints.length > 0 ? constraints : undefined,
+          },
+        },
       };
     }
     if (toolName === 'delegate_explorer' && task) {
       return {
         source: 'delegate',
-        call: { tool: 'delegate_explorer', args: { task, files, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } },
+        call: {
+          tool: 'delegate_explorer',
+          args: {
+            task,
+            files,
+            intent,
+            deliverable,
+            knownContext: knownContext && knownContext.length > 0 ? knownContext : undefined,
+            constraints: constraints && constraints.length > 0 ? constraints : undefined,
+          },
+        },
       };
     }
     return null;

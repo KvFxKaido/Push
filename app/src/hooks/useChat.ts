@@ -23,7 +23,7 @@ import type {
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
-import { runCoderAgent, generateCheckpointAnswer } from '@/lib/coder-agent';
+import { runCoderAgent, generateCheckpointAnswer, summarizeCoderStateForHandoff } from '@/lib/coder-agent';
 import { runExplorerAgent } from '@/lib/explorer-agent';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import {
@@ -1690,6 +1690,8 @@ export function useChat(
                       task: explorerTask,
                       files: toolCall.call.args.files || [],
                       intent: toolCall.call.args.intent,
+                      deliverable: toolCall.call.args.deliverable,
+                      knownContext: toolCall.call.args.knownContext,
                       constraints: toolCall.call.args.constraints,
                       branchContext: branchInfoRef.current?.currentBranch ? {
                         activeBranch: branchInfoRef.current.currentBranch,
@@ -1773,9 +1775,17 @@ export function useChat(
                           { chatId, source: 'coder' },
                         );
 
+                        const stateSummary = summarizeCoderStateForHandoff(lastCoderStateRef.current);
+                        const checkpointContext = [
+                          context.trim(),
+                          stateSummary ? `Latest coder state:\n${stateSummary}` : null,
+                        ]
+                          .filter((value): value is string => Boolean(value && value.trim()))
+                          .join('\n\n');
+
                         const answer = await generateCheckpointAnswer(
                           question,
-                          context,
+                          checkpointContext,
                           apiMessages.slice(-6), // recent chat for user intent context
                           abortControllerRef.current?.signal,
                           lockedProviderForChat,
@@ -1814,6 +1824,8 @@ export function useChat(
                         resolvedModelForChat || undefined,
                         {
                           intent: delegateArgs.intent,
+                          deliverable: delegateArgs.deliverable,
+                          knownContext: delegateArgs.knownContext,
                           constraints: delegateArgs.constraints,
                           branchContext: seqBi?.currentBranch ? {
                             activeBranch: seqBi.currentBranch,

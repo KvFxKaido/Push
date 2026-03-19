@@ -744,12 +744,28 @@ export interface PreCompactEvent {
  * Captures the task spec and context — runtime plumbing (callbacks, signals)
  * lives in CoderCallbacks.
  */
-export interface DelegationEnvelope {
+export interface DelegationBriefFields {
+  files?: string[];
+  intent?: string;
+  deliverable?: string;
+  knownContext?: string[];
+  constraints?: string[];
+}
+
+export interface CoderDelegationArgs extends DelegationBriefFields {
+  task?: string;
+  tasks?: string[];
+  acceptanceCriteria?: AcceptanceCriterion[];
+}
+
+export interface ExplorerDelegationArgs extends DelegationBriefFields {
+  task?: string;
+}
+
+export interface DelegationEnvelope extends DelegationBriefFields {
   task: string;
   files: string[];
   acceptanceCriteria?: AcceptanceCriterion[];
-  intent?: string;
-  constraints?: string[];
   branchContext?: {
     activeBranch: string;
     defaultBranch: string;
@@ -782,11 +798,9 @@ export interface CoderResult {
   criteriaResults?: CriterionResult[];
 }
 
-export interface ExplorerDelegationEnvelope {
+export interface ExplorerDelegationEnvelope extends DelegationBriefFields {
   task: string;
   files: string[];
-  intent?: string;
-  constraints?: string[];
   branchContext?: {
     activeBranch: string;
     defaultBranch: string;

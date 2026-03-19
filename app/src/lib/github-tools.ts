@@ -6,7 +6,28 @@
  * result back into the conversation as a synthetic message.
  */
 
-import type { ToolExecutionResult, PRCardData, PRListCardData, CommitListCardData, BranchListCardData, FileListCardData, CICheck, CIOverallStatus, CIStatusCardData, FileSearchCardData, FileSearchMatch, CommitFilesCardData, WorkflowRunItem, WorkflowRunsCardData, WorkflowJob, WorkflowLogsCardData, ReviewResult, AcceptanceCriterion } from '@/types';
+import type {
+  ToolExecutionResult,
+  PRCardData,
+  PRListCardData,
+  CommitListCardData,
+  BranchListCardData,
+  FileListCardData,
+  CICheck,
+  CIOverallStatus,
+  CIStatusCardData,
+  FileSearchCardData,
+  FileSearchMatch,
+  CommitFilesCardData,
+  WorkflowRunItem,
+  WorkflowRunsCardData,
+  WorkflowJob,
+  WorkflowLogsCardData,
+  ReviewResult,
+  AcceptanceCriterion,
+  CoderDelegationArgs,
+  ExplorerDelegationArgs,
+} from '@/types';
 import { asRecord, detectToolFromText } from './utils';
 import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
 import {
@@ -33,8 +54,8 @@ export type ToolCall =
   | { tool: 'grep_file'; args: { repo: string; path: string; pattern: string; branch?: string } }
   | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string } }
-  | { tool: 'delegate_coder'; args: { task?: string; tasks?: string[]; files?: string[]; acceptanceCriteria?: AcceptanceCriterion[]; intent?: string; constraints?: string[] } }
-  | { tool: 'delegate_explorer'; args: { task?: string; files?: string[]; intent?: string; constraints?: string[] } }
+  | { tool: 'delegate_coder'; args: CoderDelegationArgs }
+  | { tool: 'delegate_explorer'; args: ExplorerDelegationArgs }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
   | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } }
   | { tool: 'list_commit_files'; args: { repo: string; ref: string } }
@@ -334,6 +355,8 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     const tasks = asStringArray(args.tasks);
     const files = asStringArray(args.files);
     const intent = asString(args.intent);
+    const deliverable = asString(args.deliverable);
+    const knownContext = asStringArray(args.knownContext);
     const constraints = asStringArray(args.constraints);
     let acceptanceCriteria: AcceptanceCriterion[] | undefined;
     if (Array.isArray(args.acceptanceCriteria)) {
@@ -349,16 +372,40 @@ function validateToolCall(parsed: unknown): ToolCall | null {
       if (acceptanceCriteria.length === 0) acceptanceCriteria = undefined;
     }
     if (task || (tasks && tasks.length > 0)) {
-      return { tool: 'delegate_coder', args: { task, tasks, files, acceptanceCriteria, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } };
+      return {
+        tool: 'delegate_coder',
+        args: {
+          task,
+          tasks,
+          files,
+          acceptanceCriteria,
+          intent,
+          deliverable,
+          knownContext: knownContext && knownContext.length > 0 ? knownContext : undefined,
+          constraints: constraints && constraints.length > 0 ? constraints : undefined,
+        },
+      };
     }
   }
   if (tool === 'delegate_explorer') {
     const task = asString(args.task);
     const files = asStringArray(args.files);
     const intent = asString(args.intent);
+    const deliverable = asString(args.deliverable);
+    const knownContext = asStringArray(args.knownContext);
     const constraints = asStringArray(args.constraints);
     if (task) {
-      return { tool: 'delegate_explorer', args: { task, files, intent, constraints: constraints && constraints.length > 0 ? constraints : undefined } };
+      return {
+        tool: 'delegate_explorer',
+        args: {
+          task,
+          files,
+          intent,
+          deliverable,
+          knownContext: knownContext && knownContext.length > 0 ? knownContext : undefined,
+          constraints: constraints && constraints.length > 0 ? constraints : undefined,
+        },
+      };
     }
   }
   if (tool === 'fetch_checks' && repo) {
@@ -2667,6 +2714,9 @@ Rules:
 - For "diagnose CI" or "fix CI failures": call ${GET_WORKFLOW_RUNS_TOOL} first to find the failed run, then ${GET_WORKFLOW_LOGS_TOOL} with the run_id before delegating to ${DELEGATE_CODER_TOOL}.
 - For multiple independent coding tasks in one request, use ${DELEGATE_CODER_TOOL} with "tasks": ["task 1", "task 2", ...]
 - LOOK-BEFORE-YOU-LEAP: For architecture tracing, "where does this flow live?", or "help me understand this area" requests, ALWAYS prefer ${DELEGATE_EXPLORER_TOOL} before ${DELEGATE_CODER_TOOL}.
+- Delegation quality matters: include "files" for paths you've already read, "knownContext" for validated facts you've already learned, and "deliverable" when the expected output/end state is specific.
+- For ${DELEGATE_CODER_TOOL}, include "acceptanceCriteria" when success can be checked by commands.
+- Do not use "knownContext" for guesses or hunches. If you have not verified it, leave it out.
 - Branch creation is UI-owned. If the user wants a new branch, tell them to use the Create branch action in Home or the branch menu instead of calling a tool.
 - For "open a PR" or "submit changes" use ${FIND_EXISTING_PR_TOOL} first to check for duplicates, then ${CREATE_PR_TOOL}.
 - For "merge this PR" use ${CHECK_PR_MERGEABLE_TOOL} first to verify it's safe, then ${MERGE_PR_TOOL}.

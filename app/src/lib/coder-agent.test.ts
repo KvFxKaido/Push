@@ -7,6 +7,7 @@ import {
   formatCoderStateDiff,
   invalidateObservationDependencies,
   normalizeTrimmedRoleAlternation,
+  summarizeCoderStateForHandoff,
 } from './coder-agent';
 
 function msg(
@@ -259,5 +260,31 @@ describe('coder working memory observations', () => {
     const diff = formatCoderStateDiff(current, previous, 3);
 
     expect(diff).toContain('[STALE — app/src/foo.ts was modified at round 3] adapter-pattern: Adapter lives in app/src/foo.ts');
+  });
+});
+
+describe('summarizeCoderStateForHandoff', () => {
+  it('builds a compact plain-text snapshot for checkpoint guidance', () => {
+    const summary = summarizeCoderStateForHandoff({
+      plan: 'Trace auth refresh, patch bug, run tests',
+      currentPhase: 'Verifying',
+      openTasks: ['rerun the auth suite'],
+      filesTouched: ['app/src/auth.ts'],
+      errorsEncountered: ['Initial auth test failed with stale session state'],
+      observations: [
+        {
+          id: 'refresh-trigger',
+          text: 'Refresh begins in app/src/auth.ts after the session expiry check',
+          addedAtRound: 2,
+        },
+      ],
+    });
+
+    expect(summary).toContain('Plan: Trace auth refresh, patch bug, run tests');
+    expect(summary).toContain('Current phase: Verifying');
+    expect(summary).toContain('Open tasks: rerun the auth suite');
+    expect(summary).toContain('Files touched: app/src/auth.ts');
+    expect(summary).toContain('Key observations:');
+    expect(summary).not.toContain('[CODER_STATE]');
   });
 });

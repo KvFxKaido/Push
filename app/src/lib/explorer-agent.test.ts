@@ -62,6 +62,9 @@ describe('buildExplorerSystemPrompt', () => {
     expect(prompt).toContain('read');
     expect(prompt).toContain('web');
     expect(prompt).toContain('You may use only these read-only tools');
+    expect(prompt).toContain('Default workflow');
+    expect(prompt).toContain('Recommended next step');
+    expect(prompt).toContain('name the next actor');
     expect(prompt).toContain('Do NOT call coder, explorer');
     expect(prompt).not.toContain('{"tool": "exec"');
     expect(prompt).not.toContain('{"tool": "coder"');

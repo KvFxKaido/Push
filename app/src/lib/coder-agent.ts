@@ -25,6 +25,7 @@ import { detectToolFromText, asRecord, streamWithTimeout } from './utils';
 import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
 import { buildContextSummaryBlock } from './context-compaction';
 import { getToolPublicName } from './tool-registry';
+import { buildCoderDelegationBrief } from './role-context';
 
 const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — resets on each token)
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
@@ -505,6 +506,25 @@ export function formatCoderStateDiff(
   return ['[CODER_STATE delta]', ...diffs, '[/CODER_STATE]'].join('\n');
 }
 
+export function summarizeCoderStateForHandoff(mem: CoderWorkingMemory | null | undefined): string {
+  if (!mem) return '';
+
+  const lines: string[] = [];
+  if (mem.plan) lines.push(`Plan: ${mem.plan}`);
+  if (mem.currentPhase) lines.push(`Current phase: ${mem.currentPhase}`);
+  if (mem.openTasks?.length) lines.push(`Open tasks: ${mem.openTasks.join('; ')}`);
+  if (mem.filesTouched?.length) lines.push(`Files touched: ${mem.filesTouched.join(', ')}`);
+  if (mem.errorsEncountered?.length) lines.push(`Recent errors: ${mem.errorsEncountered.join('; ')}`);
+
+  const observations = getVisibleObservations(mem.observations, 0).slice(0, 3);
+  if (observations.length > 0) {
+    lines.push('Key observations:');
+    lines.push(...observations.map((observation) => `- ${observation.text}`));
+  }
+
+  return lines.join('\n');
+}
+
 /**
  * Generate a checkpoint answer from the Orchestrator's perspective.
  * Makes a focused LLM call using the active provider to answer the Coder's question,
@@ -529,19 +549,33 @@ export async function generateCheckpointAnswer(
 
   const checkpointSystemPrompt = `You are the Orchestrator agent for Push, answering a question from the Coder agent who has paused mid-task.
 
+Goal:
+- Unblock the Coder quickly with the smallest high-confidence decision or next step.
+
 Rules:
-- Give a direct, actionable answer to unblock the Coder
-- If the Coder is stuck on an error, suggest specific debugging steps or workarounds
-- If the Coder can't find a file, suggest where to look or alternative approaches
-- If the task is ambiguous, clarify the intent based on the user's original request
-- Keep your response under 300 words — the Coder needs quick guidance, not an essay
-- Do NOT emit tool calls — your response goes directly back to the Coder as text`;
+- Give a direct, actionable answer grounded in the user's request and the Coder's context.
+- Prefer telling the Coder what to do next over restating the problem.
+- If the Coder is stuck on an error, suggest concrete debugging steps or a safer fallback.
+- If the task is ambiguous, resolve the ambiguity from chat context when possible; if not possible, say exactly what remains ambiguous.
+- Keep your response under 220 words.
+- Do NOT emit tool calls — your response goes directly back to the Coder as text.
+
+Respond using this compact structure:
+Decision: [the call the Coder should make]
+Why: [1-2 sentences]
+Next steps:
+- [step 1]
+- [step 2]
+Avoid:
+- [common mistake or dead end to skip]
+
+If the answer is genuinely uncertain, say so plainly in Decision and give the safest next step.`;
 
   const messages: ChatMessage[] = [];
 
   // Include recent chat history for user intent context (trimmed)
   if (recentChatHistory) {
-    for (const msg of recentChatHistory.slice(-4)) {
+    for (const msg of recentChatHistory.slice(-6)) {
       messages.push({
         id: msg.id,
         role: msg.role,
@@ -645,6 +679,19 @@ Rules:
   **Verified:** [tests/types run and result, or "not run"]
   **Open:** [anything incomplete or requiring user attention, or "nothing"]
 
+Execution loop:
+1. Read the delegation brief carefully. Lock onto the task, deliverable, known context, and constraints before acting.
+2. Discover cheaply first: use list/search/symbol tools before broad file reads whenever possible.
+3. Read only the files/sections needed to make a safe change. If known context points to a location, verify it before editing.
+4. Update working memory after discovery so your current plan, files touched, and open risks stay visible across context trimming.
+5. Make the smallest change that satisfies the deliverable, then verify with the narrowest useful tests/types/build checks.
+6. Before finishing, check your diff, summarize what is done, and say exactly what remains if anything is still open.
+
+Handoff discipline:
+- Treat "Known context" as a head start, not as proof. Confirm it in code before relying on it for edits.
+- Treat "Deliverable" as the success target. If the deliverable changes, say so explicitly in **Open**.
+- If you use a checkpoint, state what you tried, what blocked you, and what decision you need from the Orchestrator.
+
 Sandbox Lifecycle:
 - The sandbox expires after 30 minutes. Use ${getToolPublicName('sandbox_save_draft')} only when you explicitly want a remote WIP checkpoint (e.g. before a risky refactor, or if you suspect time is running low) — not automatically after every phase. It switches branches and pushes unaudited; use it intentionally.
 - If you hit SANDBOX_UNREACHABLE mid-task, the session likely expired. Note this in your summary so the Orchestrator can inform the user.
@@ -692,6 +739,8 @@ export async function runCoderAgent(
   modelOverride?: string,
   delegationContext?: {
     intent?: string;
+    deliverable?: string;
+    knownContext?: string[];
     constraints?: string[];
     branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
     instructionFilename?: string;
@@ -726,6 +775,8 @@ export async function runCoderAgent(
     effectiveModelOverride = envelope.model;
     effectiveDelegationContext = {
       intent: envelope.intent,
+      deliverable: envelope.deliverable,
+      knownContext: envelope.knownContext,
       constraints: envelope.constraints,
       branchContext: envelope.branchContext,
       instructionFilename: envelope.instructionFilename,
@@ -817,16 +868,17 @@ export async function runCoderAgent(
   let consecutiveDriftRounds = 0; // count rounds of cognitive drift
 
   // Build initial messages — include intent/constraints from structured delegation brief (Item 1B)
-  let taskPreamble = `Task: ${task}`;
-  if (effectiveDelegationContext?.intent) {
-    taskPreamble += `\n\nIntent: ${effectiveDelegationContext.intent}`;
-  }
-  if (effectiveDelegationContext?.constraints && effectiveDelegationContext.constraints.length > 0) {
-    taskPreamble += `\n\nConstraints:\n${effectiveDelegationContext.constraints.map(c => `- ${c}`).join('\n')}`;
-  }
-  if (files.length > 0) {
-    taskPreamble += `\n\nRelevant files: ${files.join(', ')}`;
-  }
+  const taskPreamble = buildCoderDelegationBrief({
+    task,
+    files,
+    acceptanceCriteria: effectiveAcceptanceCriteria,
+    intent: effectiveDelegationContext?.intent,
+    deliverable: effectiveDelegationContext?.deliverable,
+    knownContext: effectiveDelegationContext?.knownContext,
+    constraints: effectiveDelegationContext?.constraints,
+    provider: activeProvider,
+    model: coderModelId,
+  });
   const messages: ChatMessage[] = [
     {
       id: 'coder-task',
