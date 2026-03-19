@@ -402,7 +402,7 @@ describe('buildCuratedOpencodeModelList', () => {
   it('prefers priority chat models and excludes image-output or embedding models', () => {
     const curated = buildCuratedOpencodeModelList(
       [
-        'gpt-5.3-codex',
+        'openai/gpt-5.3-codex',
         'claude-sonnet-4-6',
         'gemini-3.1-pro',
         'qwen3-coder',
@@ -410,8 +410,8 @@ describe('buildCuratedOpencodeModelList', () => {
         'gpt-image-1',
       ],
       {
-        'gpt-5.3-codex': {
-          id: 'gpt-5.3-codex',
+        'openai/gpt-5.3-codex': {
+          id: 'openai/gpt-5.3-codex',
           attachment: true,
           reasoning: true,
           toolCall: true,
@@ -479,7 +479,7 @@ describe('buildCuratedOpencodeModelList', () => {
       },
     );
 
-    expect(curated[0]).toBe('gpt-5.3-codex');
+    expect(curated[0]).toBe('openai/gpt-5.3-codex');
     expect(curated).toContain('claude-sonnet-4-6');
     expect(curated).toContain('gemini-3.1-pro');
     expect(curated).toContain('qwen3-coder');
