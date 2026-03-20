@@ -516,7 +516,9 @@ export function summarizeCoderStateForHandoff(mem: CoderWorkingMemory | null | u
   if (mem.filesTouched?.length) lines.push(`Files touched: ${mem.filesTouched.join(', ')}`);
   if (mem.errorsEncountered?.length) lines.push(`Recent errors: ${mem.errorsEncountered.join('; ')}`);
 
-  const observations = getVisibleObservations(mem.observations, 0).slice(0, 3);
+  const observations = (mem.observations || [])
+    .filter((observation) => !observation.stale)
+    .slice(-3);
   if (observations.length > 0) {
     lines.push('Key observations:');
     lines.push(...observations.map((observation) => `- ${observation.text}`));

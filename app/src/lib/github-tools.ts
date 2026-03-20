@@ -72,8 +72,19 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-function asStringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined;
+function asTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function asTrimmedStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const normalized = value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 /** Parse a positive integer arg (1-based line numbers). Returns undefined if absent, null if invalid. */
@@ -351,13 +362,13 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     return { tool: 'list_branches', args: { repo } };
   }
   if (tool === 'delegate_coder') {
-    const task = asString(args.task);
-    const tasks = asStringArray(args.tasks);
-    const files = asStringArray(args.files);
-    const intent = asString(args.intent);
-    const deliverable = asString(args.deliverable);
-    const knownContext = asStringArray(args.knownContext);
-    const constraints = asStringArray(args.constraints);
+    const task = asTrimmedString(args.task);
+    const tasks = asTrimmedStringArray(args.tasks);
+    const files = asTrimmedStringArray(args.files);
+    const intent = asTrimmedString(args.intent);
+    const deliverable = asTrimmedString(args.deliverable);
+    const knownContext = asTrimmedStringArray(args.knownContext);
+    const constraints = asTrimmedStringArray(args.constraints);
     let acceptanceCriteria: AcceptanceCriterion[] | undefined;
     if (Array.isArray(args.acceptanceCriteria)) {
       acceptanceCriteria = (args.acceptanceCriteria as unknown[]).filter((c): c is AcceptanceCriterion => {
@@ -388,12 +399,12 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     }
   }
   if (tool === 'delegate_explorer') {
-    const task = asString(args.task);
-    const files = asStringArray(args.files);
-    const intent = asString(args.intent);
-    const deliverable = asString(args.deliverable);
-    const knownContext = asStringArray(args.knownContext);
-    const constraints = asStringArray(args.constraints);
+    const task = asTrimmedString(args.task);
+    const files = asTrimmedStringArray(args.files);
+    const intent = asTrimmedString(args.intent);
+    const deliverable = asTrimmedString(args.deliverable);
+    const knownContext = asTrimmedStringArray(args.knownContext);
+    const constraints = asTrimmedStringArray(args.constraints);
     if (task) {
       return {
         tool: 'delegate_explorer',

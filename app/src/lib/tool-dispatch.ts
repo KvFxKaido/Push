@@ -54,6 +54,21 @@ export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set(
 
 export const MAX_PARALLEL_TOOL_CALLS = 6;
 
+function asTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function asTrimmedStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const normalized = value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 /** Check whether a tool call is read-only (safe for parallel execution). */
 export function isReadOnlyToolCall(toolCall: AnyToolCall): boolean {
   return isReadOnlyToolName(toolCall.call.tool);
@@ -987,15 +1002,13 @@ function detectDelegationTool(text: string): AnyToolCall | null {
     const parsedObj = asRecord(parsed);
     const toolName = typeof parsedObj?.tool === 'string' ? resolveToolName(parsedObj.tool) ?? parsedObj.tool : '';
     const args = asRecord(parsedObj?.args);
-    const task = typeof args?.task === 'string' ? args.task : undefined;
-    const tasks = Array.isArray(args?.tasks) ? args.tasks.filter((v): v is string => typeof v === 'string') : undefined;
-    const files = Array.isArray(args?.files) ? args.files.filter((v): v is string => typeof v === 'string') : undefined;
-    const intent = typeof args?.intent === 'string' ? args.intent : undefined;
-    const deliverable = typeof args?.deliverable === 'string' ? args.deliverable : undefined;
-    const knownContext = Array.isArray(args?.knownContext)
-      ? args.knownContext.filter((v): v is string => typeof v === 'string')
-      : undefined;
-    const constraints = Array.isArray(args?.constraints) ? args.constraints.filter((v): v is string => typeof v === 'string') : undefined;
+    const task = asTrimmedString(args?.task);
+    const tasks = asTrimmedStringArray(args?.tasks);
+    const files = asTrimmedStringArray(args?.files);
+    const intent = asTrimmedString(args?.intent);
+    const deliverable = asTrimmedString(args?.deliverable);
+    const knownContext = asTrimmedStringArray(args?.knownContext);
+    const constraints = asTrimmedStringArray(args?.constraints);
     // Parse acceptance criteria if provided
     let acceptanceCriteria: AcceptanceCriterion[] | undefined;
     if (Array.isArray(args?.acceptanceCriteria)) {

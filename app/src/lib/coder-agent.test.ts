@@ -287,4 +287,44 @@ describe('summarizeCoderStateForHandoff', () => {
     expect(summary).toContain('Key observations:');
     expect(summary).not.toContain('[CODER_STATE]');
   });
+
+  it('keeps only the most recent non-stale observations in the handoff summary', () => {
+    const summary = summarizeCoderStateForHandoff({
+      observations: [
+        {
+          id: 'stale-note',
+          text: 'Outdated stale observation',
+          stale: true,
+          staleAtRound: 3,
+          addedAtRound: 1,
+        },
+        {
+          id: 'old-fresh',
+          text: 'Older fresh observation',
+          addedAtRound: 2,
+        },
+        {
+          id: 'recent-1',
+          text: 'Recent observation 1',
+          addedAtRound: 4,
+        },
+        {
+          id: 'recent-2',
+          text: 'Recent observation 2',
+          addedAtRound: 5,
+        },
+        {
+          id: 'recent-3',
+          text: 'Recent observation 3',
+          addedAtRound: 6,
+        },
+      ],
+    });
+
+    expect(summary).not.toContain('Outdated stale observation');
+    expect(summary).not.toContain('Older fresh observation');
+    expect(summary).toContain('Recent observation 1');
+    expect(summary).toContain('Recent observation 2');
+    expect(summary).toContain('Recent observation 3');
+  });
 });

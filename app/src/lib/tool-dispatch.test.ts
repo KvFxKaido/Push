@@ -218,6 +218,22 @@ describe('detectAllToolCalls', () => {
     }
   });
 
+  it('trims delegation string fields and drops blank array entries', () => {
+    const text = '```json\n{"tool":"delegate_coder","args":{"task":"   ","tasks":["  inspect auth  ","   "],"files":[" src/auth.ts ",""],"intent":" tighten handoff flow ","deliverable":" a concise summary ","knownContext":[" existing note ","   "],"constraints":[" keep the API stable "," "]}}\n```';
+
+    const detected = detectAnyToolCall(text);
+    expect(detected?.source).toBe('delegate');
+    if (detected?.source === 'delegate' && detected.call.tool === 'delegate_coder') {
+      expect(detected.call.args.task).toBeUndefined();
+      expect(detected.call.args.tasks).toEqual(['inspect auth']);
+      expect(detected.call.args.files).toEqual(['src/auth.ts']);
+      expect(detected.call.args.intent).toBe('tighten handoff flow');
+      expect(detected.call.args.deliverable).toBe('a concise summary');
+      expect(detected.call.args.knownContext).toEqual(['existing note']);
+      expect(detected.call.args.constraints).toEqual(['keep the API stable']);
+    }
+  });
+
   it('detects mixed explicit + bare read-only calls in one response', () => {
     const text = [
       '{"tool":"search_files","args":{"repo":"KvFxKaido/Push","query":"async function runConfigInit","path":"scripts/push/cli.mjs"}}',
