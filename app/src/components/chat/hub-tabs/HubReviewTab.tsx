@@ -16,7 +16,7 @@ import {
   BEDROCK_DEFAULT_MODEL,
   VERTEX_DEFAULT_MODEL,
   type PreferredProvider,
-  getBlackboxModelDisplayName,
+  formatModelDisplayName,
 } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import {
@@ -869,7 +869,7 @@ export function HubReviewTab({
                   className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1 px-2.5 py-1.5`}
                 >
                   {modelOptionsForProvider.map((m) => (
-                    <option key={m} value={m}>{selectedProvider === 'blackbox' ? getBlackboxModelDisplayName(m) : m}</option>
+                    <option key={m} value={m}>{formatModelDisplayName(selectedProvider ?? 'ollama', m)}</option>
                   ))}
                   <option value="__custom__">Custom model…</option>
                 </select>

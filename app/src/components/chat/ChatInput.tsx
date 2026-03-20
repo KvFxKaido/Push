@@ -17,63 +17,52 @@ import {
   type ReasoningEffort,
 } from '@/lib/model-catalog';
 import type { AIProviderType, AttachmentData } from '@/types';
-import { getBlackboxModelDisplayName } from '@/lib/providers';
-
-/** Provider display names for optgroup labels */
-const OPTGROUP_LABELS: Record<string, string> = {
-  anthropic: 'Anthropic',
-  'arcee-ai': 'Arcee AI',
-  cohere: 'Cohere',
-  deepseek: 'DeepSeek',
-  google: 'Google',
-  'meta-llama': 'Meta',
-  minimax: 'MiniMax',
-  mistralai: 'Mistral',
-  moonshotai: 'Moonshot',
-  openai: 'OpenAI',
-  perplexity: 'Perplexity',
-  qwen: 'Qwen',
-  stepfun: 'StepFun',
-  'x-ai': 'xAI',
-  'z-ai': 'Zhipu',
-};
-
-function getProviderPrefix(modelId: string): string {
-  const slash = modelId.indexOf('/');
-  return slash > 0 ? modelId.slice(0, slash) : '';
-}
+import {
+  formatModelDisplayName,
+  getModelDisplayGroupKey,
+  getModelDisplayGroupLabel,
+  getModelDisplayLeafName,
+} from '@/lib/providers';
 
 /** Group model IDs by provider prefix and render as optgroups with capability hints. */
-function renderGroupedModelOptions(models: string[], provider: string) {
-  const groups: { prefix: string; label: string; models: string[] }[] = [];
-  let currentPrefix = '';
+function renderGroupedModelOptions(models: string[], provider: AIProviderType) {
+  const groups = new Map<string, { label: string | null; models: string[] }>();
 
   for (const model of models) {
-    const prefix = getProviderPrefix(model);
-    if (prefix !== currentPrefix) {
-      currentPrefix = prefix;
-      groups.push({
-        prefix,
-        label: OPTGROUP_LABELS[prefix] || prefix,
-        models: [],
-      });
+    const groupKey = getModelDisplayGroupKey(provider, model);
+    const mapKey = groupKey || '__ungrouped__';
+    const existing = groups.get(mapKey);
+    if (existing) {
+      existing.models.push(model);
+      continue;
     }
-    groups[groups.length - 1].models.push(model);
+    groups.set(mapKey, {
+      label: groupKey ? getModelDisplayGroupLabel(groupKey) : null,
+      models: [model],
+    });
   }
 
-  return groups.map((group) => (
-    <optgroup key={group.prefix} label={group.label}>
-      {group.models.map((model) => {
-        const hints = formatModelCapabilityHints(getModelCapabilities(provider, model));
-        const displayName = model.replace(/^[^/]+\//, '');
-        return (
-          <option key={model} value={model}>
-            {hints ? `${displayName}  ·  ${hints}` : displayName}
-          </option>
-        );
-      })}
-    </optgroup>
-  ));
+  return Array.from(groups.entries()).flatMap(([groupKey, group]) => {
+    const options = group.models.map((model) => {
+      const displayName = group.label
+        ? getModelDisplayLeafName(provider, model)
+        : formatModelDisplayName(provider, model);
+      const hints = formatModelCapabilityHints(getModelCapabilities(provider, model));
+      return (
+        <option key={model} value={model}>
+          {hints ? `${displayName}  ·  ${hints}` : displayName}
+        </option>
+      );
+    });
+
+    if (!group.label) return options;
+
+    return (
+      <optgroup key={groupKey} label={group.label}>
+        {options}
+      </optgroup>
+    );
+  });
 }
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
@@ -743,7 +732,7 @@ export function ChatInput({
                               const hints = model ? formatModelCapabilityHints(getModelCapabilities('ollama', model)) : '';
                               return (
                                 <option key={model || '__default'} value={model}>
-                                  {model ? (hints ? `${model}  ·  ${hints}` : model) : '(default)'}
+                                  {model ? (hints ? `${formatModelDisplayName('ollama', model)}  ·  ${hints}` : formatModelDisplayName('ollama', model)) : '(default)'}
                                 </option>
                               );
                             })}
@@ -797,7 +786,7 @@ export function ChatInput({
                               const hints = model ? formatModelCapabilityHints(getModelCapabilities('zen', model)) : '';
                               return (
                                 <option key={model || '__default'} value={model}>
-                                  {model ? (hints ? `${model}  ·  ${hints}` : model) : '(default)'}
+                                  {model ? (hints ? `${formatModelDisplayName('zen', model)}  ·  ${hints}` : formatModelDisplayName('zen', model)) : '(default)'}
                                 </option>
                               );
                             })}
@@ -835,7 +824,7 @@ export function ChatInput({
                               const hints = model ? formatModelCapabilityHints(getModelCapabilities('nvidia', model)) : '';
                               return (
                                 <option key={model || '__default'} value={model}>
-                                  {model ? (hints ? `${model}  ·  ${hints}` : model) : '(default)'}
+                                  {model ? (hints ? `${formatModelDisplayName('nvidia', model)}  ·  ${hints}` : formatModelDisplayName('nvidia', model)) : '(default)'}
                                 </option>
                               );
                             })}
@@ -866,14 +855,12 @@ export function ChatInput({
                             onChange={(e) => providerControls.onSelectBlackboxModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
-                            {(providerControls.blackboxModelOptions.length > 0
-                              ? providerControls.blackboxModelOptions
-                              : [providerControls.blackboxModel]
-                            ).map((model) => (
-                              <option key={model || '__default'} value={model}>
-                                {getBlackboxModelDisplayName(model)}
-                              </option>
-                            ))}
+                            {renderGroupedModelOptions(
+                              providerControls.blackboxModelOptions.length > 0
+                                ? providerControls.blackboxModelOptions
+                                : [providerControls.blackboxModel],
+                              'blackbox',
+                            )}
                           </select>
                           {providerControls.blackboxModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">Loading Blackbox AI models...</p>

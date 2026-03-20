@@ -4,7 +4,7 @@ import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
-import { PROVIDER_URLS } from './providers';
+import { compareProviderModelIds, PROVIDER_URLS } from './providers';
 import { asRecord } from './utils';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
@@ -18,8 +18,8 @@ const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
-const BLACKBOX_MAX_CURATED_MODELS = 48;
 export const MIN_CONTEXT_TOKENS = 64000;
+const BLACKBOX_MIN_PARAMETER_BILLIONS = 16;
 const OPENROUTER_PRIORITY_MODELS = [
   'anthropic/claude-haiku-4.5:nitro',
   'anthropic/claude-opus-4.6:nitro',
@@ -101,19 +101,6 @@ const OPENCODE_PRIORITY_MODELS = [
   'kimi-k2.5',
   'glm-5',
   'openai/gpt-5.1-codex-mini',
-] as const;
-const BLACKBOX_PRIORITY_MODELS = [
-  'blackbox-ai',
-  'blackbox-pro',
-  'blackbox-search',
-  'anthropic/claude-sonnet-4.6',
-  'anthropic/claude-opus-4.6',
-  'openai/gpt-5.4',
-  'openai/gpt-5.4-pro',
-  'google/gemini-3.1-pro-preview',
-  'google/gemini-3-flash-preview',
-  'moonshotai/kimi-k2.5',
-  'z-ai/glm-5',
 ] as const;
 const IMAGE_GENERATION_MODEL_FAMILY_REGEX = /nanobanana|(?:^|\/)gpt-image(?:$|[-./:_])|(?:^|\/)imagen(?:$|[-./:_])|(?:^|\/)seedream(?:$|[-./:_])|(?:^|\/)recraft(?:$|[-./:_])|(?:^|\/)(?:black-forest-labs\/)?flux(?:$|[-./:_])/i;
 
@@ -714,42 +701,115 @@ function blackboxBaseId(id: string): string {
   return id.trim().replace(/^blackboxai\//i, '');
 }
 
-function isBlackboxPriorityModel(rawId: string, baseId: string): boolean {
-  return BLACKBOX_PRIORITY_MODELS.includes(rawId as typeof BLACKBOX_PRIORITY_MODELS[number])
-    || BLACKBOX_PRIORITY_MODELS.includes(baseId as typeof BLACKBOX_PRIORITY_MODELS[number]);
+const BLACKBOX_NON_CHAT_FAMILY_REGEX = /animatediff|(?:^|[-_/:.])svd(?:$|[-_/:.])|mochi(?:$|[-_/:.])|hunyuan(?:$|[-_/:.])|(?:^|[-_/:.])lora(?:$|[-_/:.])|gemini-flash-edit/i;
+
+const BLACKBOX_ALIAS_PROVIDER_PREFIXES: Array<[RegExp, string]> = [
+  [/^claude\b/i, 'anthropic'],
+  [/^(?:gpt|o1\b|o3\b|o4\b|codex\b)/i, 'openai'],
+  [/^gemini\b/i, 'google'],
+  [/^(?:llama|meta\b)/i, 'meta'],
+  [/^qwen\b/i, 'qwen'],
+  [/^(?:kimi|moonshot)\b/i, 'moonshotai'],
+  [/^glm\b/i, 'z-ai'],
+  [/^deepseek\b/i, 'deepseek'],
+  [/^(?:mistral|codestral|devstral)\b/i, 'mistralai'],
+  [/^sonar\b/i, 'perplexity'],
+  [/^grok\b/i, 'x-ai'],
+];
+
+function inferBlackboxAliasProvider(normalizedLeaf: string): string | null {
+  for (const [pattern, provider] of BLACKBOX_ALIAS_PROVIDER_PREFIXES) {
+    if (pattern.test(normalizedLeaf)) return provider;
+  }
+  return null;
+}
+
+function normalizeBlackboxAliasLeaf(id: string): string {
+  return id
+    .trim()
+    .toLowerCase()
+    .replace(/^blackboxai\//i, '')
+    .replace(/_/g, '-')
+    .replace(/[-_.]?20\d{6}$/, '')
+    .replace(/(\d)-(\d)/g, '$1.$2');
+}
+
+function getBlackboxDedupKey(id: string): string {
+  const baseId = blackboxBaseId(id);
+  const slash = baseId.indexOf('/');
+  if (slash > 0) {
+    const provider = baseId.slice(0, slash).toLowerCase();
+    const leaf = baseId.slice(slash + 1);
+    return `${provider}/${normalizeBlackboxAliasLeaf(leaf)}`;
+  }
+
+  const normalizedLeaf = normalizeBlackboxAliasLeaf(baseId);
+  const inferredProvider = inferBlackboxAliasProvider(normalizedLeaf);
+  if (inferredProvider) return `${inferredProvider}/${normalizedLeaf}`;
+  return `blackbox/${normalizedLeaf}`;
+}
+
+function prefersBlackboxModelId(nextId: string, currentId: string): boolean {
+  const nextBase = blackboxBaseId(nextId);
+  const currentBase = blackboxBaseId(currentId);
+  const nextIsRouted = nextBase.includes('/');
+  const currentIsRouted = currentBase.includes('/');
+  if (nextIsRouted !== currentIsRouted) return nextIsRouted;
+
+  const nextLabel = normalizeBlackboxAliasLeaf(nextBase);
+  const currentLabel = normalizeBlackboxAliasLeaf(currentBase);
+  if (nextLabel !== currentLabel) return nextLabel.localeCompare(currentLabel, undefined, { numeric: true, sensitivity: 'base' }) < 0;
+
+  return nextBase.localeCompare(currentBase, undefined, { numeric: true, sensitivity: 'base' }) < 0;
+}
+
+function isClearlyNonPushBlackboxModel(id: string): boolean {
+  return BLACKBOX_NON_CHAT_FAMILY_REGEX.test(id.toLowerCase());
+}
+
+function isExplicitlySmallBlackboxModel(id: string): boolean {
+  const normalized = id.toLowerCase();
+  if (/(?:^|[-_/:.])(nano|tiny)(?:$|[-_/:.])/.test(normalized)) return true;
+
+  // Avoid misclassifying MoE names like 8x22b as "22b" single-size models.
+  if (/\d+x\d+(?:\.\d+)?b\b/.test(normalized)) return false;
+
+  const sizeMatches = normalized.matchAll(/(\d+(?:\.\d+)?)b\b/g);
+  for (const match of sizeMatches) {
+    const sizeInBillions = Number(match[1]);
+    if (Number.isFinite(sizeInBillions) && sizeInBillions < BLACKBOX_MIN_PARAMETER_BILLIONS) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function buildCuratedBlackboxModelList(
   modelIds: string[],
   metadataById: Record<string, ModelsDevProviderMetadata>,
 ): string[] {
-  const prioritySet = new Set<string>(BLACKBOX_PRIORITY_MODELS);
+  const deduped = new Map<string, string>();
 
-  const candidates = modelIds.filter((rawId) => {
+  for (const rawId of modelIds) {
     const baseId = blackboxBaseId(rawId);
     const metadata = metadataById[rawId] ?? metadataById[baseId];
-    if (!isProviderTextChatModel(baseId, metadata)) return false;
+    if (!isProviderTextChatModel(baseId, metadata)) continue;
+    if (isClearlyNonPushBlackboxModel(baseId)) continue;
+    if (isExplicitlySmallBlackboxModel(baseId)) continue;
 
-    const priorityId = isBlackboxPriorityModel(rawId, baseId)
-      ? (BLACKBOX_PRIORITY_MODELS.includes(rawId as typeof BLACKBOX_PRIORITY_MODELS[number]) ? rawId : baseId)
-      : baseId;
-    const filterResult = filterModelByContext(priorityId, metadata?.contextLimit, prioritySet);
-    return filterResult.allowed;
-  });
+    const dedupKey = getBlackboxDedupKey(baseId);
+    const existing = deduped.get(dedupKey);
+    if (!existing || prefersBlackboxModelId(rawId, existing)) {
+      deduped.set(dedupKey, rawId);
+    }
+  }
+
+  const candidates = Array.from(deduped.values());
 
   if (candidates.length === 0) return [];
 
-  const preferred: string[] = [];
-  for (const priorityId of BLACKBOX_PRIORITY_MODELS) {
-    const match = candidates.find((rawId) => rawId === priorityId || blackboxBaseId(rawId) === priorityId);
-    if (match && !preferred.includes(match)) preferred.push(match);
-  }
-
-  const rest = candidates
-    .filter((rawId) => !preferred.includes(rawId))
-    .sort((a, b) => blackboxBaseId(a).localeCompare(blackboxBaseId(b)) || a.localeCompare(b));
-
-  return [...preferred, ...rest].slice(0, BLACKBOX_MAX_CURATED_MODELS);
+  return [...candidates].sort((a, b) => compareProviderModelIds('blackbox', a, b));
 }
 
 export function buildCuratedOpencodeModelList(
@@ -1014,8 +1074,8 @@ export async function fetchBlackboxModels(): Promise<string[]> {
     const payload = (await catalogRes.json()) as unknown;
     const liveModels = normalizeModelList(payload);
     const curated = buildCuratedBlackboxModelList(liveModels, modelsDevMetadata);
-    // Keep Blackbox aligned with the curated-provider path: do not fall back to the
-    // raw catalog if metadata/context filtering excludes everything.
+    // Keep Blackbox on a lightweight provider-specific filter: preserve good chat/code
+    // models from the live catalog while dropping obvious image/non-text/tiny variants.
     return curated;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {

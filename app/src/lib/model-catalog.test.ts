@@ -408,11 +408,12 @@ describe('buildCuratedOllamaModelList', () => {
 });
 
 describe('buildCuratedBlackboxModelList', () => {
-  it('normalizes routed IDs, keeps priority chat models, and excludes image-only or embedding models', () => {
+  it('normalizes routed IDs, keeps viable chat models, and excludes image-only or embedding models', () => {
     const curated = buildCuratedBlackboxModelList(
       [
         'blackbox-pro',
         'blackboxai/anthropic/claude-sonnet-4.6',
+        'blackboxai/qwen/qwen3-coder-32b-instruct',
         'blackboxai/openai/gpt-image-1',
         'blackboxai/nomic/nomic-embed-text',
       ],
@@ -453,10 +454,85 @@ describe('buildCuratedBlackboxModelList', () => {
       },
     );
 
-    expect(curated[0]).toBe('blackbox-pro');
+    expect(curated).toEqual([
+      'blackboxai/anthropic/claude-sonnet-4.6',
+      'blackbox-pro',
+      'blackboxai/qwen/qwen3-coder-32b-instruct',
+    ]);
     expect(curated).toContain('blackboxai/anthropic/claude-sonnet-4.6');
+    expect(curated).toContain('blackboxai/qwen/qwen3-coder-32b-instruct');
     expect(curated).not.toContain('blackboxai/openai/gpt-image-1');
     expect(curated).not.toContain('blackboxai/nomic/nomic-embed-text');
+  });
+
+  it('prefers routed provider aliases over duplicate legacy Blackbox aliases', () => {
+    const curated = buildCuratedBlackboxModelList(
+      [
+        'claude-3-5-haiku-20241022',
+        'claude-haiku-4-5-20251001',
+        'blackboxai/anthropic/claude-3.5-haiku',
+        'blackboxai/anthropic/claude-haiku-4.5',
+        'blackbox-pro',
+      ],
+      {},
+    );
+
+    expect(curated).toEqual([
+      'blackboxai/anthropic/claude-3.5-haiku',
+      'blackboxai/anthropic/claude-haiku-4.5',
+      'blackbox-pro',
+    ]);
+    expect(curated).not.toContain('claude-3-5-haiku-20241022');
+    expect(curated).not.toContain('claude-haiku-4-5-20251001');
+  });
+
+  it('excludes explicitly tiny Blackbox models even without metadata', () => {
+    const curated = buildCuratedBlackboxModelList(
+      [
+        'blackboxai/meta/llama-3.2-3b-instruct',
+        'blackboxai/qwen/qwen2.5-coder-7b-instruct',
+        'blackboxai/openai/gpt-5.4-nano',
+        'blackboxai/qwen/qwen3-coder-32b-instruct',
+      ],
+      {},
+    );
+
+    expect(curated).toContain('blackboxai/qwen/qwen3-coder-32b-instruct');
+    expect(curated).not.toContain('blackboxai/meta/llama-3.2-3b-instruct');
+    expect(curated).not.toContain('blackboxai/qwen/qwen2.5-coder-7b-instruct');
+    expect(curated).not.toContain('blackboxai/openai/gpt-5.4-nano');
+  });
+
+  it('excludes obvious image, video, and edit families from the Blackbox catalog', () => {
+    const curated = buildCuratedBlackboxModelList(
+      [
+        'fast-animatediff',
+        'fast-svd',
+        'fast-svd-lcm',
+        'gemini-flash-edit',
+        'hunyuan-video-lora',
+        'mochi-v1',
+        'blackboxai/qwen/qwen3-coder-32b-instruct',
+      ],
+      {},
+    );
+
+    expect(curated).toEqual(['blackboxai/qwen/qwen3-coder-32b-instruct']);
+    expect(curated).not.toContain('fast-animatediff');
+    expect(curated).not.toContain('fast-svd');
+    expect(curated).not.toContain('fast-svd-lcm');
+    expect(curated).not.toContain('gemini-flash-edit');
+    expect(curated).not.toContain('hunyuan-video-lora');
+    expect(curated).not.toContain('mochi-v1');
+  });
+
+  it('does not truncate the Blackbox catalog after sorting', () => {
+    const models = Array.from({ length: 60 }, (_, index) => `blackboxai/openai/gpt-5.${index}`);
+    const curated = buildCuratedBlackboxModelList(models, {});
+
+    expect(curated).toHaveLength(60);
+    expect(curated[0]).toBe('blackboxai/openai/gpt-5.0');
+    expect(curated.at(-1)).toBe('blackboxai/openai/gpt-5.59');
   });
 });
 
@@ -653,16 +729,23 @@ describe('fetchBlackboxModels', () => {
       }
       return jsonResponse({
         data: [
+          { id: 'claude-3-5-haiku-20241022' },
           { id: 'blackbox-pro' },
+          { id: 'blackboxai/anthropic/claude-3.5-haiku' },
           { id: 'blackboxai/anthropic/claude-sonnet-4.6' },
+          { id: 'blackboxai/qwen/qwen3-coder-32b-instruct' },
+          { id: 'blackboxai/meta/llama-3.2-3b-instruct' },
           { id: 'blackboxai/openai/gpt-image-1' },
+          { id: 'fast-animatediff' },
         ],
       });
     }));
 
     await expect(fetchBlackboxModels()).resolves.toEqual([
-      'blackbox-pro',
+      'blackboxai/anthropic/claude-3.5-haiku',
       'blackboxai/anthropic/claude-sonnet-4.6',
+      'blackbox-pro',
+      'blackboxai/qwen/qwen3-coder-32b-instruct',
     ]);
   });
 

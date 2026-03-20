@@ -1,0 +1,42 @@
+import { describe, expect, it } from 'vitest';
+import {
+  compareProviderModelIds,
+  formatModelDisplayName,
+  getModelDisplayGroupKey,
+  getModelDisplayLeafName,
+} from './providers';
+
+describe('formatModelDisplayName', () => {
+  it('normalizes routed Blackbox ids and uses provider shorthand labels', () => {
+    expect(formatModelDisplayName('blackbox', 'blackboxai/anthropic/claude-sonnet-4.6'))
+      .toBe('Anthropic / claude-sonnet-4.6');
+    expect(formatModelDisplayName('openrouter', 'openai/gpt-5.4'))
+      .toBe('OpenAI / gpt-5.4');
+  });
+
+  it('keeps provider-native ids readable when they are not routed', () => {
+    expect(formatModelDisplayName('blackbox', 'blackbox-pro')).toBe('blackbox-pro');
+    expect(formatModelDisplayName('ollama', 'gemini-3-flash-preview')).toBe('gemini-3-flash-preview');
+  });
+});
+
+describe('Blackbox display grouping', () => {
+  it('groups first-party Blackbox models under the Blackbox bucket', () => {
+    expect(getModelDisplayGroupKey('blackbox', 'blackbox-pro')).toBe('blackbox');
+    expect(getModelDisplayLeafName('blackbox', 'blackbox-pro')).toBe('blackbox-pro');
+  });
+
+  it('sorts by provider bucket, then model name', () => {
+    const models = [
+      'blackboxai/qwen/qwen3-coder-32b-instruct',
+      'blackbox-pro',
+      'blackboxai/anthropic/claude-sonnet-4.6',
+    ];
+
+    expect([...models].sort((left, right) => compareProviderModelIds('blackbox', left, right))).toEqual([
+      'blackboxai/anthropic/claude-sonnet-4.6',
+      'blackbox-pro',
+      'blackboxai/qwen/qwen3-coder-32b-instruct',
+    ]);
+  });
+});

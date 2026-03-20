@@ -119,9 +119,74 @@ export const BLACKBOX_MODELS: string[] = [
   'blackbox-search',
 ];
 
-/** Strip 'blackboxai/' routing prefix from Blackbox model IDs for cleaner display. */
-export function getBlackboxModelDisplayName(modelId: string): string {
-  return modelId.replace(/^blackboxai\//, '');
+const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
+  anthropic: 'Anthropic',
+  'arcee-ai': 'Arcee AI',
+  blackbox: 'Blackbox',
+  cohere: 'Cohere',
+  deepseek: 'DeepSeek',
+  google: 'Google',
+  meta: 'Meta',
+  'meta-llama': 'Meta',
+  minimax: 'MiniMax',
+  mistralai: 'Mistral',
+  moonshotai: 'Moonshot',
+  openai: 'OpenAI',
+  perplexity: 'Perplexity',
+  qwen: 'Qwen',
+  stepfun: 'StepFun',
+  'x-ai': 'xAI',
+  'z-ai': 'Zhipu',
+};
+
+function normalizeProviderModelId(provider: AIProviderType | string, modelId: string): string {
+  const trimmed = modelId.trim();
+  if (provider === 'blackbox') return trimmed.replace(/^blackboxai\//i, '');
+  return trimmed;
+}
+
+export function getModelDisplayGroupKey(provider: AIProviderType | string, modelId: string): string {
+  const normalized = normalizeProviderModelId(provider, modelId);
+  const slash = normalized.indexOf('/');
+  if (slash > 0) return normalized.slice(0, slash);
+  if (provider === 'blackbox' && normalized) return 'blackbox';
+  return '';
+}
+
+export function getModelDisplayGroupLabel(groupKey: string): string {
+  return MODEL_ROUTE_PROVIDER_LABELS[groupKey] || groupKey;
+}
+
+export function getModelDisplayLeafName(provider: AIProviderType | string, modelId: string): string {
+  const normalized = normalizeProviderModelId(provider, modelId);
+  const slash = normalized.indexOf('/');
+  return slash > 0 ? normalized.slice(slash + 1) : normalized;
+}
+
+export function formatModelDisplayName(provider: AIProviderType | string, modelId: string): string {
+  const normalized = normalizeProviderModelId(provider, modelId);
+  const groupKey = getModelDisplayGroupKey(provider, modelId);
+  const slash = normalized.indexOf('/');
+  if (slash <= 0) return normalized;
+  return `${getModelDisplayGroupLabel(groupKey)} / ${normalized.slice(slash + 1)}`;
+}
+
+export function compareProviderModelIds(
+  provider: AIProviderType | string,
+  left: string,
+  right: string,
+): number {
+  const leftGroup = getModelDisplayGroupLabel(getModelDisplayGroupKey(provider, left));
+  const rightGroup = getModelDisplayGroupLabel(getModelDisplayGroupKey(provider, right));
+  const groupDiff = leftGroup.localeCompare(rightGroup, undefined, { numeric: true, sensitivity: 'base' });
+  if (groupDiff !== 0) return groupDiff;
+
+  const leafDiff = getModelDisplayLeafName(provider, left)
+    .localeCompare(getModelDisplayLeafName(provider, right), undefined, { numeric: true, sensitivity: 'base' });
+  if (leafDiff !== 0) return leafDiff;
+
+  return normalizeProviderModelId(provider, left)
+    .localeCompare(normalizeProviderModelId(provider, right), undefined, { numeric: true, sensitivity: 'base' });
 }
 
 /** Build the standard role model set for a provider. */

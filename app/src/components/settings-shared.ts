@@ -1,7 +1,6 @@
 import type { ComponentType, SVGProps } from 'react';
 import { AICoreIcon, WorkspaceTuneIcon, YouBadgeIcon } from '@/components/icons/push-custom-icons';
-import type { PreferredProvider } from '@/lib/providers';
-import { getBlackboxModelDisplayName } from '@/lib/providers';
+import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
 import type { ExperimentalProviderType } from '@/lib/experimental-providers';
 import type { AIProviderType } from '@/types';
 
@@ -56,28 +55,31 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     placeholder: 'Ollama API key',
     saveLabel: 'Save Ollama key',
     hint: 'Ollama API key (local or cloud).',
+    labelTransform: (model) => formatModelDisplayName('ollama', model),
   },
   openrouter: {
     placeholder: 'OpenRouter API key',
     saveLabel: 'Save OpenRouter key',
     hint: 'OpenRouter API key from openrouter.ai. BYOK works too: keep provider-native keys in your OpenRouter account, then use your OpenRouter key here.',
-    labelTransform: (model) => model.replace(/^[^/]+\//, ''),
+    labelTransform: (model) => formatModelDisplayName('openrouter', model),
   },
   nvidia: {
     placeholder: 'Nvidia API key',
     saveLabel: 'Save Nvidia key',
     hint: 'Nvidia NIM API key (OpenAI-compatible endpoint).',
+    labelTransform: (model) => formatModelDisplayName('nvidia', model),
   },
   zen: {
     placeholder: 'Zen API key',
     saveLabel: 'Save OpenCode Zen key',
     hint: 'OpenCode Zen API key for https://opencode.ai/zen.',
+    labelTransform: (model) => formatModelDisplayName('zen', model),
   },
   blackbox: {
     placeholder: 'Blackbox API key',
     saveLabel: 'Save Blackbox key',
     hint: 'Blackbox AI API key from blackbox.ai. Unified access to 300+ models.',
-    labelTransform: getBlackboxModelDisplayName,
+    labelTransform: (model) => formatModelDisplayName('blackbox', model),
   },
 };
 
