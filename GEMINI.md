@@ -20,7 +20,7 @@ Push is a personal AI coding notebook backed by role-based AI agents (Orchestrat
 | **Styling** | Tailwind CSS 3, shadcn/ui (Radix primitives) |
 | **Backend** | Cloudflare Workers (TypeScript) |
 | **Sandbox** | Modal (Serverless Python Containers) |
-| **AI Integration** | OpenAI-compatible streaming for built-ins plus Azure/Bedrock private connectors; native Google Vertex service-account flow for Gemini and Claude |
+| **AI Integration** | OpenAI-compatible streaming for built-ins (Ollama, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM) plus Azure/Bedrock private connectors; native Google Vertex service-account flow for Gemini and Claude |
 | **APIs** | GitHub REST API |
 
 ## Architecture
@@ -203,7 +203,7 @@ Push/
 ### Environment
 Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI. Without GitHub auth, the app stays on onboarding unless the user starts a scratch workspace. In local development, with no AI keys configured, the app uses the demo-provider path.
 
-Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_VERTEX_SERVICE_ACCOUNT_JSON` / `VITE_VERTEX_REGION` / `VITE_VERTEX_MODEL` (Google Vertex native config), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
+Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_BLACKBOX_API_KEY` (Blackbox AI), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_VERTEX_SERVICE_ACCOUNT_JSON` / `VITE_VERTEX_REGION` / `VITE_VERTEX_MODEL` (Google Vertex native config), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
 
 ## Coding Conventions
 *   **TypeScript:** Strict mode enabled. Explicit return types required on exported functions.

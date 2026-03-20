@@ -19,7 +19,7 @@ Push is a personal AI coding notebook backed by role-based AI agents. Users open
 |-------|------------|
 | Frontend | React 19, TypeScript 5.9, Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Multi-backend: built-ins (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM) + opt-in private connectors (Azure, Bedrock, Vertex) |
+| AI | Multi-backend: built-ins (Ollama, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM) + opt-in private connectors (Azure, Bedrock, Vertex) |
 | Backend | Cloudflare Workers (TypeScript) |
 | Sandbox | Modal (serverless Python containers) |
 | APIs | GitHub REST API |
@@ -46,6 +46,9 @@ The web app has four built-in providers, all using OpenAI-compatible SSE streami
 |----------|---------------|
 | **Ollama Cloud** | gemini-3-flash-preview |
 | **OpenRouter** | claude-sonnet-4.6:nitro |
+| **OpenCode Zen** | big-pickle |
+| **Blackbox AI** | blackbox-ai |
+| **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
 | **OpenCode Zen** | big-pickle |
 | **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
 
