@@ -150,3 +150,61 @@ export function getVisionCapabilityNotice(
     text: `Image support for ${trimmedModelId} is not confirmed yet.`,
   };
 }
+
+function formatCapabilitySupportLabel(support: ModelCapabilitySupport): string {
+  if (support === 'supported') return 'supported';
+  if (support === 'unsupported') return 'unsupported';
+  return 'unverified';
+}
+
+function formatProviderLabel(provider: AIProviderType): string {
+  switch (provider) {
+    case 'ollama': return 'Ollama';
+    case 'openrouter': return 'OpenRouter';
+    case 'zen': return 'OpenCode Zen';
+    case 'nvidia': return 'Nvidia NIM';
+    case 'blackbox': return 'Blackbox AI';
+    case 'azure': return 'Azure OpenAI';
+    case 'bedrock': return 'AWS Bedrock';
+    case 'vertex': return 'Google Vertex';
+    case 'demo': return 'Demo';
+    default: return provider;
+  }
+}
+
+export function buildModelCapabilityAwarenessBlock(
+  provider: AIProviderType,
+  modelId: string | null | undefined,
+  options?: {
+    hasImageAttachments?: boolean;
+  },
+): string {
+  const resolvedModel = modelId?.trim() || 'default model';
+  const capabilities = getModelCapabilities(provider, resolvedModel);
+  const lines = [
+    '## Current Model Capability Context',
+    `Provider: ${formatProviderLabel(provider)}`,
+    `Model: ${resolvedModel}`,
+    `Vision / image attachments: ${formatCapabilitySupportLabel(capabilities.visionInput)}`,
+    `Native tool calling: ${formatCapabilitySupportLabel(capabilities.toolCalls)}`,
+    `Native JSON mode: ${formatCapabilitySupportLabel(capabilities.jsonMode)}`,
+    `Image generation: ${formatCapabilitySupportLabel(capabilities.imageGeneration)}`,
+    'Rules:',
+    '- Push tool use is prompt-engineered. Continue using the JSON tool protocol even when native tool calling or JSON mode are unsupported or unverified.',
+    '- Delegated Coder and Explorer runs inherit this same chat-locked provider/model by default. Delegation does not upgrade capabilities.',
+    '- If the task depends on a capability that is unsupported or unverified, say so plainly instead of guessing.',
+    '- Do not promise image generation here unless Push exposes a matching image-generation tool path.',
+  ];
+
+  if (options?.hasImageAttachments) {
+    if (capabilities.visionInput === 'supported') {
+      lines.push('- The current conversation includes image attachments, and this model can inspect them.');
+    } else if (capabilities.visionInput === 'unsupported') {
+      lines.push('- The current conversation includes image attachments, but this model cannot inspect them. Explain the limitation instead of delegating and pretending the images were understood.');
+    } else {
+      lines.push('- The current conversation includes image attachments, but support is unverified. Be explicit if you cannot confidently interpret the images.');
+    }
+  }
+
+  return lines.join('\n');
+}

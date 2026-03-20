@@ -49,6 +49,7 @@ import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './verte
 import { buildContextSummaryBlock, compactChatMessage } from './context-compaction';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
+import { buildModelCapabilityAwarenessBlock } from './model-capabilities';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -492,7 +493,7 @@ Boundaries:
 ## Default Workflow
 
 Use this operating loop unless the request clearly calls for something else:
-1. Decide whether the request is read-only, implementation, or current-info lookup.
+1. Decide whether the request is read-only, implementation, or current-info lookup, and whether the current model can actually inspect the provided inputs.
 2. Pick the cheapest reliable tool path first: list/search/symbol tools before broad reads; reads before mutations.
 3. Prefer direct handling when the task is already well-scoped. Delegate only when the sub-agent adds real leverage.
 4. Distill what you already know before handing work off — don't make another role rediscover validated facts.
@@ -558,6 +559,7 @@ Rules:
 - Only include "knownContext" items you have actually validated.
 - Don't guess. If unsure, omit the field.
 - Prioritize correctness over optimization.
+- Coder and Explorer inherit the current chat-locked provider/model by default. Delegation does not grant capabilities the current model lacks.
 - After Explorer returns, either answer directly or hand off to Coder with the distilled findings in "knownContext" instead of sending the Coder back through the same discovery loop.
 
 ## Explorer Task Template
@@ -697,6 +699,17 @@ function toLLMMessages(
     if (identityBlock) {
       systemContent += '\n\n' + identityBlock;
       if (import.meta.env.DEV) _promptSizes.identity = identityBlock.length;
+    }
+
+    if (providerType && providerModel) {
+      const hasImageAttachments = messages.some((message) =>
+        Boolean(message.attachments?.some((attachment) => attachment.type === 'image')),
+      );
+      const capabilityBlock = buildModelCapabilityAwarenessBlock(providerType, providerModel, {
+        hasImageAttachments,
+      });
+      systemContent += '\n\n' + capabilityBlock;
+      if (import.meta.env.DEV) _promptSizes.capabilities = capabilityBlock.length;
     }
 
     // Workspace description (always present for active workspaces)
