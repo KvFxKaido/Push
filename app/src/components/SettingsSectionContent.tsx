@@ -13,6 +13,7 @@ import {
   EXPERIMENTAL_SETTINGS_PROVIDER_ORDER,
   PROVIDER_LABELS,
   TAVILY_SETTINGS_META,
+  type BuiltInSettingsProviderId,
 } from '@/components/settings-shared';
 import {
   ExperimentalProviderSection,
@@ -76,6 +77,23 @@ export function SettingsSectionContent({
   const tcMetrics = getMalformedToolCallMetrics();
   const ctxMetrics = getContextMetrics();
   const guardMetrics = fileLedger.getMetrics();
+  const [expandedBuiltInProviders, setExpandedBuiltInProviders] = useState<Record<BuiltInSettingsProviderId, boolean>>(() => {
+    const activeBuiltIn = BUILT_IN_SETTINGS_PROVIDER_ORDER.find((providerId) => providerId === ai.activeBackend);
+    const fallbackOpen = activeBuiltIn
+      ?? BUILT_IN_SETTINGS_PROVIDER_ORDER.find((providerId) => ai.builtInProviders[providerId].hasKey)
+      ?? 'blackbox';
+
+    return Object.fromEntries(
+      BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => [providerId, providerId === fallbackOpen]),
+    ) as Record<BuiltInSettingsProviderId, boolean>;
+  });
+
+  const toggleBuiltInProvider = (providerId: BuiltInSettingsProviderId) => {
+    setExpandedBuiltInProviders((prev) => ({
+      ...prev,
+      [providerId]: !prev[providerId],
+    }));
+  };
 
   return (
         <div className="flex flex-col gap-6 px-3 pt-2 pb-8">
@@ -868,49 +886,73 @@ export function SettingsSectionContent({
               const provider = ai.builtInProviders[providerId];
               const meta = BUILT_IN_SETTINGS_PROVIDER_META[providerId];
               const label = PROVIDER_LABELS[providerId];
+              const expanded = expandedBuiltInProviders[providerId] ?? false;
+              const modelLabel = meta.labelTransform ? meta.labelTransform(provider.model) : provider.model;
 
               return (
                 <div key={providerId} className="space-y-2 rounded-2xl border border-push-edge bg-push-surface/35 p-3">
-                  <label className="text-xs font-medium text-push-fg-secondary">{label}</label>
-                  <ProviderKeySection
-                    label={label}
-                    hasKey={provider.hasKey}
-                    keyInput={provider.keyInput}
-                    setKeyInput={provider.setKeyInput}
-                    saveKey={() => provider.setKey(provider.keyInput.trim())}
-                    clearKey={provider.clearKey}
-                    activeBackend={ai.activeBackend}
-                    backendId={providerId}
-                    clearPreferredProvider={ai.clearPreferredProvider}
-                    setActiveBackend={ai.setActiveBackend}
-                    placeholder={meta.placeholder}
-                    saveLabel={meta.saveLabel}
-                    hint={meta.hint}
-                    model={{
-                      value: provider.model,
-                      set: provider.setModel,
-                      options: provider.modelOptions,
-                      isLocked: provider.isModelLocked,
-                      lockedModel: ai.lockedModel,
-                      labelTransform: meta.labelTransform,
-                    }}
-                    refresh={{
-                      trigger: provider.refreshModels,
-                      loading: provider.modelsLoading,
-                      error: provider.modelsError,
-                      updatedAt: provider.modelsUpdatedAt,
-                    }}
-                  />
-                  {providerId === 'zen' && provider.hasKey && provider.setGoMode && (
-                    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
-                      <span className="text-xs text-push-fg-muted">Go subscription</span>
-                      <input
-                        type="checkbox"
-                        checked={provider.goMode ?? false}
-                        onChange={(e) => provider.setGoMode!(e.target.checked)}
-                        className="h-3.5 w-3.5 accent-emerald-400"
+                  <button
+                    type="button"
+                    onClick={() => toggleBuiltInProvider(providerId)}
+                    className="flex w-full items-center justify-between gap-3 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2.5 text-left transition-colors hover:border-push-edge-hover"
+                    aria-expanded={expanded}
+                  >
+                    <div className="min-w-0 flex items-center gap-2.5">
+                      <ProviderIcon provider={providerId as AIProviderType} size={14} />
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-push-fg-secondary">{label}</p>
+                        <p className="truncate text-[11px] text-push-fg-dim">
+                          {provider.hasKey
+                            ? `Connected${modelLabel ? ` · ${modelLabel}` : ''}`
+                            : 'No key configured'}
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-push-fg-dim transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                  </button>
+                  {expanded && (
+                    <>
+                      <ProviderKeySection
+                        label={label}
+                        hasKey={provider.hasKey}
+                        keyInput={provider.keyInput}
+                        setKeyInput={provider.setKeyInput}
+                        saveKey={() => provider.setKey(provider.keyInput.trim())}
+                        clearKey={provider.clearKey}
+                        activeBackend={ai.activeBackend}
+                        backendId={providerId}
+                        clearPreferredProvider={ai.clearPreferredProvider}
+                        setActiveBackend={ai.setActiveBackend}
+                        placeholder={meta.placeholder}
+                        saveLabel={meta.saveLabel}
+                        hint={meta.hint}
+                        model={{
+                          value: provider.model,
+                          set: provider.setModel,
+                          options: provider.modelOptions,
+                          isLocked: provider.isModelLocked,
+                          lockedModel: ai.lockedModel,
+                          labelTransform: meta.labelTransform,
+                        }}
+                        refresh={{
+                          trigger: provider.refreshModels,
+                          loading: provider.modelsLoading,
+                          error: provider.modelsError,
+                          updatedAt: provider.modelsUpdatedAt,
+                        }}
                       />
-                    </label>
+                      {providerId === 'zen' && provider.hasKey && provider.setGoMode && (
+                        <label className="flex cursor-pointer items-center justify-between rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
+                          <span className="text-xs text-push-fg-muted">Go subscription</span>
+                          <input
+                            type="checkbox"
+                            checked={provider.goMode ?? false}
+                            onChange={(e) => provider.setGoMode!(e.target.checked)}
+                            className="h-3.5 w-3.5 accent-emerald-400"
+                          />
+                        </label>
+                      )}
+                    </>
                   )}
                 </div>
               );

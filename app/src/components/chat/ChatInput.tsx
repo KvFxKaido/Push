@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { ChevronsUpDown, Loader2, Lock, RefreshCw, Square } from 'lucide-react';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ContextMeter } from './ContextMeter';
@@ -184,6 +184,7 @@ const COMPOSER_CONTROL_SURFACE_CLASS =
   'relative overflow-hidden rounded-full border border-push-edge-subtle bg-push-grad-input shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl';
 const COMPOSER_CONTROL_INTERACTIVE_CLASS =
   'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 spring-press';
+const EMPTY_MODEL_OPTIONS: string[] = [];
 
 function composerDraftStorageKey(draftKey: string): string {
   return `${COMPOSER_DRAFT_KEY_PREFIX}${draftKey}`;
@@ -432,6 +433,22 @@ export function ChatInput({
     if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
     if (selectedProvider === 'blackbox') providerControls.refreshBlackboxModels();
   };
+  const openRouterModelList = providerControls?.openRouterModelOptions ?? EMPTY_MODEL_OPTIONS;
+  const blackboxModelList = providerControls?.blackboxModelOptions ?? EMPTY_MODEL_OPTIONS;
+  const blackboxFallbackModel = providerControls?.blackboxModel ?? '';
+
+  const openRouterModelOptions = useMemo(() => (
+    renderGroupedModelOptions(openRouterModelList, 'openrouter')
+  ), [openRouterModelList]);
+
+  const blackboxModelOptions = useMemo(() => {
+    const models = blackboxModelList.length > 0
+      ? blackboxModelList
+      : blackboxFallbackModel
+        ? [blackboxFallbackModel]
+        : [];
+    return renderGroupedModelOptions(models, 'blackbox');
+  }, [blackboxFallbackModel, blackboxModelList]);
 
   // Reasoning effort (per-provider, only for models that support it)
   const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
@@ -763,7 +780,7 @@ export function ChatInput({
                             onChange={(e) => providerControls.onSelectOpenRouterModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
-                            {renderGroupedModelOptions(providerControls.openRouterModelOptions, 'openrouter')}
+                            {openRouterModelOptions}
                           </select>
                           {providerControls.isOpenRouterModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
@@ -855,12 +872,7 @@ export function ChatInput({
                             onChange={(e) => providerControls.onSelectBlackboxModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
-                            {renderGroupedModelOptions(
-                              providerControls.blackboxModelOptions.length > 0
-                                ? providerControls.blackboxModelOptions
-                                : [providerControls.blackboxModel],
-                              'blackbox',
-                            )}
+                            {blackboxModelOptions}
                           </select>
                           {providerControls.blackboxModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">Loading Blackbox AI models...</p>
