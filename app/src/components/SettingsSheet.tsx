@@ -43,6 +43,8 @@ const SETTINGS_TAB_META: Record<SettingsTabKey, { title: string; description: st
   },
 };
 
+const SETTINGS_SELECT_CLASS = 'rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 [color-scheme:dark] [background-color:#121926] [&>option]:bg-[#121926] [&>option]:text-push-fg';
+
 // ── Prop groups ──────────────────────────────────────────────────────
 
 export interface SettingsAuthProps {
@@ -366,7 +368,7 @@ export function ProviderKeySection({
               value={model.value}
               onChange={(e) => model.set(e.target.value)}
               disabled={model.options.length === 0 || (refresh?.loading ?? false)}
-              className="flex-1 rounded-md border border-push-edge-subtle bg-push-grad-input px-2 py-1 text-xs text-push-fg font-mono shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 disabled:opacity-50"
+              className={`flex-1 rounded-md px-2 py-1 text-xs font-mono disabled:opacity-50 ${SETTINGS_SELECT_CLASS}`}
             >
               {model.options.length === 0 ? (
                 <option value={model.value}>{model.labelTransform ? model.labelTransform(model.value) : model.value}</option>
@@ -862,7 +864,7 @@ export function VertexProviderSection({
               setModel(e.target.value);
               setModelInput(e.target.value);
             }}
-            className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
+            className={`w-full ${SETTINGS_SELECT_CLASS}`}
           >
             {modelOptions.map((option) => (
               <option key={option} value={option}>{option}</option>

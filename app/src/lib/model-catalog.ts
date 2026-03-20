@@ -13,10 +13,12 @@ const MODELS_DEV_OPENROUTER_CACHE_KEY = 'push:models-dev:openrouter-models';
 const MODELS_DEV_NVIDIA_CACHE_KEY = 'push:models-dev:nvidia-models';
 const MODELS_DEV_OLLAMA_CACHE_KEY = 'push:models-dev:ollama-cloud-models';
 const MODELS_DEV_OPENCODE_CACHE_KEY = 'push:models-dev:opencode-models';
+const MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY = 'push:models-dev:all-provider-models';
 const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
+const BLACKBOX_MAX_CURATED_MODELS = 48;
 export const MIN_CONTEXT_TOKENS = 64000;
 const OPENROUTER_PRIORITY_MODELS = [
   'anthropic/claude-haiku-4.5:nitro',
@@ -100,6 +102,20 @@ const OPENCODE_PRIORITY_MODELS = [
   'glm-5',
   'openai/gpt-5.1-codex-mini',
 ] as const;
+const BLACKBOX_PRIORITY_MODELS = [
+  'blackbox-ai',
+  'blackbox-pro',
+  'blackbox-search',
+  'anthropic/claude-sonnet-4.6',
+  'anthropic/claude-opus-4.6',
+  'openai/gpt-5.4',
+  'openai/gpt-5.4-pro',
+  'google/gemini-3.1-pro-preview',
+  'google/gemini-3-flash-preview',
+  'moonshotai/kimi-k2.5',
+  'z-ai/glm-5',
+] as const;
+const IMAGE_GENERATION_MODEL_FAMILY_REGEX = /nanobanana|(?:^|\/)gpt-image(?:$|[-./:_])|(?:^|\/)imagen(?:$|[-./:_])|(?:^|\/)seedream(?:$|[-./:_])|(?:^|\/)recraft(?:$|[-./:_])|(?:^|\/)(?:black-forest-labs\/)?flux(?:$|[-./:_])/i;
 
 export interface OpenRouterCatalogModel {
   id: string;
@@ -249,13 +265,21 @@ function resolveFromProviderMetadata(meta: ModelsDevProviderMetadata): ResolvedM
 
 /**
  * Look up cached model capabilities from models.dev metadata.
- * Works for any provider — checks OpenRouter, Ollama, Nvidia, OpenCode caches.
+ * Works for any provider — checks OpenRouter, Ollama, Nvidia, OpenCode, and
+ * Blackbox-compatible routed IDs against cached metadata.
  */
 export function getModelCapabilities(provider: string, modelId: string): ResolvedModelCapabilities {
   if (provider === 'openrouter') {
     const metadata = readCachedModelsDevOpenRouterMetadata();
     const meta = metadata?.[modelId];
     return meta ? resolveFromOpenRouterMetadata(meta) : EMPTY_CAPABILITIES;
+  }
+
+  if (provider === 'blackbox') {
+    const metadata = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY);
+    const baseId = blackboxBaseId(modelId);
+    const meta = metadata?.[modelId] ?? metadata?.[baseId];
+    return meta ? resolveFromProviderMetadata(meta) : EMPTY_CAPABILITIES;
   }
 
   const cacheKey = provider === 'nvidia' ? MODELS_DEV_NVIDIA_CACHE_KEY
@@ -389,6 +413,40 @@ function extractModelsDevProviderMetadata(
   return entries;
 }
 
+function mergeProviderMetadata(
+  current: ModelsDevProviderMetadata | undefined,
+  incoming: ModelsDevProviderMetadata,
+): ModelsDevProviderMetadata {
+  if (!current) return incoming;
+
+  return {
+    id: current.id || incoming.id,
+    attachment: current.attachment || incoming.attachment,
+    reasoning: current.reasoning || incoming.reasoning,
+    toolCall: current.toolCall || incoming.toolCall,
+    structuredOutput: current.structuredOutput || incoming.structuredOutput,
+    openWeights: current.openWeights || incoming.openWeights,
+    inputModalities: Array.from(new Set([...current.inputModalities, ...incoming.inputModalities])),
+    outputModalities: Array.from(new Set([...current.outputModalities, ...incoming.outputModalities])),
+    contextLimit: Math.max(current.contextLimit, incoming.contextLimit),
+  };
+}
+
+function extractAllModelsDevProviderMetadata(payload: unknown): Record<string, ModelsDevProviderMetadata> {
+  const root = asRecord(payload);
+  if (!root) return {};
+
+  const entries: Record<string, ModelsDevProviderMetadata> = {};
+  for (const [providerKey] of Object.entries(root)) {
+    const providerEntries = extractModelsDevProviderMetadata(payload, providerKey);
+    for (const [id, metadata] of Object.entries(providerEntries)) {
+      entries[id] = mergeProviderMetadata(entries[id], metadata);
+    }
+  }
+
+  return entries;
+}
+
 async function fetchModelsDevProviderMetadata(
   providerKey: string,
   cacheKey: string,
@@ -485,6 +543,33 @@ async function fetchModelsDevOpencodeMetadata(): Promise<Record<string, ModelsDe
   return fetchModelsDevProviderMetadata('opencode', MODELS_DEV_OPENCODE_CACHE_KEY);
 }
 
+async function fetchModelsDevGlobalProviderMetadata(): Promise<Record<string, ModelsDevProviderMetadata>> {
+  const cached = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY);
+  if (cached) return cached;
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(MODELS_DEV_OPENROUTER_URL, {
+      method: 'GET',
+      signal: controller.signal,
+      cache: 'force-cache',
+    });
+    if (!res.ok) throw new Error(`models.dev metadata failed (${res.status})`);
+    const payload = (await res.json()) as unknown;
+    const metadata = extractAllModelsDevProviderMetadata(payload);
+    if (Object.keys(metadata).length > 0) {
+      writeCachedModelsDevMetadata(MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY, metadata);
+    }
+    return metadata;
+  } catch {
+    return cached ?? {};
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 export function parseOpenRouterCatalog(payload: unknown): OpenRouterCatalogModel[] {
   const root = asRecord(payload);
   const data = Array.isArray(root?.data) ? root.data : [];
@@ -554,6 +639,7 @@ function isProviderTextChatModel(id: string, metadata?: ModelsDevProviderMetadat
   if ((metadata?.outputModalities?.length ?? 0) > 0 && !metadata?.outputModalities?.includes('text')) return false;
 
   const normalized = id.toLowerCase();
+  if (IMAGE_GENERATION_MODEL_FAMILY_REGEX.test(normalized)) return false;
   if (/(embed|embedding|rerank|retriev|nv-rerank|nvolve)/.test(normalized)) return false;
   return true;
 }
@@ -622,6 +708,48 @@ export function buildCuratedOllamaModelList(
 function isOpencodeChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
   if (!isProviderTextChatModel(id, metadata)) return false;
   return true;
+}
+
+function blackboxBaseId(id: string): string {
+  return id.trim().replace(/^blackboxai\//i, '');
+}
+
+function isBlackboxPriorityModel(rawId: string, baseId: string): boolean {
+  return BLACKBOX_PRIORITY_MODELS.includes(rawId as typeof BLACKBOX_PRIORITY_MODELS[number])
+    || BLACKBOX_PRIORITY_MODELS.includes(baseId as typeof BLACKBOX_PRIORITY_MODELS[number]);
+}
+
+export function buildCuratedBlackboxModelList(
+  modelIds: string[],
+  metadataById: Record<string, ModelsDevProviderMetadata>,
+): string[] {
+  const prioritySet = new Set<string>(BLACKBOX_PRIORITY_MODELS);
+
+  const candidates = modelIds.filter((rawId) => {
+    const baseId = blackboxBaseId(rawId);
+    const metadata = metadataById[rawId] ?? metadataById[baseId];
+    if (!isProviderTextChatModel(baseId, metadata)) return false;
+
+    const priorityId = isBlackboxPriorityModel(rawId, baseId)
+      ? (BLACKBOX_PRIORITY_MODELS.includes(rawId as typeof BLACKBOX_PRIORITY_MODELS[number]) ? rawId : baseId)
+      : baseId;
+    const filterResult = filterModelByContext(priorityId, metadata?.contextLimit, prioritySet);
+    return filterResult.allowed;
+  });
+
+  if (candidates.length === 0) return [];
+
+  const preferred: string[] = [];
+  for (const priorityId of BLACKBOX_PRIORITY_MODELS) {
+    const match = candidates.find((rawId) => rawId === priorityId || blackboxBaseId(rawId) === priorityId);
+    if (match && !preferred.includes(match)) preferred.push(match);
+  }
+
+  const rest = candidates
+    .filter((rawId) => !preferred.includes(rawId))
+    .sort((a, b) => blackboxBaseId(a).localeCompare(blackboxBaseId(b)) || a.localeCompare(b));
+
+  return [...preferred, ...rest].slice(0, BLACKBOX_MAX_CURATED_MODELS);
 }
 
 export function buildCuratedOpencodeModelList(
@@ -868,12 +996,15 @@ export async function fetchBlackboxModels(): Promise<string[]> {
   const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
 
   try {
-    const catalogRes = await fetch(PROVIDER_URLS.blackbox.models, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-      cache: 'no-store',
-    });
+    const [catalogRes, modelsDevMetadata] = await Promise.all([
+      fetch(PROVIDER_URLS.blackbox.models, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+        cache: 'no-store',
+      }),
+      fetchModelsDevGlobalProviderMetadata(),
+    ]);
 
     if (!catalogRes.ok) {
       const detail = await catalogRes.text().catch(() => '');
@@ -881,7 +1012,11 @@ export async function fetchBlackboxModels(): Promise<string[]> {
     }
 
     const payload = (await catalogRes.json()) as unknown;
-    return normalizeModelList(payload);
+    const liveModels = normalizeModelList(payload);
+    const curated = buildCuratedBlackboxModelList(liveModels, modelsDevMetadata);
+    // Keep Blackbox aligned with the curated-provider path: do not fall back to the
+    // raw catalog if metadata/context filtering excludes everything.
+    return curated;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`Blackbox AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);

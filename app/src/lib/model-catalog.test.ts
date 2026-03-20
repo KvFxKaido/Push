@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  buildCuratedBlackboxModelList,
   buildCuratedNvidiaModelList,
   buildCuratedOllamaModelList,
   buildCuratedOpencodeModelList,
@@ -365,7 +366,12 @@ describe('buildCuratedOllamaModelList', () => {
 
   it('allows non-priority models with missing context metadata via fail-open', () => {
     const curated = buildCuratedOllamaModelList(
-      ['gemini-3-flash-preview', 'some-new-model'],
+      [
+        'gemini-3-flash-preview',
+        'some-new-model',
+        'google/nanobanana-preview',
+        'black-forest-labs/flux.1-dev',
+      ],
       {
         'gemini-3-flash-preview': {
           id: 'gemini-3-flash-preview',
@@ -396,6 +402,61 @@ describe('buildCuratedOllamaModelList', () => {
     expect(curated).toContain('gemini-3-flash-preview');
     // contextLimit 0 is treated as "missing" → Ollama's fail-open allows it
     expect(curated).toContain('some-new-model');
+    expect(curated).not.toContain('google/nanobanana-preview');
+    expect(curated).not.toContain('black-forest-labs/flux.1-dev');
+  });
+});
+
+describe('buildCuratedBlackboxModelList', () => {
+  it('normalizes routed IDs, keeps priority chat models, and excludes image-only or embedding models', () => {
+    const curated = buildCuratedBlackboxModelList(
+      [
+        'blackbox-pro',
+        'blackboxai/anthropic/claude-sonnet-4.6',
+        'blackboxai/openai/gpt-image-1',
+        'blackboxai/nomic/nomic-embed-text',
+      ],
+      {
+        'anthropic/claude-sonnet-4.6': {
+          id: 'anthropic/claude-sonnet-4.6',
+          attachment: true,
+          reasoning: true,
+          toolCall: true,
+          structuredOutput: true,
+          openWeights: false,
+          inputModalities: ['text', 'image'],
+          outputModalities: ['text'],
+          contextLimit: 200_000,
+        },
+        'openai/gpt-image-1': {
+          id: 'openai/gpt-image-1',
+          attachment: false,
+          reasoning: false,
+          toolCall: false,
+          structuredOutput: false,
+          openWeights: false,
+          inputModalities: ['text'],
+          outputModalities: ['image'],
+          contextLimit: 128_000,
+        },
+        'nomic/nomic-embed-text': {
+          id: 'nomic/nomic-embed-text',
+          attachment: false,
+          reasoning: false,
+          toolCall: false,
+          structuredOutput: false,
+          openWeights: true,
+          inputModalities: ['text'],
+          outputModalities: ['embedding'],
+          contextLimit: 8_192,
+        },
+      },
+    );
+
+    expect(curated[0]).toBe('blackbox-pro');
+    expect(curated).toContain('blackboxai/anthropic/claude-sonnet-4.6');
+    expect(curated).not.toContain('blackboxai/openai/gpt-image-1');
+    expect(curated).not.toContain('blackboxai/nomic/nomic-embed-text');
   });
 });
 
@@ -561,13 +622,48 @@ describe('provider model fetchers', () => {
 });
 
 describe('fetchBlackboxModels', () => {
-  it('normalizes a standard /models payload', async () => {
+  it('returns a curated Blackbox chat-model list', async () => {
     stubWindow();
-    vi.stubGlobal('fetch', vi.fn(async () =>
-      jsonResponse({ data: [{ id: 'blackbox-ai' }, { id: 'blackbox-pro' }] }),
-    ));
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('models.dev/api.json')) {
+        return jsonResponse({
+          anthropic: {
+            models: {
+              'anthropic/claude-sonnet-4.6': {
+                id: 'anthropic/claude-sonnet-4.6',
+                reasoning: true,
+                tool_call: true,
+                structured_output: true,
+                modalities: { input: ['text', 'image'], output: ['text'] },
+                limit: { context: 200_000 },
+              },
+            },
+          },
+          openai: {
+            models: {
+              'openai/gpt-image-1': {
+                id: 'openai/gpt-image-1',
+                modalities: { input: ['text'], output: ['image'] },
+                limit: { context: 128_000 },
+              },
+            },
+          },
+        });
+      }
+      return jsonResponse({
+        data: [
+          { id: 'blackbox-pro' },
+          { id: 'blackboxai/anthropic/claude-sonnet-4.6' },
+          { id: 'blackboxai/openai/gpt-image-1' },
+        ],
+      });
+    }));
 
-    await expect(fetchBlackboxModels()).resolves.toEqual(['blackbox-ai', 'blackbox-pro']);
+    await expect(fetchBlackboxModels()).resolves.toEqual([
+      'blackbox-pro',
+      'blackboxai/anthropic/claude-sonnet-4.6',
+    ]);
   });
 
   it('throws on non-OK response', async () => {
@@ -590,6 +686,32 @@ describe('fetchBlackboxModels', () => {
     }));
 
     await expect(fetchBlackboxModels()).rejects.toThrow(/timed out/);
+  });
+
+  it('does not fall back to the raw provider list when every model is filtered out', async () => {
+    stubWindow();
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('models.dev/api.json')) {
+        return jsonResponse({
+          openai: {
+            models: {
+              'openai/gpt-image-1': {
+                id: 'openai/gpt-image-1',
+                modalities: { input: ['text'], output: ['image'] },
+                limit: { context: 128_000 },
+              },
+            },
+          },
+        });
+      }
+      if (url.includes('/blackbox/')) {
+        return jsonResponse({ data: [{ id: 'blackboxai/openai/gpt-image-1' }] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    await expect(fetchBlackboxModels()).resolves.toEqual([]);
   });
 });
 
