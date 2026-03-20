@@ -252,6 +252,38 @@ else:
 print(json.dumps({"symbols": symbols, "total_lines": len(lines)}))
 `.trim();
 
+/**
+ * Regex-based fallback for symbol extraction when the Python AST extractor
+ * fails (timeout, signal, parse error). Reads the file line-by-line and matches
+ * top-level declarations. Less accurate than AST but resilient to syntax errors.
+ * The file path is passed as the first positional argument after `--`.
+ */
+const SANDBOX_REGEX_FALLBACK_SCRIPT = `
+const fs = require('fs');
+const readline = require('readline');
+const filePath = process.argv[1];
+if (!fs.existsSync(filePath)) process.exit(1);
+const rl = readline.createInterface({ input: fs.createReadStream(filePath), terminal: false });
+let lineCount = 0;
+const symbols = [];
+const regex = /^(export\\s+)?(function|class|interface|type|const|let|var)\\s+([a-zA-Z0-9_]+)/;
+rl.on('line', (line) => {
+  lineCount++;
+  const match = line.match(regex);
+  if (match) {
+    symbols.push({
+      name: match[3],
+      kind: match[2].trim(),
+      line: lineCount,
+      signature: line.trim().split('{')[0].trim()
+    });
+  }
+});
+rl.on('close', () => {
+  console.log(JSON.stringify({ symbols, total_lines: lineCount }));
+});
+`.trim();
+
 const SANDBOX_FIND_REFERENCES_SCRIPT = `
 import sys, json, os, subprocess
 
@@ -715,6 +747,7 @@ export async function readSymbolsFromSandbox(
   path: string,
 ): Promise<SandboxReadSymbolsResult> {
   let result;
+  let primaryFailed = false;
   try {
     result = await execInSandbox(
       sandboxId,
@@ -722,10 +755,14 @@ export async function readSymbolsFromSandbox(
     );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    if (!(msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('signal'))) {
+    const isTransient = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('signal');
+    if (!isTransient) {
       throw error;
     }
-    // Timeout/signal: fall through to regex fallback
+    // Python extractor hit a timeout or was killed by a signal (e.g. OOM on
+    // very large files). Mark as failed so the lightweight regex fallback runs
+    // instead of returning empty symbols.
+    primaryFailed = true;
   }
 
   let parsed: {
@@ -738,45 +775,24 @@ export async function readSymbolsFromSandbox(
     try {
       parsed = JSON.parse(result.stdout.trim());
     } catch {
-      // Fall through to regex fallback
+      primaryFailed = true;
     }
   }
 
-  // If primary failed or produced no symbols on a large file, try regex fallback
-  if (!parsed.symbols || parsed.symbols.length === 0) {
-    const fallbackCmd = `node -e "
-      const fs = require('fs');
-      const readline = require('readline');
-      const filePath = process.argv[1];
-      if (!fs.existsSync(filePath)) process.exit(1);
-      const rl = readline.createInterface({ input: fs.createReadStream(filePath), terminal: false });
-      let lineCount = 0;
-      const symbols = [];
-      const regex = /^(export\\\\s+)?(function|class|interface|type|const|let|var)\\\\s+([a-zA-Z0-9_]+)/;
-      rl.on('line', (line) => {
-        lineCount++;
-        const match = line.match(regex);
-        if (match) {
-          symbols.push({
-            name: match[3],
-            kind: match[2].trim(),
-            line: lineCount,
-            signature: line.trim().split('{')[0].trim()
-          });
-        }
-      });
-      rl.on('close', () => {
-        console.log(JSON.stringify({ symbols, total_lines: lineCount }));
-      });
-    " -- ${shellEscape(path)}`;
-
+  // If the AST extractor failed, timed out, or produced no symbols, try the
+  // lightweight regex fallback. The fallback script is a named constant
+  // (SANDBOX_REGEX_FALLBACK_SCRIPT) for auditability — path is the only
+  // external input, passed via shellEscape after a `--` separator.
+  if (primaryFailed || !parsed.symbols || parsed.symbols.length === 0) {
+    const fallbackCmd = `node -e ${shellEscape(SANDBOX_REGEX_FALLBACK_SCRIPT)} -- ${shellEscape(path)}`;
     try {
       const fbResult = await execInSandbox(sandboxId, fallbackCmd);
-      if (fbResult.exitCode === 0) {
-        parsed = JSON.parse(fbResult.stdout);
+      if (fbResult.exitCode === 0 && fbResult.stdout.trim()) {
+        parsed = JSON.parse(fbResult.stdout.trim());
       }
     } catch {
-      // Silently continue with empty symbols
+      // Regex fallback also failed — continue with empty symbols rather than
+      // failing the entire tool call. The caller still gets a valid result.
     }
   }
 

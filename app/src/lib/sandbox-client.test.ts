@@ -330,6 +330,105 @@ describe('readSymbolsFromSandbox', () => {
       readSymbolsFromSandbox('sb-123', '/workspace/src/missing.ts'),
     ).rejects.toThrow('No such file or directory');
   });
+
+  it('falls back to regex extractor on timeout', async () => {
+    let callCount = 0;
+    mockFetch.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        // Primary python extractor times out
+        return Promise.reject(new Error('Request timeout'));
+      }
+      // Regex fallback succeeds
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          stdout: JSON.stringify({
+            symbols: [{ name: 'greet', kind: 'function', line: 1, signature: 'function greet()' }],
+            total_lines: 10,
+          }),
+          stderr: '',
+          exit_code: 0,
+          truncated: false,
+        }),
+      });
+    });
+
+    const { readSymbolsFromSandbox } = await import('./sandbox-client');
+    const result = await readSymbolsFromSandbox('sb-123', '/workspace/src/app.ts');
+
+    expect(callCount).toBe(2);
+    expect(result.symbols).toEqual([
+      { name: 'greet', kind: 'function', line: 1, signature: 'function greet()' },
+    ]);
+    expect(result.totalLines).toBe(10);
+
+    // Verify fallback command uses node with shellEscape'd path
+    const secondBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(secondBody.command).toContain('node -e');
+    expect(secondBody.command).toContain('/workspace/src/app.ts');
+  });
+
+  it('falls back to regex extractor when primary returns no symbols', async () => {
+    let callCount = 0;
+    mockFetch.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        // Primary returns empty symbols
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            stdout: JSON.stringify({ symbols: [], total_lines: 50 }),
+            stderr: '',
+            exit_code: 0,
+            truncated: false,
+          }),
+        });
+      }
+      // Regex fallback finds something
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          stdout: JSON.stringify({
+            symbols: [{ name: 'Config', kind: 'class', line: 5, signature: 'class Config' }],
+            total_lines: 50,
+          }),
+          stderr: '',
+          exit_code: 0,
+          truncated: false,
+        }),
+      });
+    });
+
+    const { readSymbolsFromSandbox } = await import('./sandbox-client');
+    const result = await readSymbolsFromSandbox('sb-123', '/workspace/src/config.ts');
+
+    expect(callCount).toBe(2);
+    expect(result.symbols).toEqual([
+      { name: 'Config', kind: 'class', line: 5, signature: 'class Config' },
+    ]);
+  });
+
+  it('returns empty symbols when both extractors fail', async () => {
+    mockFetch.mockImplementation(() => {
+      return Promise.reject(new Error('Request timeout'));
+    });
+
+    const { readSymbolsFromSandbox } = await import('./sandbox-client');
+    const result = await readSymbolsFromSandbox('sb-123', '/workspace/src/broken.ts');
+
+    expect(result.symbols).toEqual([]);
+    expect(result.totalLines).toBe(0);
+  });
+
+  it('re-throws non-timeout/signal errors from primary extractor', async () => {
+    mockFetch.mockRejectedValue(new Error('Network failure'));
+
+    const { readSymbolsFromSandbox } = await import('./sandbox-client');
+    await expect(
+      readSymbolsFromSandbox('sb-123', '/workspace/src/app.ts'),
+    ).rejects.toThrow('Network failure');
+  });
 });
 
 describe('findReferencesInSandbox', () => {
