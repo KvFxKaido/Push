@@ -17,6 +17,11 @@ describe('looksLikeToolCall', () => {
     expect(looksLikeToolCall('tool: read_file, args: path=README.md')).toBe(false);
     expect(looksLikeToolCall('Config:\ntool: read_file, args: path=README.md')).toBe(false);
   });
+
+  it('detects native tool-call echo fragments', () => {
+    expect(looksLikeToolCall('repo_ls", "repo": "KvFxKaido/Push"}}')).toBe(true);
+    expect(looksLikeToolCall('repo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md"}}')).toBe(true);
+  });
 });
 
 describe('stripToolCallPayload', () => {
@@ -73,6 +78,27 @@ describe('stripToolCallPayload', () => {
       '  {"tool":"sandbox_read_file","args":{"path":"b.ts"}}',
       ']',
     ].join('\n');
+    expect(stripToolCallPayload(content)).toBe('');
+  });
+
+  it('strips native tool-call echo fragment (no "tool" key)', () => {
+    expect(stripToolCallPayload('repo_ls", "repo": "KvFxKaido/Push"}}')).toBe('');
+  });
+
+  it('strips native echo with args object', () => {
+    expect(
+      stripToolCallPayload('repo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md", "start_line": 1, "end_line": 400}}'),
+    ).toBe('');
+  });
+
+  it('strips native echo preserving preceding prose', () => {
+    expect(
+      stripToolCallPayload('Let me check.\nrepo_ls", "args": {"repo": "KvFxKaido/Push"}}'),
+    ).toBe('Let me check.');
+  });
+
+  it('strips native echo with fenced tool call JSON alongside', () => {
+    const content = 'repo_read", "args": {"repo": "a/b", "path": "AGENTS.md"}}\n```json\n{"tool":"repo_read","args":{"repo":"a/b","path":"AGENTS.md"}}\n```';
     expect(stripToolCallPayload(content)).toBe('');
   });
 });

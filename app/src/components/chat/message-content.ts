@@ -14,6 +14,13 @@ const BRACED_TOOL_OBJECT_START = /\{\s*["']?tool["']?\s*:\s*(?:["'][^"'\n]*["']|
 const BRACELESS_QUOTED_TOOL_START = /(?:^|\n)\s*["']tool["']\s*:\s*["'][^"'\n]*["']/s;
 const BRACELESS_TOOL_WITH_ARGS_OBJECT = /(?:^|\n)\s*["']?tool["']?\s*:\s*["'][^"'\n]*["']\s*,\s*["']?args["']?\s*:\s*\{/s;
 
+// Native tool-call echo: some providers emit both delta.content and
+// delta.tool_calls for the same invocation.  The bridge converts native calls
+// into fenced JSON (stripped above), but the echoed content remains as a
+// fragment like:  repo_ls", "args": {"repo": "KvFxKaido/Push"}}
+// i.e. the tool-name value followed by the rest of the JSON without {"tool": "
+const NATIVE_TOOL_ECHO_RE = /[a-z_]\w*["']\s*,\s*["'][a-z_]+["']\s*:/i;
+
 function stripBareToolCallJson(text: string): string {
   const ranges: Array<{ start: number; end: number }> = [];
   let i = 0;
@@ -95,6 +102,7 @@ export function looksLikeToolCall(text: string): boolean {
   if (BRACED_TOOL_OBJECT_START.test(text)) return true;
   if (BRACELESS_QUOTED_TOOL_START.test(text)) return true;
   if (BRACELESS_TOOL_WITH_ARGS_OBJECT.test(text)) return true;
+  if (NATIVE_TOOL_ECHO_RE.test(text)) return true;
   return false;
 }
 
@@ -145,6 +153,17 @@ export function stripToolCallPayload(content: string): string {
 
   stripped = stripped.replace(/```(?:json)?\s*\n?\{\s*["']?tool["']?[\s\S]*$/s, '');
   stripped = stripped.replace(/```(?:json)?\s*$/s, '');
+
+  // Strip native tool-call echo fragments — content like:
+  //   repo_ls", "args": {"repo": "KvFxKaido/Push"}}
+  //   repo_read", "args": {"repo": "...", "path": "README.md", "start_line": 1, "end_line": 400}}
+  // These appear when a provider emits both delta.content and delta.tool_calls
+  // for the same invocation.  The bridge converts native calls into fenced JSON
+  // (stripped above), but the echoed text fragment remains without the {"tool": " prefix.
+  stripped = stripped.replace(
+    /(?:^|\n)\s*[a-z_]\w*["']\s*,\s*["'][a-z_]+["']\s*:[\s\S]*$/si,
+    '',
+  );
 
   // After all stripping, if only brackets/braces/commas/whitespace remain, return empty.
   // This catches array-wrapped tool calls like [\n  {"tool":...}\n] where the inner
