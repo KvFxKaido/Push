@@ -402,6 +402,11 @@ export const MessageBubble = memo(function MessageBubble({
       if (message.isToolCall || (isStreaming && looksLikeToolCall(text))) {
         text = stripToolCallPayload(text);
       }
+      // Unconditional cleanup: if the remaining text is only brackets, braces,
+      // commas, and whitespace (artifact from stripped tool calls), hide it.
+      if (/^[[{}\],\s]*$/.test(text)) {
+        text = '';
+      }
       return text;
     },
     [isUser, message.content, message.displayContent, message.isToolCall, isStreaming],

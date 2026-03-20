@@ -142,10 +142,19 @@ export function stripToolCallPayload(content: string): string {
   stripped = stripped.replace(/```(?:json)?\s*\n?\{\s*["']?tool["']?[\s\S]*$/s, '');
   stripped = stripped.replace(/```(?:json)?\s*$/s, '');
 
-  return stripped
+  // After all stripping, if only brackets/braces/commas/whitespace remain, return empty.
+  // This catches array-wrapped tool calls like [\n  {"tool":...}\n] where the inner
+  // object was removed but the outer brackets (and possibly a lone `{`) survived.
+  stripped = stripped
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\n+|\n+$/g, '')
     .trim();
+
+  if (/^[[{}\],\s]*$/.test(stripped)) {
+    return '';
+  }
+
+  return stripped;
 }
 
 export function stripToolResultEnvelopes(content: string): string {

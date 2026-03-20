@@ -44,4 +44,35 @@ describe('stripToolCallPayload', () => {
   it('strips truncated brace-less quoted tool payloads once args start as an object', () => {
     expect(stripToolCallPayload('Before\n"tool": "sandbox_exec", "args": {')).toBe('Before');
   });
+
+  it('strips array-wrapped tool calls leaving no bracket artifacts', () => {
+    expect(
+      stripToolCallPayload('[\n  {"tool":"sandbox_read_file","args":{"path":"src/main.ts"}}\n]'),
+    ).toBe('');
+  });
+
+  it('strips array-wrapped tool calls with preceding prose', () => {
+    expect(
+      stripToolCallPayload(
+        'Let me read that.\n[\n  {"tool":"sandbox_read_file","args":{"path":"src/main.ts"}}\n]',
+      ),
+    ).toBe('Let me read that.');
+  });
+
+  it('strips lone bracket/brace artifacts like [\\n  {\\n]', () => {
+    expect(stripToolCallPayload('[\n  {\n]')).toBe('');
+    expect(stripToolCallPayload('[  ]')).toBe('');
+    expect(stripToolCallPayload('[\n{\n}\n]')).toBe('');
+    expect(stripToolCallPayload('[,]')).toBe('');
+  });
+
+  it('strips multiple array-wrapped tool calls', () => {
+    const content = [
+      '[',
+      '  {"tool":"sandbox_read_file","args":{"path":"a.ts"}},',
+      '  {"tool":"sandbox_read_file","args":{"path":"b.ts"}}',
+      ']',
+    ].join('\n');
+    expect(stripToolCallPayload(content)).toBe('');
+  });
 });
