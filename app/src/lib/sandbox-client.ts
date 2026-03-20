@@ -266,14 +266,14 @@ if (!fs.existsSync(filePath)) process.exit(1);
 const rl = readline.createInterface({ input: fs.createReadStream(filePath), terminal: false });
 let lineCount = 0;
 const symbols = [];
-const regex = /^(export\\s+)?(function|class|interface|type|const|let|var)\\s+([a-zA-Z0-9_]+)/;
+const regex = /^(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(function|class|interface|type|const|let|var)\\s+([a-zA-Z0-9_]+)/;
 rl.on('line', (line) => {
   lineCount++;
   const match = line.match(regex);
   if (match) {
     symbols.push({
-      name: match[3],
-      kind: match[2].trim(),
+      name: match[2],
+      kind: match[1].trim(),
       line: lineCount,
       signature: line.trim().split('{')[0].trim()
     });
@@ -755,7 +755,8 @@ export async function readSymbolsFromSandbox(
     );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    const isTransient = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('signal');
+    const lowerMsg = msg.toLowerCase();
+    const isTransient = lowerMsg.includes('timeout') || lowerMsg.includes('timed out') || lowerMsg.includes('signal') || lowerMsg.includes('aborterror');
     if (!isTransient) {
       throw error;
     }

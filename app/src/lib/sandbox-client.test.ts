@@ -331,13 +331,21 @@ describe('readSymbolsFromSandbox', () => {
     ).rejects.toThrow('No such file or directory');
   });
 
-  it('falls back to regex extractor on timeout', async () => {
+  it('falls back to regex extractor when primary returns non-zero exit code', async () => {
     let callCount = 0;
     mockFetch.mockImplementation(() => {
       callCount++;
       if (callCount === 1) {
-        // Primary python extractor times out
-        return Promise.reject(new Error('Request timeout'));
+        // Primary python extractor fails (non-zero exit, no retries triggered)
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            stdout: '',
+            stderr: 'SyntaxError: invalid syntax',
+            exit_code: 1,
+            truncated: false,
+          }),
+        });
       }
       // Regex fallback succeeds
       return Promise.resolve({
@@ -411,7 +419,16 @@ describe('readSymbolsFromSandbox', () => {
 
   it('returns empty symbols when both extractors fail', async () => {
     mockFetch.mockImplementation(() => {
-      return Promise.reject(new Error('Request timeout'));
+      // Both primary and fallback return non-zero exit (no retry-inducing errors)
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          stdout: '',
+          stderr: 'command failed',
+          exit_code: 1,
+          truncated: false,
+        }),
+      });
     });
 
     const { readSymbolsFromSandbox } = await import('./sandbox-client');
