@@ -433,12 +433,13 @@ export function ChatInput({
     return null;
   })();
 
-  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'zen' || selectedProvider === 'nvidia';
+  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'zen' || selectedProvider === 'nvidia' || selectedProvider === 'blackbox';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
     if (selectedProvider === 'zen') providerControls.refreshZenModels();
     if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
+    if (selectedProvider === 'blackbox') providerControls.refreshBlackboxModels();
   };
 
   // Reasoning effort (per-provider, only for models that support it)
