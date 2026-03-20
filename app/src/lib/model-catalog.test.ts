@@ -4,6 +4,7 @@ import {
   buildCuratedOllamaModelList,
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
+  fetchBlackboxModels,
   fetchNvidiaModels,
   fetchOllamaModels,
   fetchZenModels,
@@ -528,6 +529,22 @@ describe('provider model fetchers', () => {
       providerMatcher: (url: string) => url.includes('/nvidia/') || url.includes('/api/nvidia/models'),
       modelsDevPayload: {
         nvidia: {
+          models: {
+            'tiny-context-model': {
+              id: 'tiny-context-model',
+              modalities: { input: ['text'], output: ['text'] },
+              limit: { context: 32_000 },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: 'Blackbox AI',
+      fetchModels: fetchBlackboxModels,
+      providerMatcher: (url: string) => url.includes('/blackbox/') || url.includes('/api/blackbox/models'),
+      modelsDevPayload: {
+        blackbox: {
           models: {
             'tiny-context-model': {
               id: 'tiny-context-model',

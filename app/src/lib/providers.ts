@@ -23,7 +23,7 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   openrouter: { chat: providerUrl('/openrouter/api/v1/chat/completions',    '/api/openrouter/chat'), models: providerUrl('/openrouter/api/v1/models',        '/api/openrouter/models') },
   zen:        { chat: providerUrl('/opencode/zen/v1/chat/completions',          '/api/zen/chat'),        models: providerUrl('/opencode/zen/v1/models',          '/api/zen/models')        },
   nvidia:     { chat: providerUrl('/nvidia/v1/chat/completions',                '/api/nvidia/chat'),     models: providerUrl('/nvidia/v1/models',                '/api/nvidia/models')     },
-  blackbox:   { chat: providerUrl('/blackbox/chat/completions',               '/api/blackbox/chat'),   models: providerUrl('/blackbox/models',                  '/api/blackbox/models')   },
+  blackbox:   { chat: providerUrl('/blackbox/chat/completions',                '/api/blackbox/chat'),   models: providerUrl('/blackbox/models',                 '/api/blackbox/models')   },
   azure:      { chat: providerUrl('/api/azure/chat',                              '/api/azure/chat'),      models: providerUrl('/api/azure/models',                '/api/azure/models')      },
   bedrock:    { chat: providerUrl('/api/bedrock/chat',                            '/api/bedrock/chat'),    models: providerUrl('/api/bedrock/models',              '/api/bedrock/models')    },
   vertex:     { chat: providerUrl('/api/vertex/chat',                             '/api/vertex/chat'),     models: providerUrl('/api/vertex/models',               '/api/vertex/models')     },

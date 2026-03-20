@@ -170,6 +170,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   openrouter: 'OpenRouter',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
+  blackbox: 'Blackbox AI',
   azure: 'Azure OpenAI',
   bedrock: 'AWS Bedrock',
   vertex: 'Google Vertex',
