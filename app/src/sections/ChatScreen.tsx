@@ -1008,7 +1008,11 @@ export function ChatScreen(props: ChatScreenProps) {
             )}
             <div className={`${activeRepoAppearance ? '-ml-1.5' : '-ml-2.5'} flex min-w-0 items-center self-stretch`}>
               <p className="truncate text-sm font-medium leading-tight text-[#f5f7ff]">
-                {isScratch ? 'Workspace' : activeRepo?.name || 'Push'}
+                {isScratch ? (
+                  <span className="hidden sm:inline">Workspace</span>
+                ) : (
+                  activeRepo?.name || 'Push'
+                )}
               </p>
             </div>
           </div>
@@ -1017,7 +1021,7 @@ export function ChatScreen(props: ChatScreenProps) {
                 <span className="text-push-2xs text-push-fg-dim">ephemeral</span>
                 {snapshots.latestSnapshot && (
                   <span
-                    className={`text-push-2xs ${snapshotIsStale ? 'text-amber-400' : 'text-push-fg-dim'}`}
+                    className={`hidden text-push-2xs sm:inline ${snapshotIsStale ? 'text-amber-400' : 'text-push-fg-dim'}`}
                     title={`Latest snapshot: ${new Date(snapshots.latestSnapshot.createdAt).toLocaleString()}`}
                   >
                     {snapshotIsStale ? `snapshot stale (${snapshotAgeLabel})` : `snapshot ${snapshotAgeLabel}`}
@@ -1032,7 +1036,7 @@ export function ChatScreen(props: ChatScreenProps) {
                     aria-label="Save Snapshot Now"
                   >
                     {snapshots.snapshotSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                    Save
+                    <span className="hidden sm:inline">Save</span>
                   </button>
                 )}
                 {snapshots.latestSnapshot && (
@@ -1044,7 +1048,7 @@ export function ChatScreen(props: ChatScreenProps) {
                     aria-label="Restore from Last Snapshot"
                   >
                     {snapshots.snapshotRestoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                    Restore
+                    <span className="hidden sm:inline">Restore</span>
                   </button>
                 )}
                 {sandbox.status === 'ready' && (
