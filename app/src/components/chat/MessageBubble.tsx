@@ -5,6 +5,7 @@ import { CardRenderer } from '@/components/cards/CardRenderer';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import {
   looksLikeToolCall,
+  ONLY_BRACKETS_RE,
   stripToolCallPayload,
   stripToolResultEnvelopes,
 } from './message-content';
@@ -402,9 +403,10 @@ export const MessageBubble = memo(function MessageBubble({
       if (message.isToolCall || (isStreaming && looksLikeToolCall(text))) {
         text = stripToolCallPayload(text);
       }
-      // Unconditional cleanup: if the remaining text is only brackets, braces,
-      // commas, and whitespace (artifact from stripped tool calls), hide it.
-      if (/^[[{}\],\s]*$/.test(text)) {
+      // Strip bracket-only artifacts, but only when we believe the content
+      // originated from a tool call / tool JSON, to avoid erasing legitimate
+      // minimal JSON-like replies such as "[]" or "{}".
+      if ((message.isToolCall || (isStreaming && looksLikeToolCall(text))) && ONLY_BRACKETS_RE.test(text)) {
         text = '';
       }
       return text;
