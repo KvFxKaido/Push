@@ -19,7 +19,7 @@ const BRACELESS_TOOL_WITH_ARGS_OBJECT = /(?:^|\n)\s*["']?tool["']?\s*:\s*["'][^"
 // into fenced JSON (stripped above), but the echoed content remains as a
 // fragment like:  repo_ls", "args": {"repo": "KvFxKaido/Push"}}
 // i.e. the tool-name value followed by the rest of the JSON without {"tool": "
-const NATIVE_TOOL_ECHO_RE = /[a-z_]\w*["']\s*,\s*["'][a-z_]+["']\s*:/i;
+const NATIVE_TOOL_ECHO_RE = /(?:^|\n)\s*[a-z_]\w*["']\s*,\s*["'][a-z_]+["']\s*:/i;
 
 function stripBareToolCallJson(text: string): string {
   const ranges: Array<{ start: number; end: number }> = [];
@@ -160,8 +160,9 @@ export function stripToolCallPayload(content: string): string {
   // These appear when a provider emits both delta.content and delta.tool_calls
   // for the same invocation.  The bridge converts native calls into fenced JSON
   // (stripped above), but the echoed text fragment remains without the {"tool": " prefix.
+  // Build the stripping regex from the shared detection constant so both stay in sync.
   stripped = stripped.replace(
-    /(?:^|\n)\s*[a-z_]\w*["']\s*,\s*["'][a-z_]+["']\s*:[\s\S]*$/si,
+    new RegExp(NATIVE_TOOL_ECHO_RE.source + '[\\s\\S]*$', 'i'),
     '',
   );
 
