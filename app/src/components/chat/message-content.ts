@@ -6,6 +6,10 @@ function isToolCallObject(value: unknown): boolean {
   return typeof record.tool === 'string';
 }
 
+/** Returns true when text contains only JSON structural characters (brackets, braces, commas, whitespace). */
+// eslint-disable-next-line no-useless-escape -- \[ inside character class aids readability
+export const ONLY_BRACKETS_RE = /^[\[{}\],\s]*$/;
+
 const BRACED_TOOL_OBJECT_START = /\{\s*["']?tool["']?\s*:\s*(?:["'][^"'\n]*["']|[^,\n{}]+)/s;
 const BRACELESS_QUOTED_TOOL_START = /(?:^|\n)\s*["']tool["']\s*:\s*["'][^"'\n]*["']/s;
 const BRACELESS_TOOL_WITH_ARGS_OBJECT = /(?:^|\n)\s*["']?tool["']?\s*:\s*["'][^"'\n]*["']\s*,\s*["']?args["']?\s*:\s*\{/s;
@@ -142,10 +146,19 @@ export function stripToolCallPayload(content: string): string {
   stripped = stripped.replace(/```(?:json)?\s*\n?\{\s*["']?tool["']?[\s\S]*$/s, '');
   stripped = stripped.replace(/```(?:json)?\s*$/s, '');
 
-  return stripped
+  // After all stripping, if only brackets/braces/commas/whitespace remain, return empty.
+  // This catches array-wrapped tool calls like [\n  {"tool":...}\n] where the inner
+  // object was removed but the outer brackets (and possibly a lone `{`) survived.
+  stripped = stripped
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\n+|\n+$/g, '')
     .trim();
+
+  if (ONLY_BRACKETS_RE.test(stripped)) {
+    return '';
+  }
+
+  return stripped;
 }
 
 export function stripToolResultEnvelopes(content: string): string {
