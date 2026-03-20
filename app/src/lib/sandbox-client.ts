@@ -714,25 +714,70 @@ export async function readSymbolsFromSandbox(
   sandboxId: string,
   path: string,
 ): Promise<SandboxReadSymbolsResult> {
-  const result = await execInSandbox(
-    sandboxId,
-    `python3 -c ${shellEscape(SANDBOX_READ_SYMBOLS_SCRIPT)} ${shellEscape(path)}`,
-  );
-
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.error || 'Failed to extract symbols');
+  let result;
+  try {
+    result = await execInSandbox(
+      sandboxId,
+      `python3 -c ${shellEscape(SANDBOX_READ_SYMBOLS_SCRIPT)} ${shellEscape(path)}`,
+    );
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (!(msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('signal'))) {
+      throw error;
+    }
+    // Timeout/signal: fall through to regex fallback
   }
 
   let parsed: {
     error?: string;
     symbols?: Array<{ name?: string; kind?: string; line?: number; signature?: string }>;
     total_lines?: number;
-  };
+  } = {};
 
-  try {
-    parsed = JSON.parse(result.stdout.trim());
-  } catch {
-    throw new Error(`Failed to parse symbol output: ${result.stdout.slice(0, 500)}`);
+  if (result && result.exitCode === 0) {
+    try {
+      parsed = JSON.parse(result.stdout.trim());
+    } catch {
+      // Fall through to regex fallback
+    }
+  }
+
+  // If primary failed or produced no symbols on a large file, try regex fallback
+  if (!parsed.symbols || parsed.symbols.length === 0) {
+    const fallbackCmd = `node -e "
+      const fs = require('fs');
+      const readline = require('readline');
+      const filePath = process.argv[1];
+      if (!fs.existsSync(filePath)) process.exit(1);
+      const rl = readline.createInterface({ input: fs.createReadStream(filePath), terminal: false });
+      let lineCount = 0;
+      const symbols = [];
+      const regex = /^(export\\\\s+)?(function|class|interface|type|const|let|var)\\\\s+([a-zA-Z0-9_]+)/;
+      rl.on('line', (line) => {
+        lineCount++;
+        const match = line.match(regex);
+        if (match) {
+          symbols.push({
+            name: match[3],
+            kind: match[2].trim(),
+            line: lineCount,
+            signature: line.trim().split('{')[0].trim()
+          });
+        }
+      });
+      rl.on('close', () => {
+        console.log(JSON.stringify({ symbols, total_lines: lineCount }));
+      });
+    " -- ${shellEscape(path)}`;
+
+    try {
+      const fbResult = await execInSandbox(sandboxId, fallbackCmd);
+      if (fbResult.exitCode === 0) {
+        parsed = JSON.parse(fbResult.stdout);
+      }
+    } catch {
+      // Silently continue with empty symbols
+    }
   }
 
   if (parsed.error) {
