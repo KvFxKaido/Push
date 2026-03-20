@@ -339,29 +339,29 @@ export function useModelCatalog(): ModelCatalog {
   // requestIdleCallback (or a short setTimeout) so startup isn't blocked.
   useEffect(() => scheduleAutoFetch(
     shouldAutoFetchProviderModels({ hasKey: ollamaCfg.hasKey, modelCount: ollamaModelList.length, loading: ollamaLoading, error: ollamaError }),
-    getActiveProvider() === 'ollama',
+    activeProviderLabel === 'ollama',
     () => { void refreshOllamaModels(); },
-  ), [ollamaCfg.hasKey, ollamaError, ollamaLoading, ollamaModelList.length, refreshOllamaModels]);
+  ), [activeProviderLabel, ollamaCfg.hasKey, ollamaError, ollamaLoading, ollamaModelList.length, refreshOllamaModels]);
   useEffect(() => scheduleAutoFetch(
     shouldAutoFetchProviderModels({ hasKey: openRouterCfg.hasKey, modelCount: openRouterModelList.length, loading: openRouterLoading, error: openRouterError }),
-    getActiveProvider() === 'openrouter',
+    activeProviderLabel === 'openrouter',
     () => { void refreshOpenRouterModels(); },
-  ), [openRouterCfg.hasKey, openRouterError, openRouterLoading, openRouterModelList.length, refreshOpenRouterModels]);
+  ), [activeProviderLabel, openRouterCfg.hasKey, openRouterError, openRouterLoading, openRouterModelList.length, refreshOpenRouterModels]);
   useEffect(() => scheduleAutoFetch(
     !zenCfg.goMode && shouldAutoFetchProviderModels({ hasKey: zenCfg.hasKey, modelCount: zenModelList.length, loading: zenLoading, error: zenError }),
-    getActiveProvider() === 'zen',
+    activeProviderLabel === 'zen',
     () => { void refreshZenStandardModels(); },
-  ), [refreshZenStandardModels, zenCfg.goMode, zenCfg.hasKey, zenError, zenLoading, zenModelList.length]);
+  ), [activeProviderLabel, refreshZenStandardModels, zenCfg.goMode, zenCfg.hasKey, zenError, zenLoading, zenModelList.length]);
   useEffect(() => scheduleAutoFetch(
     shouldAutoFetchProviderModels({ hasKey: nvidiaCfg.hasKey, modelCount: nvidiaModelList.length, loading: nvidiaLoading, error: nvidiaError }),
-    getActiveProvider() === 'nvidia',
+    activeProviderLabel === 'nvidia',
     () => { void refreshNvidiaModels(); },
-  ), [nvidiaCfg.hasKey, nvidiaError, nvidiaLoading, nvidiaModelList.length, refreshNvidiaModels]);
+  ), [activeProviderLabel, nvidiaCfg.hasKey, nvidiaError, nvidiaLoading, nvidiaModelList.length, refreshNvidiaModels]);
   useEffect(() => scheduleAutoFetch(
     shouldAutoFetchProviderModels({ hasKey: blackboxCfg.hasKey, modelCount: blackboxModelList.length, loading: blackboxLoading, error: blackboxError }),
-    getActiveProvider() === 'blackbox',
+    activeProviderLabel === 'blackbox',
     () => { void refreshBlackboxModels(); },
-  ), [blackboxCfg.hasKey, blackboxError, blackboxLoading, blackboxModelList.length, refreshBlackboxModels]);
+  ), [activeProviderLabel, blackboxCfg.hasKey, blackboxError, blackboxLoading, blackboxModelList.length, refreshBlackboxModels]);
 
   // Clear models when key is removed
   useEffect(() => { if (!ollamaCfg.hasKey) { setOllamaModelList([]); setOllamaError(null); setOllamaUpdatedAt(null); } }, [ollamaCfg.hasKey]);

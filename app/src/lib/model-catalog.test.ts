@@ -15,10 +15,15 @@ import {
 } from './model-catalog';
 
 function createStorageMock() {
+  const store = new Map<string, string>();
   return {
-    getItem: vi.fn(() => null),
-    setItem: vi.fn(),
-    removeItem: vi.fn(),
+    getItem: vi.fn((key: string) => store.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      store.set(key, value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      store.delete(key);
+    }),
   };
 }
 
@@ -40,6 +45,7 @@ function jsonResponse(payload: unknown) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -694,6 +700,53 @@ describe('provider model fetchers', () => {
     }));
 
     await expect(fetchModels()).resolves.toEqual([]);
+  });
+
+  it('re-fetches provider metadata after the in-memory cache TTL expires', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-20T00:00:00Z'));
+    stubWindow();
+
+    const thirteenHoursMs = 13 * 60 * 60 * 1000;
+    let contextLimit = 32_000;
+    const fetchSpy = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('models.dev/api.json')) {
+        return jsonResponse({
+          nvidia: {
+            models: {
+              'fresh-context-model': {
+                id: 'fresh-context-model',
+                modalities: { input: ['text'], output: ['text'] },
+                limit: { context: contextLimit },
+              },
+            },
+          },
+        });
+      }
+      if (url.includes('/nvidia/') || url.includes('/api/nvidia/models')) {
+        return jsonResponse({ data: [{ id: 'fresh-context-model' }] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchSpy);
+
+    vi.resetModules();
+    const {
+      fetchNvidiaModels: fetchFreshNvidiaModels,
+      MIN_CONTEXT_TOKENS: freshMinContextTokens,
+    } = await import('./model-catalog');
+
+    await expect(fetchFreshNvidiaModels()).resolves.toEqual([]);
+
+    contextLimit = freshMinContextTokens;
+    vi.setSystemTime(Date.now() + thirteenHoursMs);
+
+    await expect(fetchFreshNvidiaModels()).resolves.toEqual(['fresh-context-model']);
+
+    const modelsDevCalls = fetchSpy.mock.calls.filter(([input]) => String(input).includes('models.dev/api.json'));
+    expect(modelsDevCalls).toHaveLength(2);
   });
 });
 

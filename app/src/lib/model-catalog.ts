@@ -179,9 +179,14 @@ function readCachedModelsDevOpenRouterMetadata(): Record<string, ModelsDevOpenRo
 // In-memory metadata cache (avoids repeated localStorage reads + JSON.parse)
 // ---------------------------------------------------------------------------
 
-// Module-level cache: keyed by storage key, value is the parsed models record or null.
+interface MetadataMemCacheEntry {
+  fetchedAt: number;
+  models: Record<string, unknown>;
+}
+
+// Module-level cache: keyed by storage key, value is the parsed payload or null.
 // Populated on first read; invalidated/updated on every write.
-const metadataMemCache = new Map<string, Record<string, unknown> | null>();
+const metadataMemCache = new Map<string, MetadataMemCacheEntry | null>();
 
 // ---------------------------------------------------------------------------
 // Reasoning effort preference (per-provider, localStorage)
@@ -353,7 +358,12 @@ function writeCachedModelsDevOpenRouterMetadata(models: Record<string, ModelsDev
 
 function readCachedModelsDevMetadata<TModel>(storageKey: string): Record<string, TModel> | null {
   if (metadataMemCache.has(storageKey)) {
-    return metadataMemCache.get(storageKey) as Record<string, TModel> | null;
+    const cached = metadataMemCache.get(storageKey);
+    if (!cached) return null;
+    if (Date.now() - cached.fetchedAt <= MODELS_DEV_OPENROUTER_CACHE_TTL_MS) {
+      return cached.models as Record<string, TModel>;
+    }
+    metadataMemCache.delete(storageKey);
   }
 
   const raw = safeStorageGet(storageKey);
@@ -373,7 +383,10 @@ function readCachedModelsDevMetadata<TModel>(storageKey: string): Record<string,
       return null;
     }
     const result = parsed.models as Record<string, TModel>;
-    metadataMemCache.set(storageKey, result as Record<string, unknown>);
+    metadataMemCache.set(storageKey, {
+      fetchedAt: parsed.fetchedAt,
+      models: result as Record<string, unknown>,
+    });
     return result;
   } catch {
     metadataMemCache.set(storageKey, null);
@@ -382,9 +395,13 @@ function readCachedModelsDevMetadata<TModel>(storageKey: string): Record<string,
 }
 
 function writeCachedModelsDevMetadata<TModel>(storageKey: string, models: Record<string, TModel>): void {
-  metadataMemCache.set(storageKey, models as Record<string, unknown>);
+  const fetchedAt = Date.now();
+  metadataMemCache.set(storageKey, {
+    fetchedAt,
+    models: models as Record<string, unknown>,
+  });
   const payload: ModelsDevProviderCachePayload<TModel> = {
-    fetchedAt: Date.now(),
+    fetchedAt,
     models,
   };
   safeStorageSet(storageKey, JSON.stringify(payload));
