@@ -119,6 +119,11 @@ export const BLACKBOX_MODELS: string[] = [
   'blackbox-search',
 ];
 
+/** Strip 'blackboxai/' routing prefix from Blackbox model IDs for cleaner display. */
+export function getBlackboxModelDisplayName(modelId: string): string {
+  return modelId.replace(/^blackboxai\//, '');
+}
+
 /** Build the standard role model set for a provider. */
 function makeRoleModels(
   id: string,

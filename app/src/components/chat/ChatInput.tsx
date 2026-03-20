@@ -17,6 +17,7 @@ import {
   type ReasoningEffort,
 } from '@/lib/model-catalog';
 import type { AIProviderType, AttachmentData } from '@/types';
+import { getBlackboxModelDisplayName } from '@/lib/providers';
 
 /** Provider display names for optgroup labels */
 const OPTGROUP_LABELS: Record<string, string> = {
@@ -870,7 +871,7 @@ export function ChatInput({
                               : [providerControls.blackboxModel]
                             ).map((model) => (
                               <option key={model || '__default'} value={model}>
-                                {model || '(default)'}
+                                {getBlackboxModelDisplayName(model)}
                               </option>
                             ))}
                           </select>

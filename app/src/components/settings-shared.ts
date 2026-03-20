@@ -1,6 +1,7 @@
 import type { ComponentType, SVGProps } from 'react';
 import { AICoreIcon, WorkspaceTuneIcon, YouBadgeIcon } from '@/components/icons/push-custom-icons';
 import type { PreferredProvider } from '@/lib/providers';
+import { getBlackboxModelDisplayName } from '@/lib/providers';
 import type { ExperimentalProviderType } from '@/lib/experimental-providers';
 import type { AIProviderType } from '@/types';
 
@@ -76,6 +77,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     placeholder: 'Blackbox API key',
     saveLabel: 'Save Blackbox key',
     hint: 'Blackbox AI API key from blackbox.ai. Unified access to 300+ models.',
+    labelTransform: getBlackboxModelDisplayName,
   },
 };
 
