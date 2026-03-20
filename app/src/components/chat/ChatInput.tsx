@@ -130,6 +130,14 @@ interface ChatInputProps {
     isNvidiaModelLocked: boolean;
     refreshNvidiaModels: () => void;
     onSelectNvidiaModel: (model: string) => void;
+    blackboxModel: string;
+    blackboxModelOptions: string[];
+    blackboxModelsLoading: boolean;
+    blackboxModelsError: string | null;
+    blackboxModelsUpdatedAt: number | null;
+    isBlackboxModelLocked: boolean;
+    refreshBlackboxModels: () => void;
+    onSelectBlackboxModel: (model: string) => void;
     azureModel: string;
     azureDeployments: ExperimentalDeployment[];
     azureActiveDeploymentId: string | null;
@@ -393,6 +401,7 @@ export function ChatInput({
     if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
     if (selectedProvider === 'zen') return providerControls.zenModel;
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModel;
+    if (selectedProvider === 'blackbox') return providerControls.blackboxModel;
     if (selectedProvider === 'azure') return providerControls.azureModel;
     if (selectedProvider === 'bedrock') return providerControls.bedrockModel;
     if (selectedProvider === 'vertex') return providerControls.vertexModel;
@@ -411,6 +420,7 @@ export function ChatInput({
     if (selectedProvider === 'ollama') return providerControls.ollamaModelsLoading;
     if (selectedProvider === 'zen') return providerControls.zenModelsLoading;
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModelsLoading;
+    if (selectedProvider === 'blackbox') return providerControls.blackboxModelsLoading;
     return false;
   })();
 
@@ -419,6 +429,7 @@ export function ChatInput({
     if (selectedProvider === 'ollama') return formatTimeAgo(providerControls.ollamaModelsUpdatedAt);
     if (selectedProvider === 'zen') return formatTimeAgo(providerControls.zenModelsUpdatedAt);
     if (selectedProvider === 'nvidia') return formatTimeAgo(providerControls.nvidiaModelsUpdatedAt);
+    if (selectedProvider === 'blackbox') return formatTimeAgo(providerControls.blackboxModelsUpdatedAt);
     return null;
   })();
 
@@ -839,6 +850,41 @@ export function ChatInput({
                             <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isNvidiaModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'blackbox' && (
+                        <>
+                          <select
+                            value={providerControls.blackboxModel}
+                            disabled={!canChangeModel || providerControls.blackboxModelsLoading || providerControls.blackboxModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectBlackboxModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {(providerControls.blackboxModelOptions.length > 0
+                              ? providerControls.blackboxModelOptions
+                              : [providerControls.blackboxModel]
+                            ).map((model) => (
+                              <option key={model || '__default'} value={model}>
+                                {model || '(default)'}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.blackboxModelsLoading && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading Blackbox AI models...</p>
+                          )}
+                          {!providerControls.blackboxModelsLoading && providerControls.blackboxModelOptions.length === 0 && !providerControls.blackboxModelsError && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
+                          )}
+                          {providerControls.blackboxModelsError && (
+                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.blackboxModelsError}</p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                          )}
+                          {providerControls.isBlackboxModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

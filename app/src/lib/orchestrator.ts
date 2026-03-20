@@ -12,6 +12,7 @@ import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
+import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import {
   getAzureBaseUrl,
   getAzureKey,
@@ -36,6 +37,7 @@ import {
   getOpenRouterModelName,
   getZenModelName,
   getNvidiaModelName,
+  getBlackboxModelName,
   PROVIDER_URLS,
   ZEN_GO_URLS,
   getZenGoMode,
@@ -1540,6 +1542,21 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       providerType: 'nvidia',
     }),
   },
+  blackbox: {
+    getKey: getBlackboxKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'Blackbox AI',
+      apiUrl: PROVIDER_URLS.blackbox.chat,
+      apiKey,
+      model: modelOverride || getBlackboxModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('Blackbox AI'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+      shouldResetStallOnReasoning: true,
+      providerType: 'blackbox',
+    }),
+  },
   azure: {
     getKey: getAzureKey,
     buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
@@ -1629,6 +1646,7 @@ export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('o
 export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
 export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
+export const streamBlackboxChat: StreamChatFn = (...args) => streamProviderChat('blackbox', ...args);
 export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
 export const streamBedrockChat: StreamChatFn = (...args) => streamProviderChat('bedrock', ...args);
 export const streamVertexChat: StreamChatFn = (...args) => streamProviderChat('vertex', ...args);
@@ -1642,6 +1660,7 @@ export type ActiveProvider =
   | 'openrouter'
   | 'zen'
   | 'nvidia'
+  | 'blackbox'
   | 'azure'
   | 'bedrock'
   | 'vertex'
@@ -1652,6 +1671,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   openrouter: () => Boolean(getOpenRouterKey()),
   zen: () => Boolean(getZenKey()),
   nvidia: () => Boolean(getNvidiaKey()),
+  blackbox: () => Boolean(getBlackboxKey()),
   azure: () => Boolean(getAzureKey() && normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok && getAzureModelName()),
   bedrock: () => Boolean(getBedrockKey() && normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok && getBedrockModelName()),
   vertex: () => {
@@ -1668,7 +1688,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
  * Neutral ordering — no provider is favoured.
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama', 'openrouter', 'zen', 'nvidia',
+  'ollama', 'openrouter', 'zen', 'nvidia', 'blackbox',
 ];
 
 /**
@@ -1706,6 +1726,7 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
     case 'zen': return { providerType: 'zen' as const, streamFn: streamZenChat };
     case 'nvidia': return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
+    case 'blackbox': return { providerType: 'blackbox' as const, streamFn: streamBlackboxChat };
     case 'azure': return { providerType: 'azure' as const, streamFn: streamAzureChat };
     case 'bedrock': return { providerType: 'bedrock' as const, streamFn: streamBedrockChat };
     case 'vertex': return { providerType: 'vertex' as const, streamFn: streamVertexChat };
@@ -1760,6 +1781,10 @@ export async function streamChat(
 
   if (provider === 'nvidia') {
     return streamNvidiaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
+  }
+
+  if (provider === 'blackbox') {
+    return streamBlackboxChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
   }
 
   if (provider === 'azure') {

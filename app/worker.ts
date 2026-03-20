@@ -37,6 +37,7 @@ interface Env {
   OPENROUTER_API_KEY?: string;
   ZEN_API_KEY?: string;
   NVIDIA_API_KEY?: string;
+  BLACKBOX_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
@@ -890,6 +891,7 @@ interface HealthStatus {
     openrouter: { status: 'ok' | 'unconfigured'; configured: boolean };
     zen: { status: 'ok' | 'unconfigured'; configured: boolean };
     nvidia: { status: 'ok' | 'unconfigured'; configured: boolean };
+    blackbox: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
     github_app_oauth: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -902,6 +904,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   const openRouterConfigured = Boolean(env.OPENROUTER_API_KEY);
   const zenConfigured = Boolean(env.ZEN_API_KEY);
   const nvidiaConfigured = Boolean(env.NVIDIA_API_KEY);
+  const blackboxConfigured = Boolean(env.BLACKBOX_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -917,7 +920,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   }
   }
 
-  const hasAnyLlm = ollamaConfigured || openRouterConfigured || zenConfigured || nvidiaConfigured;
+  const hasAnyLlm = ollamaConfigured || openRouterConfigured || zenConfigured || nvidiaConfigured || blackboxConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -931,6 +934,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       openrouter: { status: openRouterConfigured ? 'ok' : 'unconfigured', configured: openRouterConfigured },
       zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
       nvidia: { status: nvidiaConfigured ? 'ok' : 'unconfigured', configured: nvidiaConfigured },
+      blackbox: { status: blackboxConfigured ? 'ok' : 'unconfigured', configured: blackboxConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
       github_app_oauth: { status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET) },
@@ -1199,6 +1203,28 @@ const handleNvidiaModels = createJsonProxyHandler({
   buildAuth: standardAuth('NVIDIA_API_KEY'),
   keyMissingError: 'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
+});
+
+// --- Blackbox AI ---
+
+const handleBlackboxChat = createStreamProxyHandler({
+  name: 'Blackbox AI API', logTag: 'api/blackbox/chat',
+  upstreamUrl: 'https://api.blackbox.ai/chat/completions',
+  timeoutMs: 120_000,
+  maxOutputTokens: 8_192,
+  buildAuth: standardAuth('BLACKBOX_API_KEY'),
+  keyMissingError: 'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
+  timeoutError: 'Blackbox AI request timed out after 120 seconds',
+});
+
+const handleBlackboxModels = createJsonProxyHandler({
+  name: 'Blackbox AI API', logTag: 'api/blackbox/models',
+  upstreamUrl: 'https://api.blackbox.ai/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('BLACKBOX_API_KEY'),
+  keyMissingError: 'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
+  timeoutError: 'Blackbox AI model list timed out after 30 seconds',
 });
 
 // --- Experimental private connectors (OpenAI-compatible upstreams) ---
@@ -1879,6 +1905,8 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/zen/go/models', method: 'GET', handler: handleZenGoModels },
   { path: '/api/nvidia/chat', method: 'POST', handler: handleNvidiaChat },
   { path: '/api/nvidia/models', method: 'GET', handler: handleNvidiaModels },
+  { path: '/api/blackbox/chat', method: 'POST', handler: handleBlackboxChat },
+  { path: '/api/blackbox/models', method: 'GET', handler: handleBlackboxModels },
   { path: '/api/azure/chat', method: 'POST', handler: handleAzureChat },
   { path: '/api/azure/models', method: 'GET', handler: handleAzureModels },
   { path: '/api/bedrock/chat', method: 'POST', handler: handleBedrockChat },

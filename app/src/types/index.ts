@@ -101,6 +101,7 @@ export type AIProviderType =
   | 'openrouter'
   | 'zen'
   | 'nvidia'
+  | 'blackbox'
   | 'azure'
   | 'bedrock'
   | 'vertex'

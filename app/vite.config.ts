@@ -158,6 +158,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/nvidia/, ''),
       },
+      '/blackbox': {
+        target: 'https://api.blackbox.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/blackbox/, ''),
+      },
       '/api': {
         target: API_PROXY_TARGET,
         changeOrigin: true,

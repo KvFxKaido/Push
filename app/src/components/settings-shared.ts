@@ -9,6 +9,7 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
   openrouter: 'OpenRouter',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
+  blackbox: 'Blackbox AI',
   azure: 'Azure OpenAI',
   bedrock: 'AWS Bedrock',
   vertex: 'Google Vertex',
@@ -17,7 +18,7 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
 
 export type BuiltInSettingsProviderId = Extract<
   PreferredProvider,
-  'ollama' | 'openrouter' | 'zen' | 'nvidia'
+  'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox'
 >;
 
 export type ExperimentalSettingsProviderId = Extract<
@@ -38,6 +39,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'openrouter',
   'nvidia',
   'zen',
+  'blackbox',
 ];
 
 export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
@@ -69,6 +71,11 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     placeholder: 'Zen API key',
     saveLabel: 'Save OpenCode Zen key',
     hint: 'OpenCode Zen API key for https://opencode.ai/zen.',
+  },
+  blackbox: {
+    placeholder: 'Blackbox API key',
+    saveLabel: 'Save Blackbox key',
+    hint: 'Blackbox AI API key from blackbox.ai. Unified access to 300+ models.',
   },
 };
 
