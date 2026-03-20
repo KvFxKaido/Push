@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from 'react';
 import {
   Check,
   ChevronDown,
@@ -44,7 +44,10 @@ import {
   SandboxCubeIcon,
   SettingsCellsIcon,
 } from '@/components/icons/push-custom-icons';
-import { HubNotesTab, HubConsoleTab, HubFilesTab, HubDiffTab, HubPRsTab, HubReviewTab, HubSettingsTab } from './hub-tabs';
+import { HubNotesTab, HubConsoleTab, HubFilesTab, HubDiffTab } from './hub-tabs';
+const HubPRsTab = lazy(() => import('./hub-tabs/HubPRsTab').then((m) => ({ default: m.HubPRsTab })));
+const HubReviewTab = lazy(() => import('./hub-tabs/HubReviewTab').then((m) => ({ default: m.HubReviewTab })));
+const HubSettingsTab = lazy(() => import('./hub-tabs/HubSettingsTab').then((m) => ({ default: m.HubSettingsTab })));
 import type {
   SettingsAIProps,
   SettingsAuthProps,
@@ -321,6 +324,8 @@ export function WorkspaceHubSheet({
   onUpdateArtifactLabel,
 }: WorkspaceHubSheetProps) {
   const [activeTab, setActiveTab] = useState<HubTab>('files');
+  // Mount-once-then-keep for the Review tab: avoids running its hooks when hidden.
+  const [reviewTabMounted, setReviewTabMounted] = useState(false);
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Diff state (shared between diff tab and commit flow)
@@ -428,6 +433,11 @@ export function WorkspaceHubSheet({
     if (tabs.some((tab) => tab.key === activeTab)) return;
     setActiveTab(fallbackTab);
   }, [activeTab, fallbackTab, tabs]);
+
+  // Mount the review tab on first open, then keep it mounted to preserve state.
+  useEffect(() => {
+    if (activeTab === 'review' && !reviewTabMounted) setReviewTabMounted(true);
+  }, [activeTab, reviewTabMounted]);
 
   useEffect(() => {
     if (capabilities.canCommitAndPush) return;
@@ -1391,44 +1401,52 @@ export function WorkspaceHubSheet({
 
             {activeTab === 'prs' && (
               <div className="flex h-full min-h-0 flex-col">
-                <HubPRsTab
-                  repoFullName={repoFullName}
-                  activeBranch={branchProps.currentBranch}
-                  onOpenDiff={handleOpenReviewDiff}
-                  onOpenReviewTab={() => setActiveTab('review')}
-                />
+                <Suspense fallback={null}>
+                  <HubPRsTab
+                    repoFullName={repoFullName}
+                    activeBranch={branchProps.currentBranch}
+                    onOpenDiff={handleOpenReviewDiff}
+                    onOpenReviewTab={() => setActiveTab('review')}
+                  />
+                </Suspense>
               </div>
             )}
 
-            <div className={activeTab === 'review' ? 'flex h-full min-h-0 flex-col' : 'hidden h-full min-h-0 flex-col'}>
-              <HubReviewTab
-                sandboxId={sandboxId}
-                sandboxStatus={sandboxStatus}
-                ensureSandbox={ensureSandbox}
-                availableProviders={reviewProviders}
-                activeProvider={reviewActiveProvider}
-                providerModelOptions={reviewModelOptions}
-                repoFullName={repoFullName}
-                activeBranch={branchProps.currentBranch}
-                defaultBranch={branchProps.defaultBranch}
-                projectInstructions={projectInstructions}
-                protectMain={protectMainEnabled}
-                onOpenDiff={handleOpenReviewDiff}
-                onFixFinding={onFixReviewFinding}
-              />
-            </div>
+            {reviewTabMounted && (
+              <div className={activeTab === 'review' ? 'flex h-full min-h-0 flex-col' : 'hidden h-full min-h-0 flex-col'}>
+                <Suspense fallback={null}>
+                  <HubReviewTab
+                    sandboxId={sandboxId}
+                    sandboxStatus={sandboxStatus}
+                    ensureSandbox={ensureSandbox}
+                    availableProviders={reviewProviders}
+                    activeProvider={reviewActiveProvider}
+                    providerModelOptions={reviewModelOptions}
+                    repoFullName={repoFullName}
+                    activeBranch={branchProps.currentBranch}
+                    defaultBranch={branchProps.defaultBranch}
+                    projectInstructions={projectInstructions}
+                    protectMain={protectMainEnabled}
+                    onOpenDiff={handleOpenReviewDiff}
+                    onFixFinding={onFixReviewFinding}
+                  />
+                </Suspense>
+              </div>
+            )}
 
             {activeTab === 'settings' && (
               <div className="flex h-full min-h-0 flex-col">
-                <HubSettingsTab
-                  key={`settings-${open ? 'open' : 'closed'}`}
-                  auth={settingsAuth}
-                  profile={settingsProfile}
-                  ai={settingsAI}
-                  workspace={settingsWorkspace}
-                  data={settingsData}
-                  onCloseHub={() => onOpenChange(false)}
-                />
+                <Suspense fallback={null}>
+                  <HubSettingsTab
+                    key={`settings-${open ? 'open' : 'closed'}`}
+                    auth={settingsAuth}
+                    profile={settingsProfile}
+                    ai={settingsAI}
+                    workspace={settingsWorkspace}
+                    data={settingsData}
+                    onCloseHub={() => onOpenChange(false)}
+                  />
+                </Suspense>
               </div>
             )}
           </div>
