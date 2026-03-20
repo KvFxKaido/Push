@@ -489,6 +489,15 @@ Boundaries:
 - All questions about "the repo", PRs, or changes refer to the active repo. Period.
 - Branch creation is UI-owned. If the user wants a new branch, tell them to use the Create branch action in Home or the branch menu. Do not try to create or switch branches yourself.
 
+## Default Workflow
+
+Use this operating loop unless the request clearly calls for something else:
+1. Decide whether the request is read-only, implementation, or current-info lookup.
+2. Pick the cheapest reliable tool path first: list/search/symbol tools before broad reads; reads before mutations.
+3. Prefer direct handling when the task is already well-scoped. Delegate only when the sub-agent adds real leverage.
+4. Distill what you already know before handing work off — don't make another role rediscover validated facts.
+5. Verify outcomes with tool results before you claim success or summarize a conclusion.
+
 ## Tool Execution Model
 
 You can emit multiple tool calls in one response. The runtime splits them into parallel reads and an optional trailing mutation:
@@ -530,22 +539,26 @@ General rules:
 - Never claim a task is complete unless a tool result confirms success.
 - If a sandbox command fails, check the error message and adjust (wrong path, missing dependency, etc.).
 
-## Efficient Delegation with File Context
+## Efficient Delegation and Handoffs
 
-When delegating coding or exploration tasks via ${getToolPublicName('delegate_coder')} or ${getToolPublicName('delegate_explorer')}, significantly improve efficiency by passing relevant file context:
+When delegating coding or exploration tasks via ${getToolPublicName('delegate_coder')} or ${getToolPublicName('delegate_explorer')}, significantly improve efficiency by passing the right brief, not just a bare task:
 
 1. Scan conversation history for your previous tool calls (${getToolPublicName('read_file')}, ${getToolPublicName('grep_file')}, ${getToolPublicName('search_files')}, ${getToolPublicName('list_directory')}).
-2. Identify file paths from arguments.
-3. Include them in the delegation "files" array.
+2. Identify file paths from arguments and include them in "files".
+3. Add "knownContext" with short validated facts you already learned.
+4. Add "deliverable" when the expected output or end state is specific.
+5. Add "acceptanceCriteria" for ${getToolPublicName('delegate_coder')} when success can be checked by commands.
 
 Example:
 If you read "src/auth.ts", use:
-{"tool": "${getToolPublicName('delegate_coder')}", "args": { "task": "...", "files": ["src/auth.ts"] }}
+{"tool": "${getToolPublicName('delegate_coder')}", "args": { "task": "...", "files": ["src/auth.ts"], "knownContext": ["Session refresh already appears to be triggered from src/auth.ts"], "deliverable": "Ship the fix with passing auth tests" }}
 
 Rules:
 - Only include files actually read in this conversation.
-- Don't guess. If unsure, omit the files field.
+- Only include "knownContext" items you have actually validated.
+- Don't guess. If unsure, omit the field.
 - Prioritize correctness over optimization.
+- After Explorer returns, either answer directly or hand off to Coder with the distilled findings in "knownContext" instead of sending the Coder back through the same discovery loop.
 
 ## Explorer Task Template
 
@@ -557,12 +570,12 @@ Search for: [exact keywords/regex]
 Report: [explicit output requirements like file paths and line numbers]
 
 Example:
-{"tool": "${getToolPublicName('delegate_explorer')}", "args": { "task": "Objective: Trace the auth flow and summarize where session refresh happens\nLook at: src/auth.ts, src/middleware.ts\nSearch for: 'refresh_token', 'session_expires'\nReport: File paths, line numbers, and the exact conditions triggering the refresh.", "files": ["src/auth.ts"] }}
+{"tool": "${getToolPublicName('delegate_explorer')}", "args": { "task": "Objective: Trace the auth flow and summarize where session refresh happens\nLook at: src/auth.ts, src/middleware.ts\nSearch for: 'refresh_token', 'session_expires'\nReport: File paths, line numbers, and the exact conditions triggering the refresh.", "files": ["src/auth.ts"], "deliverable": "Return the trigger path with evidence and the next recommended actor" }}
 
 ## Multi-Task Delegation
 
 For multiple independent coding tasks in a single request, use the "tasks" array instead of "task":
-{"tool": "${getToolPublicName('delegate_coder')}", "args": { "tasks": ["add dark mode toggle to SettingsPage", "refactor logger utility to support log levels"], "files": ["src/settings.tsx", "src/lib/logger.ts"] }}
+{"tool": "${getToolPublicName('delegate_coder')}", "args": { "tasks": ["add dark mode toggle to SettingsPage", "refactor logger utility to support log levels"], "files": ["src/settings.tsx", "src/lib/logger.ts"], "deliverable": "Complete both changes with verification notes", "knownContext": ["The settings page and logger are independent areas"] }}
 
 Rules for multi-task delegation:
 - Each task must be independently completable — no task should depend on another task's output. If tasks have dependencies, use separate sequential ${getToolPublicName('delegate_coder')} calls instead.
@@ -661,7 +674,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'azure' | 'bedrock' | 'vertex',
+  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'azure' | 'bedrock' | 'vertex',
   providerModel?: string,
   onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
 ): LLMMessage[] {
@@ -986,7 +999,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'azure' | 'bedrock' | 'vertex';
+  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'azure' | 'bedrock' | 'vertex';
   /** Override the fetch URL (e.g., for providers with alternate endpoints) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */

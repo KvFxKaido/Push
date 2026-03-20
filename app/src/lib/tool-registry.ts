@@ -205,9 +205,9 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     source: 'delegate',
     readOnly: false,
     statusLabel: 'Delegating to Coder...',
-    protocolSignature: 'coder(task?, tasks?, files?, acceptanceCriteria?, intent?, constraints?)',
+    protocolSignature: 'coder(task?, tasks?, files?, acceptanceCriteria?, intent?, deliverable?, knownContext?, constraints?)',
     protocolDescription: 'Delegate coding work to the Coder agent',
-    exampleJson: '{"tool": "coder", "args": {"task": "Implement the requested change", "files": ["src/app.ts"]}}',
+    exampleJson: '{"tool": "coder", "args": {"task": "Implement the requested change", "files": ["src/app.ts"], "deliverable": "Ship the fix with passing tests", "knownContext": ["Explorer found the bug in src/app.ts:84"]}}',
   },
   {
     canonicalName: 'delegate_explorer',
@@ -215,9 +215,9 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     source: 'delegate',
     readOnly: false,
     statusLabel: 'Delegating to Explorer...',
-    protocolSignature: 'explorer(task, files?, intent?, constraints?)',
+    protocolSignature: 'explorer(task, files?, intent?, deliverable?, knownContext?, constraints?)',
     protocolDescription: 'Delegate read-only investigation to the Explorer agent',
-    exampleJson: '{"tool": "explorer", "args": {"task": "Trace the auth flow", "files": ["src/auth.ts"]}}',
+    exampleJson: '{"tool": "explorer", "args": {"task": "Trace the auth flow", "files": ["src/auth.ts"], "deliverable": "Return the refresh trigger with file and line references"}}',
   },
   {
     canonicalName: 'sandbox_exec',

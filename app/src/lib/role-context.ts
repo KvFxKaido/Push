@@ -1,3 +1,8 @@
+import type {
+  AcceptanceCriterion,
+  DelegationEnvelope,
+  ExplorerDelegationEnvelope,
+} from '@/types';
 import { sanitizeProjectInstructions } from './workspace-context';
 
 // Keep role-level policy hints compact so Reviewer/Auditor get the essentials
@@ -22,6 +27,54 @@ export interface ReviewerPromptContext extends RolePromptContextBase {
 export interface AuditorPromptContext extends RolePromptContextBase {
   source?: AuditorPromptSource;
   prNumber?: number;
+}
+
+function formatAcceptanceCriteria(criteria?: AcceptanceCriterion[]): string[] {
+  if (!criteria || criteria.length === 0) return [];
+  return criteria.map((criterion) => {
+    const description = criterion.description?.trim();
+    if (description) return `${criterion.id}: ${description}`;
+    return `${criterion.id}: ${criterion.check}`;
+  });
+}
+
+function buildDelegationBrief(
+  task: string,
+  fields: {
+    intent?: string;
+    deliverable?: string;
+    knownContext?: string[];
+    constraints?: string[];
+    files?: string[];
+    acceptanceCriteria?: AcceptanceCriterion[];
+  },
+): string {
+  const lines = [`Task: ${task}`];
+
+  if (fields.intent?.trim()) {
+    lines.push('', `Intent: ${fields.intent.trim()}`);
+  }
+  if (fields.deliverable?.trim()) {
+    lines.push('', `Deliverable: ${fields.deliverable.trim()}`);
+  }
+  if (fields.knownContext && fields.knownContext.length > 0) {
+    lines.push('', 'Known context:');
+    lines.push(...fields.knownContext.map((item) => `- ${item}`));
+  }
+  if (fields.constraints && fields.constraints.length > 0) {
+    lines.push('', 'Constraints:');
+    lines.push(...fields.constraints.map((constraint) => `- ${constraint}`));
+  }
+  if (fields.files && fields.files.length > 0) {
+    lines.push('', `Relevant files: ${fields.files.join(', ')}`);
+  }
+  const acceptanceLines = formatAcceptanceCriteria(fields.acceptanceCriteria);
+  if (acceptanceLines.length > 0) {
+    lines.push('', 'Acceptance checks:');
+    lines.push(...acceptanceLines.map((line) => `- ${line}`));
+  }
+
+  return lines.join('\n');
 }
 
 function formatProjectPolicyHints(projectInstructions?: string | null): string | null {
@@ -128,4 +181,25 @@ export function buildAuditorContextBlock(context?: AuditorPromptContext): string
   }
 
   return lines.join('\n');
+}
+
+export function buildCoderDelegationBrief(envelope: DelegationEnvelope): string {
+  return buildDelegationBrief(envelope.task, {
+    intent: envelope.intent,
+    deliverable: envelope.deliverable,
+    knownContext: envelope.knownContext,
+    constraints: envelope.constraints,
+    files: envelope.files,
+    acceptanceCriteria: envelope.acceptanceCriteria,
+  });
+}
+
+export function buildExplorerDelegationBrief(envelope: ExplorerDelegationEnvelope): string {
+  return buildDelegationBrief(envelope.task, {
+    intent: envelope.intent,
+    deliverable: envelope.deliverable,
+    knownContext: envelope.knownContext,
+    constraints: envelope.constraints,
+    files: envelope.files,
+  });
 }

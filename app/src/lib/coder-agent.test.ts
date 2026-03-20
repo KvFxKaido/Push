@@ -7,6 +7,7 @@ import {
   formatCoderStateDiff,
   invalidateObservationDependencies,
   normalizeTrimmedRoleAlternation,
+  summarizeCoderStateForHandoff,
 } from './coder-agent';
 
 function msg(
@@ -259,5 +260,71 @@ describe('coder working memory observations', () => {
     const diff = formatCoderStateDiff(current, previous, 3);
 
     expect(diff).toContain('[STALE — app/src/foo.ts was modified at round 3] adapter-pattern: Adapter lives in app/src/foo.ts');
+  });
+});
+
+describe('summarizeCoderStateForHandoff', () => {
+  it('builds a compact plain-text snapshot for checkpoint guidance', () => {
+    const summary = summarizeCoderStateForHandoff({
+      plan: 'Trace auth refresh, patch bug, run tests',
+      currentPhase: 'Verifying',
+      openTasks: ['rerun the auth suite'],
+      filesTouched: ['app/src/auth.ts'],
+      errorsEncountered: ['Initial auth test failed with stale session state'],
+      observations: [
+        {
+          id: 'refresh-trigger',
+          text: 'Refresh begins in app/src/auth.ts after the session expiry check',
+          addedAtRound: 2,
+        },
+      ],
+    });
+
+    expect(summary).toContain('Plan: Trace auth refresh, patch bug, run tests');
+    expect(summary).toContain('Current phase: Verifying');
+    expect(summary).toContain('Open tasks: rerun the auth suite');
+    expect(summary).toContain('Files touched: app/src/auth.ts');
+    expect(summary).toContain('Key observations:');
+    expect(summary).not.toContain('[CODER_STATE]');
+  });
+
+  it('keeps only the most recent non-stale observations in the handoff summary', () => {
+    const summary = summarizeCoderStateForHandoff({
+      observations: [
+        {
+          id: 'stale-note',
+          text: 'Outdated stale observation',
+          stale: true,
+          staleAtRound: 3,
+          addedAtRound: 1,
+        },
+        {
+          id: 'old-fresh',
+          text: 'Older fresh observation',
+          addedAtRound: 2,
+        },
+        {
+          id: 'recent-1',
+          text: 'Recent observation 1',
+          addedAtRound: 4,
+        },
+        {
+          id: 'recent-2',
+          text: 'Recent observation 2',
+          addedAtRound: 5,
+        },
+        {
+          id: 'recent-3',
+          text: 'Recent observation 3',
+          addedAtRound: 6,
+        },
+      ],
+    });
+
+    expect(summary).not.toContain('Outdated stale observation');
+    expect(summary).not.toContain('Older fresh observation');
+    expect(summary).toContain('Recent observation 1');
+    expect(summary).toContain('Recent observation 2');
+    expect(summary).toContain('Recent observation 3');
   });
 });
