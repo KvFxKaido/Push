@@ -192,6 +192,7 @@ interface ChatScreenProps {
   handleSelectOpenRouterModelFromChat: (model: string) => void;
   handleSelectZenModelFromChat: (model: string) => void;
   handleSelectNvidiaModelFromChat: (model: string) => void;
+  handleSelectBlackboxModelFromChat: (model: string) => void;
   handleSelectAzureModelFromChat: (model: string) => void;
   handleSelectBedrockModelFromChat: (model: string) => void;
   handleSelectVertexModelFromChat: (model: string) => void;
@@ -237,6 +238,7 @@ const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
   openrouter: 'OpenRouter',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
+  blackbox: 'Blackbox AI',
   azure: 'Azure OpenAI',
   bedrock: 'AWS Bedrock',
   vertex: 'Google Vertex',
@@ -318,6 +320,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSelectOpenRouterModelFromChat,
     handleSelectZenModelFromChat,
     handleSelectNvidiaModelFromChat,
+    handleSelectBlackboxModelFromChat,
     handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat,
     handleSelectVertexModelFromChat,
@@ -450,6 +453,7 @@ export function ChatScreen(props: ChatScreenProps) {
     if (selectedComposerProvider === 'openrouter') return selectedChatModels.openrouter;
     if (selectedComposerProvider === 'zen') return selectedChatModels.zen;
     if (selectedComposerProvider === 'nvidia') return selectedChatModels.nvidia;
+    if (selectedComposerProvider === 'blackbox') return selectedChatModels.blackbox;
     if (selectedComposerProvider === 'azure') return selectedChatModels.azure;
     if (selectedComposerProvider === 'bedrock') return selectedChatModels.bedrock;
     if (selectedComposerProvider === 'vertex') return selectedChatModels.vertex;
@@ -697,6 +701,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
   const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
   const isNvidiaModelLocked = isModelLocked && lockedProvider === 'nvidia';
+  const isBlackboxModelLocked = isModelLocked && lockedProvider === 'blackbox';
   const isAzureModelLocked = isModelLocked && lockedProvider === 'azure';
   const isBedrockModelLocked = isModelLocked && lockedProvider === 'bedrock';
   const isVertexModelLocked = isModelLocked && lockedProvider === 'vertex';
@@ -822,6 +827,21 @@ export function ChatScreen(props: ChatScreenProps) {
         clearKey: catalog.zen.clearKey,
         goMode: catalog.zenGoMode,
         setGoMode: catalog.setZenGoMode,
+      },
+      blackbox: {
+        hasKey: catalog.blackbox.hasKey,
+        model: catalog.blackbox.model,
+        setModel: catalog.blackbox.setModel,
+        modelOptions: catalog.blackboxModelOptions,
+        modelsLoading: catalog.blackboxModels.loading,
+        modelsError: catalog.blackboxModels.error,
+        modelsUpdatedAt: catalog.blackboxModels.updatedAt,
+        isModelLocked: isBlackboxModelLocked,
+        refreshModels: catalog.refreshBlackboxModels,
+        keyInput: catalog.blackbox.keyInput,
+        setKeyInput: catalog.blackbox.setKeyInput,
+        setKey: catalog.blackbox.setKey,
+        clearKey: catalog.blackbox.clearKey,
       },
     },
     experimentalProviders: {
@@ -1225,6 +1245,14 @@ export function ChatScreen(props: ChatScreenProps) {
           isNvidiaModelLocked,
           refreshNvidiaModels: catalog.refreshNvidiaModels,
           onSelectNvidiaModel: handleSelectNvidiaModelFromChat,
+          blackboxModel: selectedChatModels.blackbox,
+          blackboxModelOptions: catalog.blackboxModelOptions,
+          blackboxModelsLoading: catalog.blackboxModels.loading,
+          blackboxModelsError: catalog.blackboxModels.error,
+          blackboxModelsUpdatedAt: catalog.blackboxModels.updatedAt,
+          isBlackboxModelLocked,
+          refreshBlackboxModels: catalog.refreshBlackboxModels,
+          onSelectBlackboxModel: handleSelectBlackboxModelFromChat,
           azureModel: selectedChatModels.azure,
           azureDeployments: catalog.azure.deployments,
           azureActiveDeploymentId: catalog.azure.activeDeploymentId,

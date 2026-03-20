@@ -4,6 +4,7 @@ import {
   buildCuratedOllamaModelList,
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
+  fetchBlackboxModels,
   fetchNvidiaModels,
   fetchOllamaModels,
   fetchZenModels,
@@ -556,6 +557,39 @@ describe('provider model fetchers', () => {
     }));
 
     await expect(fetchModels()).resolves.toEqual([]);
+  });
+});
+
+describe('fetchBlackboxModels', () => {
+  it('normalizes a standard /models payload', async () => {
+    stubWindow();
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      jsonResponse({ data: [{ id: 'blackbox-ai' }, { id: 'blackbox-pro' }] }),
+    ));
+
+    await expect(fetchBlackboxModels()).resolves.toEqual(['blackbox-ai', 'blackbox-pro']);
+  });
+
+  it('throws on non-OK response', async () => {
+    stubWindow();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      text: async () => 'Unauthorized',
+    })));
+
+    await expect(fetchBlackboxModels()).rejects.toThrow(/Blackbox AI model list failed \(401\)/);
+  });
+
+  it('throws on timeout', async () => {
+    stubWindow();
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => {
+      init?.signal?.throwIfAborted();
+      const err = new DOMException('The operation was aborted.', 'AbortError');
+      throw err;
+    }));
+
+    await expect(fetchBlackboxModels()).rejects.toThrow(/timed out/);
   });
 });
 

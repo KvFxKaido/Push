@@ -7,6 +7,7 @@ import {
   ZEN_MODELS,
   ZEN_GO_MODELS,
   NVIDIA_MODELS,
+  BLACKBOX_MODELS,
   type PreferredProvider,
 } from '@/lib/providers';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
@@ -15,11 +16,13 @@ import {
   fetchOpenRouterModels,
   fetchZenModels,
   fetchNvidiaModels,
+  fetchBlackboxModels,
 } from '@/lib/model-catalog';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
+import { useBlackboxConfig } from '@/hooks/useBlackboxConfig';
 import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProviderConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
@@ -114,6 +117,7 @@ export interface ModelCatalog {
   openRouter: ProviderKeyConfig;
   zen: ProviderKeyConfig;
   nvidia: ProviderKeyConfig;
+  blackbox: ProviderKeyConfig;
   azure: ExperimentalProviderConfig;
   bedrock: ExperimentalProviderConfig;
   vertex: VertexProviderConfig;
@@ -132,12 +136,14 @@ export interface ModelCatalog {
   openRouterModels: ProviderModelState;
   zenModels: ProviderModelState;
   nvidiaModels: ProviderModelState;
+  blackboxModels: ProviderModelState;
 
   // Model option lists (includes selected even if not in fetched list)
   ollamaModelOptions: string[];
   openRouterModelOptions: string[];
   zenModelOptions: string[];
   nvidiaModelOptions: string[];
+  blackboxModelOptions: string[];
 
   // Zen Go tier
   zenGoMode: boolean;
@@ -148,6 +154,7 @@ export interface ModelCatalog {
   refreshOpenRouterModels: () => Promise<void>;
   refreshZenModels: () => Promise<void>;
   refreshNvidiaModels: () => Promise<void>;
+  refreshBlackboxModels: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +178,7 @@ export function useModelCatalog(): ModelCatalog {
   const openRouterCfg = useOpenRouterConfig();
   const zenCfg = useZenConfig();
   const nvidiaCfg = useNvidiaConfig();
+  const blackboxCfg = useBlackboxConfig();
   const azureCfg = useAzureConfig();
   const bedrockCfg = useBedrockConfig();
   const vertexCfg = useVertexConfig();
@@ -181,6 +189,7 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
   const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
+  const [blackboxKeyInput, setBlackboxKeyInput] = useState('');
   const [azureKeyInput, setAzureKeyInput] = useState('');
   const [azureBaseUrlInput, setAzureBaseUrlInput] = useState('');
   const [azureModelInput, setAzureModelInput] = useState('');
@@ -202,6 +211,7 @@ export function useModelCatalog(): ModelCatalog {
     ['openrouter', 'OpenRouter', openRouterCfg.hasKey],
     ['zen', 'OpenCode Zen', zenCfg.hasKey],
     ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
+    ['blackbox', 'Blackbox AI', blackboxCfg.hasKey],
     ['azure', 'Azure OpenAI', azureCfg.isConfigured],
     ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],
     ['vertex', 'Google Vertex', vertexCfg.isConfigured],
@@ -213,21 +223,25 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterModelList, setOpenRouterModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
+  const [blackboxModelList, setBlackboxModelList] = useState<string[]>([]);
 
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
+  const [blackboxLoading, setBlackboxLoading] = useState(false);
 
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
+  const [blackboxError, setBlackboxError] = useState<string | null>(null);
 
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
+  const [blackboxUpdatedAt, setBlackboxUpdatedAt] = useState<number | null>(null);
 
   // Generic refresh helper
   const refreshModels = useCallback(async (params: {
@@ -309,6 +323,17 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [nvidiaCfg.hasKey, nvidiaLoading, refreshModels]);
 
+  const refreshBlackboxModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: blackboxCfg.hasKey, isLoading: blackboxLoading,
+      setLoading: setBlackboxLoading, setError: setBlackboxError,
+      setModels: setBlackboxModelList, setUpdatedAt: setBlackboxUpdatedAt,
+      fetchModels: fetchBlackboxModels,
+      emptyMessage: 'No models returned by Blackbox AI.',
+      failureMessage: 'Failed to load Blackbox AI models.',
+    });
+  }, [blackboxCfg.hasKey, blackboxLoading, refreshModels]);
+
   // Auto-fetch models when key becomes available
   useEffect(() => {
     if (shouldAutoFetchProviderModels({
@@ -342,6 +367,14 @@ export function useModelCatalog(): ModelCatalog {
       error: nvidiaError,
     })) refreshNvidiaModels();
   }, [nvidiaCfg.hasKey, nvidiaError, nvidiaLoading, nvidiaModelList.length, refreshNvidiaModels]);
+  useEffect(() => {
+    if (shouldAutoFetchProviderModels({
+      hasKey: blackboxCfg.hasKey,
+      modelCount: blackboxModelList.length,
+      loading: blackboxLoading,
+      error: blackboxError,
+    })) refreshBlackboxModels();
+  }, [blackboxCfg.hasKey, blackboxError, blackboxLoading, blackboxModelList.length, refreshBlackboxModels]);
 
   // Clear models when key is removed
   useEffect(() => { if (!ollamaCfg.hasKey) { setOllamaModelList([]); setOllamaError(null); setOllamaUpdatedAt(null); } }, [ollamaCfg.hasKey]);
@@ -352,6 +385,7 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [zenCfg.hasKey]);
   useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
+  useEffect(() => { if (!blackboxCfg.hasKey) { setBlackboxModelList([]); setBlackboxError(null); setBlackboxUpdatedAt(null); } }, [blackboxCfg.hasKey]);
 
   const activeZenModelList = useMemo(
     () => (zenCfg.goMode ? [] : zenModelList),
@@ -375,6 +409,7 @@ export function useModelCatalog(): ModelCatalog {
     [activeZenModelList, zenCfg.goMode, zenCfg.model],
   );
   const nvidiaModelOptions = useMemo(() => includeSelectedModel(nvidiaModelList, nvidiaCfg.model), [nvidiaModelList, nvidiaCfg.model]);
+  const blackboxModelOptions = useMemo(() => includeSelectedModel(blackboxModelList.length > 0 ? blackboxModelList : BLACKBOX_MODELS, blackboxCfg.model), [blackboxModelList, blackboxCfg.model]);
   const vertexModelOptions = useMemo(() => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model), [vertexCfg.modelOptions, vertexCfg.model]);
 
   return {
@@ -382,6 +417,7 @@ export function useModelCatalog(): ModelCatalog {
     openRouter: { setKey: openRouterCfg.setKey, clearKey: openRouterCfg.clearKey, hasKey: openRouterCfg.hasKey, model: openRouterCfg.model, setModel: openRouterCfg.setModel, keyInput: openRouterKeyInput, setKeyInput: setOpenRouterKeyInput },
     zen: { setKey: zenCfg.setKey, clearKey: zenCfg.clearKey, hasKey: zenCfg.hasKey, model: zenCfg.model, setModel: zenCfg.setModel, keyInput: zenKeyInput, setKeyInput: setZenKeyInput },
     nvidia: { setKey: nvidiaCfg.setKey, clearKey: nvidiaCfg.clearKey, hasKey: nvidiaCfg.hasKey, model: nvidiaCfg.model, setModel: nvidiaCfg.setModel, keyInput: nvidiaKeyInput, setKeyInput: setNvidiaKeyInput },
+    blackbox: { setKey: blackboxCfg.setKey, clearKey: blackboxCfg.clearKey, hasKey: blackboxCfg.hasKey, model: blackboxCfg.model, setModel: blackboxCfg.setModel, keyInput: blackboxKeyInput, setKeyInput: setBlackboxKeyInput },
     azure: {
       keyInput: azureKeyInput,
       setKeyInput: setAzureKeyInput,
@@ -472,11 +508,13 @@ export function useModelCatalog(): ModelCatalog {
     openRouterModels: { models: openRouterModelList, loading: openRouterLoading, error: openRouterError, updatedAt: openRouterUpdatedAt },
     zenModels: { models: activeZenModelList, loading: activeZenLoading, error: activeZenError, updatedAt: activeZenUpdatedAt },
     nvidiaModels: { models: nvidiaModelList, loading: nvidiaLoading, error: nvidiaError, updatedAt: nvidiaUpdatedAt },
+    blackboxModels: { models: blackboxModelList, loading: blackboxLoading, error: blackboxError, updatedAt: blackboxUpdatedAt },
 
     ollamaModelOptions,
     openRouterModelOptions,
     zenModelOptions,
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
+    blackboxModelOptions,
 
     zenGoMode: zenCfg.goMode,
     setZenGoMode: zenCfg.setGoMode,
@@ -485,5 +523,6 @@ export function useModelCatalog(): ModelCatalog {
     refreshOpenRouterModels,
     refreshZenModels,
     refreshNvidiaModels,
+    refreshBlackboxModels,
   };
 }

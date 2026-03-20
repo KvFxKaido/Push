@@ -2,6 +2,7 @@ import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
+import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 import { PROVIDER_URLS } from './providers';
 import { asRecord } from './utils';
@@ -852,6 +853,38 @@ export async function fetchNvidiaModels(): Promise<string[]> {
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`Nvidia NIM model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchBlackboxModels(): Promise<string[]> {
+  const key = getBlackboxKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const catalogRes = await fetch(PROVIDER_URLS.blackbox.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!catalogRes.ok) {
+      const detail = await catalogRes.text().catch(() => '');
+      throw new Error(`Blackbox AI model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await catalogRes.json()) as unknown;
+    return normalizeModelList(payload);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Blackbox AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
     }
     throw err;
   } finally {

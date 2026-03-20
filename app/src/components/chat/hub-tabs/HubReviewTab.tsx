@@ -11,6 +11,7 @@ import {
   OPENROUTER_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
+  BLACKBOX_DEFAULT_MODEL,
   AZURE_DEFAULT_MODEL,
   BEDROCK_DEFAULT_MODEL,
   VERTEX_DEFAULT_MODEL,
@@ -94,6 +95,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   openrouter: 'push:review:model:openrouter',
   zen: 'push:review:model:zen',
   nvidia: 'push:review:model:nvidia',
+  blackbox: 'push:review:model:blackbox',
   azure: 'push:review:model:azure',
   bedrock: 'push:review:model:bedrock',
   vertex: 'push:review:model:vertex',
@@ -104,6 +106,7 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   openrouter: OPENROUTER_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
+  blackbox: BLACKBOX_DEFAULT_MODEL,
   azure: AZURE_DEFAULT_MODEL,
   bedrock: BEDROCK_DEFAULT_MODEL,
   vertex: VERTEX_DEFAULT_MODEL,
@@ -116,6 +119,7 @@ function readStoredReviewProvider(): PreferredProvider | null {
     || stored === 'openrouter'
     || stored === 'zen'
     || stored === 'nvidia'
+    || stored === 'blackbox'
     || stored === 'azure'
     || stored === 'bedrock'
     || stored === 'vertex'
@@ -131,6 +135,7 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     || value === 'openrouter'
     || value === 'zen'
     || value === 'nvidia'
+    || value === 'blackbox'
     || value === 'azure'
     || value === 'bedrock'
     || value === 'vertex'
@@ -143,6 +148,7 @@ function readStoredReviewModels(): Record<PreferredProvider, string> {
     openrouter: safeStorageGet(REVIEW_MODEL_KEYS.openrouter) || REVIEW_DEFAULT_MODELS.openrouter,
     zen: safeStorageGet(REVIEW_MODEL_KEYS.zen) || REVIEW_DEFAULT_MODELS.zen,
     nvidia: safeStorageGet(REVIEW_MODEL_KEYS.nvidia) || REVIEW_DEFAULT_MODELS.nvidia,
+    blackbox: safeStorageGet(REVIEW_MODEL_KEYS.blackbox) || REVIEW_DEFAULT_MODELS.blackbox,
     azure: safeStorageGet(REVIEW_MODEL_KEYS.azure) || REVIEW_DEFAULT_MODELS.azure,
     bedrock: safeStorageGet(REVIEW_MODEL_KEYS.bedrock) || REVIEW_DEFAULT_MODELS.bedrock,
     vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || REVIEW_DEFAULT_MODELS.vertex,

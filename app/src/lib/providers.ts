@@ -23,6 +23,7 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   openrouter: { chat: providerUrl('/openrouter/api/v1/chat/completions',    '/api/openrouter/chat'), models: providerUrl('/openrouter/api/v1/models',        '/api/openrouter/models') },
   zen:        { chat: providerUrl('/opencode/zen/v1/chat/completions',          '/api/zen/chat'),        models: providerUrl('/opencode/zen/v1/models',          '/api/zen/models')        },
   nvidia:     { chat: providerUrl('/nvidia/v1/chat/completions',                '/api/nvidia/chat'),     models: providerUrl('/nvidia/v1/models',                '/api/nvidia/models')     },
+  blackbox:   { chat: providerUrl('/blackbox/chat/completions',                '/api/blackbox/chat'),   models: providerUrl('/blackbox/models',                 '/api/blackbox/models')   },
   azure:      { chat: providerUrl('/api/azure/chat',                              '/api/azure/chat'),      models: providerUrl('/api/azure/models',                '/api/azure/models')      },
   bedrock:    { chat: providerUrl('/api/bedrock/chat',                            '/api/bedrock/chat'),    models: providerUrl('/api/bedrock/models',              '/api/bedrock/models')    },
   vertex:     { chat: providerUrl('/api/vertex/chat',                             '/api/vertex/chat'),     models: providerUrl('/api/vertex/models',               '/api/vertex/models')     },
@@ -38,6 +39,8 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
 // Nvidia NIM (OpenAI-compatible) default model
 export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
+// Blackbox AI (OpenAI-compatible) default model
+export const BLACKBOX_DEFAULT_MODEL = 'blackbox-ai';
 // Experimental direct-deployment defaults — only used as placeholders before the user
 // configures a concrete deployment/model.
 export const AZURE_DEFAULT_MODEL = 'gpt-4.1';
@@ -110,6 +113,12 @@ export const NVIDIA_MODELS: string[] = [
   'mistralai/mistral-large-2-instruct',
 ];
 
+export const BLACKBOX_MODELS: string[] = [
+  'blackbox-ai',
+  'blackbox-pro',
+  'blackbox-search',
+];
+
 /** Build the standard role model set for a provider. */
 function makeRoleModels(
   id: string,
@@ -159,6 +168,14 @@ export const PROVIDERS: AIProviderConfig[] = [
     envKey: 'VITE_NVIDIA_API_KEY',
     envUrl: 'https://build.nvidia.com',
     models: makeRoleModels(NVIDIA_DEFAULT_MODEL, 'Nvidia NIM', 'nvidia', 131_072),
+  },
+  {
+    type: 'blackbox',
+    name: 'Blackbox AI',
+    description: 'Blackbox AI — unified inference API with 300+ models (OpenAI-compatible)',
+    envKey: 'VITE_BLACKBOX_API_KEY',
+    envUrl: 'https://www.blackbox.ai',
+    models: makeRoleModels(BLACKBOX_DEFAULT_MODEL, 'Blackbox AI', 'blackbox', 200_000),
   },
   {
     type: 'azure',
@@ -238,6 +255,10 @@ const nvidiaModel = createModelNameStorage('nvidia_model', NVIDIA_DEFAULT_MODEL)
 export const getNvidiaModelName = nvidiaModel.get;
 export const setNvidiaModelName = nvidiaModel.set;
 
+const blackboxModel = createModelNameStorage('blackbox_model', BLACKBOX_DEFAULT_MODEL);
+export const getBlackboxModelName = blackboxModel.get;
+export const setBlackboxModelName = blackboxModel.set;
+
 const azureModel = createModelNameStorage('azure_model', AZURE_DEFAULT_MODEL);
 export const setAzureModelName = azureModel.set;
 
@@ -253,6 +274,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   openrouter: getOpenRouterModelName,
   zen: getZenModelName,
   nvidia: getNvidiaModelName,
+  blackbox: getBlackboxModelName,
   azure: getAzureModelName,
   bedrock: getBedrockModelName,
   vertex: getVertexModelName,
@@ -293,6 +315,7 @@ export type PreferredProvider =
   | 'openrouter'
   | 'zen'
   | 'nvidia'
+  | 'blackbox'
   | 'azure'
   | 'bedrock'
   | 'vertex';
@@ -304,6 +327,7 @@ export function getPreferredProvider(): PreferredProvider | null {
     || stored === 'openrouter'
     || stored === 'zen'
     || stored === 'nvidia'
+    || stored === 'blackbox'
     || stored === 'azure'
     || stored === 'bedrock'
     || stored === 'vertex'
@@ -333,6 +357,7 @@ export function getLastUsedProvider(): PreferredProvider | null {
     || stored === 'openrouter'
     || stored === 'zen'
     || stored === 'nvidia'
+    || stored === 'blackbox'
     || stored === 'azure'
     || stored === 'bedrock'
     || stored === 'vertex'

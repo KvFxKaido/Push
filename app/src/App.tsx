@@ -105,6 +105,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   openrouter: '',
   zen: '',
   nvidia: '',
+  blackbox: '',
   azure: '',
   bedrock: '',
   vertex: '',
@@ -121,6 +122,7 @@ function readStoredChatModelMemory(): Record<PreferredProvider, string> {
       openrouter: typeof parsed.openrouter === 'string' ? parsed.openrouter.trim() : '',
       zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
       nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
+      blackbox: typeof parsed.blackbox === 'string' ? parsed.blackbox.trim() : '',
       azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
       bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
       vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
@@ -168,12 +170,14 @@ function App() {
     openrouter: catalog.openRouter.model,
     zen: catalog.zen.model,
     nvidia: catalog.nvidia.model,
+    blackbox: catalog.blackbox.model,
     azure: catalog.azure.model,
     bedrock: catalog.bedrock.model,
     vertex: catalog.vertex.model,
   }), [
     catalog.azure.model,
     catalog.bedrock.model,
+    catalog.blackbox.model,
     catalog.nvidia.model,
     catalog.ollama.model,
     catalog.openRouter.model,
@@ -220,6 +224,7 @@ function App() {
       openrouter: draft?.models?.openrouter?.trim() || rememberedChatModels.openrouter || defaultChatModels.openrouter,
       zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
       nvidia: draft?.models?.nvidia?.trim() || rememberedChatModels.nvidia || defaultChatModels.nvidia,
+      blackbox: draft?.models?.blackbox?.trim() || rememberedChatModels.blackbox || defaultChatModels.blackbox,
       azure: draft?.models?.azure?.trim() || rememberedChatModels.azure || defaultChatModels.azure,
       bedrock: draft?.models?.bedrock?.trim() || rememberedChatModels.bedrock || defaultChatModels.bedrock,
       vertex: draft?.models?.vertex?.trim() || rememberedChatModels.vertex || defaultChatModels.vertex,
@@ -605,6 +610,12 @@ function App() {
     rememberChatModel('nvidia', model);
     const chatId = ensureDraftChatForComposerChange();
     upsertChatDraft(chatId, { models: { nvidia: model } });
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+
+  const handleSelectBlackboxModelFromChat = useCallback((model: string) => {
+    rememberChatModel('blackbox', model);
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { blackbox: model } });
   }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleSelectAzureModelFromChat = useCallback((model: string) => {
@@ -1013,6 +1024,7 @@ function App() {
       handleSelectOpenRouterModelFromChat={handleSelectOpenRouterModelFromChat}
       handleSelectZenModelFromChat={handleSelectZenModelFromChat}
       handleSelectNvidiaModelFromChat={handleSelectNvidiaModelFromChat}
+      handleSelectBlackboxModelFromChat={handleSelectBlackboxModelFromChat}
       handleSelectAzureModelFromChat={handleSelectAzureModelFromChat}
       handleSelectBedrockModelFromChat={handleSelectBedrockModelFromChat}
       handleSelectVertexModelFromChat={handleSelectVertexModelFromChat}
