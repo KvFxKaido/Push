@@ -109,6 +109,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   azure: '',
   bedrock: '',
   vertex: '',
+  kilocode: '',
 };
 
 function readStoredChatModelMemory(): Record<PreferredProvider, string> {
@@ -126,6 +127,7 @@ function readStoredChatModelMemory(): Record<PreferredProvider, string> {
       azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
       bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
       vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
+      kilocode: typeof parsed.kilocode === 'string' ? parsed.kilocode.trim() : '',
     };
   } catch {
     return { ...EMPTY_CHAT_MODEL_MEMORY };
@@ -171,6 +173,7 @@ function App() {
     zen: catalog.zen.model,
     nvidia: catalog.nvidia.model,
     blackbox: catalog.blackbox.model,
+    kilocode: catalog.kilocode.model,
     azure: catalog.azure.model,
     bedrock: catalog.bedrock.model,
     vertex: catalog.vertex.model,
@@ -178,6 +181,7 @@ function App() {
     catalog.azure.model,
     catalog.bedrock.model,
     catalog.blackbox.model,
+    catalog.kilocode.model,
     catalog.nvidia.model,
     catalog.ollama.model,
     catalog.openRouter.model,
@@ -228,6 +232,7 @@ function App() {
       azure: draft?.models?.azure?.trim() || rememberedChatModels.azure || defaultChatModels.azure,
       bedrock: draft?.models?.bedrock?.trim() || rememberedChatModels.bedrock || defaultChatModels.bedrock,
       vertex: draft?.models?.vertex?.trim() || rememberedChatModels.vertex || defaultChatModels.vertex,
+      kilocode: draft?.models?.kilocode?.trim() || rememberedChatModels.kilocode || defaultChatModels.kilocode,
     };
 
     let provider = draft?.provider ?? defaultChatProvider;

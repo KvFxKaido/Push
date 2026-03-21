@@ -163,6 +163,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   blackbox: 'Blackbox AI',
   azure: 'Azure OpenAI',
   bedrock: 'AWS Bedrock',
+  kilocode: 'Kilo Code',
   vertex: 'Google Vertex',
   demo: 'Demo',
 };

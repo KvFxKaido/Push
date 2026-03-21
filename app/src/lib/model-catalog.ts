@@ -3,6 +3,7 @@ import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
+import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 import { compareProviderModelIds, PROVIDER_URLS } from './providers';
 import { asRecord } from './utils';
@@ -1118,6 +1119,38 @@ export async function fetchBlackboxModels(): Promise<string[]> {
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`Blackbox AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchKilocodeModels(): Promise<string[]> {
+  const key = getKilocodeKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(PROVIDER_URLS.kilocode.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`Kilo Code model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as unknown;
+    return normalizeModelList(payload);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Kilo Code model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
     }
     throw err;
   } finally {

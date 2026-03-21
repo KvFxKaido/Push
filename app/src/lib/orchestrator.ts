@@ -13,6 +13,7 @@ import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
+import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import {
   getAzureBaseUrl,
   getAzureKey,
@@ -1694,6 +1695,7 @@ export type ActiveProvider =
   | 'nvidia'
   | 'blackbox'
   | 'azure'
+  | 'kilocode'
   | 'bedrock'
   | 'vertex'
   | 'demo';
@@ -1704,6 +1706,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   zen: () => Boolean(getZenKey()),
   nvidia: () => Boolean(getNvidiaKey()),
   blackbox: () => Boolean(getBlackboxKey()),
+  kilocode: () => Boolean(getKilocodeKey()),
   azure: () => Boolean(getAzureKey() && normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok && getAzureModelName()),
   bedrock: () => Boolean(getBedrockKey() && normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok && getBedrockModelName()),
   vertex: () => {

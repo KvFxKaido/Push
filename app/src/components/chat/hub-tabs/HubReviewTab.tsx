@@ -15,6 +15,7 @@ import {
   AZURE_DEFAULT_MODEL,
   BEDROCK_DEFAULT_MODEL,
   VERTEX_DEFAULT_MODEL,
+  KILOCODE_DEFAULT_MODEL,
   type PreferredProvider,
   formatModelDisplayName,
 } from '@/lib/providers';
@@ -100,6 +101,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   azure: 'push:review:model:azure',
   bedrock: 'push:review:model:bedrock',
   vertex: 'push:review:model:vertex',
+  kilocode: 'push:review:model:kilocode',
 };
 
 const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
@@ -111,6 +113,7 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   azure: AZURE_DEFAULT_MODEL,
   bedrock: BEDROCK_DEFAULT_MODEL,
   vertex: VERTEX_DEFAULT_MODEL,
+  kilocode: KILOCODE_DEFAULT_MODEL,
 };
 
 function readStoredReviewProvider(): PreferredProvider | null {
@@ -150,6 +153,7 @@ function readStoredReviewModels(): Record<PreferredProvider, string> {
     zen: safeStorageGet(REVIEW_MODEL_KEYS.zen) || REVIEW_DEFAULT_MODELS.zen,
     nvidia: safeStorageGet(REVIEW_MODEL_KEYS.nvidia) || REVIEW_DEFAULT_MODELS.nvidia,
     blackbox: safeStorageGet(REVIEW_MODEL_KEYS.blackbox) || REVIEW_DEFAULT_MODELS.blackbox,
+    kilocode: safeStorageGet(REVIEW_MODEL_KEYS.kilocode) || REVIEW_DEFAULT_MODELS.kilocode,
     azure: safeStorageGet(REVIEW_MODEL_KEYS.azure) || REVIEW_DEFAULT_MODELS.azure,
     bedrock: safeStorageGet(REVIEW_MODEL_KEYS.bedrock) || REVIEW_DEFAULT_MODELS.bedrock,
     vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || REVIEW_DEFAULT_MODELS.vertex,
