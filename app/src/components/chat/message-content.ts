@@ -21,6 +21,10 @@ const BRACELESS_TOOL_WITH_ARGS_OBJECT = /(?:^|\n)\s*["']?tool["']?\s*:\s*["'][^"
 // i.e. the tool-name value followed by the rest of the JSON without {"tool": "
 const NATIVE_TOOL_ECHO_RE = /(?:^|\n)\s*[a-z_]\w*["']\s*,\s*["'][a-z_]+["']\s*:/i;
 
+// Orphaned JSON tail: caught when a tool call prefix is lost but the args/braces remain.
+// Matches patterns like: ", "workdir": "/workspace"}}
+const ORPHANED_JSON_TAIL_RE = /",?\s*["']?[a-z_]+["']?\s*:\s*[^}]*\}\s*\}\s*$/s;
+
 function stripBareToolCallJson(text: string): string {
   const ranges: Array<{ start: number; end: number }> = [];
   let i = 0;
@@ -103,6 +107,7 @@ export function looksLikeToolCall(text: string): boolean {
   if (BRACELESS_QUOTED_TOOL_START.test(text)) return true;
   if (BRACELESS_TOOL_WITH_ARGS_OBJECT.test(text)) return true;
   if (NATIVE_TOOL_ECHO_RE.test(text)) return true;
+  if (ORPHANED_JSON_TAIL_RE.test(text)) return true;
   return false;
 }
 
@@ -163,6 +168,11 @@ export function stripToolCallPayload(content: string): string {
   // Build the stripping regex from the shared detection constant so both stay in sync.
   stripped = stripped.replace(
     new RegExp(NATIVE_TOOL_ECHO_RE.source + '[\\s\\S]*$', 'i'),
+    '',
+  );
+
+  stripped = stripped.replace(
+    new RegExp(ORPHANED_JSON_TAIL_RE.source),
     '',
   );
 

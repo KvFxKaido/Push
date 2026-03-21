@@ -400,13 +400,16 @@ export const MessageBubble = memo(function MessageBubble({
       // messages (prevents visual flash of raw JSON while model is still outputting).
       // For streaming, gate on a cheap marker check to avoid regex/brace-scan cost
       // on every token update when the response is just plain text.
-      if (message.isToolCall || (isStreaming && looksLikeToolCall(text))) {
+      // Always apply tool-call stripping to assistant messages if they look like tool calls.
+      // This acts as a fail-safe even if the background parser missed a malformed call
+      // or the streaming state has finished.
+      if (message.isToolCall || looksLikeToolCall(text)) {
         text = stripToolCallPayload(text);
       }
       // Strip bracket-only artifacts, but only when we believe the content
       // originated from a tool call / tool JSON, to avoid erasing legitimate
       // minimal JSON-like replies such as "[]" or "{}".
-      if ((message.isToolCall || (isStreaming && looksLikeToolCall(text))) && ONLY_BRACKETS_RE.test(text)) {
+      if ((message.isToolCall || looksLikeToolCall(text)) && ONLY_BRACKETS_RE.test(text)) {
         text = '';
       }
       return text;

@@ -22,6 +22,10 @@ describe('looksLikeToolCall', () => {
     expect(looksLikeToolCall('repo_ls", "repo": "KvFxKaido/Push"}}')).toBe(true);
     expect(looksLikeToolCall('repo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md"}}')).toBe(true);
   });
+
+  it('detects orphaned JSON tails', () => {
+    expect(looksLikeToolCall('workspace/app && npm audit fix","workdir":"/workspace"}}')).toBe(true);
+  });
 });
 
 describe('stripToolCallPayload', () => {
@@ -95,6 +99,11 @@ describe('stripToolCallPayload', () => {
     expect(
       stripToolCallPayload('Let me check.\nrepo_ls", "args": {"repo": "KvFxKaido/Push"}}'),
     ).toBe('Let me check.');
+  });
+
+  it('strips orphaned JSON tail from shell command', () => {
+    const leaked = 'workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json","workdir":"/workspace"}}';
+    expect(stripToolCallPayload(leaked)).toBe('workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json');
   });
 
   it('strips native echo with fenced tool call JSON alongside', () => {
