@@ -1273,3 +1273,16 @@ export async function sandboxStatus(sandboxId: string): Promise<SandboxStatusRes
     error: result.exitCode !== 0 ? (result.stderr || 'git command failed') : undefined,
   };
 }
+
+const DIFF_MAX_BYTES = 30 * 1024; // 30KB cap — keeps checkpoint size bounded
+
+/**
+ * Fetch the full uncommitted diff from the sandbox for cold-resume checkpointing.
+ * Truncated to 30KB if the diff is large.
+ */
+export async function fetchSandboxDiff(sandboxId: string): Promise<string> {
+  const result = await execInSandbox(sandboxId, 'cd /workspace && git diff 2>/dev/null');
+  const diff = result.stdout || '';
+  if (diff.length <= DIFF_MAX_BYTES) return diff;
+  return diff.slice(0, DIFF_MAX_BYTES) + '\n...(diff truncated at 30KB)';
+}

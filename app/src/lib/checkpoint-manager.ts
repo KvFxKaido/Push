@@ -44,6 +44,8 @@ export interface RunCheckpointSnapshot {
   userAborted?: boolean;
   workspaceSessionId?: string;
   savedAt?: number;
+  savedDiff?: string;
+  reason?: 'expiry' | 'manual' | 'interrupt';
 }
 
 const resumeEvents: ResumeEvent[] = [];
@@ -89,6 +91,8 @@ export function buildRunCheckpoint(snapshot: RunCheckpointSnapshot): RunCheckpoi
     repoId: snapshot.repoId,
     userAborted: snapshot.userAborted || undefined,
     workspaceSessionId: snapshot.workspaceSessionId,
+    savedDiff: snapshot.savedDiff || undefined,
+    reason: snapshot.reason,
   };
 }
 
@@ -135,7 +139,9 @@ export async function detectInterruptedRun(
     return null;
   }
 
-  if (currentSandboxId && checkpoint.sandboxSessionId !== currentSandboxId) {
+  // Expiry checkpoints survive sandbox ID mismatch — the old sandbox is gone by design.
+  const isColdResume = checkpoint.reason === 'expiry';
+  if (!isColdResume && currentSandboxId && checkpoint.sandboxSessionId !== currentSandboxId) {
     clearRunCheckpoint(chatId);
     return null;
   }
@@ -155,6 +161,19 @@ export function buildCheckpointReconciliationMessage(
   checkpoint: RunCheckpoint,
   status: SandboxStatusResult,
 ): string {
+  // Cold resume: prior sandbox expired. Build from saved diff instead of live status.
+  if (checkpoint.reason === 'expiry') {
+    let msg = '[SESSION_RESUMED]\nPrior sandbox expired. Resuming on a new sandbox (fresh clone).\n';
+    if (checkpoint.savedDiff) {
+      msg += `\nUncommitted changes at expiry:\n---\n${checkpoint.savedDiff}\n---\n`;
+      msg += '\nRe-apply these changes to continue the task. Verify each file before editing.\n';
+    } else {
+      msg += '\nNo uncommitted changes were pending at expiry.\nContinue from the conversation above.\n';
+    }
+    msg += '\nDo not repeat work already committed to the branch.';
+    return msg;
+  }
+
   const dirtyList = status.dirtyFiles.length > 0 ? status.dirtyFiles.join('\n') : 'clean';
   const changedList = status.changedFiles.length > 0 ? status.changedFiles.join('\n') : 'none';
 

@@ -910,4 +910,8 @@ export interface RunCheckpoint {
   userAborted?: boolean;
   /** Logical workspace session identity (Sprint 2f). Old checkpoints without this field are unresumable. */
   workspaceSessionId?: string;
+  /** Full git diff of uncommitted changes captured at save time (cold resume). */
+  savedDiff?: string;
+  /** How this checkpoint was created — determines resume behavior. */
+  reason?: 'expiry' | 'manual' | 'interrupt';
 }

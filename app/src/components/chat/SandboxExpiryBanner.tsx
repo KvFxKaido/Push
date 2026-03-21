@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Clock, Download, RefreshCw } from 'lucide-react';
 import { downloadFromSandbox } from '@/lib/sandbox-client';
 import {
@@ -15,6 +15,8 @@ interface SandboxExpiryBannerProps {
   sandboxId: string | null;
   sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
   onRestart: () => void;
+  /** Fired once when 5 min warning threshold is first crossed — used to save an expiry checkpoint. */
+  onWarningThresholdReached?: () => void;
 }
 
 function formatRemaining(ms: number): string {
@@ -25,9 +27,13 @@ function formatRemaining(ms: number): string {
   return `${min}:${sec.toString().padStart(2, '0')}`;
 }
 
-export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRestart }: SandboxExpiryBannerProps) {
+export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRestart, onWarningThresholdReached }: SandboxExpiryBannerProps) {
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const warningFiredRef = useRef(false);
+
+  // Reset the one-shot flag when the sandbox changes (new session).
+  useEffect(() => { warningFiredRef.current = false; }, [sandboxId]);
 
   // Tick every second to update countdown
   useEffect(() => {
@@ -40,12 +46,16 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
       const elapsed = Date.now() - createdAt!;
       const remaining = SANDBOX_LIFETIME_MS - elapsed;
       setRemainingMs(remaining);
+      if (remaining <= WARNING_THRESHOLD_MS && !warningFiredRef.current) {
+        warningFiredRef.current = true;
+        onWarningThresholdReached?.();
+      }
     }
 
     tick(); // Initial
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [createdAt, sandboxStatus]);
+  }, [createdAt, sandboxStatus, onWarningThresholdReached]);
 
   const handleDownload = useCallback(async () => {
     if (!sandboxId || downloading) return;

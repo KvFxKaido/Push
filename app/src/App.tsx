@@ -283,6 +283,7 @@ function App() {
     interruptedCheckpoint,
     resumeInterruptedRun,
     dismissResume,
+    saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
   } = useChat(
@@ -987,6 +988,7 @@ function App() {
       interruptedCheckpoint={interruptedCheckpoint}
       resumeInterruptedRun={resumeInterruptedRun}
       dismissResume={dismissResume}
+      saveExpiryCheckpoint={saveExpiryCheckpoint}
       ciStatus={ciStatus}
 	      diagnoseCIFailure={diagnoseCIFailure}
 	      repos={repos}

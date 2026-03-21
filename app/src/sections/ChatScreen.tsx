@@ -56,6 +56,7 @@ import type {
 } from '@/types';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
+import { fetchSandboxDiff } from '@/lib/sandbox-client';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -103,6 +104,7 @@ interface ChatScreenProps {
   interruptedCheckpoint: RunCheckpoint | null;
   resumeInterruptedRun: () => void;
   dismissResume: () => void;
+  saveExpiryCheckpoint: (savedDiff: string) => void;
   ciStatus: CIStatus | null;
   diagnoseCIFailure: () => void;
 
@@ -281,6 +283,7 @@ export function ChatScreen(props: ChatScreenProps) {
     interruptedCheckpoint,
     resumeInterruptedRun,
     dismissResume,
+    saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
     repos,
@@ -639,6 +642,17 @@ export function ChatScreen(props: ChatScreenProps) {
       setResettingWorkspaceForNewChat(false);
     }
   }, [activeRepo, handleCreateNewChat, isScratch, resettingWorkspaceForNewChat, sandbox]);
+
+  const handleExpiryWarningReached = useCallback(async () => {
+    if (!sandbox.sandboxId) return;
+    try {
+      const diff = await fetchSandboxDiff(sandbox.sandboxId);
+      saveExpiryCheckpoint(diff);
+    } catch {
+      // Best effort — save without diff rather than skip entirely
+      saveExpiryCheckpoint('');
+    }
+  }, [sandbox.sandboxId, saveExpiryCheckpoint]);
 
   const handleFixReviewFinding = useCallback(async (prompt: string) => {
     if (isStreaming) {
@@ -1163,6 +1177,7 @@ export function ChatScreen(props: ChatScreenProps) {
           sandboxId={sandbox.sandboxId}
           sandboxStatus={sandbox.status}
           onRestart={handleSandboxRestart}
+          onWarningThresholdReached={handleExpiryWarningReached}
         />
       )}
 

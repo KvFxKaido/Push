@@ -418,6 +418,40 @@ export function useChat(
     };
   }, [activeChatId, activeRepoFullName, branchInfo?.currentBranch]);
 
+  /**
+   * Save an expiry checkpoint when the sandbox is about to expire.
+   * Works outside of an active loop — captures the last known agent state
+   * plus the uncommitted diff so the next sandbox can reconstruct progress.
+   */
+  const saveExpiryCheckpoint = useCallback((savedDiff: string) => {
+    const chatId = activeChatId;
+    if (!chatId) return;
+    // Skip if no agent work has happened this session (round 0, no diff).
+    if (checkpointRoundRef.current === 0 && !savedDiff) return;
+
+    const checkpoint = buildRunCheckpoint({
+      chatId,
+      round: checkpointRoundRef.current,
+      phase: checkpointPhaseRef.current,
+      baseMessageCount: checkpointBaseMessageCountRef.current,
+      apiMessages: checkpointApiMessagesRef.current,
+      accumulated: '',
+      thinkingAccumulated: '',
+      lastCoderState: lastCoderStateRef.current,
+      provider: checkpointProviderRef.current as AIProviderType,
+      model: checkpointModelRef.current,
+      sandboxSessionId: sandboxIdRef.current || '',
+      activeBranch: branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || '',
+      repoId: repoRef.current || '',
+      workspaceSessionId: workspaceSessionIdRef.current || undefined,
+      savedDiff: savedDiff || undefined,
+      reason: 'expiry',
+    });
+
+    saveRunCheckpoint(checkpoint);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChatId]);
+
   const flushCheckpoint = useCallback(() => {
     const chatId = checkpointChatIdRef.current;
     if (!chatId || !loopActiveRef.current) return;
@@ -2547,6 +2581,7 @@ export function useChat(
     interruptedCheckpoint,
     resumeInterruptedRun,
     dismissResume,
+    saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
   };
