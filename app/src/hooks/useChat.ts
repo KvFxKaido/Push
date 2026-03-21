@@ -44,7 +44,12 @@ import {
 import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
-import { getModelNameForProvider, setLastUsedProvider, type PreferredProvider } from '@/lib/providers';
+import {
+  getModelNameForProvider,
+  normalizeKilocodeModelName,
+  setLastUsedProvider,
+  type PreferredProvider,
+} from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import {
   migrateConversationsToIndexedDB,
@@ -142,6 +147,16 @@ function generateTitle(messages: ChatMessage[]): string {
   return content.length > 30 ? content.slice(0, 30) + '...' : content;
 }
 
+function normalizeConversationModel(
+  provider: AIProviderType | null | undefined,
+  model: string | null | undefined,
+): string | null {
+  if (typeof model !== 'string') return null;
+  const trimmed = model.trim();
+  if (!trimmed) return null;
+  return provider === 'kilocode' ? normalizeKilocodeModelName(trimmed) : trimmed;
+}
+
 
 // --- persistence helpers ---
 
@@ -174,25 +189,38 @@ function loadConversations(): Record<string, Conversation> {
     const stored = safeStorageGet(CONVERSATIONS_KEY);
     if (stored) {
       const convs: Record<string, Conversation> = JSON.parse(stored);
+      let migrated = false;
       for (const id of Object.keys(convs)) {
+        const conversation = convs[id];
         const cleaned = (convs[id].messages || [])
           .map(sanitizeSandboxStateCards)
           .filter((m): m is ChatMessage => m !== null);
-        convs[id] = { ...convs[id], messages: cleaned };
+        const normalizedModel = normalizeConversationModel(
+          conversation.provider ?? null,
+          conversation.model ?? null,
+        );
+        convs[id] = {
+          ...conversation,
+          messages: cleaned,
+          model: normalizedModel ?? undefined,
+        };
+        if ((conversation.model ?? null) !== normalizedModel) {
+          migrated = true;
+        }
       }
 
       // Migration: stamp unscoped conversations with the current active repo
       const repoFullName = getActiveRepoFullName();
       if (repoFullName) {
-        let migrated = false;
         for (const id of Object.keys(convs)) {
           if (!convs[id].repoFullName) {
             convs[id] = { ...convs[id], repoFullName };
             migrated = true;
           }
         }
-        if (migrated) saveConversationsLegacy(convs);
       }
+
+      if (migrated) saveConversationsLegacy(convs);
 
       return convs;
     }
@@ -741,7 +769,10 @@ export function useChat(
     [agentEventsByChat, activeChatId],
   );
   const conversationProvider = conversations[activeChatId]?.provider;
-  const conversationModel = conversations[activeChatId]?.model;
+  const conversationModel = normalizeConversationModel(
+    conversationProvider,
+    conversations[activeChatId]?.model,
+  );
 
   // Context usage — estimate tokens for the meter
   const contextUsage = useMemo(() => {
@@ -1061,13 +1092,16 @@ export function useChat(
 
       const existingConversation = conversations[chatId];
       const requestedProvider = options?.provider || null;
-      const requestedModel = options?.model?.trim() || null;
+      const requestedModel = normalizeConversationModel(requestedProvider, options?.model || null);
       const lockedProviderForChat = (
         existingConversation?.provider ||
         requestedProvider ||
         getActiveProvider()
       ) as ActiveProvider;
-      const existingLockedModel = existingConversation?.model;
+      const existingLockedModel = normalizeConversationModel(
+        existingConversation?.provider || null,
+        existingConversation?.model || null,
+      );
       const resolvedModelForChat =
         existingLockedModel ||
         requestedModel ||

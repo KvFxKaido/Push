@@ -6,6 +6,7 @@ import {
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
   fetchBlackboxModels,
+  fetchKilocodeModels,
   fetchNvidiaModels,
   fetchOllamaModels,
   fetchZenModels,
@@ -848,6 +849,24 @@ describe('fetchBlackboxModels', () => {
     }));
 
     await expect(fetchBlackboxModels()).resolves.toEqual([]);
+  });
+});
+
+describe('fetchKilocodeModels', () => {
+  it('keeps only canonical model ids from the OpenAI-style Kilo catalog payload', async () => {
+    stubWindow();
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      data: [
+        { id: 'google/gemini-3-flash-preview', name: 'Google: Gemini 3 Flash Preview' },
+        { id: 'anthropic/claude-sonnet-4.6', name: 'Anthropic: Claude Sonnet 4.6' },
+        { name: 'OpenAI: GPT 5.2' },
+      ],
+    })));
+
+    await expect(fetchKilocodeModels()).resolves.toEqual([
+      'anthropic/claude-sonnet-4.6',
+      'google/gemini-3-flash-preview',
+    ]);
   });
 });
 

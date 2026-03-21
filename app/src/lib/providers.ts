@@ -47,7 +47,7 @@ export const BLACKBOX_DEFAULT_MODEL = 'blackbox-ai';
 export const AZURE_DEFAULT_MODEL = 'gpt-4.1';
 export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0';
 export const VERTEX_DEFAULT_MODEL = SHARED_VERTEX_DEFAULT_MODEL;
-export const KILOCODE_DEFAULT_MODEL = 'google/gemini-2.0-flash';
+export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
 
 export const OPENROUTER_MODELS: string[] = [
   'anthropic/claude-haiku-4.5:nitro',
@@ -122,9 +122,11 @@ export const BLACKBOX_MODELS: string[] = [
 ];
 
 export const KILOCODE_MODELS: string[] = [
-  'google/gemini-2.0-flash',
-  'anthropic/claude-3.5-sonnet',
-  'openai/gpt-4o',
+  'google/gemini-3-flash-preview',
+  'anthropic/claude-sonnet-4.6',
+  'openai/gpt-5.2',
+  'moonshotai/kimi-k2.5',
+  'kilo-auto/balanced',
 ];
 
 const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
@@ -134,6 +136,7 @@ const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
   cohere: 'Cohere',
   deepseek: 'DeepSeek',
   google: 'Google',
+  'kilo-auto': 'Kilo Auto',
   meta: 'Meta',
   'meta-llama': 'Meta',
   minimax: 'MiniMax',
@@ -146,6 +149,26 @@ const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
   'x-ai': 'xAI',
   'z-ai': 'Zhipu',
 };
+
+const LEGACY_KILOCODE_MODEL_MIGRATIONS: Record<string, string> = {
+  'google/gemini-2.0-flash': 'google/gemini-3-flash-preview',
+  'anthropic/claude-3.5-sonnet': 'anthropic/claude-sonnet-4.6',
+  'openai/gpt-4o': 'openai/gpt-5.2',
+};
+
+export function normalizeKilocodeModelName(model: string): string {
+  const trimmed = model.trim();
+  if (!trimmed) return KILOCODE_DEFAULT_MODEL;
+
+  const migrated = LEGACY_KILOCODE_MODEL_MIGRATIONS[trimmed];
+  if (migrated) return migrated;
+
+  if (!trimmed.includes('/') || /\s/.test(trimmed)) {
+    return KILOCODE_DEFAULT_MODEL;
+  }
+
+  return trimmed;
+}
 
 function normalizeProviderModelId(provider: AIProviderType | string, modelId: string): string {
   const trimmed = modelId.trim();
@@ -306,11 +329,27 @@ function createModelNameStorage(
   storageKey: string,
   defaultModel: string,
   onSet?: () => void,
+  normalizeModel?: (model: string) => string,
 ): { get: () => string; set: (model: string) => void } {
+  const sanitizeModel = (model: string): string => {
+    const trimmed = model.trim();
+    return normalizeModel ? normalizeModel(trimmed) : trimmed;
+  };
+
   return {
-    get: () => safeStorageGet(storageKey) || defaultModel,
+    get: () => {
+      const stored = safeStorageGet(storageKey);
+      if (!stored) return defaultModel;
+      const normalized = sanitizeModel(stored);
+      if (normalized && normalized !== stored) {
+        safeStorageSet(storageKey, normalized);
+      }
+      return normalized || defaultModel;
+    },
     set: (model: string) => {
-      safeStorageSet(storageKey, model.trim());
+      const normalized = sanitizeModel(model);
+      if (!normalized) return;
+      safeStorageSet(storageKey, normalized);
       onSet?.();
     },
   };
@@ -354,7 +393,12 @@ export const setBedrockModelName = bedrockModel.set;
 const vertexModel = createModelNameStorage('vertex_model', VERTEX_DEFAULT_MODEL);
 export const setVertexModelName = vertexModel.set;
 
-const kiloCodeModel = createModelNameStorage('kilocode_model', KILOCODE_DEFAULT_MODEL);
+const kiloCodeModel = createModelNameStorage(
+  'kilocode_model',
+  KILOCODE_DEFAULT_MODEL,
+  undefined,
+  normalizeKilocodeModelName,
+);
 export const getKiloCodeModelName = kiloCodeModel.get;
 export const setKiloCodeModelName = kiloCodeModel.set;
 

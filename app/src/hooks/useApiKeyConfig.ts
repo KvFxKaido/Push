@@ -77,19 +77,23 @@ export function useApiKeyWithModelConfig(
   envVar: string | undefined,
   defaultModel: string,
   getter: () => string | null,
+  normalizeModel?: (model: string) => string,
 ): ApiKeyWithModelHookResult {
   const { key, setKey, clearKey, hasKey } = useApiKeyConfig(keyStorageKey, envVar, getter);
 
   const [model, setModelState] = useState<string>(() => {
-    return safeStorageGet(modelStorageKey) || defaultModel;
+    const stored = safeStorageGet(modelStorageKey) || defaultModel;
+    return normalizeModel ? normalizeModel(stored) : stored;
   });
 
   const setModel = useCallback((newModel: string) => {
     const trimmed = newModel.trim();
     if (!trimmed) return;
-    safeStorageSet(modelStorageKey, trimmed);
-    setModelState(trimmed);
-  }, [modelStorageKey]);
+    const normalized = normalizeModel ? normalizeModel(trimmed) : trimmed;
+    if (!normalized) return;
+    safeStorageSet(modelStorageKey, normalized);
+    setModelState(normalized);
+  }, [modelStorageKey, normalizeModel]);
 
   return { key, setKey, clearKey, hasKey, model, setModel };
 }
@@ -119,6 +123,7 @@ export function createKeyOnlyProviderConfig(
 interface ModelProviderConfigOptions extends KeyOnlyProviderConfigOptions {
   modelStorageKey: string;
   defaultModel: string;
+  normalizeModel?: (model: string) => string;
 }
 
 interface ModelProviderConfig extends KeyOnlyProviderConfig {
@@ -128,12 +133,19 @@ interface ModelProviderConfig extends KeyOnlyProviderConfig {
 export function createModelProviderConfig(
   options: ModelProviderConfigOptions,
 ): ModelProviderConfig {
-  const { storageKey, modelStorageKey, envVar, defaultModel } = options;
+  const { storageKey, modelStorageKey, envVar, defaultModel, normalizeModel } = options;
   const getKey = createApiKeyGetter(storageKey, envVar);
 
   return {
     getKey,
     useConfig: () =>
-      useApiKeyWithModelConfig(storageKey, modelStorageKey, envVar, defaultModel, getKey),
+      useApiKeyWithModelConfig(
+        storageKey,
+        modelStorageKey,
+        envVar,
+        defaultModel,
+        getKey,
+        normalizeModel,
+      ),
   };
 }

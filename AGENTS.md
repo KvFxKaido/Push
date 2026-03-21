@@ -49,7 +49,7 @@ The web app has six built-in providers, all using OpenAI-compatible SSE streamin
 | **OpenCode Zen** | big-pickle |
 | **Blackbox AI** | blackbox-ai |
 | **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
-| **Kilo Code** | google/gemini-2.0-flash |
+| **Kilo Code** | google/gemini-3-flash-preview |
 
 **OpenRouter** provides access to 50+ models through a single API. Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-4o/GPT-5.4, Codex, Cohere Command-R, Gemini, Mistral, MiniMax, Qwen, GLM, DeepSeek, Perplexity Sonar, Arcee Trinity, Mercury, Xiaomi MiMo, Grok 4.20, and Kimi.
 

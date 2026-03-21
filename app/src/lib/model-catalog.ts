@@ -880,24 +880,32 @@ export function buildCuratedOpencodeModelList(
 function normalizeModelList(payload: unknown): string[] {
   const ids = new Set<string>();
 
-  const maybePushId = (value: unknown) => {
+  const maybePushId = (value: unknown): number => {
     if (typeof value === 'string' && value.trim()) {
-      ids.add(value.trim());
+      const trimmed = value.trim();
+      const sizeBefore = ids.size;
+      ids.add(trimmed);
+      return ids.size > sizeBefore ? 1 : 0;
     }
+    return 0;
   };
 
-  const fromArray = (arr: unknown[]) => {
+  const fromArray = (arr: unknown[], allowName: boolean) => {
+    let added = 0;
     for (const item of arr) {
       if (typeof item === 'string') {
-        maybePushId(item);
+        added += maybePushId(item);
         continue;
       }
       const rec = asRecord(item);
       if (!rec) continue;
-      maybePushId(rec.id);
-      maybePushId(rec.name);
-      maybePushId(rec.model);
+      added += maybePushId(rec.id);
+      added += maybePushId(rec.model);
+      if (allowName) {
+        added += maybePushId(rec.name);
+      }
     }
+    return added;
   };
 
   const visited = new WeakSet<object>();
@@ -905,11 +913,14 @@ function normalizeModelList(payload: unknown): string[] {
     if (visited.has(rec)) return;
     visited.add(rec);
 
-    if (Array.isArray(rec.data)) fromArray(rec.data);
-    if (Array.isArray(rec.models)) fromArray(rec.models);
-    if (Array.isArray(rec.items)) fromArray(rec.items);
-    if (Array.isArray(rec.list)) fromArray(rec.list);
-    if (Array.isArray(rec.model_list)) fromArray(rec.model_list);
+    if (Array.isArray(rec.data)) {
+      const added = fromArray(rec.data, false);
+      if (added === 0) fromArray(rec.data, true);
+    }
+    if (Array.isArray(rec.models)) fromArray(rec.models, true);
+    if (Array.isArray(rec.items)) fromArray(rec.items, false);
+    if (Array.isArray(rec.list)) fromArray(rec.list, false);
+    if (Array.isArray(rec.model_list)) fromArray(rec.model_list, false);
 
     const nestedData = asRecord(rec.data);
     if (nestedData) fromRecord(nestedData);
@@ -920,7 +931,7 @@ function normalizeModelList(payload: unknown): string[] {
   };
 
   if (Array.isArray(payload)) {
-    fromArray(payload);
+    fromArray(payload, true);
   } else {
     const rec = asRecord(payload);
     if (rec) fromRecord(rec);
@@ -1147,7 +1158,8 @@ export async function fetchKilocodeModels(): Promise<string[]> {
     }
 
     const payload = (await res.json()) as unknown;
-    return normalizeModelList(payload);
+    return normalizeModelList(payload)
+      .sort((left, right) => compareProviderModelIds('kilocode', left, right));
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`Kilo Code model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);

@@ -8,7 +8,9 @@ import {
   ZEN_GO_MODELS,
   NVIDIA_MODELS,
   BLACKBOX_MODELS,
+  KILOCODE_DEFAULT_MODEL,
   KILOCODE_MODELS,
+  normalizeKilocodeModelName,
   type PreferredProvider,
 } from '@/lib/providers';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
@@ -405,6 +407,28 @@ export function useModelCatalog(): ModelCatalog {
   useEffect(() => { if (!blackboxCfg.hasKey) { setBlackboxModelList([]); setBlackboxError(null); setBlackboxUpdatedAt(null); } }, [blackboxCfg.hasKey]);
   useEffect(() => { if (!kilocodeCfg.hasKey) { setKilocodeModelList([]); setKilocodeError(null); setKilocodeUpdatedAt(null); } }, [kilocodeCfg.hasKey]);
 
+  const kilocodeSelectedModel = kilocodeCfg.model;
+  const setKilocodeModel = kilocodeCfg.setModel;
+
+  useEffect(() => {
+    const normalizedSelectedModel = normalizeKilocodeModelName(kilocodeSelectedModel);
+    if (normalizedSelectedModel !== kilocodeSelectedModel) {
+      setKilocodeModel(normalizedSelectedModel);
+      return;
+    }
+
+    if (kilocodeModelList.length === 0 || kilocodeModelList.includes(normalizedSelectedModel)) {
+      return;
+    }
+
+    const fallbackModel = kilocodeModelList.includes(KILOCODE_DEFAULT_MODEL)
+      ? KILOCODE_DEFAULT_MODEL
+      : kilocodeModelList[0];
+    if (fallbackModel && fallbackModel !== kilocodeSelectedModel) {
+      setKilocodeModel(fallbackModel);
+    }
+  }, [kilocodeModelList, kilocodeSelectedModel, setKilocodeModel]);
+
   const activeZenModelList = useMemo(
     () => (zenCfg.goMode ? [] : zenModelList),
     [zenCfg.goMode, zenModelList],
@@ -428,7 +452,15 @@ export function useModelCatalog(): ModelCatalog {
   );
   const nvidiaModelOptions = useMemo(() => includeSelectedModel(nvidiaModelList, nvidiaCfg.model), [nvidiaModelList, nvidiaCfg.model]);
   const blackboxModelOptions = useMemo(() => includeSelectedModel(blackboxModelList.length > 0 ? blackboxModelList : BLACKBOX_MODELS, blackboxCfg.model), [blackboxModelList, blackboxCfg.model]);
-  const kilocodeModelOptions = useMemo(() => includeSelectedModel(kilocodeModelList.length > 0 ? kilocodeModelList : KILOCODE_MODELS, kilocodeCfg.model), [kilocodeModelList, kilocodeCfg.model]);
+  const kilocodeModelOptions = useMemo(() => {
+    const selectedModel = normalizeKilocodeModelName(kilocodeSelectedModel);
+    if (kilocodeModelList.length > 0) {
+      return kilocodeModelList.includes(selectedModel)
+        ? includeSelectedModel(kilocodeModelList, selectedModel)
+        : [...kilocodeModelList];
+    }
+    return includeSelectedModel(KILOCODE_MODELS, selectedModel);
+  }, [kilocodeModelList, kilocodeSelectedModel]);
   const vertexModelOptions = useMemo(() => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model), [vertexCfg.modelOptions, vertexCfg.model]);
 
   return {

@@ -16,6 +16,7 @@ import { useSnapshotManager, buildWorkspaceScratchActions } from '@/hooks/useSna
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { useProjectInstructions } from '@/hooks/useProjectInstructions';
 import {
+  normalizeKilocodeModelName,
   type PreferredProvider,
 } from '@/lib/providers';
 import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
@@ -127,7 +128,7 @@ function readStoredChatModelMemory(): Record<PreferredProvider, string> {
       azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
       bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
       vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
-      kilocode: typeof parsed.kilocode === 'string' ? parsed.kilocode.trim() : '',
+      kilocode: typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
     };
   } catch {
     return { ...EMPTY_CHAT_MODEL_MEMORY };
@@ -213,7 +214,9 @@ function App() {
   }, [rememberedChatModels]);
 
   const rememberChatModel = useCallback((provider: PreferredProvider, model: string | null | undefined) => {
-    const trimmed = model?.trim();
+    const trimmed = typeof model === 'string'
+      ? (provider === 'kilocode' ? normalizeKilocodeModelName(model) : model.trim())
+      : '';
     if (!trimmed) return;
     setRememberedChatModels((prev) => (
       prev[provider] === trimmed
@@ -232,7 +235,11 @@ function App() {
       azure: draft?.models?.azure?.trim() || rememberedChatModels.azure || defaultChatModels.azure,
       bedrock: draft?.models?.bedrock?.trim() || rememberedChatModels.bedrock || defaultChatModels.bedrock,
       vertex: draft?.models?.vertex?.trim() || rememberedChatModels.vertex || defaultChatModels.vertex,
-      kilocode: draft?.models?.kilocode?.trim() || rememberedChatModels.kilocode || defaultChatModels.kilocode,
+      kilocode: normalizeKilocodeModelName(
+        draft?.models?.kilocode?.trim()
+          || rememberedChatModels.kilocode
+          || defaultChatModels.kilocode,
+      ),
     };
 
     let provider = draft?.provider ?? defaultChatProvider;
@@ -325,12 +332,15 @@ function App() {
   const activeChatDraft = useMemo(() => {
     const storedDraft = activeChatId ? chatDrafts[activeChatId] : null;
     const baseDraft = normalizeChatDraft(storedDraft);
+    const lockedConversationModel = activeConversation?.provider === 'kilocode' && activeConversation.model
+      ? normalizeKilocodeModelName(activeConversation.model)
+      : activeConversation?.model;
 
     if (activeConversation?.provider && activeConversation.provider !== 'demo') {
       return normalizeChatDraft({
         provider: activeConversation.provider,
-        models: activeConversation.model
-          ? { ...baseDraft.models, [activeConversation.provider]: activeConversation.model }
+        models: lockedConversationModel
+          ? { ...baseDraft.models, [activeConversation.provider]: lockedConversationModel }
           : baseDraft.models,
       });
     }
@@ -625,9 +635,10 @@ function App() {
   }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleSelectKilocodeModelFromChat = useCallback((model: string) => {
-    rememberChatModel('kilocode', model);
+    const normalizedModel = normalizeKilocodeModelName(model);
+    rememberChatModel('kilocode', normalizedModel);
     const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { kilocode: model } });
+    upsertChatDraft(chatId, { models: { kilocode: normalizedModel } });
   }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const handleSelectAzureModelFromChat = useCallback((model: string) => {

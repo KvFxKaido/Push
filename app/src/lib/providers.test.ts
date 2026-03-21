@@ -4,6 +4,7 @@ import {
   formatModelDisplayName,
   getModelDisplayGroupKey,
   getModelDisplayLeafName,
+  normalizeKilocodeModelName,
 } from './providers';
 
 describe('formatModelDisplayName', () => {
@@ -17,6 +18,20 @@ describe('formatModelDisplayName', () => {
   it('keeps provider-native ids readable when they are not routed', () => {
     expect(formatModelDisplayName('blackbox', 'blackbox-pro')).toBe('blackbox-pro');
     expect(formatModelDisplayName('ollama', 'gemini-3-flash-preview')).toBe('gemini-3-flash-preview');
+  });
+
+  it('formats Kilo auto routes with a readable provider label', () => {
+    expect(formatModelDisplayName('kilocode', 'kilo-auto/balanced')).toBe('Kilo Auto / balanced');
+  });
+});
+
+describe('normalizeKilocodeModelName', () => {
+  it('migrates retired Kilo defaults and rejects label-shaped selections', () => {
+    expect(normalizeKilocodeModelName('google/gemini-2.0-flash')).toBe('google/gemini-3-flash-preview');
+    expect(normalizeKilocodeModelName('anthropic/claude-3.5-sonnet')).toBe('anthropic/claude-sonnet-4.6');
+    expect(normalizeKilocodeModelName('openai/gpt-4o')).toBe('openai/gpt-5.2');
+    expect(normalizeKilocodeModelName('Anthropic: Claude Sonnet 4.6')).toBe('google/gemini-3-flash-preview');
+    expect(normalizeKilocodeModelName('kilo-auto/balanced')).toBe('kilo-auto/balanced');
   });
 });
 

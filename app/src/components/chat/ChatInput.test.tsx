@@ -49,8 +49,8 @@ function buildProps(
     isBlackboxModelLocked: false,
     refreshBlackboxModels: vi.fn(),
     onSelectBlackboxModel: vi.fn(),
-    kilocodeModel: 'google/gemini-2.0-flash',
-    kilocodeModelOptions: ['google/gemini-2.0-flash', 'openai/gpt-4o'],
+    kilocodeModel: 'google/gemini-3-flash-preview',
+    kilocodeModelOptions: ['google/gemini-3-flash-preview', 'openai/gpt-5.2'],
     kilocodeModelsLoading: false,
     kilocodeModelsError: null,
     kilocodeModelsUpdatedAt: null,
@@ -86,7 +86,7 @@ describe('ChatInput', () => {
   it('shows the selected Kilo Code model instead of falling back to demo', () => {
     const html = renderToStaticMarkup(<ChatInput {...buildProps()} />);
 
-    expect(html).toContain('gemini-2.0-flash');
+    expect(html).toContain('gemini-3-flash-preview');
     expect(html).not.toContain('>demo<');
   });
 });

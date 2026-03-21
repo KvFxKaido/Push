@@ -67,7 +67,7 @@ describe('buildModelCapabilityAwarenessBlock', () => {
   it('formats Kilo Code with a human-readable provider label', () => {
     const block = buildModelCapabilityAwarenessBlock(
       'kilocode',
-      'google/gemini-2.0-flash',
+      'google/gemini-3-flash-preview',
       { hasImageAttachments: true },
     );
 

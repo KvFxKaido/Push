@@ -1,4 +1,4 @@
-import { KILOCODE_DEFAULT_MODEL } from '@/lib/providers';
+import { KILOCODE_DEFAULT_MODEL, normalizeKilocodeModelName } from '@/lib/providers';
 import { createModelProviderConfig } from './useApiKeyConfig';
 
 const KEY_STORAGE = 'kilocode_api_key';
@@ -9,6 +9,7 @@ const providerConfig = createModelProviderConfig({
   modelStorageKey: MODEL_STORAGE,
   envVar: import.meta.env.VITE_KILOCODE_API_KEY,
   defaultModel: KILOCODE_DEFAULT_MODEL,
+  normalizeModel: normalizeKilocodeModelName,
 });
 
 export const getKilocodeKey = providerConfig.getKey;
