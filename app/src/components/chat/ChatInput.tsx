@@ -128,6 +128,14 @@ interface ChatInputProps {
     isBlackboxModelLocked: boolean;
     refreshBlackboxModels: () => void;
     onSelectBlackboxModel: (model: string) => void;
+    kilocodeModel: string;
+    kilocodeModelOptions: string[];
+    kilocodeModelsLoading: boolean;
+    kilocodeModelsError: string | null;
+    kilocodeModelsUpdatedAt: number | null;
+    isKilocodeModelLocked: boolean;
+    refreshKilocodeModels: () => void;
+    onSelectKilocodeModel: (model: string) => void;
     azureModel: string;
     azureDeployments: ExperimentalDeployment[];
     azureActiveDeploymentId: string | null;
@@ -395,6 +403,7 @@ export function ChatInput({
     if (selectedProvider === 'zen') return providerControls.zenModel;
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModel;
     if (selectedProvider === 'blackbox') return providerControls.blackboxModel;
+    if (selectedProvider === 'kilocode') return providerControls.kilocodeModel;
     if (selectedProvider === 'azure') return providerControls.azureModel;
     if (selectedProvider === 'bedrock') return providerControls.bedrockModel;
     if (selectedProvider === 'vertex') return providerControls.vertexModel;
@@ -414,6 +423,7 @@ export function ChatInput({
     if (selectedProvider === 'zen') return providerControls.zenModelsLoading;
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModelsLoading;
     if (selectedProvider === 'blackbox') return providerControls.blackboxModelsLoading;
+    if (selectedProvider === 'kilocode') return providerControls.kilocodeModelsLoading;
     return false;
   })();
 
@@ -423,20 +433,28 @@ export function ChatInput({
     if (selectedProvider === 'zen') return formatTimeAgo(providerControls.zenModelsUpdatedAt);
     if (selectedProvider === 'nvidia') return formatTimeAgo(providerControls.nvidiaModelsUpdatedAt);
     if (selectedProvider === 'blackbox') return formatTimeAgo(providerControls.blackboxModelsUpdatedAt);
+    if (selectedProvider === 'kilocode') return formatTimeAgo(providerControls.kilocodeModelsUpdatedAt);
     return null;
   })();
 
-  const canRefreshSelectedModelList = selectedProvider === 'ollama' || selectedProvider === 'zen' || selectedProvider === 'nvidia' || selectedProvider === 'blackbox';
+  const canRefreshSelectedModelList = selectedProvider === 'ollama'
+    || selectedProvider === 'zen'
+    || selectedProvider === 'nvidia'
+    || selectedProvider === 'blackbox'
+    || selectedProvider === 'kilocode';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
     if (selectedProvider === 'zen') providerControls.refreshZenModels();
     if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
     if (selectedProvider === 'blackbox') providerControls.refreshBlackboxModels();
+    if (selectedProvider === 'kilocode') providerControls.refreshKilocodeModels();
   };
   const openRouterModelList = providerControls?.openRouterModelOptions ?? EMPTY_MODEL_OPTIONS;
   const blackboxModelList = providerControls?.blackboxModelOptions ?? EMPTY_MODEL_OPTIONS;
   const blackboxFallbackModel = providerControls?.blackboxModel ?? '';
+  const kilocodeModelList = providerControls?.kilocodeModelOptions ?? EMPTY_MODEL_OPTIONS;
+  const kilocodeFallbackModel = providerControls?.kilocodeModel ?? '';
 
   const openRouterModelOptions = useMemo(() => (
     renderGroupedModelOptions(openRouterModelList, 'openrouter')
@@ -450,6 +468,15 @@ export function ChatInput({
         : [];
     return renderGroupedModelOptions(models, 'blackbox');
   }, [blackboxFallbackModel, blackboxModelList]);
+
+  const kilocodeModelOptions = useMemo(() => {
+    const models = kilocodeModelList.length > 0
+      ? kilocodeModelList
+      : kilocodeFallbackModel
+        ? [kilocodeFallbackModel]
+        : [];
+    return renderGroupedModelOptions(models, 'kilocode');
+  }, [kilocodeFallbackModel, kilocodeModelList]);
 
   // Reasoning effort (per-provider, only for models that support it)
   const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
@@ -888,6 +915,34 @@ export function ChatInput({
                             <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isBlackboxModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'kilocode' && (
+                        <>
+                          <select
+                            value={providerControls.kilocodeModel}
+                            disabled={!canChangeModel || providerControls.kilocodeModelsLoading || providerControls.kilocodeModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectKilocodeModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {kilocodeModelOptions}
+                          </select>
+                          {providerControls.kilocodeModelsLoading && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading Kilo Code models...</p>
+                          )}
+                          {!providerControls.kilocodeModelsLoading && providerControls.kilocodeModelOptions.length === 0 && !providerControls.kilocodeModelsError && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
+                          )}
+                          {providerControls.kilocodeModelsError && (
+                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.kilocodeModelsError}</p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                          )}
+                          {providerControls.isKilocodeModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>

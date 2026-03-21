@@ -624,6 +624,12 @@ function App() {
     upsertChatDraft(chatId, { models: { blackbox: model } });
   }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
+  const handleSelectKilocodeModelFromChat = useCallback((model: string) => {
+    rememberChatModel('kilocode', model);
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { kilocode: model } });
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+
   const handleSelectAzureModelFromChat = useCallback((model: string) => {
     rememberChatModel('azure', model);
     const chatId = ensureDraftChatForComposerChange();
@@ -1032,6 +1038,7 @@ function App() {
       handleSelectZenModelFromChat={handleSelectZenModelFromChat}
       handleSelectNvidiaModelFromChat={handleSelectNvidiaModelFromChat}
       handleSelectBlackboxModelFromChat={handleSelectBlackboxModelFromChat}
+      handleSelectKilocodeModelFromChat={handleSelectKilocodeModelFromChat}
       handleSelectAzureModelFromChat={handleSelectAzureModelFromChat}
       handleSelectBedrockModelFromChat={handleSelectBedrockModelFromChat}
       handleSelectVertexModelFromChat={handleSelectVertexModelFromChat}

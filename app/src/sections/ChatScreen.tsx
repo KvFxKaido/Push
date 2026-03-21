@@ -195,6 +195,7 @@ interface ChatScreenProps {
   handleSelectZenModelFromChat: (model: string) => void;
   handleSelectNvidiaModelFromChat: (model: string) => void;
   handleSelectBlackboxModelFromChat: (model: string) => void;
+  handleSelectKilocodeModelFromChat: (model: string) => void;
   handleSelectAzureModelFromChat: (model: string) => void;
   handleSelectBedrockModelFromChat: (model: string) => void;
   handleSelectVertexModelFromChat: (model: string) => void;
@@ -325,6 +326,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSelectZenModelFromChat,
     handleSelectNvidiaModelFromChat,
     handleSelectBlackboxModelFromChat,
+    handleSelectKilocodeModelFromChat,
     handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat,
     handleSelectVertexModelFromChat,
@@ -458,6 +460,7 @@ export function ChatScreen(props: ChatScreenProps) {
     if (selectedComposerProvider === 'zen') return selectedChatModels.zen;
     if (selectedComposerProvider === 'nvidia') return selectedChatModels.nvidia;
     if (selectedComposerProvider === 'blackbox') return selectedChatModels.blackbox;
+    if (selectedComposerProvider === 'kilocode') return selectedChatModels.kilocode;
     if (selectedComposerProvider === 'azure') return selectedChatModels.azure;
     if (selectedComposerProvider === 'bedrock') return selectedChatModels.bedrock;
     if (selectedComposerProvider === 'vertex') return selectedChatModels.vertex;
@@ -717,6 +720,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
   const isNvidiaModelLocked = isModelLocked && lockedProvider === 'nvidia';
   const isBlackboxModelLocked = isModelLocked && lockedProvider === 'blackbox';
+  const isKilocodeModelLocked = isModelLocked && lockedProvider === 'kilocode';
   const isAzureModelLocked = isModelLocked && lockedProvider === 'azure';
   const isBedrockModelLocked = isModelLocked && lockedProvider === 'bedrock';
   const isVertexModelLocked = isModelLocked && lockedProvider === 'vertex';
@@ -1288,6 +1292,14 @@ export function ChatScreen(props: ChatScreenProps) {
           isBlackboxModelLocked,
           refreshBlackboxModels: catalog.refreshBlackboxModels,
           onSelectBlackboxModel: handleSelectBlackboxModelFromChat,
+          kilocodeModel: selectedChatModels.kilocode,
+          kilocodeModelOptions: catalog.kilocodeModelOptions,
+          kilocodeModelsLoading: catalog.kilocodeModels.loading,
+          kilocodeModelsError: catalog.kilocodeModels.error,
+          kilocodeModelsUpdatedAt: catalog.kilocodeModels.updatedAt,
+          isKilocodeModelLocked,
+          refreshKilocodeModels: catalog.refreshKilocodeModels,
+          onSelectKilocodeModel: handleSelectKilocodeModelFromChat,
           azureModel: selectedChatModels.azure,
           azureDeployments: catalog.azure.deployments,
           azureActiveDeploymentId: catalog.azure.activeDeploymentId,
