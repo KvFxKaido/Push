@@ -403,8 +403,13 @@ export const MessageBubble = memo(function MessageBubble({
       // Always apply tool-call stripping to assistant messages if they look like tool calls.
       // This acts as a fail-safe even if the background parser missed a malformed call
       // or the streaming state has finished.
-      if (message.isToolCall || looksLikeToolCall(text)) {
+      if (message.isToolCall || message.isMalformed || looksLikeToolCall(text)) {
         text = stripToolCallPayload(text);
+      }
+      // Malformed messages are failed tool calls — any leftover text is garbage
+      // (e.g. orphaned shell command fragments). Force-clear so the bubble hides.
+      if (message.isMalformed) {
+        text = '';
       }
       // Strip bracket-only artifacts, but only when we believe the content
       // originated from a tool call / tool JSON, to avoid erasing legitimate
@@ -414,7 +419,7 @@ export const MessageBubble = memo(function MessageBubble({
       }
       return text;
     },
-    [isUser, message.content, message.displayContent, message.isToolCall, isStreaming],
+    [isUser, message.content, message.displayContent, message.isToolCall, message.isMalformed, isStreaming],
   );
   const hasContent = Boolean(displayContentText.trim());
 
@@ -433,9 +438,9 @@ export const MessageBubble = memo(function MessageBubble({
     return null;
   }
 
-  // Hide tool call messages only when they have no cards.
+  // Hide tool call / malformed messages only when they have no cards.
   // If the model included user-facing text before the JSON call, keep it visible.
-  if (message.isToolCall && !hasContent && visibleCards.length === 0) {
+  if ((message.isToolCall || message.isMalformed) && !hasContent && visibleCards.length === 0) {
     return null;
   }
 

@@ -1607,6 +1607,7 @@ export function useChat(
                   content: accumulated,
                   thinking: thinkingAccumulated || undefined,
                   status: 'done',
+                  isMalformed: recoveryResult.kind === 'diagnosis_exhausted' || undefined,
                 };
               }
               const updated = { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
