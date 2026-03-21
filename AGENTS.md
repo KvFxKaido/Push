@@ -1,13 +1,44 @@
 # Push — Agent Context
 
-This file is a compatibility shim for agents. The canonical detailed source is [CLAUDE.md](CLAUDE.md).
+This is the **required entry doc** for Push. The currently reads `AGENTS.md` first, so this file must be self-sufficient.
 
-## Quick pointers
+`CLAUDE.md` is the deeper canonical reference for architecture and implementation details, but this file carries the minimum contract Push agents need at startup.
+
+## Core model
 
 - Push is a mobile-first AI coding notebook with a web app and local CLI.
-- Core roles: Orchestrator, Explorer, Coder, Reviewer, Auditor.
-- Repo chats are branch-scoped, and repo work follows a PR-based merge flow.
-- Delegated Coder and Explorer runs inherit the current chat-locked provider/model.
-- Scratch workspaces are available when GitHub auth is not needed.
+- Core roles: **Orchestrator**, **Explorer**, **Coder**, **Reviewer**, **Auditor**.
+- Repo context is locked to the selected repo.
+- Chats are branch-scoped.
+- The **active branch** is the commit target, push target, diff base, and chat context.
+- Branch switching is explicit and tears down the sandbox.
+- Branch creation is UI-owned; the assistant should not create or switch branches itself.
 
-Refer to [CLAUDE.md](CLAUDE.md) for the full architecture, workflow, and tool protocol details.
+## Provider behavior
+
+- Settings stores default backend/model picks plus the active backend preference.
+- The current chat locks the Orchestrator provider/model on first send.
+- Delegated **Coder** and **Explorer** runs inherit that chat-locked provider/model.
+- **Reviewer** keeps its own sticky provider/model selection.
+- **Auditor** follows the chat lock when available, otherwise the active backend.
+
+## Workflow rules
+
+- Use **Explorer** for read-only investigation and architecture tracing.
+- Use **Coder** for implementation in the sandbox.
+- Use **Reviewer** for advisory diffs on branch diff, last commit, or working tree.
+- Use **Auditor** for the pre-commit SAFE/UNSAFE gate on standard commits.
+- Standard merges go through **GitHub PR flow** only.
+- Push never runs `git merge` locally.
+- PR-backed branch diff reviews are the only reviews that can be posted back to GitHub.
+
+## Scratch workspace
+
+- Scratch workspaces are available when GitHub auth is not needed.
+- They are sandbox-only and do not use repo GitHub tools.
+- Use them for quick experiments or when starting without repo auth.
+
+## Pointer
+
+For full architecture, tool protocol, and implementation detail, see [`CLAUDE.md`](CLAUDE.md).
+If this file conflicts with `CLAUDE.md`, prefer `CLAUDE.md` for detailed behavior and this file for startup contract.
