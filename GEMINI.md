@@ -9,7 +9,7 @@ Push is a personal AI coding notebook backed by role-based AI agents (Orchestrat
 *   **Type:** AI Coding Agent — Mobile PWA + Local CLI
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** The web app ships with six built-in providers (Ollama, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM, Kilo Code) plus opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex. The built-ins, Azure, and Bedrock use OpenAI-compatible SSE streaming. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex OpenAPI, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into the app's OpenAI-style SSE stream; legacy raw Vertex OpenAPI config still works as a fallback. Settings stores default backend/model picks and the app's active backend preference, chat keeps its own current selection, delegated Coder and Explorer runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor now follows the same chat lock when available. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
+*   **AI Backend:** The web app ships with seven built-in providers (Ollama, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM, Kilo Code, OpenAdapter) plus opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex. The built-ins, Azure, and Bedrock use OpenAI-compatible SSE streaming. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex OpenAPI, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into the app's OpenAI-style SSE stream; legacy raw Vertex OpenAPI config still works as a fallback. Settings stores default backend/model picks and the app's active backend preference, chat keeps its own current selection, delegated Coder and Explorer runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor now follows the same chat lock when available. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
 *   **Current Product Focus:** CLI/TUI terminal UX improvements, with most active terminal work going into the full-screen TUI while REPL and headless flows remain supported.
 
 ## Tech Stack
@@ -20,7 +20,7 @@ Push is a personal AI coding notebook backed by role-based AI agents (Orchestrat
 | **Styling** | Tailwind CSS 3, shadcn/ui (Radix primitives) |
 | **Backend** | Cloudflare Workers (TypeScript) |
 | **Sandbox** | Modal (Serverless Python Containers) |
-| **AI Integration** | OpenAI-compatible streaming for built-ins (Ollama, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM) plus Azure/Bedrock private connectors; native Google Vertex service-account flow for Gemini and Claude |
+| **AI Integration** | OpenAI-compatible streaming for built-ins (Ollama, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM, Kilo Code, OpenAdapter) plus Azure/Bedrock private connectors; native Google Vertex service-account flow for Gemini and Claude |
 | **APIs** | GitHub REST API |
 
 ## Architecture
@@ -110,7 +110,7 @@ PUSH_TUI_ENABLED=1 ./push           # TUI
 *   `.push/` internal state (sessions, backups) excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Five providers: Ollama, OpenRouter, OpenCode Zen, Nvidia NIM, Kilo Code. All use OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Six providers: Ollama, OpenRouter, OpenCode Zen, Nvidia NIM, Kilo Code, OpenAdapter. All use OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
 
 ## Directory Structure
 

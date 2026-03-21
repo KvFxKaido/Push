@@ -11,7 +11,7 @@ Self-hosted only. No managed service.
 Push is a personal AI coding notebook backed by role-based AI agents that read your code, write patches, run checks in a sandbox, and commit/push changes from your phone or terminal.
 
 Try it free with provider free tiers: OpenCode Zen, Blackbox AI, or Ollama Cloud.
-Bring your own provider: Ollama Cloud, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM, or Kilo Code. Advanced Settings also expose opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex.
+Bring your own provider: Ollama Cloud, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM, Kilo Code, or OpenAdapter. Advanced Settings also expose opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex.
 Set provider/model defaults in Settings, then choose active chat and review models separately. Delegated Coder and Explorer runs inherit the current chat's locked provider/model, and Auditor now follows that same chat lock when one exists.
 
 ## What It Does
@@ -53,7 +53,7 @@ The app is free. AI usage depends on the provider and plan you choose.
 | Framework | React 19, TypeScript 5.9 |
 | Build | Vite 7 |
 | Styling | Tailwind CSS 3, shadcn/ui (Radix primitives) |
-| AI | Built-in providers: Ollama Cloud, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM, Kilo Code; opt-in private connectors: Azure OpenAI, AWS Bedrock, Google Vertex |
+| AI | Built-in providers: Ollama Cloud, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM, Kilo Code, OpenAdapter; opt-in private connectors: Azure OpenAI, AWS Bedrock, Google Vertex |
 | Sandbox | Modal (serverless containers) |
 | Auth | GitHub App or Personal Access Token |
 | APIs | GitHub REST API |
