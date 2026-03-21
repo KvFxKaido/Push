@@ -9,7 +9,7 @@ Push is a personal AI coding notebook backed by role-based AI agents (Orchestrat
 *   **Type:** AI Coding Agent — Mobile PWA + Local CLI
 *   **Purpose:** Enable developers to manage repositories, review code, and deploy changes via a chat interface on mobile or a terminal agent locally.
 *   **Core Philosophy:** Chat-first, repo-locked context, live agent pipeline, rich inline UI (cards), harness-first reliability.
-*   **AI Backend:** The web app ships with five built-in providers (Ollama, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM) plus opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex. The built-ins, Azure, and Bedrock use OpenAI-compatible SSE streaming. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex OpenAPI, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into the app's OpenAI-style SSE stream; legacy raw Vertex OpenAPI config still works as a fallback. Settings stores default backend/model picks and the app's active backend preference, chat keeps its own current selection, delegated Coder and Explorer runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor now follows the same chat lock when available. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
+*   **AI Backend:** The web app ships with six built-in providers (Ollama, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM, Kilo Code) plus opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex. The built-ins, Azure, and Bedrock use OpenAI-compatible SSE streaming. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex OpenAPI, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into the app's OpenAI-style SSE stream; legacy raw Vertex OpenAPI config still works as a fallback. Settings stores default backend/model picks and the app's active backend preference, chat keeps its own current selection, delegated Coder and Explorer runs inherit that chat lock, Reviewer keeps its own sticky provider/model selection, and Auditor now follows the same chat lock when available. After the first user message, a chat's provider/model are locked and changing either starts a new chat.
 *   **Current Product Focus:** CLI/TUI terminal UX improvements, with most active terminal work going into the full-screen TUI while REPL and headless flows remain supported.
 
 ## Tech Stack
@@ -110,7 +110,7 @@ PUSH_TUI_ENABLED=1 ./push           # TUI
 *   `.push/` internal state (sessions, backups) excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Four providers: Ollama, OpenRouter, OpenCode Zen, Nvidia NIM. All use OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Five providers: Ollama, OpenRouter, OpenCode Zen, Nvidia NIM, Kilo Code. All use OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
 
 ## Directory Structure
 
@@ -203,7 +203,7 @@ Push/
 ### Environment
 Environment variables are in `app/.env` (local dev) and Cloudflare Worker secrets (production). API keys can also be set via the Settings UI. Without GitHub auth, the app stays on onboarding unless the user starts a scratch workspace. In local development, with no AI keys configured, the app uses the demo-provider path.
 
-Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_BLACKBOX_API_KEY` (Blackbox AI), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_VERTEX_SERVICE_ACCOUNT_JSON` / `VITE_VERTEX_REGION` / `VITE_VERTEX_MODEL` (Google Vertex native config), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
+Key variables: `VITE_OLLAMA_API_KEY` (Ollama Cloud), `VITE_OPENROUTER_API_KEY` (OpenRouter), `VITE_ZEN_API_KEY` (OpenCode Zen), `VITE_BLACKBOX_API_KEY` (Blackbox AI), `VITE_NVIDIA_API_KEY` (Nvidia NIM), `VITE_KILOCODE_API_KEY` (Kilo Code), `VITE_VERTEX_SERVICE_ACCOUNT_JSON` / `VITE_VERTEX_REGION` / `VITE_VERTEX_MODEL` (Google Vertex native config), `VITE_TAVILY_API_KEY` (web search), `VITE_GITHUB_TOKEN` (PAT), `VITE_GITHUB_CLIENT_ID` / `VITE_GITHUB_APP_REDIRECT_URI` / `VITE_GITHUB_OAUTH_PROXY` / `VITE_GITHUB_REDIRECT_URI` (GitHub App OAuth), `PUSH_WEB_SEARCH_BACKEND` (CLI web search backend override).
 
 ## Coding Conventions
 *   **TypeScript:** Strict mode enabled. Explicit return types required on exported functions.

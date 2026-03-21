@@ -39,6 +39,7 @@ import {
   getZenModelName,
   getNvidiaModelName,
   getBlackboxModelName,
+  getKiloCodeModelName,
   PROVIDER_URLS,
   ZEN_GO_URLS,
   getZenGoMode,
@@ -683,7 +684,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'azure' | 'bedrock' | 'vertex',
+  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'azure' | 'bedrock' | 'vertex',
   providerModel?: string,
   onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
 ): LLMMessage[] {
@@ -1019,7 +1020,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'azure' | 'bedrock' | 'vertex';
+  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'azure' | 'bedrock' | 'vertex';
   /** Override the fetch URL (e.g., for providers with alternate endpoints) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -1590,6 +1591,20 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       providerType: 'blackbox',
     }),
   },
+  kilocode: {
+    getKey: getKilocodeKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'Kilo Code',
+      apiUrl: PROVIDER_URLS.kilocode.chat,
+      apiKey,
+      model: modelOverride || getKiloCodeModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('Kilo Code'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+      providerType: 'kilocode',
+    }),
+  },
   azure: {
     getKey: getAzureKey,
     buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
@@ -1680,6 +1695,7 @@ export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderCha
 export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
 export const streamBlackboxChat: StreamChatFn = (...args) => streamProviderChat('blackbox', ...args);
+export const streamKilocodeChat: StreamChatFn = (...args) => streamProviderChat('kilocode', ...args);
 export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
 export const streamBedrockChat: StreamChatFn = (...args) => streamProviderChat('bedrock', ...args);
 export const streamVertexChat: StreamChatFn = (...args) => streamProviderChat('vertex', ...args);
@@ -1723,7 +1739,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
  * Neutral ordering — no provider is favoured.
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama', 'openrouter', 'zen', 'nvidia', 'blackbox',
+  'ollama', 'openrouter', 'zen', 'nvidia', 'blackbox', 'kilocode',
 ];
 
 /**
@@ -1762,6 +1778,7 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'zen': return { providerType: 'zen' as const, streamFn: streamZenChat };
     case 'nvidia': return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
     case 'blackbox': return { providerType: 'blackbox' as const, streamFn: streamBlackboxChat };
+    case 'kilocode': return { providerType: 'kilocode' as const, streamFn: streamKilocodeChat };
     case 'azure': return { providerType: 'azure' as const, streamFn: streamAzureChat };
     case 'bedrock': return { providerType: 'bedrock' as const, streamFn: streamBedrockChat };
     case 'vertex': return { providerType: 'vertex' as const, streamFn: streamVertexChat };
@@ -1788,6 +1805,7 @@ export async function streamChat(
   onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
 ): Promise<void> {
   const provider = providerOverride || getActiveProvider();
+  const { streamFn } = getProviderStreamFn(provider);
 
   // Demo mode: no API keys in dev → show welcome message
   if (provider === 'demo' && import.meta.env.DEV) {
@@ -1801,38 +1819,18 @@ export async function streamChat(
     onDone();
     return;
   }
-
-  if (provider === 'ollama') {
-    return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
-  }
-
-  if (provider === 'openrouter') {
-    return streamOpenRouterChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
-  }
-
-  if (provider === 'zen') {
-    return streamZenChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
-  }
-
-  if (provider === 'nvidia') {
-    return streamNvidiaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
-  }
-
-  if (provider === 'blackbox') {
-    return streamBlackboxChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
-  }
-
-  if (provider === 'azure') {
-    return streamAzureChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
-  }
-
-  if (provider === 'bedrock') {
-    return streamBedrockChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
-  }
-
-  if (provider === 'vertex') {
-    return streamVertexChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
-  }
-
-  return streamOllamaChat(messages, onToken, onDone, onError, onThinkingToken, workspaceContext, hasSandbox, modelOverride, undefined, scratchpadContent, signal, onPreCompact);
+  return streamFn(
+    messages,
+    onToken,
+    onDone,
+    onError,
+    onThinkingToken,
+    workspaceContext,
+    hasSandbox,
+    modelOverride,
+    undefined,
+    scratchpadContent,
+    signal,
+    onPreCompact,
+  );
 }

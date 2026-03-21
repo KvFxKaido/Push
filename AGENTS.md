@@ -40,7 +40,7 @@ Backend/model routing is currently split. Settings stores default backend/model 
 
 ### AI Backends
 
-The web app has five built-in providers, all using OpenAI-compatible SSE streaming: Ollama, OpenRouter, OpenCode Zen, Blackbox AI, and Nvidia NIM. It also exposes opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex in advanced Settings. Any single built-in provider key is sufficient. Azure and Bedrock each use one shared API key and one shared base URL per provider, with up to three saved deployment/model entries layered on top. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex's OpenAPI surface, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into OpenAI-style SSE for the app; legacy raw Vertex OpenAPI config still works as a fallback. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Settings stores default backend/model picks, the chat composer keeps a per-chat selection, delegated Coder and Explorer runs inherit that chat-locked provider/model, Reviewer keeps its own sticky provider/model selection, and Auditor follows the same chat-locked provider/model when available, otherwise the active backend/default-provider path. Once a chat sends its first message, that chat's provider/model are locked and changing either starts a new chat. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, `/api/blackbox/chat`, `/api/nvidia/chat`, and the opt-in private-connector routes `/api/azure/chat`, `/api/bedrock/chat`, and `/api/vertex/chat`.
+The web app has six built-in providers, all using OpenAI-compatible SSE streaming: Ollama, OpenRouter, OpenCode Zen, Blackbox AI, Nvidia NIM, and Kilo Code. It also exposes opt-in private connectors for Azure OpenAI, AWS Bedrock, and Google Vertex in advanced Settings. Any single built-in provider key is sufficient. Azure and Bedrock each use one shared API key and one shared base URL per provider, with up to three saved deployment/model entries layered on top. Vertex now uses a Google service account JSON plus region and model in the normal path, routes Gemini through Vertex's OpenAPI surface, routes Claude through Vertex's Anthropic partner-model API, and translates the result back into OpenAI-style SSE for the app; legacy raw Vertex OpenAPI config still works as a fallback. Web default backend mode is **Auto** (Zen-first when available), with explicit per-provider override in Settings. Settings stores default backend/model picks, the chat composer keeps a per-chat selection, delegated Coder and Explorer runs inherit that chat-locked provider/model, Reviewer keeps its own sticky provider/model selection, and Auditor follows the same chat-locked provider/model when available, otherwise the active backend/default-provider path. Once a chat sends its first message, that chat's provider/model are locked and changing either starts a new chat. Production uses Cloudflare Worker proxies at `/api/ollama/chat`, `/api/openrouter/chat`, `/api/zen/chat`, `/api/blackbox/chat`, `/api/nvidia/chat`, `/api/kilocode/chat`, `/api/kilocode/models`, and the opt-in private-connector routes `/api/azure/chat`, `/api/bedrock/chat`, and `/api/vertex/chat`.
 
 | Provider | Default Model |
 |----------|---------------|
@@ -49,6 +49,7 @@ The web app has five built-in providers, all using OpenAI-compatible SSE streami
 | **OpenCode Zen** | big-pickle |
 | **Blackbox AI** | blackbox-ai |
 | **Nvidia NIM** | nvidia/llama-3.1-nemotron-70b-instruct |
+| **Kilo Code** | google/gemini-2.0-flash |
 
 **OpenRouter** provides access to 50+ models through a single API. Push ships with a curated catalog spanning Claude, GPT-4.1/GPT-4o/GPT-5.4, Codex, Cohere Command-R, Gemini, Mistral, MiniMax, Qwen, GLM, DeepSeek, Perplexity Sonar, Arcee Trinity, Mercury, Xiaomi MiMo, Grok 4.20, and Kimi.
 
@@ -188,7 +189,7 @@ Read-only tools run in parallel per turn. Only one mutating tool is allowed per 
 Workspace jail, high-risk command detection, tool loop detection, max rounds cap, output truncation. `.push/` internal state excluded from `git_commit`.
 
 ### Configuration
-Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Four providers (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM), all OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
+Config resolves: CLI flags > env vars > `~/.push/config.json` > defaults. Five providers (Ollama, OpenRouter, OpenCode Zen, Nvidia NIM, Kilo Code), all OpenAI-compatible SSE with retry on 429/5xx. All tools are prompt-engineered (JSON blocks in model output, client-side dispatch). CLI web search backend is configurable via `--search-backend`, `PUSH_WEB_SEARCH_BACKEND`, or config (`auto` default: Tavily -> Ollama native -> DuckDuckGo).
 
 ## Directory Structure
 

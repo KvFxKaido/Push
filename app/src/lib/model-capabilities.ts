@@ -173,6 +173,7 @@ function formatProviderLabel(provider: AIProviderType): string {
     case 'zen': return 'OpenCode Zen';
     case 'nvidia': return 'Nvidia NIM';
     case 'blackbox': return 'Blackbox AI';
+    case 'kilocode': return 'Kilo Code';
     case 'azure': return 'Azure OpenAI';
     case 'bedrock': return 'AWS Bedrock';
     case 'vertex': return 'Google Vertex';

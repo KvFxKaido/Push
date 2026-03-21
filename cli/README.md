@@ -118,7 +118,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
@@ -131,6 +131,9 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_NVIDIA_URL` | Nvidia NIM endpoint (default: `https://integrate.api.nvidia.com/v1/chat/completions`) |
 | `PUSH_NVIDIA_API_KEY` | Nvidia NIM API key |
 | `PUSH_NVIDIA_MODEL` | Nvidia NIM model (default: `nvidia/llama-3.1-nemotron-70b-instruct`) |
+| `PUSH_KILOCODE_URL` | Kilo Code endpoint (default: `https://api.kilo.ai/api/gateway/chat/completions`) |
+| `PUSH_KILOCODE_API_KEY` | Kilo Code API key |
+| `PUSH_KILOCODE_MODEL` | Kilo Code model (default: `google/gemini-2.0-flash`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
@@ -141,7 +144,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-All four providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+All five providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -149,6 +152,7 @@ All four providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5
 | `openrouter` | `anthropic/claude-sonnet-4.6:nitro` | Yes |
 | `zen` | `big-pickle` | Yes |
 | `nvidia` | `nvidia/llama-3.1-nemotron-70b-instruct` | Yes |
+| `kilocode` | `google/gemini-2.0-flash` | Yes |
 
 Removed providers (`mistral`, `zai`, `google`, `minimax`) are gracefully redirected to `openrouter` with a warning.
 
