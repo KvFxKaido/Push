@@ -219,13 +219,13 @@ describe('detectAllToolCalls', () => {
   });
 
   it('trims delegation string fields and drops blank array entries', () => {
-    const text = '```json\n{"tool":"delegate_coder","args":{"task":"   ","tasks":["  inspect auth  ","   "],"files":[" src/auth.ts ",""],"intent":" tighten handoff flow ","deliverable":" a concise summary ","knownContext":[" existing note ","   "],"constraints":[" keep the API stable "," "]}}\n```';
+    const text = '```json\n{"tool":"delegate_coder","args":{"task":"   ","tasks":["  inspect auth flow and fix the handoff  ","   "],"files":[" src/auth.ts ",""],"intent":" tighten handoff flow ","deliverable":" a concise summary ","knownContext":[" existing note ","   "],"constraints":[" keep the API stable "," "]}}\n```';
 
     const detected = detectAnyToolCall(text);
     expect(detected?.source).toBe('delegate');
     if (detected?.source === 'delegate' && detected.call.tool === 'delegate_coder') {
       expect(detected.call.args.task).toBeUndefined();
-      expect(detected.call.args.tasks).toEqual(['inspect auth']);
+      expect(detected.call.args.tasks).toEqual(['inspect auth flow and fix the handoff']);
       expect(detected.call.args.files).toEqual(['src/auth.ts']);
       expect(detected.call.args.intent).toBe('tighten handoff flow');
       expect(detected.call.args.deliverable).toBe('a concise summary');
@@ -401,8 +401,8 @@ describe('detectAllToolCalls', () => {
 
   it('captures extra delegate_coder mutations so the caller can reject them', () => {
     const text = [
-      '{"tool":"delegate_coder","args":{"task":"task one"}}',
-      '{"tool":"delegate_coder","args":{"task":"task two"}}',
+      '{"tool":"delegate_coder","args":{"task":"refactor the auth module to use tokens"}}',
+      '{"tool":"delegate_coder","args":{"task":"add unit tests for the session handler"}}',
     ].join('\n');
 
     const detected = detectAllToolCalls(text);
@@ -419,8 +419,8 @@ describe('detectAllToolCalls', () => {
 
   it('captures extra delegate_explorer mutations so the caller can reject them', () => {
     const text = [
-      '{"tool":"delegate_explorer","args":{"task":"task one"}}',
-      '{"tool":"delegate_explorer","args":{"task":"task two"}}',
+      '{"tool":"delegate_explorer","args":{"task":"trace the auth flow across files"}}',
+      '{"tool":"delegate_explorer","args":{"task":"find all session refresh triggers"}}',
     ].join('\n');
 
     const detected = detectAllToolCalls(text);

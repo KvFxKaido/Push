@@ -1023,7 +1023,12 @@ function detectDelegationTool(text: string): AnyToolCall | null {
       }));
       if (acceptanceCriteria.length === 0) acceptanceCriteria = undefined;
     }
-    if (toolName === 'delegate_coder' && (task || (tasks && tasks.length > 0))) {
+    // Require a meaningful task description — reject placeholder/trivially short tasks
+    // to prevent phantom delegations when the model fires coder calls inappropriately.
+    const MIN_CODER_TASK_LENGTH = 20;
+    const hasValidTask = task && task.length >= MIN_CODER_TASK_LENGTH;
+    const hasValidTasks = tasks && tasks.length > 0 && tasks.some((t) => t.length >= MIN_CODER_TASK_LENGTH);
+    if (toolName === 'delegate_coder' && (hasValidTask || hasValidTasks)) {
       return {
         source: 'delegate',
         call: {
@@ -1041,7 +1046,8 @@ function detectDelegationTool(text: string): AnyToolCall | null {
         },
       };
     }
-    if (toolName === 'delegate_explorer' && task) {
+    const MIN_EXPLORER_TASK_LENGTH = 10;
+    if (toolName === 'delegate_explorer' && task && task.length >= MIN_EXPLORER_TASK_LENGTH) {
       return {
         source: 'delegate',
         call: {
