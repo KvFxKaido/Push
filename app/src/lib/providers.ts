@@ -28,6 +28,7 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   bedrock:    { chat: providerUrl('/api/bedrock/chat',                            '/api/bedrock/chat'),    models: providerUrl('/api/bedrock/models',              '/api/bedrock/models')    },
   vertex:     { chat: providerUrl('/api/vertex/chat',                             '/api/vertex/chat'),     models: providerUrl('/api/vertex/models',               '/api/vertex/models')     },
   demo:       { chat: '',                                                                                models: ''                                                                        },
+  kilocode:   { chat: providerUrl('/api/kilocode/chat',                          '/api/kilocode/chat'),   models: providerUrl('/api/kilocode/models',                '/api/kilocode/models')   },
 };
 
 // Valid Ollama model names — these must exist on the Ollama server
@@ -46,6 +47,7 @@ export const BLACKBOX_DEFAULT_MODEL = 'blackbox-ai';
 export const AZURE_DEFAULT_MODEL = 'gpt-4.1';
 export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0';
 export const VERTEX_DEFAULT_MODEL = SHARED_VERTEX_DEFAULT_MODEL;
+export const KILOCODE_DEFAULT_MODEL = 'google/gemini-2.0-flash';
 
 export const OPENROUTER_MODELS: string[] = [
   'anthropic/claude-haiku-4.5:nitro',
@@ -117,6 +119,12 @@ export const BLACKBOX_MODELS: string[] = [
   'blackbox-ai',
   'blackbox-pro',
   'blackbox-search',
+];
+
+export const KILOCODE_MODELS: string[] = [
+  'google/gemini-2.0-flash',
+  'anthropic/claude-3.5-sonnet',
+  'openai/gpt-4o',
 ];
 
 const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
@@ -248,6 +256,14 @@ export const PROVIDERS: AIProviderConfig[] = [
     models: makeRoleModels(BLACKBOX_DEFAULT_MODEL, 'Blackbox AI', 'blackbox', 200_000),
   },
   {
+    type: 'kilocode',
+    name: 'Kilo Code',
+    description: 'Kilo Code — Unified AI gateway with hundreds of models (OpenAI-compatible)',
+    envKey: 'VITE_KILOCODE_API_KEY',
+    envUrl: 'https://api.kilo.ai/api/gateway',
+    models: makeRoleModels(KILOCODE_DEFAULT_MODEL, 'Kilo Code', 'kilocode', 128_000),
+  },
+  {
     type: 'azure',
     name: 'Azure OpenAI',
     description: 'Experimental private connector for direct Azure OpenAI and Azure AI Foundry deployments',
@@ -338,6 +354,10 @@ export const setBedrockModelName = bedrockModel.set;
 const vertexModel = createModelNameStorage('vertex_model', VERTEX_DEFAULT_MODEL);
 export const setVertexModelName = vertexModel.set;
 
+const kiloCodeModel = createModelNameStorage('kilocode_model', KILOCODE_DEFAULT_MODEL);
+export const getKiloCodeModelName = kiloCodeModel.get;
+export const setKiloCodeModelName = kiloCodeModel.set;
+
 /** Runtime model-name getters for providers where the user can override the default. */
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
@@ -348,6 +368,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   azure: getAzureModelName,
   bedrock: getBedrockModelName,
   vertex: getVertexModelName,
+  kilocode: getKiloCodeModelName,
 };
 
 /** Return the current runtime model name for a provider, or undefined if unknown. */
@@ -388,7 +409,8 @@ export type PreferredProvider =
   | 'blackbox'
   | 'azure'
   | 'bedrock'
-  | 'vertex';
+  | 'vertex'
+  | 'kilocode';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
@@ -401,6 +423,7 @@ export function getPreferredProvider(): PreferredProvider | null {
     || stored === 'azure'
     || stored === 'bedrock'
     || stored === 'vertex'
+    || stored === 'kilocode'
   ) return stored;
   return null;
 }
@@ -431,6 +454,7 @@ export function getLastUsedProvider(): PreferredProvider | null {
     || stored === 'azure'
     || stored === 'bedrock'
     || stored === 'vertex'
+    || stored === 'kilocode'
   ) return stored;
   return null;
 }

@@ -81,6 +81,15 @@ const CAPABILITY_RULES: CapabilityRule[] = [
       streaming: 'supported',
     },
   },
+  {
+    providers: ['kilocode'],
+    match: /.*/,
+    capabilities: {
+      visionInput: 'supported',
+      toolCalls: 'supported',
+      streaming: 'supported',
+    },
+  },
 ];
 
 function mergeCapabilities(

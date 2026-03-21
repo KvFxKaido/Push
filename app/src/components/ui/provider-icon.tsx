@@ -14,6 +14,7 @@ const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
   azure: 'https://models.dev/logos/azure.svg',
   bedrock: 'https://models.dev/logos/aws.svg',
   vertex: 'https://models.dev/logos/google.svg',
+  kilocode: 'https://kilo.ai/favicon.ico',
   demo: demoIcon,
 };
 
@@ -26,6 +27,7 @@ const PROVIDER_ALT: Record<AIProviderType, string> = {
   azure: 'Azure OpenAI logo',
   bedrock: 'AWS Bedrock logo',
   vertex: 'Google Vertex logo',
+  kilocode: 'Kilo Code logo',
   demo: 'Push logo',
 };
 
@@ -38,6 +40,7 @@ const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
   azure: 'Az',
   bedrock: 'B',
   vertex: 'V',
+  kilocode: 'K',
   demo: 'P',
 };
 

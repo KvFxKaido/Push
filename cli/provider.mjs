@@ -53,6 +53,13 @@ export const PROVIDER_CONFIGS = {
     ],
     requiresKey: true,
   },
+  kilocode: {
+    id: 'kilocode',
+    url: process.env.PUSH_KILOCODE_URL || 'https://api.kilo.ai/api/gateway/chat/completions',
+    defaultModel: process.env.PUSH_KILOCODE_MODEL || 'google/gemini-2.0-flash',
+    apiKeyEnv: ['PUSH_KILOCODE_API_KEY', 'KILOCODE_API_KEY', 'VITE_KILOCODE_API_KEY'],
+    requiresKey: true,
+  },
 };
 
 export function resolveApiKey(config) {

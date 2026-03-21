@@ -14,11 +14,12 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
   bedrock: 'AWS Bedrock',
   vertex: 'Google Vertex',
   demo: 'Demo',
+  kilocode: 'Kilo Code',
 };
 
 export type BuiltInSettingsProviderId = Extract<
   PreferredProvider,
-  'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox'
+  'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode'
 >;
 
 export type ExperimentalSettingsProviderId = Extract<
@@ -40,6 +41,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'nvidia',
   'zen',
   'blackbox',
+  'kilocode',
 ];
 
 export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
@@ -80,6 +82,12 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     saveLabel: 'Save Blackbox key',
     hint: 'Blackbox AI API key from blackbox.ai. Unified access to 300+ models.',
     labelTransform: (model) => formatModelDisplayName('blackbox', model),
+  },
+  kilocode: {
+    placeholder: 'Kilo Code API key',
+    saveLabel: 'Save Kilo Code key',
+    hint: 'Kilo Code API key from kilo.ai. One key for hundreds of models.',
+    labelTransform: (model) => formatModelDisplayName('kilocode', model),
   },
 };
 

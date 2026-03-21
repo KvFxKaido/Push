@@ -69,11 +69,18 @@ export const NVIDIA_MODELS = [
   'mistralai/mistral-large-2-instruct',
 ];
 
+export const KILOCODE_MODELS = [
+  'google/gemini-2.0-flash',
+  'anthropic/claude-3.5-sonnet',
+  'openai/gpt-4o',
+];
+
 const CATALOG = {
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,
   zen: ZEN_MODELS,
   nvidia: NVIDIA_MODELS,
+  kilocode: KILOCODE_MODELS,
 };
 
 /** Default model per provider — must match PROVIDER_CONFIGS defaults. */
@@ -82,6 +89,7 @@ export const DEFAULT_MODELS = {
   openrouter: 'anthropic/claude-sonnet-4.6:nitro',
   zen: 'big-pickle',
   nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
+  kilocode: 'google/gemini-2.0-flash',
 };
 
 /**

@@ -103,6 +103,8 @@ export type AIProviderType =
   | 'nvidia'
   | 'blackbox'
   | 'azure'
+  | 'kilocode'
+
   | 'bedrock'
   | 'vertex'
   | 'demo';

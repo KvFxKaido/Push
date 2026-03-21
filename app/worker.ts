@@ -38,6 +38,7 @@ interface Env {
   ZEN_API_KEY?: string;
   NVIDIA_API_KEY?: string;
   BLACKBOX_API_KEY?: string;
+  KILOCODE_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
@@ -905,6 +906,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   const zenConfigured = Boolean(env.ZEN_API_KEY);
   const nvidiaConfigured = Boolean(env.NVIDIA_API_KEY);
   const blackboxConfigured = Boolean(env.BLACKBOX_API_KEY);
+  const kiloCodeConfigured = Boolean(env.KILOCODE_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -920,7 +922,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   }
   }
 
-  const hasAnyLlm = ollamaConfigured || openRouterConfigured || zenConfigured || nvidiaConfigured || blackboxConfigured;
+  const hasAnyLlm = ollamaConfigured || openRouterConfigured || zenConfigured || nvidiaConfigured || blackboxConfigured || kiloCodeConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -935,6 +937,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
       nvidia: { status: nvidiaConfigured ? 'ok' : 'unconfigured', configured: nvidiaConfigured },
       blackbox: { status: blackboxConfigured ? 'ok' : 'unconfigured', configured: blackboxConfigured },
+      kilocode: { status: kiloCodeConfigured ? 'ok' : 'unconfigured', configured: kiloCodeConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
       github_app_oauth: { status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET) },
@@ -1018,6 +1021,28 @@ const handleZenModels = createJsonProxyHandler({
   buildAuth: standardAuth('ZEN_API_KEY'),
   keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen model list timed out after 30 seconds',
+});
+
+// --- Kilo Code (OpenAI-compatible gateway) ---
+
+const handleKiloCodeChat = createStreamProxyHandler({
+  name: 'Kilo Code API', logTag: 'api/kilocode/chat',
+  upstreamUrl: 'https://api.kilo.ai/api/gateway/chat/completions',
+  timeoutMs: 120_000,
+  maxOutputTokens: 8_192,
+  buildAuth: standardAuth('KILOCODE_API_KEY'),
+  keyMissingError: 'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
+  timeoutError: 'Kilo Code request timed out after 120 seconds',
+});
+
+const handleKiloCodeModels = createJsonProxyHandler({
+  name: 'Kilo Code API', logTag: 'api/kilocode/models',
+  upstreamUrl: 'https://api.kilo.ai/api/gateway/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('KILOCODE_API_KEY'),
+  keyMissingError: 'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
+  timeoutError: 'Kilo Code model list timed out after 30 seconds',
 });
 
 // --- OpenCode Zen Go tier (mixed OpenAI + Anthropic transports) ---
@@ -1907,6 +1932,8 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/nvidia/models', method: 'GET', handler: handleNvidiaModels },
   { path: '/api/blackbox/chat', method: 'POST', handler: handleBlackboxChat },
   { path: '/api/blackbox/models', method: 'GET', handler: handleBlackboxModels },
+  { path: '/api/kilocode/chat', method: 'POST', handler: handleKiloCodeChat },
+  { path: '/api/kilocode/models', method: 'GET', handler: handleKiloCodeModels },
   { path: '/api/azure/chat', method: 'POST', handler: handleAzureChat },
   { path: '/api/azure/models', method: 'GET', handler: handleAzureModels },
   { path: '/api/bedrock/chat', method: 'POST', handler: handleBedrockChat },
