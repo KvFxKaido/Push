@@ -449,7 +449,6 @@ export function useChat(
     });
 
     saveRunCheckpoint(checkpoint);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChatId]);
 
   const flushCheckpoint = useCallback(() => {
