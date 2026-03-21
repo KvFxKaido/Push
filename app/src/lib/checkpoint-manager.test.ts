@@ -31,6 +31,7 @@ const {
   acquireRunTabLock,
   buildCheckpointReconciliationMessage,
   buildRunCheckpoint,
+  checkpointRequiresLiveSandboxStatus,
   detectInterruptedRun,
   heartbeatRunTabLock,
   releaseRunTabLock,
@@ -166,6 +167,31 @@ describe('checkpoint-manager', () => {
     expect(mockClearCheckpoint).not.toHaveBeenCalled();
   });
 
+  it('keeps expiry checkpoints when the old sandbox id no longer exists', async () => {
+    const checkpoint = makeCheckpoint({
+      reason: 'expiry',
+      savedDiff: 'diff --git a/file.ts b/file.ts',
+      sandboxSessionId: 'expired-sandbox',
+    });
+    mockLoadCheckpoint.mockResolvedValue(checkpoint);
+
+    const result = await detectInterruptedRun(
+      'chat-1',
+      'fresh-sandbox',
+      'feature/checkpoint-manager',
+      'owner/repo',
+      'workspace-1',
+    );
+
+    expect(result).toEqual(checkpoint);
+    expect(mockClearCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('treats only non-expiry checkpoints as requiring live sandbox status', () => {
+    expect(checkpointRequiresLiveSandboxStatus(makeCheckpoint())).toBe(true);
+    expect(checkpointRequiresLiveSandboxStatus(makeCheckpoint({ reason: 'expiry' }))).toBe(false);
+  });
+
   it('builds coder-specific reconciliation guidance', () => {
     const content = buildCheckpointReconciliationMessage(
       makeCheckpoint({
@@ -185,6 +211,25 @@ describe('checkpoint-manager', () => {
     expect(content).toContain('HEAD: abc1234');
     expect(content).toContain('Last known Coder state');
     expect(content).toContain('Do not repeat work that is already reflected in the sandbox.');
+  });
+
+  it('builds expiry reconciliation guidance from the saved diff without live sandbox state', () => {
+    const content = buildCheckpointReconciliationMessage(
+      makeCheckpoint({
+        reason: 'expiry',
+        savedDiff: 'diff --git a/app.ts b/app.ts\n+console.log("hi")',
+      }),
+      {
+        head: 'ignored',
+        dirtyFiles: ['ignored.ts'],
+        diffStat: 'ignored',
+        changedFiles: ['ignored.ts'],
+      },
+    );
+
+    expect(content).toContain('Prior sandbox expired');
+    expect(content).toContain('diff --git a/app.ts b/app.ts');
+    expect(content).not.toContain('HEAD: ignored');
   });
 
   it('acquires, heartbeats, and releases a tab lock', () => {

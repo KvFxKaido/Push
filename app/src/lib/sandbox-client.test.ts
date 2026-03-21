@@ -448,6 +448,53 @@ describe('readSymbolsFromSandbox', () => {
   });
 });
 
+describe('fetchSandboxDiff', () => {
+  it('captures tracked, staged, and untracked changes from HEAD', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        stdout: 'diff --git a/file.ts b/file.ts\n',
+        stderr: '',
+        exit_code: 0,
+        truncated: false,
+      }),
+    });
+
+    const { fetchSandboxDiff } = await import('./sandbox-client');
+    const result = await fetchSandboxDiff('sb-123');
+
+    expect(result).toBe('diff --git a/file.ts b/file.ts\n');
+
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/sandbox/exec');
+    expect(options.method).toBe('POST');
+
+    const body = JSON.parse(options.body);
+    expect(body.sandbox_id).toBe('sb-123');
+    expect(body.command).toContain('git diff --no-ext-diff --binary HEAD');
+    expect(body.command).toContain('git ls-files --others --exclude-standard -z');
+    expect(body.command).toContain('git diff --no-index --binary -- /dev/null "$path"');
+  });
+
+  it('truncates oversized diffs to the checkpoint cap', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        stdout: 'x'.repeat(30 * 1024 + 25),
+        stderr: '',
+        exit_code: 0,
+        truncated: false,
+      }),
+    });
+
+    const { fetchSandboxDiff } = await import('./sandbox-client');
+    const result = await fetchSandboxDiff('sb-123');
+
+    expect(result.length).toBeLessThanOrEqual(30 * 1024);
+    expect(result.endsWith('\n...(diff truncated at 30KB)')).toBe(true);
+  });
+});
+
 describe('findReferencesInSandbox', () => {
   it('executes the ripgrep helper and parses structured output', async () => {
     mockFetch.mockResolvedValue({

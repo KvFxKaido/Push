@@ -56,6 +56,7 @@ import {
   acquireRunTabLock,
   buildCheckpointReconciliationMessage,
   buildRunCheckpoint,
+  checkpointRequiresLiveSandboxStatus,
   clearRunCheckpoint,
   detectInterruptedRun as detectInterruptedRunFromManager,
   getResumeEvents as getResumeEventsFromManager,
@@ -87,6 +88,12 @@ const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
+const EMPTY_SANDBOX_STATUS: SandboxStatusResult = {
+  head: 'unknown',
+  dirtyFiles: [],
+  diffStat: '',
+  changedFiles: [],
+};
 
 function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -601,7 +608,24 @@ export function useChat(
       return;
     }
 
-    if (!currentSandboxId) {
+    const resumeCheckpoint = revalidated;
+    const requiresLiveSandboxStatus = checkpointRequiresLiveSandboxStatus(resumeCheckpoint);
+    let resumeSandboxId = currentSandboxId;
+
+    if (!requiresLiveSandboxStatus && !resumeSandboxId && ensureSandboxRef.current) {
+      updateAgentStatus({ active: true, phase: 'Recreating sandbox...' }, { chatId });
+      try {
+        const recreatedSandboxId = await ensureSandboxRef.current();
+        if (recreatedSandboxId) {
+          resumeSandboxId = recreatedSandboxId;
+          sandboxIdRef.current = recreatedSandboxId;
+        }
+      } catch {
+        // Best effort only: expiry reconciliation can continue from the saved diff.
+      }
+    }
+
+    if (requiresLiveSandboxStatus && !resumeSandboxId) {
       // Sandbox not available — can't reconcile. Clear and inform user.
       clearRunCheckpoint(chatId);
       setConversations((prev) => {
@@ -621,54 +645,69 @@ export function useChat(
       return;
     }
 
-    // Fetch sandbox truth
-    updateAgentStatus({ active: true, phase: 'Resuming session...' }, { chatId });
-    let sbStatus: SandboxStatusResult;
-    try {
-      sbStatus = await sandboxStatus(currentSandboxId);
-    } catch (err) {
-      clearRunCheckpoint(chatId);
-      updateAgentStatus({ active: false, phase: '' });
-      setConversations((prev) => {
-        const conv = prev[chatId];
-        if (!conv) return prev;
-        const msg: ChatMessage = {
-          id: createId(),
-          role: 'assistant',
-          content: `Session was interrupted, but sandbox status check failed: ${err instanceof Error ? err.message : String(err)}. Starting fresh.`,
-          timestamp: Date.now(),
-          status: 'done',
-        };
-        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
-        dirtyConversationIdsRef.current.add(chatId);
-        return updated;
-      });
-      return;
-    }
+    let sbStatus: SandboxStatusResult | null = null;
+    if (requiresLiveSandboxStatus) {
+      const liveSandboxId = resumeSandboxId;
+      if (!liveSandboxId) {
+        return;
+      }
+      // Normal resume path needs live sandbox truth before the model continues.
+      updateAgentStatus({ active: true, phase: 'Resuming session...' }, { chatId });
+      try {
+        sbStatus = await sandboxStatus(liveSandboxId);
+      } catch (err) {
+        clearRunCheckpoint(chatId);
+        updateAgentStatus({ active: false, phase: '' });
+        setConversations((prev) => {
+          const conv = prev[chatId];
+          if (!conv) return prev;
+          const msg: ChatMessage = {
+            id: createId(),
+            role: 'assistant',
+            content: `Session was interrupted, but sandbox status check failed: ${err instanceof Error ? err.message : String(err)}. Starting fresh.`,
+            timestamp: Date.now(),
+            status: 'done',
+          };
+          const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
+          dirtyConversationIdsRef.current.add(chatId);
+          return updated;
+        });
+        return;
+      }
 
-    // Guard: if sandbox git commands failed, don't build reconciliation from bad data
-    if (sbStatus.error) {
-      clearRunCheckpoint(chatId);
-      updateAgentStatus({ active: false, phase: '' });
-      setConversations((prev) => {
-        const conv = prev[chatId];
-        if (!conv) return prev;
-        const msg: ChatMessage = {
-          id: createId(),
-          role: 'assistant',
-          content: `Session was interrupted, but the sandbox is in an unexpected state: ${sbStatus.error}. Starting fresh.`,
-          timestamp: Date.now(),
-          status: 'done',
-        };
-        const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
-        dirtyConversationIdsRef.current.add(chatId);
-        return updated;
-      });
-      return;
+      // Guard: if sandbox git commands failed, don't build reconciliation from bad data
+      if (sbStatus.error) {
+        const sandboxStateError = sbStatus.error;
+        clearRunCheckpoint(chatId);
+        updateAgentStatus({ active: false, phase: '' });
+        setConversations((prev) => {
+          const conv = prev[chatId];
+          if (!conv) return prev;
+          const msg: ChatMessage = {
+            id: createId(),
+            role: 'assistant',
+            content: `Session was interrupted, but the sandbox is in an unexpected state: ${sandboxStateError}. Starting fresh.`,
+            timestamp: Date.now(),
+            status: 'done',
+          };
+          const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() } };
+          dirtyConversationIdsRef.current.add(chatId);
+          return updated;
+        });
+        return;
+      }
+    } else {
+      updateAgentStatus(
+        { active: true, phase: resumeSandboxId ? 'Restoring expired session...' : 'Resuming from saved checkpoint...' },
+        { chatId },
+      );
     }
 
     // Build reconciliation message
-    const reconciliationContent = buildCheckpointReconciliationMessage(checkpoint, sbStatus);
+    const reconciliationContent = buildCheckpointReconciliationMessage(
+      resumeCheckpoint,
+      sbStatus ?? EMPTY_SANDBOX_STATUS,
+    );
 
     const conv = conversations[chatId];
     if (!conv) {
@@ -681,7 +720,7 @@ export function useChat(
     clearRunCheckpoint(chatId);
 
     // Track resume event
-    recordResumeEvent(checkpoint);
+    recordResumeEvent(resumeCheckpoint);
 
     // Send the reconciliation content directly as the user message text.
     // We do NOT inject it via setConversations first because sendMessage captures

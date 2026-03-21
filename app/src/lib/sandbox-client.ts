@@ -1275,14 +1275,22 @@ export async function sandboxStatus(sandboxId: string): Promise<SandboxStatusRes
 }
 
 const DIFF_MAX_BYTES = 30 * 1024; // 30KB cap — keeps checkpoint size bounded
+const DIFF_TRUNCATION_SUFFIX = '\n...(diff truncated at 30KB)';
+const SANDBOX_DIFF_CAPTURE_COMMAND = [
+  'cd /workspace || exit 1',
+  'git diff --no-ext-diff --binary HEAD 2>/dev/null',
+  "git ls-files --others --exclude-standard -z 2>/dev/null | while IFS= read -r -d '' path; do",
+  '  git diff --no-index --binary -- /dev/null "$path" 2>/dev/null || true',
+  'done',
+].join('\n');
 
 /**
  * Fetch the full uncommitted diff from the sandbox for cold-resume checkpointing.
  * Truncated to 30KB if the diff is large.
  */
 export async function fetchSandboxDiff(sandboxId: string): Promise<string> {
-  const result = await execInSandbox(sandboxId, 'cd /workspace && git diff 2>/dev/null');
+  const result = await execInSandbox(sandboxId, SANDBOX_DIFF_CAPTURE_COMMAND);
   const diff = result.stdout || '';
   if (diff.length <= DIFF_MAX_BYTES) return diff;
-  return diff.slice(0, DIFF_MAX_BYTES) + '\n...(diff truncated at 30KB)';
+  return diff.slice(0, Math.max(0, DIFF_MAX_BYTES - DIFF_TRUNCATION_SUFFIX.length)) + DIFF_TRUNCATION_SUFFIX;
 }

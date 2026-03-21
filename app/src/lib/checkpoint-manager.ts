@@ -50,6 +50,12 @@ export interface RunCheckpointSnapshot {
 
 const resumeEvents: ResumeEvent[] = [];
 
+export function checkpointRequiresLiveSandboxStatus(
+  checkpoint: Pick<RunCheckpoint, 'reason'>,
+): boolean {
+  return checkpoint.reason !== 'expiry';
+}
+
 function trimCheckpointDelta(checkpoint: RunCheckpoint): RunCheckpoint {
   const deltaJson = JSON.stringify(checkpoint.deltaMessages);
   if (deltaJson.length <= CHECKPOINT_DELTA_WARN_SIZE) return checkpoint;
@@ -140,8 +146,11 @@ export async function detectInterruptedRun(
   }
 
   // Expiry checkpoints survive sandbox ID mismatch — the old sandbox is gone by design.
-  const isColdResume = checkpoint.reason === 'expiry';
-  if (!isColdResume && currentSandboxId && checkpoint.sandboxSessionId !== currentSandboxId) {
+  if (
+    checkpointRequiresLiveSandboxStatus(checkpoint) &&
+    currentSandboxId &&
+    checkpoint.sandboxSessionId !== currentSandboxId
+  ) {
     clearRunCheckpoint(chatId);
     return null;
   }
