@@ -133,10 +133,12 @@ function getRestartPolicy(state) {
 function shouldRecover(policy, marker) {
   if (policy === 'never') return false;
   // 'on-failure' and 'always' both recover interrupted runs
-  // Guard: don't recover runs older than 1 hour (stale markers)
-  const age = Date.now() - (marker.startedAt || 0);
+  // Guard: reject missing/non-finite startedAt and stale markers (>1 hour)
+  const startedAt = Number(marker.startedAt);
+  if (!Number.isFinite(startedAt)) return false;
+  const age = Date.now() - startedAt;
   const ONE_HOUR = 60 * 60 * 1000;
-  if (age > ONE_HOUR) return false;
+  if (age < 0 || age > ONE_HOUR) return false;
   return true;
 }
 
@@ -154,6 +156,54 @@ export function validateAttachToken(entry, providedToken) {
 
 // sessionId → { state, attachToken, abortController?, activeRunId?, pendingApproval? }
 const activeSessions = new Map();
+
+// ─── Shared approval builder ─────────────────────────────────────
+
+/**
+ * Build an approvalFn for a session entry. The returned function emits
+ * approval_required events and awaits a client decision (or times out).
+ * Used by both normal runs and crash-recovery runs.
+ */
+function buildApprovalFn(sessionId, entry, runId) {
+  return async (tool, detail) => {
+    const approvalId = makeApprovalId();
+
+    const approvalPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        entry.pendingApproval = null;
+        reject(new Error('Approval timed out'));
+      }, APPROVAL_TIMEOUT_MS);
+
+      entry.pendingApproval = { approvalId, resolve, reject, timer };
+    });
+
+    const approvalPayload = {
+      approvalId,
+      kind: tool?.tool || 'tool_execution',
+      title: `Approve ${tool?.tool || 'action'}`,
+      summary: typeof detail === 'string' ? detail : JSON.stringify(detail || {}),
+      options: ['approve', 'deny'],
+    };
+    await appendSessionEvent(entry.state, 'approval_required', approvalPayload, runId);
+    broadcastEvent(sessionId, {
+      v: PROTOCOL_VERSION,
+      kind: 'event',
+      sessionId,
+      runId,
+      seq: entry.state.eventSeq,
+      ts: Date.now(),
+      type: 'approval_required',
+      payload: approvalPayload,
+    });
+
+    try {
+      const decision = await approvalPromise;
+      return decision === 'approve';
+    } catch {
+      return false;
+    }
+  };
+}
 
 // ─── Multi-client fan-out ────────────────────────────────────────
 
@@ -322,53 +372,17 @@ async function handleSendUserMessage(req, emitEvent) {
     return makeErrorResponse(req.requestId, 'send_user_message', 'PROVIDER_NOT_CONFIGURED', err.message);
   }
 
-  // Approval function that emits approval_required and awaits client decision
-  const approvalFn = async (tool, detail) => {
-    const approvalId = makeApprovalId();
-
-    const approvalPromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        entry.pendingApproval = null;
-        reject(new Error('Approval timed out'));
-      }, APPROVAL_TIMEOUT_MS);
-
-      entry.pendingApproval = { approvalId, resolve, reject, timer };
-    });
-
-    // Emit approval_required to all clients
-    const approvalPayload = {
-      approvalId,
-      kind: tool?.tool || 'tool_execution',
-      title: `Approve ${tool?.tool || 'action'}`,
-      summary: typeof detail === 'string' ? detail : JSON.stringify(detail || {}),
-      options: ['approve', 'deny'],
-    };
-    await appendSessionEvent(state, 'approval_required', approvalPayload, runId);
-    // Build envelope after appendSessionEvent so seq matches the persisted event
-    broadcastEvent(sessionId, {
-      v: PROTOCOL_VERSION,
-      kind: 'event',
-      sessionId,
-      runId,
-      seq: state.eventSeq,
-      ts: Date.now(),
-      type: 'approval_required',
-      payload: approvalPayload,
-    });
-
-    try {
-      const decision = await approvalPromise;
-      return decision === 'approve';
-    } catch {
-      return false;
-    }
-  };
-
-  // Write run marker so crash recovery can detect interrupted runs
-  writeRunMarker(sessionId, runId, { provider: state.provider, model: state.model, cwd: state.cwd }).catch(() => {});
+  const approvalFn = buildApprovalFn(sessionId, entry, runId);
 
   // Run in background — broadcast events to all attached clients
   (async () => {
+    // Write run marker so crash recovery can detect interrupted runs.
+    // Awaited inside the async IIFE so a crash right after launch is still detectable.
+    try {
+      await writeRunMarker(sessionId, runId, { provider: state.provider, model: state.model, cwd: state.cwd });
+    } catch (err) {
+      process.stderr.write(`warning: failed to write run marker for ${sessionId}: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
     let sawError = false;
     let sawRunComplete = false;
     try {
@@ -781,6 +795,9 @@ async function recoverInterruptedRuns() {
     await clearRunMarker(sessionId).catch(() => {});
     await writeRunMarker(sessionId, recoveryRunId, { provider: state.provider, model: state.model, cwd: state.cwd, recoveredFrom: marker.runId }).catch(() => {});
 
+    // Build approval gate so recovered runs can request client approvals
+    const approvalFn = buildApprovalFn(sessionId, entry, recoveryRunId);
+
     // Launch recovery run in background (same pattern as handleSendUserMessage)
     (async () => {
       let sawError = false;
@@ -788,6 +805,7 @@ async function recoverInterruptedRuns() {
       try {
         await runAssistantLoop(state, providerConfig, apiKey, DEFAULT_MAX_ROUNDS, {
           runId: recoveryRunId,
+          approvalFn,
           signal: abortController.signal,
           emit: (event) => {
             const seq = state.eventSeq;
@@ -869,7 +887,8 @@ export async function main() {
     try {
       await recoverInterruptedRuns();
     } catch (err) {
-      process.stderr.write(`crash recovery failed: ${err.message}\n`);
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`crash recovery failed: ${msg}\n`);
     }
   });
 

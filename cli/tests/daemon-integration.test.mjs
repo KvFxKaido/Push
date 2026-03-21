@@ -517,6 +517,17 @@ describe('restart policies', () => {
   it('shouldRecover handles missing startedAt', () => {
     assert.equal(shouldRecover('on-failure', {}), false);
   });
+
+  it('shouldRecover rejects non-finite startedAt', () => {
+    assert.equal(shouldRecover('on-failure', { startedAt: 'bogus' }), false);
+    assert.equal(shouldRecover('on-failure', { startedAt: NaN }), false);
+    assert.equal(shouldRecover('on-failure', { startedAt: Infinity }), false);
+  });
+
+  it('shouldRecover rejects negative age (clock skew)', () => {
+    const futureTs = Date.now() + 60_000;
+    assert.equal(shouldRecover('on-failure', { startedAt: futureTs }), false);
+  });
 });
 
 // ─── Run markers (crash recovery) ───────────────────────────────

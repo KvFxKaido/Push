@@ -204,7 +204,6 @@ export async function clearRunMarker(sessionId) {
     const markerPath = path.join(getSessionDirInRoot(root, sessionId), 'run.json');
     try {
       await fs.unlink(markerPath);
-      return;
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
     }
@@ -221,6 +220,11 @@ export async function readRunMarker(sessionId) {
       return JSON.parse(raw);
     } catch (err) {
       if (err.code === 'ENOENT') continue;
+      // Malformed JSON (e.g. partial write during crash) — clean up and skip
+      if (err instanceof SyntaxError) {
+        try { await fs.unlink(markerPath); } catch { /* ignore */ }
+        continue;
+      }
       throw err;
     }
   }
