@@ -39,6 +39,7 @@ interface Env {
   NVIDIA_API_KEY?: string;
   BLACKBOX_API_KEY?: string;
   KILOCODE_API_KEY?: string;
+  OPENADAPTER_API_KEY?: string;
   MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
@@ -893,6 +894,7 @@ interface HealthStatus {
     zen: { status: 'ok' | 'unconfigured'; configured: boolean };
     nvidia: { status: 'ok' | 'unconfigured'; configured: boolean };
     blackbox: { status: 'ok' | 'unconfigured'; configured: boolean };
+    openadapter: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
     github_app_oauth: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -907,6 +909,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   const nvidiaConfigured = Boolean(env.NVIDIA_API_KEY);
   const blackboxConfigured = Boolean(env.BLACKBOX_API_KEY);
   const kiloCodeConfigured = Boolean(env.KILOCODE_API_KEY);
+  const openAdapterConfigured = Boolean(env.OPENADAPTER_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -922,7 +925,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   }
   }
 
-  const hasAnyLlm = ollamaConfigured || openRouterConfigured || zenConfigured || nvidiaConfigured || blackboxConfigured || kiloCodeConfigured;
+  const hasAnyLlm = ollamaConfigured || openRouterConfigured || zenConfigured || nvidiaConfigured || blackboxConfigured || kiloCodeConfigured || openAdapterConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
     hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
@@ -938,6 +941,7 @@ async function handleHealthCheck(env: Env): Promise<Response> {
       nvidia: { status: nvidiaConfigured ? 'ok' : 'unconfigured', configured: nvidiaConfigured },
       blackbox: { status: blackboxConfigured ? 'ok' : 'unconfigured', configured: blackboxConfigured },
       kilocode: { status: kiloCodeConfigured ? 'ok' : 'unconfigured', configured: kiloCodeConfigured },
+      openadapter: { status: openAdapterConfigured ? 'ok' : 'unconfigured', configured: openAdapterConfigured },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
       github_app_oauth: { status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET) },
@@ -1043,6 +1047,26 @@ const handleKiloCodeModels = createJsonProxyHandler({
   buildAuth: standardAuth('KILOCODE_API_KEY'),
   keyMissingError: 'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
   timeoutError: 'Kilo Code model list timed out after 30 seconds',
+});
+
+const handleOpenAdapterChat = createStreamProxyHandler({
+  name: 'OpenAdapter API', logTag: 'api/openadapter/chat',
+  upstreamUrl: 'https://api.openadapter.in/v1/chat/completions',
+  timeoutMs: 120_000,
+  maxOutputTokens: 8_192,
+  buildAuth: standardAuth('OPENADAPTER_API_KEY'),
+  keyMissingError: 'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
+  timeoutError: 'OpenAdapter request timed out after 120 seconds',
+});
+
+const handleOpenAdapterModels = createJsonProxyHandler({
+  name: 'OpenAdapter API', logTag: 'api/openadapter/models',
+  upstreamUrl: 'https://api.openadapter.in/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('OPENADAPTER_API_KEY'),
+  keyMissingError: 'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
+  timeoutError: 'OpenAdapter model list timed out after 30 seconds',
 });
 
 // --- OpenCode Zen Go tier (mixed OpenAI + Anthropic transports) ---
@@ -1934,6 +1958,8 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/blackbox/models', method: 'GET', handler: handleBlackboxModels },
   { path: '/api/kilocode/chat', method: 'POST', handler: handleKiloCodeChat },
   { path: '/api/kilocode/models', method: 'GET', handler: handleKiloCodeModels },
+  { path: '/api/openadapter/chat', method: 'POST', handler: handleOpenAdapterChat },
+  { path: '/api/openadapter/models', method: 'GET', handler: handleOpenAdapterModels },
   { path: '/api/azure/chat', method: 'POST', handler: handleAzureChat },
   { path: '/api/azure/models', method: 'GET', handler: handleAzureModels },
   { path: '/api/bedrock/chat', method: 'POST', handler: handleBedrockChat },

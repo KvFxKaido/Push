@@ -641,6 +641,12 @@ function App() {
     upsertChatDraft(chatId, { models: { kilocode: normalizedModel } });
   }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
+  const handleSelectOpenAdapterModelFromChat = useCallback((model: string) => {
+    rememberChatModel('openadapter', model);
+    const chatId = ensureDraftChatForComposerChange();
+    upsertChatDraft(chatId, { models: { openadapter: model } });
+  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+
   const handleSelectAzureModelFromChat = useCallback((model: string) => {
     rememberChatModel('azure', model);
     const chatId = ensureDraftChatForComposerChange();
@@ -1050,6 +1056,7 @@ function App() {
       handleSelectNvidiaModelFromChat={handleSelectNvidiaModelFromChat}
       handleSelectBlackboxModelFromChat={handleSelectBlackboxModelFromChat}
       handleSelectKilocodeModelFromChat={handleSelectKilocodeModelFromChat}
+      handleSelectOpenAdapterModelFromChat={handleSelectOpenAdapterModelFromChat}
       handleSelectAzureModelFromChat={handleSelectAzureModelFromChat}
       handleSelectBedrockModelFromChat={handleSelectBedrockModelFromChat}
       handleSelectVertexModelFromChat={handleSelectVertexModelFromChat}

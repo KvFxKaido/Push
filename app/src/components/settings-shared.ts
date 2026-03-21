@@ -15,11 +15,12 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
   vertex: 'Google Vertex',
   demo: 'Demo',
   kilocode: 'Kilo Code',
+  openadapter: 'OpenAdapter',
 };
 
 export type BuiltInSettingsProviderId = Extract<
   PreferredProvider,
-  'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode'
+  'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'openadapter'
 >;
 
 export type ExperimentalSettingsProviderId = Extract<
@@ -42,6 +43,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'zen',
   'blackbox',
   'kilocode',
+  'openadapter',
 ];
 
 export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
@@ -88,6 +90,12 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     saveLabel: 'Save Kilo Code key',
     hint: 'Kilo Code API key from kilo.ai. One key for hundreds of models.',
     labelTransform: (model) => formatModelDisplayName('kilocode', model),
+  },
+  openadapter: {
+    placeholder: 'OpenAdapter API key',
+    saveLabel: 'Save OpenAdapter key',
+    hint: 'OpenAdapter API key from openadapter.dev. 69+ open-source models through one gateway.',
+    labelTransform: (model) => formatModelDisplayName('openadapter', model),
   },
 };
 

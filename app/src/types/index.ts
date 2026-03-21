@@ -104,6 +104,7 @@ export type AIProviderType =
   | 'blackbox'
   | 'azure'
   | 'kilocode'
+  | 'openadapter'
 
   | 'bedrock'
   | 'vertex'

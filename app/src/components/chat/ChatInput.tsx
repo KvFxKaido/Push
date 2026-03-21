@@ -136,6 +136,14 @@ interface ChatInputProps {
     isKilocodeModelLocked: boolean;
     refreshKilocodeModels: () => void;
     onSelectKilocodeModel: (model: string) => void;
+    openadapterModel: string;
+    openadapterModelOptions: string[];
+    openadapterModelsLoading: boolean;
+    openadapterModelsError: string | null;
+    openadapterModelsUpdatedAt: number | null;
+    isOpenAdapterModelLocked: boolean;
+    refreshOpenAdapterModels: () => void;
+    onSelectOpenAdapterModel: (model: string) => void;
     azureModel: string;
     azureDeployments: ExperimentalDeployment[];
     azureActiveDeploymentId: string | null;
@@ -404,6 +412,7 @@ export function ChatInput({
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModel;
     if (selectedProvider === 'blackbox') return providerControls.blackboxModel;
     if (selectedProvider === 'kilocode') return providerControls.kilocodeModel;
+    if (selectedProvider === 'openadapter') return providerControls.openadapterModel;
     if (selectedProvider === 'azure') return providerControls.azureModel;
     if (selectedProvider === 'bedrock') return providerControls.bedrockModel;
     if (selectedProvider === 'vertex') return providerControls.vertexModel;
@@ -424,6 +433,7 @@ export function ChatInput({
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModelsLoading;
     if (selectedProvider === 'blackbox') return providerControls.blackboxModelsLoading;
     if (selectedProvider === 'kilocode') return providerControls.kilocodeModelsLoading;
+    if (selectedProvider === 'openadapter') return providerControls.openadapterModelsLoading;
     return false;
   })();
 
@@ -434,6 +444,7 @@ export function ChatInput({
     if (selectedProvider === 'nvidia') return formatTimeAgo(providerControls.nvidiaModelsUpdatedAt);
     if (selectedProvider === 'blackbox') return formatTimeAgo(providerControls.blackboxModelsUpdatedAt);
     if (selectedProvider === 'kilocode') return formatTimeAgo(providerControls.kilocodeModelsUpdatedAt);
+    if (selectedProvider === 'openadapter') return formatTimeAgo(providerControls.openadapterModelsUpdatedAt);
     return null;
   })();
 
@@ -441,7 +452,8 @@ export function ChatInput({
     || selectedProvider === 'zen'
     || selectedProvider === 'nvidia'
     || selectedProvider === 'blackbox'
-    || selectedProvider === 'kilocode';
+    || selectedProvider === 'kilocode'
+    || selectedProvider === 'openadapter';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
@@ -449,12 +461,15 @@ export function ChatInput({
     if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
     if (selectedProvider === 'blackbox') providerControls.refreshBlackboxModels();
     if (selectedProvider === 'kilocode') providerControls.refreshKilocodeModels();
+    if (selectedProvider === 'openadapter') providerControls.refreshOpenAdapterModels();
   };
   const openRouterModelList = providerControls?.openRouterModelOptions ?? EMPTY_MODEL_OPTIONS;
   const blackboxModelList = providerControls?.blackboxModelOptions ?? EMPTY_MODEL_OPTIONS;
   const blackboxFallbackModel = providerControls?.blackboxModel ?? '';
   const kilocodeModelList = providerControls?.kilocodeModelOptions ?? EMPTY_MODEL_OPTIONS;
   const kilocodeFallbackModel = providerControls?.kilocodeModel ?? '';
+  const openAdapterModelList = providerControls?.openadapterModelOptions ?? EMPTY_MODEL_OPTIONS;
+  const openAdapterFallbackModel = providerControls?.openadapterModel ?? '';
 
   const openRouterModelOptions = useMemo(() => (
     renderGroupedModelOptions(openRouterModelList, 'openrouter')
@@ -477,6 +492,15 @@ export function ChatInput({
         : [];
     return renderGroupedModelOptions(models, 'kilocode');
   }, [kilocodeFallbackModel, kilocodeModelList]);
+
+  const openAdapterModelOptions = useMemo(() => {
+    const models = openAdapterModelList.length > 0
+      ? openAdapterModelList
+      : openAdapterFallbackModel
+        ? [openAdapterFallbackModel]
+        : [];
+    return renderGroupedModelOptions(models, 'openadapter');
+  }, [openAdapterFallbackModel, openAdapterModelList]);
 
   // Reasoning effort (per-provider, only for models that support it)
   const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
@@ -943,6 +967,34 @@ export function ChatInput({
                             <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
                           )}
                           {providerControls.isKilocodeModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'openadapter' && (
+                        <>
+                          <select
+                            value={providerControls.openadapterModel}
+                            disabled={!canChangeModel || providerControls.openadapterModelsLoading || providerControls.openadapterModelOptions.length === 0}
+                            onChange={(e) => providerControls.onSelectOpenAdapterModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {openAdapterModelOptions}
+                          </select>
+                          {providerControls.openadapterModelsLoading && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading OpenAdapter models...</p>
+                          )}
+                          {!providerControls.openadapterModelsLoading && providerControls.openadapterModelOptions.length === 0 && !providerControls.openadapterModelsError && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
+                          )}
+                          {providerControls.openadapterModelsError && (
+                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.openadapterModelsError}</p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                          )}
+                          {providerControls.isOpenAdapterModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
                           )}
                         </>
