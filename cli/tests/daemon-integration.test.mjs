@@ -6,8 +6,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 
-import { getSocketPath, getPidPath, validateAttachToken } from '../pushd.mjs';
-import { PROTOCOL_VERSION } from '../session-store.mjs';
+import { getSocketPath, getPidPath, validateAttachToken, getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY } from '../pushd.mjs';
+import { PROTOCOL_VERSION, writeRunMarker, clearRunMarker, readRunMarker, scanInterruptedSessions, makeSessionId } from '../session-store.mjs';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -446,20 +446,20 @@ describe('multi-client fan-out', () => {
 // ─── Daemon version bump ─────────────────────────────────────────
 
 describe('daemon version', () => {
-  it('pushd version is 0.2.0 for Track 4', async () => {
-    // Read the file and check VERSION
+  it('pushd version is 0.3.0 with crash recovery', async () => {
     const content = await fs.readFile(
       path.join(import.meta.dirname, '..', 'pushd.mjs'), 'utf8'
     );
-    assert.ok(content.includes("const VERSION = '0.2.0'"));
+    assert.ok(content.includes("const VERSION = '0.3.0'"));
   });
 
-  it('capabilities include multi_client and replay_attach', async () => {
+  it('capabilities include multi_client, replay_attach, and crash_recovery', async () => {
     const content = await fs.readFile(
       path.join(import.meta.dirname, '..', 'pushd.mjs'), 'utf8'
     );
     assert.ok(content.includes("'multi_client'"));
     assert.ok(content.includes("'replay_attach'"));
+    assert.ok(content.includes("'crash_recovery'"));
   });
 
   it('all 8 handler types are registered', async () => {
@@ -472,6 +472,152 @@ describe('daemon version', () => {
     ];
     for (const h of handlers) {
       assert.ok(content.includes(`${h}: handle`), `Missing handler: ${h}`);
+    }
+  });
+});
+
+// ─── Restart policies ────────────────────────────────────────────
+
+describe('restart policies', () => {
+  it('default restart policy is on-failure', () => {
+    assert.equal(DEFAULT_RESTART_POLICY, 'on-failure');
+  });
+
+  it('getRestartPolicy returns default for missing/invalid policy', () => {
+    assert.equal(getRestartPolicy({}), 'on-failure');
+    assert.equal(getRestartPolicy({ restartPolicy: 'bogus' }), 'on-failure');
+    assert.equal(getRestartPolicy(null), 'on-failure');
+    assert.equal(getRestartPolicy(undefined), 'on-failure');
+  });
+
+  it('getRestartPolicy returns valid policies', () => {
+    assert.equal(getRestartPolicy({ restartPolicy: 'on-failure' }), 'on-failure');
+    assert.equal(getRestartPolicy({ restartPolicy: 'always' }), 'always');
+    assert.equal(getRestartPolicy({ restartPolicy: 'never' }), 'never');
+  });
+
+  it('shouldRecover respects never policy', () => {
+    assert.equal(shouldRecover('never', { startedAt: Date.now() }), false);
+  });
+
+  it('shouldRecover allows on-failure for recent markers', () => {
+    assert.equal(shouldRecover('on-failure', { startedAt: Date.now() - 1000 }), true);
+  });
+
+  it('shouldRecover allows always for recent markers', () => {
+    assert.equal(shouldRecover('always', { startedAt: Date.now() - 1000 }), true);
+  });
+
+  it('shouldRecover rejects markers older than 1 hour', () => {
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    assert.equal(shouldRecover('on-failure', { startedAt: twoHoursAgo }), false);
+    assert.equal(shouldRecover('always', { startedAt: twoHoursAgo }), false);
+  });
+
+  it('shouldRecover handles missing startedAt', () => {
+    assert.equal(shouldRecover('on-failure', {}), false);
+  });
+
+  it('shouldRecover rejects non-finite startedAt', () => {
+    assert.equal(shouldRecover('on-failure', { startedAt: 'bogus' }), false);
+    assert.equal(shouldRecover('on-failure', { startedAt: NaN }), false);
+    assert.equal(shouldRecover('on-failure', { startedAt: Infinity }), false);
+  });
+
+  it('shouldRecover rejects negative age (clock skew)', () => {
+    const futureTs = Date.now() + 60_000;
+    assert.equal(shouldRecover('on-failure', { startedAt: futureTs }), false);
+  });
+});
+
+// ─── Run markers (crash recovery) ───────────────────────────────
+
+describe('run markers', () => {
+  let testSessionDir;
+  let testSessionId;
+  const originalEnv = process.env.PUSH_SESSION_DIR;
+
+  // Use a temp directory so tests don't interfere with real sessions
+  const tmpRoot = path.join(os.tmpdir(), `push-test-markers-${randomBytes(4).toString('hex')}`);
+
+  // Setup: point session store at temp dir
+  // Teardown: restore and clean up
+  it('write, read, and clear run marker', async () => {
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      testSessionId = makeSessionId();
+      testSessionDir = path.join(tmpRoot, testSessionId);
+      await fs.mkdir(testSessionDir, { recursive: true });
+
+      // Write
+      await writeRunMarker(testSessionId, 'run_test_123', { provider: 'ollama' });
+
+      // Read
+      const marker = await readRunMarker(testSessionId);
+      assert.ok(marker);
+      assert.equal(marker.runId, 'run_test_123');
+      assert.equal(marker.provider, 'ollama');
+      assert.equal(typeof marker.startedAt, 'number');
+
+      // Clear
+      await clearRunMarker(testSessionId);
+      const cleared = await readRunMarker(testSessionId);
+      assert.equal(cleared, null);
+    } finally {
+      process.env.PUSH_SESSION_DIR = originalEnv || '';
+      if (!originalEnv) delete process.env.PUSH_SESSION_DIR;
+      await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('readRunMarker returns null for missing marker', async () => {
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const sid = makeSessionId();
+      await fs.mkdir(path.join(tmpRoot, sid), { recursive: true });
+      const marker = await readRunMarker(sid);
+      assert.equal(marker, null);
+    } finally {
+      process.env.PUSH_SESSION_DIR = originalEnv || '';
+      if (!originalEnv) delete process.env.PUSH_SESSION_DIR;
+      await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('scanInterruptedSessions finds sessions with markers', async () => {
+    const scanRoot = path.join(os.tmpdir(), `push-test-scan-${randomBytes(4).toString('hex')}`);
+    process.env.PUSH_SESSION_DIR = scanRoot;
+    try {
+      const sid1 = makeSessionId();
+      const sid2 = makeSessionId();
+      await fs.mkdir(path.join(scanRoot, sid1), { recursive: true });
+      await fs.mkdir(path.join(scanRoot, sid2), { recursive: true });
+
+      // Only sid1 has a run marker
+      await writeRunMarker(sid1, 'run_a');
+
+      const interrupted = await scanInterruptedSessions();
+      assert.equal(interrupted.length, 1);
+      assert.equal(interrupted[0].sessionId, sid1);
+      assert.equal(interrupted[0].marker.runId, 'run_a');
+    } finally {
+      process.env.PUSH_SESSION_DIR = originalEnv || '';
+      if (!originalEnv) delete process.env.PUSH_SESSION_DIR;
+      await fs.rm(scanRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('scanInterruptedSessions returns empty when no markers exist', async () => {
+    const emptyRoot = path.join(os.tmpdir(), `push-test-empty-${randomBytes(4).toString('hex')}`);
+    process.env.PUSH_SESSION_DIR = emptyRoot;
+    try {
+      await fs.mkdir(emptyRoot, { recursive: true });
+      const interrupted = await scanInterruptedSessions();
+      assert.equal(interrupted.length, 0);
+    } finally {
+      process.env.PUSH_SESSION_DIR = originalEnv || '';
+      if (!originalEnv) delete process.env.PUSH_SESSION_DIR;
+      await fs.rm(emptyRoot, { recursive: true, force: true }).catch(() => {});
     }
   });
 });

@@ -179,6 +179,95 @@ export async function deleteSession(sessionId) {
   return deleted;
 }
 
+// ─── Run markers (crash recovery) ────────────────────────────────
+// A run marker is a small file written when a run starts and deleted when it
+// finishes. If pushd crashes mid-run, the marker survives on disk and lets
+// the next startup detect interrupted sessions.
+
+export async function writeRunMarker(sessionId, runId, metadata = {}) {
+  validateSessionId(sessionId);
+  const root = getSessionRoot();
+  await ensureSessionDir(sessionId, root);
+  const markerPath = path.join(getSessionDirInRoot(root, sessionId), 'run.json');
+  const marker = {
+    runId,
+    startedAt: Date.now(),
+    ...metadata,
+  };
+  await fs.writeFile(markerPath, JSON.stringify(marker), { encoding: 'utf8', mode: 0o600 });
+}
+
+export async function clearRunMarker(sessionId) {
+  validateSessionId(sessionId);
+  const roots = getSessionRootsForRead();
+  for (const root of roots) {
+    const markerPath = path.join(getSessionDirInRoot(root, sessionId), 'run.json');
+    try {
+      await fs.unlink(markerPath);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+  }
+}
+
+export async function readRunMarker(sessionId) {
+  validateSessionId(sessionId);
+  const roots = getSessionRootsForRead();
+  for (const root of roots) {
+    const markerPath = path.join(getSessionDirInRoot(root, sessionId), 'run.json');
+    try {
+      const raw = await fs.readFile(markerPath, 'utf8');
+      return JSON.parse(raw);
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;
+      // Malformed JSON (e.g. partial write during crash) — clean up and skip
+      if (err instanceof SyntaxError) {
+        try { await fs.unlink(markerPath); } catch { /* ignore */ }
+        continue;
+      }
+      throw err;
+    }
+  }
+  return null;
+}
+
+/**
+ * Scan all sessions for run markers (interrupted runs).
+ * Returns an array of { sessionId, marker } for each interrupted session.
+ */
+export async function scanInterruptedSessions() {
+  const roots = getSessionRootsForRead();
+  const results = [];
+  const seen = new Set();
+
+  for (const root of roots) {
+    let entries;
+    try {
+      entries = await fs.readdir(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (!SESSION_ID_RE.test(entry.name)) continue;
+      if (seen.has(entry.name)) continue;
+      seen.add(entry.name);
+
+      const markerPath = path.join(getSessionDirInRoot(root, entry.name), 'run.json');
+      try {
+        const raw = await fs.readFile(markerPath, 'utf8');
+        const marker = JSON.parse(raw);
+        results.push({ sessionId: entry.name, marker });
+      } catch {
+        // No marker or malformed — skip
+      }
+    }
+  }
+
+  return results;
+}
+
 export async function listSessions() {
   const roots = getSessionRootsForRead();
   const byId = new Map();

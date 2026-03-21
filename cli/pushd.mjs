@@ -31,13 +31,16 @@ import {
   loadSessionState,
   loadSessionEvents,
   listSessions,
+  writeRunMarker,
+  clearRunMarker,
+  scanInterruptedSessions,
   PROTOCOL_VERSION,
 } from './session-store.mjs';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.mjs';
 import { appendUserMessageWithFileReferences } from './file-references.mjs';
 
-const VERSION = '0.2.0';
-const CAPABILITIES = ['stream_tokens', 'approvals', 'replay_attach', 'multi_client'];
+const VERSION = '0.3.0';
+const CAPABILITIES = ['stream_tokens', 'approvals', 'replay_attach', 'multi_client', 'crash_recovery'];
 
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -114,7 +117,34 @@ function makeErrorResponse(requestId, type, code, message, retryable = false) {
   });
 }
 
+// ─── Restart policies ─────────────────────────────────────────────
+// Each session can have a restart policy that controls crash recovery.
+//   'on-failure' (default) — recover runs that were interrupted by daemon crash
+//   'always'               — always recover (same as on-failure for now; future: timer-based restarts)
+//   'never'                — never auto-recover; user must manually re-send
+const DEFAULT_RESTART_POLICY = 'on-failure';
+const VALID_RESTART_POLICIES = new Set(['on-failure', 'always', 'never']);
+
+function getRestartPolicy(state) {
+  const policy = state?.restartPolicy || DEFAULT_RESTART_POLICY;
+  return VALID_RESTART_POLICIES.has(policy) ? policy : DEFAULT_RESTART_POLICY;
+}
+
+function shouldRecover(policy, marker) {
+  if (policy === 'never') return false;
+  // 'on-failure' and 'always' both recover interrupted runs
+  // Guard: reject missing/non-finite startedAt and stale markers (>1 hour)
+  const startedAt = Number(marker.startedAt);
+  if (!Number.isFinite(startedAt)) return false;
+  const age = Date.now() - startedAt;
+  const ONE_HOUR = 60 * 60 * 1000;
+  if (age < 0 || age > ONE_HOUR) return false;
+  return true;
+}
+
 // ─── Token validation ─────────────────────────────────────────────
+
+export { getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY };
 
 export function validateAttachToken(entry, providedToken) {
   if (!entry || !entry.attachToken) return true;
@@ -126,6 +156,54 @@ export function validateAttachToken(entry, providedToken) {
 
 // sessionId → { state, attachToken, abortController?, activeRunId?, pendingApproval? }
 const activeSessions = new Map();
+
+// ─── Shared approval builder ─────────────────────────────────────
+
+/**
+ * Build an approvalFn for a session entry. The returned function emits
+ * approval_required events and awaits a client decision (or times out).
+ * Used by both normal runs and crash-recovery runs.
+ */
+function buildApprovalFn(sessionId, entry, runId) {
+  return async (tool, detail) => {
+    const approvalId = makeApprovalId();
+
+    const approvalPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        entry.pendingApproval = null;
+        reject(new Error('Approval timed out'));
+      }, APPROVAL_TIMEOUT_MS);
+
+      entry.pendingApproval = { approvalId, resolve, reject, timer };
+    });
+
+    const approvalPayload = {
+      approvalId,
+      kind: tool?.tool || 'tool_execution',
+      title: `Approve ${tool?.tool || 'action'}`,
+      summary: typeof detail === 'string' ? detail : JSON.stringify(detail || {}),
+      options: ['approve', 'deny'],
+    };
+    await appendSessionEvent(entry.state, 'approval_required', approvalPayload, runId);
+    broadcastEvent(sessionId, {
+      v: PROTOCOL_VERSION,
+      kind: 'event',
+      sessionId,
+      runId,
+      seq: entry.state.eventSeq,
+      ts: Date.now(),
+      type: 'approval_required',
+      payload: approvalPayload,
+    });
+
+    try {
+      const decision = await approvalPromise;
+      return decision === 'approve';
+    } catch {
+      return false;
+    }
+  };
+}
 
 // ─── Multi-client fan-out ────────────────────────────────────────
 
@@ -203,6 +281,7 @@ async function handleStartSession(req) {
 
   const cwd = payload.repo?.rootPath || process.cwd();
   const model = payload.model || PROVIDER_CONFIGS[provider].defaultModel;
+  const restartPolicy = VALID_RESTART_POLICIES.has(payload.restartPolicy) ? payload.restartPolicy : DEFAULT_RESTART_POLICY;
   const sessionId = makeSessionId();
   const attachToken = makeAttachToken();
   const now = Date.now();
@@ -214,6 +293,7 @@ async function handleStartSession(req) {
     provider,
     model,
     cwd,
+    restartPolicy,
     rounds: 0,
     eventSeq: 0,
     messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
@@ -292,50 +372,17 @@ async function handleSendUserMessage(req, emitEvent) {
     return makeErrorResponse(req.requestId, 'send_user_message', 'PROVIDER_NOT_CONFIGURED', err.message);
   }
 
-  // Approval function that emits approval_required and awaits client decision
-  const approvalFn = async (tool, detail) => {
-    const approvalId = makeApprovalId();
-
-    const approvalPromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        entry.pendingApproval = null;
-        reject(new Error('Approval timed out'));
-      }, APPROVAL_TIMEOUT_MS);
-
-      entry.pendingApproval = { approvalId, resolve, reject, timer };
-    });
-
-    // Emit approval_required to all clients
-    const approvalPayload = {
-      approvalId,
-      kind: tool?.tool || 'tool_execution',
-      title: `Approve ${tool?.tool || 'action'}`,
-      summary: typeof detail === 'string' ? detail : JSON.stringify(detail || {}),
-      options: ['approve', 'deny'],
-    };
-    await appendSessionEvent(state, 'approval_required', approvalPayload, runId);
-    // Build envelope after appendSessionEvent so seq matches the persisted event
-    broadcastEvent(sessionId, {
-      v: PROTOCOL_VERSION,
-      kind: 'event',
-      sessionId,
-      runId,
-      seq: state.eventSeq,
-      ts: Date.now(),
-      type: 'approval_required',
-      payload: approvalPayload,
-    });
-
-    try {
-      const decision = await approvalPromise;
-      return decision === 'approve';
-    } catch {
-      return false;
-    }
-  };
+  const approvalFn = buildApprovalFn(sessionId, entry, runId);
 
   // Run in background — broadcast events to all attached clients
   (async () => {
+    // Write run marker so crash recovery can detect interrupted runs.
+    // Awaited inside the async IIFE so a crash right after launch is still detectable.
+    try {
+      await writeRunMarker(sessionId, runId, { provider: state.provider, model: state.model, cwd: state.cwd });
+    } catch (err) {
+      process.stderr.write(`warning: failed to write run marker for ${sessionId}: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
     let sawError = false;
     let sawRunComplete = false;
     try {
@@ -405,6 +452,8 @@ async function handleSendUserMessage(req, emitEvent) {
         clearTimeout(entry.pendingApproval.timer);
         entry.pendingApproval = null;
       }
+      // Clear run marker — this run is no longer active
+      clearRunMarker(sessionId).catch(() => {});
     }
   })();
 
@@ -654,6 +703,160 @@ function handleConnection(socket) {
   });
 }
 
+// ─── Crash recovery ──────────────────────────────────────────────
+
+/**
+ * Scan for sessions with run markers (interrupted by daemon crash).
+ * For each, check restart policy and optionally re-enter the assistant loop.
+ *
+ * Recovery injects a [SESSION_RECOVERED] reconciliation message so the model
+ * knows context was interrupted and can adjust.
+ */
+async function recoverInterruptedRuns() {
+  let interrupted;
+  try {
+    interrupted = await scanInterruptedSessions();
+  } catch {
+    return; // scan failure is non-fatal
+  }
+
+  if (interrupted.length === 0) return;
+  process.stdout.write(`crash recovery: found ${interrupted.length} interrupted session(s)\n`);
+
+  for (const { sessionId, marker } of interrupted) {
+    let state;
+    try {
+      state = await loadSessionState(sessionId);
+    } catch {
+      // Can't load state — clear stale marker and skip
+      await clearRunMarker(sessionId).catch(() => {});
+      process.stdout.write(`  ${sessionId}: state unreadable, clearing marker\n`);
+      continue;
+    }
+
+    const policy = getRestartPolicy(state);
+    if (!shouldRecover(policy, marker)) {
+      await clearRunMarker(sessionId).catch(() => {});
+      const reason = policy === 'never' ? 'policy=never' : 'marker too old';
+      process.stdout.write(`  ${sessionId}: skipped (${reason})\n`);
+
+      // Log that we skipped recovery
+      await appendSessionEvent(state, 'recovery_skipped', {
+        originalRunId: marker.runId,
+        reason,
+        policy,
+        markerAge: Date.now() - (marker.startedAt || 0),
+      }).catch(() => {});
+      await saveSessionState(state).catch(() => {});
+      continue;
+    }
+
+    // Resolve provider + API key
+    const providerConfig = PROVIDER_CONFIGS[state.provider];
+    if (!providerConfig) {
+      await clearRunMarker(sessionId).catch(() => {});
+      process.stdout.write(`  ${sessionId}: unknown provider "${state.provider}", clearing marker\n`);
+      continue;
+    }
+
+    let apiKey;
+    try {
+      apiKey = resolveApiKey(providerConfig);
+    } catch {
+      await clearRunMarker(sessionId).catch(() => {});
+      process.stdout.write(`  ${sessionId}: no API key for "${state.provider}", clearing marker\n`);
+      continue;
+    }
+
+    const recoveryRunId = makeRunId();
+    const abortController = new AbortController();
+    const attachToken = makeAttachToken();
+
+    // Register in-memory
+    const entry = { state, attachToken, activeRunId: recoveryRunId, abortController };
+    activeSessions.set(sessionId, entry);
+
+    // Inject reconciliation message so the model knows it was interrupted
+    state.messages.push({
+      role: 'user',
+      content: `[SESSION_RECOVERED]\nThe previous run (${marker.runId}) was interrupted by a daemon crash.\nYou are resuming in a new run (${recoveryRunId}). Review your working memory and continue where you left off.\nDo NOT restart from scratch — pick up from the last completed step.\n[/SESSION_RECOVERED]`,
+    });
+
+    await appendSessionEvent(state, 'run_recovered', {
+      originalRunId: marker.runId,
+      recoveryRunId,
+      policy,
+      markerAge: Date.now() - (marker.startedAt || 0),
+    }).catch(() => {});
+
+    process.stdout.write(`  ${sessionId}: recovering run ${marker.runId} → ${recoveryRunId}\n`);
+
+    // Clear old marker and write new one for the recovery run
+    await clearRunMarker(sessionId).catch(() => {});
+    await writeRunMarker(sessionId, recoveryRunId, { provider: state.provider, model: state.model, cwd: state.cwd, recoveredFrom: marker.runId }).catch(() => {});
+
+    // Build approval gate so recovered runs can request client approvals
+    const approvalFn = buildApprovalFn(sessionId, entry, recoveryRunId);
+
+    // Launch recovery run in background (same pattern as handleSendUserMessage)
+    (async () => {
+      let sawError = false;
+      let sawRunComplete = false;
+      try {
+        await runAssistantLoop(state, providerConfig, apiKey, DEFAULT_MAX_ROUNDS, {
+          runId: recoveryRunId,
+          approvalFn,
+          signal: abortController.signal,
+          emit: (event) => {
+            const seq = state.eventSeq;
+            if (event.type === 'error') sawError = true;
+            if (event.type === 'run_complete') sawRunComplete = true;
+
+            broadcastEvent(sessionId, {
+              v: PROTOCOL_VERSION,
+              kind: 'event',
+              sessionId: event.sessionId,
+              runId: event.runId,
+              seq,
+              ts: Date.now(),
+              type: event.type,
+              payload: event.payload,
+            });
+          },
+        });
+        await saveSessionState(state);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!sawError) {
+          await appendSessionEvent(state, 'error', { code: 'RECOVERY_ERROR', message, retryable: false }, recoveryRunId).catch(() => {});
+          broadcastEvent(sessionId, {
+            v: PROTOCOL_VERSION, kind: 'event', sessionId, runId: recoveryRunId,
+            seq: state.eventSeq, ts: Date.now(), type: 'error',
+            payload: { code: 'RECOVERY_ERROR', message, retryable: false },
+          });
+        }
+        if (!sawRunComplete) {
+          await appendSessionEvent(state, 'run_complete', { runId: recoveryRunId, outcome: 'failed', summary: message.slice(0, 500) }, recoveryRunId).catch(() => {});
+          broadcastEvent(sessionId, {
+            v: PROTOCOL_VERSION, kind: 'event', sessionId, runId: recoveryRunId,
+            seq: state.eventSeq, ts: Date.now(), type: 'run_complete',
+            payload: { outcome: 'failed', summary: message.slice(0, 500) },
+          });
+        }
+        await saveSessionState(state).catch(() => {});
+      } finally {
+        entry.activeRunId = null;
+        entry.abortController = null;
+        if (entry.pendingApproval) {
+          clearTimeout(entry.pendingApproval.timer);
+          entry.pendingApproval = null;
+        }
+        clearRunMarker(sessionId).catch(() => {});
+      }
+    })();
+  }
+}
+
 // ─── Main ────────────────────────────────────────────────────────
 
 export async function main() {
@@ -678,6 +881,14 @@ export async function main() {
       await fs.chmod(socketPath, 0o600);
     } catch {
       // non-fatal
+    }
+
+    // Recover interrupted runs from previous crash
+    try {
+      await recoverInterruptedRuns();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`crash recovery failed: ${msg}\n`);
     }
   });
 
