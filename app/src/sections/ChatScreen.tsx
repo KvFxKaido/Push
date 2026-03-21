@@ -246,6 +246,7 @@ const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
   azure: 'Azure OpenAI',
   bedrock: 'AWS Bedrock',
   kilocode: 'Kilo Code',
+  openadapter: 'OpenAdapter',
   vertex: 'Google Vertex',
   demo: 'Demo',
 };
@@ -463,6 +464,7 @@ export function ChatScreen(props: ChatScreenProps) {
     if (selectedComposerProvider === 'nvidia') return selectedChatModels.nvidia;
     if (selectedComposerProvider === 'blackbox') return selectedChatModels.blackbox;
     if (selectedComposerProvider === 'kilocode') return selectedChatModels.kilocode;
+    if (selectedComposerProvider === 'openadapter') return selectedChatModels.openadapter;
     if (selectedComposerProvider === 'azure') return selectedChatModels.azure;
     if (selectedComposerProvider === 'bedrock') return selectedChatModels.bedrock;
     if (selectedComposerProvider === 'vertex') return selectedChatModels.vertex;

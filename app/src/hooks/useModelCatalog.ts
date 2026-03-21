@@ -127,6 +127,7 @@ export interface ModelCatalog {
   nvidia: ProviderKeyConfig;
   blackbox: ProviderKeyConfig;
   kilocode: ProviderKeyConfig;
+  openadapter: ProviderKeyConfig;
   azure: ExperimentalProviderConfig;
   bedrock: ExperimentalProviderConfig;
   vertex: VertexProviderConfig;
@@ -147,6 +148,7 @@ export interface ModelCatalog {
   nvidiaModels: ProviderModelState;
   blackboxModels: ProviderModelState;
   kilocodeModels: ProviderModelState;
+  openAdapterModels: ProviderModelState;
 
   // Model option lists (includes selected even if not in fetched list)
   ollamaModelOptions: string[];
@@ -155,6 +157,7 @@ export interface ModelCatalog {
   nvidiaModelOptions: string[];
   blackboxModelOptions: string[];
   kilocodeModelOptions: string[];
+  openAdapterModelOptions: string[];
 
   // Zen Go tier
   zenGoMode: boolean;
@@ -167,6 +170,7 @@ export interface ModelCatalog {
   refreshNvidiaModels: () => Promise<void>;
   refreshBlackboxModels: () => Promise<void>;
   refreshKilocodeModels: () => Promise<void>;
+  refreshOpenAdapterModels: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

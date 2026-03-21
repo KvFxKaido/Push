@@ -28,8 +28,8 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   bedrock:    { chat: providerUrl('/api/bedrock/chat',                            '/api/bedrock/chat'),    models: providerUrl('/api/bedrock/models',              '/api/bedrock/models')    },
   vertex:     { chat: providerUrl('/api/vertex/chat',                             '/api/vertex/chat'),     models: providerUrl('/api/vertex/models',               '/api/vertex/models')     },
   demo:       { chat: '',                                                                                models: ''                                                                        },
-  kilocode:      { chat: providerUrl('/api/kilocode/chat',                          '/api/kilocode/chat'),   models: providerUrl('/api/kilocode/models',                '/api/kilocode/models')   },
-  openadapter:   { chat: providerUrl('/api/openadapter/chat',                       '/api/openadapter/chat'), models: providerUrl('/api/openadapter/models',             '/api/openadapter/models') },
+  kilocode:    { chat: providerUrl('/api/kilocode/chat',                            '/api/kilocode/chat'),    models: providerUrl('/api/kilocode/models',              '/api/kilocode/models')    },
+  openadapter: { chat: providerUrl('/api/openadapter/chat',                         '/api/openadapter/chat'), models: providerUrl('/api/openadapter/models',           '/api/openadapter/models') },
 };
 
 // Valid Ollama model names — these must exist on the Ollama server
@@ -305,7 +305,7 @@ export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'openadapter',
     name: 'OpenAdapter',
-    description: 'OpenAdapter — 69+ open-source models through one OpenAI-compatible gateway (OpenAI-compatible)',
+    description: 'OpenAdapter — 69+ open-source models through one OpenAI-compatible gateway',
     envKey: 'VITE_OPENADAPTER_API_KEY',
     envUrl: 'https://openadapter.dev',
     models: makeRoleModels(OPENADAPTER_DEFAULT_MODEL, 'OpenAdapter', 'openadapter', 131_072),

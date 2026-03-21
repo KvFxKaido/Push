@@ -21,7 +21,7 @@ npm run dev
   - OpenCode Zen (routing API via opencode.ai/zen, OpenAI-compatible SSE)
   - Nvidia NIM (OpenAI-compatible endpoint via integrate.api.nvidia.com)
   - Blackbox AI (OpenAI-compatible endpoint via api.blackbox.ai)
-  - OpenAdapter (69+ open-source models via openadapter.dev, OpenAI-compatible SSE)
+  - OpenAdapter (69+ open-source models; product site openadapter.dev, API base api.openadapter.in, OpenAI-compatible SSE)
 - Modal (serverless containers) for sandbox code execution
 - Cloudflare Workers (streaming proxy + sandbox proxy)
 
