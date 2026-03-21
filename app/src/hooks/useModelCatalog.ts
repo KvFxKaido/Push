@@ -10,6 +10,7 @@ import {
   BLACKBOX_MODELS,
   KILOCODE_DEFAULT_MODEL,
   KILOCODE_MODELS,
+  OPENADAPTER_MODELS,
   normalizeKilocodeModelName,
   type PreferredProvider,
 } from '@/lib/providers';
@@ -21,6 +22,7 @@ import {
   fetchNvidiaModels,
   fetchBlackboxModels,
   fetchKilocodeModels,
+  fetchOpenAdapterModels,
 } from '@/lib/model-catalog';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
@@ -28,6 +30,7 @@ import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
 import { useBlackboxConfig } from '@/hooks/useBlackboxConfig';
 import { useKilocodeConfig } from '@/hooks/useKilocodeConfig';
+import { useOpenAdapterConfig } from '@/hooks/useOpenAdapterConfig';
 import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProviderConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
@@ -124,6 +127,7 @@ export interface ModelCatalog {
   nvidia: ProviderKeyConfig;
   blackbox: ProviderKeyConfig;
   kilocode: ProviderKeyConfig;
+  openadapter: ProviderKeyConfig;
   azure: ExperimentalProviderConfig;
   bedrock: ExperimentalProviderConfig;
   vertex: VertexProviderConfig;
@@ -144,6 +148,7 @@ export interface ModelCatalog {
   nvidiaModels: ProviderModelState;
   blackboxModels: ProviderModelState;
   kilocodeModels: ProviderModelState;
+  openAdapterModels: ProviderModelState;
 
   // Model option lists (includes selected even if not in fetched list)
   ollamaModelOptions: string[];
@@ -152,6 +157,7 @@ export interface ModelCatalog {
   nvidiaModelOptions: string[];
   blackboxModelOptions: string[];
   kilocodeModelOptions: string[];
+  openAdapterModelOptions: string[];
 
   // Zen Go tier
   zenGoMode: boolean;
@@ -164,6 +170,7 @@ export interface ModelCatalog {
   refreshNvidiaModels: () => Promise<void>;
   refreshBlackboxModels: () => Promise<void>;
   refreshKilocodeModels: () => Promise<void>;
+  refreshOpenAdapterModels: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +196,7 @@ export function useModelCatalog(): ModelCatalog {
   const nvidiaCfg = useNvidiaConfig();
   const blackboxCfg = useBlackboxConfig();
   const kilocodeCfg = useKilocodeConfig();
+  const openAdapterCfg = useOpenAdapterConfig();
   const azureCfg = useAzureConfig();
   const bedrockCfg = useBedrockConfig();
   const vertexCfg = useVertexConfig();
@@ -201,6 +209,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
   const [blackboxKeyInput, setBlackboxKeyInput] = useState('');
   const [kilocodeKeyInput, setKilocodeKeyInput] = useState('');
+  const [openAdapterKeyInput, setOpenAdapterKeyInput] = useState('');
   const [azureKeyInput, setAzureKeyInput] = useState('');
   const [azureBaseUrlInput, setAzureBaseUrlInput] = useState('');
   const [azureModelInput, setAzureModelInput] = useState('');
@@ -224,6 +233,7 @@ export function useModelCatalog(): ModelCatalog {
     ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
     ['blackbox', 'Blackbox AI', blackboxCfg.hasKey],
     ['kilocode', 'Kilo Code', kilocodeCfg.hasKey],
+    ['openadapter', 'OpenAdapter', openAdapterCfg.hasKey],
     ['azure', 'Azure OpenAI', azureCfg.isConfigured],
     ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],
     ['vertex', 'Google Vertex', vertexCfg.isConfigured],
@@ -237,6 +247,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
   const [blackboxModelList, setBlackboxModelList] = useState<string[]>([]);
   const [kilocodeModelList, setKilocodeModelList] = useState<string[]>([]);
+  const [openAdapterModelList, setOpenAdapterModelList] = useState<string[]>([]);
 
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
@@ -244,6 +255,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
   const [blackboxLoading, setBlackboxLoading] = useState(false);
   const [kilocodeLoading, setKilocodeLoading] = useState(false);
+  const [openAdapterLoading, setOpenAdapterLoading] = useState(false);
 
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
@@ -251,6 +263,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
   const [blackboxError, setBlackboxError] = useState<string | null>(null);
   const [kilocodeError, setKilocodeError] = useState<string | null>(null);
+  const [openAdapterError, setOpenAdapterError] = useState<string | null>(null);
 
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
@@ -258,6 +271,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
   const [blackboxUpdatedAt, setBlackboxUpdatedAt] = useState<number | null>(null);
   const [kilocodeUpdatedAt, setKilocodeUpdatedAt] = useState<number | null>(null);
+  const [openAdapterUpdatedAt, setOpenAdapterUpdatedAt] = useState<number | null>(null);
 
   // Generic refresh helper
   const refreshModels = useCallback(async (params: {
@@ -361,6 +375,17 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [kilocodeCfg.hasKey, kilocodeLoading, refreshModels]);
 
+  const refreshOpenAdapterModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: openAdapterCfg.hasKey, isLoading: openAdapterLoading,
+      setLoading: setOpenAdapterLoading, setError: setOpenAdapterError,
+      setModels: setOpenAdapterModelList, setUpdatedAt: setOpenAdapterUpdatedAt,
+      fetchModels: fetchOpenAdapterModels,
+      emptyMessage: 'No models returned by OpenAdapter.',
+      failureMessage: 'Failed to load OpenAdapter models.',
+    });
+  }, [openAdapterCfg.hasKey, openAdapterLoading, refreshModels]);
+
   // Auto-fetch models when key becomes available.
   // The active provider fetches immediately; all others are deferred via
   // requestIdleCallback (or a short setTimeout) so startup isn't blocked.
@@ -394,6 +419,11 @@ export function useModelCatalog(): ModelCatalog {
     activeProviderLabel === 'kilocode',
     () => { void refreshKilocodeModels(); },
   ), [activeProviderLabel, kilocodeCfg.hasKey, kilocodeError, kilocodeLoading, kilocodeModelList.length, refreshKilocodeModels]);
+  useEffect(() => scheduleAutoFetch(
+    shouldAutoFetchProviderModels({ hasKey: openAdapterCfg.hasKey, modelCount: openAdapterModelList.length, loading: openAdapterLoading, error: openAdapterError }),
+    activeProviderLabel === 'openadapter',
+    () => { void refreshOpenAdapterModels(); },
+  ), [activeProviderLabel, openAdapterCfg.hasKey, openAdapterError, openAdapterLoading, openAdapterModelList.length, refreshOpenAdapterModels]);
 
   // Clear models when key is removed
   useEffect(() => { if (!ollamaCfg.hasKey) { setOllamaModelList([]); setOllamaError(null); setOllamaUpdatedAt(null); } }, [ollamaCfg.hasKey]);
@@ -406,6 +436,7 @@ export function useModelCatalog(): ModelCatalog {
   useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
   useEffect(() => { if (!blackboxCfg.hasKey) { setBlackboxModelList([]); setBlackboxError(null); setBlackboxUpdatedAt(null); } }, [blackboxCfg.hasKey]);
   useEffect(() => { if (!kilocodeCfg.hasKey) { setKilocodeModelList([]); setKilocodeError(null); setKilocodeUpdatedAt(null); } }, [kilocodeCfg.hasKey]);
+  useEffect(() => { if (!openAdapterCfg.hasKey) { setOpenAdapterModelList([]); setOpenAdapterError(null); setOpenAdapterUpdatedAt(null); } }, [openAdapterCfg.hasKey]);
 
   const kilocodeSelectedModel = kilocodeCfg.model;
   const setKilocodeModel = kilocodeCfg.setModel;
@@ -461,6 +492,7 @@ export function useModelCatalog(): ModelCatalog {
     }
     return includeSelectedModel(KILOCODE_MODELS, selectedModel);
   }, [kilocodeModelList, kilocodeSelectedModel]);
+  const openAdapterModelOptions = useMemo(() => includeSelectedModel(openAdapterModelList.length > 0 ? openAdapterModelList : OPENADAPTER_MODELS, openAdapterCfg.model), [openAdapterModelList, openAdapterCfg.model]);
   const vertexModelOptions = useMemo(() => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model), [vertexCfg.modelOptions, vertexCfg.model]);
 
   return {
@@ -470,6 +502,7 @@ export function useModelCatalog(): ModelCatalog {
     nvidia: { setKey: nvidiaCfg.setKey, clearKey: nvidiaCfg.clearKey, hasKey: nvidiaCfg.hasKey, model: nvidiaCfg.model, setModel: nvidiaCfg.setModel, keyInput: nvidiaKeyInput, setKeyInput: setNvidiaKeyInput },
     blackbox: { setKey: blackboxCfg.setKey, clearKey: blackboxCfg.clearKey, hasKey: blackboxCfg.hasKey, model: blackboxCfg.model, setModel: blackboxCfg.setModel, keyInput: blackboxKeyInput, setKeyInput: setBlackboxKeyInput },
     kilocode: { setKey: kilocodeCfg.setKey, clearKey: kilocodeCfg.clearKey, hasKey: kilocodeCfg.hasKey, model: kilocodeCfg.model, setModel: kilocodeCfg.setModel, keyInput: kilocodeKeyInput, setKeyInput: setKilocodeKeyInput },
+    openadapter: { setKey: openAdapterCfg.setKey, clearKey: openAdapterCfg.clearKey, hasKey: openAdapterCfg.hasKey, model: openAdapterCfg.model, setModel: openAdapterCfg.setModel, keyInput: openAdapterKeyInput, setKeyInput: setOpenAdapterKeyInput },
     azure: {
       keyInput: azureKeyInput,
       setKeyInput: setAzureKeyInput,
@@ -562,6 +595,7 @@ export function useModelCatalog(): ModelCatalog {
     nvidiaModels: { models: nvidiaModelList, loading: nvidiaLoading, error: nvidiaError, updatedAt: nvidiaUpdatedAt },
     blackboxModels: { models: blackboxModelList, loading: blackboxLoading, error: blackboxError, updatedAt: blackboxUpdatedAt },
     kilocodeModels: { models: kilocodeModelList, loading: kilocodeLoading, error: kilocodeError, updatedAt: kilocodeUpdatedAt },
+    openAdapterModels: { models: openAdapterModelList, loading: openAdapterLoading, error: openAdapterError, updatedAt: openAdapterUpdatedAt },
 
     ollamaModelOptions,
     openRouterModelOptions,
@@ -569,6 +603,7 @@ export function useModelCatalog(): ModelCatalog {
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
     blackboxModelOptions,
     kilocodeModelOptions,
+    openAdapterModelOptions,
 
     zenGoMode: zenCfg.goMode,
     setZenGoMode: zenCfg.setGoMode,
@@ -579,5 +614,6 @@ export function useModelCatalog(): ModelCatalog {
     refreshNvidiaModels,
     refreshBlackboxModels,
     refreshKilocodeModels,
+    refreshOpenAdapterModels,
   };
 }

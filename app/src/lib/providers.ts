@@ -28,7 +28,8 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   bedrock:    { chat: providerUrl('/api/bedrock/chat',                            '/api/bedrock/chat'),    models: providerUrl('/api/bedrock/models',              '/api/bedrock/models')    },
   vertex:     { chat: providerUrl('/api/vertex/chat',                             '/api/vertex/chat'),     models: providerUrl('/api/vertex/models',               '/api/vertex/models')     },
   demo:       { chat: '',                                                                                models: ''                                                                        },
-  kilocode:   { chat: providerUrl('/api/kilocode/chat',                          '/api/kilocode/chat'),   models: providerUrl('/api/kilocode/models',                '/api/kilocode/models')   },
+  kilocode:    { chat: providerUrl('/api/kilocode/chat',                            '/api/kilocode/chat'),    models: providerUrl('/api/kilocode/models',              '/api/kilocode/models')    },
+  openadapter: { chat: providerUrl('/api/openadapter/chat',                         '/api/openadapter/chat'), models: providerUrl('/api/openadapter/models',           '/api/openadapter/models') },
 };
 
 // Valid Ollama model names — these must exist on the Ollama server
@@ -48,6 +49,8 @@ export const AZURE_DEFAULT_MODEL = 'gpt-4.1';
 export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0';
 export const VERTEX_DEFAULT_MODEL = SHARED_VERTEX_DEFAULT_MODEL;
 export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
+// OpenAdapter (OpenAI-compatible gateway) default model
+export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
 
 export const OPENROUTER_MODELS: string[] = [
   'anthropic/claude-haiku-4.5:nitro',
@@ -127,6 +130,19 @@ export const KILOCODE_MODELS: string[] = [
   'openai/gpt-5.2',
   'moonshotai/kimi-k2.5',
   'kilo-auto/balanced',
+];
+
+export const OPENADAPTER_MODELS: string[] = [
+  'deepseek/deepseek-r1',
+  'deepseek/deepseek-v3',
+  'qwen/qwen3-coder',
+  'qwen/qwen3.5',
+  'mistralai/mistral-large',
+  'mistralai/devstral',
+  'moonshotai/kimi-k2.5',
+  'minimax/minimax-m2.5',
+  'meta-llama/llama-4-maverick',
+  'z-ai/glm-5',
 ];
 
 const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
@@ -287,6 +303,14 @@ export const PROVIDERS: AIProviderConfig[] = [
     models: makeRoleModels(KILOCODE_DEFAULT_MODEL, 'Kilo Code', 'kilocode', 128_000),
   },
   {
+    type: 'openadapter',
+    name: 'OpenAdapter',
+    description: 'OpenAdapter — 69+ open-source models through one OpenAI-compatible gateway',
+    envKey: 'VITE_OPENADAPTER_API_KEY',
+    envUrl: 'https://openadapter.dev',
+    models: makeRoleModels(OPENADAPTER_DEFAULT_MODEL, 'OpenAdapter', 'openadapter', 131_072),
+  },
+  {
     type: 'azure',
     name: 'Azure OpenAI',
     description: 'Experimental private connector for direct Azure OpenAI and Azure AI Foundry deployments',
@@ -393,6 +417,10 @@ export const setBedrockModelName = bedrockModel.set;
 const vertexModel = createModelNameStorage('vertex_model', VERTEX_DEFAULT_MODEL);
 export const setVertexModelName = vertexModel.set;
 
+const openAdapterModel = createModelNameStorage('openadapter_model', OPENADAPTER_DEFAULT_MODEL);
+export const getOpenAdapterModelName = openAdapterModel.get;
+export const setOpenAdapterModelName = openAdapterModel.set;
+
 const kiloCodeModel = createModelNameStorage(
   'kilocode_model',
   KILOCODE_DEFAULT_MODEL,
@@ -413,6 +441,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   bedrock: getBedrockModelName,
   vertex: getVertexModelName,
   kilocode: getKiloCodeModelName,
+  openadapter: getOpenAdapterModelName,
 };
 
 /** Return the current runtime model name for a provider, or undefined if unknown. */
@@ -454,7 +483,8 @@ export type PreferredProvider =
   | 'azure'
   | 'bedrock'
   | 'vertex'
-  | 'kilocode';
+  | 'kilocode'
+  | 'openadapter';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
@@ -468,6 +498,7 @@ export function getPreferredProvider(): PreferredProvider | null {
     || stored === 'bedrock'
     || stored === 'vertex'
     || stored === 'kilocode'
+    || stored === 'openadapter'
   ) return stored;
   return null;
 }
@@ -499,6 +530,7 @@ export function getLastUsedProvider(): PreferredProvider | null {
     || stored === 'bedrock'
     || stored === 'vertex'
     || stored === 'kilocode'
+    || stored === 'openadapter'
   ) return stored;
   return null;
 }

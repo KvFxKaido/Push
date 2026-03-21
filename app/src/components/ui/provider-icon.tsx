@@ -15,6 +15,7 @@ const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
   bedrock: 'https://models.dev/logos/aws.svg',
   vertex: 'https://models.dev/logos/google.svg',
   kilocode: 'https://kilo.ai/favicon.ico',
+  openadapter: 'https://openadapter.dev/favicon.ico',
   demo: demoIcon,
 };
 
@@ -28,6 +29,7 @@ const PROVIDER_ALT: Record<AIProviderType, string> = {
   bedrock: 'AWS Bedrock logo',
   vertex: 'Google Vertex logo',
   kilocode: 'Kilo Code logo',
+  openadapter: 'OpenAdapter logo',
   demo: 'Push logo',
 };
 
@@ -41,6 +43,7 @@ const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
   bedrock: 'B',
   vertex: 'V',
   kilocode: 'K',
+  openadapter: 'OA',
   demo: 'P',
 };
 

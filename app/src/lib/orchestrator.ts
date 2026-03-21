@@ -14,6 +14,7 @@ import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
+import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import {
   getAzureBaseUrl,
   getAzureKey,
@@ -40,6 +41,7 @@ import {
   getNvidiaModelName,
   getBlackboxModelName,
   getKiloCodeModelName,
+  getOpenAdapterModelName,
   PROVIDER_URLS,
   ZEN_GO_URLS,
   getZenGoMode,
@@ -1020,7 +1022,7 @@ interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'azure' | 'bedrock' | 'vertex';
+  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'openadapter' | 'azure' | 'bedrock' | 'vertex';
   /** Override the fetch URL (e.g., for providers with alternate endpoints) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -1605,6 +1607,20 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       providerType: 'kilocode',
     }),
   },
+  openadapter: {
+    getKey: getOpenAdapterKey,
+    buildConfig: (apiKey, modelOverride) => ({
+      name: 'OpenAdapter',
+      apiUrl: PROVIDER_URLS.openadapter.chat,
+      apiKey,
+      model: modelOverride || getOpenAdapterModelName(),
+      ...STANDARD_TIMEOUTS,
+      errorMessages: buildErrorMessages('OpenAdapter'),
+      parseError: (p, f) => parseProviderError(p, f, true),
+      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+      providerType: 'openadapter',
+    }),
+  },
   azure: {
     getKey: getAzureKey,
     buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
@@ -1696,6 +1712,7 @@ export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen'
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
 export const streamBlackboxChat: StreamChatFn = (...args) => streamProviderChat('blackbox', ...args);
 export const streamKilocodeChat: StreamChatFn = (...args) => streamProviderChat('kilocode', ...args);
+export const streamOpenAdapterChat: StreamChatFn = (...args) => streamProviderChat('openadapter', ...args);
 export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
 export const streamBedrockChat: StreamChatFn = (...args) => streamProviderChat('bedrock', ...args);
 export const streamVertexChat: StreamChatFn = (...args) => streamProviderChat('vertex', ...args);
@@ -1712,6 +1729,7 @@ export type ActiveProvider =
   | 'blackbox'
   | 'azure'
   | 'kilocode'
+  | 'openadapter'
   | 'bedrock'
   | 'vertex'
   | 'demo';
@@ -1723,6 +1741,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   nvidia: () => Boolean(getNvidiaKey()),
   blackbox: () => Boolean(getBlackboxKey()),
   kilocode: () => Boolean(getKilocodeKey()),
+  openadapter: () => Boolean(getOpenAdapterKey()),
   azure: () => Boolean(getAzureKey() && normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok && getAzureModelName()),
   bedrock: () => Boolean(getBedrockKey() && normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok && getBedrockModelName()),
   vertex: () => {
@@ -1739,7 +1758,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
  * Neutral ordering — no provider is favoured.
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama', 'openrouter', 'zen', 'nvidia', 'blackbox', 'kilocode',
+  'ollama', 'openrouter', 'zen', 'nvidia', 'blackbox', 'kilocode', 'openadapter',
 ];
 
 /**
@@ -1779,6 +1798,7 @@ export function getProviderStreamFn(provider: ActiveProvider) {
     case 'nvidia': return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
     case 'blackbox': return { providerType: 'blackbox' as const, streamFn: streamBlackboxChat };
     case 'kilocode': return { providerType: 'kilocode' as const, streamFn: streamKilocodeChat };
+    case 'openadapter': return { providerType: 'openadapter' as const, streamFn: streamOpenAdapterChat };
     case 'azure': return { providerType: 'azure' as const, streamFn: streamAzureChat };
     case 'bedrock': return { providerType: 'bedrock' as const, streamFn: streamBedrockChat };
     case 'vertex': return { providerType: 'vertex' as const, streamFn: streamVertexChat };

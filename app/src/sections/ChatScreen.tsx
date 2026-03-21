@@ -196,6 +196,7 @@ interface ChatScreenProps {
   handleSelectNvidiaModelFromChat: (model: string) => void;
   handleSelectBlackboxModelFromChat: (model: string) => void;
   handleSelectKilocodeModelFromChat: (model: string) => void;
+  handleSelectOpenAdapterModelFromChat: (model: string) => void;
   handleSelectAzureModelFromChat: (model: string) => void;
   handleSelectBedrockModelFromChat: (model: string) => void;
   handleSelectVertexModelFromChat: (model: string) => void;
@@ -245,6 +246,7 @@ const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
   azure: 'Azure OpenAI',
   bedrock: 'AWS Bedrock',
   kilocode: 'Kilo Code',
+  openadapter: 'OpenAdapter',
   vertex: 'Google Vertex',
   demo: 'Demo',
 };
@@ -327,6 +329,7 @@ export function ChatScreen(props: ChatScreenProps) {
     handleSelectNvidiaModelFromChat,
     handleSelectBlackboxModelFromChat,
     handleSelectKilocodeModelFromChat,
+    handleSelectOpenAdapterModelFromChat,
     handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat,
     handleSelectVertexModelFromChat,
@@ -461,6 +464,7 @@ export function ChatScreen(props: ChatScreenProps) {
     if (selectedComposerProvider === 'nvidia') return selectedChatModels.nvidia;
     if (selectedComposerProvider === 'blackbox') return selectedChatModels.blackbox;
     if (selectedComposerProvider === 'kilocode') return selectedChatModels.kilocode;
+    if (selectedComposerProvider === 'openadapter') return selectedChatModels.openadapter;
     if (selectedComposerProvider === 'azure') return selectedChatModels.azure;
     if (selectedComposerProvider === 'bedrock') return selectedChatModels.bedrock;
     if (selectedComposerProvider === 'vertex') return selectedChatModels.vertex;
@@ -721,6 +725,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const isNvidiaModelLocked = isModelLocked && lockedProvider === 'nvidia';
   const isBlackboxModelLocked = isModelLocked && lockedProvider === 'blackbox';
   const isKilocodeModelLocked = isModelLocked && lockedProvider === 'kilocode';
+  const isOpenAdapterModelLocked = isModelLocked && lockedProvider === 'openadapter';
   const isAzureModelLocked = isModelLocked && lockedProvider === 'azure';
   const isBedrockModelLocked = isModelLocked && lockedProvider === 'bedrock';
   const isVertexModelLocked = isModelLocked && lockedProvider === 'vertex';
@@ -876,6 +881,21 @@ export function ChatScreen(props: ChatScreenProps) {
         setKeyInput: catalog.kilocode.setKeyInput,
         setKey: catalog.kilocode.setKey,
         clearKey: catalog.kilocode.clearKey,
+      },
+      openadapter: {
+        hasKey: catalog.openadapter.hasKey,
+        model: catalog.openadapter.model,
+        setModel: catalog.openadapter.setModel,
+        modelOptions: catalog.openAdapterModelOptions,
+        modelsLoading: catalog.openAdapterModels.loading,
+        modelsError: catalog.openAdapterModels.error,
+        modelsUpdatedAt: catalog.openAdapterModels.updatedAt,
+        isModelLocked: isOpenAdapterModelLocked,
+        refreshModels: catalog.refreshOpenAdapterModels,
+        keyInput: catalog.openadapter.keyInput,
+        setKeyInput: catalog.openadapter.setKeyInput,
+        setKey: catalog.openadapter.setKey,
+        clearKey: catalog.openadapter.clearKey,
       },
     },
     experimentalProviders: {
@@ -1300,6 +1320,14 @@ export function ChatScreen(props: ChatScreenProps) {
           isKilocodeModelLocked,
           refreshKilocodeModels: catalog.refreshKilocodeModels,
           onSelectKilocodeModel: handleSelectKilocodeModelFromChat,
+          openadapterModel: selectedChatModels.openadapter,
+          openadapterModelOptions: catalog.openAdapterModelOptions,
+          openadapterModelsLoading: catalog.openAdapterModels.loading,
+          openadapterModelsError: catalog.openAdapterModels.error,
+          openadapterModelsUpdatedAt: catalog.openAdapterModels.updatedAt,
+          isOpenAdapterModelLocked,
+          refreshOpenAdapterModels: catalog.refreshOpenAdapterModels,
+          onSelectOpenAdapterModel: handleSelectOpenAdapterModelFromChat,
           azureModel: selectedChatModels.azure,
           azureDeployments: catalog.azure.deployments,
           azureActiveDeploymentId: catalog.azure.activeDeploymentId,
