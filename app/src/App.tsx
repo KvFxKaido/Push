@@ -22,6 +22,7 @@ import {
 import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
+import { getApprovalMode, setApprovalMode, type ApprovalMode } from '@/lib/approval-mode';
 import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import type {
@@ -476,6 +477,7 @@ function App() {
   const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
   const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() => getSandboxStartMode());
   const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
+  const [approvalMode, setApprovalModeState] = useState<ApprovalMode>(() => getApprovalMode());
 
   // --- Sandbox state for settings display ---
   const [sandboxState, setSandboxState] = useState<SandboxStateCardData | null>(null);
@@ -506,6 +508,11 @@ function App() {
   const updateContextMode = useCallback((mode: ContextMode) => {
     setContextMode(mode);
     setContextModeState(mode);
+  }, []);
+
+  const updateApprovalMode = useCallback((mode: ApprovalMode) => {
+    setApprovalMode(mode);
+    setApprovalModeState(mode);
   }, []);
 
   const updateSandboxStartMode = useCallback((mode: SandboxStartMode) => {
@@ -1071,6 +1078,8 @@ function App() {
       sandboxState={sandboxState}
       sandboxStateLoading={sandboxStateLoading}
       fetchSandboxState={fetchSandboxState}
+      approvalMode={approvalMode}
+      updateApprovalMode={updateApprovalMode}
       contextMode={contextMode}
       updateContextMode={updateContextMode}
       sandboxStartMode={sandboxStartMode}

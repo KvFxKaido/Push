@@ -50,6 +50,7 @@ import {
   redactSensitiveText,
 } from './sensitive-data-guard';
 import { getActiveGitHubToken } from './github-auth';
+import { getApprovalMode } from './approval-mode';
 import {
   fileVersionKey,
   getByKey as versionCacheGet,
@@ -1231,22 +1232,26 @@ export async function executeSandboxToolCall(
     switch (call.tool) {
       case 'sandbox_exec': {
         // Git guard: block direct git mutations unless user explicitly approved
+        // In full-auto mode, allow direct git — the system has granted blanket permission
         const blockedGitOp = detectBlockedGitCommand(call.args.command);
-        if (blockedGitOp && !call.args.allowDirectGit) {
+        const currentApprovalMode = getApprovalMode();
+        if (blockedGitOp && !call.args.allowDirectGit && currentApprovalMode !== 'full-auto') {
           const guardErr: StructuredToolError = {
             type: 'GIT_GUARD_BLOCKED',
             retryable: false,
             message: `Direct "${blockedGitOp}" is blocked`,
             detail: 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.',
           };
+          const guidance = currentApprovalMode === 'autonomous'
+            ? `Direct "${blockedGitOp}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`
+            : [
+                `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
+                ``,
+                `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
+                `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
+              ].join('\n');
           return {
-            text: formatStructuredError(guardErr, [
-              `[Tool Blocked — sandbox_exec]`,
-              `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
-              ``,
-              `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
-              `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
-            ].join('\n')),
+            text: formatStructuredError(guardErr, `[Tool Blocked — sandbox_exec]\n${guidance}`),
             structuredError: guardErr,
           };
         }

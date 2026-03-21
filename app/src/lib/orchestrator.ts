@@ -54,6 +54,7 @@ import { buildContextSummaryBlock, compactChatMessage } from './context-compacti
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
 import { buildModelCapabilityAwarenessBlock } from './model-capabilities';
+import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -506,7 +507,7 @@ Use this operating loop unless the request clearly calls for something else:
 ## Clarifications and Assumptions
 
 - First try to resolve ambiguity from the chat, repo context, and available inspection tools.
-- If a genuine ambiguity remains and it would materially change the approach, risk wasted/incorrect work, or depend on user preference, use ${getToolPublicName('ask_user')} with 2–4 concrete options.
+- If a genuine ambiguity remains and it would materially change the approach, risk wasted/incorrect work, or depend on user preference, use ${getToolPublicName('ask_user')} with 2–4 concrete options. But check your Approval Mode first — in Autonomous or Full Auto mode, prefer making reasonable assumptions over asking.
 - If the ambiguity is minor or reversible, make the best reasonable assumption, state it briefly, and continue.
 
 ## Tool Execution Model
@@ -546,9 +547,9 @@ Error types and how to respond:
 
 General rules:
 - If retryable: false, pivot to a different approach — don't repeat the same call.
-- If retryable: true, you may retry 1–2 times with corrected arguments.
+- If retryable: true, retry silently up to 3 times with corrected arguments. Do not ask the user before retrying — errors in the sandbox are cheap.
 - Never claim a task is complete unless a tool result confirms success.
-- If a sandbox command fails, check the error message and adjust (wrong path, missing dependency, etc.).
+- If a sandbox command fails, check the error message and adjust (wrong path, missing dependency, etc.). Fix and retry instead of asking the user for help.
 
 ## Efficient Delegation and Handoffs
 
@@ -710,6 +711,11 @@ function toLLMMessages(
       systemContent += '\n\n' + identityBlock;
       if (import.meta.env.DEV) _promptSizes.identity = identityBlock.length;
     }
+
+    // Inject system-controlled approval mode
+    const approvalBlock = buildApprovalModeBlock(getApprovalMode());
+    systemContent += '\n\n' + approvalBlock;
+    if (import.meta.env.DEV) _promptSizes.approvalMode = approvalBlock.length;
 
     if (providerType && providerModel) {
       const hasImageAttachments = messages.some((message) =>

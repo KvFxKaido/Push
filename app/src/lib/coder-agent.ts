@@ -26,6 +26,7 @@ import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
 import { buildContextSummaryBlock } from './context-compaction';
 import { getToolPublicName } from './tool-registry';
 import { buildCoderDelegationBrief } from './role-context';
+import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 
 const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — resets on each token)
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
@@ -664,7 +665,10 @@ async function fetchSandboxStateSummary(sandboxId: string): Promise<string> {
 
 function buildCoderSystemPrompt(): string {
   const sandboxBlock = getSandboxToolProtocol();
+  const approvalBlock = buildApprovalModeBlock(getApprovalMode());
   return `You are the Coder agent for Push, a mobile AI coding assistant. Your job is to implement coding tasks.
+
+${approvalBlock}
 
 Rules:
 - You receive a task description and work autonomously to complete it
