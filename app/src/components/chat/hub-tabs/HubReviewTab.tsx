@@ -16,6 +16,7 @@ import {
   BEDROCK_DEFAULT_MODEL,
   VERTEX_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
+  OPENADAPTER_DEFAULT_MODEL,
   type PreferredProvider,
   formatModelDisplayName,
 } from '@/lib/providers';
@@ -102,6 +103,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   bedrock: 'push:review:model:bedrock',
   vertex: 'push:review:model:vertex',
   kilocode: 'push:review:model:kilocode',
+  openadapter: 'push:review:model:openadapter',
 };
 
 const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
@@ -114,6 +116,7 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   bedrock: BEDROCK_DEFAULT_MODEL,
   vertex: VERTEX_DEFAULT_MODEL,
   kilocode: KILOCODE_DEFAULT_MODEL,
+  openadapter: OPENADAPTER_DEFAULT_MODEL,
 };
 
 function readStoredReviewProvider(): PreferredProvider | null {
@@ -127,6 +130,8 @@ function readStoredReviewProvider(): PreferredProvider | null {
     || stored === 'azure'
     || stored === 'bedrock'
     || stored === 'vertex'
+    || stored === 'kilocode'
+    || stored === 'openadapter'
   ) {
     return stored;
   }
@@ -143,6 +148,8 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     || value === 'azure'
     || value === 'bedrock'
     || value === 'vertex'
+    || value === 'kilocode'
+    || value === 'openadapter'
   );
 }
 
@@ -154,6 +161,7 @@ function readStoredReviewModels(): Record<PreferredProvider, string> {
     nvidia: safeStorageGet(REVIEW_MODEL_KEYS.nvidia) || REVIEW_DEFAULT_MODELS.nvidia,
     blackbox: safeStorageGet(REVIEW_MODEL_KEYS.blackbox) || REVIEW_DEFAULT_MODELS.blackbox,
     kilocode: safeStorageGet(REVIEW_MODEL_KEYS.kilocode) || REVIEW_DEFAULT_MODELS.kilocode,
+    openadapter: safeStorageGet(REVIEW_MODEL_KEYS.openadapter) || REVIEW_DEFAULT_MODELS.openadapter,
     azure: safeStorageGet(REVIEW_MODEL_KEYS.azure) || REVIEW_DEFAULT_MODELS.azure,
     bedrock: safeStorageGet(REVIEW_MODEL_KEYS.bedrock) || REVIEW_DEFAULT_MODELS.bedrock,
     vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || REVIEW_DEFAULT_MODELS.vertex,

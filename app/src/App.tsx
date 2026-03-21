@@ -111,6 +111,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   bedrock: '',
   vertex: '',
   kilocode: '',
+  openadapter: '',
 };
 
 function readStoredChatModelMemory(): Record<PreferredProvider, string> {
@@ -129,6 +130,7 @@ function readStoredChatModelMemory(): Record<PreferredProvider, string> {
       bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
       vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
       kilocode: typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
+      openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
     };
   } catch {
     return { ...EMPTY_CHAT_MODEL_MEMORY };
@@ -175,6 +177,7 @@ function App() {
     nvidia: catalog.nvidia.model,
     blackbox: catalog.blackbox.model,
     kilocode: catalog.kilocode.model,
+    openadapter: catalog.openadapter.model,
     azure: catalog.azure.model,
     bedrock: catalog.bedrock.model,
     vertex: catalog.vertex.model,
@@ -183,6 +186,7 @@ function App() {
     catalog.bedrock.model,
     catalog.blackbox.model,
     catalog.kilocode.model,
+    catalog.openadapter.model,
     catalog.nvidia.model,
     catalog.ollama.model,
     catalog.openRouter.model,
@@ -240,6 +244,7 @@ function App() {
           || rememberedChatModels.kilocode
           || defaultChatModels.kilocode,
       ),
+      openadapter: draft?.models?.openadapter?.trim() || rememberedChatModels.openadapter || defaultChatModels.openadapter,
     };
 
     let provider = draft?.provider ?? defaultChatProvider;
