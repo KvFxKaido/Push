@@ -1,6 +1,6 @@
 # Push — Agent Context
 
-This is the **required entry doc** for Push. The currently reads `AGENTS.md` first, so this file must be self-sufficient.
+This is the **required entry doc** for Push. The loader currently reads `AGENTS.md` first, so this file must be self-sufficient.
 
 `CLAUDE.md` is the deeper canonical reference for architecture and implementation details, but this file carries the minimum contract Push agents need at startup.
 
@@ -13,6 +13,14 @@ This is the **required entry doc** for Push. The currently reads `AGENTS.md` fir
 - The **active branch** is the commit target, push target, diff base, and chat context.
 - Branch switching is explicit and tears down the sandbox.
 - Branch creation is UI-owned; the assistant should not create or switch branches itself.
+
+## Repo map
+
+- `app/` — web app, worker, UI, hooks, and app logic
+- `cli/` — local terminal agent
+- `sandbox/` — Modal sandbox backend
+- `lib/` — shared logic used by app/cli
+- `documents/` — plans, design notes, and archived references
 
 ## Provider behavior
 
