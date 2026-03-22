@@ -1236,11 +1236,14 @@ export async function executeSandboxToolCall(
         const blockedGitOp = detectBlockedGitCommand(call.args.command);
         const currentApprovalMode = getApprovalMode();
         if (blockedGitOp && !call.args.allowDirectGit && currentApprovalMode !== 'full-auto') {
+          const guardDetail = currentApprovalMode === 'autonomous'
+            ? 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry with allowDirectGit: true.'
+            : 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.';
           const guardErr: StructuredToolError = {
             type: 'GIT_GUARD_BLOCKED',
             retryable: false,
             message: `Direct "${blockedGitOp}" is blocked`,
-            detail: 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.',
+            detail: guardDetail,
           };
           const guidance = currentApprovalMode === 'autonomous'
             ? `Direct "${blockedGitOp}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`

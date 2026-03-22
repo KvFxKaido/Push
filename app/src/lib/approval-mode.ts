@@ -6,31 +6,25 @@
  *
  * - supervised: Model asks before mutating actions (default — current behavior)
  * - autonomous: Model executes freely, only asks on genuine ambiguity
- * - full-auto:  Execute everything, errors auto-retry, no ask_user unless blocked
+ * - full-auto:  Execute everything, errors auto-retry, never use ask_user
  */
+
+import { safeStorageGet, safeStorageSet } from './safe-storage';
 
 export type ApprovalMode = 'supervised' | 'autonomous' | 'full-auto';
 
 const APPROVAL_MODE_STORAGE_KEY = 'push_approval_mode';
 
 export function getApprovalMode(): ApprovalMode {
-  try {
-    const stored = localStorage.getItem(APPROVAL_MODE_STORAGE_KEY);
-    if (stored === 'supervised' || stored === 'autonomous' || stored === 'full-auto') {
-      return stored;
-    }
-  } catch {
-    // ignore storage errors
+  const stored = safeStorageGet(APPROVAL_MODE_STORAGE_KEY);
+  if (stored === 'supervised' || stored === 'autonomous' || stored === 'full-auto') {
+    return stored;
   }
   return 'supervised';
 }
 
 export function setApprovalMode(mode: ApprovalMode): void {
-  try {
-    localStorage.setItem(APPROVAL_MODE_STORAGE_KEY, mode);
-  } catch {
-    // ignore storage errors
-  }
+  safeStorageSet(APPROVAL_MODE_STORAGE_KEY, mode);
 }
 
 // ---------------------------------------------------------------------------
