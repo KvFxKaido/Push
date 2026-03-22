@@ -47,13 +47,8 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
         truncated: false,
         version: 'v1',
       })
-      // If the delegated edit does a second read instead of using prefetch, this
-      // would fail the flow. The expected behavior is exactly one read.
-      .mockResolvedValueOnce({
-        content: '',
-        truncated: false,
-        error: 'permission denied',
-      } as unknown as sandboxClient.FileReadResult);
+      // Post-write verification read-back (non-critical).
+      .mockResolvedValueOnce({ content: 'c', truncated: false, version: 'v2' });
 
     vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
       ok: true,
@@ -87,7 +82,8 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
     const result = await executeAnyToolCall(detected, 'KvFxKaido/Push', 'sb-123');
 
     expect(result.text).toContain('Edited /workspace/src/app.ts');
-    expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(1);
+    // 2 calls: initial search_replace read + post-write verification
+    expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
       'sb-123',
       path,

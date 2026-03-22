@@ -1939,15 +1939,47 @@ export async function executeSandboxToolCall(
           return { text: formatStructuredError(wErr, `[Tool Error — sandbox_edit_file]\n${editWriteResult.error || 'Write failed'}`), structuredError: wErr };
         }
 
-        // Update version cache
+        // Update version cache and clear any stale prefetch for this path
         if (typeof editWriteResult.new_version === 'string' && editWriteResult.new_version) {
           versionCacheSet(editCacheKey, editWriteResult.new_version);
         }
+        // Ensure any prefetch cache entry for this file is cleared after write
+        // (normally consumed by takePrefetchedEditFile, but clear defensively to
+        // prevent stale reads if the same file is re-edited without a fresh read)
+        takePrefetchedEditFile(sandboxId, path);
         fileLedger.recordCreation(path);
         fileLedger.recordMutation(path, 'agent');
         symbolLedger.invalidate(path);
 
-        // 4. Get the diff hunks for this file
+        // 4. Post-write verification: read back and compare version to confirm
+        // the write actually persisted on disk. This catches cases where the
+        // sandbox reports ok but file state didn't change (e.g. stale container).
+        let writeVerified = true;
+        let verifyWarning: string | null = null;
+        try {
+          const verifyRead = await readFromSandbox(sandboxId, path, 1, 1) as FileReadResult & { error?: string };
+          if (verifyRead.error) {
+            writeVerified = false;
+            verifyWarning = `Post-write read-back failed: ${verifyRead.error}. The edit may not have persisted.`;
+          } else if (
+            editWriteResult.new_version
+            && typeof verifyRead.version === 'string'
+            && verifyRead.version !== editWriteResult.new_version
+          ) {
+            writeVerified = false;
+            verifyWarning = `Post-write version mismatch: expected ${editWriteResult.new_version}, got ${verifyRead.version}. The file may have been overwritten or the edit did not persist.`;
+            // Update caches with the actual version
+            versionCacheSet(editCacheKey, verifyRead.version);
+            fileLedger.markStale(path);
+          } else {
+            // Write confirmed — update workspace revision from the verify read
+            syncReadSnapshot(sandboxId, path, verifyRead);
+          }
+        } catch {
+          // Non-critical — don't fail the edit for a verification error
+        }
+
+        // 5. Get the diff hunks for this file
         const escapedPath = path.replace(/'/g, "'\\''");
         const diffResult = await execInSandbox(sandboxId, `cd /workspace && git diff -- '${escapedPath}'`);
         const diffHunks = diffResult.exitCode === 0 ? diffResult.stdout.trim() : '';
@@ -1958,6 +1990,7 @@ export async function executeSandboxToolCall(
           `Before version: ${beforeVersion}`,
           `After version: ${editWriteResult.new_version || 'unknown'}`,
           `Bytes written: ${editWriteResult.bytes_written ?? editResult.content.length}`,
+          ...(writeVerified ? [] : [`WARNING: ${verifyWarning}`]),
         ];
         if (symbolicWarning) {
           editLines.push(`Symbol guard warning: ${symbolicWarning}`);
@@ -2108,9 +2141,108 @@ export async function executeSandboxToolCall(
           syncReadSnapshot(sandboxId, path, hydrated);
         }
 
-        // Find lines containing the search string.
+        // Find the search string in the file content.
+        // Support multi-line search strings (containing \n) by searching the
+        // full content first, then falling back to per-line search for
+        // single-line strings.
         const rawLines = hydrated.content.split('\n');
         const visibleLines = hydrated.content.endsWith('\n') ? rawLines.slice(0, -1) : rawLines;
+        const isMultiLineSearch = search.includes('\n');
+
+        // --- Multi-line search path ---
+        // Search across the full content string rather than line-by-line.
+        // This handles template strings, multi-line expressions, etc.
+        if (isMultiLineSearch) {
+          const visibleContent = visibleLines.join('\n');
+          const firstIdx = visibleContent.indexOf(search);
+          if (firstIdx === -1) {
+            // Try Unicode normalization fallback
+            const normalizedSearch = normalizeUnicode(search);
+            const normalizedContent = normalizeUnicode(visibleContent);
+            const fuzzyIdx = normalizedContent.indexOf(normalizedSearch);
+            if (fuzzyIdx !== -1) {
+              const fuzzyLineNo = visibleContent.slice(0, fuzzyIdx).split('\n').length;
+              const err: StructuredToolError = {
+                type: 'EDIT_CONTENT_NOT_FOUND',
+                retryable: true,
+                message: `Multi-line search string has encoding mismatches. Found a match after Unicode normalization near line ${fuzzyLineNo}.`,
+                detail: `Re-read the file with sandbox_read_file and copy the exact characters.`,
+              };
+              return {
+                text: formatStructuredError(err, [
+                  `[Tool Error — sandbox_search_replace]`,
+                  `Encoding mismatch in multi-line search string for ${path}.`,
+                  `A match was found near line ${fuzzyLineNo} after Unicode normalization.`,
+                  `Re-read the file with sandbox_read_file and use the exact characters from the output.`,
+                ].join('\n')),
+                structuredError: err,
+              };
+            }
+            const err: StructuredToolError = { type: 'EDIT_CONTENT_NOT_FOUND', retryable: false, message: `Multi-line search string not found in ${path}.`, detail: `"${search.slice(0, 120)}" matched nothing.` };
+            return {
+              text: formatStructuredError(err, [
+                `[Tool Error — sandbox_search_replace]`,
+                `Multi-line search string not found in ${path}.`,
+                `"${search.slice(0, 120)}" matched nothing.`,
+                `Use sandbox_read_file to verify the exact content, or use sandbox_edit_range for line-range replacements.`,
+              ].join('\n')),
+              structuredError: err,
+            };
+          }
+
+          // Check for ambiguous matches
+          const secondIdx = visibleContent.indexOf(search, firstIdx + 1);
+          if (secondIdx !== -1) {
+            const firstLineNo = visibleContent.slice(0, firstIdx).split('\n').length;
+            const secondLineNo = visibleContent.slice(0, secondIdx).split('\n').length;
+            const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Ambiguous: multi-line search matches at least 2 locations in ${path} (lines ${firstLineNo} and ${secondLineNo}).`, detail: `Add more surrounding context to make the search unique.` };
+            return {
+              text: formatStructuredError(err, [
+                `[Tool Error — sandbox_search_replace]`,
+                `Ambiguous: multi-line search matches at least 2 locations in ${path}.`,
+                `First match near line ${firstLineNo}, second near line ${secondLineNo}.`,
+                `Add more surrounding context to make the search unique.`,
+              ].join('\n')),
+              structuredError: err,
+            };
+          }
+
+          // Unique multi-line match found — compute the line range and build ops
+          const matchStartLine = visibleContent.slice(0, firstIdx).split('\n').length; // 1-indexed
+          const searchLines = search.split('\n');
+          const matchEndLine = matchStartLine + searchLines.length - 1;
+
+          // Build replacement via edit_range delegation
+          const replacementContent = replace;
+
+          const { ops } = await buildRangeReplaceHashlineOps(hydrated.content, matchStartLine, matchEndLine, replacementContent);
+
+          // Prime the edit guard/read path
+          const hydratedLineCount = hydrated.content.split('\n').length;
+          const hydratedSymbols = extractSignaturesWithLines(hydrated.content);
+          fileLedger.recordRead(path, {
+            truncated: hydrated.truncated,
+            totalLines: hydratedLineCount,
+            symbols: hydratedSymbols,
+          });
+          syncReadSnapshot(sandboxId, path, hydrated);
+          setPrefetchedEditFile(
+            sandboxId,
+            path,
+            hydrated.content,
+            typeof hydrated.version === 'string' ? hydrated.version : undefined,
+            typeof hydrated.workspace_revision === 'number' ? hydrated.workspace_revision : undefined,
+            hydrated.truncated,
+          );
+
+          return executeSandboxToolCall(
+            { tool: 'sandbox_edit_file', args: { path, edits: ops, expected_version: expected_version ?? hydrated.version ?? undefined } },
+            sandboxId,
+            options,
+          );
+        }
+
+        // --- Single-line search path (original) ---
         const matchingIndices = visibleLines
           .map((line, i) => line.includes(search) ? i : -1)
           .filter(i => i !== -1);

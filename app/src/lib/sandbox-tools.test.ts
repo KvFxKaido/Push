@@ -1062,6 +1062,10 @@ describe('sandbox_edit_file large file fallback', () => {
 
     const ref = await calculateLineHash('line 1');
 
+    // Post-write verification read-back
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({ content: 'l', truncated: false, version: 'v2' });
+
     const result = await executeSandboxToolCall(
       {
         tool: 'sandbox_edit_file',
@@ -1076,8 +1080,8 @@ describe('sandbox_edit_file large file fallback', () => {
     expect(result.text).toContain('Edited /workspace/demo.txt');
     // Call 2 is the chunk hydration read with line range (cached result reused for edit logic)
     expect(sandboxClient.readFromSandbox).toHaveBeenNthCalledWith(2, 'sb-123', '/workspace/demo.txt', 1, 400);
-    // Verify no duplicate reads — only 2 calls total (guard initial + chunk)
-    expect(sandboxClient.readFromSandbox).toHaveBeenCalledTimes(2);
+    // 3 calls total: guard initial + chunk + post-write verification
+    expect(sandboxClient.readFromSandbox).toHaveBeenCalledTimes(3);
   });
 
   it('blocks sandbox_edit_file when chunk hydration remains truncated', async () => {
@@ -1538,7 +1542,9 @@ describe('sandbox_edit_file symbolic guard', () => {
       // sandbox_edit_file Step 1 read.
       .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' })
       // Auto-retry re-read.
-      .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' });
+      .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' })
+      // Post-write verification read-back.
+      .mockResolvedValueOnce({ content: 'h', truncated: false, version: 'v3' });
     vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v3', bytes_written: 30 });
     vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
 
@@ -1568,7 +1574,8 @@ describe('sandbox_edit_file symbolic guard', () => {
       'header line\nconst value = 3;\n',
       'v2',
     );
-    expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(3);
+    // 4 calls: initial read + edit read + auto-retry re-read + post-write verification
+    expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -2156,12 +2163,8 @@ describe('sandbox_search_replace', () => {
     const fileContent = 'const x = 1;\n';
     vi.mocked(sandboxClient.readFromSandbox)
       .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
-      // If a second read happens, delegated edit would see this error and fail.
-      .mockResolvedValueOnce({
-        content: '',
-        truncated: false,
-        error: 'permission denied',
-      } as unknown as sandboxClient.FileReadResult);
+      // Post-write verification read-back (non-critical, won't block edit).
+      .mockResolvedValueOnce({ content: 'c', truncated: false, version: 'v2' });
     vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 12 });
     vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
 
@@ -2171,7 +2174,8 @@ describe('sandbox_search_replace', () => {
     );
 
     expect(result.text).toContain('Edited /workspace/src/app.ts');
-    expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(1);
+    // 2 calls: initial search_replace read + post-write verification
+    expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
       'sb-123',
       path,
