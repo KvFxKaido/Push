@@ -295,6 +295,17 @@ export function repairToolJson(candidate: string): Record<string, unknown> | nul
 
   if (tryParseToolJson(repaired)) return tryParseToolJson(repaired);
 
+  // 6b. Raw newlines/tabs inside JSON string values — escape them.
+  // Models often emit multi-line content with literal newlines inside
+  // JSON strings (e.g. search/replace content with template literals).
+  // This must run after the initial parse attempt to avoid double-escaping
+  // well-formed JSON.
+  const rawNewlineEscaped = escapeRawNewlinesInJsonStrings(repaired);
+  if (rawNewlineEscaped !== repaired) {
+    if (tryParseToolJson(rawNewlineEscaped)) return tryParseToolJson(rawNewlineEscaped);
+    repaired = rawNewlineEscaped;
+  }
+
   // 7. Auto-close truncated JSON — if braces/brackets are unbalanced,
   //    try appending closing characters. Only safe when the opening looks
   //    like a tool call (has "tool" key pattern).
@@ -333,6 +344,35 @@ function replacePythonLiterals(text: string): string {
       result += 'null'; i += 4; continue;
     }
     result += ch; i++;
+  }
+  return result;
+}
+
+/**
+ * Escape raw (unescaped) newlines, carriage returns, and tabs inside JSON
+ * string values so that JSON.parse succeeds. Walks the string character-by-
+ * character tracking quote/escape state.
+ *
+ * This handles the common LLM pattern of emitting multi-line content with
+ * literal newlines inside JSON strings, e.g.:
+ *   {"tool": "replace", "args": {"search": "line1
+ *   line2", "replace": "fixed"}}
+ */
+function escapeRawNewlinesInJsonStrings(text: string): string {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) { result += ch; escaped = false; continue; }
+    if (ch === '\\' && inString) { result += ch; escaped = true; continue; }
+    if (ch === '"') { inString = !inString; result += ch; continue; }
+    if (inString) {
+      if (ch === '\n') { result += '\\n'; continue; }
+      if (ch === '\r') { result += '\\r'; continue; }
+      if (ch === '\t') { result += '\\t'; continue; }
+    }
+    result += ch;
   }
   return result;
 }
