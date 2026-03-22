@@ -688,7 +688,7 @@ function toLLMMessages(
   hasSandbox?: boolean,
   systemPromptOverride?: string,
   scratchpadContent?: string,
-  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'azure' | 'bedrock' | 'vertex',
+  providerType?: Exclude<ActiveProvider, 'demo'>,
   providerModel?: string,
   onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
   intentHint?: string | null,

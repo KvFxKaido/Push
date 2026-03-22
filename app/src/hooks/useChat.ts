@@ -2199,6 +2199,7 @@ export function useChat(
       .join(', ');
     await sendMessage(
       `CI is failing on ${ciStatus.ref}. Failed checks: ${failedChecks}. Diagnose and fix the failures.`,
+      undefined,
       {
         provider: lockedProvider || undefined,
         model: lockedModel || undefined,
