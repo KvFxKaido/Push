@@ -2197,8 +2197,14 @@ export function useChat(
       .filter((c) => c.conclusion === 'failure')
       .map((c) => c.name)
       .join(', ');
-    await sendMessage(`CI is failing on ${ciStatus.ref}. Failed checks: ${failedChecks}. Diagnose and fix the failures.`);
-  }, [ciStatus, sendMessage]);
+    await sendMessage(
+      `CI is failing on ${ciStatus.ref}. Failed checks: ${failedChecks}. Diagnose and fix the failures.`,
+      {
+        provider: lockedProvider || undefined,
+        model: lockedModel || undefined,
+      },
+    );
+  }, [ciStatus, lockedModel, lockedProvider, sendMessage]);
 
   // --- Card action handler (Phase 4 — commit review + CI) ---
 
