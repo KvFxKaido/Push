@@ -604,8 +604,11 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
  */
 function diagnoseMissingExplorerCall(text: string): ToolCallDiagnosis | null {
   const classification = classifyIntent(text);
-  if (classification === 'discovery') {
-    return {
+  if (classification !== 'discovery') return null;
+  const directIntentPattern = /\b(I\s+(?:should|will|need to|must|have to|want to)|Let\s+me|I'm\s+(?:going to|about to)|should\s+I)\b/i;
+  const quotedPattern = /^\s*(?:feat:|fix:|refactor:|chore:|docs:|test:|The\s|You\s|This\s|Here\s)/im;
+  if (!directIntentPattern.test(text) || quotedPattern.test(text)) return null;
+  return {
       reason: 'natural_language_intent',
       toolName: 'delegate_explorer',
       errorMessage: `Your response describes an investigation or discovery process but you didn't output the \`explorer\` tool call. `
@@ -615,8 +618,6 @@ function diagnoseMissingExplorerCall(text: string): ToolCallDiagnosis | null {
         + '```\n\n'
         + `Do not describe the investigation in prose — start the explorer with a clear objective.`,
     };
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
