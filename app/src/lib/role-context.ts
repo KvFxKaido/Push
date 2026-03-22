@@ -1,3 +1,4 @@
+import { classifyIntent } from './intent-classifier';
 import type {
   AcceptanceCriterion,
   DelegationEnvelope,
@@ -202,4 +203,19 @@ export function buildExplorerDelegationBrief(envelope: ExplorerDelegationEnvelop
     constraints: envelope.constraints,
     files: envelope.files,
   });
+}
+
+
+/**
+ * Builds a system hint for the orchestrator based on the predicted intent.
+ */
+export function buildRequestIntentHint(text: string): string | null {
+  const classification = classifyIntent(text);
+  if (classification === 'discovery') {
+    return 'The user task appears to be discovery-shaped. Prefer the explorer tool first to investigate the codebase before proposing changes.';
+  }
+  if (classification === 'implementation') {
+    return 'The user task appears to be implementation-shaped. Prefer the coder tool for making changes.';
+  }
+  return null;
 }

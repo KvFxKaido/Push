@@ -7,6 +7,8 @@
  * to the correct implementation.
  */
 
+import { classifyIntent } from './intent-classifier';
+
 import type {
   ToolExecutionResult,
   AcceptanceCriterion,
@@ -585,9 +587,35 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
   // cases ("I'll use sandbox_exec...") where the model clearly intended a tool
   // call but emitted prose instead of JSON; return a diagnosis so the caller can
   // inject a correction and retry.
+  // 4. Bias toward discovery intent (Prose describes investigation without tool call)
+  const explorerDiagnosis = diagnoseMissingExplorerCall(text);
+  if (explorerDiagnosis) return explorerDiagnosis;
+
+
   const nlIntent = detectNaturalLanguageToolIntent(text);
   if (nlIntent) return nlIntent;
 
+  return null;
+}
+
+/**
+ * Diagnoses a response that contains prose about wanting to explore or trace
+ * without emitting the explorer tool. Bias toward investigation intent.
+ */
+function diagnoseMissingExplorerCall(text: string): ToolCallDiagnosis | null {
+  const classification = classifyIntent(text);
+  if (classification === 'discovery') {
+    return {
+      reason: 'natural_language_intent',
+      toolName: 'delegate_explorer',
+      errorMessage: `Your response describes an investigation or discovery process but you didn't output the \`explorer\` tool call. `
+        + `To explore the codebase, output ONLY a fenced JSON block like this:\n\n`
+        + '```json\n'
+        + '{"tool": "explorer", "args": {"task": "Trace the auth flow and summarize where session refresh happens", "files": ["src/auth.ts"]}}\n'
+        + '```\n\n'
+        + `Do not describe the investigation in prose — start the explorer with a clear objective.`,
+    };
+  }
   return null;
 }
 

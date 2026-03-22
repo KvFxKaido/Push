@@ -645,6 +645,7 @@ type LLMMessageContent = LLMMessageContentText | LLMMessageContentImage;
 interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | LLMMessageContent[];
+  intentHint?: string | null;
 }
 
 function isNonEmptyContent(content: string | LLMMessageContent[]): boolean {
@@ -690,6 +691,7 @@ function toLLMMessages(
   providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'azure' | 'bedrock' | 'vertex',
   providerModel?: string,
   onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
+  intentHint?: string | null,
 ): LLMMessage[] {
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
@@ -739,6 +741,11 @@ function toLLMMessages(
         if (import.meta.env.DEV) _promptSizes.tools = TOOL_PROTOCOL.length;
       }
     }
+
+
+      if (intentHint) {
+        systemContent += '\n\n' + intentHint;
+      }
 
     // Sandbox tools (always included when a sandbox is active)
     if (hasSandbox) {
