@@ -364,14 +364,14 @@ function escapeRawNewlinesInJsonStrings(text: string): string {
   let escaped = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
+    if (ch === '"' && !escaped) { inString = !inString; result += ch; continue; }
+    if (inString) {
+      if (ch === '\n') { result += escaped ? 'n' : '\\n'; escaped = false; continue; }
+      if (ch === '\r') { result += escaped ? 'r' : '\\r'; escaped = false; continue; }
+      if (ch === '\t') { result += escaped ? 't' : '\\t'; escaped = false; continue; }
+    }
     if (escaped) { result += ch; escaped = false; continue; }
     if (ch === '\\' && inString) { result += ch; escaped = true; continue; }
-    if (ch === '"') { inString = !inString; result += ch; continue; }
-    if (inString) {
-      if (ch === '\n') { result += '\\n'; continue; }
-      if (ch === '\r') { result += '\\r'; continue; }
-      if (ch === '\t') { result += '\\t'; continue; }
-    }
     result += ch;
   }
   return result;

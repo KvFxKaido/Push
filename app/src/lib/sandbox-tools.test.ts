@@ -2158,6 +2158,29 @@ describe('sandbox_search_replace', () => {
     );
   });
 
+  it('treats newline-terminated multiline searches as literal replacements', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'line1\nline2\nline3';
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
+      .mockResolvedValueOnce({ content: 'l', truncated: false, version: 'v2' });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 14 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search_replace', args: { path, search: 'line2\n', replace: 'NEW' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'line1\nNEWline3',
+      'v1',
+    );
+  });
+
   it('reuses prefetched content so delegated edit does not require a second read', async () => {
     const path = '/workspace/src/app.ts';
     const fileContent = 'const x = 1;\n';

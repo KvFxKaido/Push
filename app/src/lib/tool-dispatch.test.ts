@@ -73,6 +73,20 @@ describe('repairToolJson', () => {
     const result = repairToolJson('{"tool": "x", "a": {"b": {"c": {"d": {"e": "');
     expect(result).toBeNull();
   });
+
+  it('repairs a raw newline that lands after a backslash inside a string', () => {
+    const candidate = [
+      '{"tool": "sandbox_search_replace", "args": {"path": "/workspace/src/app.ts", "search": "path\\',
+      'more", "replace": "fixed"}}',
+    ].join('\n');
+    const result = repairToolJson(candidate);
+
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe('sandbox_search_replace');
+    const args = result!.args as Record<string, unknown>;
+    expect(args.search).toBe('path\nmore');
+    expect(args.replace).toBe('fixed');
+  });
 });
 
 // ---------------------------------------------------------------------------
