@@ -472,7 +472,61 @@ export function SettingsSectionContent({
           <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.015))] px-4 py-4 shadow-[0_16px_30px_rgba(0,0,0,0.2)]">
             <p className="text-sm font-medium text-push-fg">Shape how the workspace behaves</p>
             <p className="mt-1 text-xs text-push-fg-dim">
-              Tune long-chat behavior, runtime warm-up, and branch safety without changing your overall flow.
+              Tune approval behavior, long-chat behavior, runtime warm-up, and branch safety without changing your overall flow.
+            </p>
+          </div>
+
+          {/* Approval Mode */}
+          <div className={SECTION_CARD_CLASS}>
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-push-fg">
+                Approval mode
+              </label>
+              <span className="text-xs text-push-fg-secondary">
+                {workspace.approvalMode === 'supervised' ? 'Supervised' : workspace.approvalMode === 'autonomous' ? 'Autonomous' : 'Full auto'}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => workspace.updateApprovalMode('supervised')}
+                className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                  workspace.approvalMode === 'supervised'
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                }`}
+              >
+                Supervised
+              </button>
+              <button
+                type="button"
+                onClick={() => workspace.updateApprovalMode('autonomous')}
+                className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                  workspace.approvalMode === 'autonomous'
+                    ? 'border-sky-500/50 bg-sky-500/10 text-sky-400'
+                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                }`}
+              >
+                Autonomous
+              </button>
+              <button
+                type="button"
+                onClick={() => workspace.updateApprovalMode('full-auto')}
+                className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                  workspace.approvalMode === 'full-auto'
+                    ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
+                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                }`}
+              >
+                Full auto
+              </button>
+            </div>
+            <p className="text-push-xs text-push-fg-secondary">
+              {workspace.approvalMode === 'supervised'
+                ? 'The model asks before mutating actions. Best for careful, step-by-step work.'
+                : workspace.approvalMode === 'autonomous'
+                  ? 'The model acts decisively, only asking when genuinely ambiguous. Faster flow.'
+                  : 'No confirmations, no questions. Errors auto-retry. Maximum speed, sandbox-safe.'}
             </p>
           </div>
 

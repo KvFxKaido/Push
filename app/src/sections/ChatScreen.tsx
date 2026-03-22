@@ -56,6 +56,7 @@ import type {
 } from '@/types';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
+import type { ApprovalMode } from '@/lib/approval-mode';
 import { fetchSandboxDiff } from '@/lib/sandbox-client';
 
 // ---------------------------------------------------------------------------
@@ -212,6 +213,8 @@ interface ChatScreenProps {
   fetchSandboxState: (id: string) => void;
 
   // Settings sheet extra
+  approvalMode: ApprovalMode;
+  updateApprovalMode: (mode: ApprovalMode) => void;
   contextMode: ContextMode;
   updateContextMode: (mode: ContextMode) => void;
   sandboxStartMode: SandboxStartMode;
@@ -339,6 +342,8 @@ export function ChatScreen(props: ChatScreenProps) {
     sandboxState,
     sandboxStateLoading,
     fetchSandboxState,
+    approvalMode,
+    updateApprovalMode,
     contextMode,
     updateContextMode,
     sandboxStartMode,
@@ -988,6 +993,8 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const settingsWorkspace = {
 
+        approvalMode,
+        updateApprovalMode,
         contextMode,
         updateContextMode,
         sandboxStartMode,

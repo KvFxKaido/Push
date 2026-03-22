@@ -12,6 +12,7 @@ import type { AIProviderType, SandboxStateCardData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
+import type { ApprovalMode } from '@/lib/approval-mode';
 import type { RepoOverride } from '@/hooks/useProtectMain';
 import {
   MAX_EXPERIMENTAL_DEPLOYMENTS,
@@ -176,6 +177,8 @@ export interface SettingsTavilyProvider {
 }
 
 export interface SettingsWorkspaceProps {
+  approvalMode: ApprovalMode;
+  updateApprovalMode: (mode: ApprovalMode) => void;
   contextMode: ContextMode;
   updateContextMode: (mode: ContextMode) => void;
   sandboxStartMode: SandboxStartMode;
