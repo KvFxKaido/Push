@@ -67,6 +67,16 @@ describe('buildExplorerSystemPrompt', () => {
     expect(prompt).toContain('name the next actor');
     expect(prompt).toContain('Do NOT call coder, explorer');
     expect(prompt).not.toContain('{"tool": "exec"');
+
+
+  it('includes stronger discovery guidance and bounded stop conditions', () => {
+    const prompt = buildExplorerSystemPrompt();
+
+    expect(prompt).toContain('discovery-shaped');
+    expect(prompt).toContain('rank the most relevant files first');
+    expect(prompt).toContain('relevant files, symbols, and control points');
+    expect(prompt).toContain('broad but bounded investigation');
+  });
     expect(prompt).not.toContain('{"tool": "coder"');
   });
 });
