@@ -209,6 +209,13 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
 
     expect(result).toBeNull();
   });
+
+  it('does not flag commit messages that mention discovery keywords', () => {
+    const result = diagnoseToolCallFailure(
+      'Here is the commit:\n\nfeat: trace the flow of the auth module to understand session refresh\n\nThis improves performance.'
+    );
+    expect(result).toBeNull();
+  });
 });
 
 describe('detectAllToolCalls', () => {
