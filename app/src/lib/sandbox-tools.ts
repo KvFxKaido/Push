@@ -1975,8 +1975,11 @@ export async function executeSandboxToolCall(
             // Write confirmed — update workspace revision from the verify read
             syncReadSnapshot(sandboxId, path, verifyRead);
           }
-        } catch {
-          // Non-critical — don't fail the edit for a verification error
+        } catch (verifyErr) {
+          // Non-critical — don't fail the edit, but flag that verification didn't run
+          writeVerified = false;
+          const msg = verifyErr instanceof Error ? verifyErr.message : String(verifyErr);
+          verifyWarning = `Post-write verification failed: ${msg}. The edit may not have persisted.`;
         }
 
         // 5. Get the diff hunks for this file
@@ -2207,13 +2210,21 @@ export async function executeSandboxToolCall(
             };
           }
 
-          // Unique multi-line match found — compute the line range and build ops
+          // Unique multi-line match found — compute the line range and build ops.
+          // Preserve any text on the first/last matched lines that falls outside
+          // the search match (prefix before match start, suffix after match end)
+          // to avoid data loss when the match doesn't align to line boundaries.
+          const matchEndIdx = firstIdx + search.length;
           const matchStartLine = visibleContent.slice(0, firstIdx).split('\n').length; // 1-indexed
-          const searchLines = search.split('\n');
-          const matchEndLine = matchStartLine + searchLines.length - 1;
+          const matchEndLine = visibleContent.slice(0, matchEndIdx).split('\n').length;
 
-          // Build replacement via edit_range delegation
-          const replacementContent = replace;
+          // Extract prefix (text before match on first matched line) and suffix
+          // (text after match on last matched line).
+          const prefixStartIdx = visibleContent.lastIndexOf('\n', firstIdx - 1) + 1;
+          const prefix = visibleContent.slice(prefixStartIdx, firstIdx);
+          const suffixEndIdx = visibleContent.indexOf('\n', matchEndIdx);
+          const suffix = visibleContent.slice(matchEndIdx, suffixEndIdx === -1 ? undefined : suffixEndIdx);
+          const replacementContent = prefix + replace + suffix;
 
           const { ops } = await buildRangeReplaceHashlineOps(hydrated.content, matchStartLine, matchEndLine, replacementContent);
 
