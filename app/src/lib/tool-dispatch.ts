@@ -1075,7 +1075,7 @@ function detectDelegationTool(text: string): AnyToolCall | null {
 // phrasing patterns and nudges the model to emit proper tool-call JSON.
 
 /** Intent action verbs that signal the model wants to do something NOW. */
-const INTENT_VERBS = `(?:I(?:'ll|\\s+will|\\s+am\\s+going\\s+to)|Let\\s+me|I'm\\s+going\\s+to|Going\\s+to|Now\\s+I(?:'ll|\\s+will))`;
+const INTENT_VERBS = `(?:I(?:'ll|\\s+will|\\s+am\\s+going\\s+to|\\s+should)|Let\\s+me|I'm\\s+going\\s+to|Going\\s+to|Now\\s+I(?:'ll|\\s+will)|First\\s+I(?:'ll|\\s+will|\\s+should))`;
 
 interface NLIntentPattern {
   regex: RegExp;

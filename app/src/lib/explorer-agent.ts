@@ -112,8 +112,11 @@ Open questions:
 Recommended next step:
 
 Keep the report concise, evidence-based, and focused on helping the Orchestrator decide what to do next. Lead with the highest-signal findings, rank the most relevant files first, and include file/symbol/line evidence whenever available.
-In "Recommended next step", name the next actor (answer directly, coder, ask_user, or more investigation) and the concrete next move in one sentence.`;
+In "Recommended next step", name the next actor (answer directly, coder, ask_user, or more investigation) and the concrete next move in one sentence.
+
 If the request is clearly discovery-shaped (for example: where is X, how does Y work, trace the flow of Z, what depends on A, why does B happen), prefer a broad but bounded investigation before concluding. Inspect enough files to cover the main path, but stop once the next actor can proceed without rediscovery.
+`;
+
 
 const EXPLORER_TOOL_PROTOCOL = `
 ## Explorer Tool Protocol

@@ -193,13 +193,14 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
 
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('delegate_explorer');
+    expect(result?.telemetryOnly).toBeUndefined();
+  });
 
   it('detects delegate intent phrased as discovery and tracing work for explorer', () => {
     const result = diagnoseToolCallFailure('First I should delegate this to the explorer to trace the dependency flow and explain why it happens.');
     expect(result?.toolName).toBe('delegate_explorer');
   });
-    expect(result?.telemetryOnly).toBeUndefined();
-  });
+
 
   it('does not flag explanatory prose as tool intent', () => {
     const result = diagnoseToolCallFailure(
@@ -437,6 +438,9 @@ describe('detectAllToolCalls', () => {
     }
     if (detected.extraMutations[0]?.source === 'delegate') {
       expect(detected.extraMutations[0].call.tool).toBe('delegate_explorer');
+    }
+  });
+
 
   it('detects delegate_explorer JSON with trimmed context fields', () => {
     const text = '```json\n{"tool":"delegate_explorer","args":{"task":"  trace the auth flow across files  ","files":[" src/auth.ts "," src/middleware.ts "],"intent":" understand control points ","deliverable":" ranked file list with evidence ","knownContext":[" existing clue ","   "],"constraints":[" read only "," "]}}\n```';
@@ -453,10 +457,7 @@ describe('detectAllToolCalls', () => {
       });
     }
   });
-    }
-  });
 });
-
 describe('diagnoseToolCallFailure arg hints', () => {
   it('includes expected format hint for known tools', () => {
     // A sandbox_exec call with wrong args structure that fails validation
