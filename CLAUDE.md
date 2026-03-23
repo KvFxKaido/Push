@@ -12,7 +12,7 @@ npm run dev
 
 ## Tech Stack
 
-- React 19 + TypeScript 5.9 + Vite 7
+- React 19 + TypeScript 6 + Vite 7
 - Tailwind CSS 3 + shadcn/ui (Radix primitives)
 - GitHub REST API for repo operations
 - Multi-backend AI with built-ins plus opt-in private connectors
