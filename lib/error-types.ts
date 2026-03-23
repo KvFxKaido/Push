@@ -20,6 +20,7 @@ export type ToolErrorType =
   | 'STALE_FILE'
   | 'EDIT_GUARD_BLOCKED'
   | 'WRITE_FAILED'
+  | 'INVALID_ARGUMENT'
   | 'UNKNOWN';
 
 /** Structured error attached to tool results when something goes wrong. */
@@ -80,6 +81,9 @@ export function classifyError(error: string, context?: string): StructuredToolEr
   // CLI-specific: path escape and argument validation (mapped to existing types)
   if (lower.includes('path escapes workspace root')) {
     return { type: 'AUTH_FAILURE', retryable: false, message: error, detail: context };
+  }
+  if (lower.includes('invalid argument') || lower.includes('invalid_argument')) {
+    return { type: 'INVALID_ARGUMENT', retryable: false, message: error, detail: context };
   }
   if (lower.includes('non-zero exit') || lower.includes('exit code')) {
     return { type: 'EXEC_NON_ZERO_EXIT', retryable: false, message: error, detail: context };
