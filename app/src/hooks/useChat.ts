@@ -23,11 +23,7 @@ import type {
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { detectAnyToolCall, executeAnyToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
-import { runCoderAgent, generateCheckpointAnswer, summarizeCoderStateForHandoff } from '@/lib/coder-agent';
-import { runExplorerAgent } from '@/lib/explorer-agent';
-import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
-import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
-import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import { generateCheckpointAnswer, summarizeCoderStateForHandoff } from '@/lib/coder-agent';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import {
   appendCardsToLatestToolCall,
@@ -91,6 +87,7 @@ import {
   shouldPrewarmSandbox,
   createId,
 } from '@/hooks/chat-persistence';
+import { useAgentDelegation } from '@/hooks/useAgentDelegation';
 
 export {
   detectInterruptedRunFromManager as detectInterruptedRun,
