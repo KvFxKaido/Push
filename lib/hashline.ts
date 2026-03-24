@@ -52,11 +52,11 @@ function hasWebCrypto(): boolean {
  * Uses SHA-256 truncated to `length` hex characters (default 7).
  *
  * Collision properties:
- * - 7 hex chars = 28 bits → ~50% collision chance at ~5K lines (birthday paradox).
+ * - 7 hex chars = 28 bits → ~50% collision chance at ~19K lines (birthday paradox).
  *   In practice most "collisions" are identical-content lines (duplicate imports,
  *   blank lines, closing braces), not hash collisions.
  * - Internal caches store 12-char (48-bit) hashes; short refs match via prefix.
- *   At 12 chars the birthday threshold is ~16M lines — effectively collision-free.
+ *   At 12 chars the birthday threshold is ~20M lines — effectively collision-free.
  * - When a short ref is ambiguous, the resolver suggests line-qualified refs
  *   (e.g. "42:abc1234") and distinguishes true hash ambiguity from identical
  *   content so agents can self-correct.
