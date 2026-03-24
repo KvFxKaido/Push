@@ -35,6 +35,16 @@ function parseRef(ref: string): { lineNo: number | null; hash: string } {
  * Calculate a hash for a line of text (trimmed).
  * Uses SHA-256 truncated to `length` hex characters (default 7) for brevity in tool calls.
  * Callers can request longer hashes (up to 12) to disambiguate collisions.
+ *
+ * Collision properties:
+ * - 7 hex chars = 28 bits → ~50% collision chance at ~5K lines (birthday paradox).
+ *   In practice most "collisions" are identical-content lines (duplicate imports,
+ *   blank lines, closing braces), not hash collisions.
+ * - Internal caches store 12-char (48-bit) hashes; short refs match via prefix.
+ *   At 12 chars the birthday threshold is ~16M lines — effectively collision-free.
+ * - When a short ref is ambiguous, the resolver suggests line-qualified refs
+ *   (e.g. "42:abc1234") and distinguishes true hash ambiguity from identical
+ *   content so agents can self-correct.
  */
 export async function calculateLineHash(line: string, length: number = 7): Promise<string> {
   const msgUint8 = new TextEncoder().encode(line.trim());
