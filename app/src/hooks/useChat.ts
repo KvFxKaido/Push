@@ -89,7 +89,8 @@ import {
   normalizeConversationModel,
   saveActiveChatId,
   shouldPrewarmSandbox,
-} from '@/hooks/use-chat-persistence';
+  createId,
+} from '@/hooks/chat-persistence';
 
 export {
   detectInterruptedRunFromManager as detectInterruptedRun,
@@ -105,9 +106,6 @@ const EMPTY_SANDBOX_STATUS: SandboxStatusResult = {
   changedFiles: [],
 };
 
-function createId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
 
 // formatElapsedTime moved to lib/utils.ts
 

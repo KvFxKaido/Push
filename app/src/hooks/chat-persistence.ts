@@ -7,6 +7,10 @@ const ACTIVE_CHAT_KEY = 'diff_active_chat';
 const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
 
+export function createId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
   const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
@@ -115,7 +119,7 @@ export function loadConversations(): Record<string, Conversation> {
     if (oldHistory) {
       const oldMessages: ChatMessage[] = JSON.parse(oldHistory);
       if (oldMessages.length > 0) {
-        const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const id = createId();
         const repoFullName = getActiveRepoFullName();
         const migrated: Record<string, Conversation> = {
           [id]: {
