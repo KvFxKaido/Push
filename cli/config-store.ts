@@ -22,6 +22,7 @@ export interface PushConfig {
   nvidia?: ProviderConfig;
   kilocode?: ProviderConfig;
   blackbox?: ProviderConfig;
+  openadapter?: ProviderConfig;
   [key: string]: unknown;
 }
 
@@ -106,6 +107,11 @@ export function applyConfigToEnv(config: PushConfig): void {
   setEnvIfMissing('PUSH_BLACKBOX_URL', blackbox.url);
   setEnvIfMissing('PUSH_BLACKBOX_API_KEY', blackbox.apiKey);
   setEnvIfMissing('PUSH_BLACKBOX_MODEL', blackbox.model);
+
+  const openadapter = ensureObject(config.openadapter) as ProviderConfig;
+  setEnvIfMissing('PUSH_OPENADAPTER_URL', openadapter.url);
+  setEnvIfMissing('PUSH_OPENADAPTER_API_KEY', openadapter.apiKey);
+  setEnvIfMissing('PUSH_OPENADAPTER_MODEL', openadapter.model);
 }
 
 export function maskSecret(value: unknown): string {

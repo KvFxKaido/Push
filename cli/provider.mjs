@@ -67,6 +67,13 @@ export const PROVIDER_CONFIGS = {
     apiKeyEnv: ['PUSH_BLACKBOX_API_KEY', 'BLACKBOX_API_KEY', 'VITE_BLACKBOX_API_KEY'],
     requiresKey: true,
   },
+  openadapter: {
+    id: 'openadapter',
+    url: process.env.PUSH_OPENADAPTER_URL || 'https://api.openadapter.in/v1/chat/completions',
+    defaultModel: process.env.PUSH_OPENADAPTER_MODEL || 'deepseek/deepseek-v3',
+    apiKeyEnv: ['PUSH_OPENADAPTER_API_KEY', 'OPENADAPTER_API_KEY', 'VITE_OPENADAPTER_API_KEY'],
+    requiresKey: true,
+  },
 };
 
 export function resolveApiKey(config) {

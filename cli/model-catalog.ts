@@ -83,7 +83,20 @@ export const BLACKBOX_MODELS: readonly string[] = [
   'blackbox-search',
 ];
 
-export type ProviderId = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'kilocode' | 'blackbox';
+export const OPENADAPTER_MODELS: readonly string[] = [
+  'deepseek/deepseek-r1',
+  'deepseek/deepseek-v3',
+  'qwen/qwen3-coder',
+  'qwen/qwen3.5',
+  'mistralai/mistral-large',
+  'mistralai/devstral',
+  'moonshotai/kimi-k2.5',
+  'minimax/minimax-m2.5',
+  'meta-llama/llama-4-maverick',
+  'z-ai/glm-5',
+];
+
+export type ProviderId = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'kilocode' | 'blackbox' | 'openadapter';
 
 const CATALOG: Record<ProviderId, readonly string[]> = {
   ollama: OLLAMA_MODELS,
@@ -92,6 +105,7 @@ const CATALOG: Record<ProviderId, readonly string[]> = {
   nvidia: NVIDIA_MODELS,
   kilocode: KILOCODE_MODELS,
   blackbox: BLACKBOX_MODELS,
+  openadapter: OPENADAPTER_MODELS,
 };
 
 /** Default model per provider — keep in sync with PROVIDER_CONFIGS in provider.ts. */
@@ -102,6 +116,7 @@ export const DEFAULT_MODELS: Record<ProviderId, string> = {
   nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
   kilocode: 'google/gemini-3-flash-preview',
   blackbox: 'blackbox-ai',
+  openadapter: 'deepseek/deepseek-v3',
 } as const;
 
 /**

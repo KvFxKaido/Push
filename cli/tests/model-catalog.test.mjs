@@ -11,6 +11,7 @@ import {
   ZEN_MODELS,
   KILOCODE_MODELS,
   BLACKBOX_MODELS,
+  OPENADAPTER_MODELS,
 } from '../model-catalog.mjs';
 
 function extractExportedStringArray(source, exportName) {
@@ -52,6 +53,12 @@ describe('getCuratedModels', () => {
     assert.deepEqual(models, NVIDIA_MODELS);
   });
 
+  it('returns OpenAdapter models', () => {
+    const models = getCuratedModels('openadapter');
+    assert.ok(models.length > 0);
+    assert.deepEqual(models, OPENADAPTER_MODELS);
+  });
+
   it('returns empty array for unknown provider', () => {
     assert.deepEqual(getCuratedModels('unknown'), []);
     assert.deepEqual(getCuratedModels(''), []);
@@ -68,6 +75,7 @@ describe('catalog parity', () => {
     assert.deepEqual(NVIDIA_MODELS, extractExportedStringArray(providersSource, 'NVIDIA_MODELS'));
     assert.deepEqual(KILOCODE_MODELS, extractExportedStringArray(providersSource, 'KILOCODE_MODELS'));
     assert.deepEqual(BLACKBOX_MODELS, extractExportedStringArray(providersSource, 'BLACKBOX_MODELS'));
+    assert.deepEqual(OPENADAPTER_MODELS, extractExportedStringArray(providersSource, 'OPENADAPTER_MODELS'));
   });
 
   it('keeps the CLI provider defaults in sync with the web catalog', () => {
@@ -78,6 +86,7 @@ describe('catalog parity', () => {
       nvidia: extractExportedStringConstant(providersSource, 'NVIDIA_DEFAULT_MODEL'),
       kilocode: extractExportedStringConstant(providersSource, 'KILOCODE_DEFAULT_MODEL'),
       blackbox: extractExportedStringConstant(providersSource, 'BLACKBOX_DEFAULT_MODEL'),
+      openadapter: extractExportedStringConstant(providersSource, 'OPENADAPTER_DEFAULT_MODEL'),
     });
   });
 });
@@ -92,6 +101,7 @@ describe('DEFAULT_MODELS', () => {
     nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
     kilocode: 'google/gemini-3-flash-preview',
     blackbox: 'blackbox-ai',
+    openadapter: 'deepseek/deepseek-v3',
   };
 
   it('has correct hardcoded defaults', () => {
@@ -105,7 +115,7 @@ describe('DEFAULT_MODELS', () => {
   });
 
   it('covers all providers', () => {
-    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['blackbox', 'kilocode', 'nvidia', 'ollama', 'openrouter', 'zen']);
+    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['blackbox', 'kilocode', 'nvidia', 'ollama', 'openadapter', 'openrouter', 'zen']);
   });
 
   it('each default appears in its curated list', () => {

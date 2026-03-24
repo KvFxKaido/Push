@@ -83,6 +83,19 @@ export const BLACKBOX_MODELS = [
   'blackbox-search',
 ];
 
+export const OPENADAPTER_MODELS = [
+  'deepseek/deepseek-r1',
+  'deepseek/deepseek-v3',
+  'qwen/qwen3-coder',
+  'qwen/qwen3.5',
+  'mistralai/mistral-large',
+  'mistralai/devstral',
+  'moonshotai/kimi-k2.5',
+  'minimax/minimax-m2.5',
+  'meta-llama/llama-4-maverick',
+  'z-ai/glm-5',
+];
+
 const CATALOG = {
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,
@@ -90,6 +103,7 @@ const CATALOG = {
   nvidia: NVIDIA_MODELS,
   kilocode: KILOCODE_MODELS,
   blackbox: BLACKBOX_MODELS,
+  openadapter: OPENADAPTER_MODELS,
 };
 
 /** Default model per provider — must match PROVIDER_CONFIGS defaults. */
@@ -100,6 +114,7 @@ export const DEFAULT_MODELS = {
   nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
   kilocode: 'google/gemini-3-flash-preview',
   blackbox: 'blackbox-ai',
+  openadapter: 'deepseek/deepseek-v3',
 };
 
 /**
