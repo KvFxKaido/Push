@@ -5,7 +5,7 @@ import { streamCompletion } from './provider.js';
 import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.js';
 import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.js';
-import { trimContext } from './context-manager.js';
+import { trimContext, distillContext } from './context-manager.js';
 
 import type { SessionState } from './session-store.js';
 import type { ProviderConfig } from './provider.js';
@@ -260,6 +260,18 @@ export async function runAssistantLoop(
   // Lazily enrich system prompt with workspace context (git status,
   // project instructions, memory) if it hasn't been loaded yet.
   await ensureSystemPromptReady(state);
+  // Surgical context distillation for long sessions: reduce history to essentials
+  // if starting a new run with significant history.
+  if ((state.messages as Message[]).length > 40) {
+      state.messages = distillContext(state.messages as Message[]) as any;
+      dispatchEvent('status', {
+        source: 'orchestrator',
+        phase: 'context_distillation',
+        detail: `History distilled to ${(state.messages as Message[]).length} essential messages.`,
+      });
+  }
+
+
 
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
@@ -353,6 +365,18 @@ export async function runAssistantLoop(
     }
 
     // Trim context to fit provider budget (state.messages is never mutated)
+    if (round > 4 && (state.workingMemory as WorkingMemory)?.plan?.trim()) {
+      const beforeCount = (state.messages as Message[]).length;
+      state.messages = distillContext(state.messages as Message[]) as any;
+      if ((state.messages as Message[]).length < beforeCount) {
+        dispatchEvent('status', {
+          source: 'orchestrator',
+          phase: 'context_distillation',
+          detail: `Round ${round}: history distilled from ${beforeCount} to ${(state.messages as Message[]).length} essential messages.`,
+        });
+      }
+    }
+
     const trimResult: TrimResult = trimContext(state.messages as Message[], providerConfig.id, state.model);
     lastTrimResult = trimResult;
     if (trimResult.trimmed) {

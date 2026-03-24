@@ -5,7 +5,7 @@ import { streamCompletion } from './provider.mjs';
 import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.mjs';
 import { recordMalformedToolCall } from './tool-call-metrics.mjs';
 import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.mjs';
-import { trimContext } from './context-manager.mjs';
+import { trimContext, distillContext } from './context-manager.mjs';
 
 export const DEFAULT_MAX_ROUNDS = 8;
 
@@ -165,6 +165,18 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
   // Lazily enrich system prompt with workspace context (git status,
   // project instructions, memory) if it hasn't been loaded yet.
   await ensureSystemPromptReady(state);
+  // Surgical context distillation for long sessions: reduce history to essentials
+  // if starting a new run with significant history.
+  if (state.messages.length > 40) {
+      state.messages = distillContext(state.messages);
+      dispatchEvent('status', {
+        source: 'orchestrator',
+        phase: 'context_distillation',
+        detail: `History distilled to ${state.messages.length} essential messages.`,
+      });
+  }
+
+
 
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
@@ -255,6 +267,18 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     }
 
     // Trim context to fit provider budget (state.messages is never mutated)
+    if (round > 4 && state.workingMemory?.plan?.trim()) {
+      const beforeCount = state.messages.length;
+      state.messages = distillContext(state.messages);
+      if (state.messages.length < beforeCount) {
+        dispatchEvent('status', {
+          source: 'orchestrator',
+          phase: 'context_distillation',
+          detail: `Round ${round}: history distilled from ${beforeCount} to ${state.messages.length} essential messages.`,
+        });
+      }
+    }
+
     const trimResult = trimContext(state.messages, providerConfig.id, state.model);
     lastTrimResult = trimResult;
     if (trimResult.trimmed) {

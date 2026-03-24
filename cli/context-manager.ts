@@ -334,6 +334,54 @@ export function compactContext(messages: Message[], options: { preserveTurns?: n
 // ---------------------------------------------------------------------------
 
 /**
+ * Surgical contextual filtering for agent handoffs.
+ * Preserves system prompt, first user message, latest working memory, and tail context.
+ */
+export function distillContext(messages: Message[], options: { tailSize?: number } = {}): Message[] {
+  if (!messages || messages.length === 0) return [];
+
+  const tailSize: number = typeof options.tailSize === 'number' ? options.tailSize : 10;
+  const normalized: Message[] = normalizeMessages(messages);
+
+  const preservedIndices: Set<number> = new Set();
+
+  // 1. System Prompt
+  if (normalized[0]?.role === 'system') {
+    preservedIndices.add(0);
+  }
+
+  // 2. First User Message (The original request)
+  const firstUserIdx = normalized.findIndex((m) => isFirstUserMessage(m));
+  if (firstUserIdx >= 0) {
+    preservedIndices.add(firstUserIdx);
+  }
+
+  // 3. Latest Working Memory update (from coder_update_state)
+  let latestMemoryIdx = -1;
+  for (let i = normalized.length - 1; i >= 0; i--) {
+    if (toContentString(normalized[i].content).includes('"workingMemory":')) {
+      latestMemoryIdx = i;
+      break;
+    }
+  }
+  if (latestMemoryIdx >= 0) {
+    preservedIndices.add(latestMemoryIdx);
+  }
+
+  // 4. Conversation tail (recent context)
+  const tailStart = Math.max(0, normalized.length - tailSize);
+  for (let i = tailStart; i < normalized.length; i++) {
+    preservedIndices.add(i);
+  }
+
+  // Return preserved messages in original order
+  return Array.from(preservedIndices)
+    .sort((a, b) => a - b)
+    .map((idx) => normalized[idx]);
+}
+
+
+/**
  * Trim messages to fit within the provider's context budget.
  *
  * Returns a TrimResult with the trimmed messages and stats.
