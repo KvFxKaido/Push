@@ -70,9 +70,11 @@ export const NVIDIA_MODELS = [
 ];
 
 export const KILOCODE_MODELS = [
-  'google/gemini-2.0-flash',
-  'anthropic/claude-3.5-sonnet',
-  'openai/gpt-4o',
+  'google/gemini-3-flash-preview',
+  'anthropic/claude-sonnet-4.6',
+  'openai/gpt-5.2',
+  'moonshotai/kimi-k2.5',
+  'kilo-auto/balanced',
 ];
 
 const CATALOG = {
@@ -89,7 +91,7 @@ export const DEFAULT_MODELS = {
   openrouter: 'anthropic/claude-sonnet-4.6:nitro',
   zen: 'big-pickle',
   nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
-  kilocode: 'google/gemini-2.0-flash',
+  kilocode: 'google/gemini-3-flash-preview',
 };
 
 /**

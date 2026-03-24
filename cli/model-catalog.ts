@@ -70,9 +70,11 @@ export const NVIDIA_MODELS: readonly string[] = [
 ];
 
 export const KILOCODE_MODELS: readonly string[] = [
-  'google/gemini-2.0-flash',
-  'anthropic/claude-3.5-sonnet',
-  'openai/gpt-4o',
+  'google/gemini-3-flash-preview',
+  'anthropic/claude-sonnet-4.6',
+  'openai/gpt-5.2',
+  'moonshotai/kimi-k2.5',
+  'kilo-auto/balanced',
 ];
 
 export type ProviderId = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'kilocode';
@@ -85,14 +87,14 @@ const CATALOG: Record<ProviderId, readonly string[]> = {
   kilocode: KILOCODE_MODELS,
 };
 
-/** Default model per provider — must match PROVIDER_CONFIGS defaults. */
+/** Default model per provider — keep in sync with PROVIDER_CONFIGS in provider.ts. */
 export const DEFAULT_MODELS: Record<ProviderId, string> = {
   ollama: 'gemini-3-flash-preview',
   openrouter: 'anthropic/claude-sonnet-4.6:nitro',
   zen: 'big-pickle',
   nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
-  kilocode: 'google/gemini-2.0-flash',
-};
+  kilocode: 'google/gemini-3-flash-preview',
+} as const;
 
 /**
  * Return the curated model list for a provider.

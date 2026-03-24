@@ -20,6 +20,7 @@ export interface PushConfig {
   openrouter?: ProviderConfig;
   zen?: ProviderConfig;
   nvidia?: ProviderConfig;
+  kilocode?: ProviderConfig;
   [key: string]: unknown;
 }
 
