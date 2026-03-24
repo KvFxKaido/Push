@@ -1,4 +1,4 @@
-import type { AIProviderType, ModelCapabilities, ModelCapabilitySupport } from '@/types';
+import type { AIProviderType, ModelCapabilities, ModelCapabilitySupport, HarnessProfile, HarnessProfileSettings } from '@/types';
 
 type CapabilityRule = {
   providers: AIProviderType[] | 'any';
@@ -217,4 +217,67 @@ export function buildModelCapabilityAwarenessBlock(
   }
 
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Harness profile resolution — tier-based scaffolding for agent runs
+// ---------------------------------------------------------------------------
+
+const STANDARD_PROFILE_SETTINGS: HarnessProfileSettings = {
+  profile: 'standard',
+  maxCoderRounds: 30,
+  plannerRequired: false,
+  contextResetsEnabled: false,
+  evaluateAfterCoder: true,
+};
+
+const HEAVY_PROFILE_SETTINGS: HarnessProfileSettings = {
+  profile: 'heavy',
+  maxCoderRounds: 20,
+  plannerRequired: true,
+  contextResetsEnabled: true,
+  evaluateAfterCoder: true,
+};
+
+/**
+ * Resolve the harness profile for a given provider + model combination.
+ * Opus-class and large frontier models get 'standard' (less scaffolding).
+ * Everything else gets 'heavy' (more guardrails).
+ */
+export function getHarnessProfile(
+  provider: AIProviderType,
+  modelId: string | null | undefined,
+): HarnessProfile {
+  const id = modelId?.trim()?.toLowerCase() || '';
+
+  // Opus-class models — capable enough for minimal scaffolding
+  if (/opus/i.test(id)) return 'standard';
+
+  // GPT-5.4+ tier
+  if (/gpt-5\.[4-9]|gpt-5\.1\d/i.test(id)) return 'standard';
+
+  // Gemini large Pro / 3.1-pro models
+  if (/gemini-3\.1-pro|gemini-3-pro/i.test(id)) return 'standard';
+
+  // Grok large models
+  if (/grok-4/i.test(id)) return 'standard';
+
+  // GLM-5 (non-turbo) — large model
+  if (/glm-5(?!-turbo)/i.test(id)) return 'standard';
+
+  // Everything else: Sonnet, Haiku, smaller models, unknown models
+  return 'heavy';
+}
+
+/** Get the concrete settings for a harness profile tier. */
+export function getHarnessProfileSettings(profile: HarnessProfile): HarnessProfileSettings {
+  return profile === 'standard' ? { ...STANDARD_PROFILE_SETTINGS } : { ...HEAVY_PROFILE_SETTINGS };
+}
+
+/** Convenience: resolve settings directly from provider + model. */
+export function resolveHarnessSettings(
+  provider: AIProviderType,
+  modelId: string | null | undefined,
+): HarnessProfileSettings {
+  return getHarnessProfileSettings(getHarnessProfile(provider, modelId));
 }

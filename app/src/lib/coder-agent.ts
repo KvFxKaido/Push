@@ -11,7 +11,7 @@
  * endlessly on errors or ambiguity.
  */
 
-import type { ChatMessage, ChatCard, AcceptanceCriterion, CriterionResult, CoderObservation, CoderWorkingMemory, DelegationEnvelope, CoderCallbacks, CoderResult } from '@/types';
+import type { ChatMessage, ChatCard, AcceptanceCriterion, CriterionResult, CoderObservation, CoderWorkingMemory, DelegationEnvelope, CoderCallbacks, CoderResult, HarnessProfileSettings } from '@/types';
 import { parseDiffStats } from './diff-utils';
 import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
@@ -750,6 +750,8 @@ export async function runCoderAgent(
     constraints?: string[];
     branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
     instructionFilename?: string;
+    harnessSettings?: HarnessProfileSettings;
+    plannerBrief?: string;
   },
 ): Promise<CoderResult> {
   // Normalise: envelope-based call → unified locals
@@ -764,6 +766,8 @@ export async function runCoderAgent(
   let effectiveProviderOverride: ActiveProvider | undefined;
   let effectiveModelOverride: string | undefined;
   let effectiveDelegationContext: typeof delegationContext;
+  let effectiveHarnessSettings: HarnessProfileSettings | undefined;
+  let effectivePlannerBrief: string | undefined;
 
   if (typeof taskOrEnvelope === 'object') {
     // Envelope-based invocation
@@ -779,6 +783,8 @@ export async function runCoderAgent(
     effectiveOnWorkingMemoryUpdate = callbacks.onWorkingMemoryUpdate;
     effectiveProviderOverride = envelope.provider === 'demo' ? undefined : envelope.provider as ActiveProvider;
     effectiveModelOverride = envelope.model;
+    effectiveHarnessSettings = envelope.harnessSettings;
+    effectivePlannerBrief = envelope.plannerBrief;
     effectiveDelegationContext = {
       intent: envelope.intent,
       deliverable: envelope.deliverable,
@@ -799,6 +805,8 @@ export async function runCoderAgent(
     effectiveOnWorkingMemoryUpdate = onWorkingMemoryUpdate;
     effectiveProviderOverride = providerOverride;
     effectiveModelOverride = modelOverride;
+    effectiveHarnessSettings = delegationContext?.harnessSettings;
+    effectivePlannerBrief = delegationContext?.plannerBrief;
     effectiveDelegationContext = delegationContext;
   }
 
@@ -864,17 +872,23 @@ export async function runCoderAgent(
   let rounds = 0;
   let checkpointCount = 0;
 
+  // Harness profile — controls scaffolding level
+  const maxRounds = effectiveHarnessSettings?.maxCoderRounds ?? MAX_CODER_ROUNDS;
+  const contextResetsEnabled = effectiveHarnessSettings?.contextResetsEnabled ?? false;
+
   // Agent-internal working memory — survives context trimming via injection
   const workingMemory: CoderWorkingMemory = {};
   // Track the last injected snapshot so we can emit compact diffs
   let lastInjectedState: CoderWorkingMemory | null = null;
+  // Track phase for context reset detection
+  let lastPhaseForReset: string | undefined;
 
   // --- Drift & failure guardrail state ---
   const mutationFailures = new Map<string, MutationFailureEntry>(); // track consecutive failures per tool+file
   let consecutiveDriftRounds = 0; // count rounds of cognitive drift
 
   // Build initial messages — include intent/constraints from structured delegation brief (Item 1B)
-  const taskPreamble = buildCoderDelegationBrief({
+  let taskPreamble = buildCoderDelegationBrief({
     task,
     files,
     acceptanceCriteria: effectiveAcceptanceCriteria,
@@ -885,6 +899,12 @@ export async function runCoderAgent(
     provider: activeProvider,
     model: coderModelId,
   });
+
+  // Inject planner brief if available
+  if (effectivePlannerBrief) {
+    taskPreamble += '\n\n' + effectivePlannerBrief;
+  }
+
   const messages: ChatMessage[] = [
     {
       id: 'coder-task',
@@ -900,12 +920,12 @@ export async function runCoderAgent(
     }
 
     // Circuit breaker: prevent runaway delegation loops
-    if (round >= MAX_CODER_ROUNDS) {
-      statusFn('Coder stopped', `Hit ${MAX_CODER_ROUNDS} round limit`);
+    if (round >= maxRounds) {
+      statusFn('Coder stopped', `Hit ${maxRounds} round limit`);
       // Auto-fetch sandbox state for Orchestrator context
       const sandboxState = await fetchSandboxStateSummary(sandboxId);
       return {
-        summary: `[Coder stopped after ${MAX_CODER_ROUNDS} rounds — task may be incomplete. Review sandbox state with sandbox_diff.]${sandboxState}`,
+        summary: `[Coder stopped after ${maxRounds} rounds — task may be incomplete. Review sandbox state with sandbox_diff.]${sandboxState}`,
         cards: allCards,
         rounds: round,
         checkpoints: checkpointCount,
@@ -1131,6 +1151,49 @@ ${truncatedResult}
       // Notify caller of latest working memory state (for checkpoint capture)
       if (effectiveOnWorkingMemoryUpdate) {
         effectiveOnWorkingMemoryUpdate(workingMemory);
+      }
+
+      // --- Context Reset on Phase Transition ---
+      // When context resets are enabled (heavy harness profile) and the Coder
+      // transitions to a new phase, reset the message array to give the model
+      // a clean slate. The working memory serves as the structured handoff artifact.
+      if (
+        contextResetsEnabled
+        && stateUpdate.currentPhase
+        && stateUpdate.currentPhase !== lastPhaseForReset
+        && lastPhaseForReset !== undefined // skip the very first phase assignment
+      ) {
+        statusFn('Context reset', `Phase: ${stateUpdate.currentPhase}`);
+        lastPhaseForReset = stateUpdate.currentPhase;
+
+        // Build a fresh task message with working memory as handoff context
+        const resetPreamble = [
+          taskPreamble,
+          '',
+          '[CONTEXT RESET — Phase transition]',
+          `Previous phase "${workingMemory.completedPhases?.slice(-1)?.[0] || 'unknown'}" completed.`,
+          `Now starting phase: ${stateUpdate.currentPhase}`,
+          '',
+          formatCoderState(workingMemory, round),
+          '',
+          'Continue working on the task from this phase. Your working memory above contains all accumulated context.',
+          '[/CONTEXT RESET]',
+        ].join('\n');
+
+        // Reset messages to just the new preamble
+        messages.length = 0;
+        messages.push({
+          id: `coder-reset-task-${round}`,
+          role: 'user',
+          content: resetPreamble,
+          timestamp: Date.now(),
+        });
+        lastInjectedState = structuredClone(workingMemory);
+        continue;
+      }
+      // Track current phase for reset detection
+      if (stateUpdate.currentPhase) {
+        lastPhaseForReset = stateUpdate.currentPhase;
       }
 
       // If only a state update was emitted (no sandbox tool AND no checkpoint), inject ack and continue
