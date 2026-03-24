@@ -1863,6 +1863,25 @@ export async function executeSandboxToolCall(
           };
         }
 
+        // 2b. Truncation-hashline sync: verify resolved edit targets fall within
+        // the model's read ranges. This is a belt-and-suspenders guard — the model
+        // normally can't produce valid hashes for unseen lines, but an explicit
+        // cross-check closes the gap between the hashline and ledger systems.
+        if (editResult.resolvedLines.length > 0) {
+          const coverageVerdict = fileLedger.checkLinesCovered(path, editResult.resolvedLines);
+          if (!coverageVerdict.allowed) {
+            const err: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Truncation guard: ${coverageVerdict.reason}`, detail: 'Hashline edit targets lines outside the model read range' };
+            return {
+              text: formatStructuredError(err, [
+                `[Tool Error — sandbox_edit_file]`,
+                coverageVerdict.reason,
+                `No changes were saved. Read the target lines first, then retry the edit.`,
+              ].join("\n")),
+              structuredError: err,
+            };
+          }
+        }
+
         // 3. Write the edited content directly (instead of delegating to sandbox_write_file)
         // Transient failures (5xx, timeout, network) are retried by sandbox-client withRetry().
         const beforeVersion = readResult.version || 'unknown';
@@ -3635,6 +3654,14 @@ export async function executeSandboxToolCall(
           if (editResult.failed > 0) {
             validationErrors.push(`${edit.path}: ${editResult.errors.join('; ')}`);
           } else {
+            // Truncation-hashline sync: verify resolved lines fall within read ranges
+            if (editResult.resolvedLines.length > 0) {
+              const coverageVerdict = fileLedger.checkLinesCovered(edit.path, editResult.resolvedLines);
+              if (!coverageVerdict.allowed) {
+                validationErrors.push(`${edit.path}: ${coverageVerdict.reason}`);
+                continue;
+              }
+            }
             editResults.push({
               path: edit.path,
               content: editResult.content,

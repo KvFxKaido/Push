@@ -129,6 +129,44 @@ describe('ambiguous 7-char ref → diagnostic → retry with longer ref', () => 
   });
 });
 
+describe('resolvedLines in edit results', () => {
+  it('returns 1-indexed line numbers of successfully resolved targets', async () => {
+    const content = 'aaa\nbbb\nccc\nddd';
+    const refB = '2:' + await calculateLineHash('bbb', 7);
+    const refD = '4:' + await calculateLineHash('ddd', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref: refB, content: 'BBB' },
+      { op: 'replace_line', ref: refD, content: 'DDD' },
+    ]);
+    expect(result.applied).toBe(2);
+    expect(result.resolvedLines).toEqual([2, 4]);
+  });
+
+  it('excludes failed edits from resolvedLines', async () => {
+    const content = 'aaa\nbbb\nccc';
+    const refA = '1:' + await calculateLineHash('aaa', 7);
+    const badRef = '2:' + 'badhash';
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref: refA, content: 'AAA' },
+      { op: 'replace_line', ref: badRef, content: 'BBB' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.resolvedLines).toEqual([1]);
+  });
+
+  it('returns empty resolvedLines when all edits fail', async () => {
+    const content = 'aaa\nbbb';
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref: 'badhash', content: 'X' },
+    ]);
+    expect(result.failed).toBe(1);
+    expect(result.resolvedLines).toEqual([]);
+  });
+});
+
 describe('batched edits: same-line replace + insert_after', () => {
   it('replace_line then insert_after with the same line-qualified ref', async () => {
     const content = 'line1\nline2\nline3';

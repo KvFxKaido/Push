@@ -1,0 +1,77 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { FileAwarenessLedger } from './file-awareness-ledger';
+
+describe('FileAwarenessLedger.checkLinesCovered', () => {
+  let ledger: FileAwarenessLedger;
+
+  beforeEach(() => {
+    ledger = new FileAwarenessLedger();
+  });
+
+  it('blocks lines for never-read files', () => {
+    const result = ledger.checkLinesCovered('foo.ts', [1, 2, 3]);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('not been read');
+  });
+
+  it('allows all lines for fully-read files', () => {
+    ledger.recordRead('foo.ts');
+    const result = ledger.checkLinesCovered('foo.ts', [1, 50, 999]);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('allows all lines for model-authored files', () => {
+    ledger.recordCreation('foo.ts');
+    const result = ledger.checkLinesCovered('foo.ts', [1, 50]);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('allows lines within partial read ranges', () => {
+    ledger.recordRead('foo.ts', { startLine: 10, endLine: 50 });
+    const result = ledger.checkLinesCovered('foo.ts', [10, 25, 50]);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('blocks lines outside partial read ranges', () => {
+    ledger.recordRead('foo.ts', { startLine: 10, endLine: 50 });
+    const result = ledger.checkLinesCovered('foo.ts', [5, 25, 60]);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('5');
+    expect(result.reason).toContain('60');
+  });
+
+  it('handles multiple disjoint read ranges', () => {
+    ledger.recordRead('foo.ts', { startLine: 1, endLine: 50 });
+    ledger.recordRead('foo.ts', { startLine: 100, endLine: 150 });
+
+    // Lines within both ranges
+    expect(ledger.checkLinesCovered('foo.ts', [25, 125]).allowed).toBe(true);
+
+    // Line in the gap
+    const result = ledger.checkLinesCovered('foo.ts', [25, 75, 125]);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('75');
+  });
+
+  it('formats uncovered lines as ranges', () => {
+    ledger.recordRead('foo.ts', { startLine: 1, endLine: 10 });
+    const result = ledger.checkLinesCovered('foo.ts', [15, 16, 17, 20]);
+    expect(result.allowed).toBe(false);
+    // Should show "15-17, 20" not "15, 16, 17, 20"
+    expect(result.reason).toContain('15-17');
+    expect(result.reason).toContain('20');
+  });
+
+  it('allows empty line numbers array', () => {
+    const result = ledger.checkLinesCovered('foo.ts', []);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('works through stale state using previous ranges', () => {
+    ledger.recordRead('foo.ts', { startLine: 1, endLine: 100 });
+    ledger.markStale('foo.ts');
+    // Stale files unwrap to previousState — ranges still valid
+    const result = ledger.checkLinesCovered('foo.ts', [50]);
+    expect(result.allowed).toBe(true);
+  });
+});
