@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createTheme, detectColorTier, detectUnicode,
   TOKENS, GLYPHS_UNICODE, GLYPHS_ASCII,
-} from '../tui-theme.mjs';
+} from '../tui-theme.ts';
 
 // ─── detectColorTier ────────────────────────────────────────────
 

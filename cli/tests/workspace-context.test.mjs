@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from '../workspace-context.mjs';
-import { executeToolCall } from '../tools.mjs';
+import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from '../workspace-context.ts';
+import { executeToolCall } from '../tools.ts';
 
 const PUSH_ROOT = path.resolve(import.meta.dirname, '..', '..');
 

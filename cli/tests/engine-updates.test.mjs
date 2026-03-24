@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSystemPrompt, buildToolResultMessage } from '../engine.mjs';
+import { buildSystemPrompt, buildToolResultMessage } from '../engine.ts';
 
 // ─── buildToolResultMessage: working memory deduplication ────────
 

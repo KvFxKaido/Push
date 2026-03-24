@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getSocketPath, getPidPath, validateAttachToken } from '../pushd.mjs';
+import { getSocketPath, getPidPath, validateAttachToken } from '../pushd.ts';
 import path from 'node:path';
 import os from 'node:os';
 

@@ -1,6 +1,6 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyConfigToEnv } from '../config-store.mjs';
+import { applyConfigToEnv } from '../config-store.ts';
 
 const savedEnv = {
   PUSH_PROVIDER: process.env.PUSH_PROVIDER,

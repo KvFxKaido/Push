@@ -4,8 +4,8 @@ import {
   stripAnsi, visibleWidth, truncate, wordWrap, padTo,
   drawBox, drawDivider, computeLayout,
   createScreenBuffer, createRenderScheduler, charWidth,
-} from '../tui-renderer.mjs';
-import { createTheme, GLYPHS_UNICODE, GLYPHS_ASCII } from '../tui-theme.mjs';
+} from '../tui-renderer.ts';
+import { createTheme, GLYPHS_UNICODE, GLYPHS_ASCII } from '../tui-theme.ts';
 
 // ─── stripAnsi ──────────────────────────────────────────────────
 

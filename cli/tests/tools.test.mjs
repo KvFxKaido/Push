@@ -13,7 +13,7 @@ import {
   isSafeCommand,
   suggestApprovalPrefix,
   truncateText,
-} from '../tools.mjs';
+} from '../tools.ts';
 
 // ─── detectToolCall ──────────────────────────────────────────────
 

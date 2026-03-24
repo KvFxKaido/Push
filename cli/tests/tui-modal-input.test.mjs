@@ -5,7 +5,7 @@ import {
   applySingleLineEditKey,
   getListNavigationAction,
   moveCursorCircular,
-} from '../tui-modal-input.mjs';
+} from '../tui-modal-input.ts';
 
 describe('moveCursorCircular', () => {
   it('wraps forward and backward', () => {

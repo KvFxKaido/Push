@@ -8,7 +8,7 @@ import {
   backupFile,
   isReadOnlyToolCall,
   TOOL_PROTOCOL,
-} from '../tools.mjs';
+} from '../tools.ts';
 
 const PUSH_ROOT = path.resolve(import.meta.dirname, '..', '..');
 const originalFetch = globalThis.fetch;

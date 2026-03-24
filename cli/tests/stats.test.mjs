@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { aggregateStats, formatStats } from '../stats.mjs';
+import { aggregateStats, formatStats } from '../stats.ts';
 import {
   makeSessionId,
   saveSessionState,
   appendSessionEvent,
   loadSessionEvents,
-} from '../session-store.mjs';
+} from '../session-store.ts';
 
 // ─── loadSessionEvents ──────────────────────────────────────────
 

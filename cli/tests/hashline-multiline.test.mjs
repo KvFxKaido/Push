@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applyHashlineEdits,
   calculateLineHash,
-} from '../hashline.mjs';
+} from '../hashline.ts';
 
 function makeRef(line, lineNo) {
   return `${lineNo}:${calculateLineHash(line)}`;

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseKey, splitRawInputChunk, createKeybindMap, createComposer, createInputHistory } from '../tui-input.mjs';
+import { parseKey, splitRawInputChunk, createKeybindMap, createComposer, createInputHistory } from '../tui-input.ts';
 
 // ─── parseKey ───────────────────────────────────────────────────
 

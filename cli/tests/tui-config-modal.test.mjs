@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   applySingleLineEditKey,
   getListNavigationAction,
-} from '../tui-modal-input.mjs';
+} from '../tui-modal-input.ts';
 
 /**
  * Simulate the config modal state machine to verify edit mode works correctly.

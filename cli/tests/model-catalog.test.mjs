@@ -12,7 +12,7 @@ import {
   KILOCODE_MODELS,
   BLACKBOX_MODELS,
   OPENADAPTER_MODELS,
-} from '../model-catalog.mjs';
+} from '../model-catalog.ts';
 
 function extractExportedStringArray(source, exportName) {
   const match = source.match(

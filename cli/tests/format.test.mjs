@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFormatter, hasColor, Spinner } from '../format.mjs';
+import { createFormatter, hasColor, Spinner } from '../format.ts';
 
 // ─── createFormatter ────────────────────────────────────────────
 

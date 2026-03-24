@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 
 const execFileAsync = promisify(execFile);
-const CLI_PATH = path.resolve(import.meta.dirname, '..', 'cli.mjs');
+const CLI_PATH = path.resolve(import.meta.dirname, '..', 'cli.ts');
 
 async function runCli(args, options = {}) {
   const { env: extraEnv, ...execOpts } = options;
@@ -18,7 +18,7 @@ async function runCli(args, options = {}) {
     ...extraEnv,
   };
   try {
-    const result = await execFileAsync('node', [CLI_PATH, ...args], {
+    const result = await execFileAsync('node', ['--import', 'tsx', CLI_PATH, ...args], {
       timeout: 5000,
       env,
       ...execOpts,
@@ -51,7 +51,7 @@ async function runCliPty(args, options = {}) {
     PUSH_CONFIG_PATH: '/tmp/push-test-cli-config-' + Date.now(),
     ...extraEnv,
   };
-  const cmd = [process.execPath, CLI_PATH, ...args].map(shQuote).join(' ');
+  const cmd = [process.execPath, '--import', 'tsx', CLI_PATH, ...args].map(shQuote).join(' ');
   const lines = String(input || '')
     .split('\n')
     .filter((line, idx, arr) => !(idx === arr.length - 1 && line === ''))

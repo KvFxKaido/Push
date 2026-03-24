@@ -10,7 +10,7 @@ import {
   compactContext,
   trimContext,
   distillContext,
-} from '../context-manager.mjs';
+} from '../context-manager.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────
 

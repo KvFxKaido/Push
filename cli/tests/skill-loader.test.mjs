@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { loadSkills, interpolateSkill, RESERVED_COMMANDS, getSkillPromptTemplate } from '../skill-loader.mjs';
+import { loadSkills, interpolateSkill, RESERVED_COMMANDS, getSkillPromptTemplate } from '../skill-loader.ts';
 
 let tmpDir;
 

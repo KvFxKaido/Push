@@ -8,7 +8,7 @@ import {
   buildFileReferenceContextMessage,
   appendUserMessageWithFileReferences,
   MAX_FILE_REFERENCE_COUNT,
-} from '../file-references.mjs';
+} from '../file-references.ts';
 
 let tmpDir;
 

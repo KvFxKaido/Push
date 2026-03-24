@@ -4,7 +4,7 @@ import {
   createFileLedger,
   updateFileLedger,
   getLedgerSummary,
-} from '../file-ledger.mjs';
+} from '../file-ledger.ts';
 
 describe('getLedgerSummary', () => {
   it('returns empty files array for fresh ledger', () => {

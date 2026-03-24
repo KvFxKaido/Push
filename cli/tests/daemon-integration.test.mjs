@@ -6,8 +6,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 
-import { getSocketPath, getPidPath, validateAttachToken, getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY } from '../pushd.mjs';
-import { PROTOCOL_VERSION, writeRunMarker, clearRunMarker, readRunMarker, scanInterruptedSessions, makeSessionId } from '../session-store.mjs';
+import { getSocketPath, getPidPath, validateAttachToken, getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY } from '../pushd.ts';
+import { PROTOCOL_VERSION, writeRunMarker, clearRunMarker, readRunMarker, scanInterruptedSessions, makeSessionId } from '../session-store.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -448,14 +448,14 @@ describe('multi-client fan-out', () => {
 describe('daemon version', () => {
   it('pushd version is 0.3.0 with crash recovery', async () => {
     const content = await fs.readFile(
-      path.join(import.meta.dirname, '..', 'pushd.mjs'), 'utf8'
+      path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8'
     );
     assert.ok(content.includes("const VERSION = '0.3.0'"));
   });
 
   it('capabilities include multi_client, replay_attach, and crash_recovery', async () => {
     const content = await fs.readFile(
-      path.join(import.meta.dirname, '..', 'pushd.mjs'), 'utf8'
+      path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8'
     );
     assert.ok(content.includes("'multi_client'"));
     assert.ok(content.includes("'replay_attach'"));
@@ -464,7 +464,7 @@ describe('daemon version', () => {
 
   it('all 8 handler types are registered', async () => {
     const content = await fs.readFile(
-      path.join(import.meta.dirname, '..', 'pushd.mjs'), 'utf8'
+      path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8'
     );
     const handlers = [
       'hello', 'ping', 'list_sessions', 'start_session',

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createCompleter } from '../completer.mjs';
+import { createCompleter } from '../completer.ts';
 
 const OLLAMA_MODELS = ['gemini-3-flash-preview'];
 const PROVIDERS = [{ id: 'ollama' }, { id: 'openrouter' }, { id: 'zen' }, { id: 'nvidia' }];

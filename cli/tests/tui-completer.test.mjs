@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTabCompleter } from '../tui-completer.mjs';
+import { createTabCompleter } from '../tui-completer.ts';
 
 // ── Fixtures ──────────────────────────────────────────────────────
 

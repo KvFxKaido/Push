@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getCenteredModalRect, getWindowedListRange } from '../tui-widgets.mjs';
+import { getCenteredModalRect, getWindowedListRange } from '../tui-widgets.ts';
 
 describe('getCenteredModalRect', () => {
   it('centers a modal within the terminal', () => {
