@@ -3,7 +3,7 @@
  * Free-text input is always accepted — these are suggestions, not constraints.
  */
 
-export const OPENROUTER_MODELS = [
+export const OPENROUTER_MODELS: readonly string[] = [
   'anthropic/claude-haiku-4.5:nitro',
   'anthropic/claude-opus-4.6:nitro',
   'anthropic/claude-sonnet-4.6:nitro',
@@ -42,13 +42,13 @@ export const OPENROUTER_MODELS = [
   'z-ai/glm-5-turbo:nitro',
 ];
 
-export const OLLAMA_MODELS = [
+export const OLLAMA_MODELS: readonly string[] = [
   // Cloud-first curated fallback. Live `/models` fetch and free-text entry
   // cover account-specific availability beyond this baseline.
   'gemini-3-flash-preview',
 ];
 
-export const ZEN_MODELS = [
+export const ZEN_MODELS: readonly string[] = [
   'openai/gpt-5.3-codex',
   'openai/gpt-5.2-codex',
   'qwen3-coder',
@@ -60,7 +60,7 @@ export const ZEN_MODELS = [
   'big-pickle',
 ];
 
-export const NVIDIA_MODELS = [
+export const NVIDIA_MODELS: readonly string[] = [
   'nvidia/llama-3.1-nemotron-70b-instruct',
   'meta/llama-3.3-70b-instruct',
   'meta/llama-3.1-405b-instruct',
@@ -69,7 +69,7 @@ export const NVIDIA_MODELS = [
   'mistralai/mistral-large-2-instruct',
 ];
 
-export const KILOCODE_MODELS = [
+export const KILOCODE_MODELS: readonly string[] = [
   'google/gemini-3-flash-preview',
   'anthropic/claude-sonnet-4.6',
   'openai/gpt-5.2',
@@ -77,13 +77,15 @@ export const KILOCODE_MODELS = [
   'kilo-auto/balanced',
 ];
 
-export const BLACKBOX_MODELS = [
+export const BLACKBOX_MODELS: readonly string[] = [
   'blackbox-ai',
   'blackbox-pro',
   'blackbox-search',
 ];
 
-const CATALOG = {
+export type ProviderId = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'kilocode' | 'blackbox';
+
+const CATALOG: Record<ProviderId, readonly string[]> = {
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,
   zen: ZEN_MODELS,
@@ -92,30 +94,56 @@ const CATALOG = {
   blackbox: BLACKBOX_MODELS,
 };
 
-/** Default model per provider — must match PROVIDER_CONFIGS defaults. */
-export const DEFAULT_MODELS = {
+/** Default model per provider — keep in sync with PROVIDER_CONFIGS in provider.ts. */
+export const DEFAULT_MODELS: Record<ProviderId, string> = {
   ollama: 'gemini-3-flash-preview',
   openrouter: 'anthropic/claude-sonnet-4.6:nitro',
   zen: 'big-pickle',
   nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
   kilocode: 'google/gemini-3-flash-preview',
   blackbox: 'blackbox-ai',
-};
+} as const;
 
 /**
  * Return the curated model list for a provider.
  * Unknown providers return an empty array.
  */
-export function getCuratedModels(providerId) {
-  return CATALOG[providerId] || [];
+export function getCuratedModels(providerId: string): readonly string[] {
+  return CATALOG[providerId as ProviderId] || [];
 }
 
 /**
  * Derive the /models endpoint from a provider's chat/completions URL.
  * Works for all OpenAI-compatible providers.
  */
-function deriveModelsUrl(chatUrl) {
+function deriveModelsUrl(chatUrl: string): string {
   return chatUrl.replace(/\/chat\/completions\/?$/, '/models');
+}
+
+interface ProviderConfig {
+  id: string;
+  url: string;
+}
+
+interface FetchModelsOptions {
+  timeoutMs?: number;
+}
+
+interface FetchModelsResult {
+  models: string[];
+  source: 'live' | 'curated';
+  error?: string;
+}
+
+interface ModelEntry {
+  id?: string;
+  name?: string;
+  model?: string;
+}
+
+interface ModelsPayload {
+  data?: ModelEntry[];
+  models?: ModelEntry[];
 }
 
 /**
@@ -123,9 +151,13 @@ function deriveModelsUrl(chatUrl) {
  * Returns { models: string[], source: 'live' | 'curated', error?: string }.
  * Falls back to curated list on any failure.
  */
-export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 } = {}) {
+export async function fetchModels(
+  providerConfig: ProviderConfig,
+  apiKey: string | undefined,
+  { timeoutMs = 10_000 }: FetchModelsOptions = {},
+): Promise<FetchModelsResult> {
   const providerId = providerConfig.id;
-  const curated = getCuratedModels(providerId);
+  const curated = getCuratedModels(providerId) as string[];
 
   const modelsUrl = deriveModelsUrl(providerConfig.url);
   // If URL didn't change (no /chat/completions to replace), skip live fetch
@@ -137,7 +169,7 @@ export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 }
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const headers = { 'Accept': 'application/json' };
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     if (providerId === 'openrouter') {
       headers['HTTP-Referer'] = process.env.PUSH_OPENROUTER_REFERER || 'https://push.local';
@@ -147,18 +179,18 @@ export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 }
       return { models: curated, source: 'curated', error: `HTTP ${response.status}` };
     }
 
-    const payload = await response.json();
+    const payload: ModelsPayload = await response.json();
 
     // OpenAI-compatible: { data: [{ id: "model-name" }, ...] }
     // Ollama native: { models: [{ name: "model-name" }, ...] }
-    let ids = [];
+    let ids: string[] = [];
     if (Array.isArray(payload.data)) {
       ids = payload.data
-        .map(m => m.id || m.name || '')
+        .map((m: ModelEntry) => m.id || m.name || '')
         .filter(Boolean);
     } else if (Array.isArray(payload.models)) {
       ids = payload.models
-        .map(m => m.name || m.id || m.model || '')
+        .map((m: ModelEntry) => m.name || m.id || m.model || '')
         .filter(Boolean);
     }
 
@@ -171,16 +203,15 @@ export async function fetchModels(providerConfig, apiKey, { timeoutMs = 10_000 }
 
     // Sort: put curated models first (in their original order), then remaining
     const curatedSet = new Set(curated);
-    const inCurated = ids.filter(id => curatedSet.has(id));
-    const extra = ids.filter(id => !curatedSet.has(id)).sort();
+    const extra = ids.filter((id: string) => !curatedSet.has(id)).sort();
     // Keep curated order for known models, append discovered ones
-    const orderedCurated = curated.filter(id => ids.includes(id));
-    const merged = [...orderedCurated, ...extra.filter(id => !orderedCurated.includes(id))];
+    const orderedCurated = curated.filter((id: string) => ids.includes(id));
+    const merged = [...orderedCurated, ...extra.filter((id: string) => !orderedCurated.includes(id))];
 
     return { models: merged, source: 'live' };
-  } catch (err) {
+  } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    if (err?.name === 'AbortError') {
+    if (err instanceof Error && err.name === 'AbortError') {
       return { models: curated, source: 'curated', error: 'timeout' };
     }
     return { models: curated, source: 'curated', error: message };

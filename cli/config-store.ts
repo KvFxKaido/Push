@@ -3,27 +3,49 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
-function ensureObject(value) {
-  return value && typeof value === 'object' ? value : {};
+export interface ProviderConfig {
+  url?: string;
+  apiKey?: string;
+  model?: string;
 }
 
-export function getConfigPath() {
+export interface PushConfig {
+  provider?: string;
+  localSandbox?: boolean | string;
+  explainMode?: boolean | string;
+  tavilyApiKey?: string;
+  webSearchBackend?: string;
+  execMode?: string;
+  ollama?: ProviderConfig;
+  openrouter?: ProviderConfig;
+  zen?: ProviderConfig;
+  nvidia?: ProviderConfig;
+  kilocode?: ProviderConfig;
+  blackbox?: ProviderConfig;
+  [key: string]: unknown;
+}
+
+function ensureObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+export function getConfigPath(): string {
   return process.env.PUSH_CONFIG_PATH || path.join(os.homedir(), '.push', 'config.json');
 }
 
-export async function loadConfig() {
+export async function loadConfig(): Promise<PushConfig> {
   const configPath = getConfigPath();
   try {
     const raw = await fs.readFile(configPath, 'utf8');
     const parsed = JSON.parse(raw);
-    return ensureObject(parsed);
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return {};
+    return ensureObject(parsed) as PushConfig;
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') return {};
     throw err;
   }
 }
 
-export async function saveConfig(config) {
+export async function saveConfig(config: PushConfig): Promise<string> {
   const configPath = getConfigPath();
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
@@ -35,12 +57,12 @@ export async function saveConfig(config) {
   return configPath;
 }
 
-function setEnvIfMissing(key, value) {
+function setEnvIfMissing(key: string, value: unknown): void {
   if (!value || process.env[key]) return;
   process.env[key] = String(value);
 }
 
-export function applyConfigToEnv(config) {
+export function applyConfigToEnv(config: PushConfig): void {
   const provider = typeof config.provider === 'string' ? config.provider : '';
   setEnvIfMissing('PUSH_PROVIDER', provider);
   if (config.localSandbox !== undefined) {
@@ -55,39 +77,38 @@ export function applyConfigToEnv(config) {
   setEnvIfMissing('PUSH_WEB_SEARCH_BACKEND', config.webSearchBackend);
   setEnvIfMissing('PUSH_EXEC_MODE', config.execMode);
 
-
-  const ollama = ensureObject(config.ollama);
+  const ollama = ensureObject(config.ollama) as ProviderConfig;
   setEnvIfMissing('PUSH_OLLAMA_URL', ollama.url);
   setEnvIfMissing('PUSH_OLLAMA_API_KEY', ollama.apiKey);
   setEnvIfMissing('PUSH_OLLAMA_MODEL', ollama.model);
 
-  const openrouter = ensureObject(config.openrouter);
+  const openrouter = ensureObject(config.openrouter) as ProviderConfig;
   setEnvIfMissing('PUSH_OPENROUTER_URL', openrouter.url);
   setEnvIfMissing('PUSH_OPENROUTER_API_KEY', openrouter.apiKey);
   setEnvIfMissing('PUSH_OPENROUTER_MODEL', openrouter.model);
 
-  const zen = ensureObject(config.zen);
+  const zen = ensureObject(config.zen) as ProviderConfig;
   setEnvIfMissing('PUSH_ZEN_URL', zen.url);
   setEnvIfMissing('PUSH_ZEN_API_KEY', zen.apiKey);
   setEnvIfMissing('PUSH_ZEN_MODEL', zen.model);
 
-  const nvidia = ensureObject(config.nvidia);
+  const nvidia = ensureObject(config.nvidia) as ProviderConfig;
   setEnvIfMissing('PUSH_NVIDIA_URL', nvidia.url);
   setEnvIfMissing('PUSH_NVIDIA_API_KEY', nvidia.apiKey);
   setEnvIfMissing('PUSH_NVIDIA_MODEL', nvidia.model);
 
-  const kilocode = ensureObject(config.kilocode);
+  const kilocode = ensureObject(config.kilocode) as ProviderConfig;
   setEnvIfMissing('PUSH_KILOCODE_URL', kilocode.url);
   setEnvIfMissing('PUSH_KILOCODE_API_KEY', kilocode.apiKey);
   setEnvIfMissing('PUSH_KILOCODE_MODEL', kilocode.model);
 
-  const blackbox = ensureObject(config.blackbox);
+  const blackbox = ensureObject(config.blackbox) as ProviderConfig;
   setEnvIfMissing('PUSH_BLACKBOX_URL', blackbox.url);
   setEnvIfMissing('PUSH_BLACKBOX_API_KEY', blackbox.apiKey);
   setEnvIfMissing('PUSH_BLACKBOX_MODEL', blackbox.model);
 }
 
-export function maskSecret(value) {
+export function maskSecret(value: unknown): string {
   if (!value) return '';
   const s = String(value);
   if (s.length <= 8) return '********';

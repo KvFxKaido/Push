@@ -9,6 +9,8 @@ import {
   OLLAMA_MODELS,
   NVIDIA_MODELS,
   ZEN_MODELS,
+  KILOCODE_MODELS,
+  BLACKBOX_MODELS,
 } from '../model-catalog.mjs';
 
 function extractExportedStringArray(source, exportName) {
@@ -64,6 +66,8 @@ describe('catalog parity', () => {
     assert.deepEqual(OPENROUTER_MODELS, extractExportedStringArray(providersSource, 'OPENROUTER_MODELS'));
     assert.deepEqual(ZEN_MODELS, extractExportedStringArray(providersSource, 'ZEN_MODELS'));
     assert.deepEqual(NVIDIA_MODELS, extractExportedStringArray(providersSource, 'NVIDIA_MODELS'));
+    assert.deepEqual(KILOCODE_MODELS, extractExportedStringArray(providersSource, 'KILOCODE_MODELS'));
+    assert.deepEqual(BLACKBOX_MODELS, extractExportedStringArray(providersSource, 'BLACKBOX_MODELS'));
   });
 
   it('keeps the CLI provider defaults in sync with the web catalog', () => {
@@ -72,6 +76,8 @@ describe('catalog parity', () => {
       openrouter: extractExportedStringConstant(providersSource, 'OPENROUTER_DEFAULT_MODEL'),
       zen: extractExportedStringConstant(providersSource, 'ZEN_DEFAULT_MODEL'),
       nvidia: extractExportedStringConstant(providersSource, 'NVIDIA_DEFAULT_MODEL'),
+      kilocode: extractExportedStringConstant(providersSource, 'KILOCODE_DEFAULT_MODEL'),
+      blackbox: extractExportedStringConstant(providersSource, 'BLACKBOX_DEFAULT_MODEL'),
     });
   });
 });
@@ -84,6 +90,8 @@ describe('DEFAULT_MODELS', () => {
     openrouter: 'anthropic/claude-sonnet-4.6:nitro',
     zen: 'big-pickle',
     nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
+    kilocode: 'google/gemini-3-flash-preview',
+    blackbox: 'blackbox-ai',
   };
 
   it('has correct hardcoded defaults', () => {
@@ -97,7 +105,7 @@ describe('DEFAULT_MODELS', () => {
   });
 
   it('covers all providers', () => {
-    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['nvidia', 'ollama', 'openrouter', 'zen']);
+    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['blackbox', 'kilocode', 'nvidia', 'ollama', 'openrouter', 'zen']);
   });
 
   it('each default appears in its curated list', () => {

@@ -2,6 +2,13 @@
   "name": "push-root",
   "private": true,
   "scripts": {
-    "build": "cd app && npm install && npm run build"
+    "build": "cd app && npm install && npm run build",
+    "build:cli": "cd cli && npx tsc -p tsconfig.json",
+    "dev:cli": "node --import tsx cli/cli.ts",
+    "typecheck": "cd cli && npx tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
   }
 }
