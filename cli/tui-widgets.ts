@@ -8,14 +8,7 @@ export interface ScreenBuffer {
   writeLine(row: number, col: number, text: string): void;
 }
 
-export interface ThemeGlyphs {
-  [key: string]: string;
-}
-
-export interface Theme {
-  glyphs: ThemeGlyphs;
-  [key: string]: unknown;
-}
+export type { Theme } from './tui-theme.js';
 
 export interface ModalRect {
   top: number;

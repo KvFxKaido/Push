@@ -232,9 +232,7 @@ export interface BoxGlyphs {
   vertical: string;
 }
 
-export interface Theme {
-  style: (token: string, text: string) => string;
-}
+export type { Theme } from './tui-theme.js';
 
 /**
  * Draw a bordered box. Returns array of strings (one per row).

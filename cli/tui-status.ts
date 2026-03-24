@@ -60,22 +60,11 @@ export async function getCompactGitStatus(cwd: string): Promise<CompactGitStatus
 
   const dirtyCount = info.dirtyFiles?.length || 0;
 
-  // Parse ahead/behind from branch name if present (e.g., "main...origin/main [ahead 2, behind 1]")
-  let ahead = 0;
-  let behind = 0;
-  const aheadMatch = info.branch.match(/\[ahead\s+(\d+)/);
-  const behindMatch = info.branch.match(/behind\s+(\d+)\]/);
-  if (aheadMatch) ahead = parseInt(aheadMatch[1], 10);
-  if (behindMatch) behind = parseInt(behindMatch[1], 10);
-
-  // Clean branch name (remove remote tracking info)
-  const cleanBranch = info.branch.replace(/\.\.\..*$/, '').replace(/\s*\[.*\]$/, '').trim();
-
   return {
-    branch: cleanBranch,
+    branch: info.branch,
     dirty: dirtyCount,
-    ahead,
-    behind,
+    ahead: info.ahead,
+    behind: info.behind,
   };
 }
 

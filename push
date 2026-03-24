@@ -14,11 +14,14 @@ ROOT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 : "${PUSH_TUI_ENABLED:=1}"
 export PUSH_TUI_ENABLED
 
-# Prefer compiled JS if available, otherwise run TS directly via tsx.
+# Prefer compiled JS if available, then tsx for TS, then direct .mjs fallback.
 if [ -f "$ROOT_DIR/cli/dist/cli.js" ]; then
   exec node "$ROOT_DIR/cli/dist/cli.js" "$@"
 elif command -v tsx >/dev/null 2>&1; then
   exec tsx "$ROOT_DIR/cli/cli.ts" "$@"
+elif [ -f "$ROOT_DIR/cli/cli.mjs" ]; then
+  exec node "$ROOT_DIR/cli/cli.mjs" "$@"
 else
-  exec node --import tsx "$ROOT_DIR/cli/cli.ts" "$@"
+  echo "push: cannot start — no compiled dist, no tsx, and no cli.mjs fallback found." >&2
+  exit 1
 fi

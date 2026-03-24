@@ -1203,7 +1203,9 @@ async function runDaemonSubcommand(positionals) {
 
     // Launch pushd as a detached child process
     const { spawn } = await import('node:child_process');
-    const pushdPath = new URL('./pushd.js', import.meta.url).pathname;
+    // Derive pushd entry from the current runtime file extension (.js → .js, .ts → .ts, .mjs → .mjs)
+    const currentExt = import.meta.url.match(/\.(m?[jt]s)$/)?.[1] ?? 'mjs';
+    const pushdPath = new URL(`./pushd.${currentExt}`, import.meta.url).pathname;
     const child = spawn(process.execPath, [pushdPath], {
       detached: true,
       stdio: 'ignore',

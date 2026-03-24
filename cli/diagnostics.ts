@@ -145,7 +145,7 @@ function parseTscOutput(output: string, workspaceRoot: string): Diagnostic[] {
     if (match) {
       const [, file, lineStr, colStr, severity, code, message] = match;
       diagnostics.push({
-        file: path.relative(workspaceRoot, file.trim()),
+        file: path.relative(workspaceRoot, path.resolve(workspaceRoot, file.trim())),
         line: parseInt(lineStr, 10),
         col: parseInt(colStr, 10),
         severity: severity === 'error' ? 'error' : 'warning',
@@ -231,7 +231,7 @@ function parsePyrightOutput(jsonOutput: string, workspaceRoot: string): Diagnost
 
     for (const diag of data.generalDiagnostics || []) {
       diagnostics.push({
-        file: diag.file ? path.relative(workspaceRoot, diag.file) : '<unknown>',
+        file: diag.file ? path.relative(workspaceRoot, path.resolve(workspaceRoot, diag.file)) : '<unknown>',
         line: diag.range?.start?.line ?? 0,
         col: diag.range?.start?.character ?? 0,
         severity: diag.severity === 'error' ? 'error' : 'warning',
@@ -295,7 +295,7 @@ function parseRuffOutput(jsonOutput: string, workspaceRoot: string): Diagnostic[
 
     for (const violation of data || []) {
       diagnostics.push({
-        file: path.relative(workspaceRoot, violation.filename),
+        file: path.relative(workspaceRoot, path.resolve(workspaceRoot, violation.filename)),
         line: violation.location?.row ?? 0,
         col: violation.location?.column ?? 0,
         severity: 'warning', // ruff doesn't distinguish error vs warning
@@ -388,7 +388,7 @@ function parseCargoOutput(output: string, workspaceRoot: string): Diagnostic[] {
         const span = msg.message.spans?.[0];
         if (span) {
           diagnostics.push({
-            file: path.relative(workspaceRoot, span.file_name),
+            file: path.relative(workspaceRoot, path.resolve(workspaceRoot, span.file_name)),
             line: span.line_start,
             col: span.column_start,
             severity: msg.message.level === 'error' ? 'error' : 'warning',
@@ -467,7 +467,7 @@ function parseGoVetOutput(output: string, workspaceRoot: string): Diagnostic[] {
     if (match) {
       const [, file, lineStr, colStr, message] = match;
       diagnostics.push({
-        file: path.relative(workspaceRoot, file.trim()),
+        file: path.relative(workspaceRoot, path.resolve(workspaceRoot, file.trim())),
         line: parseInt(lineStr, 10),
         col: parseInt(colStr, 10),
         severity: 'warning', // go vet only reports issues, not compile errors

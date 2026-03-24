@@ -28,6 +28,8 @@ const MANIFEST_FILES: readonly string[] = [
 export interface GitInfo {
   branch: string;
   dirtyFiles: string[];
+  ahead: number;
+  behind: number;
 }
 
 export interface ProjectInstructions {
@@ -48,17 +50,25 @@ export async function getGitInfo(cwd: string): Promise<GitInfo | null> {
     const lines: string[] = stdout.trimEnd().split('\n');
     const headerLine: string = lines[0] || '';
 
-    // Header looks like: "## main...origin/main" or "## main" or "## HEAD (no branch)"
+    // Header looks like: "## main...origin/main [ahead 2, behind 1]" or "## main" or "## HEAD (no branch)"
     let branch = '(unknown)';
     const branchMatch: RegExpMatchArray | null = headerLine.match(/^## (.+?)(?:\.\.\.|$)/);
     if (branchMatch) {
       branch = branchMatch[1].trim();
     }
 
+    // Parse ahead/behind from the full header line
+    let ahead = 0;
+    let behind = 0;
+    const aheadMatch: RegExpMatchArray | null = headerLine.match(/\[ahead\s+(\d+)/);
+    const behindMatch: RegExpMatchArray | null = headerLine.match(/behind\s+(\d+)\]/);
+    if (aheadMatch) ahead = parseInt(aheadMatch[1], 10);
+    if (behindMatch) behind = parseInt(behindMatch[1], 10);
+
     const dirty: string[] = lines.slice(1).filter((l) => l.trim().length > 0);
     const dirtyFiles: string[] = dirty.map((l) => l.trim().replace(/^[A-Z?!]{1,2}\s+/, ''));
 
-    return { branch, dirtyFiles };
+    return { branch, dirtyFiles, ahead, behind };
   } catch {
     return null;
   }
@@ -254,9 +264,7 @@ export async function loadProjectInstructions(cwd: string): Promise<ProjectInstr
         content = content.slice(0, MAX_INSTRUCTIONS_CHARS);
       }
       return { file: relPath, content };
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      // Unexpected error — skip this file, try next
+    } catch {
       continue;
     }
   }

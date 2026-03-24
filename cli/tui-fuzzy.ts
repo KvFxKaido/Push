@@ -21,9 +21,7 @@ interface FuzzyFilterOptions {
   maxResults?: number;
 }
 
-interface Theme {
-  style(name: string, text: string): string;
-}
+import type { Theme } from './tui-theme.js';
 
 interface Session {
   sessionName?: string;
