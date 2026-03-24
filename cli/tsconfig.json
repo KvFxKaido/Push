@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -16,7 +16,11 @@
     "paths": {
       "@push/lib/*": ["../lib/*"]
     },
-    "baseUrl": "."
+    "baseUrl": ".",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "allowUnreachableCode": true,
+    "noEmit": false
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist", "tests"]
