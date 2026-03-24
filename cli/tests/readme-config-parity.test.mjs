@@ -100,7 +100,7 @@ describe('README config parity', () => {
   const searchBackendsFromTools = extractSetValues(toolsSource, 'WEB_SEARCH_BACKENDS');
   const deprecatedProviders = extractObjectEntries(cliSource, 'DEPRECATED_PROVIDERS');
 
-  it('documents provider URLs and default models that match cli/provider.mjs', () => {
+  it('documents provider URLs and default models that match cli/provider.ts', () => {
     for (const provider of providerEntries) {
       const upper = provider.id.toUpperCase();
       const urlRow = readmeEnvRows.get(`PUSH_${upper}_URL`);
@@ -119,7 +119,7 @@ describe('README config parity', () => {
     }
   });
 
-  it('documents the same provider table defaults and key requirements as cli/provider.mjs', () => {
+  it('documents the same provider table defaults and key requirements as cli/provider.ts', () => {
     assert.deepEqual(
       readmeProviderRows,
       providerEntries.map((provider) => ({
@@ -130,7 +130,7 @@ describe('README config parity', () => {
     );
   });
 
-  it('documents the same provider options and deprecated-provider redirects as cli/cli.mjs', () => {
+  it('documents the same provider options and deprecated-provider redirects as cli/cli.ts', () => {
     const providerOptionTail = extractReadmeOptionValues(readmeSource, '--provider <name>');
     assert.equal(
       providerOptionTail,
