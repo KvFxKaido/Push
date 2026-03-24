@@ -20,7 +20,7 @@ const {
   validateSessionId,
   SESSION_ID_RE,
   PROTOCOL_VERSION,
-} = await import('../session-store.mjs');
+} = await import('../session-store.ts');
 
 after(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });

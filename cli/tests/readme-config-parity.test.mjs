@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const readmeSource = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-const providerSource = readFileSync(new URL('../provider.mjs', import.meta.url), 'utf8');
-const cliSource = readFileSync(new URL('../cli.mjs', import.meta.url), 'utf8');
-const toolsSource = readFileSync(new URL('../tools.mjs', import.meta.url), 'utf8');
+const providerSource = readFileSync(new URL('../provider.ts', import.meta.url), 'utf8');
+const cliSource = readFileSync(new URL('../cli.ts', import.meta.url), 'utf8');
+const toolsSource = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
 
 function extractProviderConfigsBlock(source) {
-  const match = source.match(/export const PROVIDER_CONFIGS = \{([\s\S]*?)\n\};/);
+  const match = source.match(/export const PROVIDER_CONFIGS[^=]*= \{([\s\S]*?)\n\};/);
   assert.ok(match, 'Expected to find PROVIDER_CONFIGS');
   return match[1];
 }
@@ -73,7 +73,7 @@ function extractReadmeEnvVarRows(source) {
 function extractReadmeProviderRows(source) {
   const rows = extractReadmeTableRows(source);
   return rows
-    .filter(([provider]) => ['`ollama`', '`openrouter`', '`zen`', '`nvidia`'].includes(provider))
+    .filter(([provider]) => ['`ollama`', '`openrouter`', '`zen`', '`nvidia`', '`kilocode`', '`blackbox`', '`openadapter`'].includes(provider))
     .map(([provider, model, requiresKey]) => ({
       id: provider.slice(1, -1),
       defaultModel: model.slice(1, -1),
@@ -100,7 +100,7 @@ describe('README config parity', () => {
   const searchBackendsFromTools = extractSetValues(toolsSource, 'WEB_SEARCH_BACKENDS');
   const deprecatedProviders = extractObjectEntries(cliSource, 'DEPRECATED_PROVIDERS');
 
-  it('documents provider URLs and default models that match cli/provider.mjs', () => {
+  it('documents provider URLs and default models that match cli/provider.ts', () => {
     for (const provider of providerEntries) {
       const upper = provider.id.toUpperCase();
       const urlRow = readmeEnvRows.get(`PUSH_${upper}_URL`);
@@ -119,7 +119,7 @@ describe('README config parity', () => {
     }
   });
 
-  it('documents the same provider table defaults and key requirements as cli/provider.mjs', () => {
+  it('documents the same provider table defaults and key requirements as cli/provider.ts', () => {
     assert.deepEqual(
       readmeProviderRows,
       providerEntries.map((provider) => ({
@@ -130,7 +130,7 @@ describe('README config parity', () => {
     );
   });
 
-  it('documents the same provider options and deprecated-provider redirects as cli/cli.mjs', () => {
+  it('documents the same provider options and deprecated-provider redirects as cli/cli.ts', () => {
     const providerOptionTail = extractReadmeOptionValues(readmeSource, '--provider <name>');
     assert.equal(
       providerOptionTail,

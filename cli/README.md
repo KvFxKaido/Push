@@ -118,7 +118,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `openadapter`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `blackbox`, `openadapter`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
@@ -133,7 +133,10 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_NVIDIA_MODEL` | Nvidia NIM model (default: `nvidia/llama-3.1-nemotron-70b-instruct`) |
 | `PUSH_KILOCODE_URL` | Kilo Code endpoint (default: `https://api.kilo.ai/api/gateway/chat/completions`) |
 | `PUSH_KILOCODE_API_KEY` | Kilo Code API key |
-| `PUSH_KILOCODE_MODEL` | Kilo Code model (default: `google/gemini-2.0-flash`) |
+| `PUSH_KILOCODE_MODEL` | Kilo Code model (default: `google/gemini-3-flash-preview`) |
+| `PUSH_BLACKBOX_URL` | Blackbox AI endpoint (default: `https://www.blackbox.ai/chat/completions`) |
+| `PUSH_BLACKBOX_API_KEY` | Blackbox AI API key |
+| `PUSH_BLACKBOX_MODEL` | Blackbox AI model (default: `blackbox-ai`) |
 | `PUSH_OPENADAPTER_URL` | OpenAdapter endpoint (default: `https://api.openadapter.in/v1/chat/completions`) |
 | `PUSH_OPENADAPTER_API_KEY` | OpenAdapter API key |
 | `PUSH_OPENADAPTER_MODEL` | OpenAdapter model (default: `deepseek/deepseek-v3`) |
@@ -147,7 +150,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-All six providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+All seven providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -155,7 +158,8 @@ All six providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5x
 | `openrouter` | `anthropic/claude-sonnet-4.6:nitro` | Yes |
 | `zen` | `big-pickle` | Yes |
 | `nvidia` | `nvidia/llama-3.1-nemotron-70b-instruct` | Yes |
-| `kilocode` | `google/gemini-2.0-flash` | Yes |
+| `kilocode` | `google/gemini-3-flash-preview` | Yes |
+| `blackbox` | `blackbox-ai` | Yes |
 | `openadapter` | `deepseek/deepseek-v3` | Yes |
 
 Removed providers (`mistral`, `zai`, `google`, `minimax`) are gracefully redirected to `openrouter` with a warning.
@@ -306,7 +310,7 @@ push config init                    Interactive setup wizard
 push config set ...                 Save provider config
 
 Options:
-  --provider <name>       ollama | openrouter | zen | nvidia (default: ollama)
+  --provider <name>       ollama | openrouter | zen | nvidia | kilocode | blackbox | openadapter (default: ollama)
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key
