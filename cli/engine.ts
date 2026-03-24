@@ -5,7 +5,7 @@ import { streamCompletion } from './provider.js';
 import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.js';
 import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.js';
-import { trimContext, distillContext } from './context-manager.js';
+import { trimContext, distillContext, estimateContextTokens, getContextBudget } from './context-manager.js';
 
 import type { SessionState } from './session-store.js';
 import type { ProviderConfig } from './provider.js';
@@ -365,7 +365,7 @@ export async function runAssistantLoop(
     }
 
     // Trim context to fit provider budget (state.messages is never mutated)
-    if (round > 4 && (state.workingMemory as WorkingMemory)?.plan?.trim()) {
+    if (round > 4 && (state.workingMemory as WorkingMemory)?.plan?.trim().length > 0 && estimateContextTokens(state.messages as Message[]) > getContextBudget(providerConfig.id, state.model).targetTokens / 2) {
       const beforeCount = (state.messages as Message[]).length;
       state.messages = distillContext(state.messages as Message[]) as any;
       if ((state.messages as Message[]).length < beforeCount) {

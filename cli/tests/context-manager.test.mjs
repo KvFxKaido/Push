@@ -9,6 +9,7 @@ import {
   isParseErrorMessage,
   compactContext,
   trimContext,
+  distillContext,
 } from '../context-manager.mjs';
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -458,5 +459,112 @@ describe('compactContext', () => {
     compactContext(msgs, { preserveTurns: 1 });
 
     assert.deepEqual(msgs, original);
+  });
+});
+
+
+// ─── distillContext ──────────────────────────────────────────────
+
+describe('distillContext', () => {
+  it('returns empty array for empty input', () => {
+    const result = distillContext([]);
+    assert.deepEqual(result, []);
+  });
+
+  it('preserves system prompt at index 0', () => {
+    const msgs = [
+      makeSystemMsg(100),
+      makeUserMsg('Hello'),
+      makeAssistantMsg('Hi!'),
+    ];
+    const result = distillContext(msgs);
+    assert.equal(result[0]?.role, 'system');
+    assert.equal(result[0]?.content, msgs[0].content);
+  });
+
+  it('preserves first user message', () => {
+    const msgs = [
+      makeSystemMsg(100),
+      makeUserMsg('Original request'),
+      makeAssistantMsg('Sure!'),
+      makeUserMsg('Follow up'),
+    ];
+    const result = distillContext(msgs);
+    const firstUser = result.find((m) => m.role === 'user' && m.content === 'Original request');
+    assert.ok(firstUser, 'first user message should be preserved');
+  });
+
+  it('preserves latest working memory update (coder_update_state tool call)', () => {
+    const workingMemoryMsg = {
+      role: 'user',
+      content: '[TOOL_RESULT]\n{"tool": "coder_update_state", "ok": true, "output": "Memory updated", "meta": {"workingMemory": {"plan": "Test plan"}}, "structuredError": null}\n[/TOOL_RESULT]',
+    };
+    const msgs = [
+      makeSystemMsg(100),
+      makeUserMsg('Hello'),
+      makeAssistantMsg('Hi!'),
+      workingMemoryMsg,
+      makeUserMsg('Follow up'),
+    ];
+    const result = distillContext(msgs);
+    const found = result.some((m) => m.content.includes('"tool": "coder_update_state"'));
+    assert.ok(found, 'latest working memory update should be preserved');
+  });
+
+  it('preserves tail messages (default last 10)', () => {
+    const msgs = [makeSystemMsg(100), makeUserMsg('Start')];
+    for (let i = 0; i < 20; i++) {
+      msgs.push(makeAssistantMsg(`Reply ${i}`));
+      msgs.push(makeUserMsg(`User ${i}`));
+    }
+    const result = distillContext(msgs);
+    // Should preserve last 10 messages from tail
+    assert.ok(result.length >= 10, 'should preserve at least tail messages');
+    // Last message should be included
+    const lastMsg = msgs[msgs.length - 1];
+    const found = result.some((m) => m.content === lastMsg.content);
+    assert.ok(found, 'last message should be in result');
+  });
+
+  it('maintains original order of preserved messages', () => {
+    const msgs = [
+      makeSystemMsg(100),
+      makeUserMsg('First'),
+      makeAssistantMsg('A'),
+      makeUserMsg('Second'),
+      makeAssistantMsg('B'),
+      makeUserMsg('Third'),
+    ];
+    const result = distillContext(msgs);
+    // Check that indices are in ascending order
+    for (let i = 1; i < result.length; i++) {
+      const prevIdx = msgs.findIndex((m) => m.content === result[i - 1].content);
+      const currIdx = msgs.findIndex((m) => m.content === result[i].content);
+      assert.ok(currIdx > prevIdx, 'messages should maintain original order');
+    }
+  });
+
+  it('respects custom tailSize option', () => {
+    const msgs = [makeSystemMsg(100), makeUserMsg('Start')];
+    for (let i = 0; i < 20; i++) {
+      msgs.push(makeAssistantMsg(`Reply ${i}`));
+      msgs.push(makeUserMsg(`User ${i}`));
+    }
+    const resultSmallTail = distillContext(msgs, { tailSize: 2 });
+    const resultLargeTail = distillContext(msgs, { tailSize: 15 });
+    // Larger tail should preserve more messages
+    assert.ok(resultLargeTail.length >= resultSmallTail.length, 'larger tailSize should preserve at least as many messages');
+  });
+
+  it('handles messages without working memory updates', () => {
+    const msgs = [
+      makeSystemMsg(100),
+      makeUserMsg('Hello'),
+      makeAssistantMsg('Hi!'),
+      makeToolResult('read_file', 100),
+    ];
+    const result = distillContext(msgs);
+    assert.ok(result.length > 0, 'should return messages even without working memory');
+    assert.equal(result[0].role, 'system', 'system prompt should still be preserved');
   });
 });

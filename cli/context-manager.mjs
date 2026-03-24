@@ -336,7 +336,7 @@ export function distillContext(messages, options = {}) {
   // 3. Latest Working Memory update (from coder_update_state)
   let latestMemoryIdx = -1;
   for (let i = normalized.length - 1; i >= 0; i--) {
-    if (normalized[i].content.includes('"workingMemory":')) {
+    if (normalized[i].content.includes('"tool": "coder_update_state"')) {
       latestMemoryIdx = i;
       break;
     }
@@ -356,7 +356,6 @@ export function distillContext(messages, options = {}) {
     .sort((a, b) => a - b)
     .map((idx) => normalized[idx]);
 }
-
 
 /**
  * Trim messages to fit within the provider's context budget.

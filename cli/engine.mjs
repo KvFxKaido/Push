@@ -5,7 +5,7 @@ import { streamCompletion } from './provider.mjs';
 import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.mjs';
 import { recordMalformedToolCall } from './tool-call-metrics.mjs';
 import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.mjs';
-import { trimContext, distillContext } from './context-manager.mjs';
+import { trimContext, distillContext, estimateContextTokens, getContextBudget } from './context-manager.mjs';
 
 export const DEFAULT_MAX_ROUNDS = 8;
 
@@ -267,7 +267,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     }
 
     // Trim context to fit provider budget (state.messages is never mutated)
-    if (round > 4 && state.workingMemory?.plan?.trim()) {
+    if (round > 4 && state.workingMemory?.plan?.trim().length > 0 && estimateContextTokens(state.messages) > getContextBudget(providerConfig.id, state.model).targetTokens / 2) {
       const beforeCount = state.messages.length;
       state.messages = distillContext(state.messages);
       if (state.messages.length < beforeCount) {
