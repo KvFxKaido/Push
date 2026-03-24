@@ -3646,6 +3646,7 @@ export async function executeSandboxToolCall(
         const patchsetWorkspaceRevision = workspaceRevisions[0];
 
         // Validate all hashline ops against file contents
+        const coverageErrors: string[] = [];
         for (const edit of edits) {
           const fileData = fileContents.get(edit.path);
           if (!fileData) continue; // shouldn't happen given the check above
@@ -3658,7 +3659,7 @@ export async function executeSandboxToolCall(
             if (editResult.resolvedLines.length > 0) {
               const coverageVerdict = fileLedger.checkLinesCovered(edit.path, editResult.resolvedLines);
               if (!coverageVerdict.allowed) {
-                validationErrors.push(`${edit.path}: ${coverageVerdict.reason}`);
+                coverageErrors.push(`${edit.path}: ${coverageVerdict.reason}`);
                 continue;
               }
             }
@@ -3670,6 +3671,20 @@ export async function executeSandboxToolCall(
               workspaceRevision: fileData.workspaceRevision,
             });
           }
+        }
+
+        // Surface coverage guard failures as EDIT_GUARD_BLOCKED (not hash mismatch)
+        if (coverageErrors.length > 0) {
+          const err: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Truncation guard: edit targets lines outside the model read range in ${coverageErrors.length} file(s)`, detail: coverageErrors.join('; ') };
+          return {
+            text: formatStructuredError(err, [
+              `[Tool Error — sandbox_apply_patchset]`,
+              `Edit guard blocked ${coverageErrors.length} file(s):`,
+              ...coverageErrors.map(e => `  - ${e}`),
+              `No changes were written. Read the target lines first, then retry the patchset.`,
+            ].join('\n')),
+            structuredError: err,
+          };
         }
 
         if (validationErrors.length > 0) {
