@@ -284,6 +284,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       clearSandboxSessionByStorageKey(currentSessionStorageKey, id);
     }
     sessionStorageKeyRef.current = nextSessionStorageKey;
+
+    // Reset the file-awareness ledger when switching branches so stale
+    // read/write state from the previous branch doesn't leak through.
+    fileLedger.reset();
   }, []);
 
   // Expose session createdAt for expiry warnings
