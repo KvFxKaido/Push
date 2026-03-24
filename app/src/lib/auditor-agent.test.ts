@@ -17,9 +17,13 @@ vi.mock('./orchestrator', () => ({
   getProviderStreamFn: (...args: unknown[]) => mockGetProviderStreamFn(...args),
 }));
 
-vi.mock('./providers', () => ({
-  getModelForRole: (...args: unknown[]) => mockGetModelForRole(...args),
-}));
+vi.mock(import('./providers'), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getModelForRole: (...args: unknown[]) => mockGetModelForRole(...args),
+  };
+});
 
 vi.mock('./role-context', () => ({
   buildAuditorContextBlock: vi.fn(() => ''),

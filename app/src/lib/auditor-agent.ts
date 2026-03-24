@@ -1,5 +1,11 @@
 /**
- * Auditor Agent — reviews diffs for safety before allowing commits.
+ * Auditor Agent — reviews diffs for safety before allowing commits,
+ * and evaluates Coder output for completeness against acceptance criteria.
+ *
+ * Two modes:
+ * - **Commit mode** (runAuditor): binary SAFE/UNSAFE security review on diffs.
+ * - **Evaluation mode** (runAuditorEvaluation): COMPLETE/INCOMPLETE verdict
+ *   against the original task + acceptance criteria after Coder delegation.
  *
  * Uses either an explicit provider/model override (for chat-locked conversations)
  * or the active provider with the role-specific model resolved via providers.ts.
@@ -7,13 +13,14 @@
  * while preserving the global-backend fallback for non-chat flows.
  *
  * Design: fail-safe. If the Auditor returns invalid JSON or errors,
- * the verdict defaults to UNSAFE (blocking the commit).
+ * the verdict defaults to UNSAFE / INCOMPLETE.
  */
 
-import type { ChatMessage, AuditVerdictCardData } from '@/types';
+import type { ChatMessage, AuditVerdictCardData, CoderWorkingMemory } from '@/types';
 import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
 import { buildAuditorContextBlock, type AuditorPromptContext } from './role-context';
+import { formatCoderState } from './coder-agent';
 
 import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
@@ -190,5 +197,176 @@ export async function runAuditor(
         filesReviewed,
       },
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation mode — post-Coder completeness assessment
+// ---------------------------------------------------------------------------
+
+const EVALUATION_TIMEOUT_MS = 60_000;
+
+export interface EvaluationResult {
+  verdict: 'complete' | 'incomplete';
+  summary: string;
+  /** Specific items that are incomplete or missing. */
+  gaps: string[];
+  /** Confidence level in the verdict. */
+  confidence: 'high' | 'medium' | 'low';
+}
+
+const EVALUATION_SYSTEM_PROMPT = `You are the Evaluator for Push, a mobile AI coding assistant. Your job is to assess whether a Coder agent's work is complete.
+
+You receive:
+1. The original task description
+2. The Coder's final summary of what it did
+3. The Coder's working memory (plan, completed phases, errors, files touched)
+4. A diff of sandbox changes (if available)
+
+You MUST respond with ONLY a valid JSON object. No other text.
+
+Schema:
+{
+  "verdict": "complete" | "incomplete",
+  "summary": "One sentence explaining your assessment",
+  "gaps": ["Specific items that are missing or incomplete"],
+  "confidence": "high" | "medium" | "low"
+}
+
+Evaluation criteria:
+- Did the Coder address the core intent of the task?
+- Are there open tasks remaining in the working memory?
+- Did the Coder encounter errors that were never resolved?
+- Does the diff show the expected changes (files created/modified)?
+- If acceptance criteria were provided, did they pass?
+- Did the Coder hit a round cap or drift, suggesting premature termination?
+
+Important:
+- Be honest. Do NOT rubber-stamp incomplete work.
+- "complete" means the task's core deliverable is done, not that it's perfect.
+- Minor polish or optimization gaps do not make a task "incomplete".
+- If the Coder was stopped by a circuit breaker (round cap, drift), default to "incomplete" unless the summary clearly shows the work was finished before the stop.
+- If you lack enough context to judge, set confidence to "low" rather than guessing.`;
+
+export async function runAuditorEvaluation(
+  task: string,
+  coderSummary: string,
+  workingMemory: CoderWorkingMemory | null,
+  diff: string | null,
+  onStatus: (phase: string) => void,
+  options?: AuditorRunOptions & {
+    coderRounds?: number;
+    coderMaxRounds?: number;
+    criteriaResults?: { id: string; passed: boolean; output: string }[];
+  },
+): Promise<EvaluationResult> {
+  // Fail-safe default
+  const INCOMPLETE_DEFAULT: EvaluationResult = {
+    verdict: 'incomplete',
+    summary: 'Evaluation could not be completed — defaulting to incomplete.',
+    gaps: ['Evaluation failed'],
+    confidence: 'low',
+  };
+
+  const activeProvider = options?.providerOverride || getActiveProvider();
+  if (activeProvider === 'demo') {
+    return {
+      ...INCOMPLETE_DEFAULT,
+      summary: 'No AI provider configured. Cannot run evaluation.',
+    };
+  }
+
+  const { streamFn } = getProviderStreamFn(activeProvider);
+  const roleModel = getModelForRole(activeProvider, 'auditor');
+  const auditorModelId = options?.modelOverride?.trim() || roleModel?.id;
+
+  onStatus('Evaluating Coder output...');
+
+  // Build the evaluation request
+  const sections: string[] = [
+    `[ORIGINAL TASK]\n${task}\n[/ORIGINAL TASK]`,
+    `[CODER SUMMARY]\n${coderSummary}\n[/CODER SUMMARY]`,
+  ];
+
+  if (workingMemory) {
+    // Reuse the canonical formatCoderState to ensure all fields (including
+    // assumptions, observations, etc.) are included in the evaluation context.
+    sections.push(`[WORKING MEMORY]\n${formatCoderState(workingMemory, options?.coderRounds || 0)}\n[/WORKING MEMORY]`);
+  }
+
+  if (options?.coderRounds !== undefined && options?.coderMaxRounds !== undefined) {
+    const hitCap = options.coderRounds >= options.coderMaxRounds;
+    sections.push(`[EXECUTION INFO]\nRounds used: ${options.coderRounds}/${options.coderMaxRounds}${hitCap ? ' (HIT ROUND CAP — may be premature termination)' : ''}\n[/EXECUTION INFO]`);
+  }
+
+  if (options?.criteriaResults?.length) {
+    const passed = options.criteriaResults.filter(r => r.passed).length;
+    const total = options.criteriaResults.length;
+    const lines = options.criteriaResults.map(r =>
+      `  ${r.passed ? 'PASS' : 'FAIL'} ${r.id}${r.passed ? '' : `: ${r.output.slice(0, 200)}`}`,
+    );
+    sections.push(`[ACCEPTANCE CRITERIA] ${passed}/${total} passed\n${lines.join('\n')}\n[/ACCEPTANCE CRITERIA]`);
+  }
+
+  if (diff) {
+    const truncatedDiff = diff.length > 15_000 ? diff.slice(0, 15_000) + '\n[diff truncated]' : diff;
+    sections.push(`[SANDBOX DIFF]\n\`\`\`diff\n${truncatedDiff.replace(/`/g, '\\`')}\n\`\`\`\n[/SANDBOX DIFF]`);
+  }
+
+  const messages: ChatMessage[] = [
+    {
+      id: 'eval-request',
+      role: 'user',
+      content: `Evaluate whether the Coder's work is complete:\n\n${sections.join('\n\n')}`,
+      timestamp: Date.now(),
+    },
+  ];
+
+  const { promise: streamErrorPromise, getAccumulated } = streamWithTimeout(
+    EVALUATION_TIMEOUT_MS,
+    `Evaluation timed out after ${EVALUATION_TIMEOUT_MS / 1000}s.`,
+    (onToken, onDone, onError) => {
+      return streamFn(
+        messages,
+        onToken,
+        onDone,
+        onError,
+        undefined,
+        undefined,
+        false,
+        auditorModelId,
+        EVALUATION_SYSTEM_PROMPT,
+      );
+    },
+  );
+  const streamError = await streamErrorPromise;
+  const accumulated = getAccumulated();
+
+  if (streamError) {
+    return { ...INCOMPLETE_DEFAULT, summary: `Evaluation error: ${streamError.message}` };
+  }
+
+  // Parse JSON response
+  try {
+    let jsonStr = accumulated.trim();
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+    if (fenceMatch) {
+      jsonStr = fenceMatch[1].trim();
+    }
+
+    const parsed = asRecord(JSON.parse(jsonStr));
+    const verdict: 'complete' | 'incomplete' = parsed?.verdict === 'complete' ? 'complete' : 'incomplete';
+    const summary = typeof parsed?.summary === 'string' ? parsed.summary : 'No summary provided';
+    const gaps = Array.isArray(parsed?.gaps)
+      ? (parsed.gaps as unknown[]).filter((g): g is string => typeof g === 'string')
+      : [];
+    const confidence: 'high' | 'medium' | 'low' =
+      parsed?.confidence === 'high' || parsed?.confidence === 'medium' || parsed?.confidence === 'low'
+        ? parsed.confidence
+        : 'low';
+
+    return { verdict, summary, gaps, confidence };
+  } catch {
+    return { ...INCOMPLETE_DEFAULT, summary: 'Evaluator returned invalid response. Defaulting to incomplete.' };
   }
 }

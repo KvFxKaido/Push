@@ -120,6 +120,34 @@ export interface ModelCapabilities {
   streaming: ModelCapabilitySupport;
 }
 
+// ---------------------------------------------------------------------------
+// Harness profile — model-dependent scaffolding tiers
+// ---------------------------------------------------------------------------
+
+/**
+ * Harness profile tier: controls how much scaffolding the harness applies
+ * around agent runs (context resets, planner, evaluation, round caps).
+ *
+ * - 'standard': Opus-class / large models — compaction only, planner optional,
+ *   full round budget, evaluation at end only.
+ * - 'heavy': Sonnet-class / smaller models — context resets between phases,
+ *   planner enforced, tighter round caps, evaluation after every phase.
+ */
+export type HarnessProfile = 'standard' | 'heavy';
+
+/** Concrete settings derived from a HarnessProfile tier. */
+export interface HarnessProfileSettings {
+  profile: HarnessProfile;
+  /** Max rounds for a single Coder delegation. */
+  maxCoderRounds: number;
+  /** Whether the planner pre-pass is required before Coder delegation. */
+  plannerRequired: boolean;
+  /** Whether context resets are enabled between Coder phases. */
+  contextResetsEnabled: boolean;
+  /** Whether the Auditor evaluation runs after every Coder delegation. */
+  evaluateAfterCoder: boolean;
+}
+
 export interface AIModel {
   id: string;
   name: string;
@@ -782,6 +810,10 @@ export interface DelegationEnvelope extends DelegationBriefFields {
   projectInstructions?: string;
   /** Filename of the instructions file (for sandbox_read_file hint). */
   instructionFilename?: string;
+  /** Harness profile settings — controls scaffolding level for this delegation. */
+  harnessSettings?: HarnessProfileSettings;
+  /** Pre-computed planner brief to inject into the Coder's task preamble. */
+  plannerBrief?: string;
 }
 
 /** Runtime callbacks for the Coder agent loop. */

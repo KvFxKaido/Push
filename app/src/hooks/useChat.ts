@@ -25,6 +25,9 @@ import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget,
 import { detectAnyToolCall, executeAnyToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
 import { runCoderAgent, generateCheckpointAnswer, summarizeCoderStateForHandoff } from '@/lib/coder-agent';
 import { runExplorerAgent } from '@/lib/explorer-agent';
+import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
+import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
+import { resolveHarnessSettings } from '@/lib/model-capabilities';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import {
   appendCardsToLatestToolCall,
@@ -1854,6 +1857,15 @@ export function useChat(
                 toolExecResult = { text: '[Tool Error] Failed to start sandbox automatically. Try again.' };
               } else {
                 try {
+                  // --- Harness Profile Resolution ---
+                  // Resolve scaffolding level based on the model being used for this delegation.
+                  const harnessProvider = lockedProviderForChat || getActiveProvider();
+                  const harnessModelId = resolvedModelForChat || undefined;
+                  const harnessSettings = resolveHarnessSettings(
+                    harnessProvider as AIProviderType,
+                    harnessModelId,
+                  );
+
                   const delegateArgs = toolCall.call.args;
                   const taskList = Array.isArray(delegateArgs.tasks)
                     ? delegateArgs.tasks.filter((t) => typeof t === 'string' && t.trim())
@@ -1869,6 +1881,33 @@ export function useChat(
                   const summaries: string[] = [];
                   let totalRounds = 0;
                   let totalCheckpoints = 0;
+                  // Collect acceptance criteria results across all tasks for evaluation
+                  const allCriteriaResults: { id: string; passed: boolean; exitCode: number; output: string }[] = [];
+
+                  // --- Planner Pre-Pass ---
+                  // When the harness profile requires it (or the task is large enough),
+                  // run the planner to decompose into a feature checklist.
+                  let plannerBrief: string | undefined;
+                  if (harnessSettings.plannerRequired && taskList.length === 1) {
+                    updateAgentStatus(
+                      { active: true, phase: 'Planning task...', detail: `Profile: ${harnessSettings.profile}` },
+                      { chatId, source: 'coder' },
+                    );
+                    const plan = await runPlanner(
+                      taskList[0],
+                      delegateArgs.files || [],
+                      (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
+                      {
+                        providerOverride: lockedProviderForChat,
+                        modelOverride: resolvedModelForChat || undefined,
+                      },
+                    );
+                    if (plan) {
+                      plannerBrief = formatPlannerBrief(plan);
+                    }
+                    // Fail-open: if planner returns null, Coder proceeds without a plan
+                  }
+
                     for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
                       const task = taskList[taskIndex];
 
@@ -1940,6 +1979,8 @@ export function useChat(
                             protectMain: isMainProtectedRef.current,
                           } : undefined,
                           instructionFilename: instructionFilenameRef.current || undefined,
+                          harnessSettings,
+                          plannerBrief,
                         },
                       );
                       const seqElapsed = formatElapsedTime(Date.now() - seqTaskStart);
@@ -1951,8 +1992,67 @@ export function useChat(
                       } else {
                         summaries.push(`${coderResult.summary} (${seqElapsed})`);
                       }
+                      if (coderResult.criteriaResults) {
+                        allCriteriaResults.push(...coderResult.criteriaResults);
+                      }
                       allCards.push(...coderResult.cards);
                     }
+
+                  // --- Auditor Evaluation ---
+                  // After all Coder tasks complete, run the Auditor in evaluation
+                  // mode to assess whether the work is actually complete.
+                  if (harnessSettings.evaluateAfterCoder && summaries.length > 0) {
+                    let evalResult: EvaluationResult | null = null;
+                    try {
+                      updateAgentStatus(
+                        { active: true, phase: 'Evaluating output...' },
+                        { chatId, source: 'coder' },
+                      );
+                      // Get sandbox diff for evaluation context
+                      let evalDiff: string | null = null;
+                      try {
+                        const { getSandboxDiff } = await import('@/lib/sandbox-client');
+                        const diffResult = await getSandboxDiff(currentSandboxId);
+                        evalDiff = diffResult.diff || null;
+                      } catch { /* no diff available — evaluation proceeds without it */ }
+
+                      const combinedTask = taskList.join('\n\n');
+                      const combinedSummary = summaries.join('\n');
+                      // For multi-task delegations, only the last task's working memory
+                      // is available — pass null to avoid misleading the evaluator.
+                      const evalWorkingMemory = taskList.length <= 1
+                        ? lastCoderStateRef.current
+                        : null;
+                      // Scale max rounds by task count so multi-task totals don't
+                      // falsely trigger the "hit round cap" signal.
+                      const evalMaxRounds = harnessSettings.maxCoderRounds * Math.max(taskList.length, 1);
+                      evalResult = await runAuditorEvaluation(
+                        combinedTask,
+                        combinedSummary,
+                        evalWorkingMemory,
+                        evalDiff,
+                        (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
+                        {
+                          providerOverride: lockedProviderForChat,
+                          modelOverride: resolvedModelForChat || undefined,
+                          coderRounds: totalRounds,
+                          coderMaxRounds: evalMaxRounds,
+                          criteriaResults: allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
+                        },
+                      );
+                    } catch {
+                      // Fail-open: if evaluation fails, Coder result stands as-is
+                    }
+
+                    // Append evaluation verdict to summaries
+                    if (evalResult) {
+                      const evalLine = `\n[Evaluation: ${evalResult.verdict.toUpperCase()}] ${evalResult.summary}`;
+                      const gapLines = evalResult.gaps.length > 0
+                        ? evalResult.gaps.map(g => `  - ${g}`).join('\n')
+                        : '';
+                      summaries.push(evalLine + (gapLines ? `\n${gapLines}` : ''));
+                    }
+                  }
 
                   // Attach all Coder cards to the assistant message
                   if (allCards.length > 0) {
