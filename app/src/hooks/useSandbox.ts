@@ -285,9 +285,12 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     }
     sessionStorageKeyRef.current = nextSessionStorageKey;
 
-    // Reset the file-awareness ledger when switching branches so stale
-    // read/write state from the previous branch doesn't leak through.
-    fileLedger.reset();
+    // Reset the file-awareness ledger only when the repo/branch actually
+    // changed so stale read/write state doesn't leak through, but we
+    // preserve coverage when re-binding within the same session.
+    if (currentSessionStorageKey !== nextSessionStorageKey) {
+      fileLedger.reset();
+    }
   }, []);
 
   // Expose session createdAt for expiry warnings
