@@ -17,6 +17,8 @@ export interface HashlineEditResult {
   applied: number;
   failed: number;
   errors: string[];
+  /** 1-indexed line numbers of successfully resolved edit targets (against the original content). */
+  resolvedLines: number[];
 }
 
 // --- Crypto runtime detection ---
@@ -251,7 +253,7 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
     applied.push({ originalIndex: r.index, op: edit.op, edit });
   }
 
-  return { content: resultLines.join('\n'), applied: appliedCount, failed: failedCount, errors };
+  return { content: resultLines.join('\n'), applied: appliedCount, failed: failedCount, errors, resolvedLines: applied.map(a => a.originalIndex + 1) };
 }
 
 /**

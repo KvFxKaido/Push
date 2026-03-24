@@ -1863,6 +1863,25 @@ export async function executeSandboxToolCall(
           };
         }
 
+        // 2b. Truncation-hashline sync: verify resolved edit targets fall within
+        // the model's read ranges. This is a belt-and-suspenders guard — the model
+        // normally can't produce valid hashes for unseen lines, but an explicit
+        // cross-check closes the gap between the hashline and ledger systems.
+        if (editResult.resolvedLines.length > 0) {
+          const coverageVerdict = fileLedger.checkLinesCovered(path, editResult.resolvedLines);
+          if (!coverageVerdict.allowed) {
+            const err: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Truncation guard: ${coverageVerdict.reason}`, detail: 'Hashline edit targets lines outside the model read range' };
+            return {
+              text: formatStructuredError(err, [
+                `[Tool Error — sandbox_edit_file]`,
+                coverageVerdict.reason,
+                `No changes were saved. Read the target lines first, then retry the edit.`,
+              ].join("\n")),
+              structuredError: err,
+            };
+          }
+        }
+
         // 3. Write the edited content directly (instead of delegating to sandbox_write_file)
         // Transient failures (5xx, timeout, network) are retried by sandbox-client withRetry().
         const beforeVersion = readResult.version || 'unknown';
@@ -3627,6 +3646,7 @@ export async function executeSandboxToolCall(
         const patchsetWorkspaceRevision = workspaceRevisions[0];
 
         // Validate all hashline ops against file contents
+        const coverageErrors: string[] = [];
         for (const edit of edits) {
           const fileData = fileContents.get(edit.path);
           if (!fileData) continue; // shouldn't happen given the check above
@@ -3635,6 +3655,14 @@ export async function executeSandboxToolCall(
           if (editResult.failed > 0) {
             validationErrors.push(`${edit.path}: ${editResult.errors.join('; ')}`);
           } else {
+            // Truncation-hashline sync: verify resolved lines fall within read ranges
+            if (editResult.resolvedLines.length > 0) {
+              const coverageVerdict = fileLedger.checkLinesCovered(edit.path, editResult.resolvedLines);
+              if (!coverageVerdict.allowed) {
+                coverageErrors.push(`${edit.path}: ${coverageVerdict.reason}`);
+                continue;
+              }
+            }
             editResults.push({
               path: edit.path,
               content: editResult.content,
@@ -3643,6 +3671,20 @@ export async function executeSandboxToolCall(
               workspaceRevision: fileData.workspaceRevision,
             });
           }
+        }
+
+        // Surface coverage guard failures as EDIT_GUARD_BLOCKED (not hash mismatch)
+        if (coverageErrors.length > 0) {
+          const err: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Truncation guard: edit targets lines outside the model read range in ${coverageErrors.length} file(s)`, detail: coverageErrors.join('; ') };
+          return {
+            text: formatStructuredError(err, [
+              `[Tool Error — sandbox_apply_patchset]`,
+              `Edit guard blocked ${coverageErrors.length} file(s):`,
+              ...coverageErrors.map(e => `  - ${e}`),
+              `No changes were written. Read the target lines first, then retry the patchset.`,
+            ].join('\n')),
+            structuredError: err,
+          };
         }
 
         if (validationErrors.length > 0) {

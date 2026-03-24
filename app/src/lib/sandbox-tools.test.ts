@@ -1579,6 +1579,52 @@ describe('sandbox_edit_file symbolic guard', () => {
   });
 });
 
+describe('sandbox_edit_file truncation-hashline sync guard', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.writeToSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    fileLedger.reset();
+  });
+
+  it('blocks edit when resolved lines fall outside partial_read range', async () => {
+    const path = '/workspace/big.ts';
+    // File has 6 lines; ledger records lines 1-3 with symbol 'foo'
+    const fileContent = 'function foo() {\n  return 1;\n}\nfunction bar() {\n  return 2;\n}';
+    fileLedger.recordRead(path, {
+      startLine: 1,
+      endLine: 3,
+      truncated: false,
+      symbols: [{ name: 'foo', kind: 'function', lineRange: { start: 1, end: 3 } }],
+    });
+
+    // The edit targets line 5 (hash of '  return 2;') — outside the read range [1-3]
+    // Edit content declares 'function foo' so symbolic guard passes (known symbol)
+    const ref = await calculateLineHash('  return 2;');
+
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path,
+          edits: [{ op: 'replace_line', ref, content: 'function foo() { return 42; }' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.structuredError?.type).toBe('EDIT_GUARD_BLOCKED');
+    expect(result.text).toContain('not read');
+    expect(sandboxClient.writeToSandbox).not.toHaveBeenCalled();
+  });
+});
+
 describe('sandbox_edit_range', () => {
   beforeEach(() => {
     vi.mocked(sandboxClient.readFromSandbox).mockReset();

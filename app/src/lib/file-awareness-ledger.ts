@@ -563,6 +563,97 @@ export class FileAwarenessLedger {
   }
 
   /**
+   * Check whether specific 1-indexed line numbers fall within the model's read ranges.
+   * Used by the hashline-truncation sync to verify that resolved edit targets
+   * were actually seen by the model, not just resolvable against the full file.
+   *
+   * Returns allowed:true if the file is fully_read, model_authored, or all lines
+   * fall within partial_read ranges. Otherwise returns allowed:false with a
+   * human-readable reason string that includes the uncovered line ranges.
+   */
+  checkLinesCovered(path: string, lineNumbers: number[]): EditGuardVerdict {
+    if (lineNumbers.length === 0) return { allowed: true };
+
+    this._metrics.checksTotal++;
+    const key = this.normalizePath(path);
+    const entry = this.entries.get(key);
+
+    if (!entry || entry.kind === 'never_read') {
+      this._metrics.blockedTotal++;
+      this._metrics.blockedByNeverRead++;
+      return {
+        allowed: false,
+        reason: `File "${path}" has not been read yet. Use sandbox_read_file to read it before editing.`,
+      };
+    }
+
+    // Stale files are blocked — consistent with checkWriteAllowed(). The caller
+    // (sandbox_edit_file / sandbox_apply_patchset) should have freshened the
+    // ledger via auto-expand before reaching this point. If the file went stale
+    // between the read and here, blocking is the correct behavior.
+    if (entry.kind === 'stale') {
+      this._metrics.blockedTotal++;
+      this._metrics.blockedByStale++;
+      return {
+        allowed: false,
+        reason: `File "${path}" may have changed since your last read. Re-read it with sandbox_read_file before editing.`,
+      };
+    }
+
+    if (entry.kind === 'fully_read' || entry.kind === 'model_authored') {
+      this._metrics.allowedTotal++;
+      return { allowed: true };
+    }
+
+    if (entry.kind === 'partial_read') {
+      const uncovered: number[] = [];
+      for (const line of lineNumbers) {
+        let covered = false;
+        for (const range of entry.ranges) {
+          if (line >= range.start && line <= range.end) {
+            covered = true;
+            break;
+          }
+        }
+        if (!covered) uncovered.push(line);
+      }
+      if (uncovered.length === 0) {
+        this._metrics.allowedTotal++;
+        return { allowed: true };
+      }
+
+      // Format uncovered lines as ranges for readability
+      const sorted = [...new Set(uncovered)].sort((a, b) => a - b);
+      const rangeStrs: string[] = [];
+      let rangeStart = sorted[0];
+      let rangeEnd = sorted[0];
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i] === rangeEnd + 1) {
+          rangeEnd = sorted[i];
+        } else {
+          rangeStrs.push(rangeStart === rangeEnd ? `${rangeStart}` : `${rangeStart}-${rangeEnd}`);
+          rangeStart = rangeEnd = sorted[i];
+        }
+      }
+      rangeStrs.push(rangeStart === rangeEnd ? `${rangeStart}` : `${rangeStart}-${rangeEnd}`);
+
+      this._metrics.blockedTotal++;
+      this._metrics.blockedByPartialRead++;
+      return {
+        allowed: false,
+        reason: `Edit targets line(s) ${rangeStrs.join(', ')} which were not read. Read those ranges with sandbox_read_file first.`,
+      };
+    }
+
+    // Fail closed for any unhandled state kinds
+    this._metrics.blockedTotal++;
+    return {
+      allowed: false,
+      reason: `Cannot edit file "${path}": unhandled awareness state kind (${(entry as { kind: string }).kind}).`,
+    };
+  }
+
+  /**
    * Get the stale warning for a file, if applicable.
    */
   getStaleWarning(path: string): string | null {
