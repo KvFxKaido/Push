@@ -34,6 +34,19 @@ function uniqueStrings(values) {
   return out;
 }
 
+// ─── Context Distillation ─────────────────────────────────────────
+
+/**
+ * Determine if mid-session context distillation is needed.
+ * Only distill if we're past round 4, have a plan, and are over half the token budget.
+ */
+function shouldDistillMidSession(messages, workingMemory, round, providerId, model) {
+  if (round <= 4) return false;
+  if (!workingMemory?.plan?.trim().length) return false;
+  const budget = getContextBudget(providerId, model);
+  return estimateContextTokens(messages) > budget.targetTokens / 2;
+}
+
 function applyWorkingMemoryUpdate(state, args) {
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
@@ -267,7 +280,7 @@ export async function runAssistantLoop(state, providerConfig, apiKey, maxRounds,
     }
 
     // Trim context to fit provider budget (state.messages is never mutated)
-    if (round > 4 && state.workingMemory?.plan?.trim().length > 0 && estimateContextTokens(state.messages) > getContextBudget(providerConfig.id, state.model).targetTokens / 2) {
+    if (shouldDistillMidSession(state.messages, state.workingMemory, round, providerConfig.id, state.model)) {
       const beforeCount = state.messages.length;
       state.messages = distillContext(state.messages);
       if (state.messages.length < beforeCount) {

@@ -121,6 +121,26 @@ function uniqueStrings(values: unknown[] | undefined): string[] {
   return out;
 }
 
+// ─── Context Distillation ─────────────────────────────────────────
+
+/**
+ * Determine if mid-session context distillation is needed.
+ * Only distill if we're past round 4, have a plan, and are over half the token budget.
+ */
+function shouldDistillMidSession(
+  messages: Message[],
+  workingMemory: WorkingMemory | undefined,
+  round: number,
+  providerId: string,
+  model: string,
+): boolean {
+  if (round <= 4) return false;
+  if (!workingMemory?.plan?.trim().length) return false;
+  const budget = getContextBudget(providerId, model);
+  return estimateContextTokens(messages) > budget.targetTokens / 2;
+}
+
+
 function applyWorkingMemoryUpdate(state: SessionState, args: Partial<WorkingMemory>): WorkingMemory {
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
@@ -365,7 +385,7 @@ export async function runAssistantLoop(
     }
 
     // Trim context to fit provider budget (state.messages is never mutated)
-    if (round > 4 && (state.workingMemory as WorkingMemory)?.plan?.trim().length > 0 && estimateContextTokens(state.messages as Message[]) > getContextBudget(providerConfig.id, state.model).targetTokens / 2) {
+    if (shouldDistillMidSession(state.messages as Message[], state.workingMemory as WorkingMemory, round, providerConfig.id, state.model)) {
       const beforeCount = (state.messages as Message[]).length;
       state.messages = distillContext(state.messages as Message[]) as any;
       if ((state.messages as Message[]).length < beforeCount) {
