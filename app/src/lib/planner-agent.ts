@@ -13,7 +13,7 @@
  * a plan — the Coder's own internal planning takes over.
  */
 
-import type { ChatMessage, AIProviderType } from '@/types';
+import type { ChatMessage } from '@/types';
 import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
 import { asRecord, streamWithTimeout } from './utils';
