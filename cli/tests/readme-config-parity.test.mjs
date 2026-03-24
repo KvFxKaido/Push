@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const readmeSource = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-const providerSource = readFileSync(new URL('../provider.mjs', import.meta.url), 'utf8');
-const cliSource = readFileSync(new URL('../cli.mjs', import.meta.url), 'utf8');
-const toolsSource = readFileSync(new URL('../tools.mjs', import.meta.url), 'utf8');
+const providerSource = readFileSync(new URL('../provider.ts', import.meta.url), 'utf8');
+const cliSource = readFileSync(new URL('../cli.ts', import.meta.url), 'utf8');
+const toolsSource = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
 
 function extractProviderConfigsBlock(source) {
-  const match = source.match(/export const PROVIDER_CONFIGS = \{([\s\S]*?)\n\};/);
+  const match = source.match(/export const PROVIDER_CONFIGS[^=]*= \{([\s\S]*?)\n\};/);
   assert.ok(match, 'Expected to find PROVIDER_CONFIGS');
   return match[1];
 }
@@ -73,7 +73,7 @@ function extractReadmeEnvVarRows(source) {
 function extractReadmeProviderRows(source) {
   const rows = extractReadmeTableRows(source);
   return rows
-    .filter(([provider]) => ['`ollama`', '`openrouter`', '`zen`', '`nvidia`'].includes(provider))
+    .filter(([provider]) => ['`ollama`', '`openrouter`', '`zen`', '`nvidia`', '`kilocode`', '`blackbox`', '`openadapter`'].includes(provider))
     .map(([provider, model, requiresKey]) => ({
       id: provider.slice(1, -1),
       defaultModel: model.slice(1, -1),

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const cliProviderSource = readFileSync(new URL('../provider.mjs', import.meta.url), 'utf8');
+const cliProviderSource = readFileSync(new URL('../provider.ts', import.meta.url), 'utf8');
 const webProviderSource = readFileSync(new URL('../../app/src/lib/providers.ts', import.meta.url), 'utf8');
 
 function extractExportedStringConstant(source, exportName) {
@@ -18,7 +18,7 @@ function extractUnionMembers(source, typeName) {
 }
 
 function extractProviderConfigsBlock(source) {
-  const match = source.match(/export const PROVIDER_CONFIGS = \{([\s\S]*?)\n\};/);
+  const match = source.match(/export const PROVIDER_CONFIGS[^=]*= \{([\s\S]*?)\n\};/);
   assert.ok(match, 'Expected to find PROVIDER_CONFIGS');
   return match[1];
 }
@@ -68,6 +68,9 @@ describe('provider config parity', () => {
     openrouter: 'OPENROUTER_DEFAULT_MODEL',
     zen: 'ZEN_DEFAULT_MODEL',
     nvidia: 'NVIDIA_DEFAULT_MODEL',
+    kilocode: 'KILOCODE_DEFAULT_MODEL',
+    blackbox: 'BLACKBOX_DEFAULT_MODEL',
+    openadapter: 'OPENADAPTER_DEFAULT_MODEL',
   };
 
   it('keeps the CLI provider roster in sync with the web provider set', () => {

@@ -1,6 +1,7 @@
 {
   "name": "push-root",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "cd app && npm install && npm run build",
     "build:cli": "cd cli && npx tsc -p tsconfig.json",

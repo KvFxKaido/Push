@@ -192,14 +192,14 @@ describe('validateAttachToken', () => {
 
 describe('daemon-client module', () => {
   it('exports connect, tryConnect, waitForReady', async () => {
-    const mod = await import('../daemon-client.mjs');
+    const mod = await import('../daemon-client.ts');
     assert.equal(typeof mod.connect, 'function');
     assert.equal(typeof mod.tryConnect, 'function');
     assert.equal(typeof mod.waitForReady, 'function');
   });
 
   it('tryConnect returns null for nonexistent socket', async () => {
-    const { tryConnect } = await import('../daemon-client.mjs');
+    const { tryConnect } = await import('../daemon-client.ts');
     const result = await tryConnect('/tmp/nonexistent-pushd-test.sock', 200);
     assert.equal(result, null);
   });
@@ -249,7 +249,7 @@ describe('daemon-client module', () => {
     try {
       await new Promise((resolve) => server.listen(sockPath, resolve));
 
-      const { connect } = await import('../daemon-client.mjs');
+      const { connect } = await import('../daemon-client.ts');
       const client = await connect(sockPath);
       assert.ok(client.connected);
 
@@ -304,7 +304,7 @@ describe('daemon-client module', () => {
     try {
       await new Promise((resolve) => server.listen(sockPath, resolve));
 
-      const { connect } = await import('../daemon-client.mjs');
+      const { connect } = await import('../daemon-client.ts');
       const client = await connect(sockPath);
 
       const events = [];
