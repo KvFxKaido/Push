@@ -1881,6 +1881,8 @@ export function useChat(
                   const summaries: string[] = [];
                   let totalRounds = 0;
                   let totalCheckpoints = 0;
+                  // Collect acceptance criteria results across all tasks for evaluation
+                  const allCriteriaResults: { id: string; passed: boolean; exitCode: number; output: string }[] = [];
 
                   // --- Planner Pre-Pass ---
                   // When the harness profile requires it (or the task is large enough),
@@ -1990,6 +1992,9 @@ export function useChat(
                       } else {
                         summaries.push(`${coderResult.summary} (${seqElapsed})`);
                       }
+                      if (coderResult.criteriaResults) {
+                        allCriteriaResults.push(...coderResult.criteriaResults);
+                      }
                       allCards.push(...coderResult.cards);
                     }
 
@@ -2013,17 +2018,26 @@ export function useChat(
 
                       const combinedTask = taskList.join('\n\n');
                       const combinedSummary = summaries.join('\n');
+                      // For multi-task delegations, only the last task's working memory
+                      // is available — pass null to avoid misleading the evaluator.
+                      const evalWorkingMemory = taskList.length <= 1
+                        ? lastCoderStateRef.current
+                        : null;
+                      // Scale max rounds by task count so multi-task totals don't
+                      // falsely trigger the "hit round cap" signal.
+                      const evalMaxRounds = harnessSettings.maxCoderRounds * Math.max(taskList.length, 1);
                       evalResult = await runAuditorEvaluation(
                         combinedTask,
                         combinedSummary,
-                        lastCoderStateRef.current,
+                        evalWorkingMemory,
                         evalDiff,
                         (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
                         {
                           providerOverride: lockedProviderForChat,
                           modelOverride: resolvedModelForChat || undefined,
                           coderRounds: totalRounds,
-                          coderMaxRounds: harnessSettings.maxCoderRounds,
+                          coderMaxRounds: evalMaxRounds,
+                          criteriaResults: allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
                         },
                       );
                     } catch {

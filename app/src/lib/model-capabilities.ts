@@ -245,7 +245,7 @@ const HEAVY_PROFILE_SETTINGS: HarnessProfileSettings = {
  * Everything else gets 'heavy' (more guardrails).
  */
 export function getHarnessProfile(
-  provider: AIProviderType,
+  _provider: AIProviderType,
   modelId: string | null | undefined,
 ): HarnessProfile {
   const id = modelId?.trim()?.toLowerCase() || '';
@@ -253,8 +253,11 @@ export function getHarnessProfile(
   // Opus-class models — capable enough for minimal scaffolding
   if (/opus/i.test(id)) return 'standard';
 
-  // GPT-5.4+ tier
-  if (/gpt-5\.[4-9]|gpt-5\.1\d/i.test(id)) return 'standard';
+  // Claude 3.5 Sonnet — proven capable for long-running tasks
+  if (/claude-3-5-sonnet|claude-3\.5-sonnet/i.test(id)) return 'standard';
+
+  // GPT-4o and GPT-5.4+ tier
+  if (/gpt-4o|gpt-5\.[4-9]|gpt-5\.1\d/i.test(id)) return 'standard';
 
   // Gemini large Pro / 3.1-pro models
   if (/gemini-3\.1-pro|gemini-3-pro/i.test(id)) return 'standard';
@@ -265,7 +268,7 @@ export function getHarnessProfile(
   // GLM-5 (non-turbo) — large model
   if (/glm-5(?!-turbo)/i.test(id)) return 'standard';
 
-  // Everything else: Sonnet, Haiku, smaller models, unknown models
+  // Everything else: Sonnet 4.x, Haiku, smaller models, unknown models
   return 'heavy';
 }
 

@@ -20,6 +20,7 @@ import type { ChatMessage, AuditVerdictCardData, CoderWorkingMemory } from '@/ty
 import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
 import { buildAuditorContextBlock, type AuditorPromptContext } from './role-context';
+import { formatCoderState } from './coder-agent';
 
 import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
@@ -288,16 +289,9 @@ export async function runAuditorEvaluation(
   ];
 
   if (workingMemory) {
-    const memLines: string[] = [];
-    if (workingMemory.plan) memLines.push(`Plan: ${workingMemory.plan}`);
-    if (workingMemory.openTasks?.length) memLines.push(`Open tasks: ${workingMemory.openTasks.join('; ')}`);
-    if (workingMemory.filesTouched?.length) memLines.push(`Files touched: ${workingMemory.filesTouched.join(', ')}`);
-    if (workingMemory.errorsEncountered?.length) memLines.push(`Unresolved errors: ${workingMemory.errorsEncountered.join('; ')}`);
-    if (workingMemory.currentPhase) memLines.push(`Current phase: ${workingMemory.currentPhase}`);
-    if (workingMemory.completedPhases?.length) memLines.push(`Completed phases: ${workingMemory.completedPhases.join(', ')}`);
-    if (memLines.length) {
-      sections.push(`[WORKING MEMORY]\n${memLines.join('\n')}\n[/WORKING MEMORY]`);
-    }
+    // Reuse the canonical formatCoderState to ensure all fields (including
+    // assumptions, observations, etc.) are included in the evaluation context.
+    sections.push(`[WORKING MEMORY]\n${formatCoderState(workingMemory, options?.coderRounds || 0)}\n[/WORKING MEMORY]`);
   }
 
   if (options?.coderRounds !== undefined && options?.coderMaxRounds !== undefined) {

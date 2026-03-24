@@ -1163,15 +1163,16 @@ ${truncatedResult}
         && stateUpdate.currentPhase !== lastPhaseForReset
         && lastPhaseForReset !== undefined // skip the very first phase assignment
       ) {
-        statusFn('Context reset', `Phase: ${stateUpdate.currentPhase}`);
+        const previousPhase = lastPhaseForReset;
         lastPhaseForReset = stateUpdate.currentPhase;
+        statusFn('Context reset', `Phase: ${stateUpdate.currentPhase}`);
 
         // Build a fresh task message with working memory as handoff context
         const resetPreamble = [
           taskPreamble,
           '',
           '[CONTEXT RESET — Phase transition]',
-          `Previous phase "${workingMemory.completedPhases?.slice(-1)?.[0] || 'unknown'}" completed.`,
+          `Previous phase "${previousPhase}" completed.`,
           `Now starting phase: ${stateUpdate.currentPhase}`,
           '',
           formatCoderState(workingMemory, round),
@@ -1180,7 +1181,9 @@ ${truncatedResult}
           '[/CONTEXT RESET]',
         ].join('\n');
 
-        // Reset messages to just the new preamble
+        // Reset messages to just the new preamble — but do NOT continue here.
+        // Fall through to tool detection so any tool call in the same response
+        // is still executed (a phase transition + tool call in one turn is valid).
         messages.length = 0;
         messages.push({
           id: `coder-reset-task-${round}`,
@@ -1189,7 +1192,8 @@ ${truncatedResult}
           timestamp: Date.now(),
         });
         lastInjectedState = structuredClone(workingMemory);
-        continue;
+        // Fall through — don't continue; let tool detection below handle
+        // any sandbox tool call emitted in the same response.
       }
       // Track current phase for reset detection
       if (stateUpdate.currentPhase) {
