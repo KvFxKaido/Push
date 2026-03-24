@@ -21,6 +21,7 @@ export interface PushConfig {
   zen?: ProviderConfig;
   nvidia?: ProviderConfig;
   kilocode?: ProviderConfig;
+  blackbox?: ProviderConfig;
   [key: string]: unknown;
 }
 
@@ -95,6 +96,16 @@ export function applyConfigToEnv(config: PushConfig): void {
   setEnvIfMissing('PUSH_NVIDIA_URL', nvidia.url);
   setEnvIfMissing('PUSH_NVIDIA_API_KEY', nvidia.apiKey);
   setEnvIfMissing('PUSH_NVIDIA_MODEL', nvidia.model);
+
+  const kilocode = ensureObject(config.kilocode) as ProviderConfig;
+  setEnvIfMissing('PUSH_KILOCODE_URL', kilocode.url);
+  setEnvIfMissing('PUSH_KILOCODE_API_KEY', kilocode.apiKey);
+  setEnvIfMissing('PUSH_KILOCODE_MODEL', kilocode.model);
+
+  const blackbox = ensureObject(config.blackbox) as ProviderConfig;
+  setEnvIfMissing('PUSH_BLACKBOX_URL', blackbox.url);
+  setEnvIfMissing('PUSH_BLACKBOX_API_KEY', blackbox.apiKey);
+  setEnvIfMissing('PUSH_BLACKBOX_MODEL', blackbox.model);
 }
 
 export function maskSecret(value: unknown): string {

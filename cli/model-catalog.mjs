@@ -77,12 +77,19 @@ export const KILOCODE_MODELS = [
   'kilo-auto/balanced',
 ];
 
+export const BLACKBOX_MODELS = [
+  'blackbox-ai',
+  'blackbox-pro',
+  'blackbox-search',
+];
+
 const CATALOG = {
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,
   zen: ZEN_MODELS,
   nvidia: NVIDIA_MODELS,
   kilocode: KILOCODE_MODELS,
+  blackbox: BLACKBOX_MODELS,
 };
 
 /** Default model per provider — must match PROVIDER_CONFIGS defaults. */
@@ -92,6 +99,7 @@ export const DEFAULT_MODELS = {
   zen: 'big-pickle',
   nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
   kilocode: 'google/gemini-3-flash-preview',
+  blackbox: 'blackbox-ai',
 };
 
 /**

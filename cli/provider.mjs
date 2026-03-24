@@ -56,8 +56,15 @@ export const PROVIDER_CONFIGS = {
   kilocode: {
     id: 'kilocode',
     url: process.env.PUSH_KILOCODE_URL || 'https://api.kilo.ai/api/gateway/chat/completions',
-    defaultModel: process.env.PUSH_KILOCODE_MODEL || 'google/gemini-2.0-flash',
+    defaultModel: process.env.PUSH_KILOCODE_MODEL || 'google/gemini-3-flash-preview',
     apiKeyEnv: ['PUSH_KILOCODE_API_KEY', 'KILOCODE_API_KEY', 'VITE_KILOCODE_API_KEY'],
+    requiresKey: true,
+  },
+  blackbox: {
+    id: 'blackbox',
+    url: process.env.PUSH_BLACKBOX_URL || 'https://www.blackbox.ai/chat/completions',
+    defaultModel: process.env.PUSH_BLACKBOX_MODEL || 'blackbox-ai',
+    apiKeyEnv: ['PUSH_BLACKBOX_API_KEY', 'BLACKBOX_API_KEY', 'VITE_BLACKBOX_API_KEY'],
     requiresKey: true,
   },
 };

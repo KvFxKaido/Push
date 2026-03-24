@@ -92,6 +92,13 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
     apiKeyEnv: ['PUSH_KILOCODE_API_KEY', 'KILOCODE_API_KEY', 'VITE_KILOCODE_API_KEY'],
     requiresKey: true,
   },
+  blackbox: {
+    id: 'blackbox',
+    url: process.env.PUSH_BLACKBOX_URL || 'https://www.blackbox.ai/chat/completions',
+    defaultModel: process.env.PUSH_BLACKBOX_MODEL || 'blackbox-ai',
+    apiKeyEnv: ['PUSH_BLACKBOX_API_KEY', 'BLACKBOX_API_KEY', 'VITE_BLACKBOX_API_KEY'],
+    requiresKey: true,
+  },
 };
 
 export function resolveApiKey(config: ProviderConfig): string {

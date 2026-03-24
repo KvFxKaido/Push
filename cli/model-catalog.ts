@@ -77,7 +77,13 @@ export const KILOCODE_MODELS: readonly string[] = [
   'kilo-auto/balanced',
 ];
 
-export type ProviderId = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'kilocode';
+export const BLACKBOX_MODELS: readonly string[] = [
+  'blackbox-ai',
+  'blackbox-pro',
+  'blackbox-search',
+];
+
+export type ProviderId = 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'kilocode' | 'blackbox';
 
 const CATALOG: Record<ProviderId, readonly string[]> = {
   ollama: OLLAMA_MODELS,
@@ -85,6 +91,7 @@ const CATALOG: Record<ProviderId, readonly string[]> = {
   zen: ZEN_MODELS,
   nvidia: NVIDIA_MODELS,
   kilocode: KILOCODE_MODELS,
+  blackbox: BLACKBOX_MODELS,
 };
 
 /** Default model per provider — keep in sync with PROVIDER_CONFIGS in provider.ts. */
@@ -94,6 +101,7 @@ export const DEFAULT_MODELS: Record<ProviderId, string> = {
   zen: 'big-pickle',
   nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
   kilocode: 'google/gemini-3-flash-preview',
+  blackbox: 'blackbox-ai',
 } as const;
 
 /**
