@@ -583,18 +583,26 @@ export class FileAwarenessLedger {
       };
     }
 
-    // Unwrap stale — the underlying ranges still represent what the model saw
-    const base = entry.kind === 'stale' ? entry.previousState : entry;
+    // Stale files are blocked — consistent with checkWriteAllowed(). The caller
+    // (sandbox_edit_file / sandbox_apply_patchset) should have freshened the
+    // ledger via auto-expand before reaching this point. If the file went stale
+    // between the read and here, blocking is the correct behavior.
+    if (entry.kind === 'stale') {
+      return {
+        allowed: false,
+        reason: `File "${path}" may have changed since your last read. Re-read it with sandbox_read_file before editing.`,
+      };
+    }
 
-    if (base.kind === 'fully_read' || base.kind === 'model_authored') {
+    if (entry.kind === 'fully_read' || entry.kind === 'model_authored') {
       return { allowed: true };
     }
 
-    if (base.kind === 'partial_read') {
+    if (entry.kind === 'partial_read') {
       const uncovered: number[] = [];
       for (const line of lineNumbers) {
         let covered = false;
-        for (const range of base.ranges) {
+        for (const range of entry.ranges) {
           if (line >= range.start && line <= range.end) {
             covered = true;
             break;

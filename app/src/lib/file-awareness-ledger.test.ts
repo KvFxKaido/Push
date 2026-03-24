@@ -67,11 +67,12 @@ describe('FileAwarenessLedger.checkLinesCovered', () => {
     expect(result.allowed).toBe(true);
   });
 
-  it('works through stale state using previous ranges', () => {
+  it('blocks stale files even if lines were previously in range', () => {
     ledger.recordRead('foo.ts', { startLine: 1, endLine: 100 });
     ledger.markStale('foo.ts');
-    // Stale files unwrap to previousState — ranges still valid
+    // Stale files are blocked — consistent with checkWriteAllowed()
     const result = ledger.checkLinesCovered('foo.ts', [50]);
-    expect(result.allowed).toBe(true);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('may have changed');
   });
 });
