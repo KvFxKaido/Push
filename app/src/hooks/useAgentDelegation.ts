@@ -1,7 +1,8 @@
 import { useCallback } from 'react';
-import { streamChat, getActiveProvider } from '@/lib/orchestrator';
+import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { runCoderAgent, generateCheckpointAnswer, summarizeCoderStateForHandoff } from '@/lib/coder-agent';
 import { runExplorerAgent } from '@/lib/explorer-agent';
+import { type AnyToolCall } from '@/lib/tool-dispatch';
 import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
 import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
@@ -9,6 +10,7 @@ import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import { formatElapsedTime } from '@/lib/utils';
 import type {
   ToolExecutionResult,
+  ChatMessage,
   ChatCard,
   CoderWorkingMemory,
   AIProviderType,
@@ -16,7 +18,6 @@ import type {
   AgentStatus,
   AgentStatusSource,
 } from '@/types';
-import { BranchInfo } from '@/hooks/useBranchManager';
 
 function getTaskStatusLabel(criteriaResults?: import('@/types').CriterionResult[]): string {
   if (!criteriaResults || criteriaResults.length === 0) return 'OK';
@@ -26,11 +27,11 @@ function getTaskStatusLabel(criteriaResults?: import('@/types').CriterionResult[
 
 export interface UseAgentDelegationParams {
   setConversations: React.Dispatch<React.SetStateAction<Record<string, Conversation>>>;
-  updateAgentStatus: (status: Partial<AgentStatus>, meta?: { chatId: string; source?: AgentStatusSource }) => void;
-  branchInfoRef: React.MutableRefObject<BranchInfo | null>;
+  updateAgentStatus: (status: AgentStatus, meta?: { chatId?: string; source?: AgentStatusSource; log?: boolean }) => void;
+  branchInfoRef: React.RefObject<{ currentBranch?: string; defaultBranch?: string } | undefined | null>;
   isMainProtectedRef: React.MutableRefObject<boolean>;
   lockedProviderForChat: string | null;
-  resolvedModelForChat: string | null;
+  resolvedModelForChat: string | null | undefined;
   agentsMdRef: React.MutableRefObject<string | null>;
   instructionFilenameRef: React.MutableRefObject<string | null>;
   sandboxIdRef: React.MutableRefObject<string | null>;
@@ -56,29 +57,11 @@ export function useAgentDelegation({
   abortRef,
   checkpointPhaseRef,
   lastCoderStateRef,
-}: Omit<UseAgentDelegationParams, 'chatId'>) {
-  setConversations,
-  updateAgentStatus,
-  branchInfoRef,
-  isMainProtectedRef,
-  lockedProviderForChat,
-  resolvedModelForChat,
-  agentsMdRef,
-  instructionFilenameRef,
-  sandboxIdRef,
-  repoRef,
-  abortControllerRef,
-  abortRef,
-  checkpointPhaseRef,
-  lastCoderStateRef,
 }: UseAgentDelegationParams) {
   const executeDelegateCall = useCallback(async (
     chatId: string,
-    toolCall: any,
-    apiMessages: any[]
-  ): Promise<ToolExecutionResult> => {
-    toolCall: any,
-    apiMessages: any[]
+    toolCall: AnyToolCall,
+    apiMessages: ChatMessage[]
   ): Promise<ToolExecutionResult> => {
     let toolExecResult: ToolExecutionResult = { text: '' };
 
@@ -102,7 +85,7 @@ export function useAgentDelegation({
                 defaultBranch: branchInfoRef.current.defaultBranch || 'main',
                 protectMain: isMainProtectedRef.current,
               } : undefined,
-              provider: lockedProviderForChat,
+              provider: lockedProviderForChat as AIProviderType,
               model: resolvedModelForChat || undefined,
               projectInstructions: agentsMdRef.current || undefined,
               instructionFilename: instructionFilenameRef.current || undefined,
@@ -162,7 +145,7 @@ export function useAgentDelegation({
 
           const delegateArgs = toolCall.call.args;
           const taskList = Array.isArray(delegateArgs.tasks)
-            ? delegateArgs.tasks.filter((t: any) => typeof t === 'string' && t.trim())
+            ? delegateArgs.tasks.filter((t: unknown) => typeof t === 'string' && t.trim())
             : [];
           if (delegateArgs.task?.trim()) {
             taskList.unshift(delegateArgs.task.trim());
@@ -192,7 +175,7 @@ export function useAgentDelegation({
                 delegateArgs.files || [],
                 (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
                 {
-                  providerOverride: lockedProviderForChat,
+                  providerOverride: lockedProviderForChat as ActiveProvider | undefined,
                   modelOverride: resolvedModelForChat || undefined,
                 },
               );
@@ -228,7 +211,7 @@ export function useAgentDelegation({
                   checkpointContext,
                   apiMessages.slice(-6), // recent chat for user intent context
                   abortControllerRef.current?.signal,
-                  lockedProviderForChat,
+                  lockedProviderForChat as ActiveProvider | undefined,
                   resolvedModelForChat || undefined,
                 );
 
@@ -260,7 +243,7 @@ export function useAgentDelegation({
                 handleCheckpoint,
                 delegateArgs.acceptanceCriteria,
                 (state) => { lastCoderStateRef.current = state; },
-                lockedProviderForChat,
+                lockedProviderForChat as ActiveProvider | undefined,
                 resolvedModelForChat || undefined,
                 {
                   intent: delegateArgs.intent,
@@ -327,7 +310,7 @@ export function useAgentDelegation({
                   evalDiff,
                   (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
                   {
-                    providerOverride: lockedProviderForChat,
+                    providerOverride: lockedProviderForChat as ActiveProvider | undefined,
                     modelOverride: resolvedModelForChat || undefined,
                     coderRounds: totalRounds,
                     coderMaxRounds: evalMaxRounds,
