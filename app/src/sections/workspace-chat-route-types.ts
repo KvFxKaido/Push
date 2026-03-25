@@ -1,0 +1,192 @@
+import type { ApprovalMode } from '@/lib/approval-mode';
+import type { ContextMode } from '@/lib/orchestrator';
+import type { PreferredProvider } from '@/lib/providers';
+import type { RepoAppearance } from '@/lib/repo-appearance';
+import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
+import type { BranchManager } from '@/hooks/useBranchManager';
+import type { ModelCatalog } from '@/hooks/useModelCatalog';
+import type { ProjectInstructionsManager } from '@/hooks/useProjectInstructions';
+import type { RepoOverride } from '@/hooks/useProtectMain';
+import type { ScratchpadMemory } from '@/hooks/useScratchpad';
+import type { SnapshotManager } from '@/hooks/useSnapshotManager';
+import type { SandboxStatus } from '@/hooks/useSandbox';
+import type {
+  ActiveRepo,
+  AgentStatus,
+  AgentStatusEvent,
+  AIProviderType,
+  AttachmentData,
+  CardAction,
+  ChatMessage,
+  ChatSendOptions,
+  CIStatus,
+  Conversation,
+  GitHubUser,
+  NewChatWorkspaceState,
+  RepoWithActivity,
+  RunCheckpoint,
+  SandboxStateCardData,
+  UserProfile,
+  WorkspaceSession,
+} from '@/types';
+
+export interface ChatRouteWorkspaceProps {
+  activeRepo: ActiveRepo | null;
+  workspaceSession?: WorkspaceSession | null;
+  resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
+  setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
+  clearRepoAppearance: (repoFullName: string) => void;
+  sandbox: {
+    sandboxId: string | null;
+    status: SandboxStatus;
+    error: string | null;
+    createdAt: number | null;
+    start: (repo: string, branch?: string) => Promise<string | null>;
+    stop: () => Promise<void>;
+    refresh: () => Promise<boolean>;
+    markUnreachable: (reason: string) => void;
+  };
+  handleStartWorkspace: (() => void) | undefined;
+  handleExitWorkspace: () => void;
+  handleDisconnect: () => void;
+  handleCreateNewChat: () => void;
+  inspectNewChatWorkspace: () => Promise<NewChatWorkspaceState | null>;
+  handleSandboxRestart: () => Promise<void>;
+  handleSandboxDownload: () => Promise<void>;
+  sandboxDownloading: boolean;
+  setCurrentBranch: (branch: string) => void;
+  onSandboxBranchSwitch: (branch: string) => void;
+  sandboxState: SandboxStateCardData | null;
+  sandboxStateLoading: boolean;
+  fetchSandboxState: (id: string) => void;
+  ensureSandbox: () => Promise<string | null>;
+}
+
+export interface ChatRouteConversationProps {
+  messages: ChatMessage[];
+  sendMessage: (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => Promise<void> | void;
+  agentStatus: AgentStatus;
+  agentEvents: AgentStatusEvent[];
+  isStreaming: boolean;
+  lockedProvider: AIProviderType | null;
+  isProviderLocked: boolean;
+  lockedModel: string | null;
+  isModelLocked: boolean;
+  conversations: Record<string, Conversation>;
+  activeChatId: string | null;
+  switchChat: (id: string) => void;
+  renameChat: (id: string, name: string) => void;
+  deleteChat: (id: string) => void;
+  deleteAllChats: () => void;
+  regenerateLastResponse: () => Promise<void> | void;
+  editMessageAndResend: (messageId: string, text: string, attachments?: AttachmentData[], options?: ChatSendOptions) => Promise<void> | void;
+  handleCardAction: (action: CardAction) => void;
+  contextUsage: { used: number; max: number; percent: number };
+  abortStream: () => void;
+  interruptedCheckpoint: RunCheckpoint | null;
+  resumeInterruptedRun: () => void;
+  dismissResume: () => void;
+  saveExpiryCheckpoint: (savedDiff: string) => void;
+  ciStatus: CIStatus | null;
+  diagnoseCIFailure: () => void;
+}
+
+export interface ChatRouteRepositoryProps {
+  repos: RepoWithActivity[];
+  reposLoading: boolean;
+  reposError: string | null;
+  branches: BranchManager;
+  handleSelectRepoFromDrawer: (repo: RepoWithActivity, branch?: string) => void;
+}
+
+export interface ChatRouteCatalogProps {
+  catalog: ModelCatalog;
+  selectedChatProvider: PreferredProvider | null;
+  selectedChatModels: Record<PreferredProvider, string>;
+  handleSelectBackend: (provider: PreferredProvider) => void;
+  handleSelectOllamaModelFromChat: (model: string) => void;
+  handleSelectOpenRouterModelFromChat: (model: string) => void;
+  handleSelectZenModelFromChat: (model: string) => void;
+  handleSelectNvidiaModelFromChat: (model: string) => void;
+  handleSelectBlackboxModelFromChat: (model: string) => void;
+  handleSelectKilocodeModelFromChat: (model: string) => void;
+  handleSelectOpenAdapterModelFromChat: (model: string) => void;
+  handleSelectAzureModelFromChat: (model: string) => void;
+  handleSelectBedrockModelFromChat: (model: string) => void;
+  handleSelectVertexModelFromChat: (model: string) => void;
+}
+
+export interface ChatRouteWorkspaceDataProps {
+  snapshots: SnapshotManager;
+  instructions: ProjectInstructionsManager;
+  scratchpad: {
+    content: string;
+    hasContent: boolean;
+    setContent: (content: string) => void;
+    clear: () => void;
+    memories: ScratchpadMemory[];
+    activeMemoryId: string | null;
+    saveMemory: (label: string) => void;
+    loadMemory: (id: string | null) => void;
+    deleteMemory: (id: string) => void;
+  };
+  protectMain: {
+    isProtected: boolean;
+    globalDefault: boolean;
+    setGlobalDefault: (value: boolean) => void;
+    repoOverride: RepoOverride;
+    setRepoOverride: (value: RepoOverride) => void;
+  };
+}
+
+export interface ChatRouteAuthProps {
+  token: string | null;
+  patToken: string | null;
+  isAppAuth: boolean;
+  installationId: string | null;
+  validatedUser: GitHubUser | null;
+  appLoading: boolean;
+  appError: string | null;
+  connectApp: () => void;
+  installApp: () => void;
+  setInstallationIdManually: (id: string) => Promise<boolean>;
+}
+
+export interface ChatRouteUiStateProps {
+  showToolActivity: boolean;
+  approvalMode: ApprovalMode;
+  updateApprovalMode: (mode: ApprovalMode) => void;
+  contextMode: ContextMode;
+  updateContextMode: (mode: ContextMode) => void;
+  sandboxStartMode: SandboxStartMode;
+  updateSandboxStartMode: (mode: SandboxStartMode) => void;
+  updateShowToolActivity: (value: boolean) => void;
+  showInstallIdInput: boolean;
+  setShowInstallIdInput: (value: boolean) => void;
+  installIdInput: string;
+  setInstallIdInput: (value: string) => void;
+  allowlistSecretCmd: string;
+  copyAllowlistCommand: () => void;
+}
+
+export interface ChatRouteProfileProps {
+  profile: UserProfile;
+  updateProfile: (updates: Partial<UserProfile>) => void;
+  clearProfile: () => void;
+  displayNameDraft: string;
+  setDisplayNameDraft: (value: string) => void;
+  handleDisplayNameBlur: () => void;
+  bioDraft: string;
+  setBioDraft: (value: string) => void;
+  handleBioBlur: () => void;
+}
+
+export type ChatRouteProps =
+  & ChatRouteWorkspaceProps
+  & ChatRouteConversationProps
+  & ChatRouteRepositoryProps
+  & ChatRouteCatalogProps
+  & ChatRouteWorkspaceDataProps
+  & ChatRouteAuthProps
+  & ChatRouteUiStateProps
+  & ChatRouteProfileProps;

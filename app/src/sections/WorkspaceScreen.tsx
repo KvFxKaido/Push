@@ -1,31 +1,21 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
-import { ChatScreen } from './ChatScreen';
+import { WorkspaceChatRoute } from './WorkspaceChatRoute';
 import { FileBrowser } from './FileBrowser';
 import { useChat } from '@/hooks/useChat';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
-import { useUserProfile } from '@/hooks/useUserProfile';
 import { useProtectMain } from '@/hooks/useProtectMain';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { useSnapshotManager, buildWorkspaceScratchActions } from '@/hooks/useSnapshotManager';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { useProjectInstructions } from '@/hooks/useProjectInstructions';
-import {
-  normalizeKilocodeModelName,
-  type PreferredProvider,
-} from '@/lib/providers';
-import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
+import { useWorkspaceComposerState } from '@/hooks/useWorkspaceComposerState';
+import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
-import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
-import { getApprovalMode, setApprovalMode, type ApprovalMode } from '@/lib/approval-mode';
-import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
+import { toConversationIndex } from '@/lib/conversation-index';
 import type {
-  AttachmentData,
-  ChatSendOptions,
-  Conversation,
-  ConversationIndex,
   NewChatWorkspaceState,
   RepoWithActivity,
   SandboxStateCardData,
@@ -68,65 +58,6 @@ function parseSandboxGitStatus(sandboxId: string, stdout: string): SandboxStateC
   };
 }
 
-const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
-const CHAT_MODEL_MEMORY_STORAGE_KEY = 'push:chat:last-used-models';
-
-const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
-  ollama: '',
-  openrouter: '',
-  zen: '',
-  nvidia: '',
-  blackbox: '',
-  azure: '',
-  bedrock: '',
-  vertex: '',
-  kilocode: '',
-  openadapter: '',
-};
-
-function readStoredChatModelMemory(): Record<PreferredProvider, string> {
-  const raw = safeStorageGet(CHAT_MODEL_MEMORY_STORAGE_KEY);
-  if (!raw) return { ...EMPTY_CHAT_MODEL_MEMORY };
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<Record<PreferredProvider, unknown>>;
-    return {
-      ollama: typeof parsed.ollama === 'string' ? parsed.ollama.trim() : '',
-      openrouter: typeof parsed.openrouter === 'string' ? parsed.openrouter.trim() : '',
-      zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
-      nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
-      blackbox: typeof parsed.blackbox === 'string' ? parsed.blackbox.trim() : '',
-      azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
-      bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
-      vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
-      kilocode: typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
-      openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
-    };
-  } catch {
-    return { ...EMPTY_CHAT_MODEL_MEMORY };
-  }
-}
-
-type ChatComposerDraft = {
-  provider: PreferredProvider | null;
-  models: Record<PreferredProvider, string>;
-};
-
-type ChatComposerDraftUpdate = {
-  provider?: PreferredProvider | null;
-  models?: Partial<Record<PreferredProvider, string>>;
-};
-
-function toConversationIndex(conversations: Record<string, Conversation>): ConversationIndex {
-  const index: ConversationIndex = {};
-  for (const [chatId, conversation] of Object.entries(conversations)) {
-    index[chatId] = Object.fromEntries(
-      Object.entries(conversation).filter(([key]) => key !== 'messages'),
-    ) as ConversationIndex[string];
-  }
-  return index;
-}
-
 export function WorkspaceScreen({
   workspaceSession,
   onWorkspaceSessionChange,
@@ -165,93 +96,6 @@ export function WorkspaceScreen({
   const stopSandbox = sandbox.stop;
   const startSandbox = sandbox.start;
   const catalog = useModelCatalog();
-
-  const defaultChatModels = useMemo<Record<PreferredProvider, string>>(() => ({
-    ollama: catalog.ollama.model,
-    openrouter: catalog.openRouter.model,
-    zen: catalog.zen.model,
-    nvidia: catalog.nvidia.model,
-    blackbox: catalog.blackbox.model,
-    kilocode: catalog.kilocode.model,
-    openadapter: catalog.openadapter.model,
-    azure: catalog.azure.model,
-    bedrock: catalog.bedrock.model,
-    vertex: catalog.vertex.model,
-  }), [
-    catalog.azure.model,
-    catalog.bedrock.model,
-    catalog.blackbox.model,
-    catalog.kilocode.model,
-    catalog.openadapter.model,
-    catalog.nvidia.model,
-    catalog.ollama.model,
-    catalog.openRouter.model,
-    catalog.vertex.model,
-    catalog.zen.model,
-  ]);
-
-  const availableChatProviders = useMemo(
-    () => new Set(catalog.availableProviders.map(([provider]) => provider)),
-    [catalog.availableProviders],
-  );
-
-  const defaultChatProvider = useMemo<PreferredProvider | null>(() => {
-    if (catalog.activeBackend && availableChatProviders.has(catalog.activeBackend)) {
-      return catalog.activeBackend;
-    }
-    if (catalog.activeProviderLabel !== 'demo' && availableChatProviders.has(catalog.activeProviderLabel)) {
-      return catalog.activeProviderLabel;
-    }
-    return catalog.availableProviders[0]?.[0] ?? null;
-  }, [availableChatProviders, catalog.activeBackend, catalog.activeProviderLabel, catalog.availableProviders]);
-
-  const [rememberedChatModels, setRememberedChatModels] = useState<Record<PreferredProvider, string>>(
-    () => readStoredChatModelMemory(),
-  );
-
-  useEffect(() => {
-    safeStorageSet(CHAT_MODEL_MEMORY_STORAGE_KEY, JSON.stringify(rememberedChatModels));
-  }, [rememberedChatModels]);
-
-  const rememberChatModel = useCallback((provider: PreferredProvider, model: string | null | undefined) => {
-    const trimmed = typeof model === 'string'
-      ? (provider === 'kilocode' ? normalizeKilocodeModelName(model) : model.trim())
-      : '';
-    if (!trimmed) return;
-    setRememberedChatModels((prev) => (
-      prev[provider] === trimmed
-        ? prev
-        : { ...prev, [provider]: trimmed }
-    ));
-  }, []);
-
-  const normalizeChatDraft = useCallback((draft?: Partial<ChatComposerDraft> | null): ChatComposerDraft => {
-    const models: Record<PreferredProvider, string> = {
-      ollama: draft?.models?.ollama?.trim() || rememberedChatModels.ollama || defaultChatModels.ollama,
-      openrouter: draft?.models?.openrouter?.trim() || rememberedChatModels.openrouter || defaultChatModels.openrouter,
-      zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
-      nvidia: draft?.models?.nvidia?.trim() || rememberedChatModels.nvidia || defaultChatModels.nvidia,
-      blackbox: draft?.models?.blackbox?.trim() || rememberedChatModels.blackbox || defaultChatModels.blackbox,
-      azure: draft?.models?.azure?.trim() || rememberedChatModels.azure || defaultChatModels.azure,
-      bedrock: draft?.models?.bedrock?.trim() || rememberedChatModels.bedrock || defaultChatModels.bedrock,
-      vertex: draft?.models?.vertex?.trim() || rememberedChatModels.vertex || defaultChatModels.vertex,
-      kilocode: normalizeKilocodeModelName(
-        draft?.models?.kilocode?.trim()
-          || rememberedChatModels.kilocode
-          || defaultChatModels.kilocode,
-      ),
-      openadapter: draft?.models?.openadapter?.trim() || rememberedChatModels.openadapter || defaultChatModels.openadapter,
-    };
-
-    let provider = draft?.provider ?? defaultChatProvider;
-    if (provider && !availableChatProviders.has(provider)) {
-      provider = defaultChatProvider;
-    }
-
-    return { provider, models };
-  }, [availableChatProviders, defaultChatModels, defaultChatProvider, rememberedChatModels]);
-
-  const [chatDrafts, setChatDrafts] = useState<Record<string, ChatComposerDraft>>({});
 
   const skipBranchTeardownRef = useRef(false);
   const handleSandboxBranchSwitch = useCallback((branch: string) => {
@@ -341,91 +185,40 @@ export function WorkspaceScreen({
     switchChat(pendingResumeChatId);
   }, [conversations, pendingResumeChatId, switchChat, workspaceSession.id]);
 
-  const activeConversation = activeChatId ? conversations[activeChatId] : undefined;
-
-  const activeChatDraft = useMemo(() => {
-    const storedDraft = activeChatId ? chatDrafts[activeChatId] : null;
-    const baseDraft = normalizeChatDraft(storedDraft);
-    const lockedConversationModel = activeConversation?.provider === 'kilocode' && activeConversation.model
-      ? normalizeKilocodeModelName(activeConversation.model)
-      : activeConversation?.model;
-
-    if (activeConversation?.provider && activeConversation.provider !== 'demo') {
-      return normalizeChatDraft({
-        provider: activeConversation.provider,
-        models: lockedConversationModel
-          ? { ...baseDraft.models, [activeConversation.provider]: lockedConversationModel }
-          : baseDraft.models,
-      });
-    }
-
-    return baseDraft;
-  }, [activeChatId, activeConversation?.model, activeConversation?.provider, chatDrafts, normalizeChatDraft]);
-
-  useEffect(() => {
-    setChatDrafts((prev) => {
-      let changed = false;
-      const next: Record<string, ChatComposerDraft> = {};
-
-      for (const [chatId, draft] of Object.entries(prev)) {
-        const conversation = conversations[chatId];
-        if (!conversation || conversation.provider) {
-          changed = true;
-          continue;
-        }
-        next[chatId] = draft;
-      }
-
-      return changed ? next : prev;
-    });
-  }, [conversations]);
-
-  const upsertChatDraft = useCallback((chatId: string, updates: ChatComposerDraftUpdate) => {
-    setChatDrafts((prev) => {
-      const current = normalizeChatDraft(prev[chatId]);
-      const next = normalizeChatDraft({
-        provider: updates.provider ?? current.provider,
-        models: {
-          ...current.models,
-          ...(updates.models ?? {}),
-        },
-      });
-      return {
-        ...prev,
-        [chatId]: next,
-      };
-    });
-  }, [normalizeChatDraft]);
-
-  const ensureDraftChatForComposerChange = useCallback((): string => {
-    if (activeChatId && !isProviderLocked && !isModelLocked) {
-      return activeChatId;
-    }
-
-    const nextId = createNewChat();
-    upsertChatDraft(nextId, activeChatDraft);
-    return nextId;
-  }, [activeChatDraft, activeChatId, createNewChat, isModelLocked, isProviderLocked, upsertChatDraft]);
-
   const protectMain = useProtectMain(workspaceRepo?.full_name ?? undefined);
   useEffect(() => {
     setIsMainProtected(protectMain.isProtected);
   }, [protectMain.isProtected, setIsMainProtected]);
 
-  const sendMessageWithChatDraft = useCallback((message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
-    if (activeChatDraft.provider) {
-      rememberChatModel(activeChatDraft.provider, activeChatDraft.models[activeChatDraft.provider]);
-    }
-    return sendMessage(message, attachments, {
-      provider: activeChatDraft.provider,
-      model: activeChatDraft.provider ? activeChatDraft.models[activeChatDraft.provider] : null,
-      displayText: options?.displayText,
-    });
-  }, [activeChatDraft, rememberChatModel, sendMessage]);
+  const {
+    selectedChatProvider,
+    selectedChatModels,
+    sendMessageWithChatDraft,
+    handleCreateNewChat,
+    handleSelectBackend,
+    handleSelectOllamaModelFromChat,
+    handleSelectOpenRouterModelFromChat,
+    handleSelectZenModelFromChat,
+    handleSelectNvidiaModelFromChat,
+    handleSelectBlackboxModelFromChat,
+    handleSelectKilocodeModelFromChat,
+    handleSelectOpenAdapterModelFromChat,
+    handleSelectAzureModelFromChat,
+    handleSelectBedrockModelFromChat,
+    handleSelectVertexModelFromChat,
+  } = useWorkspaceComposerState({
+    catalog,
+    conversations,
+    activeChatId,
+    isProviderLocked,
+    isModelLocked,
+    createNewChat,
+    switchChat,
+    sendMessage,
+  });
 
   const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
   const branches = useBranchManager(workspaceRepo, workspaceSession);
-  const [isWorkspaceHubOpen, setIsWorkspaceHubOpen] = useState(false);
   const [showFileBrowser, setShowFileBrowser] = useState(false);
 
   const instructions = useProjectInstructions(
@@ -442,137 +235,40 @@ export function WorkspaceScreen({
     snapshots.markSnapshotActivity,
   );
 
-  const [showToolActivity, setShowToolActivityState] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(TOOL_ACTIVITY_STORAGE_KEY) === '1';
-  });
-  const { profile, updateProfile, clearProfile } = useUserProfile();
-  const [displayNameDraft, setDisplayNameDraft] = useState('');
-  const [bioDraft, setBioDraft] = useState('');
-  const [installIdInput, setInstallIdInput] = useState('');
-  const [showInstallIdInput, setShowInstallIdInput] = useState(false);
-  const allowlistSecretCmd = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
-  const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() => getSandboxStartMode());
-  const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
-  const [approvalMode, setApprovalModeState] = useState<ApprovalMode>(() => getApprovalMode());
+  const {
+    profile,
+    updateProfile,
+    clearProfile,
+    displayNameDraft,
+    setDisplayNameDraft,
+    handleDisplayNameBlur,
+    bioDraft,
+    setBioDraft,
+    handleBioBlur,
+    installIdInput,
+    setInstallIdInput,
+    showInstallIdInput,
+    setShowInstallIdInput,
+    showToolActivity,
+    updateShowToolActivity,
+    sandboxStartMode,
+    updateSandboxStartMode,
+    contextMode,
+    updateContextMode,
+    approvalMode,
+    updateApprovalMode,
+    allowlistSecretCmd,
+    copyAllowlistCommand,
+  } = useWorkspacePreferences(validatedUser?.login);
 
   const [sandboxState, setSandboxState] = useState<SandboxStateCardData | null>(null);
   const [sandboxStateLoading, setSandboxStateLoading] = useState(false);
   const sandboxStateFetchedFor = useRef<string | null>(null);
   const [sandboxDownloading, setSandboxDownloading] = useState(false);
 
-  useEffect(() => { setDisplayNameDraft(profile.displayName); }, [profile.displayName]);
-  useEffect(() => { setBioDraft(profile.bio); }, [profile.bio]);
-
-  const copyAllowlistCommand = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(allowlistSecretCmd);
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = allowlistSecretCmd;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-    }
-  }, [allowlistSecretCmd]);
-
-  const updateContextMode = useCallback((mode: ContextMode) => {
-    setContextMode(mode);
-    setContextModeState(mode);
-  }, []);
-
-  const updateApprovalMode = useCallback((mode: ApprovalMode) => {
-    setApprovalMode(mode);
-    setApprovalModeState(mode);
-  }, []);
-
-  const updateSandboxStartMode = useCallback((mode: SandboxStartMode) => {
-    setSandboxStartMode(mode);
-    setSandboxStartModeState(mode);
-  }, []);
-
-  const updateShowToolActivity = useCallback((value: boolean) => {
-    setShowToolActivityState(value);
-    if (typeof window === 'undefined') return;
-    if (value) {
-      window.localStorage.setItem(TOOL_ACTIVITY_STORAGE_KEY, '1');
-    } else {
-      window.localStorage.removeItem(TOOL_ACTIVITY_STORAGE_KEY);
-    }
-  }, []);
-
   const handleSelectRepoFromDrawer = useCallback((repo: RepoWithActivity, branch?: string) => {
     onSelectRepo(repo, branch);
   }, [onSelectRepo]);
-
-  const handleSelectBackend = useCallback((provider: PreferredProvider) => {
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { provider });
-  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
-
-  const handleSelectOllamaModelFromChat = useCallback((model: string) => {
-    rememberChatModel('ollama', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { ollama: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
-
-  const handleSelectOpenRouterModelFromChat = useCallback((model: string) => {
-    rememberChatModel('openrouter', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { openrouter: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
-
-  const handleSelectZenModelFromChat = useCallback((model: string) => {
-    rememberChatModel('zen', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { zen: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
-
-  const handleSelectNvidiaModelFromChat = useCallback((model: string) => {
-    rememberChatModel('nvidia', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { nvidia: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
-
-  const handleSelectBlackboxModelFromChat = useCallback((model: string) => {
-    rememberChatModel('blackbox', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { blackbox: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
-
-  const handleSelectKilocodeModelFromChat = useCallback((model: string) => {
-    const normalizedModel = normalizeKilocodeModelName(model);
-    rememberChatModel('kilocode', normalizedModel);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { kilocode: normalizedModel } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
-
-  const handleSelectOpenAdapterModelFromChat = useCallback((model: string) => {
-    rememberChatModel('openadapter', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { openadapter: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
-
-  const handleSelectAzureModelFromChat = useCallback((model: string) => {
-    rememberChatModel('azure', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { azure: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
-
-  const handleSelectBedrockModelFromChat = useCallback((model: string) => {
-    rememberChatModel('bedrock', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { bedrock: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
-
-  const handleSelectVertexModelFromChat = useCallback((model: string) => {
-    rememberChatModel('vertex', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { vertex: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
 
   const fetchSandboxState = useCallback(async (id: string): Promise<SandboxStateCardData | null> => {
     setSandboxStateLoading(true);
@@ -679,7 +375,6 @@ export function WorkspaceScreen({
     if (previousSessionId === workspaceSession.id) return;
 
     setShowFileBrowser(false);
-    setIsWorkspaceHubOpen(false);
     setSandboxState(null);
     sandboxStateFetchedFor.current = null;
 
@@ -719,40 +414,6 @@ export function WorkspaceScreen({
       startSandbox('', 'main');
     }
   }, [isScratch, sandboxStatus, currentSandboxId, startSandbox]);
-
-  useEffect(() => {
-    if (validatedUser?.login && validatedUser.login !== profile.githubLogin) {
-      updateProfile({ githubLogin: validatedUser.login });
-    }
-  }, [validatedUser?.login, profile.githubLogin, updateProfile]);
-
-  const handleCreateNewChat = useCallback(() => {
-    if (activeChatDraft.provider) {
-      rememberChatModel(activeChatDraft.provider, activeChatDraft.models[activeChatDraft.provider]);
-    }
-    const id = createNewChat();
-    switchChat(id);
-  }, [activeChatDraft, createNewChat, rememberChatModel, switchChat]);
-
-  const handleDisplayNameBlur = useCallback(() => {
-    const nextDisplayName = displayNameDraft.trim();
-    if (nextDisplayName !== profile.displayName) {
-      updateProfile({ displayName: nextDisplayName });
-    }
-    if (nextDisplayName !== displayNameDraft) {
-      setDisplayNameDraft(nextDisplayName);
-    }
-  }, [displayNameDraft, profile.displayName, updateProfile]);
-
-  const handleBioBlur = useCallback(() => {
-    const nextBio = bioDraft.slice(0, 300);
-    if (nextBio !== profile.bio) {
-      updateProfile({ bio: nextBio });
-    }
-    if (nextBio !== bioDraft) {
-      setBioDraft(nextBio);
-    }
-  }, [bioDraft, profile.bio, updateProfile]);
 
   const handleSandboxDownload = useCallback(async () => {
     if (!sandbox.sandboxId || sandboxDownloading) return;
@@ -804,20 +465,10 @@ export function WorkspaceScreen({
     })
     : null;
 
-  const handleStartWorkspace = useCallback(() => {
-    if (isStreaming) {
-      abortStream();
-    }
-    setIsWorkspaceHubOpen(false);
-    setShowFileBrowser(false);
-    onStartScratchWorkspace();
-  }, [abortStream, isStreaming, onStartScratchWorkspace]);
-
   const handleExitWorkspace = useCallback(() => {
     if (isStreaming) {
       abortStream();
     }
-    setIsWorkspaceHubOpen(false);
     setShowFileBrowser(false);
     onEndWorkspace();
   }, [abortStream, isStreaming, onEndWorkspace]);
@@ -826,7 +477,6 @@ export function WorkspaceScreen({
     if (isStreaming) {
       abortStream();
     }
-    setIsWorkspaceHubOpen(false);
     setShowFileBrowser(false);
     onDisconnect();
   }, [abortStream, isStreaming, onDisconnect]);
@@ -855,7 +505,8 @@ export function WorkspaceScreen({
   }
 
   return (
-    <ChatScreen
+    <WorkspaceChatRoute
+      key={workspaceSession.id}
       activeRepo={workspaceRepo}
       workspaceSession={workspaceSession}
       resolveRepoAppearance={resolveRepoAppearance}
@@ -909,11 +560,8 @@ export function WorkspaceScreen({
       appError={appError}
       connectApp={connectApp}
       installApp={installApp}
-      isWorkspaceHubOpen={isWorkspaceHubOpen}
-      setIsWorkspaceHubOpen={setIsWorkspaceHubOpen}
       showToolActivity={showToolActivity}
-      setShowFileBrowser={setShowFileBrowser}
-      handleStartWorkspace={isScratch ? undefined : handleStartWorkspace}
+      handleStartWorkspace={isScratch ? undefined : onStartScratchWorkspace}
       handleExitWorkspace={handleExitWorkspace}
       handleCreateNewChat={handleCreateNewChat}
       inspectNewChatWorkspace={inspectNewChatWorkspace}
@@ -921,8 +569,8 @@ export function WorkspaceScreen({
       handleSandboxRestart={handleSandboxRestart}
       handleSandboxDownload={handleSandboxDownload}
       sandboxDownloading={sandboxDownloading}
-      selectedChatProvider={activeChatDraft.provider}
-      selectedChatModels={activeChatDraft.models}
+      selectedChatProvider={selectedChatProvider}
+      selectedChatModels={selectedChatModels}
       handleSelectBackend={handleSelectBackend}
       handleSelectOllamaModelFromChat={handleSelectOllamaModelFromChat}
       handleSelectOpenRouterModelFromChat={handleSelectOpenRouterModelFromChat}

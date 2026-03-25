@@ -5,26 +5,16 @@ import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useRepoAppearance } from '@/hooks/useRepoAppearance';
 import { replaceAllConversations, migrateConversationsToIndexedDB } from '@/lib/conversation-store';
+import { toConversationIndex } from '@/lib/conversation-index';
 import { safeStorageRemove } from '@/lib/safe-storage';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import type {
   AppShellScreen,
-  Conversation,
   ConversationIndex,
   RepoWithActivity,
   WorkspaceSession,
 } from '@/types';
 import './App.css';
-
-function toConversationIndex(conversations: Record<string, Conversation>): ConversationIndex {
-  const index: ConversationIndex = {};
-  for (const [chatId, conversation] of Object.entries(conversations)) {
-    index[chatId] = Object.fromEntries(
-      Object.entries(conversation).filter(([key]) => key !== 'messages'),
-    ) as ConversationIndex[string];
-  }
-  return index;
-}
 
 const OnboardingScreen = lazyWithRecovery(
   toDefaultExport(() => import('@/sections/OnboardingScreen'), (module) => module.OnboardingScreen),
