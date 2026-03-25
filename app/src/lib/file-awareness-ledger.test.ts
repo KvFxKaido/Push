@@ -11,7 +11,7 @@ describe('FileAwarenessLedger.checkLinesCovered', () => {
   it('blocks lines for never-read files', () => {
     const result = ledger.checkLinesCovered('foo.ts', [1, 2, 3]);
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('not been read');
+    expect((result as { reason: string }).reason).toContain('not been read');
   });
 
   it('allows all lines for fully-read files', () => {
@@ -36,8 +36,8 @@ describe('FileAwarenessLedger.checkLinesCovered', () => {
     ledger.recordRead('foo.ts', { startLine: 10, endLine: 50 });
     const result = ledger.checkLinesCovered('foo.ts', [5, 25, 60]);
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('5');
-    expect(result.reason).toContain('60');
+    expect((result as { reason: string }).reason).toContain('5');
+    expect((result as { reason: string }).reason).toContain('60');
   });
 
   it('handles multiple disjoint read ranges', () => {
@@ -50,7 +50,7 @@ describe('FileAwarenessLedger.checkLinesCovered', () => {
     // Line in the gap
     const result = ledger.checkLinesCovered('foo.ts', [25, 75, 125]);
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('75');
+    expect((result as { reason: string }).reason).toContain('75');
   });
 
   it('formats uncovered lines as ranges', () => {
@@ -58,8 +58,8 @@ describe('FileAwarenessLedger.checkLinesCovered', () => {
     const result = ledger.checkLinesCovered('foo.ts', [15, 16, 17, 20]);
     expect(result.allowed).toBe(false);
     // Should show "15-17, 20" not "15, 16, 17, 20"
-    expect(result.reason).toContain('15-17');
-    expect(result.reason).toContain('20');
+    expect((result as { reason: string }).reason).toContain('15-17');
+    expect((result as { reason: string }).reason).toContain('20');
   });
 
   it('allows empty line numbers array', () => {
@@ -73,6 +73,6 @@ describe('FileAwarenessLedger.checkLinesCovered', () => {
     // Stale files are blocked — consistent with checkWriteAllowed()
     const result = ledger.checkLinesCovered('foo.ts', [50]);
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('may have changed');
+    expect((result as { reason: string }).reason).toContain('may have changed');
   });
 });
