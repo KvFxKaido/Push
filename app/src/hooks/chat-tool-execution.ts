@@ -223,11 +223,15 @@ export function collectSideEffects(results: ToolExecRawResult[]): ToolSideEffect
 
 /** Instruction for the streaming loop after handling a recovery result. */
 export interface RecoveryAction {
-  /** 'continue' = re-stream, 'break' = exit loop normally, 'noop' = telemetry-only, keep going */
+  /** 'continue' = re-stream, 'break' = exit loop normally. */
   loopAction: 'continue' | 'break';
   /** Updated apiMessages to feed back into the loop. */
   apiMessages: ChatMessage[];
-  /** Conversation messages update: [updatedMsgs, appendMsg?]. null = no update needed (telemetry-only). */
+  /**
+   * Conversation messages update derived from the recovery handling.
+   * Contains the assistant content and optional metadata; currently always
+   * populated by handleRecoveryResult, but remains nullable for future use.
+   */
   conversationUpdate: {
     assistantContent: string;
     assistantThinking?: string;
@@ -241,9 +245,9 @@ export interface RecoveryAction {
 }
 
 /**
- * Pure function that decides what to do with a ToolCallRecoveryResult.
+ * Side-effectful helper that decides what to do with a ToolCallRecoveryResult.
  *
- * Handles telemetry recording, log messages, and returns an action
+ * Records telemetry, emits log messages, and returns an action
  * describing what the streaming loop should do next. Does NOT call
  * setConversations or mutate any refs — the caller applies the action.
  */

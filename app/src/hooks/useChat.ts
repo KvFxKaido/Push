@@ -1423,7 +1423,7 @@ export function useChat(
                     malformed: upd.assistantMalformed,
                     toolMeta: upd.assistantToolMeta,
                   });
-                  return { ...prev, [chatId]: { ...conv, messages: [...msgs, upd.appendMessage!] } };
+                  return { ...prev, [chatId]: { ...conv, messages: [...msgs, upd.appendMessage] } };
                 });
               } else {
                 // Finalize path: update last assistant message in place
