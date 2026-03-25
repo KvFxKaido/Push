@@ -138,7 +138,7 @@ export function useAgentDelegation({
           const harnessProvider = lockedProviderForChat || getActiveProvider();
           const harnessModelId = resolvedModelForChat || undefined;
           const harnessSettings = resolveHarnessSettings(
-            harnessProvider as ActiveProvider,
+            harnessProvider,
             harnessModelId,
           );
 
