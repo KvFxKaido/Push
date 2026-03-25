@@ -11,8 +11,6 @@ import type {
   ChatMessage,
   ChatCard,
   ToolExecutionResult,
-  AIProviderType,
-  ActiveRepo,
 } from '@/types';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { executeAnyToolCall } from '@/lib/tool-dispatch';
