@@ -24,6 +24,13 @@ import {
 } from '@/lib/chat-tool-messages';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { createId } from '@/hooks/chat-persistence';
+import {
+  buildToolCallParseErrorBlock,
+  formatToolResultEnvelope,
+  MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
+  type ToolCallRecoveryResult,
+} from '@/lib/tool-call-recovery';
+import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -208,4 +215,212 @@ export function collectSideEffects(results: ToolExecRawResult[]): ToolSideEffect
   }
 
   return combined;
+}
+
+// ---------------------------------------------------------------------------
+// Recovery result handling (extracted from useChat streaming loop)
+// ---------------------------------------------------------------------------
+
+/** Instruction for the streaming loop after handling a recovery result. */
+export interface RecoveryAction {
+  /** 'continue' = re-stream, 'break' = exit loop normally, 'noop' = telemetry-only, keep going */
+  loopAction: 'continue' | 'break';
+  /** Updated apiMessages to feed back into the loop. */
+  apiMessages: ChatMessage[];
+  /** Conversation messages update: [updatedMsgs, appendMsg?]. null = no update needed (telemetry-only). */
+  conversationUpdate: {
+    assistantContent: string;
+    assistantThinking?: string;
+    assistantMalformed?: boolean;
+    assistantToolMeta?: ReturnType<typeof buildToolMeta>;
+    appendMessage?: ChatMessage;
+    markDirty?: boolean;
+  } | null;
+  /** Whether the loop completed normally (for the break case). */
+  loopCompletedNormally?: boolean;
+}
+
+/**
+ * Pure function that decides what to do with a ToolCallRecoveryResult.
+ *
+ * Handles telemetry recording, log messages, and returns an action
+ * describing what the streaming loop should do next. Does NOT call
+ * setConversations or mutate any refs — the caller applies the action.
+ */
+export function handleRecoveryResult(
+  recoveryResult: ToolCallRecoveryResult,
+  accumulated: string,
+  thinkingAccumulated: string,
+  apiMessages: readonly ChatMessage[],
+  provider: ActiveProvider,
+  model: string | null | undefined,
+): RecoveryAction {
+  // --- Telemetry ---
+  const diagnosis =
+    recoveryResult.kind === 'telemetry_only' ||
+    recoveryResult.kind === 'diagnosis_exhausted' ||
+    (recoveryResult.kind === 'feedback' && recoveryResult.diagnosis)
+      ? recoveryResult.diagnosis
+      : null;
+
+  if (diagnosis) {
+    recordMalformedToolCallMetric({
+      provider,
+      model,
+      reason: diagnosis.reason,
+      toolName: diagnosis.toolName,
+    });
+    console.warn(
+      `[Push] Tool call diagnosis: ${diagnosis.reason}${diagnosis.toolName ? ` (${diagnosis.toolName})` : ''}${diagnosis.telemetryOnly ? ' (telemetry-only)' : ''}`,
+    );
+  }
+
+  // --- Feedback: inject error message and re-stream ---
+  if (recoveryResult.kind === 'feedback') {
+    const { feedback } = recoveryResult;
+
+    if (feedback.mode === 'unimplemented_tool') {
+      console.warn(`[Push] Unimplemented tool call detected: ${feedback.toolName}`);
+    } else if (feedback.mode === 'recover_plain_text') {
+      console.warn(
+        `[Push] Diagnosis retry cap reached (${MAX_TOOL_CALL_DIAGNOSIS_RETRIES}) — injecting recovery message`,
+      );
+    }
+
+    const feedbackMsg: ChatMessage = {
+      id: createId(),
+      role: 'user',
+      content: feedback.content,
+      timestamp: Date.now(),
+      status: 'done',
+      isToolResult: true,
+      toolMeta: buildToolMeta({
+        toolName: feedback.toolName,
+        source: feedback.source,
+        provider,
+        durationMs: 0,
+        isError: true,
+      }),
+    };
+
+    const assistantToolMeta =
+      feedback.mode === 'unimplemented_tool'
+        ? undefined
+        : buildToolMeta({
+            toolName: feedback.toolName,
+            source: feedback.source,
+            provider,
+            durationMs: 0,
+            isError: true,
+          });
+
+    return {
+      loopAction: 'continue',
+      apiMessages: [
+        ...apiMessages,
+        { id: createId(), role: 'assistant' as const, content: accumulated, timestamp: Date.now(), status: 'done' as const },
+        feedbackMsg,
+      ],
+      conversationUpdate: {
+        assistantContent: accumulated,
+        assistantThinking: thinkingAccumulated,
+        assistantMalformed: feedback.markMalformed,
+        assistantToolMeta,
+        appendMessage: feedbackMsg,
+      },
+    };
+  }
+
+  // --- Diagnosis exhausted: let message through with isMalformed ---
+  if (recoveryResult.kind === 'diagnosis_exhausted') {
+    console.warn('[Push] Recovery also failed — letting message through');
+  }
+
+  // --- None / telemetry_only / diagnosis_exhausted: finalize message ---
+  return {
+    loopAction: 'break',
+    apiMessages: [...apiMessages],
+    conversationUpdate: {
+      assistantContent: accumulated,
+      assistantThinking: thinkingAccumulated,
+      assistantMalformed: recoveryResult.kind === 'diagnosis_exhausted' || undefined,
+      markDirty: true,
+    },
+    loopCompletedNormally: true,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Multiple-mutations error handling (extracted from useChat streaming loop)
+// ---------------------------------------------------------------------------
+
+/** Result of handling a multiple-mutations parse error. */
+export interface MultipleMutationsErrorAction {
+  /** Error message to inject into the conversation. */
+  errorMessage: ChatMessage;
+  /** Updated apiMessages with assistant + error appended. */
+  apiMessages: ChatMessage[];
+  /** Info for updating the assistant message in conversation state. */
+  assistantUpdate: {
+    content: string;
+    thinking?: string;
+    toolMeta: ReturnType<typeof buildToolMeta>;
+  };
+}
+
+/**
+ * Build the error response when the LLM emits multiple mutating tool calls
+ * in a single turn. Returns the messages and state updates needed — caller
+ * applies them to React state.
+ */
+export function handleMultipleMutationsError(
+  detected: { mutating: AnyToolCall | null; extraMutations: AnyToolCall[] },
+  accumulated: string,
+  thinkingAccumulated: string,
+  apiMessages: readonly ChatMessage[],
+  provider: ActiveProvider,
+): MultipleMutationsErrorAction {
+  const rejectedMutations = detected.mutating
+    ? [detected.mutating, ...detected.extraMutations]
+    : detected.extraMutations;
+  const rejectedToolNames = rejectedMutations.map((call) => getToolName(call));
+
+  const parseErrorHeader = buildToolCallParseErrorBlock({
+    errorType: 'multiple_mutating_calls',
+    problem: `Only one mutating tool call can run per turn. Received ${rejectedToolNames.length}: ${rejectedToolNames.join(', ')}.`,
+    hint: 'Put read-only tools first and one mutating tool last. For multiple coding tasks, use one coder call with "tasks".',
+  });
+
+  const primaryMutation = rejectedMutations[0];
+  const toolMeta = buildToolMeta({
+    toolName: rejectedToolNames[0] || 'unknown',
+    source: primaryMutation?.source || 'sandbox',
+    provider,
+    durationMs: 0,
+    isError: true,
+  });
+
+  const errorMessage: ChatMessage = {
+    id: createId(),
+    role: 'user',
+    content: formatToolResultEnvelope(parseErrorHeader),
+    timestamp: Date.now(),
+    status: 'done',
+    isToolResult: true,
+    toolMeta,
+  };
+
+  return {
+    errorMessage,
+    apiMessages: [
+      ...apiMessages,
+      { id: createId(), role: 'assistant' as const, content: accumulated, timestamp: Date.now(), status: 'done' as const },
+      errorMessage,
+    ],
+    assistantUpdate: {
+      content: accumulated,
+      thinking: thinkingAccumulated,
+      toolMeta,
+    },
+  };
 }
