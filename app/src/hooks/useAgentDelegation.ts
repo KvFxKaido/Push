@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useCallback } from 'react';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { runCoderAgent, generateCheckpointAnswer, summarizeCoderStateForHandoff } from '@/lib/coder-agent';
@@ -13,13 +14,13 @@ import type {
   ChatMessage,
   ChatCard,
   CoderWorkingMemory,
-  AIProviderType,
+  CriterionResult,
   Conversation,
   AgentStatus,
   AgentStatusSource,
 } from '@/types';
 
-function getTaskStatusLabel(criteriaResults?: import('@/types').CriterionResult[]): string {
+function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
   if (!criteriaResults || criteriaResults.length === 0) return 'OK';
   const allPassed = criteriaResults.every(r => r.passed);
   return allPassed ? 'OK' : 'CHECKS_FAILED';
@@ -30,8 +31,6 @@ export interface UseAgentDelegationParams {
   updateAgentStatus: (status: AgentStatus, meta?: { chatId?: string; source?: AgentStatusSource; log?: boolean }) => void;
   branchInfoRef: React.RefObject<{ currentBranch?: string; defaultBranch?: string } | undefined | null>;
   isMainProtectedRef: React.MutableRefObject<boolean>;
-  lockedProviderForChat: string | null;
-  resolvedModelForChat: string | null | undefined;
   agentsMdRef: React.MutableRefObject<string | null>;
   instructionFilenameRef: React.MutableRefObject<string | null>;
   sandboxIdRef: React.MutableRefObject<string | null>;
@@ -47,8 +46,6 @@ export function useAgentDelegation({
   updateAgentStatus,
   branchInfoRef,
   isMainProtectedRef,
-  lockedProviderForChat,
-  resolvedModelForChat,
   agentsMdRef,
   instructionFilenameRef,
   sandboxIdRef,
@@ -61,7 +58,9 @@ export function useAgentDelegation({
   const executeDelegateCall = useCallback(async (
     chatId: string,
     toolCall: AnyToolCall,
-    apiMessages: ChatMessage[]
+    apiMessages: ChatMessage[],
+    lockedProviderForChat: ActiveProvider,
+    resolvedModelForChat: string | undefined,
   ): Promise<ToolExecutionResult> => {
     let toolExecResult: ToolExecutionResult = { text: '' };
 
@@ -85,7 +84,7 @@ export function useAgentDelegation({
                 defaultBranch: branchInfoRef.current.defaultBranch || 'main',
                 protectMain: isMainProtectedRef.current,
               } : undefined,
-              provider: lockedProviderForChat as AIProviderType,
+              provider: lockedProviderForChat,
               model: resolvedModelForChat || undefined,
               projectInstructions: agentsMdRef.current || undefined,
               instructionFilename: instructionFilenameRef.current || undefined,
@@ -139,7 +138,7 @@ export function useAgentDelegation({
           const harnessProvider = lockedProviderForChat || getActiveProvider();
           const harnessModelId = resolvedModelForChat || undefined;
           const harnessSettings = resolveHarnessSettings(
-            harnessProvider as AIProviderType,
+            harnessProvider as ActiveProvider,
             harnessModelId,
           );
 
@@ -175,7 +174,7 @@ export function useAgentDelegation({
                 delegateArgs.files || [],
                 (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
                 {
-                  providerOverride: lockedProviderForChat as ActiveProvider | undefined,
+                  providerOverride: lockedProviderForChat,
                   modelOverride: resolvedModelForChat || undefined,
                 },
               );
@@ -211,7 +210,7 @@ export function useAgentDelegation({
                   checkpointContext,
                   apiMessages.slice(-6), // recent chat for user intent context
                   abortControllerRef.current?.signal,
-                  lockedProviderForChat as ActiveProvider | undefined,
+                  lockedProviderForChat,
                   resolvedModelForChat || undefined,
                 );
 
@@ -243,7 +242,7 @@ export function useAgentDelegation({
                 handleCheckpoint,
                 delegateArgs.acceptanceCriteria,
                 (state) => { lastCoderStateRef.current = state; },
-                lockedProviderForChat as ActiveProvider | undefined,
+                lockedProviderForChat,
                 resolvedModelForChat || undefined,
                 {
                   intent: delegateArgs.intent,
@@ -310,7 +309,7 @@ export function useAgentDelegation({
                   evalDiff,
                   (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
                   {
-                    providerOverride: lockedProviderForChat as ActiveProvider | undefined,
+                    providerOverride: lockedProviderForChat,
                     modelOverride: resolvedModelForChat || undefined,
                     coderRounds: totalRounds,
                     coderMaxRounds: evalMaxRounds,
@@ -362,7 +361,7 @@ export function useAgentDelegation({
     }
     
     return toolExecResult;
-  }, [setConversations, updateAgentStatus, branchInfoRef, isMainProtectedRef, lockedProviderForChat, resolvedModelForChat, agentsMdRef, instructionFilenameRef, sandboxIdRef, repoRef, abortControllerRef, abortRef, checkpointPhaseRef, lastCoderStateRef]);
+  }, [setConversations, updateAgentStatus, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef, sandboxIdRef, repoRef, abortControllerRef, abortRef, checkpointPhaseRef, lastCoderStateRef]);
 
   return { executeDelegateCall };
 }
