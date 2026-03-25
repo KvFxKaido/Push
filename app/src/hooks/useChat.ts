@@ -22,38 +22,40 @@ import type {
   ChatSendOptions,
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
-import { detectAnyToolCall, executeAnyToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
-import { runCoderAgent, generateCheckpointAnswer, summarizeCoderStateForHandoff } from '@/lib/coder-agent';
-import { runExplorerAgent } from '@/lib/explorer-agent';
-import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
-import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
-import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import { detectAnyToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import {
   appendCardsToLatestToolCall,
   buildToolMeta,
   buildToolResultMessage,
-  buildToolResultMetaLine,
   getToolName,
   getToolStatusLabel,
   markLastAssistantToolCall,
 } from '@/lib/chat-tool-messages';
+import {
+  executeTool,
+  buildToolOutcome,
+  executeParallelTools,
+  buildMetaLine,
+  collectSideEffects,
+  type ToolExecRunContext,
+  type ToolExecRawResult,
+} from '@/hooks/chat-tool-execution';
 import {
   execInSandbox,
   writeToSandbox,
   sandboxStatus,
   type SandboxStatusResult,
 } from '@/lib/sandbox-client';
+import { useAgentDelegation } from './useAgentDelegation';
 import { executeToolCall } from '@/lib/github-tools';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import {
   getModelNameForProvider,
-  normalizeKilocodeModelName,
   setLastUsedProvider,
   type PreferredProvider,
 } from '@/lib/providers';
-import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import {
   migrateConversationsToIndexedDB,
   saveConversation as saveConversationToDB,
@@ -83,17 +85,21 @@ import {
 } from '@/lib/tool-call-recovery';
 
 import { buildEditedReplay, buildRegeneratedReplay } from '@/lib/chat-replay';
-import { formatElapsedTime } from '@/lib/utils';
+import {
+  generateTitle,
+  loadActiveChatId,
+  loadConversations,
+  normalizeConversationModel,
+  saveActiveChatId,
+  shouldPrewarmSandbox,
+  createId,
+} from '@/hooks/chat-persistence';
 
 export {
   detectInterruptedRunFromManager as detectInterruptedRun,
   getResumeEventsFromManager as getResumeEvents,
 };
 
-const CONVERSATIONS_KEY = 'diff_conversations';
-const ACTIVE_CHAT_KEY = 'diff_active_chat';
-const OLD_STORAGE_KEY = 'diff_chat_history';
-const ACTIVE_REPO_KEY = 'active_repo';
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
 const EMPTY_SANDBOX_STATUS: SandboxStatusResult = {
@@ -103,9 +109,6 @@ const EMPTY_SANDBOX_STATUS: SandboxStatusResult = {
   changedFiles: [],
 };
 
-function createId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
 
 // formatElapsedTime moved to lib/utils.ts
 
@@ -116,174 +119,6 @@ function createId(): string {
 
 
 
-/**
- * Derive a status label from coder results. If acceptance criteria were run
- * and any failed, report CHECKS_FAILED instead of OK to avoid misleading the user.
- */
-function getTaskStatusLabel(criteriaResults?: import('@/types').CriterionResult[]): string {
-  if (!criteriaResults || criteriaResults.length === 0) return 'OK';
-  const allPassed = criteriaResults.every(r => r.passed);
-  return allPassed ? 'OK' : 'CHECKS_FAILED';
-}
-
-function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
-  const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
-  const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
-
-  // Drop old auto-injected sandbox state messages entirely.
-  if (
-    message.role === 'assistant' &&
-    sandboxAttachedBanner.test(message.content.trim()) &&
-    cards.length === 0
-  ) {
-    return null;
-  }
-
-  if (!message.cards) return message;
-  return { ...message, cards };
-}
-
-function generateTitle(messages: ChatMessage[]): string {
-  const firstUser = messages.find((m) => m.role === 'user');
-  if (!firstUser) return 'New Chat';
-  const content = (firstUser.displayContent ?? firstUser.content).trim();
-  return content.length > 30 ? content.slice(0, 30) + '...' : content;
-}
-
-function normalizeConversationModel(
-  provider: AIProviderType | null | undefined,
-  model: string | null | undefined,
-): string | null {
-  if (typeof model !== 'string') return null;
-  const trimmed = model.trim();
-  if (!trimmed) return null;
-  return provider === 'kilocode' ? normalizeKilocodeModelName(trimmed) : trimmed;
-}
-
-
-// --- persistence helpers ---
-
-// Legacy sync save — kept only for old-format migration writes.
-// Normal persistence is handled by the dirty-tracking flush effect.
-function saveConversationsLegacy(convs: Record<string, Conversation>) {
-  safeStorageSet(CONVERSATIONS_KEY, JSON.stringify(convs));
-}
-
-function saveActiveChatId(id: string) {
-  safeStorageSet(ACTIVE_CHAT_KEY, id);
-}
-
-function getActiveRepoFullName(): string | null {
-  try {
-    const stored = safeStorageGet(ACTIVE_REPO_KEY);
-    if (!stored) return null;
-    const parsed = JSON.parse(stored);
-    if (parsed && typeof parsed.full_name === 'string' && parsed.full_name.trim()) {
-      return parsed.full_name;
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return null;
-}
-
-function loadConversations(): Record<string, Conversation> {
-  try {
-    const stored = safeStorageGet(CONVERSATIONS_KEY);
-    if (stored) {
-      const convs: Record<string, Conversation> = JSON.parse(stored);
-      let migrated = false;
-      for (const id of Object.keys(convs)) {
-        const conversation = convs[id];
-        const cleaned = (convs[id].messages || [])
-          .map(sanitizeSandboxStateCards)
-          .filter((m): m is ChatMessage => m !== null);
-        const normalizedModel = normalizeConversationModel(
-          conversation.provider ?? null,
-          conversation.model ?? null,
-        );
-        convs[id] = {
-          ...conversation,
-          messages: cleaned,
-          model: normalizedModel ?? undefined,
-        };
-        if ((conversation.model ?? null) !== normalizedModel) {
-          migrated = true;
-        }
-      }
-
-      // Migration: stamp unscoped conversations with the current active repo
-      const repoFullName = getActiveRepoFullName();
-      if (repoFullName) {
-        for (const id of Object.keys(convs)) {
-          if (!convs[id].repoFullName) {
-            convs[id] = { ...convs[id], repoFullName };
-            migrated = true;
-          }
-        }
-      }
-
-      if (migrated) saveConversationsLegacy(convs);
-
-      return convs;
-    }
-  } catch {
-    // Ignore parse errors
-  }
-
-  // Migration: check for old single-chat format
-  try {
-    const oldHistory = safeStorageGet(OLD_STORAGE_KEY);
-    if (oldHistory) {
-      const oldMessages: ChatMessage[] = JSON.parse(oldHistory);
-      if (oldMessages.length > 0) {
-        const id = createId();
-        const repoFullName = getActiveRepoFullName();
-        const migrated: Record<string, Conversation> = {
-          [id]: {
-            id,
-            title: generateTitle(oldMessages),
-            messages: oldMessages,
-            createdAt: oldMessages[0]?.timestamp || Date.now(),
-            lastMessageAt: oldMessages[oldMessages.length - 1]?.timestamp || Date.now(),
-            repoFullName: repoFullName || undefined,
-          },
-        };
-        saveConversationsLegacy(migrated);
-        saveActiveChatId(id);
-        safeStorageRemove(OLD_STORAGE_KEY);
-        return migrated;
-      }
-    }
-  } catch {
-    // Ignore migration errors
-  }
-
-  return {};
-}
-
-function loadActiveChatId(conversations: Record<string, Conversation>): string {
-  const stored = safeStorageGet(ACTIVE_CHAT_KEY);
-  if (stored && conversations[stored]) return stored;
-  // Default to most recent conversation or empty
-  const ids = Object.keys(conversations);
-  if (ids.length === 0) return '';
-  return ids.sort((a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt)[0];
-}
-
-function shouldPrewarmSandbox(text: string, attachments?: AttachmentData[]): boolean {
-  const normalized = text.toLowerCase();
-  const intentRegex = /\b(edit|modify|change|refactor|fix|implement|write|create|add|remove|rename|run|test|build|lint|compile|typecheck|type-check|commit|push|patch|bug|failing|error|debug)\b/;
-  if (intentRegex.test(normalized)) return true;
-
-  const fileHintRegex = /\b([a-z0-9_\-/]+\.(ts|tsx|js|jsx|py|rs|go|java|rb|css|html|json|md|yml|yaml|toml|sh))\b/i;
-  if (fileHintRegex.test(text)) return true;
-
-  if (attachments?.some((att) => att.type === 'code' || att.type === 'document')) {
-    return true;
-  }
-  return false;
-}
 
 export interface ScratchpadHandlers {
   content: string;
@@ -1066,6 +901,21 @@ export function useChat(
 
   // --- Send message with tool execution loop ---
 
+  const { executeDelegateCall } = useAgentDelegation({
+    setConversations,
+    updateAgentStatus,
+    branchInfoRef,
+    isMainProtectedRef,
+    agentsMdRef,
+    instructionFilenameRef,
+    sandboxIdRef,
+    repoRef,
+    abortControllerRef,
+    abortRef,
+    checkpointPhaseRef,
+    lastCoderStateRef,
+  });
+
   const sendMessage = useCallback(
     async (text: string, attachments?: AttachmentData[], options?: SendMessageOptions) => {
       if ((!text.trim() && (!attachments || attachments.length === 0)) || isStreaming) return;
@@ -1438,78 +1288,41 @@ export function useChat(
               if (newId) sandboxIdRef.current = newId;
             }
 
-            const toolRepoFullName = repoRef.current;
-            const parallelResults = await Promise.all(
-              parallelToolCalls.map(async (call) => {
-                const callStart = Date.now();
-                let result: ToolExecutionResult;
-                if (call.source === 'github' && !toolRepoFullName) {
-                  result = { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
-                } else {
-                  result = await executeAnyToolCall(
-                    call,
-                    toolRepoFullName || '',
-                    sandboxIdRef.current,
-                    isMainProtectedRef.current,
-                    branchInfoRef.current?.defaultBranch,
-                    lockedProviderForChat,
-                    resolvedModelForChat,
-                  );
-                }
-                return {
-                  call,
-                  result,
-                  durationMs: Date.now() - callStart,
-                };
-              }),
-            );
+            const runCtx: ToolExecRunContext = {
+              repoFullName: repoRef.current,
+              sandboxId: sandboxIdRef.current,
+              isMainProtected: isMainProtectedRef.current,
+              defaultBranch: branchInfoRef.current?.defaultBranch,
+              provider: lockedProviderForChat,
+              model: resolvedModelForChat,
+            };
+
+            // Execute first, then fetch sandbox status *after* so meta line reflects changes
+            const parallelRawResults = await executeParallelTools(parallelToolCalls, runCtx);
 
             if (abortRef.current) break;
 
-            // Notify sandbox hook if any tool indicates the container is unreachable
-            for (const { result } of parallelResults) {
-              if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-                runtimeHandlersRef.current?.onSandboxUnreachable?.(result.structuredError.message);
-                break;
-              }
+            // Handle side effects from parallel results
+            const parallelEffects = collectSideEffects(parallelRawResults);
+            if (parallelEffects.sandboxUnreachable) {
+              runtimeHandlersRef.current?.onSandboxUnreachable?.(parallelEffects.sandboxUnreachable);
             }
 
-            const cards = parallelResults
-              .map((entry) => entry.result.card)
-              .filter((card): card is ChatCard => !!card && card.type !== 'sandbox-state');
-
-            if (cards.length > 0) {
+            const allCards = parallelRawResults.flatMap((r) => r.cards);
+            if (allCards.length > 0) {
               setConversations((prev) => {
                 const conv = prev[chatId];
                 if (!conv) return prev;
-                const msgs = appendCardsToLatestToolCall(conv.messages, cards);
+                const msgs = appendCardsToLatestToolCall(conv.messages, allCards);
                 return { ...prev, [chatId]: { ...conv, messages: msgs } };
               });
             }
 
+            // Build result messages with post-execution sandbox status
+            roundSandboxStatusFetched = false; // invalidate cache — tools may have changed sandbox
             const parallelSandboxStatus = await getRoundSandboxStatus();
-            const parallelMetaLine = buildToolResultMetaLine(
-              round,
-              apiMessages,
-              lockedProviderForChat,
-              resolvedModelForChat,
-              parallelSandboxStatus,
-            );
-            const toolResultMessages: ChatMessage[] = parallelResults.map(({ call, result, durationMs }) =>
-              buildToolResultMessage({
-                id: createId(),
-                timestamp: Date.now(),
-                text: result.text,
-                metaLine: parallelMetaLine,
-                toolMeta: buildToolMeta({
-                  toolName: getToolName(call),
-                  source: call.source,
-                  provider: lockedProviderForChat,
-                  durationMs,
-                  isError: result.text.includes('[Tool Error]'),
-                }),
-              }),
-            );
+            const parallelMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, parallelSandboxStatus);
+            const toolResultMessages = parallelRawResults.map((r) => buildToolOutcome(r, parallelMetaLine, lockedProviderForChat).resultMessage);
 
             setConversations((prev) => {
               const conv = prev[chatId];
@@ -1558,61 +1371,58 @@ export function useChat(
                 if (newId) sandboxIdRef.current = newId;
               }
 
-              const mutStart = Date.now();
-              const mutResult = await executeAnyToolCall(
-                mutCall,
-                repoRef.current || '',
-                sandboxIdRef.current,
-                isMainProtectedRef.current,
-                branchInfoRef.current?.defaultBranch,
-                lockedProviderForChat,
-                resolvedModelForChat,
-              );
-              const mutDuration = Date.now() - mutStart;
+              let mutRawResult: ToolExecRawResult;
 
-              // Notify sandbox hook if mutation indicates container is unreachable
-              if (mutResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-                runtimeHandlersRef.current?.onSandboxUnreachable?.(mutResult.structuredError.message);
+              if (mutCall.source === 'delegate') {
+                // Delegate calls (coder/explorer) must go through executeDelegateCall
+                const delegateStart = Date.now();
+                const mutResult = await executeDelegateCall(chatId, mutCall, apiMessages, lockedProviderForChat, resolvedModelForChat || undefined);
+                checkpointPhaseRef.current = 'executing_tools';
+                lastCoderStateRef.current = null;
+
+                const mutCards: ChatCard[] = mutResult.card && mutResult.card.type !== 'sandbox-state'
+                  ? [mutResult.card]
+                  : [];
+                mutRawResult = { call: mutCall, raw: mutResult, cards: mutCards, durationMs: Date.now() - delegateStart };
+              } else {
+                // GitHub or Sandbox mutation
+                const mutCtx: ToolExecRunContext = {
+                  repoFullName: repoRef.current,
+                  sandboxId: sandboxIdRef.current,
+                  isMainProtected: isMainProtectedRef.current,
+                  defaultBranch: branchInfoRef.current?.defaultBranch,
+                  provider: lockedProviderForChat,
+                  model: resolvedModelForChat,
+                };
+                mutRawResult = await executeTool(mutCall, mutCtx);
               }
 
-              if (mutResult.card) {
-                const mutCard = mutResult.card;
+              // Fetch sandbox status *after* execution so meta line reflects changes
+              roundSandboxStatusFetched = false;
+              const mutSandboxStatus = await getRoundSandboxStatus();
+              const mutMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, mutSandboxStatus);
+              const mutOutcome = buildToolOutcome(mutRawResult, mutMetaLine, lockedProviderForChat);
+
+              // Handle mutation side effects
+              if (mutOutcome.raw.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+                runtimeHandlersRef.current?.onSandboxUnreachable?.(mutOutcome.raw.structuredError.message);
+              }
+
+              if (mutOutcome.cards.length > 0) {
                 setConversations((prev) => {
                   const conv = prev[chatId];
                   if (!conv) return prev;
-                  const msgs = appendCardsToLatestToolCall(conv.messages, [mutCard]);
+                  const msgs = appendCardsToLatestToolCall(conv.messages, mutOutcome.cards);
                   return { ...prev, [chatId]: { ...conv, messages: msgs } };
                 });
               }
 
-              const mutSandboxStatus = await getRoundSandboxStatus();
-              const mutMetaLine = buildToolResultMetaLine(
-                round,
-                apiMessages,
-                lockedProviderForChat,
-                resolvedModelForChat,
-                mutSandboxStatus,
-              );
-              const mutResultMsg = buildToolResultMessage({
-                id: createId(),
-                timestamp: Date.now(),
-                text: mutResult.text,
-                metaLine: mutMetaLine,
-                toolMeta: buildToolMeta({
-                  toolName: getToolName(mutCall),
-                  source: mutCall.source,
-                  provider: lockedProviderForChat,
-                  durationMs: mutDuration,
-                  isError: mutResult.text.includes('[Tool Error]'),
-                }),
-              });
-
               setConversations((prev) => {
                 const conv = prev[chatId];
                 if (!conv) return prev;
-                return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, mutResultMsg], lastMessageAt: Date.now() } };
+                return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, mutOutcome.resultMessage], lastMessageAt: Date.now() } };
               });
-              apiMessages = [...apiMessages, mutResultMsg];
+              apiMessages = [...apiMessages, mutOutcome.resultMessage];
               checkpointApiMessagesRef.current = apiMessages;
 
               // --- Checkpoint: trailing mutation result received ---
@@ -1743,6 +1553,8 @@ export function useChat(
 
           // Execute tool — track timing for provenance
           const toolExecStart = Date.now();
+          let toolExecDurationMs = 0;
+          let singleRawResult: ToolExecRawResult | null = null;
           const statusLabel = getToolStatusLabel(toolCall);
           updateAgentStatus({ active: true, phase: statusLabel }, { chatId });
 
@@ -1787,325 +1599,31 @@ export function useChat(
               }
               toolExecResult = { text: result.text };
             }
+            toolExecDurationMs = Date.now() - toolExecStart;
           } else if (toolCall.source === 'delegate') {
-            if (toolCall.call.tool === 'delegate_explorer') {
-              checkpointPhaseRef.current = 'delegating_explorer';
-              const explorerTask = toolCall.call.args.task?.trim();
-              if (!explorerTask) {
-                toolExecResult = { text: '[Tool Error] delegate_explorer requires a non-empty "task" string.' };
-              } else {
-                try {
-                  const explorerResult = await runExplorerAgent(
-                    {
-                      task: explorerTask,
-                      files: toolCall.call.args.files || [],
-                      intent: toolCall.call.args.intent,
-                      deliverable: toolCall.call.args.deliverable,
-                      knownContext: toolCall.call.args.knownContext,
-                      constraints: toolCall.call.args.constraints,
-                      branchContext: branchInfoRef.current?.currentBranch ? {
-                        activeBranch: branchInfoRef.current.currentBranch,
-                        defaultBranch: branchInfoRef.current.defaultBranch || 'main',
-                        protectMain: isMainProtectedRef.current,
-                      } : undefined,
-                      provider: lockedProviderForChat,
-                      model: resolvedModelForChat || undefined,
-                      projectInstructions: agentsMdRef.current || undefined,
-                      instructionFilename: instructionFilenameRef.current || undefined,
-                    },
-                    sandboxIdRef.current,
-                    repoRef.current || '',
-                    {
-                      onStatus: (phase, detail) => {
-                        updateAgentStatus(
-                          { active: true, phase, detail },
-                          { chatId, source: 'explorer' },
-                        );
-                      },
-                      signal: abortControllerRef.current?.signal,
-                    },
-                  );
-
-                  if (explorerResult.cards.length > 0) {
-                    setConversations((prev) => {
-                      const conv = prev[chatId];
-                      if (!conv) return prev;
-                      const msgs = appendCardsToLatestToolCall(conv.messages, explorerResult.cards);
-                      return { ...prev, [chatId]: { ...conv, messages: msgs } };
-                    });
-                  }
-
-                  toolExecResult = {
-                    text: `[Tool Result — delegate_explorer]\n${explorerResult.summary}\n(${explorerResult.rounds} round${explorerResult.rounds !== 1 ? 's' : ''})`,
-                  };
-                } catch (err) {
-                  const isAbort = err instanceof DOMException && err.name === 'AbortError';
-                  if (isAbort || abortRef.current) {
-                    toolExecResult = { text: '[Tool Result — delegate_explorer]\nExplorer cancelled by user.' };
-                  } else {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    toolExecResult = { text: `[Tool Error] Explorer failed: ${msg}` };
-                  }
-                }
-              }
-            } else {
-              // Handle Coder delegation (Phase 3b)
-              checkpointPhaseRef.current = 'delegating_coder';
-              lastCoderStateRef.current = null; // Will be populated by onWorkingMemoryUpdate callback
-              const currentSandboxId = sandboxIdRef.current;
-              if (!currentSandboxId) {
-                toolExecResult = { text: '[Tool Error] Failed to start sandbox automatically. Try again.' };
-              } else {
-                try {
-                  // --- Harness Profile Resolution ---
-                  // Resolve scaffolding level based on the model being used for this delegation.
-                  const harnessProvider = lockedProviderForChat || getActiveProvider();
-                  const harnessModelId = resolvedModelForChat || undefined;
-                  const harnessSettings = resolveHarnessSettings(
-                    harnessProvider as AIProviderType,
-                    harnessModelId,
-                  );
-
-                  const delegateArgs = toolCall.call.args;
-                  const taskList = Array.isArray(delegateArgs.tasks)
-                    ? delegateArgs.tasks.filter((t) => typeof t === 'string' && t.trim())
-                    : [];
-                  if (delegateArgs.task?.trim()) {
-                    taskList.unshift(delegateArgs.task.trim());
-                  }
-
-                  if (taskList.length === 0) {
-                    toolExecResult = { text: '[Tool Error] delegate_coder requires "task" or non-empty "tasks" array.' };
-                  } else {
-                  const allCards: ChatCard[] = [];
-                  const summaries: string[] = [];
-                  let totalRounds = 0;
-                  let totalCheckpoints = 0;
-                  // Collect acceptance criteria results across all tasks for evaluation
-                  const allCriteriaResults: { id: string; passed: boolean; exitCode: number; output: string }[] = [];
-
-                  // --- Planner Pre-Pass ---
-                  // When the harness profile requires it (or the task is large enough),
-                  // run the planner to decompose into a feature checklist.
-                  let plannerBrief: string | undefined;
-                  if (harnessSettings.plannerRequired && taskList.length === 1) {
-                    updateAgentStatus(
-                      { active: true, phase: 'Planning task...', detail: `Profile: ${harnessSettings.profile}` },
-                      { chatId, source: 'coder' },
-                    );
-                    const plan = await runPlanner(
-                      taskList[0],
-                      delegateArgs.files || [],
-                      (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
-                      {
-                        providerOverride: lockedProviderForChat,
-                        modelOverride: resolvedModelForChat || undefined,
-                      },
-                    );
-                    if (plan) {
-                      plannerBrief = formatPlannerBrief(plan);
-                    }
-                    // Fail-open: if planner returns null, Coder proceeds without a plan
-                  }
-
-                    for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
-                      const task = taskList[taskIndex];
-
-                      // Interactive Checkpoint callback: when the Coder pauses to ask
-                      // the Orchestrator for guidance, this generates an answer using the
-                      // Orchestrator's LLM with recent chat history for context.
-                      const handleCheckpoint = async (question: string, context: string): Promise<string> => {
-                        const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
-                        updateAgentStatus(
-                          { active: true, phase: `${prefix}Coder checkpoint`, detail: question },
-                          { chatId, source: 'coder' },
-                        );
-
-                        const stateSummary = summarizeCoderStateForHandoff(lastCoderStateRef.current);
-                        const checkpointContext = [
-                          context.trim(),
-                          stateSummary ? `Latest coder state:\n${stateSummary}` : null,
-                        ]
-                          .filter((value): value is string => Boolean(value && value.trim()))
-                          .join('\n\n');
-
-                        const answer = await generateCheckpointAnswer(
-                          question,
-                          checkpointContext,
-                          apiMessages.slice(-6), // recent chat for user intent context
-                          abortControllerRef.current?.signal,
-                          lockedProviderForChat,
-                          resolvedModelForChat || undefined,
-                        );
-
-                        updateAgentStatus(
-                          { active: true, phase: `${prefix}Coder resuming...` },
-                          { chatId, source: 'coder' },
-                        );
-                        return answer;
-                      };
-
-                      // Apply acceptance criteria to every task — validates each independently.
-                      // For sequential single-sandbox mode this also catches regressions
-                      // introduced by earlier tasks before they compound.
-                      const seqTaskStart = Date.now();
-                      const seqBi = branchInfoRef.current;
-                      const coderResult = await runCoderAgent(
-                        task,
-                        currentSandboxId,
-                        delegateArgs.files || [],
-                        (phase, detail) => {
-                          const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
-                          updateAgentStatus(
-                            { active: true, phase: `${prefix}${phase}`, detail },
-                            { chatId, source: 'coder' },
-                          );
-                        },
-                        agentsMdRef.current || undefined,
-                        abortControllerRef.current?.signal,
-                        handleCheckpoint,
-                        delegateArgs.acceptanceCriteria,
-                        (state) => { lastCoderStateRef.current = state; },
-                        lockedProviderForChat,
-                        resolvedModelForChat || undefined,
-                        {
-                          intent: delegateArgs.intent,
-                          deliverable: delegateArgs.deliverable,
-                          knownContext: delegateArgs.knownContext,
-                          constraints: delegateArgs.constraints,
-                          branchContext: seqBi?.currentBranch ? {
-                            activeBranch: seqBi.currentBranch,
-                            defaultBranch: seqBi.defaultBranch || 'main',
-                            protectMain: isMainProtectedRef.current,
-                          } : undefined,
-                          instructionFilename: instructionFilenameRef.current || undefined,
-                          harnessSettings,
-                          plannerBrief,
-                        },
-                      );
-                      const seqElapsed = formatElapsedTime(Date.now() - seqTaskStart);
-                      const seqStatus = getTaskStatusLabel(coderResult.criteriaResults);
-                      totalRounds += coderResult.rounds;
-                      totalCheckpoints += coderResult.checkpoints;
-                      if (taskList.length > 1) {
-                        summaries.push(`Task ${taskIndex + 1} [${seqStatus}, ${seqElapsed}]: ${coderResult.summary}`);
-                      } else {
-                        summaries.push(`${coderResult.summary} (${seqElapsed})`);
-                      }
-                      if (coderResult.criteriaResults) {
-                        allCriteriaResults.push(...coderResult.criteriaResults);
-                      }
-                      allCards.push(...coderResult.cards);
-                    }
-
-                  // --- Auditor Evaluation ---
-                  // After all Coder tasks complete, run the Auditor in evaluation
-                  // mode to assess whether the work is actually complete.
-                  if (harnessSettings.evaluateAfterCoder && summaries.length > 0) {
-                    let evalResult: EvaluationResult | null = null;
-                    try {
-                      updateAgentStatus(
-                        { active: true, phase: 'Evaluating output...' },
-                        { chatId, source: 'coder' },
-                      );
-                      // Get sandbox diff for evaluation context
-                      let evalDiff: string | null = null;
-                      try {
-                        const { getSandboxDiff } = await import('@/lib/sandbox-client');
-                        const diffResult = await getSandboxDiff(currentSandboxId);
-                        evalDiff = diffResult.diff || null;
-                      } catch { /* no diff available — evaluation proceeds without it */ }
-
-                      const combinedTask = taskList.join('\n\n');
-                      const combinedSummary = summaries.join('\n');
-                      // For multi-task delegations, only the last task's working memory
-                      // is available — pass null to avoid misleading the evaluator.
-                      const evalWorkingMemory = taskList.length <= 1
-                        ? lastCoderStateRef.current
-                        : null;
-                      // Scale max rounds by task count so multi-task totals don't
-                      // falsely trigger the "hit round cap" signal.
-                      const evalMaxRounds = harnessSettings.maxCoderRounds * Math.max(taskList.length, 1);
-                      evalResult = await runAuditorEvaluation(
-                        combinedTask,
-                        combinedSummary,
-                        evalWorkingMemory,
-                        evalDiff,
-                        (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
-                        {
-                          providerOverride: lockedProviderForChat,
-                          modelOverride: resolvedModelForChat || undefined,
-                          coderRounds: totalRounds,
-                          coderMaxRounds: evalMaxRounds,
-                          criteriaResults: allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
-                        },
-                      );
-                    } catch {
-                      // Fail-open: if evaluation fails, Coder result stands as-is
-                    }
-
-                    // Append evaluation verdict to summaries
-                    if (evalResult) {
-                      const evalLine = `\n[Evaluation: ${evalResult.verdict.toUpperCase()}] ${evalResult.summary}`;
-                      const gapLines = evalResult.gaps.length > 0
-                        ? evalResult.gaps.map(g => `  - ${g}`).join('\n')
-                        : '';
-                      summaries.push(evalLine + (gapLines ? `\n${gapLines}` : ''));
-                    }
-                  }
-
-                  // Attach all Coder cards to the assistant message
-                  if (allCards.length > 0) {
-                    setConversations((prev) => {
-                      const conv = prev[chatId];
-                      if (!conv) return prev;
-                      const msgs = appendCardsToLatestToolCall(conv.messages, allCards);
-                      return { ...prev, [chatId]: { ...conv, messages: msgs } };
-                    });
-                  }
-
-                  const checkpointNote = totalCheckpoints > 0
-                    ? `, ${totalCheckpoints} checkpoint${totalCheckpoints !== 1 ? 's' : ''}`
-                    : '';
-                  toolExecResult = {
-                    text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})`,
-                  };
-                  }
-
-                } catch (err) {
-                  const isAbort = err instanceof DOMException && err.name === 'AbortError';
-                  if (isAbort || abortRef.current) {
-                    toolExecResult = { text: '[Tool Result — delegate_coder]\nCoder cancelled by user.' };
-                  } else {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    toolExecResult = { text: `[Tool Error] Coder failed: ${msg}` };
-                  }
-                }
-              }
-            }
+            toolExecResult = await executeDelegateCall(chatId, toolCall, apiMessages, lockedProviderForChat, resolvedModelForChat || undefined);
+            toolExecDurationMs = Date.now() - toolExecStart;
             // Reset phase — delegation finished (success or error)
             checkpointPhaseRef.current = 'executing_tools';
             lastCoderStateRef.current = null;
           } else {
-            // GitHub or Sandbox tools
-            const toolRepoFullName = repoRef.current;
-            if (toolCall.source === 'github' && !toolRepoFullName) {
-              toolExecResult = { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
-            } else {
-              toolExecResult = await executeAnyToolCall(
-                toolCall,
-                toolRepoFullName || '',
-                sandboxIdRef.current,
-                isMainProtectedRef.current,
-                branchInfoRef.current?.defaultBranch,
-                lockedProviderForChat,
-                resolvedModelForChat,
-              );
-            }
+            // GitHub or Sandbox tools — execute first, build message after
+            const singleCtx: ToolExecRunContext = {
+              repoFullName: repoRef.current,
+              sandboxId: sandboxIdRef.current,
+              isMainProtected: isMainProtectedRef.current,
+              defaultBranch: branchInfoRef.current?.defaultBranch,
+              provider: lockedProviderForChat,
+              model: resolvedModelForChat,
+            };
+            singleRawResult = await executeTool(toolCall, singleCtx);
+            toolExecResult = singleRawResult.raw;
+            toolExecDurationMs = singleRawResult.durationMs;
           }
 
           if (abortRef.current) break;
 
+          // --- Post-execution: side effects ---
           if (toolExecResult.promotion?.repo) {
             const promotedRepo = toolExecResult.promotion.repo;
             repoRef.current = promotedRepo.full_name;
@@ -2132,55 +1650,58 @@ export function useChat(
             runtimeHandlersRef.current?.onSandboxPromoted?.(promotedRepo);
           }
 
-          // Sync app branch state when sandbox switches branches (e.g. draft checkout)
           if (toolExecResult.branchSwitch) {
             runtimeHandlersRef.current?.onBranchSwitch?.(toolExecResult.branchSwitch);
           }
 
-          // Notify sandbox hook if tool indicates the container is unreachable
           if (toolExecResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {
             runtimeHandlersRef.current?.onSandboxUnreachable?.(toolExecResult.structuredError.message);
           }
 
-          // Attach card to the assistant message that triggered the tool call
-          if (toolExecResult.card) {
-            if (toolExecResult.card.type === 'sandbox-state') {
-              // No longer render or persist sandbox state cards in chat.
-              continue;
-            }
-            const toolCard = toolExecResult.card;
+          // --- Post-execution: build result message ---
+          // Fetch sandbox status *after* execution so meta line reflects changes
+          roundSandboxStatusFetched = false;
+          const sandboxStatus = await getRoundSandboxStatus();
+          const metaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, sandboxStatus);
+
+          let toolResultMsg: ChatMessage;
+          let cardsToAttach: ChatCard[];
+          if (singleRawResult) {
+            // GitHub/Sandbox tools — build outcome from raw result + post-execution meta
+            const outcome = buildToolOutcome(singleRawResult, metaLine, lockedProviderForChat);
+            toolResultMsg = outcome.resultMessage;
+            cardsToAttach = outcome.cards;
+          } else {
+            // Scratchpad/delegate — build message directly
+            toolResultMsg = buildToolResultMessage({
+              id: createId(),
+              timestamp: Date.now(),
+              text: toolExecResult.text,
+              metaLine,
+              toolMeta: buildToolMeta({
+                toolName: getToolName(toolCall),
+                source: toolCall.source,
+                provider: lockedProviderForChat,
+                durationMs: toolExecDurationMs,
+                isError: toolExecResult.text.includes('[Tool Error]'),
+              }),
+            });
+            cardsToAttach = toolExecResult.card && toolExecResult.card.type !== 'sandbox-state'
+              ? [toolExecResult.card]
+              : [];
+          }
+
+          // --- Post-execution: attach cards ---
+          if (cardsToAttach.length > 0) {
             setConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
-              const msgs = appendCardsToLatestToolCall(conv.messages, [toolCard]);
+              const msgs = appendCardsToLatestToolCall(conv.messages, cardsToAttach);
               return { ...prev, [chatId]: { ...conv, messages: msgs } };
             });
           }
 
-          // Create tool result message with provenance metadata + meta envelope
-          const toolExecDurationMs = Date.now() - toolExecStart;
-          const sandboxStatus = await getRoundSandboxStatus();
-          const metaLine = buildToolResultMetaLine(
-            round,
-            apiMessages,
-            lockedProviderForChat,
-            resolvedModelForChat,
-            sandboxStatus,
-          );
-          const toolResultMsg = buildToolResultMessage({
-            id: createId(),
-            timestamp: Date.now(),
-            text: toolExecResult.text,
-            metaLine,
-            toolMeta: buildToolMeta({
-              toolName: getToolName(toolCall),
-              source: toolCall.source,
-              provider: lockedProviderForChat,
-              durationMs: toolExecDurationMs,
-              isError: toolExecResult.text.includes('[Tool Error]'),
-            }),
-          });
-
+          // --- Post-execution: update state ---
           setConversations((prev) => {
             const conv = prev[chatId];
             if (!conv) return prev;
@@ -2228,7 +1749,7 @@ export function useChat(
         }
       }
     },
-    [conversations, isStreaming, createNewChat, updateAgentStatus, flushCheckpoint],
+    [conversations, isStreaming, createNewChat, updateAgentStatus, flushCheckpoint, executeDelegateCall],
   );
 
   // Wire sendMessageRef so resume callback can reach it (defined after sendMessage)
