@@ -1,62 +1,25 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { lazy, Suspense, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { WorkspaceChatRoute } from './WorkspaceChatRoute';
-import { FileBrowser } from './FileBrowser';
 import { useChat } from '@/hooks/useChat';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useProtectMain } from '@/hooks/useProtectMain';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
-import { useSnapshotManager, buildWorkspaceScratchActions } from '@/hooks/useSnapshotManager';
+import { useSnapshotManager } from '@/hooks/useSnapshotManager';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { useProjectInstructions } from '@/hooks/useProjectInstructions';
 import { useWorkspaceComposerState } from '@/hooks/useWorkspaceComposerState';
 import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
-import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
+import { useWorkspaceSandboxController } from '@/hooks/useWorkspaceSandboxController';
 import { toConversationIndex } from '@/lib/conversation-index';
 import type {
-  NewChatWorkspaceState,
   RepoWithActivity,
-  SandboxStateCardData,
-  WorkspaceCapabilities,
-  WorkspaceScratchActions,
   WorkspaceScreenProps,
 } from '@/types';
 
-function parseSandboxGitStatus(sandboxId: string, stdout: string): SandboxStateCardData {
-  const lines = stdout.split('\n').map((line) => line.trimEnd()).filter(Boolean);
-  const statusLine = lines.find((line) => line.startsWith('##'))?.slice(2).trim() || 'unknown';
-  const branch = statusLine.split('...')[0].trim() || 'unknown';
-  const entries = lines.filter((line) => !line.startsWith('##'));
-
-  let stagedFiles = 0;
-  let unstagedFiles = 0;
-  let untrackedFiles = 0;
-  for (const entry of entries) {
-    const x = entry[0] || ' ';
-    const y = entry[1] || ' ';
-    if (x === '?' && y === '?') {
-      untrackedFiles++;
-      continue;
-    }
-    if (x !== ' ') stagedFiles++;
-    if (y !== ' ') unstagedFiles++;
-  }
-
-  return {
-    sandboxId,
-    repoPath: '/workspace',
-    branch,
-    statusLine,
-    changedFiles: entries.length,
-    stagedFiles,
-    unstagedFiles,
-    untrackedFiles,
-    preview: entries.slice(0, 6).map((line) => line.length > 120 ? `${line.slice(0, 120)}...` : line),
-    fetchedAt: new Date().toISOString(),
-  };
-}
+const FileBrowser = lazy(() => import('./FileBrowser').then((module) => ({ default: module.FileBrowser })));
 
 export function WorkspaceScreen({
   workspaceSession,
@@ -93,8 +56,6 @@ export function WorkspaceScreen({
     isScratch ? '' : (workspaceRepo?.full_name ?? null),
     isScratch ? 'main' : (workspaceRepo?.current_branch || workspaceRepo?.default_branch || null),
   );
-  const stopSandbox = sandbox.stop;
-  const startSandbox = sandbox.start;
   const catalog = useModelCatalog();
 
   const skipBranchTeardownRef = useRef(false);
@@ -219,7 +180,38 @@ export function WorkspaceScreen({
 
   const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
   const branches = useBranchManager(workspaceRepo, workspaceSession);
-  const [showFileBrowser, setShowFileBrowser] = useState(false);
+  const {
+    showFileBrowser,
+    setShowFileBrowser,
+    sandboxState,
+    sandboxStateLoading,
+    sandboxDownloading,
+    fetchSandboxState,
+    inspectNewChatWorkspace,
+    ensureSandbox,
+    handleSandboxRestart,
+    handleSandboxDownload,
+    fileBrowserCapabilities,
+    fileBrowserScratchActions,
+    handleExitWorkspace,
+    handleDisconnectFromWorkspace,
+  } = useWorkspaceSandboxController({
+    workspaceSession,
+    workspaceRepo,
+    isScratch,
+    sandbox,
+    snapshots,
+    isStreaming,
+    abortStream,
+    createNewChat,
+    onWorkspaceSessionChange,
+    onEndWorkspace,
+    onDisconnect,
+    setEnsureSandbox,
+    setSandboxId,
+    setWorkspaceSessionId,
+    skipBranchTeardownRef,
+  });
 
   const instructions = useProjectInstructions(
     workspaceRepo,
@@ -261,244 +253,30 @@ export function WorkspaceScreen({
     copyAllowlistCommand,
   } = useWorkspacePreferences(validatedUser?.login);
 
-  const [sandboxState, setSandboxState] = useState<SandboxStateCardData | null>(null);
-  const [sandboxStateLoading, setSandboxStateLoading] = useState(false);
-  const sandboxStateFetchedFor = useRef<string | null>(null);
-  const [sandboxDownloading, setSandboxDownloading] = useState(false);
-
   const handleSelectRepoFromDrawer = useCallback((repo: RepoWithActivity, branch?: string) => {
     onSelectRepo(repo, branch);
   }, [onSelectRepo]);
 
-  const fetchSandboxState = useCallback(async (id: string): Promise<SandboxStateCardData | null> => {
-    setSandboxStateLoading(true);
-    try {
-      const result = await execInSandbox(id, 'cd /workspace && git status -sb --porcelain=1');
-      if (result.exitCode !== 0) return null;
-
-      const nextState = parseSandboxGitStatus(id, result.stdout);
-      setSandboxState(nextState);
-      return nextState;
-    } catch {
-      return null;
-    } finally {
-      setSandboxStateLoading(false);
-    }
-  }, []);
-
-  const inspectNewChatWorkspace = useCallback(async (): Promise<NewChatWorkspaceState | null> => {
-    if (sandbox.status !== 'ready' || !sandbox.sandboxId) return null;
-
-    if (isScratch) {
-      try {
-        const result = await execInSandbox(
-          sandbox.sandboxId,
-          "cd /workspace && total=$(find . -path './.git' -prune -o -type f -print | sed 's#^\\./##' | sort | wc -l | tr -d ' '); printf '__COUNT__%s\\n' \"$total\"; find . -path './.git' -prune -o -type f -print | sed 's#^\\./##' | sort | head -6",
-        );
-        if (result.exitCode !== 0) return null;
-
-        const lines = result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-        const countLine = lines.find((line) => line.startsWith('__COUNT__'));
-        const fileCount = Number.parseInt(countLine?.slice('__COUNT__'.length) || '0', 10);
-        if (!Number.isFinite(fileCount) || fileCount <= 0) return null;
-
-        return {
-          mode: 'scratch',
-          sandboxId: sandbox.sandboxId,
-          branch: 'scratch',
-          changedFiles: fileCount,
-          stagedFiles: 0,
-          unstagedFiles: fileCount,
-          untrackedFiles: fileCount,
-          preview: lines.filter((line) => !line.startsWith('__COUNT__')).slice(0, 6),
-          fetchedAt: new Date().toISOString(),
-        };
-      } catch {
-        return null;
-      }
-    }
-
-    const nextState = await fetchSandboxState(sandbox.sandboxId);
-    if (!nextState || nextState.changedFiles <= 0) return null;
-
-    return {
-      mode: 'repo',
-      sandboxId: nextState.sandboxId,
-      branch: nextState.branch,
-      changedFiles: nextState.changedFiles,
-      stagedFiles: nextState.stagedFiles,
-      unstagedFiles: nextState.unstagedFiles,
-      untrackedFiles: nextState.untrackedFiles,
-      preview: nextState.preview,
-      fetchedAt: nextState.fetchedAt,
-    };
-  }, [fetchSandboxState, isScratch, sandbox.sandboxId, sandbox.status]);
-
-  useEffect(() => {
-    if (sandbox.status !== 'ready' || !sandbox.sandboxId) {
-      if (sandbox.status === 'idle') {
-        setSandboxState(null);
-        sandboxStateFetchedFor.current = null;
-      }
-      return;
-    }
-    if (sandboxStateFetchedFor.current === sandbox.sandboxId) return;
-    sandboxStateFetchedFor.current = sandbox.sandboxId;
-    fetchSandboxState(sandbox.sandboxId);
-  }, [sandbox.status, sandbox.sandboxId, fetchSandboxState]);
-
-  const ensureSandbox = useCallback(async (): Promise<string | null> => {
-    if (sandbox.sandboxId) return sandbox.sandboxId;
-    if (isScratch) return sandbox.start('', 'main');
-    if (!workspaceRepo) return null;
-    return sandbox.start(workspaceRepo.full_name, workspaceRepo.current_branch || workspaceRepo.default_branch);
-  }, [sandbox, isScratch, workspaceRepo]);
-
-  useEffect(() => {
-    setEnsureSandbox(ensureSandbox);
-  }, [ensureSandbox, setEnsureSandbox]);
-
-  useEffect(() => {
-    setSandboxId(sandbox.sandboxId);
-    if (workspaceSession.sandboxId === sandbox.sandboxId) return;
-    onWorkspaceSessionChange({ ...workspaceSession, sandboxId: sandbox.sandboxId });
-  }, [onWorkspaceSessionChange, sandbox.sandboxId, setSandboxId, workspaceSession]);
-
-  useEffect(() => {
-    setWorkspaceSessionId(workspaceSession.id ?? null);
-  }, [workspaceSession.id, setWorkspaceSessionId]);
-
-  const previousSessionIdRef = useRef(workspaceSession.id);
-  useEffect(() => {
-    const previousSessionId = previousSessionIdRef.current;
-    previousSessionIdRef.current = workspaceSession.id;
-    if (previousSessionId === workspaceSession.id) return;
-
-    setShowFileBrowser(false);
-    setSandboxState(null);
-    sandboxStateFetchedFor.current = null;
-
-    if (isStreaming) {
-      abortStream();
-    }
-    void stopSandbox();
-
-    if (workspaceSession.kind === 'scratch') {
-      createNewChat();
-    }
-  }, [abortStream, createNewChat, isStreaming, stopSandbox, workspaceSession.id, workspaceSession.kind]);
-
-  const prevBranchRef = useRef<string | undefined>(workspaceRepo?.current_branch);
-  useEffect(() => {
-    const currentBranchValue = workspaceRepo?.current_branch;
-    const prevBranch = prevBranchRef.current;
-    prevBranchRef.current = currentBranchValue;
-
-    if (prevBranch === currentBranchValue) return;
-    if (isScratch) return;
-    if (prevBranch === undefined) return;
-
-    if (skipBranchTeardownRef.current) {
-      console.log(`[WorkspaceScreen] Branch changed: ${prevBranch} → ${currentBranchValue} (sandbox-initiated, skipping teardown)`);
-      skipBranchTeardownRef.current = false;
-      return;
-    }
-
-    console.log(`[WorkspaceScreen] Branch changed: ${prevBranch} → ${currentBranchValue}, tearing down sandbox`);
-    void stopSandbox();
-  }, [workspaceRepo?.current_branch, isScratch, stopSandbox]);
-
-  const { status: sandboxStatus, sandboxId: currentSandboxId } = sandbox;
-  useEffect(() => {
-    if (isScratch && sandboxStatus === 'idle' && !currentSandboxId) {
-      startSandbox('', 'main');
-    }
-  }, [isScratch, sandboxStatus, currentSandboxId, startSandbox]);
-
-  const handleSandboxDownload = useCallback(async () => {
-    if (!sandbox.sandboxId || sandboxDownloading) return;
-    setSandboxDownloading(true);
-    try {
-      const result = await downloadFromSandbox(sandbox.sandboxId);
-      if (result.ok && result.archiveBase64) {
-        const raw = atob(result.archiveBase64);
-        const bytes = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-        const blob = new Blob([bytes], { type: 'application/gzip' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `workspace-${Date.now()}.tar.gz`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    } catch {
-      // Best effort
-    } finally {
-      setSandboxDownloading(false);
-    }
-  }, [sandbox.sandboxId, sandboxDownloading]);
-
-  const handleSandboxRestart = useCallback(async () => {
-    await stopSandbox();
-    if (isScratch) {
-      await startSandbox('', 'main');
-      return;
-    }
-    if (!workspaceRepo) return;
-    await startSandbox(workspaceRepo.full_name, workspaceRepo.current_branch || workspaceRepo.default_branch);
-  }, [isScratch, startSandbox, stopSandbox, workspaceRepo]);
-
-  const fileBrowserCapabilities: Pick<WorkspaceCapabilities, 'canCommitAndPush'> = {
-    canCommitAndPush: !isScratch,
-  };
-
-  const fileBrowserScratchActions: WorkspaceScratchActions | null = isScratch
-    ? buildWorkspaceScratchActions({
-      snapshots,
-      sandboxStatus: sandbox.status,
-      downloadingWorkspace: sandboxDownloading,
-      onDownloadWorkspace: () => {
-        void handleSandboxDownload();
-      },
-      emptyStateText: 'Save a snapshot or download your files from this workspace.',
-    })
-    : null;
-
-  const handleExitWorkspace = useCallback(() => {
-    if (isStreaming) {
-      abortStream();
-    }
-    setShowFileBrowser(false);
-    onEndWorkspace();
-  }, [abortStream, isStreaming, onEndWorkspace]);
-
-  const handleDisconnectFromWorkspace = useCallback(() => {
-    if (isStreaming) {
-      abortStream();
-    }
-    setShowFileBrowser(false);
-    onDisconnect();
-  }, [abortStream, isStreaming, onDisconnect]);
-
-  useEffect(() => {
-    return () => {
-      void stopSandbox();
-    };
-  }, [stopSandbox]);
-
   if (showFileBrowser && sandbox.sandboxId) {
     return (
       <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
-        <FileBrowser
-          sandboxId={sandbox.sandboxId}
-          workspaceLabel={workspaceRepo?.name || 'Workspace'}
-          capabilities={fileBrowserCapabilities}
-          scratchActions={fileBrowserScratchActions}
-          onBack={() => setShowFileBrowser(false)}
-          lockedProvider={lockedProvider}
-          lockedModel={lockedModel}
-        />
+        <Suspense
+          fallback={(
+            <div className="flex flex-1 items-center justify-center text-sm text-push-fg-dim">
+              Loading workspace files...
+            </div>
+          )}
+        >
+          <FileBrowser
+            sandboxId={sandbox.sandboxId}
+            workspaceLabel={workspaceRepo?.name || 'Workspace'}
+            capabilities={fileBrowserCapabilities}
+            scratchActions={fileBrowserScratchActions}
+            onBack={() => setShowFileBrowser(false)}
+            lockedProvider={lockedProvider}
+            lockedModel={lockedModel}
+          />
+        </Suspense>
         <Toaster position="bottom-center" />
       </div>
     );

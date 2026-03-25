@@ -1,9 +1,4 @@
-import { useCallback, useEffect } from 'react';
-import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
-import { MergeFlowSheet } from '@/components/chat/MergeFlowSheet';
-import { NewChatWorkspaceSheet } from '@/components/chat/NewChatWorkspaceSheet';
-import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
-import { RepoLauncherSheet } from '@/components/launcher/RepoLauncherSheet';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { Toaster } from '@/components/ui/sonner';
 import { formatSnapshotAge, isSnapshotStale } from '@/hooks/useSnapshotManager';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
@@ -25,6 +20,12 @@ import {
   buildWorkspaceHubScratchActions,
 } from './workspace-chat-route-builders';
 import type { ChatRouteProps } from './workspace-chat-route-types';
+
+const BranchCreateSheet = lazy(() => import('@/components/chat/BranchCreateSheet').then((module) => ({ default: module.BranchCreateSheet })));
+const MergeFlowSheet = lazy(() => import('@/components/chat/MergeFlowSheet').then((module) => ({ default: module.MergeFlowSheet })));
+const NewChatWorkspaceSheet = lazy(() => import('@/components/chat/NewChatWorkspaceSheet').then((module) => ({ default: module.NewChatWorkspaceSheet })));
+const WorkspaceHubSheet = lazy(() => import('@/components/chat/WorkspaceHubSheet').then((module) => ({ default: module.WorkspaceHubSheet })));
+const RepoLauncherSheet = lazy(() => import('@/components/launcher/RepoLauncherSheet').then((module) => ({ default: module.RepoLauncherSheet })));
 
 export function WorkspaceChatRoute(props: ChatRouteProps) {
   const {
@@ -147,6 +148,11 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     loadRepoBranches,
     handleDeleteBranch,
   } = branches;
+  const [workspaceHubMounted, setWorkspaceHubMounted] = useState(false);
+  const [newChatSheetMounted, setNewChatSheetMounted] = useState(false);
+  const [launcherSheetMounted, setLauncherSheetMounted] = useState(false);
+  const [branchCreateMounted, setBranchCreateMounted] = useState(false);
+  const [mergeFlowMounted, setMergeFlowMounted] = useState(false);
 
   const { markSnapshotActivity } = snapshots;
 
@@ -251,6 +257,61 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     markSnapshotActivity,
   });
 
+  const handleWorkspaceHubOpenChangeWithMount = useCallback((open: boolean) => {
+    if (open) {
+      setWorkspaceHubMounted(true);
+    }
+    handleWorkspaceHubOpenChange(open);
+  }, [handleWorkspaceHubOpenChange]);
+
+  const openWorkspaceHubWithMount = useCallback(() => {
+    setWorkspaceHubMounted(true);
+    openWorkspaceHub();
+  }, [openWorkspaceHub]);
+
+  const openLauncherWithMount = useCallback(() => {
+    setLauncherSheetMounted(true);
+    openLauncher();
+  }, [openLauncher]);
+
+  const setLauncherOpenWithMount = useCallback((open: boolean) => {
+    if (open) {
+      setLauncherSheetMounted(true);
+    }
+    setIsLauncherOpen(open);
+  }, [setIsLauncherOpen]);
+
+  const handleNewChatSheetOpenChangeWithMount = useCallback((open: boolean) => {
+    if (open) {
+      setNewChatSheetMounted(true);
+    }
+    handleNewChatSheetOpenChange(open);
+  }, [handleNewChatSheetOpenChange]);
+
+  const handleCreateNewChatRequestWithMount = useCallback(() => {
+    setNewChatSheetMounted(true);
+    return handleCreateNewChatRequest();
+  }, [handleCreateNewChatRequest]);
+
+  const handleReviewNewChatWorkspaceWithMount = useCallback(() => {
+    setWorkspaceHubMounted(true);
+    handleReviewNewChatWorkspace();
+  }, [handleReviewNewChatWorkspace]);
+
+  const setShowBranchCreateWithMount = useCallback((open: boolean) => {
+    if (open) {
+      setBranchCreateMounted(true);
+    }
+    setShowBranchCreate(open);
+  }, [setShowBranchCreate]);
+
+  const setShowMergeFlowWithMount = useCallback((open: boolean) => {
+    if (open) {
+      setMergeFlowMounted(true);
+    }
+    setShowMergeFlow(open);
+  }, [setShowMergeFlow]);
+
   const chatsDrawerOffset = 'min(86vw, 24rem)';
   const workspaceHubOffset = '94vw';
   const chatShellTransform = isChatsDrawerOpen
@@ -291,8 +352,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     repoBranchesLoading,
     loadRepoBranches,
     setCurrentBranch,
-    setShowBranchCreate,
-    setShowMergeFlow,
+    setShowBranchCreate: setShowBranchCreateWithMount,
+    setShowMergeFlow: setShowMergeFlowWithMount,
     handleDeleteBranch,
   });
   const drawerProps = buildRepoChatDrawerProps({
@@ -307,7 +368,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     clearRepoAppearance,
     handleSelectRepoFromDrawer,
     switchChat,
-    handleCreateNewChatRequest,
+    handleCreateNewChatRequest: handleCreateNewChatRequestWithMount,
     deleteChat,
     renameChat,
     currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
@@ -321,7 +382,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   });
   const repoLauncherProps = buildRepoLauncherSheetProps({
     open: isLauncherOpen,
-    setOpen: setIsLauncherOpen,
+    setOpen: setLauncherOpenWithMount,
     repos,
     reposLoading,
     reposError,
@@ -337,159 +398,187 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     sandboxCreatedAt: sandbox.createdAt,
     handleStartWorkspace: handleStartWorkspace ? handleStartWorkspaceRequest : undefined,
   });
+  const chatScreenWorkspace = {
+    activeRepo,
+    isScratch,
+    activeRepoAppearance,
+    sandboxStatus: sandbox.status,
+    sandboxDownloading,
+    onSandboxDownload: handleSandboxDownload,
+    instructions,
+    snapshots,
+    snapshotAgeLabel,
+    snapshotIsStale,
+  };
+  const chatScreenShell = {
+    launcherLabel: isScratch ? 'Workspace' : currentBranch,
+    hasWorkspaceActivityIndicator: scratchpad.hasContent || agentStatus.active,
+    chatShellTransform,
+    chatShellShadow,
+    onOpenLauncher: openLauncherWithMount,
+    onOpenWorkspaceHub: openWorkspaceHubWithMount,
+    drawerProps,
+  };
+  const chatScreenChat = {
+    containerProps: {
+      messages,
+      agentStatus,
+      activeRepo,
+      hasSandbox: Boolean(isScratch || activeRepo),
+      onSuggestion: handleQuickPrompt,
+      onCardAction: handleCardActionWithSnapshotHeartbeat,
+      onPin: pinnedArtifacts.pin,
+      interruptedCheckpoint,
+      onResumeRun: resumeInterruptedRun,
+      onDismissResume: dismissResume,
+      ciStatus,
+      onDiagnoseCI: diagnoseCIFailure,
+      onEditUserMessage: !isStreaming ? handleEditUserMessage : undefined,
+      onRegenerateLastResponse: !isStreaming ? handleRegenerateLastResponse : undefined,
+    },
+    inputProps: {
+      onSend: handleComposerSend,
+      onStop: abortStream,
+      isStreaming,
+      repoName: activeRepo?.name,
+      contextUsage,
+      draftKey: activeChatId,
+      prefillRequest: composerPrefillRequest,
+      editState,
+      providerControls,
+    },
+  };
+  const chatScreenBanners = {
+    sandboxStatusBannerProps: {
+      status: sandbox.status,
+      error: sandbox.error,
+      hasMessages: messages.length > 0,
+      isStreaming,
+      sandboxId: sandbox.sandboxId,
+      isInScratchWorkspace: Boolean(isScratch),
+      onStart: startCurrentSandbox,
+      onRetry: () => { void sandbox.refresh(); },
+      onNewSandbox: restartCurrentSandbox,
+      onExitWorkspace: handleExitWorkspaceRequest,
+    },
+    sandboxExpiryBannerProps: isScratch ? {
+      createdAt: sandbox.createdAt,
+      sandboxId: sandbox.sandboxId,
+      sandboxStatus: sandbox.status,
+      onRestart: handleSandboxRestart,
+      onWarningThresholdReached: () => { void handleExpiryWarningReached(); },
+    } : null,
+  };
 
   return (
     <>
       <ChatScreen
-        activeRepo={activeRepo}
-        isScratch={isScratch}
-        activeRepoAppearance={activeRepoAppearance}
-        launcherLabel={isScratch ? 'Workspace' : currentBranch}
-        hasWorkspaceActivityIndicator={scratchpad.hasContent || agentStatus.active}
-        chatShellTransform={chatShellTransform}
-        chatShellShadow={chatShellShadow}
-        sandboxStatus={sandbox.status}
-        sandboxDownloading={sandboxDownloading}
-        onSandboxDownload={handleSandboxDownload}
-        onOpenLauncher={openLauncher}
-        onOpenWorkspaceHub={openWorkspaceHub}
-        drawerProps={drawerProps}
-        chatContainerProps={{
-          messages,
-          agentStatus,
-          activeRepo,
-          hasSandbox: Boolean(isScratch || activeRepo),
-          onSuggestion: handleQuickPrompt,
-          onCardAction: handleCardActionWithSnapshotHeartbeat,
-          onPin: pinnedArtifacts.pin,
-          interruptedCheckpoint,
-          onResumeRun: resumeInterruptedRun,
-          onDismissResume: dismissResume,
-          ciStatus,
-          onDiagnoseCI: diagnoseCIFailure,
-          onEditUserMessage: !isStreaming ? handleEditUserMessage : undefined,
-          onRegenerateLastResponse: !isStreaming ? handleRegenerateLastResponse : undefined,
-        }}
-        chatInputProps={{
-          onSend: handleComposerSend,
-          onStop: abortStream,
-          isStreaming,
-          repoName: activeRepo?.name,
-          contextUsage,
-          draftKey: activeChatId,
-          prefillRequest: composerPrefillRequest,
-          editState,
-          providerControls,
-        }}
-        instructions={instructions}
-        snapshots={snapshots}
-        snapshotAgeLabel={snapshotAgeLabel}
-        snapshotIsStale={snapshotIsStale}
-        sandboxStatusBannerProps={{
-          status: sandbox.status,
-          error: sandbox.error,
-          hasMessages: messages.length > 0,
-          isStreaming,
-          sandboxId: sandbox.sandboxId,
-          isInScratchWorkspace: Boolean(isScratch),
-          onStart: startCurrentSandbox,
-          onRetry: () => { void sandbox.refresh(); },
-          onNewSandbox: restartCurrentSandbox,
-          onExitWorkspace: handleExitWorkspaceRequest,
-        }}
-        sandboxExpiryBannerProps={isScratch ? {
-          createdAt: sandbox.createdAt,
-          sandboxId: sandbox.sandboxId,
-          sandboxStatus: sandbox.status,
-          onRestart: handleSandboxRestart,
-          onWarningThresholdReached: () => { void handleExpiryWarningReached(); },
-        } : null}
+        workspace={chatScreenWorkspace}
+        shell={chatScreenShell}
+        chat={chatScreenChat}
+        banners={chatScreenBanners}
       />
 
-      <WorkspaceHubSheet
-        open={isWorkspaceHubOpen}
-        onOpenChange={handleWorkspaceHubOpenChange}
-        externalTabRequest={hubTabRequest}
-        messages={messages}
-        agentEvents={agentEvents}
-        sandboxId={sandbox.sandboxId}
-        sandboxStatus={sandbox.status}
-        sandboxError={sandbox.error}
-        ensureSandbox={ensureSandbox}
-        onStartSandbox={startCurrentSandbox}
-        onRetrySandbox={() => { void sandbox.refresh(); }}
-        onNewSandbox={restartCurrentSandbox}
-        reviewProviders={catalog.availableProviders}
-        reviewActiveProvider={catalog.activeProviderLabel}
-        reviewModelOptions={reviewModelOptions}
-        lockedProvider={lockedProvider}
-        lockedModel={lockedModel}
-        workspaceMode={isScratch ? 'scratch' : 'repo'}
-        capabilities={workspaceHubCapabilities}
-        scratchActions={workspaceHubScratchActions}
-        repoName={activeRepo?.name || (isScratch ? 'Workspace' : undefined)}
-        repoFullName={activeRepo?.full_name}
-        projectInstructions={instructions.agentsMdContent}
-        protectMainEnabled={protectMain.isProtected}
-        showToolActivity={showToolActivity}
-        settingsAuth={settingsAuth}
-        settingsProfile={settingsProfile}
-        settingsAI={settingsAI}
-        settingsWorkspace={settingsWorkspace}
-        settingsData={settingsData}
-        scratchpadContent={scratchpad.content}
-        scratchpadMemories={scratchpad.memories}
-        activeMemoryId={scratchpad.activeMemoryId}
-        onScratchpadContentChange={scratchpad.setContent}
-        onScratchpadClear={scratchpad.clear}
-        onScratchpadSaveMemory={scratchpad.saveMemory}
-        onScratchpadLoadMemory={scratchpad.loadMemory}
-        onScratchpadDeleteMemory={scratchpad.deleteMemory}
-        branchProps={branchProps}
-        onSandboxBranchSwitch={onSandboxBranchSwitch}
-        onFixReviewFinding={handleFixReviewFinding}
-        pinnedArtifacts={pinnedArtifacts.artifacts}
-        onUnpinArtifact={pinnedArtifacts.unpin}
-        onUpdateArtifactLabel={pinnedArtifacts.updateLabel}
-      />
+      {workspaceHubMounted && (
+        <Suspense fallback={null}>
+          <WorkspaceHubSheet
+            open={isWorkspaceHubOpen}
+            onOpenChange={handleWorkspaceHubOpenChangeWithMount}
+            externalTabRequest={hubTabRequest}
+            messages={messages}
+            agentEvents={agentEvents}
+            sandboxId={sandbox.sandboxId}
+            sandboxStatus={sandbox.status}
+            sandboxError={sandbox.error}
+            ensureSandbox={ensureSandbox}
+            onStartSandbox={startCurrentSandbox}
+            onRetrySandbox={() => { void sandbox.refresh(); }}
+            onNewSandbox={restartCurrentSandbox}
+            reviewProviders={catalog.availableProviders}
+            reviewActiveProvider={catalog.activeProviderLabel}
+            reviewModelOptions={reviewModelOptions}
+            lockedProvider={lockedProvider}
+            lockedModel={lockedModel}
+            workspaceMode={isScratch ? 'scratch' : 'repo'}
+            capabilities={workspaceHubCapabilities}
+            scratchActions={workspaceHubScratchActions}
+            repoName={activeRepo?.name || (isScratch ? 'Workspace' : undefined)}
+            repoFullName={activeRepo?.full_name}
+            projectInstructions={instructions.agentsMdContent}
+            protectMainEnabled={protectMain.isProtected}
+            showToolActivity={showToolActivity}
+            settingsAuth={settingsAuth}
+            settingsProfile={settingsProfile}
+            settingsAI={settingsAI}
+            settingsWorkspace={settingsWorkspace}
+            settingsData={settingsData}
+            scratchpadContent={scratchpad.content}
+            scratchpadMemories={scratchpad.memories}
+            activeMemoryId={scratchpad.activeMemoryId}
+            onScratchpadContentChange={scratchpad.setContent}
+            onScratchpadClear={scratchpad.clear}
+            onScratchpadSaveMemory={scratchpad.saveMemory}
+            onScratchpadLoadMemory={scratchpad.loadMemory}
+            onScratchpadDeleteMemory={scratchpad.deleteMemory}
+            branchProps={branchProps}
+            onSandboxBranchSwitch={onSandboxBranchSwitch}
+            onFixReviewFinding={handleFixReviewFinding}
+            pinnedArtifacts={pinnedArtifacts.artifacts}
+            onUnpinArtifact={pinnedArtifacts.unpin}
+            onUpdateArtifactLabel={pinnedArtifacts.updateLabel}
+          />
+        </Suspense>
+      )}
 
-      <NewChatWorkspaceSheet
-        open={newChatSheetOpen}
-        onOpenChange={handleNewChatSheetOpenChange}
-        workspace={newChatWorkspaceState}
-        checking={checkingNewChatWorkspace}
-        resetting={resettingWorkspaceForNewChat}
-        onContinueCurrentWorkspace={handleContinueCurrentWorkspace}
-        onStartFresh={handleStartFreshWorkspaceForNewChat}
-        onReviewChanges={handleReviewNewChatWorkspace}
-      />
+      {newChatSheetMounted && (
+        <Suspense fallback={null}>
+          <NewChatWorkspaceSheet
+            open={newChatSheetOpen}
+            onOpenChange={handleNewChatSheetOpenChangeWithMount}
+            workspace={newChatWorkspaceState}
+            checking={checkingNewChatWorkspace}
+            resetting={resettingWorkspaceForNewChat}
+            onContinueCurrentWorkspace={handleContinueCurrentWorkspace}
+            onStartFresh={handleStartFreshWorkspaceForNewChat}
+            onReviewChanges={handleReviewNewChatWorkspaceWithMount}
+          />
+        </Suspense>
+      )}
 
-      <RepoLauncherSheet
-        {...repoLauncherProps}
-      />
+      {launcherSheetMounted && (
+        <Suspense fallback={null}>
+          <RepoLauncherSheet
+            {...repoLauncherProps}
+          />
+        </Suspense>
+      )}
 
       <Toaster position="bottom-center" />
 
-      {activeRepo && (
-        <BranchCreateSheet
-          open={showBranchCreate}
-          onOpenChange={setShowBranchCreate}
-          activeRepo={activeRepo}
-          setCurrentBranch={setCurrentBranch}
-        />
+      {activeRepo && branchCreateMounted && (
+        <Suspense fallback={null}>
+          <BranchCreateSheet
+            open={showBranchCreate}
+            onOpenChange={setShowBranchCreateWithMount}
+            activeRepo={activeRepo}
+            setCurrentBranch={setCurrentBranch}
+          />
+        </Suspense>
       )}
 
-      {activeRepo && (
-        <MergeFlowSheet
-          open={showMergeFlow}
-          onOpenChange={setShowMergeFlow}
-          activeRepo={activeRepo}
-          sandboxId={sandbox.sandboxId}
-          projectInstructions={instructions.agentsMdContent}
-          setCurrentBranch={setCurrentBranch}
-          lockedProvider={lockedProvider}
-          lockedModel={lockedModel}
-        />
+      {activeRepo && mergeFlowMounted && (
+        <Suspense fallback={null}>
+          <MergeFlowSheet
+            open={showMergeFlow}
+            onOpenChange={setShowMergeFlowWithMount}
+            activeRepo={activeRepo}
+            sandboxId={sandbox.sandboxId}
+            projectInstructions={instructions.agentsMdContent}
+            setCurrentBranch={setCurrentBranch}
+            lockedProvider={lockedProvider}
+            lockedModel={lockedModel}
+          />
+        </Suspense>
       )}
     </>
   );

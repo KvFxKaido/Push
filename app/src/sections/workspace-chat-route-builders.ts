@@ -6,15 +6,12 @@ import type {
   SettingsProfileProps,
   SettingsWorkspaceProps,
 } from '@/components/SettingsSheet';
-import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
-import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
-import { RepoLauncherSheet } from '@/components/launcher/RepoLauncherSheet';
 import { buildWorkspaceScratchActions, type SnapshotManager } from '@/hooks/useSnapshotManager';
 import type { ChatRouteProps } from './workspace-chat-route-types';
 
-type WorkspaceHubProps = ComponentProps<typeof WorkspaceHubSheet>;
-type RepoChatDrawerProps = ComponentProps<typeof RepoChatDrawer>;
-type RepoLauncherSheetProps = ComponentProps<typeof RepoLauncherSheet>;
+type WorkspaceHubProps = ComponentProps<typeof import('@/components/chat/WorkspaceHubSheet').WorkspaceHubSheet>;
+type RepoChatDrawerProps = ComponentProps<typeof import('@/components/chat/RepoChatDrawer').RepoChatDrawer>;
+type RepoLauncherSheetProps = ComponentProps<typeof import('@/components/launcher/RepoLauncherSheet').RepoLauncherSheet>;
 
 export function buildSettingsAuth(props: ChatRouteProps, onDisconnect: () => void): SettingsAuthProps {
   return {

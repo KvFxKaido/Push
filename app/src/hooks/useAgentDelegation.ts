@@ -1,6 +1,7 @@
 import type React from 'react';
 import { useCallback } from 'react';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
+import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runCoderAgent, generateCheckpointAnswer, summarizeCoderStateForHandoff } from '@/lib/coder-agent';
 import { runExplorerAgent } from '@/lib/explorer-agent';
 import { type AnyToolCall } from '@/lib/tool-dispatch';
@@ -287,7 +288,6 @@ export function useAgentDelegation({
                 // Get sandbox diff for evaluation context
                 let evalDiff: string | null = null;
                 try {
-                  const { getSandboxDiff } = await import('@/lib/sandbox-client');
                   const diffResult = await getSandboxDiff(currentSandboxId);
                   evalDiff = diffResult.diff || null;
                 } catch { /* no diff available — evaluation proceeds without it */ }

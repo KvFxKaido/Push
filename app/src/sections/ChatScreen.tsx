@@ -23,28 +23,44 @@ type ChatInputProps = ComponentProps<typeof ChatInput>;
 type SandboxStatusBannerProps = ComponentProps<typeof SandboxStatusBanner>;
 type SandboxExpiryBannerProps = ComponentProps<typeof SandboxExpiryBanner>;
 
-interface ChatScreenProps {
+interface ChatScreenWorkspaceProps {
   activeRepo: ActiveRepo | null;
   isScratch: boolean;
   activeRepoAppearance: RepoAppearance | null;
-  launcherLabel: string | undefined;
-  hasWorkspaceActivityIndicator: boolean;
-  chatShellTransform: string;
-  chatShellShadow: string;
   sandboxStatus: SandboxStatusBannerProps['status'];
   sandboxDownloading: boolean;
   onSandboxDownload: () => Promise<void>;
-  onOpenLauncher: () => void;
-  onOpenWorkspaceHub: () => void;
-  drawerProps: RepoChatDrawerProps;
-  chatContainerProps: ChatContainerProps;
-  chatInputProps: ChatInputProps;
   instructions: ProjectInstructionsManager;
   snapshots: SnapshotManager;
   snapshotAgeLabel: string | null;
   snapshotIsStale: boolean;
+}
+
+interface ChatScreenShellProps {
+  launcherLabel: string | undefined;
+  hasWorkspaceActivityIndicator: boolean;
+  chatShellTransform: string;
+  chatShellShadow: string;
+  onOpenLauncher: () => void;
+  onOpenWorkspaceHub: () => void;
+  drawerProps: RepoChatDrawerProps;
+}
+
+interface ChatScreenChatProps {
+  containerProps: ChatContainerProps;
+  inputProps: ChatInputProps;
+}
+
+interface ChatScreenBannerProps {
   sandboxStatusBannerProps: SandboxStatusBannerProps;
   sandboxExpiryBannerProps: SandboxExpiryBannerProps | null;
+}
+
+interface ChatScreenProps {
+  workspace: ChatScreenWorkspaceProps;
+  shell: ChatScreenShellProps;
+  chat: ChatScreenChatProps;
+  banners: ChatScreenBannerProps;
 }
 
 const HEADER_PLAIN_INTERACTIVE_CLASS =
@@ -54,29 +70,31 @@ const HEADER_ROUND_BUTTON_CLASS =
 const HEADER_PILL_BUTTON_CLASS =
   `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
 
-export function ChatScreen({
-  activeRepo,
-  isScratch,
-  activeRepoAppearance,
-  launcherLabel,
-  hasWorkspaceActivityIndicator,
-  chatShellTransform,
-  chatShellShadow,
-  sandboxStatus,
-  sandboxDownloading,
-  onSandboxDownload,
-  onOpenLauncher,
-  onOpenWorkspaceHub,
-  drawerProps,
-  chatContainerProps,
-  chatInputProps,
-  instructions,
-  snapshots,
-  snapshotAgeLabel,
-  snapshotIsStale,
-  sandboxStatusBannerProps,
-  sandboxExpiryBannerProps,
-}: ChatScreenProps) {
+export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps) {
+  const {
+    activeRepo,
+    isScratch,
+    activeRepoAppearance,
+    sandboxStatus,
+    sandboxDownloading,
+    onSandboxDownload,
+    instructions,
+    snapshots,
+    snapshotAgeLabel,
+    snapshotIsStale,
+  } = workspace;
+  const {
+    launcherLabel,
+    hasWorkspaceActivityIndicator,
+    chatShellTransform,
+    chatShellShadow,
+    onOpenLauncher,
+    onOpenWorkspaceHub,
+    drawerProps,
+  } = shell;
+  const { containerProps: chatContainerProps, inputProps: chatInputProps } = chat;
+  const { sandboxStatusBannerProps, sandboxExpiryBannerProps } = banners;
+
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-[#000] safe-area-top safe-area-bottom">
       <div

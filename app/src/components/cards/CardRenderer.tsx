@@ -2,6 +2,8 @@ import { Component, Suspense, type ComponentType, type ReactNode } from 'react';
 import type { ChatCard, CardAction } from '@/types';
 import { CARD_PANEL_CLASS } from '@/lib/utils';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
+import { DiffPreviewCard } from './DiffPreviewCard';
+import { AuditVerdictCard } from './AuditVerdictCard';
 
 // --- Lazy-loaded card components (code-split) ---
 const PRCard = lazyWithRecovery(toDefaultExport(() => import('./PRCard'), (module) => module.PRCard));
@@ -11,8 +13,6 @@ const FileCard = lazyWithRecovery(toDefaultExport(() => import('./FileCard'), (m
 const BranchListCard = lazyWithRecovery(toDefaultExport(() => import('./BranchListCard'), (module) => module.BranchListCard));
 const FileListCard = lazyWithRecovery(toDefaultExport(() => import('./FileListCard'), (module) => module.FileListCard));
 const SandboxCard = lazyWithRecovery(toDefaultExport(() => import('./SandboxCard'), (module) => module.SandboxCard));
-const DiffPreviewCard = lazyWithRecovery(toDefaultExport(() => import('./DiffPreviewCard'), (module) => module.DiffPreviewCard));
-const AuditVerdictCard = lazyWithRecovery(toDefaultExport(() => import('./AuditVerdictCard'), (module) => module.AuditVerdictCard));
 const CommitReviewCard = lazyWithRecovery(toDefaultExport(() => import('./CommitReviewCard'), (module) => module.CommitReviewCard));
 const CIStatusCard = lazyWithRecovery(toDefaultExport(() => import('./CIStatusCard'), (module) => module.CIStatusCard));
 const EditorCard = lazyWithRecovery(toDefaultExport(() => import('./EditorCard'), (module) => module.EditorCard));
