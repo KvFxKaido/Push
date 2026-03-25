@@ -15,7 +15,6 @@ import type {
   ChatCard,
   CoderWorkingMemory,
   CriterionResult,
-  AIProviderType,
   Conversation,
   AgentStatus,
   AgentStatusSource,
@@ -60,7 +59,7 @@ export function useAgentDelegation({
     chatId: string,
     toolCall: AnyToolCall,
     apiMessages: ChatMessage[],
-    lockedProviderForChat: string,
+    lockedProviderForChat: ActiveProvider,
     resolvedModelForChat: string | undefined,
   ): Promise<ToolExecutionResult> => {
     let toolExecResult: ToolExecutionResult = { text: '' };
@@ -85,7 +84,7 @@ export function useAgentDelegation({
                 defaultBranch: branchInfoRef.current.defaultBranch || 'main',
                 protectMain: isMainProtectedRef.current,
               } : undefined,
-              provider: lockedProviderForChat as AIProviderType,
+              provider: lockedProviderForChat,
               model: resolvedModelForChat || undefined,
               projectInstructions: agentsMdRef.current || undefined,
               instructionFilename: instructionFilenameRef.current || undefined,
@@ -139,7 +138,7 @@ export function useAgentDelegation({
           const harnessProvider = lockedProviderForChat || getActiveProvider();
           const harnessModelId = resolvedModelForChat || undefined;
           const harnessSettings = resolveHarnessSettings(
-            harnessProvider as AIProviderType,
+            harnessProvider as ActiveProvider,
             harnessModelId,
           );
 
@@ -175,7 +174,7 @@ export function useAgentDelegation({
                 delegateArgs.files || [],
                 (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
                 {
-                  providerOverride: lockedProviderForChat as ActiveProvider | undefined,
+                  providerOverride: lockedProviderForChat,
                   modelOverride: resolvedModelForChat || undefined,
                 },
               );
@@ -211,7 +210,7 @@ export function useAgentDelegation({
                   checkpointContext,
                   apiMessages.slice(-6), // recent chat for user intent context
                   abortControllerRef.current?.signal,
-                  lockedProviderForChat as ActiveProvider | undefined,
+                  lockedProviderForChat,
                   resolvedModelForChat || undefined,
                 );
 
@@ -243,7 +242,7 @@ export function useAgentDelegation({
                 handleCheckpoint,
                 delegateArgs.acceptanceCriteria,
                 (state) => { lastCoderStateRef.current = state; },
-                lockedProviderForChat as ActiveProvider | undefined,
+                lockedProviderForChat,
                 resolvedModelForChat || undefined,
                 {
                   intent: delegateArgs.intent,
@@ -310,7 +309,7 @@ export function useAgentDelegation({
                   evalDiff,
                   (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
                   {
-                    providerOverride: lockedProviderForChat as ActiveProvider | undefined,
+                    providerOverride: lockedProviderForChat,
                     modelOverride: resolvedModelForChat || undefined,
                     coderRounds: totalRounds,
                     coderMaxRounds: evalMaxRounds,
