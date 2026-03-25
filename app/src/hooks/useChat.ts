@@ -893,21 +893,11 @@ export function useChat(
 
   // --- Send message with tool execution loop ---
   
-  const rootExistingConversation = activeChatId ? conversations[activeChatId] : undefined;
-  const activeProviderStr = getActiveProvider() as ActiveProvider;
-  const rootLockedProviderForChat = rootExistingConversation?.provider ?? activeProviderStr;
-  const rootResolvedModelForChat = (
-    normalizeConversationModel(rootExistingConversation?.provider || null, rootExistingConversation?.model || null) ||
-    getModelNameForProvider(rootLockedProviderForChat)
-  );
-
   const { executeDelegateCall } = useAgentDelegation({
     setConversations,
     updateAgentStatus,
     branchInfoRef,
     isMainProtectedRef,
-    lockedProviderForChat: rootLockedProviderForChat,
-    resolvedModelForChat: rootResolvedModelForChat || undefined,
     agentsMdRef,
     instructionFilenameRef,
     sandboxIdRef,
@@ -1640,7 +1630,7 @@ export function useChat(
               toolExecResult = { text: result.text };
             }
           } else if (toolCall.source === 'delegate') {
-            toolExecResult = await executeDelegateCall(chatId, toolCall, apiMessages);
+            toolExecResult = await executeDelegateCall(chatId, toolCall, apiMessages, lockedProviderForChat, resolvedModelForChat || undefined);
             // Reset phase — delegation finished (success or error)
             checkpointPhaseRef.current = 'executing_tools';
             lastCoderStateRef.current = null;

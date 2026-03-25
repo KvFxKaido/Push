@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useCallback } from 'react';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { runCoderAgent, generateCheckpointAnswer, summarizeCoderStateForHandoff } from '@/lib/coder-agent';
@@ -13,13 +14,14 @@ import type {
   ChatMessage,
   ChatCard,
   CoderWorkingMemory,
+  CriterionResult,
   AIProviderType,
   Conversation,
   AgentStatus,
   AgentStatusSource,
 } from '@/types';
 
-function getTaskStatusLabel(criteriaResults?: import('@/types').CriterionResult[]): string {
+function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
   if (!criteriaResults || criteriaResults.length === 0) return 'OK';
   const allPassed = criteriaResults.every(r => r.passed);
   return allPassed ? 'OK' : 'CHECKS_FAILED';
@@ -30,8 +32,6 @@ export interface UseAgentDelegationParams {
   updateAgentStatus: (status: AgentStatus, meta?: { chatId?: string; source?: AgentStatusSource; log?: boolean }) => void;
   branchInfoRef: React.RefObject<{ currentBranch?: string; defaultBranch?: string } | undefined | null>;
   isMainProtectedRef: React.MutableRefObject<boolean>;
-  lockedProviderForChat: string | null;
-  resolvedModelForChat: string | null | undefined;
   agentsMdRef: React.MutableRefObject<string | null>;
   instructionFilenameRef: React.MutableRefObject<string | null>;
   sandboxIdRef: React.MutableRefObject<string | null>;
@@ -47,8 +47,6 @@ export function useAgentDelegation({
   updateAgentStatus,
   branchInfoRef,
   isMainProtectedRef,
-  lockedProviderForChat,
-  resolvedModelForChat,
   agentsMdRef,
   instructionFilenameRef,
   sandboxIdRef,
@@ -61,7 +59,9 @@ export function useAgentDelegation({
   const executeDelegateCall = useCallback(async (
     chatId: string,
     toolCall: AnyToolCall,
-    apiMessages: ChatMessage[]
+    apiMessages: ChatMessage[],
+    lockedProviderForChat: string,
+    resolvedModelForChat: string | undefined,
   ): Promise<ToolExecutionResult> => {
     let toolExecResult: ToolExecutionResult = { text: '' };
 
@@ -362,7 +362,7 @@ export function useAgentDelegation({
     }
     
     return toolExecResult;
-  }, [setConversations, updateAgentStatus, branchInfoRef, isMainProtectedRef, lockedProviderForChat, resolvedModelForChat, agentsMdRef, instructionFilenameRef, sandboxIdRef, repoRef, abortControllerRef, abortRef, checkpointPhaseRef, lastCoderStateRef]);
+  }, [setConversations, updateAgentStatus, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef, sandboxIdRef, repoRef, abortControllerRef, abortRef, checkpointPhaseRef, lastCoderStateRef]);
 
   return { executeDelegateCall };
 }
