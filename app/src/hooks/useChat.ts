@@ -33,12 +33,13 @@ import {
   markLastAssistantToolCall,
 } from '@/lib/chat-tool-messages';
 import {
-  executeAndBuildResult,
+  executeTool,
+  buildToolOutcome,
   executeParallelTools,
   buildMetaLine,
   collectSideEffects,
   type ToolExecRunContext,
-  type ToolExecOutcome,
+  type ToolExecRawResult,
 } from '@/hooks/chat-tool-execution';
 import {
   execInSandbox,
@@ -899,7 +900,7 @@ export function useChat(
   }, []);
 
   // --- Send message with tool execution loop ---
-  
+
   const { executeDelegateCall } = useAgentDelegation({
     setConversations,
     updateAgentStatus,
@@ -1287,8 +1288,6 @@ export function useChat(
               if (newId) sandboxIdRef.current = newId;
             }
 
-            const parallelSandboxStatus = await getRoundSandboxStatus();
-            const parallelMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, parallelSandboxStatus);
             const runCtx: ToolExecRunContext = {
               repoFullName: repoRef.current,
               sandboxId: sandboxIdRef.current,
@@ -1298,17 +1297,18 @@ export function useChat(
               model: resolvedModelForChat,
             };
 
-            const parallelOutcomes = await executeParallelTools(parallelToolCalls, runCtx, parallelMetaLine);
+            // Execute first, then fetch sandbox status *after* so meta line reflects changes
+            const parallelRawResults = await executeParallelTools(parallelToolCalls, runCtx);
 
             if (abortRef.current) break;
 
             // Handle side effects from parallel results
-            const parallelEffects = collectSideEffects(parallelOutcomes);
+            const parallelEffects = collectSideEffects(parallelRawResults);
             if (parallelEffects.sandboxUnreachable) {
               runtimeHandlersRef.current?.onSandboxUnreachable?.(parallelEffects.sandboxUnreachable);
             }
 
-            const allCards = parallelOutcomes.flatMap((o) => o.cards);
+            const allCards = parallelRawResults.flatMap((r) => r.cards);
             if (allCards.length > 0) {
               setConversations((prev) => {
                 const conv = prev[chatId];
@@ -1318,7 +1318,11 @@ export function useChat(
               });
             }
 
-            const toolResultMessages = parallelOutcomes.map((o) => o.resultMessage);
+            // Build result messages with post-execution sandbox status
+            roundSandboxStatusFetched = false; // invalidate cache — tools may have changed sandbox
+            const parallelSandboxStatus = await getRoundSandboxStatus();
+            const parallelMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, parallelSandboxStatus);
+            const toolResultMessages = parallelRawResults.map((r) => buildToolOutcome(r, parallelMetaLine, lockedProviderForChat).resultMessage);
 
             setConversations((prev) => {
               const conv = prev[chatId];
@@ -1367,40 +1371,21 @@ export function useChat(
                 if (newId) sandboxIdRef.current = newId;
               }
 
-              let mutResult: ToolExecutionResult;
-              let mutDuration: number;
-              let mutResultMsg: ChatMessage;
-              let mutCards: ChatCard[];
+              let mutRawResult: ToolExecRawResult;
 
               if (mutCall.source === 'delegate') {
                 // Delegate calls (coder/explorer) must go through executeDelegateCall
-                mutResult = await executeDelegateCall(chatId, mutCall, apiMessages, lockedProviderForChat, resolvedModelForChat || undefined);
-                mutDuration = Date.now() - Date.now(); // delegation tracks its own timing
+                const delegateStart = Date.now();
+                const mutResult = await executeDelegateCall(chatId, mutCall, apiMessages, lockedProviderForChat, resolvedModelForChat || undefined);
                 checkpointPhaseRef.current = 'executing_tools';
                 lastCoderStateRef.current = null;
 
-                const mutSandboxStatus = await getRoundSandboxStatus();
-                const mutMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, mutSandboxStatus);
-                mutResultMsg = buildToolResultMessage({
-                  id: createId(),
-                  timestamp: Date.now(),
-                  text: mutResult.text,
-                  metaLine: mutMetaLine,
-                  toolMeta: buildToolMeta({
-                    toolName: getToolName(mutCall),
-                    source: mutCall.source,
-                    provider: lockedProviderForChat,
-                    durationMs: 0,
-                    isError: mutResult.text.includes('[Tool Error]'),
-                  }),
-                });
-                mutCards = mutResult.card && mutResult.card.type !== 'sandbox-state'
+                const mutCards: ChatCard[] = mutResult.card && mutResult.card.type !== 'sandbox-state'
                   ? [mutResult.card]
                   : [];
+                mutRawResult = { call: mutCall, raw: mutResult, cards: mutCards, durationMs: Date.now() - delegateStart };
               } else {
                 // GitHub or Sandbox mutation
-                const mutSandboxStatus = await getRoundSandboxStatus();
-                const mutMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, mutSandboxStatus);
                 const mutCtx: ToolExecRunContext = {
                   repoFullName: repoRef.current,
                   sandboxId: sandboxIdRef.current,
@@ -1409,23 +1394,25 @@ export function useChat(
                   provider: lockedProviderForChat,
                   model: resolvedModelForChat,
                 };
-                const mutOutcome = await executeAndBuildResult(mutCall, mutCtx, mutMetaLine);
-                mutResult = mutOutcome.raw;
-                mutDuration = mutOutcome.durationMs;
-                mutResultMsg = mutOutcome.resultMessage;
-                mutCards = mutOutcome.cards;
+                mutRawResult = await executeTool(mutCall, mutCtx);
               }
+
+              // Fetch sandbox status *after* execution so meta line reflects changes
+              roundSandboxStatusFetched = false;
+              const mutSandboxStatus = await getRoundSandboxStatus();
+              const mutMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, mutSandboxStatus);
+              const mutOutcome = buildToolOutcome(mutRawResult, mutMetaLine, lockedProviderForChat);
 
               // Handle mutation side effects
-              if (mutResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-                runtimeHandlersRef.current?.onSandboxUnreachable?.(mutResult.structuredError.message);
+              if (mutOutcome.raw.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+                runtimeHandlersRef.current?.onSandboxUnreachable?.(mutOutcome.raw.structuredError.message);
               }
 
-              if (mutCards.length > 0) {
+              if (mutOutcome.cards.length > 0) {
                 setConversations((prev) => {
                   const conv = prev[chatId];
                   if (!conv) return prev;
-                  const msgs = appendCardsToLatestToolCall(conv.messages, mutCards);
+                  const msgs = appendCardsToLatestToolCall(conv.messages, mutOutcome.cards);
                   return { ...prev, [chatId]: { ...conv, messages: msgs } };
                 });
               }
@@ -1433,9 +1420,9 @@ export function useChat(
               setConversations((prev) => {
                 const conv = prev[chatId];
                 if (!conv) return prev;
-                return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, mutResultMsg], lastMessageAt: Date.now() } };
+                return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, mutOutcome.resultMessage], lastMessageAt: Date.now() } };
               });
-              apiMessages = [...apiMessages, mutResultMsg];
+              apiMessages = [...apiMessages, mutOutcome.resultMessage];
               checkpointApiMessagesRef.current = apiMessages;
 
               // --- Checkpoint: trailing mutation result received ---
@@ -1567,7 +1554,7 @@ export function useChat(
           // Execute tool — track timing for provenance
           const toolExecStart = Date.now();
           let toolExecDurationMs = 0;
-          let singleOutcome: ToolExecOutcome | null = null;
+          let singleRawResult: ToolExecRawResult | null = null;
           const statusLabel = getToolStatusLabel(toolCall);
           updateAgentStatus({ active: true, phase: statusLabel }, { chatId });
 
@@ -1620,9 +1607,7 @@ export function useChat(
             checkpointPhaseRef.current = 'executing_tools';
             lastCoderStateRef.current = null;
           } else {
-            // GitHub or Sandbox tools — use extracted helper
-            const singleSandboxStatus = await getRoundSandboxStatus();
-            const singleMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, singleSandboxStatus);
+            // GitHub or Sandbox tools — execute first, build message after
             const singleCtx: ToolExecRunContext = {
               repoFullName: repoRef.current,
               sandboxId: sandboxIdRef.current,
@@ -1631,9 +1616,9 @@ export function useChat(
               provider: lockedProviderForChat,
               model: resolvedModelForChat,
             };
-            singleOutcome = await executeAndBuildResult(toolCall, singleCtx, singleMetaLine);
-            toolExecResult = singleOutcome.raw;
-            toolExecDurationMs = singleOutcome.durationMs;
+            singleRawResult = await executeTool(toolCall, singleCtx);
+            toolExecResult = singleRawResult.raw;
+            toolExecDurationMs = singleRawResult.durationMs;
           }
 
           if (abortRef.current) break;
@@ -1674,16 +1659,20 @@ export function useChat(
           }
 
           // --- Post-execution: build result message ---
-          // For github/sandbox tools, singleOutcome already has the result message and cards.
-          // For scratchpad/delegate, build the message now.
+          // Fetch sandbox status *after* execution so meta line reflects changes
+          roundSandboxStatusFetched = false;
+          const sandboxStatus = await getRoundSandboxStatus();
+          const metaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, sandboxStatus);
+
           let toolResultMsg: ChatMessage;
           let cardsToAttach: ChatCard[];
-          if (singleOutcome) {
-            toolResultMsg = singleOutcome.resultMessage;
-            cardsToAttach = singleOutcome.cards;
+          if (singleRawResult) {
+            // GitHub/Sandbox tools — build outcome from raw result + post-execution meta
+            const outcome = buildToolOutcome(singleRawResult, metaLine, lockedProviderForChat);
+            toolResultMsg = outcome.resultMessage;
+            cardsToAttach = outcome.cards;
           } else {
-            const sandboxStatus = await getRoundSandboxStatus();
-            const metaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, sandboxStatus);
+            // Scratchpad/delegate — build message directly
             toolResultMsg = buildToolResultMessage({
               id: createId(),
               timestamp: Date.now(),
@@ -1697,7 +1686,6 @@ export function useChat(
                 isError: toolExecResult.text.includes('[Tool Error]'),
               }),
             });
-            // For scratchpad/delegate: filter cards manually
             cardsToAttach = toolExecResult.card && toolExecResult.card.type !== 'sandbox-state'
               ? [toolExecResult.card]
               : [];

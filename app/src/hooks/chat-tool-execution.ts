@@ -39,31 +39,32 @@ export interface ToolExecRunContext {
   model: string | null | undefined;
 }
 
-/** Result of executing one tool call, ready to be applied to state. */
-export interface ToolExecOutcome {
-  /** The built ChatMessage for the tool result. */
-  resultMessage: ChatMessage;
-  /** Cards to attach to the assistant message that triggered the call. */
-  cards: ChatCard[];
-  /** The raw execution result (for side-effect handling). */
+/** Raw result from executing a tool call (before building the ChatMessage). */
+export interface ToolExecRawResult {
+  call: AnyToolCall;
   raw: ToolExecutionResult;
-  /** How long execution took. */
+  cards: ChatCard[];
   durationMs: number;
 }
 
+/** Full outcome with the built ChatMessage, ready to be applied to state. */
+export interface ToolExecOutcome extends ToolExecRawResult {
+  resultMessage: ChatMessage;
+}
+
 // ---------------------------------------------------------------------------
-// Single tool execution + result message building
+// Execute a single tool call (no message building)
 // ---------------------------------------------------------------------------
 
 /**
- * Execute a single tool call and build the result message.
- * Does NOT touch React state — returns data for the caller to apply.
+ * Execute a single GitHub/Sandbox tool call and return the raw result.
+ * Does NOT build the ChatMessage — the caller should fetch sandbox status
+ * *after* execution and then call `buildToolOutcome()`.
  */
-export async function executeAndBuildResult(
+export async function executeTool(
   call: AnyToolCall,
   ctx: ToolExecRunContext,
-  metaLine: string,
-): Promise<ToolExecOutcome> {
+): Promise<ToolExecRawResult> {
   const start = Date.now();
 
   let result: ToolExecutionResult;
@@ -88,21 +89,37 @@ export async function executeAndBuildResult(
     cards.push(result.card);
   }
 
+  return { call, raw: result, cards, durationMs };
+}
+
+// ---------------------------------------------------------------------------
+// Build the ChatMessage from a raw result + post-execution meta line
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a ToolExecOutcome (with ChatMessage) from a raw execution result.
+ * Call this *after* fetching sandbox status so the meta line is accurate.
+ */
+export function buildToolOutcome(
+  rawResult: ToolExecRawResult,
+  metaLine: string,
+  provider: ActiveProvider,
+): ToolExecOutcome {
   const resultMessage = buildToolResultMessage({
     id: createId(),
     timestamp: Date.now(),
-    text: result.text,
+    text: rawResult.raw.text,
     metaLine,
     toolMeta: buildToolMeta({
-      toolName: getToolName(call),
-      source: call.source,
-      provider: ctx.provider,
-      durationMs,
-      isError: result.text.includes('[Tool Error]'),
+      toolName: getToolName(rawResult.call),
+      source: rawResult.call.source,
+      provider,
+      durationMs: rawResult.durationMs,
+      isError: rawResult.raw.text.includes('[Tool Error]'),
     }),
   });
 
-  return { resultMessage, cards, raw: result, durationMs };
+  return { ...rawResult, resultMessage };
 }
 
 // ---------------------------------------------------------------------------
@@ -110,14 +127,14 @@ export async function executeAndBuildResult(
 // ---------------------------------------------------------------------------
 
 /**
- * Execute multiple read-only tool calls in parallel, returning outcomes.
+ * Execute multiple read-only tool calls in parallel, returning raw results.
+ * Caller should fetch sandbox status after, then map with `buildToolOutcome()`.
  */
 export async function executeParallelTools(
   calls: AnyToolCall[],
   ctx: ToolExecRunContext,
-  metaLine: string,
-): Promise<ToolExecOutcome[]> {
-  return Promise.all(calls.map((call) => executeAndBuildResult(call, ctx, metaLine)));
+): Promise<ToolExecRawResult[]> {
+  return Promise.all(calls.map((call) => executeTool(call, ctx)));
 }
 
 // ---------------------------------------------------------------------------
@@ -146,8 +163,6 @@ export interface ToolSideEffects {
 
 /**
  * Extract side effects from a tool execution result.
- * Returns structured data so the caller can apply them without
- * knowing the shape of ToolExecutionResult.
  */
 export function extractSideEffects(result: ToolExecutionResult): ToolSideEffects {
   return {
@@ -176,18 +191,17 @@ export function applyCardsToMessages(
 }
 
 /**
- * Apply side effects from one or more tool outcomes.
- * Returns the combined side effects to be handled by the caller.
+ * Collect side effects from one or more raw tool results.
  */
-export function collectSideEffects(outcomes: ToolExecOutcome[]): ToolSideEffects {
+export function collectSideEffects(results: ToolExecRawResult[]): ToolSideEffects {
   const combined: ToolSideEffects = {
     promotion: undefined,
     branchSwitch: undefined,
     sandboxUnreachable: undefined,
   };
 
-  for (const outcome of outcomes) {
-    const effects = extractSideEffects(outcome.raw);
+  for (const result of results) {
+    const effects = extractSideEffects(result.raw);
     if (effects.promotion) combined.promotion = effects.promotion;
     if (effects.branchSwitch) combined.branchSwitch = effects.branchSwitch;
     if (effects.sandboxUnreachable) combined.sandboxUnreachable = effects.sandboxUnreachable;
