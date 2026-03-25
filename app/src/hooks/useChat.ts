@@ -38,6 +38,8 @@ import {
   executeParallelTools,
   buildMetaLine,
   collectSideEffects,
+  handleRecoveryResult,
+  handleMultipleMutationsError,
   type ToolExecRunContext,
   type ToolExecRawResult,
 } from '@/hooks/chat-tool-execution';
@@ -75,11 +77,7 @@ import {
   releaseRunTabLock,
   saveRunCheckpoint,
 } from '@/lib/checkpoint-manager';
-import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 import {
-  buildToolCallParseErrorBlock,
-  formatToolResultEnvelope,
-  MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
   resolveToolCallRecovery,
   type ToolCallRecoveryState,
 } from '@/lib/tool-call-recovery';
@@ -1208,56 +1206,23 @@ export function useChat(
           const detected = detectAllToolCalls(accumulated);
           const parallelToolCalls = detected.readOnly;
           if (detected.extraMutations.length > 0) {
-            const rejectedMutations = detected.mutating
-              ? [detected.mutating, ...detected.extraMutations]
-              : detected.extraMutations;
-            const rejectedToolNames = rejectedMutations.map((call) => getToolName(call));
-            const parseErrorHeader = buildToolCallParseErrorBlock({
-              errorType: 'multiple_mutating_calls',
-              problem: `Only one mutating tool call can run per turn. Received ${rejectedToolNames.length}: ${rejectedToolNames.join(', ')}.`,
-              hint: 'Put read-only tools first and one mutating tool last. For multiple coding tasks, use one coder call with "tasks".',
-            });
-            const primaryMutation = rejectedMutations[0];
-            const errorMsg: ChatMessage = {
-              id: createId(),
-              role: 'user',
-              content: formatToolResultEnvelope(parseErrorHeader),
-              timestamp: Date.now(),
-              status: 'done',
-              isToolResult: true,
-              toolMeta: buildToolMeta({
-                toolName: rejectedToolNames[0] || 'unknown',
-                source: primaryMutation?.source || 'sandbox',
-                provider: lockedProviderForChat,
-                durationMs: 0,
-                isError: true,
-              }),
-            };
+            const errorAction = handleMultipleMutationsError(
+              detected, accumulated, thinkingAccumulated, apiMessages, lockedProviderForChat,
+            );
 
             setConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
-              const toolMeta = buildToolMeta({
-                toolName: rejectedToolNames[0] || 'unknown',
-                source: primaryMutation?.source || 'sandbox',
-                provider: lockedProviderForChat,
-                durationMs: 0,
-                isError: true,
-              });
               const msgs = markLastAssistantToolCall(conv.messages, {
-                content: accumulated,
-                thinking: thinkingAccumulated,
+                content: errorAction.assistantUpdate.content,
+                thinking: errorAction.assistantUpdate.thinking,
                 malformed: true,
-                toolMeta,
+                toolMeta: errorAction.assistantUpdate.toolMeta,
               });
-              return { ...prev, [chatId]: { ...conv, messages: [...msgs, errorMsg] } };
+              return { ...prev, [chatId]: { ...conv, messages: [...msgs, errorAction.errorMessage] } };
             });
 
-            apiMessages = [
-              ...apiMessages,
-              { id: createId(), role: 'assistant' as const, content: accumulated, timestamp: Date.now(), status: 'done' as const },
-              errorMsg,
-            ];
+            apiMessages = errorAction.apiMessages;
             checkpointApiMessagesRef.current = apiMessages;
             continue;
           }
@@ -1439,102 +1404,55 @@ export function useChat(
             const recoveryResult = resolveToolCallRecovery(accumulated, toolCallRecoveryState);
             toolCallRecoveryState = recoveryResult.nextState;
 
-            const diagnosis =
-              recoveryResult.kind === 'telemetry_only' ||
-              recoveryResult.kind === 'diagnosis_exhausted' ||
-              (recoveryResult.kind === 'feedback' && recoveryResult.diagnosis)
-                ? recoveryResult.diagnosis
-                : null;
+            const action = handleRecoveryResult(
+              recoveryResult, accumulated, thinkingAccumulated,
+              apiMessages, lockedProviderForChat, resolvedModelForChat,
+            );
 
-            if (diagnosis) {
-              recordMalformedToolCallMetric({
-                provider: lockedProviderForChat,
-                model: resolvedModelForChat,
-                reason: diagnosis.reason,
-                toolName: diagnosis.toolName,
-              });
-              console.warn(`[Push] Tool call diagnosis: ${diagnosis.reason}${diagnosis.toolName ? ` (${diagnosis.toolName})` : ''}${diagnosis.telemetryOnly ? ' (telemetry-only)' : ''}`);
-            }
-
-            if (recoveryResult.kind === 'feedback') {
-              if (recoveryResult.feedback.mode === 'unimplemented_tool') {
-                console.warn(`[Push] Unimplemented tool call detected: ${recoveryResult.feedback.toolName}`);
-              } else if (recoveryResult.feedback.mode === 'recover_plain_text') {
-                console.warn(
-                  `[Push] Diagnosis retry cap reached (${MAX_TOOL_CALL_DIAGNOSIS_RETRIES}) — injecting recovery message`,
-                );
-              }
-
-              const feedbackMsg: ChatMessage = {
-                id: createId(),
-                role: 'user',
-                content: recoveryResult.feedback.content,
-                timestamp: Date.now(),
-                status: 'done',
-                isToolResult: true,
-                toolMeta: buildToolMeta({
-                  toolName: recoveryResult.feedback.toolName,
-                  source: recoveryResult.feedback.source,
-                  provider: lockedProviderForChat,
-                  durationMs: 0,
-                  isError: true,
-                }),
-              };
-
-              setConversations((prev) => {
-                const conv = prev[chatId];
-                if (!conv) return prev;
-                const assistantToolMeta =
-                  recoveryResult.feedback.mode === 'unimplemented_tool'
-                    ? undefined
-                    : buildToolMeta({
-                        toolName: recoveryResult.feedback.toolName,
-                        source: recoveryResult.feedback.source,
-                        provider: lockedProviderForChat,
-                        durationMs: 0,
-                        isError: true,
-                      });
-                const msgs = markLastAssistantToolCall(conv.messages, {
-                  content: accumulated,
-                  thinking: thinkingAccumulated,
-                  malformed: recoveryResult.feedback.markMalformed,
-                  toolMeta: assistantToolMeta,
+            // Apply conversation state update
+            if (action.conversationUpdate) {
+              const upd = action.conversationUpdate;
+              if (upd.appendMessage) {
+                // Feedback path: mark assistant as tool call + append feedback message
+                setConversations((prev) => {
+                  const conv = prev[chatId];
+                  if (!conv) return prev;
+                  const msgs = markLastAssistantToolCall(conv.messages, {
+                    content: upd.assistantContent,
+                    thinking: upd.assistantThinking,
+                    malformed: upd.assistantMalformed,
+                    toolMeta: upd.assistantToolMeta,
+                  });
+                  return { ...prev, [chatId]: { ...conv, messages: [...msgs, upd.appendMessage] } };
                 });
-                return { ...prev, [chatId]: { ...conv, messages: [...msgs, feedbackMsg] } };
-              });
-
-              apiMessages = [
-                ...apiMessages,
-                { id: createId(), role: 'assistant' as const, content: accumulated, timestamp: Date.now(), status: 'done' as const },
-                feedbackMsg,
-              ];
-              continue;
-            }
-
-            if (recoveryResult.kind === 'diagnosis_exhausted') {
-              console.warn('[Push] Recovery also failed — letting message through');
-            }
-
-            setConversations((prev) => {
-              const conv = prev[chatId];
-              if (!conv) return prev;
-              const msgs = [...conv.messages];
-              const lastIdx = msgs.length - 1;
-              if (msgs[lastIdx]?.role === 'assistant') {
-                msgs[lastIdx] = {
-                  ...msgs[lastIdx],
-                  content: accumulated,
-                  thinking: thinkingAccumulated || undefined,
-                  status: 'done',
-                  isMalformed: recoveryResult.kind === 'diagnosis_exhausted' || undefined,
-                };
+              } else {
+                // Finalize path: update last assistant message in place
+                setConversations((prev) => {
+                  const conv = prev[chatId];
+                  if (!conv) return prev;
+                  const msgs = [...conv.messages];
+                  const lastIdx = msgs.length - 1;
+                  if (msgs[lastIdx]?.role === 'assistant') {
+                    msgs[lastIdx] = {
+                      ...msgs[lastIdx],
+                      content: upd.assistantContent,
+                      thinking: upd.assistantThinking || undefined,
+                      status: 'done',
+                      isMalformed: upd.assistantMalformed || undefined,
+                    };
+                  }
+                  const updated = { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
+                  if (upd.markDirty) dirtyConversationIdsRef.current.add(chatId);
+                  return updated;
+                });
               }
-              const updated = { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
-              dirtyConversationIdsRef.current.add(chatId);
-              return updated;
-            });
-            loopCompletedNormally = true;
-            break;
+            }
+
+            apiMessages = action.apiMessages;
+
+            if (action.loopCompletedNormally) loopCompletedNormally = true;
+            if (action.loopAction === 'break') break;
+            continue;
           }
 
           // --- Tool call detected ---
