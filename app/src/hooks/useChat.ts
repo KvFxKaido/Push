@@ -22,17 +22,23 @@ import type {
   ChatSendOptions,
 } from '@/types';
 import { streamChat, getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
-import { detectAnyToolCall, executeAnyToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
+import { detectAnyToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import {
   appendCardsToLatestToolCall,
   buildToolMeta,
   buildToolResultMessage,
-  buildToolResultMetaLine,
   getToolName,
   getToolStatusLabel,
   markLastAssistantToolCall,
 } from '@/lib/chat-tool-messages';
+import {
+  executeAndBuildResult,
+  executeParallelTools,
+  buildMetaLine,
+  collectSideEffects,
+  type ToolExecRunContext,
+} from '@/hooks/chat-tool-execution';
 import {
   execInSandbox,
   writeToSandbox,
@@ -1280,78 +1286,38 @@ export function useChat(
               if (newId) sandboxIdRef.current = newId;
             }
 
-            const toolRepoFullName = repoRef.current;
-            const parallelResults = await Promise.all(
-              parallelToolCalls.map(async (call) => {
-                const callStart = Date.now();
-                let result: ToolExecutionResult;
-                if (call.source === 'github' && !toolRepoFullName) {
-                  result = { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
-                } else {
-                  result = await executeAnyToolCall(
-                    call,
-                    toolRepoFullName || '',
-                    sandboxIdRef.current,
-                    isMainProtectedRef.current,
-                    branchInfoRef.current?.defaultBranch,
-                    lockedProviderForChat,
-                    resolvedModelForChat,
-                  );
-                }
-                return {
-                  call,
-                  result,
-                  durationMs: Date.now() - callStart,
-                };
-              }),
-            );
+            const parallelSandboxStatus = await getRoundSandboxStatus();
+            const parallelMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, parallelSandboxStatus);
+            const runCtx: ToolExecRunContext = {
+              repoFullName: repoRef.current,
+              sandboxId: sandboxIdRef.current,
+              isMainProtected: isMainProtectedRef.current,
+              defaultBranch: branchInfoRef.current?.defaultBranch,
+              provider: lockedProviderForChat,
+              model: resolvedModelForChat,
+            };
+
+            const parallelOutcomes = await executeParallelTools(parallelToolCalls, runCtx, parallelMetaLine);
 
             if (abortRef.current) break;
 
-            // Notify sandbox hook if any tool indicates the container is unreachable
-            for (const { result } of parallelResults) {
-              if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-                runtimeHandlersRef.current?.onSandboxUnreachable?.(result.structuredError.message);
-                break;
-              }
+            // Handle side effects from parallel results
+            const parallelEffects = collectSideEffects(parallelOutcomes);
+            if (parallelEffects.sandboxUnreachable) {
+              runtimeHandlersRef.current?.onSandboxUnreachable?.(parallelEffects.sandboxUnreachable);
             }
 
-            const cards = parallelResults
-              .map((entry) => entry.result.card)
-              .filter((card): card is ChatCard => !!card && card.type !== 'sandbox-state');
-
-            if (cards.length > 0) {
+            const allCards = parallelOutcomes.flatMap((o) => o.cards);
+            if (allCards.length > 0) {
               setConversations((prev) => {
                 const conv = prev[chatId];
                 if (!conv) return prev;
-                const msgs = appendCardsToLatestToolCall(conv.messages, cards);
+                const msgs = appendCardsToLatestToolCall(conv.messages, allCards);
                 return { ...prev, [chatId]: { ...conv, messages: msgs } };
               });
             }
 
-            const parallelSandboxStatus = await getRoundSandboxStatus();
-            const parallelMetaLine = buildToolResultMetaLine(
-              round,
-              apiMessages,
-              lockedProviderForChat,
-              resolvedModelForChat,
-              parallelSandboxStatus,
-            );
-            const toolResultMessages: ChatMessage[] = parallelResults.map(({ call, result, durationMs }) =>
-              buildToolResultMessage({
-                id: createId(),
-                timestamp: Date.now(),
-                text: result.text,
-                metaLine: parallelMetaLine,
-                toolMeta: buildToolMeta({
-                  toolName: getToolName(call),
-                  source: call.source,
-                  provider: lockedProviderForChat,
-                  durationMs,
-                  isError: result.text.includes('[Tool Error]'),
-                }),
-              }),
-            );
+            const toolResultMessages = parallelOutcomes.map((o) => o.resultMessage);
 
             setConversations((prev) => {
               const conv = prev[chatId];
@@ -1400,61 +1366,38 @@ export function useChat(
                 if (newId) sandboxIdRef.current = newId;
               }
 
-              const mutStart = Date.now();
-              const mutResult = await executeAnyToolCall(
-                mutCall,
-                repoRef.current || '',
-                sandboxIdRef.current,
-                isMainProtectedRef.current,
-                branchInfoRef.current?.defaultBranch,
-                lockedProviderForChat,
-                resolvedModelForChat,
-              );
-              const mutDuration = Date.now() - mutStart;
+              const mutSandboxStatus = await getRoundSandboxStatus();
+              const mutMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, mutSandboxStatus);
+              const mutCtx: ToolExecRunContext = {
+                repoFullName: repoRef.current,
+                sandboxId: sandboxIdRef.current,
+                isMainProtected: isMainProtectedRef.current,
+                defaultBranch: branchInfoRef.current?.defaultBranch,
+                provider: lockedProviderForChat,
+                model: resolvedModelForChat,
+              };
+              const mutOutcome = await executeAndBuildResult(mutCall, mutCtx, mutMetaLine);
 
-              // Notify sandbox hook if mutation indicates container is unreachable
-              if (mutResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-                runtimeHandlersRef.current?.onSandboxUnreachable?.(mutResult.structuredError.message);
+              // Handle mutation side effects
+              if (mutOutcome.raw.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+                runtimeHandlersRef.current?.onSandboxUnreachable?.(mutOutcome.raw.structuredError.message);
               }
 
-              if (mutResult.card) {
-                const mutCard = mutResult.card;
+              if (mutOutcome.cards.length > 0) {
                 setConversations((prev) => {
                   const conv = prev[chatId];
                   if (!conv) return prev;
-                  const msgs = appendCardsToLatestToolCall(conv.messages, [mutCard]);
+                  const msgs = appendCardsToLatestToolCall(conv.messages, mutOutcome.cards);
                   return { ...prev, [chatId]: { ...conv, messages: msgs } };
                 });
               }
 
-              const mutSandboxStatus = await getRoundSandboxStatus();
-              const mutMetaLine = buildToolResultMetaLine(
-                round,
-                apiMessages,
-                lockedProviderForChat,
-                resolvedModelForChat,
-                mutSandboxStatus,
-              );
-              const mutResultMsg = buildToolResultMessage({
-                id: createId(),
-                timestamp: Date.now(),
-                text: mutResult.text,
-                metaLine: mutMetaLine,
-                toolMeta: buildToolMeta({
-                  toolName: getToolName(mutCall),
-                  source: mutCall.source,
-                  provider: lockedProviderForChat,
-                  durationMs: mutDuration,
-                  isError: mutResult.text.includes('[Tool Error]'),
-                }),
-              });
-
               setConversations((prev) => {
                 const conv = prev[chatId];
                 if (!conv) return prev;
-                return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, mutResultMsg], lastMessageAt: Date.now() } };
+                return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, mutOutcome.resultMessage], lastMessageAt: Date.now() } };
               });
-              apiMessages = [...apiMessages, mutResultMsg];
+              apiMessages = [...apiMessages, mutOutcome.resultMessage];
               checkpointApiMessagesRef.current = apiMessages;
 
               // --- Checkpoint: trailing mutation result received ---
@@ -1585,6 +1528,7 @@ export function useChat(
 
           // Execute tool — track timing for provenance
           const toolExecStart = Date.now();
+          let toolExecDurationMs = 0;
           const statusLabel = getToolStatusLabel(toolCall);
           updateAgentStatus({ active: true, phase: statusLabel }, { chatId });
 
@@ -1629,31 +1573,33 @@ export function useChat(
               }
               toolExecResult = { text: result.text };
             }
+            toolExecDurationMs = Date.now() - toolExecStart;
           } else if (toolCall.source === 'delegate') {
             toolExecResult = await executeDelegateCall(chatId, toolCall, apiMessages, lockedProviderForChat, resolvedModelForChat || undefined);
+            toolExecDurationMs = Date.now() - toolExecStart;
             // Reset phase — delegation finished (success or error)
             checkpointPhaseRef.current = 'executing_tools';
             lastCoderStateRef.current = null;
           } else {
-            // GitHub or Sandbox tools
-            const toolRepoFullName = repoRef.current;
-            if (toolCall.source === 'github' && !toolRepoFullName) {
-              toolExecResult = { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
-            } else {
-              toolExecResult = await executeAnyToolCall(
-                toolCall,
-                toolRepoFullName || '',
-                sandboxIdRef.current,
-                isMainProtectedRef.current,
-                branchInfoRef.current?.defaultBranch,
-                lockedProviderForChat,
-                resolvedModelForChat,
-              );
-            }
+            // GitHub or Sandbox tools — use extracted helper
+            const singleSandboxStatus = await getRoundSandboxStatus();
+            const singleMetaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, singleSandboxStatus);
+            const singleCtx: ToolExecRunContext = {
+              repoFullName: repoRef.current,
+              sandboxId: sandboxIdRef.current,
+              isMainProtected: isMainProtectedRef.current,
+              defaultBranch: branchInfoRef.current?.defaultBranch,
+              provider: lockedProviderForChat,
+              model: resolvedModelForChat,
+            };
+            const singleOutcome = await executeAndBuildResult(toolCall, singleCtx, singleMetaLine);
+            toolExecResult = singleOutcome.raw;
+            toolExecDurationMs = singleOutcome.durationMs;
           }
 
           if (abortRef.current) break;
 
+          // --- Post-execution: side effects ---
           if (toolExecResult.promotion?.repo) {
             const promotedRepo = toolExecResult.promotion.repo;
             repoRef.current = promotedRepo.full_name;
@@ -1680,41 +1626,19 @@ export function useChat(
             runtimeHandlersRef.current?.onSandboxPromoted?.(promotedRepo);
           }
 
-          // Sync app branch state when sandbox switches branches (e.g. draft checkout)
           if (toolExecResult.branchSwitch) {
             runtimeHandlersRef.current?.onBranchSwitch?.(toolExecResult.branchSwitch);
           }
 
-          // Notify sandbox hook if tool indicates the container is unreachable
           if (toolExecResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {
             runtimeHandlersRef.current?.onSandboxUnreachable?.(toolExecResult.structuredError.message);
           }
 
-          // Attach card to the assistant message that triggered the tool call
-          if (toolExecResult.card) {
-            if (toolExecResult.card.type === 'sandbox-state') {
-              // No longer render or persist sandbox state cards in chat.
-              continue;
-            }
-            const toolCard = toolExecResult.card;
-            setConversations((prev) => {
-              const conv = prev[chatId];
-              if (!conv) return prev;
-              const msgs = appendCardsToLatestToolCall(conv.messages, [toolCard]);
-              return { ...prev, [chatId]: { ...conv, messages: msgs } };
-            });
-          }
-
-          // Create tool result message with provenance metadata + meta envelope
-          const toolExecDurationMs = Date.now() - toolExecStart;
+          // --- Post-execution: build result message ---
+          // For github/sandbox tools, singleOutcome already has the result message.
+          // For scratchpad/delegate, build it now.
           const sandboxStatus = await getRoundSandboxStatus();
-          const metaLine = buildToolResultMetaLine(
-            round,
-            apiMessages,
-            lockedProviderForChat,
-            resolvedModelForChat,
-            sandboxStatus,
-          );
+          const metaLine = buildMetaLine(round, apiMessages, lockedProviderForChat, resolvedModelForChat, sandboxStatus);
           const toolResultMsg = buildToolResultMessage({
             id: createId(),
             timestamp: Date.now(),
@@ -1729,6 +1653,22 @@ export function useChat(
             }),
           });
 
+          // --- Post-execution: attach cards ---
+          if (toolExecResult.card) {
+            if (toolExecResult.card.type === 'sandbox-state') {
+              // No longer render or persist sandbox state cards in chat.
+              continue;
+            }
+            const toolCard = toolExecResult.card;
+            setConversations((prev) => {
+              const conv = prev[chatId];
+              if (!conv) return prev;
+              const msgs = appendCardsToLatestToolCall(conv.messages, [toolCard]);
+              return { ...prev, [chatId]: { ...conv, messages: msgs } };
+            });
+          }
+
+          // --- Post-execution: update state ---
           setConversations((prev) => {
             const conv = prev[chatId];
             if (!conv) return prev;
