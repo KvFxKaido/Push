@@ -1,3 +1,5 @@
+import type { RepoAppearance } from '@/lib/repo-appearance';
+
 // User profile — persisted in localStorage, injected into system prompt
 export interface UserProfile {
   displayName: string;
@@ -586,6 +588,13 @@ export interface GitHubUser {
 
 export type AppScreen = 'onboarding' | 'home' | 'chat' | 'file-browser';
 
+/**
+ * Screen type for the App routing shell after WorkspaceScreen extraction.
+ * 'workspace' replaces the 'chat' | 'file-browser' split — internal routing
+ * between chat and file browser moves inside WorkspaceScreen.
+ */
+export type AppShellScreen = 'onboarding' | 'home' | 'workspace';
+
 // File browser types (re-exported from sandbox-client for convenience)
 export interface FileEntry {
   name: string;
@@ -947,4 +956,70 @@ export interface RunCheckpoint {
   savedDiff?: string;
   /** How this checkpoint was created — determines resume behavior. */
   reason?: 'expiry' | 'manual' | 'interrupt';
+}
+
+// ---------------------------------------------------------------------------
+// WorkspaceScreen extraction — Phase 1 boundary types
+// ---------------------------------------------------------------------------
+
+/**
+ * Slim conversation metadata without the message array.
+ * Used as the App-level bridge so HomeScreen can display conversation history
+ * without pulling the full message trees out of WorkspaceScreen.
+ */
+export type ConversationMeta = Omit<Conversation, 'messages'>;
+
+/**
+ * Keyed map of slim conversation metadata, emitted upward from WorkspaceScreen
+ * via onConversationIndexChange so App and HomeScreen can stay current.
+ */
+export type ConversationIndex = Record<string, ConversationMeta>;
+
+/**
+ * Props passed from App (routing shell) into WorkspaceScreen.
+ * Everything workspace/chat/sandbox-specific lives *inside* WorkspaceScreen;
+ * this interface is the full surface area between the two.
+ */
+export interface WorkspaceScreenProps {
+  // Session
+  workspaceSession: WorkspaceSession;
+  onWorkspaceSessionChange: (session: WorkspaceSession | null) => void;
+
+  // Repo
+  setActiveRepo: (repo: ActiveRepo) => void;
+  setCurrentBranch: (branch: string) => void;
+  repos: RepoWithActivity[];
+  reposLoading: boolean;
+  reposError: string | null;
+  resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
+  setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
+  clearRepoAppearance: (repoFullName: string) => void;
+
+  // Auth — values
+  token: string | null;
+  patToken: string | null;
+  validatedUser: GitHubUser | null;
+  isAppAuth: boolean;
+  installationId: string | null;
+  appLoading: boolean;
+  appError: string | null;
+
+  // Auth — callbacks
+  connectApp: () => void;
+  installApp: () => void;
+  setInstallationIdManually: (id: string) => Promise<boolean>;
+
+  // Navigation
+  onDisconnect: () => void;
+  onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
+  onStartScratchWorkspace: () => void;
+  onEndWorkspace: () => void;
+
+  // Resume intent — App sets this when the user picks a conversation on HomeScreen.
+  // WorkspaceScreen calls switchChat internally when it mounts or the value changes.
+  pendingResumeChatId: string | null;
+
+  // Conversation index — WorkspaceScreen calls this whenever conversations change
+  // so App can pass slim metadata to HomeScreen without owning useChat.
+  onConversationIndexChange: (index: ConversationIndex) => void;
 }

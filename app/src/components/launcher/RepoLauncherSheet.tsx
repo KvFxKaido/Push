@@ -1,7 +1,7 @@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { RepoLauncherPanel, type LauncherSandboxSession } from './RepoLauncherPanel';
 import type { RepoAppearance } from '@/lib/repo-appearance';
-import type { ActiveRepo, Conversation, RepoWithActivity } from '@/types';
+import type { ActiveRepo, ConversationIndex, RepoWithActivity } from '@/types';
 
 interface RepoLauncherSheetProps {
   open: boolean;
@@ -9,7 +9,7 @@ interface RepoLauncherSheetProps {
   repos: RepoWithActivity[];
   loading: boolean;
   error?: string | null;
-  conversations: Record<string, Conversation>;
+  conversations: ConversationIndex;
   activeRepo: ActiveRepo | null;
   resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
   setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;

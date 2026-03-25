@@ -32,7 +32,7 @@ import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import { timeAgo, timeAgoCompact } from '@/lib/utils';
-import type { ActiveRepo, Conversation, RepoWithActivity } from '@/types';
+import type { ActiveRepo, ConversationIndex, ConversationMeta, RepoWithActivity } from '@/types';
 
 const LANG_COLORS: Record<string, string> = {
   TypeScript: '#3178c6',
@@ -94,7 +94,7 @@ interface RepoLauncherPanelProps {
   repos: RepoWithActivity[];
   loading: boolean;
   error?: string | null;
-  conversations: Record<string, Conversation>;
+  conversations: ConversationIndex;
   activeRepo: ActiveRepo | null;
   resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
   setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
@@ -187,7 +187,7 @@ export function RepoLauncherPanel({
 
   const latestRepoConversation = useMemo(() => {
     const availableRepos = new Set(repos.map((repo) => repo.full_name));
-    let latest: Conversation | null = null;
+    let latest: ConversationMeta | null = null;
     for (const conv of Object.values(conversations)) {
       if (!conv.repoFullName || !availableRepos.has(conv.repoFullName)) continue;
       if (!latest || conv.lastMessageAt > latest.lastMessageAt) {

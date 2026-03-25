@@ -27,13 +27,13 @@ import {
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { RepoLauncherPanel } from '@/components/launcher/RepoLauncherPanel';
 import type { RepoAppearance } from '@/lib/repo-appearance';
-import type { ActiveRepo, Conversation, GitHubUser, RepoWithActivity } from '@/types';
+import type { ActiveRepo, ConversationIndex, GitHubUser, RepoWithActivity } from '@/types';
 
 interface HomeScreenProps {
   repos: RepoWithActivity[];
   loading: boolean;
   error?: string | null;
-  conversations: Record<string, Conversation>;
+  conversations: ConversationIndex;
   activeRepo: ActiveRepo | null;
   resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
   setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
