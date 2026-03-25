@@ -43,7 +43,7 @@ export interface ToolExecRunContext {
   isMainProtected: boolean;
   defaultBranch: string | undefined;
   provider: ActiveProvider;
-  model: string | null | undefined;
+  model: string | undefined;
 }
 
 /** Raw result from executing a tool call (before building the ChatMessage). */
@@ -257,7 +257,7 @@ export function handleRecoveryResult(
   thinkingAccumulated: string,
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
-  model: string | null | undefined,
+  model: string | undefined,
 ): RecoveryAction {
   // --- Telemetry ---
   const diagnosis =

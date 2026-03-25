@@ -1,0 +1,170 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ChatMessage, Conversation } from '@/types';
+
+const { mockStreamChat } = vi.hoisted(() => ({
+  mockStreamChat: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestrator', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/orchestrator')>('@/lib/orchestrator');
+  return {
+    ...actual,
+    streamChat: (...args: unknown[]) => mockStreamChat(...args),
+  };
+});
+
+import { processAssistantTurn, streamAssistantRound, type SendLoopContext } from './chat-send';
+
+function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id: 'msg-1',
+    role: 'assistant',
+    content: '',
+    timestamp: 1,
+    status: 'streaming',
+    ...overrides,
+  };
+}
+
+function makeConversation(messages: ChatMessage[]): Record<string, Conversation> {
+  return {
+    'chat-1': {
+      id: 'chat-1',
+      title: 'Chat',
+      messages,
+      createdAt: 1,
+      lastMessageAt: 1,
+    },
+  };
+}
+
+function makeLoopContext(
+  conversationsRef: { current: Record<string, Conversation> },
+  dirtyRef: { current: Set<string> },
+  overrides: Partial<SendLoopContext> = {},
+): SendLoopContext {
+  return {
+    chatId: 'chat-1',
+    lockedProvider: 'openrouter',
+    resolvedModel: 'anthropic/claude-sonnet-4.6:nitro',
+    abortRef: { current: false },
+    abortControllerRef: { current: null },
+    sandboxIdRef: { current: null },
+    ensureSandboxRef: { current: null },
+    scratchpadRef: { current: undefined },
+    usageHandlerRef: { current: undefined },
+    workspaceContextRef: { current: null },
+    runtimeHandlersRef: { current: undefined },
+    repoRef: { current: null },
+    isMainProtectedRef: { current: false },
+    branchInfoRef: { current: undefined },
+    checkpointRefs: {
+      accumulated: { current: '' },
+      thinking: { current: '' },
+      round: { current: 0 },
+      phase: { current: 'streaming_llm' },
+      apiMessages: { current: [] },
+      baseMessageCount: { current: 0 },
+      chatId: { current: 'chat-1' },
+      provider: { current: 'openrouter' },
+      model: { current: 'anthropic/claude-sonnet-4.6:nitro' },
+    },
+    processedContentRef: { current: new Set<string>() },
+    lastCoderStateRef: { current: null },
+    setConversations: (updater) => {
+      conversationsRef.current =
+        typeof updater === 'function' ? updater(conversationsRef.current) : updater;
+    },
+    dirtyConversationIdsRef: dirtyRef,
+    updateAgentStatus: vi.fn(),
+    flushCheckpoint: vi.fn(),
+    executeDelegateCall: vi.fn(),
+    ...overrides,
+  };
+}
+
+describe('chat-send', () => {
+  beforeEach(() => {
+    mockStreamChat.mockReset();
+  });
+
+  it('streams content/thinking into the latest assistant message and checkpoint refs', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage()]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const usageHandler = { trackUsage: vi.fn() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      usageHandlerRef: { current: usageHandler },
+    });
+
+    mockStreamChat.mockImplementation(
+      (
+        _messages,
+        onToken,
+        onDone,
+        _onError,
+        onThinkingToken,
+      ) => {
+        onThinkingToken?.('Need to inspect');
+        onToken('Hello');
+        onToken(' world');
+        onDone({ inputTokens: 11, outputTokens: 7 });
+      },
+    );
+
+    const result = await streamAssistantRound(
+      0,
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Hi', status: 'done' })],
+      ctx,
+    );
+
+    expect(result).toEqual({
+      accumulated: 'Hello world',
+      thinkingAccumulated: 'Need to inspect',
+      error: null,
+    });
+    expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({
+      content: 'Hello world',
+      thinking: 'Need to inspect',
+      status: 'streaming',
+    });
+    expect(ctx.checkpointRefs.accumulated.current).toBe('Hello world');
+    expect(ctx.checkpointRefs.thinking.current).toBe('Need to inspect');
+    expect(usageHandler.trackUsage).toHaveBeenCalledWith('k2p5', 11, 7);
+  });
+
+  it('finalizes plain-text assistant turns without tool calls', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'partial' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+    const apiMessages: ChatMessage[] = [
+      makeMessage({ id: 'user-1', role: 'user', content: 'Explain the bug', status: 'done' }),
+    ];
+
+    const result = await processAssistantTurn(
+      0,
+      'Here is the final answer.',
+      'Reasoning summary',
+      apiMessages,
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('break');
+    expect(result.loopCompletedNormally).toBe(true);
+    expect(result.nextApiMessages).toEqual(apiMessages);
+    expect(result.nextRecoveryState).toEqual({
+      diagnosisRetries: 0,
+      recoveryAttempted: false,
+    });
+    expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({
+      content: 'Here is the final answer.',
+      thinking: 'Reasoning summary',
+      status: 'done',
+    });
+    expect(dirtyRef.current.has('chat-1')).toBe(true);
+  });
+});
