@@ -38,6 +38,8 @@ import { execInSandbox } from '@/lib/sandbox-client';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { createId } from '@/hooks/chat-persistence';
+import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
+import { createOrchestratorPolicy } from '@/lib/turn-policies/orchestrator-policy';
 import type {
   ActiveRepo,
   AgentStatus,
@@ -538,6 +540,36 @@ export async function processAssistantTurn(
   const toolCall = detectAnyToolCall(accumulated);
 
   if (!toolCall) {
+    // --- Turn policy: ungrounded-completion guard ---
+    // Before accepting as natural completion, check if the Orchestrator
+    // claims "done" without artifact evidence (delegation result, diff, PR).
+    const orchestratorPolicy = new TurnPolicyRegistry();
+    orchestratorPolicy.register(createOrchestratorPolicy());
+    const turnCtx: TurnContext = {
+      role: 'orchestrator',
+      round,
+      maxRounds: 100,
+      sandboxId: sandboxIdRef.current,
+      allowedRepo: repoRef.current || '',
+      activeProvider: lockedProvider,
+      activeModel: resolvedModel,
+    };
+    const policyResult = await orchestratorPolicy.evaluateAfterModel(accumulated, apiMessages, turnCtx);
+    if (policyResult?.action === 'inject') {
+      // Nudge the model — inject corrective message and continue the loop
+      const nextApiMessages = [
+        ...apiMessages,
+        { id: createId(), role: 'assistant' as const, content: accumulated, timestamp: Date.now() },
+        policyResult.message,
+      ];
+      return {
+        nextApiMessages,
+        nextRecoveryState: recoveryState,
+        loopAction: 'continue',
+        loopCompletedNormally: false,
+      };
+    }
+
     // --- No tool call: recovery check or natural completion ---
     const recoveryResult = resolveToolCallRecovery(accumulated, recoveryState);
     const nextRecoveryState = recoveryResult.nextState;
