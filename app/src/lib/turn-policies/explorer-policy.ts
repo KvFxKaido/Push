@@ -8,7 +8,11 @@
  * The Explorer is strictly read-only and must produce evidence-backed findings.
  */
 
+import type { ChatMessage } from '@/types';
 import type { TurnPolicy } from '../turn-policy';
+// NOTE: Imports the full explorer-agent module to reuse the canonical allowed
+// tools set. If bundle size becomes a concern, extract EXPLORER_ALLOWED_TOOLS
+// to a lightweight explorer-constants.ts module.
 import { EXPLORER_ALLOWED_TOOLS } from '../explorer-agent';
 
 /**
@@ -36,7 +40,7 @@ function readOnlyGate(
  */
 function noEmptyReport(
   response: string,
-): { action: 'inject'; message: { id: string; role: 'user'; content: string; timestamp: number } } | null {
+): { action: 'inject'; message: ChatMessage } | null {
   const trimmed = response.trim();
 
   // If it contains a tool call JSON block, it's not a completion attempt

@@ -6,7 +6,6 @@
  * - Cognitive drift detection (was: detectCognitiveDrift in coder-agent.ts)
  * - Mutation failure tracking (was: inline Map in coder-agent.ts loop)
  * - No-fake-completion guard (new: inspired by Open SWE's ensure_no_empty_msg)
- * - Main branch protection (was: inline in tool-dispatch.ts)
  *
  * The Coder must end each run with changed files, a blocked report, or
  * explicit acceptance-criteria results. Claiming "done" with nothing to
@@ -211,7 +210,7 @@ export function createCoderPolicy(): TurnPolicy {
 
         if (!hasError) {
           // Success — clear failure tracking for this tool+file
-          if (filePath) mutationFailures.delete(mutKey);
+          mutationFailures.delete(mutKey);
           return null;
         }
 

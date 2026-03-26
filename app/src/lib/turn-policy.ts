@@ -155,6 +155,11 @@ export class TurnPolicyRegistry {
     this.policies.push(policy);
   }
 
+  /** Remove all policies for a given role. Used to reset stateful policies. */
+  deregister(role: AgentRole): void {
+    this.policies = this.policies.filter((p) => p.role !== role);
+  }
+
   /** Get all policies for a given role, in registration order. */
   private forRole(role: AgentRole): TurnPolicy[] {
     return this.policies.filter((p) => p.role === role);
@@ -162,7 +167,7 @@ export class TurnPolicyRegistry {
 
   /**
    * Evaluate all beforeModelCall hooks for a role.
-   * First non-null result wins (halt > inject > passthrough).
+   * First non-null result wins (short-circuit).
    */
   async evaluateBeforeModel(
     messages: readonly ChatMessage[],
@@ -241,9 +246,16 @@ export class TurnPolicyRegistry {
    * Bridge: convert beforeToolExec hooks into a ToolHookRegistry that the
    * existing tool-dispatch.ts can consume. This lets roles migrate gradually
    * from raw ToolHookRegistry to TurnPolicy without a big-bang refactor.
+   *
+   * Uses ctx.role to scope policy lookup — the role is always derived from
+   * the TurnContext to avoid mismatches.
+   *
+   * Limitation: afterToolExec policies are not bridged here because
+   * PostToolUseResult cannot express 'inject' or 'halt' actions. Those
+   * must be evaluated directly via evaluateAfterTool() in the agent loop.
    */
-  toToolHookRegistry(role: AgentRole, ctx: TurnContext): ToolHookRegistry {
-    const policies = this.forRole(role);
+  toToolHookRegistry(ctx: TurnContext): ToolHookRegistry {
+    const policies = this.forRole(ctx.role);
     const hasBeforeTool = policies.some((p) => p.beforeToolExec?.length);
 
     return {
@@ -279,7 +291,8 @@ import { createOrchestratorPolicy } from './turn-policies/orchestrator-policy';
 
 /**
  * Create a fully-loaded TurnPolicyRegistry with all role policies.
- * Call once per agent session.
+ * Call once per agent session. For stateful policies (Coder), call
+ * resetCoderPolicy() at each delegation boundary to isolate state.
  */
 export function createTurnPolicyRegistry(): TurnPolicyRegistry {
   const registry = new TurnPolicyRegistry();
@@ -289,4 +302,14 @@ export function createTurnPolicyRegistry(): TurnPolicyRegistry {
   // Auditor and Reviewer are single-shot (no multi-turn loop to guard),
   // so they don't need turn policies — their invariants are structural.
   return registry;
+}
+
+/**
+ * Replace the Coder policy in an existing registry with a fresh instance.
+ * Call at the start of each delegate_coder task to prevent drift/failure
+ * state from leaking across delegations within the same session.
+ */
+export function resetCoderPolicy(registry: TurnPolicyRegistry): void {
+  registry.deregister('coder');
+  registry.register(createCoderPolicy());
 }

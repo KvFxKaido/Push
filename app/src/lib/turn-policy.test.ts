@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   TurnPolicyRegistry,
+  resetCoderPolicy,
   type TurnContext,
   type AgentRole,
 } from './turn-policy';
@@ -125,6 +126,59 @@ describe('TurnPolicyRegistry', () => {
     const result = await registry.evaluateAfterModel('', [], ctx);
     expect(result).toEqual({ action: 'halt', summary: 'Explorer exceeded round limit' });
   });
+
+  it('deregister removes all policies for a role', async () => {
+    const registry = new TurnPolicyRegistry();
+    registry.register({
+      name: 'coder-a',
+      role: 'coder',
+      afterModelCall: [() => ({ action: 'halt', summary: 'stop' })],
+    });
+    registry.register({
+      name: 'explorer-a',
+      role: 'explorer',
+      afterModelCall: [() => ({ action: 'halt', summary: 'explorer stop' })],
+    });
+
+    // Deregister coder
+    registry.deregister('coder');
+
+    // Coder policies gone
+    const coderCtx = makeCtx({ role: 'coder' });
+    expect(await registry.evaluateAfterModel('test', [], coderCtx)).toBeNull();
+
+    // Explorer policies still present
+    const explorerCtx = makeCtx({ role: 'explorer' });
+    expect(await registry.evaluateAfterModel('test', [], explorerCtx)).not.toBeNull();
+  });
+
+  it('resetCoderPolicy replaces coder state with a fresh instance', async () => {
+    const registry = new TurnPolicyRegistry();
+
+    // Register a stateful coder policy that always halts
+    let callCount = 0;
+    registry.register({
+      name: 'coder-stateful',
+      role: 'coder',
+      afterModelCall: [() => { callCount++; return { action: 'halt', summary: `call-${callCount}` }; }],
+    });
+
+    const ctx = makeCtx({ role: 'coder' });
+    await registry.evaluateAfterModel('test', [], ctx);
+    expect(callCount).toBe(1);
+
+    // Reset replaces the old policy
+    resetCoderPolicy(registry);
+
+    // Old policy's closure is gone — callCount shouldn't increment
+    const result = await registry.evaluateAfterModel('test', [], ctx);
+    // The new coder policy (from createCoderPolicy) will have its own hooks
+    // The key assertion: old stateful hooks are removed
+    expect(callCount).toBe(1); // not incremented
+    // New policy's afterModelCall should still evaluate (non-null or null depending on input)
+    // Just verify we get a result from the fresh policy, not the old one
+    expect(result?.action === 'halt' ? result.summary : '').not.toBe('call-2');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -148,7 +202,7 @@ describe('toToolHookRegistry bridge', () => {
     });
 
     const ctx = makeCtx({ role: 'explorer' });
-    const hookRegistry = registry.toToolHookRegistry('explorer', ctx);
+    const hookRegistry = registry.toToolHookRegistry(ctx);
 
     expect(hookRegistry.pre.length).toBe(1);
 
@@ -178,7 +232,7 @@ describe('toToolHookRegistry bridge', () => {
     });
 
     const ctx = makeCtx();
-    const hookRegistry = registry.toToolHookRegistry('coder', ctx);
+    const hookRegistry = registry.toToolHookRegistry(ctx);
     expect(hookRegistry.pre.length).toBe(0);
     expect(hookRegistry.post.length).toBe(0);
   });

@@ -46,7 +46,10 @@ function detectUngroundedCompletion(
   const recent = messages.slice(-6);
   const hasDelegationResult = recent.some((m) =>
     m.role === 'user'
-    && (m.content.includes('[Coder completed')
+    && (m.content.includes('[Tool Result — delegate_coder]')
+      || m.content.includes('[Tool Result — delegate_explorer]')
+      || m.content.includes('[TOOL_RESULT')
+      || m.content.includes('[Coder completed')
       || m.content.includes('[CODER_RESULT]')
       || m.content.includes('[Explorer completed')
       || m.content.includes('[EXPLORER_RESULT]')
