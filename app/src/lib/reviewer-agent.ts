@@ -85,14 +85,16 @@ Review for:
 - Documentation: README/doc changes that contradict the code diff, outdated examples, missing docs for new public APIs or changed behavior, unclear or misleading prose in comments or markdown files`;
 
 // ---------------------------------------------------------------------------
-// Coalesced promise — dedup concurrent reviews on the same diff+provider
+// Coalesced promise — dedup concurrent reviews on the same diff+provider+context
 // ---------------------------------------------------------------------------
 const pendingReviews = new Map<string, Promise<ReviewResult>>();
+const reviewListeners = new Map<string, Set<(phase: string) => void>>();
 
-function reviewCoalesceKey(diff: string, provider: string, model?: string): string {
-  // Fast identity: first 200 chars of diff + provider + model is sufficient
-  // to distinguish meaningfully different requests without hashing the full diff.
-  return `${provider}:${model ?? ''}:${diff.length}:${diff.slice(0, 200)}`;
+function reviewCoalesceKey(diff: string, provider: string, model?: string, context?: ReviewerPromptContext, sandboxId?: string): string {
+  const tail = diff.length > 400 ? diff.slice(-200) : '';
+  const ctx = context?.source ?? '';
+  const sbx = sandboxId ?? '';
+  return `${provider}:${model ?? ''}:${diff.length}:${diff.slice(0, 200)}:${tail}:${ctx}:${sbx}`;
 }
 
 const REVIEWER_SYSTEM_PROMPT = `You are the Reviewer agent for Push, a mobile AI coding assistant. Your role is to provide advisory code review feedback on diffs.
@@ -196,13 +198,25 @@ export async function runReviewer(
   options: ReviewerOptions,
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
-  const key = reviewCoalesceKey(diff, options.provider, options.model);
-  const inflight = pendingReviews.get(key);
-  if (inflight) return inflight;
+  const key = reviewCoalesceKey(diff, options.provider, options.model, options.context, options.sandboxId);
 
-  const run = runReviewerCore(diff, options, onStatus);
+  const inflight = pendingReviews.get(key);
+  if (inflight) {
+    reviewListeners.get(key)?.add(onStatus);
+    return inflight;
+  }
+
+  const listeners = new Set([onStatus]);
+  reviewListeners.set(key, listeners);
+
+  const run = runReviewerCore(diff, options, (phase) => {
+    reviewListeners.get(key)?.forEach(l => l(phase));
+  });
   pendingReviews.set(key, run);
-  run.finally(() => pendingReviews.delete(key));
+  run.finally(() => {
+    pendingReviews.delete(key);
+    reviewListeners.delete(key);
+  });
   return run;
 }
 

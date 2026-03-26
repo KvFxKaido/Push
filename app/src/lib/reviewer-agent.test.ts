@@ -107,6 +107,35 @@ describe('runReviewer', () => {
     expect(prompt).not.toContain('src/auth.test.ts ---');
   });
 
+  it('coalesces concurrent identical reviews into a single stream call', async () => {
+    // Use an async mock so the first call is still in-flight when the second arrives
+    mockStreamFn.mockImplementation(async (
+      _messages: unknown,
+      onToken: (token: string) => void,
+      onDone: () => void,
+    ) => {
+      await new Promise((r) => setTimeout(r, 10));
+      onToken('{"summary":"Looks good","comments":[]}');
+      onDone();
+    });
+
+    const statuses1: string[] = [];
+    const statuses2: string[] = [];
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+
+    const [r1, r2] = await Promise.all([
+      runReviewer(diff, { provider: 'openrouter' }, (phase) => { statuses1.push(phase); }),
+      runReviewer(diff, { provider: 'openrouter' }, (phase) => { statuses2.push(phase); }),
+    ]);
+
+    // Both callers get the same result
+    expect(r1).toBe(r2);
+    // Only one stream call was made
+    expect(mockStreamFn).toHaveBeenCalledTimes(1);
+    // First caller received status updates
+    expect(statuses1.length).toBeGreaterThan(0);
+  });
+
   it('omits file structure when sandbox is unavailable', async () => {
     const statuses: string[] = [];
     const diff = makeAddedFileDiff('src/auth.ts', 'const auth = true;');

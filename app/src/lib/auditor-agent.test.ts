@@ -84,6 +84,36 @@ describe('runAuditor', () => {
     expect(mockStreamFn.mock.calls[0]?.[7]).toBe('google/gemini-2.5-pro');
   });
 
+  it('coalesces concurrent identical audits into a single stream call', async () => {
+    // Use an async mock so the first call is still in-flight when the second arrives
+    mockStreamFn.mockImplementation(async (
+      _messages: unknown,
+      onToken: (token: string) => void,
+      onDone: () => void,
+    ) => {
+      await new Promise((r) => setTimeout(r, 10));
+      onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+      onDone();
+    });
+
+    const statuses1: string[] = [];
+    const statuses2: string[] = [];
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+
+    const [r1, r2] = await Promise.all([
+      runAuditor(diff, (phase) => { statuses1.push(phase); }),
+      runAuditor(diff, (phase) => { statuses2.push(phase); }),
+    ]);
+
+    // Both callers get the same result
+    expect(r1).toBe(r2);
+    expect(r1.verdict).toBe('safe');
+    // Only one stream call was made
+    expect(mockStreamFn).toHaveBeenCalledTimes(1);
+    // First caller received status updates
+    expect(statuses1.length).toBeGreaterThan(0);
+  });
+
   it('builds file hints from the chunked diff only', async () => {
     const hugeProductionDiff = makeAddedFileDiff('src/huge.ts', 'x'.repeat(31_000));
     const omittedTestDiff = makeAddedFileDiff('src/ignored.test.ts', 'test');

@@ -38,12 +38,23 @@ export interface AuditorRunOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Coalesced promise — dedup concurrent audits on the same diff+provider
+// Coalesced promise — dedup concurrent audits on the same diff+provider+context
 // ---------------------------------------------------------------------------
-const pendingAudits = new Map<string, Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }>>();
+type AuditResult = { verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData };
+const pendingAudits = new Map<string, Promise<AuditResult>>();
+const auditListeners = new Map<string, Set<(phase: string) => void>>();
 
-function auditCoalesceKey(diff: string, provider: string, model?: string): string {
-  return `${provider}:${model ?? ''}:${diff.length}:${diff.slice(0, 200)}`;
+function auditCoalesceKey(
+  diff: string,
+  provider: string,
+  model?: string,
+  context?: AuditorPromptContext,
+  hookResult?: HookResult | null,
+): string {
+  const tail = diff.length > 400 ? diff.slice(-200) : '';
+  const ctx = context?.source ?? '';
+  const hook = hookResult ? `${hookResult.exitCode}` : '';
+  return `${provider}:${model ?? ''}:${diff.length}:${diff.slice(0, 200)}:${tail}:${ctx}:${hook}`;
 }
 
 const AUDITOR_SYSTEM_PROMPT = `You are the Auditor agent for Push, a mobile AI coding assistant. Your sole job is to review code diffs for safety.
@@ -81,16 +92,28 @@ export async function runAuditor(
   context?: AuditorPromptContext,
   hookResult?: HookResult | null,
   options?: AuditorRunOptions,
-): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
+): Promise<AuditResult> {
   const provider = (options?.providerOverride || getActiveProvider()) as string;
   const model = options?.modelOverride?.trim() || undefined;
-  const key = auditCoalesceKey(diff, provider, model);
-  const inflight = pendingAudits.get(key);
-  if (inflight) return inflight;
+  const key = auditCoalesceKey(diff, provider, model, context, hookResult);
 
-  const run = runAuditorCore(diff, onStatus, context, hookResult, options);
+  const inflight = pendingAudits.get(key);
+  if (inflight) {
+    auditListeners.get(key)?.add(onStatus);
+    return inflight;
+  }
+
+  const listeners = new Set([onStatus]);
+  auditListeners.set(key, listeners);
+
+  const run = runAuditorCore(diff, (phase) => {
+    auditListeners.get(key)?.forEach(l => l(phase));
+  }, context, hookResult, options);
   pendingAudits.set(key, run);
-  run.finally(() => pendingAudits.delete(key));
+  run.finally(() => {
+    pendingAudits.delete(key);
+    auditListeners.delete(key);
+  });
   return run;
 }
 
