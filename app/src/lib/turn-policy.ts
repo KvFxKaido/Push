@@ -31,7 +31,7 @@ export type AgentRole = 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'au
 // Turn context — shared state visible to all policy hooks within a turn
 // ---------------------------------------------------------------------------
 
-/** Immutable snapshot of the current turn state, passed to every hook. */
+/** Current turn state, passed to every hook. Mutable: `round` is updated per turn. */
 export interface TurnContext {
   /** Which agent role is running. */
   role: AgentRole;

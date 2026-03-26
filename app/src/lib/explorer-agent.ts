@@ -37,8 +37,8 @@ import {
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
 import { buildExplorerDelegationBrief } from './role-context';
 import { symbolLedger } from './symbol-persistence-ledger';
-import type { TurnContext } from './turn-policy';
-import { createTurnPolicyRegistry } from './turn-policy-factory';
+import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
+import { createExplorerPolicy } from './turn-policies/explorer-policy';
 
 const MAX_EXPLORER_ROUNDS = 14;
 const EXPLORER_ROUND_TIMEOUT_MS = 60_000;
@@ -246,7 +246,9 @@ export async function runExplorerAgent(
   ];
 
   const cards: ChatCard[] = [];
-  const policyRegistry = createTurnPolicyRegistry();
+  // Explorer-only registry — avoids pulling Coder/Orchestrator policies.
+  const policyRegistry = new TurnPolicyRegistry();
+  policyRegistry.register(createExplorerPolicy());
   const turnCtx: TurnContext = {
     role: 'explorer',
     round: 0,

@@ -10,10 +10,7 @@
 
 import type { ChatMessage } from '@/types';
 import type { TurnPolicy } from '../turn-policy';
-// NOTE: Imports the full explorer-agent module to reuse the canonical allowed
-// tools set. If bundle size becomes a concern, extract EXPLORER_ALLOWED_TOOLS
-// to a lightweight explorer-constants.ts module.
-import { EXPLORER_ALLOWED_TOOLS } from '../explorer-agent';
+import { EXPLORER_ALLOWED_TOOLS } from '../explorer-constants';
 
 /**
  * Read-only enforcement: deny any tool not in the Explorer's allowed set.

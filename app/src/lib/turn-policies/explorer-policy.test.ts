@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createExplorerPolicy } from './explorer-policy';
-import { EXPLORER_ALLOWED_TOOLS } from '../explorer-agent';
+import { EXPLORER_ALLOWED_TOOLS } from '../explorer-constants';
 import type { TurnContext } from '../turn-policy';
 
 function makeCtx(round = 0): TurnContext {
