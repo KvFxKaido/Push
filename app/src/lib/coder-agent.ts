@@ -40,11 +40,8 @@ const MAX_TOOL_RESULT_SIZE = 24_000;  // Max chars per tool result (~400 lines v
 const MAX_AGENTS_MD_SIZE = 4000;      // Max chars for AGENTS.md
 const MAX_TOTAL_CONTEXT_SIZE = 120_000; // Rough limit for total message content
 
-// --- Drift & failure guardrails ---
+// --- Mutation failure guardrails ---
 const MAX_CONSECUTIVE_MUTATION_FAILURES = 3; // Hard failure threshold for same tool+file
-const MAX_CONSECUTIVE_DRIFT_ROUNDS = 2;      // Kill switch after N rounds of cognitive drift
-const DRIFT_NON_ASCII_RATIO_THRESHOLD = 0.3; // If >30% of chars are non-ASCII, likely drift
-// Repeated token threshold: 10+ consecutive repeats of 1-4 char sequences (encoded in regex below)
 
 // ---------------------------------------------------------------------------
 // Mutation failure tracker — detects repeated failures on same tool+file
@@ -59,73 +56,6 @@ interface MutationFailureEntry {
 
 function makeMutationKey(tool: string, file: string): string {
   return `${tool}::${file}`;
-}
-
-// ---------------------------------------------------------------------------
-// Cognitive drift detection — catches ungrounded generation
-// ---------------------------------------------------------------------------
-
-/**
- * Detect cognitive drift in model output. Returns a reason string if drift
- * is detected, or null if the output looks normal.
- *
- * Drift requires multiple converging signals to avoid false positives on
- * legitimate CJK/multilingual code or prose summaries. We never flag a
- * single signal alone — at least two must fire together.
- *
- * Signals (scored):
- * A. Repeated short token patterns (e.g. "太平太平太平") — strong signal
- * B. High non-ASCII ratio WITHOUT any tool/code/file references — moderate
- * C. Extended prose with no tool calls, code blocks, or file references
- */
-function detectCognitiveDrift(text: string): string | null {
-  const trimmed = text.trim();
-  if (!trimmed || trimmed.length < 200) return null;
-
-  // Helper: does the text reference code/tools at all?
-  const hasCodeSignals = (t: string): boolean => {
-    return /\{\s*"tool"\s*:/.test(t)       // tool JSON
-      || /```/.test(t)                      // code block
-      || /\/workspace\//.test(t)            // sandbox path
-      || /\.[tj]sx?\b|\.py\b|\.json\b/.test(t)  // file extensions
-      || /sandbox_|coder_checkpoint|coder_update_state/.test(t); // tool keywords
-  };
-
-  const reasons: string[] = [];
-
-  // Signal A: Repeated token patterns (same 1-4 char sequence repeated 10+ times)
-  // This is a strong drift indicator — models don't repeat tokens intentionally.
-  const repeatedPattern = trimmed.match(/(.{1,4})\1{9,}/);
-  if (repeatedPattern) {
-    reasons.push(`Repeated token pattern: "${repeatedPattern[1]}" ×${Math.floor(repeatedPattern[0].length / repeatedPattern[1].length)}`);
-  }
-
-  // Signal B: High non-ASCII ratio with no code references
-  // Alone this is NOT drift — CJK users write CJK comments. But combined with
-  // no code signals, it indicates the model is generating unrelated prose.
-  const nonAsciiCount = (trimmed.match(/[^\u0020-\u007E]/g) || []).length;
-  const ratio = nonAsciiCount / trimmed.length;
-  if (ratio > DRIFT_NON_ASCII_RATIO_THRESHOLD && nonAsciiCount > 50 && !hasCodeSignals(trimmed)) {
-    reasons.push(`Non-ASCII ratio ${(ratio * 100).toFixed(0)}% with no code references`);
-  }
-
-  // Signal C: Extended prose with no tool calls, code blocks, or file references
-  if (trimmed.length > 1500 || trimmed.split('\n').length > 20) {
-    if (!hasCodeSignals(trimmed)) {
-      reasons.push('Extended prose without tool calls or code references');
-    }
-  }
-
-  // Require at least 2 signals — one signal alone could be a legit summary
-  // Exception: repeated tokens with 20+ repeats is definitive on its own
-  if (reasons.length >= 2) {
-    return reasons.join('; ');
-  }
-  if (repeatedPattern && repeatedPattern[0].length / repeatedPattern[1].length >= 20) {
-    return reasons[0];
-  }
-
-  return null;
 }
 
 /**
@@ -885,9 +815,8 @@ export async function runCoderAgent(
   // Track phase for context reset detection
   let lastPhaseForReset: string | undefined;
 
-  // --- Drift & failure guardrail state ---
-  const mutationFailures = new Map<string, MutationFailureEntry>(); // track consecutive failures per tool+file
-  let consecutiveDriftRounds = 0; // count rounds of cognitive drift
+  // --- Mutation failure guardrail state ---
+  const mutationFailures = new Map<string, MutationFailureEntry>();
 
   // --- Turn policy layer (no-fake-completion guard) ---
   // Create a Coder-only registry to avoid circular imports through explorer-agent.
@@ -1007,8 +936,6 @@ export async function runCoderAgent(
 
     if (parallelCalls.length >= 2 || (parallelCalls.length >= 1 && trailingMutation)) {
       if (effectiveSignal?.aborted) throw new DOMException('Coder cancelled by user.', 'AbortError');
-      // Valid tool calls — reset drift counter
-      consecutiveDriftRounds = 0;
 
       const statusLabel = trailingMutation
         ? `${parallelCalls.length} parallel reads + 1 mutation`
@@ -1323,59 +1250,27 @@ ${truncatedResult}
       }
 
       // --- Cognitive Drift Kill Switch ---
-      // If no tool call was detected, check if the model is drifting (hallucinating
-      // unrelated content instead of working on the task).
-      const driftReason = detectCognitiveDrift(accumulated);
-      if (driftReason) {
-        consecutiveDriftRounds++;
-        statusFn('Drift detected', driftReason.slice(0, 80));
-
-        if (consecutiveDriftRounds >= MAX_CONSECUTIVE_DRIFT_ROUNDS) {
-          // Hard stop — model has drifted for too many consecutive rounds
+      // Delegated to the turn policy layer (coder-policy.ts detectCognitiveDrift).
+      // The policy handles both first-drift injection and consecutive-drift halting.
+      turnCtx.round = round;
+      const driftResult = await policyRegistry.evaluateAfterModel(accumulated, messages, turnCtx);
+      if (driftResult) {
+        if (driftResult.action === 'halt') {
           statusFn('Coder stopped', 'Cognitive drift — halted');
           const sandboxState = await fetchSandboxStateSummary(sandboxId);
           return {
-            summary: `[Coder stopped — cognitive drift detected for ${consecutiveDriftRounds} consecutive rounds. ${driftReason}. Task may be incomplete.]${sandboxState}`,
+            summary: driftResult.summary + sandboxState,
             cards: allCards,
             rounds,
             checkpoints: checkpointCount,
           };
         }
-
-        // First drift — inject correction and give the model one more chance
-        messages.push({
-          id: `coder-drift-correction-${round}`,
-          role: 'user',
-          content: `[DRIFT_DETECTED]\nYou are generating unrelated content instead of working on the task. ${driftReason}.\nStop and re-evaluate. Re-read your task and working memory, then either use a tool or summarize your progress.\n[/DRIFT_DETECTED]`,
-          timestamp: Date.now(),
-        });
-        continue;
-      }
-
-      // No drift — reset consecutive drift counter
-      consecutiveDriftRounds = 0;
-
-      // --- Turn policy: no-fake-completion guard ---
-      // Before accepting a bare response as completion, check if it has
-      // artifact evidence (file changes, blocked report). If not, nudge.
-      turnCtx.round = round;
-      const policyResult = await policyRegistry.evaluateAfterModel(accumulated, messages, turnCtx);
-      if (policyResult) {
-        if (policyResult.action === 'halt') {
-          const sandboxState = await fetchSandboxStateSummary(sandboxId);
-          return {
-            summary: policyResult.summary + sandboxState,
-            cards: allCards,
-            rounds,
-            checkpoints: checkpointCount,
-          };
-        }
-        if (policyResult.action === 'inject') {
-          messages.push(policyResult.message);
+        if (driftResult.action === 'inject') {
+          statusFn('Drift detected', driftResult.message.content.slice(0, 80));
+          messages.push(driftResult.message);
           continue;
         }
       }
-
       // No tool call — Coder is done, accumulated is the summary
       // Run acceptance criteria if provided
       let criteriaResults: CriterionResult[] | undefined;
@@ -1433,8 +1328,7 @@ ${truncatedResult}
     if (effectiveSignal?.aborted) {
       throw new DOMException('Coder cancelled by user.', 'AbortError');
     }
-    // Valid tool call — reset drift counter
-    consecutiveDriftRounds = 0;
+
 
     statusFn('Coder executing...', toolCall.tool);
     const result = await executeSandboxToolCall(toolCall, sandboxId, {
