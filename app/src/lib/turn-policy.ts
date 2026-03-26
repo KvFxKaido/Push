@@ -31,7 +31,7 @@ export type AgentRole = 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'au
 // Turn context — shared state visible to all policy hooks within a turn
 // ---------------------------------------------------------------------------
 
-/** Immutable snapshot of the current turn state, passed to every hook. */
+/** Current turn state, passed to every hook. Mutable: `round` is updated per turn. */
 export interface TurnContext {
   /** Which agent role is running. */
   role: AgentRole;
@@ -282,34 +282,7 @@ export class TurnPolicyRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// Factory — build a registry with all role policies pre-registered
+// Factory — convenience constructors live in turn-policy-factory.ts to avoid
+// circular imports (explorer-policy.ts → explorer-agent.ts → tool-dispatch.ts).
+// Import createTurnPolicyRegistry / resetCoderPolicy from there instead.
 // ---------------------------------------------------------------------------
-
-import { createExplorerPolicy } from './turn-policies/explorer-policy';
-import { createCoderPolicy } from './turn-policies/coder-policy';
-import { createOrchestratorPolicy } from './turn-policies/orchestrator-policy';
-
-/**
- * Create a fully-loaded TurnPolicyRegistry with all role policies.
- * Call once per agent session. For stateful policies (Coder), call
- * resetCoderPolicy() at each delegation boundary to isolate state.
- */
-export function createTurnPolicyRegistry(): TurnPolicyRegistry {
-  const registry = new TurnPolicyRegistry();
-  registry.register(createExplorerPolicy());
-  registry.register(createCoderPolicy());
-  registry.register(createOrchestratorPolicy());
-  // Auditor and Reviewer are single-shot (no multi-turn loop to guard),
-  // so they don't need turn policies — their invariants are structural.
-  return registry;
-}
-
-/**
- * Replace the Coder policy in an existing registry with a fresh instance.
- * Call at the start of each delegate_coder task to prevent drift/failure
- * state from leaking across delegations within the same session.
- */
-export function resetCoderPolicy(registry: TurnPolicyRegistry): void {
-  registry.deregister('coder');
-  registry.register(createCoderPolicy());
-}
