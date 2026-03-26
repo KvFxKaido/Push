@@ -37,6 +37,7 @@ import {
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
 import { buildExplorerDelegationBrief } from './role-context';
 import { symbolLedger } from './symbol-persistence-ledger';
+import { createTurnPolicyRegistry, type TurnContext } from './turn-policy';
 
 const MAX_EXPLORER_ROUNDS = 14;
 const EXPLORER_ROUND_TIMEOUT_MS = 60_000;
@@ -244,7 +245,17 @@ export async function runExplorerAgent(
   ];
 
   const cards: ChatCard[] = [];
-  const hooks = buildExplorerHooks();
+  const policyRegistry = createTurnPolicyRegistry();
+  const turnCtx: TurnContext = {
+    role: 'explorer',
+    round: 0,
+    maxRounds: MAX_EXPLORER_ROUNDS,
+    sandboxId,
+    allowedRepo,
+    activeProvider,
+    activeModel: explorerModelId,
+  };
+  const hooks = policyRegistry.toToolHookRegistry(turnCtx);
   let rounds = 0;
 
   for (let round = 0; round < MAX_EXPLORER_ROUNDS; round++) {
@@ -253,6 +264,7 @@ export async function runExplorerAgent(
     }
 
     rounds = round + 1;
+    turnCtx.round = round;
     callbacks.onStatus('Explorer investigating...', `Round ${rounds}`);
 
     const { promise: roundStreamPromise, getAccumulated } = streamWithTimeout(
@@ -413,6 +425,22 @@ export async function runExplorerAgent(
         isToolResult: true,
       });
       continue;
+    }
+
+    // --- Turn policy: afterModelCall ---
+    // Before accepting a plain-text response as the final report, evaluate
+    // the turn policy (no-empty-report guard). If the policy injects a
+    // corrective message, continue the loop instead of returning.
+    turnCtx.round = round;
+    const policyResult = await policyRegistry.evaluateAfterModel(accumulated, messages, turnCtx);
+    if (policyResult) {
+      if (policyResult.action === 'halt') {
+        return { summary: policyResult.summary, cards, rounds };
+      }
+      if (policyResult.action === 'inject') {
+        messages.push(policyResult.message);
+        continue;
+      }
     }
 
     return {
