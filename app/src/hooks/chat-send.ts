@@ -38,6 +38,8 @@ import { execInSandbox } from '@/lib/sandbox-client';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { createId } from '@/hooks/chat-persistence';
+import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
+import { createOrchestratorPolicy } from '@/lib/turn-policies/orchestrator-policy';
 import type {
   ActiveRepo,
   AgentStatus,
@@ -587,6 +589,52 @@ export async function processAssistantTurn(
           if (upd.markDirty) dirtyConversationIdsRef.current.add(chatId);
           return updated;
         });
+      }
+    }
+
+    // --- Turn policy: ungrounded-completion guard ---
+    // Only runs when recovery decides this is a genuine natural completion
+    // (not a malformed tool call needing retry). This prevents the policy
+    // from intercepting responses that should go through the recovery path.
+    if (action.loopAction === 'break') {
+      const orchestratorPolicy = new TurnPolicyRegistry();
+      orchestratorPolicy.register(createOrchestratorPolicy());
+      const turnCtx: TurnContext = {
+        role: 'orchestrator',
+        round,
+        maxRounds: 100,
+        sandboxId: sandboxIdRef.current,
+        allowedRepo: repoRef.current || '',
+        activeProvider: lockedProvider,
+        activeModel: resolvedModel,
+      };
+      const policyResult = await orchestratorPolicy.evaluateAfterModel(accumulated, apiMessages, turnCtx);
+      if (policyResult?.action === 'inject') {
+        // Finalize the assistant message in conversation state before continuing,
+        // so it doesn't remain with status: 'streaming' (stale spinner).
+        setConversations((prev) => {
+          const conv = prev[chatId];
+          if (!conv) return prev;
+          const msgs = [...conv.messages];
+          const lastIdx = msgs.length - 1;
+          if (msgs[lastIdx]?.role === 'assistant') {
+            msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, status: 'done' };
+          }
+          dirtyConversationIdsRef.current.add(chatId);
+          return { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
+        });
+
+        // Nudge the model — inject corrective message and continue the loop
+        const nextApiMessages = [
+          ...action.apiMessages,
+          policyResult.message,
+        ];
+        return {
+          nextApiMessages,
+          nextRecoveryState,
+          loopAction: 'continue',
+          loopCompletedNormally: false,
+        };
       }
     }
 
