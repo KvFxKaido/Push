@@ -929,6 +929,35 @@ export async function runCoderAgent(
       statusFn('Coder reasoning', reasoningSnippet);
     }
 
+    // --- Turn policy: evaluate on every response ---
+    // Runs before tool detection so the drift counter resets on tool-call
+    // turns (the drift hook checks for tool JSON and returns null, which
+    // clears its internal counter). Also catches no-fake-completion on
+    // responses that skip tool calls entirely.
+    turnCtx.round = round;
+    const policyResult = await policyRegistry.evaluateAfterModel(accumulated, messages, turnCtx);
+    if (policyResult) {
+      if (policyResult.action === 'halt') {
+        statusFn('Coder stopped', 'Cognitive drift — halted');
+        const sandboxState = await fetchSandboxStateSummary(sandboxId);
+        return {
+          summary: policyResult.summary + sandboxState,
+          cards: allCards,
+          rounds,
+          checkpoints: checkpointCount,
+        };
+      }
+      if (policyResult.action === 'inject') {
+        const content = policyResult.message.content ?? '';
+        const statusLabel = /DRIFT_DETECTED/.test(content) ? 'Drift detected'
+          : /INCOMPLETE_COMPLETION/.test(content) ? 'Needs more detail'
+          : 'Policy intervention';
+        statusFn(statusLabel, content.replace(/\[POLICY:.*?\]\n?/g, '').slice(0, 80));
+        messages.push(policyResult.message);
+        continue;
+      }
+    }
+
     // Check for multiple tool calls (parallel reads + optional trailing mutation)
     const detected = detectAllToolCalls(accumulated);
     const parallelCalls = detected.readOnly.filter(c => c.source === 'sandbox');
@@ -1249,29 +1278,9 @@ ${truncatedResult}
         continue;
       }
 
-      // --- Cognitive Drift Kill Switch ---
-      // Delegated to the turn policy layer (coder-policy.ts detectCognitiveDrift).
-      // The policy handles both first-drift injection and consecutive-drift halting.
-      turnCtx.round = round;
-      const driftResult = await policyRegistry.evaluateAfterModel(accumulated, messages, turnCtx);
-      if (driftResult) {
-        if (driftResult.action === 'halt') {
-          statusFn('Coder stopped', 'Cognitive drift — halted');
-          const sandboxState = await fetchSandboxStateSummary(sandboxId);
-          return {
-            summary: driftResult.summary + sandboxState,
-            cards: allCards,
-            rounds,
-            checkpoints: checkpointCount,
-          };
-        }
-        if (driftResult.action === 'inject') {
-          statusFn('Drift detected', driftResult.message.content.slice(0, 80));
-          messages.push(driftResult.message);
-          continue;
-        }
-      }
       // No tool call — Coder is done, accumulated is the summary
+      // (Drift and no-fake-completion are already handled by the policy
+      // evaluation above, before tool detection.)
       // Run acceptance criteria if provided
       let criteriaResults: CriterionResult[] | undefined;
       if (effectiveAcceptanceCriteria && effectiveAcceptanceCriteria.length > 0) {
