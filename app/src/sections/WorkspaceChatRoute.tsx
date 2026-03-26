@@ -156,25 +156,27 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
 
   const { markSnapshotActivity } = snapshots;
 
+  const sandboxStart = sandbox.start;
+  const sandboxStop = sandbox.stop;
   const startCurrentSandbox = useCallback(() => {
     if (isScratch) {
-      void sandbox.start('', 'main');
+      void sandboxStart('', 'main');
       return;
     }
     if (activeRepo) {
-      void sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
+      void sandboxStart(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
     }
-  }, [activeRepo, isScratch, sandbox]);
+  }, [activeRepo, isScratch, sandboxStart]);
 
   const restartCurrentSandbox = useCallback(() => {
     if (isScratch) {
-      void sandbox.stop().then(() => sandbox.start('', 'main'));
+      void sandboxStop().then(() => sandboxStart('', 'main'));
       return;
     }
     if (activeRepo) {
-      void sandbox.stop().then(() => sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
+      void sandboxStop().then(() => sandboxStart(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
     }
-  }, [activeRepo, isScratch, sandbox]);
+  }, [activeRepo, isScratch, sandboxStart, sandboxStop]);
 
   const {
     composerPrefillRequest,
