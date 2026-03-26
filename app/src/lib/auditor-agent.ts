@@ -43,18 +43,40 @@ export interface AuditorRunOptions {
 type AuditResult = { verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData };
 const pendingAudits = new Map<string, Promise<AuditResult>>();
 const auditListeners = new Map<string, Set<(phase: string) => void>>();
+const auditLatestPhase = new Map<string, string>();
 
 function auditCoalesceKey(
   diff: string,
   provider: string,
-  model?: string,
-  context?: AuditorPromptContext,
+  modelId: string | undefined,
+  runtimeContext: string,
   hookResult?: HookResult | null,
 ): string {
-  const tail = diff.length > 400 ? diff.slice(-200) : '';
-  const ctx = context?.source ?? '';
-  const hook = hookResult ? `${hookResult.exitCode}` : '';
-  return `${provider}:${model ?? ''}:${diff.length}:${diff.slice(0, 200)}:${tail}:${ctx}:${hook}`;
+  return JSON.stringify({
+    provider,
+    modelId: modelId ?? '',
+    runtimeContext,
+    hookResult: hookResult
+      ? {
+        exitCode: hookResult.exitCode,
+        output: hookResult.output,
+      }
+      : null,
+    diff,
+  });
+}
+
+function addAuditListener(key: string, onStatus: (phase: string) => void): void {
+  const listeners = auditListeners.get(key);
+  if (!listeners) return;
+  listeners.add(onStatus);
+  const latestPhase = auditLatestPhase.get(key);
+  if (latestPhase) onStatus(latestPhase);
+}
+
+function broadcastAuditStatus(key: string, phase: string): void {
+  auditLatestPhase.set(key, phase);
+  auditListeners.get(key)?.forEach((listener) => listener(phase));
 }
 
 const AUDITOR_SYSTEM_PROMPT = `You are the Auditor agent for Push, a mobile AI coding assistant. Your sole job is to review code diffs for safety.
@@ -94,12 +116,13 @@ export async function runAuditor(
   options?: AuditorRunOptions,
 ): Promise<AuditResult> {
   const provider = (options?.providerOverride || getActiveProvider()) as string;
-  const model = options?.modelOverride?.trim() || undefined;
-  const key = auditCoalesceKey(diff, provider, model, context, hookResult);
+  const modelId = options?.modelOverride?.trim() || getModelForRole(provider as ActiveProvider, 'auditor')?.id;
+  const runtimeContext = buildAuditorContextBlock(context);
+  const key = auditCoalesceKey(diff, provider, modelId, runtimeContext, hookResult);
 
   const inflight = pendingAudits.get(key);
   if (inflight) {
-    auditListeners.get(key)?.add(onStatus);
+    addAuditListener(key, onStatus);
     return inflight;
   }
 
@@ -107,12 +130,17 @@ export async function runAuditor(
   auditListeners.set(key, listeners);
 
   const run = runAuditorCore(diff, (phase) => {
-    auditListeners.get(key)?.forEach(l => l(phase));
-  }, context, hookResult, options);
+    broadcastAuditStatus(key, phase);
+  }, context, hookResult, {
+    ...options,
+    providerOverride: provider as ActiveProvider,
+    modelOverride: modelId,
+  }, runtimeContext);
   pendingAudits.set(key, run);
   run.finally(() => {
     pendingAudits.delete(key);
     auditListeners.delete(key);
+    auditLatestPhase.delete(key);
   });
   return run;
 }
@@ -123,6 +151,7 @@ async function runAuditorCore(
   context?: AuditorPromptContext,
   hookResult?: HookResult | null,
   options?: AuditorRunOptions,
+  runtimeContext?: string,
 ): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
   const filesReviewed = parseDiffStats(diff).filesChanged;
 
@@ -141,11 +170,10 @@ async function runAuditorCore(
   }
 
   const { streamFn } = getProviderStreamFn(activeProvider);
-  const roleModel = getModelForRole(activeProvider, 'auditor');
-  const auditorModelId = options?.modelOverride?.trim() || roleModel?.id; // undefined falls back to provider default
-  const runtimeContext = buildAuditorContextBlock(context);
-  const systemPrompt = runtimeContext
-    ? `${AUDITOR_SYSTEM_PROMPT}\n\n${runtimeContext}`
+  const auditorModelId = options?.modelOverride?.trim() || getModelForRole(activeProvider, 'auditor')?.id; // undefined falls back to provider default
+  const contextBlock = runtimeContext ?? buildAuditorContextBlock(context);
+  const systemPrompt = contextBlock
+    ? `${AUDITOR_SYSTEM_PROMPT}\n\n${contextBlock}`
     : AUDITOR_SYSTEM_PROMPT;
 
   onStatus('Auditor reviewing...');

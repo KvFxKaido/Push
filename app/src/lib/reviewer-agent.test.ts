@@ -132,8 +132,64 @@ describe('runReviewer', () => {
     expect(r1).toBe(r2);
     // Only one stream call was made
     expect(mockStreamFn).toHaveBeenCalledTimes(1);
-    // First caller received status updates
+    // Both callers received status updates
     expect(statuses1.length).toBeGreaterThan(0);
+    expect(statuses2.length).toBeGreaterThan(0);
+  });
+
+  it('does not coalesce concurrent reviews with different runtime context', async () => {
+    mockBuildReviewerContextBlock.mockImplementation((context?: { sourceLabel?: string }) => context?.sourceLabel ?? '');
+    mockStreamFn.mockImplementation(async (
+      _messages: unknown,
+      onToken: (token: string) => void,
+      onDone: () => void,
+    ) => {
+      await new Promise((r) => setTimeout(r, 10));
+      onToken('{"summary":"Looks good","comments":[]}');
+      onDone();
+    });
+
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+
+    await Promise.all([
+      runReviewer(diff, { provider: 'openrouter', context: { sourceLabel: 'Repo A' } }, () => {}),
+      runReviewer(diff, { provider: 'openrouter', context: { sourceLabel: 'Repo B' } }, () => {}),
+    ]);
+
+    expect(mockStreamFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('replays the latest status to a late-joining coalesced reviewer subscriber', async () => {
+    const releaseSymbols: { current: null | (() => void) } = { current: null };
+    mockReadSymbolsFromSandbox.mockImplementation(() => new Promise((resolve) => {
+      releaseSymbols.current = () => resolve({ totalLines: 1, symbols: [] });
+    }));
+
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+    const statuses1: string[] = [];
+    const statuses2: string[] = [];
+
+    const first = runReviewer(
+      diff,
+      { provider: 'openrouter', sandboxId: 'sb-123' },
+      (phase) => { statuses1.push(phase); },
+    );
+
+    await Promise.resolve();
+
+    const second = runReviewer(
+      diff,
+      { provider: 'openrouter', sandboxId: 'sb-123' },
+      (phase) => { statuses2.push(phase); },
+    );
+
+    expect(statuses1).toContain('Preparing review...');
+    expect(statuses2).toContain('Preparing review...');
+
+    if (releaseSymbols.current) releaseSymbols.current();
+    await Promise.all([first, second]);
+
+    expect(mockStreamFn).toHaveBeenCalledTimes(1);
   });
 
   it('omits file structure when sandbox is unavailable', async () => {

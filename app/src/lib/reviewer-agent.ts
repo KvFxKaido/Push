@@ -89,12 +89,35 @@ Review for:
 // ---------------------------------------------------------------------------
 const pendingReviews = new Map<string, Promise<ReviewResult>>();
 const reviewListeners = new Map<string, Set<(phase: string) => void>>();
+const reviewLatestPhase = new Map<string, string>();
 
-function reviewCoalesceKey(diff: string, provider: string, model?: string, context?: ReviewerPromptContext, sandboxId?: string): string {
-  const tail = diff.length > 400 ? diff.slice(-200) : '';
-  const ctx = context?.source ?? '';
-  const sbx = sandboxId ?? '';
-  return `${provider}:${model ?? ''}:${diff.length}:${diff.slice(0, 200)}:${tail}:${ctx}:${sbx}`;
+function reviewCoalesceKey(
+  diff: string,
+  provider: string,
+  modelId: string | undefined,
+  runtimeContext: string,
+  sandboxId?: string,
+): string {
+  return JSON.stringify({
+    provider,
+    modelId: modelId ?? '',
+    runtimeContext,
+    sandboxId: sandboxId ?? '',
+    diff,
+  });
+}
+
+function addReviewListener(key: string, onStatus: (phase: string) => void): void {
+  const listeners = reviewListeners.get(key);
+  if (!listeners) return;
+  listeners.add(onStatus);
+  const latestPhase = reviewLatestPhase.get(key);
+  if (latestPhase) onStatus(latestPhase);
+}
+
+function broadcastReviewStatus(key: string, phase: string): void {
+  reviewLatestPhase.set(key, phase);
+  reviewListeners.get(key)?.forEach((listener) => listener(phase));
 }
 
 const REVIEWER_SYSTEM_PROMPT = `You are the Reviewer agent for Push, a mobile AI coding assistant. Your role is to provide advisory code review feedback on diffs.
@@ -198,24 +221,31 @@ export async function runReviewer(
   options: ReviewerOptions,
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
-  const key = reviewCoalesceKey(diff, options.provider, options.model, options.context, options.sandboxId);
+  const roleModel = getModelForRole(options.provider, 'reviewer');
+  const modelId = options.model?.trim() || roleModel?.id;
+  const runtimeContext = buildReviewerContextBlock(options.context);
+  const key = reviewCoalesceKey(diff, options.provider, modelId, runtimeContext, options.sandboxId);
 
   const inflight = pendingReviews.get(key);
   if (inflight) {
-    reviewListeners.get(key)?.add(onStatus);
+    addReviewListener(key, onStatus);
     return inflight;
   }
 
   const listeners = new Set([onStatus]);
   reviewListeners.set(key, listeners);
 
-  const run = runReviewerCore(diff, options, (phase) => {
-    reviewListeners.get(key)?.forEach(l => l(phase));
+  const run = runReviewerCore(diff, {
+    ...options,
+    model: modelId,
+  }, runtimeContext, (phase) => {
+    broadcastReviewStatus(key, phase);
   });
   pendingReviews.set(key, run);
   run.finally(() => {
     pendingReviews.delete(key);
     reviewListeners.delete(key);
+    reviewLatestPhase.delete(key);
   });
   return run;
 }
@@ -223,6 +253,7 @@ export async function runReviewer(
 async function runReviewerCore(
   diff: string,
   options: ReviewerOptions,
+  runtimeContext: string,
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
   const DIFF_LIMIT = 40_000;
@@ -231,12 +262,10 @@ async function runReviewerCore(
   const totalFiles = parseDiffStats(diff).filesChanged;
   const filesReviewed = parseDiffStats(chunkedDiff).filesChanged;
   const truncated = filesReviewed < totalFiles;
-  const { provider, model: modelOverride, context, sandboxId } = options;
+  const { provider, model: modelOverride, sandboxId } = options;
 
   const { streamFn } = getProviderStreamFn(provider);
-  const roleModel = getModelForRole(provider, 'reviewer');
-  const modelId = modelOverride || roleModel?.id;
-  const runtimeContext = buildReviewerContextBlock(context);
+  const modelId = modelOverride?.trim() || getModelForRole(provider, 'reviewer')?.id;
   let fileStructureBlock: string | null = null;
   if (sandboxId) {
     onStatus('Preparing review...');

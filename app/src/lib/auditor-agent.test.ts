@@ -5,11 +5,13 @@ const {
   mockGetActiveProvider,
   mockGetProviderStreamFn,
   mockGetModelForRole,
+  mockBuildAuditorContextBlock,
 } = vi.hoisted(() => ({
   mockStreamFn: vi.fn(),
   mockGetActiveProvider: vi.fn(),
   mockGetProviderStreamFn: vi.fn(),
   mockGetModelForRole: vi.fn(),
+  mockBuildAuditorContextBlock: vi.fn(),
 }));
 
 vi.mock('./orchestrator', () => ({
@@ -26,7 +28,7 @@ vi.mock(import('./providers'), async (importOriginal) => {
 });
 
 vi.mock('./role-context', () => ({
-  buildAuditorContextBlock: vi.fn(() => ''),
+  buildAuditorContextBlock: (...args: unknown[]) => mockBuildAuditorContextBlock(...args),
 }));
 
 import { runAuditor } from './auditor-agent';
@@ -48,6 +50,7 @@ describe('runAuditor', () => {
     mockGetActiveProvider.mockReset();
     mockGetProviderStreamFn.mockReset();
     mockGetModelForRole.mockReset();
+    mockBuildAuditorContextBlock.mockReset();
 
     mockGetActiveProvider.mockReturnValue('openrouter');
     mockGetProviderStreamFn.mockImplementation((provider: string) => ({
@@ -55,6 +58,7 @@ describe('runAuditor', () => {
       streamFn: mockStreamFn,
     }));
     mockGetModelForRole.mockReturnValue({ id: 'default-auditor-model' });
+    mockBuildAuditorContextBlock.mockReturnValue('');
     mockStreamFn.mockImplementation((
       _messages: unknown,
       onToken: (token: string) => void,
@@ -110,8 +114,61 @@ describe('runAuditor', () => {
     expect(r1.verdict).toBe('safe');
     // Only one stream call was made
     expect(mockStreamFn).toHaveBeenCalledTimes(1);
-    // First caller received status updates
+    // Both callers received status updates
     expect(statuses1.length).toBeGreaterThan(0);
+    expect(statuses2.length).toBeGreaterThan(0);
+  });
+
+  it('does not coalesce concurrent audits with different hook output', async () => {
+    mockStreamFn.mockImplementation(async (
+      _messages: unknown,
+      onToken: (token: string) => void,
+      onDone: () => void,
+    ) => {
+      await new Promise((r) => setTimeout(r, 10));
+      onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+      onDone();
+    });
+
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+
+    await Promise.all([
+      runAuditor(diff, () => {}, undefined, { exitCode: 1, output: 'lint failed: a' }),
+      runAuditor(diff, () => {}, undefined, { exitCode: 1, output: 'lint failed: b' }),
+    ]);
+
+    expect(mockStreamFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('replays the latest status to a late-joining coalesced auditor subscriber', async () => {
+    const releaseStream: { current: null | (() => void) } = { current: null };
+    mockStreamFn.mockImplementation(async (
+      _messages: unknown,
+      onToken: (token: string) => void,
+      onDone: () => void,
+    ) => new Promise<void>((resolve) => {
+      releaseStream.current = () => {
+        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+        onDone();
+        resolve();
+      };
+    }));
+
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+    const statuses1: string[] = [];
+    const statuses2: string[] = [];
+
+    const first = runAuditor(diff, (phase) => { statuses1.push(phase); });
+    await Promise.resolve();
+    const second = runAuditor(diff, (phase) => { statuses2.push(phase); });
+
+    expect(statuses1).toContain('Auditor reviewing...');
+    expect(statuses2).toContain('Auditor reviewing...');
+
+    if (releaseStream.current) releaseStream.current();
+    await Promise.all([first, second]);
+
+    expect(mockStreamFn).toHaveBeenCalledTimes(1);
   });
 
   it('builds file hints from the chunked diff only', async () => {
