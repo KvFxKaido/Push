@@ -167,4 +167,67 @@ describe('chat-send', () => {
     });
     expect(dirtyRef.current.has('chat-1')).toBe(true);
   });
+
+  it('injects corrective message and continues when orchestrator claims ungrounded completion', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+    // No delegation results in the conversation — the "done" claim is ungrounded
+    const apiMessages: ChatMessage[] = [
+      makeMessage({ id: 'user-1', role: 'user', content: 'Fix the auth bug', status: 'done' }),
+    ];
+
+    const result = await processAssistantTurn(
+      0,
+      'Everything is done and completed.',
+      '',
+      apiMessages,
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    // Policy should inject a corrective message and continue the loop
+    expect(result.loopAction).toBe('continue');
+    expect(result.loopCompletedNormally).toBe(false);
+
+    // nextApiMessages should include the policy's corrective message
+    const lastMsg = result.nextApiMessages.at(-1);
+    expect(lastMsg?.role).toBe('user');
+    expect(lastMsg?.content).toContain('UNGROUNDED_COMPLETION');
+
+    // Assistant message should be finalized (not stuck in streaming)
+    const assistantMsg = conversationsRef.current['chat-1'].messages.at(-1);
+    expect(assistantMsg?.status).toBe('done');
+
+    // Conversation should be marked dirty
+    expect(dirtyRef.current.has('chat-1')).toBe(true);
+  });
+
+  it('does NOT inject when completion is grounded by delegation result', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+    // Delegation result is present in conversation
+    const apiMessages: ChatMessage[] = [
+      makeMessage({ id: 'user-1', role: 'user', content: 'Fix the auth bug', status: 'done' }),
+      makeMessage({ id: 'tool-result', role: 'user', content: '[Tool Result — delegate_coder]\nModified 3 files.', status: 'done' }),
+    ];
+
+    const result = await processAssistantTurn(
+      0,
+      'The task is done.',
+      '',
+      apiMessages,
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    // Should complete normally — grounded by delegation result
+    expect(result.loopAction).toBe('break');
+    expect(result.loopCompletedNormally).toBe(true);
+  });
 });
