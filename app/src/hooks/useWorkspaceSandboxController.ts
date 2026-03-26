@@ -302,11 +302,17 @@ export function useWorkspaceSandboxController({
     onDisconnect();
   }, [abortStream, isStreaming, onDisconnect]);
 
+  // Stop sandbox on unmount only. sandbox.stop is a stable useCallback
+  // reference, so this cleanup won't re-fire on every render. Using the
+  // full `sandbox` object as a dep caused stop() to fire on every
+  // re-render (new object identity each time), resetting status to idle
+  // and making "Start sandbox" buttons/banners reappear.
+  const stopSandbox = sandbox.stop;
   useEffect(() => {
     return () => {
-      void sandbox.stop();
+      void stopSandbox();
     };
-  }, [sandbox]);
+  }, [stopSandbox]);
 
   return {
     showFileBrowser,
