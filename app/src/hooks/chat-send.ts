@@ -610,6 +610,20 @@ export async function processAssistantTurn(
       };
       const policyResult = await orchestratorPolicy.evaluateAfterModel(accumulated, apiMessages, turnCtx);
       if (policyResult?.action === 'inject') {
+        // Finalize the assistant message in conversation state before continuing,
+        // so it doesn't remain with status: 'streaming' (stale spinner).
+        setConversations((prev) => {
+          const conv = prev[chatId];
+          if (!conv) return prev;
+          const msgs = [...conv.messages];
+          const lastIdx = msgs.length - 1;
+          if (msgs[lastIdx]?.role === 'assistant') {
+            msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, status: 'done' };
+          }
+          dirtyConversationIdsRef.current.add(chatId);
+          return { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
+        });
+
         // Nudge the model — inject corrective message and continue the loop
         const nextApiMessages = [
           ...action.apiMessages,
