@@ -6,10 +6,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   TurnPolicyRegistry,
-  resetCoderPolicy,
   type TurnContext,
   type AgentRole,
 } from './turn-policy';
+import { resetCoderPolicy } from './turn-policy-factory';
 import type { ChatMessage } from '@/types';
 
 // ---------------------------------------------------------------------------

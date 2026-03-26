@@ -27,6 +27,8 @@ import { buildContextSummaryBlock } from './context-compaction';
 import { getToolPublicName } from './tool-registry';
 import { buildCoderDelegationBrief } from './role-context';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
+import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
+import { createCoderPolicy } from './turn-policies/coder-policy';
 
 const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — resets on each token)
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
@@ -887,6 +889,20 @@ export async function runCoderAgent(
   const mutationFailures = new Map<string, MutationFailureEntry>(); // track consecutive failures per tool+file
   let consecutiveDriftRounds = 0; // count rounds of cognitive drift
 
+  // --- Turn policy layer (no-fake-completion guard) ---
+  // Create a Coder-only registry to avoid circular imports through explorer-agent.
+  const policyRegistry = new TurnPolicyRegistry();
+  policyRegistry.register(createCoderPolicy());
+  const turnCtx: TurnContext = {
+    role: 'coder',
+    round: 0,
+    maxRounds: maxRounds,
+    sandboxId,
+    allowedRepo: '',
+    activeProvider,
+    activeModel: coderModelId,
+  };
+
   // Build initial messages — include intent/constraints from structured delegation brief (Item 1B)
   let taskPreamble = buildCoderDelegationBrief({
     task,
@@ -1338,6 +1354,27 @@ ${truncatedResult}
 
       // No drift — reset consecutive drift counter
       consecutiveDriftRounds = 0;
+
+      // --- Turn policy: no-fake-completion guard ---
+      // Before accepting a bare response as completion, check if it has
+      // artifact evidence (file changes, blocked report). If not, nudge.
+      turnCtx.round = round;
+      const policyResult = await policyRegistry.evaluateAfterModel(accumulated, messages, turnCtx);
+      if (policyResult) {
+        if (policyResult.action === 'halt') {
+          const sandboxState = await fetchSandboxStateSummary(sandboxId);
+          return {
+            summary: policyResult.summary + sandboxState,
+            cards: allCards,
+            rounds,
+            checkpoints: checkpointCount,
+          };
+        }
+        if (policyResult.action === 'inject') {
+          messages.push(policyResult.message);
+          continue;
+        }
+      }
 
       // No tool call — Coder is done, accumulated is the summary
       // Run acceptance criteria if provided
