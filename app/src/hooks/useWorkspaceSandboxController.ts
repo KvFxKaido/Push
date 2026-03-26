@@ -85,6 +85,13 @@ export function useWorkspaceSandboxController({
   setWorkspaceSessionId,
   skipBranchTeardownRef,
 }: SandboxControllerArgs) {
+  // Decompose sandbox into stable individual references to avoid depending
+  // on the full object (which is a new identity every render).
+  const sandboxId = sandbox.sandboxId;
+  const sandboxStatus = sandbox.status;
+  const sandboxStart = sandbox.start;   // stable useCallback
+  const stopSandbox = sandbox.stop;     // stable useCallback
+
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [sandboxState, setSandboxState] = useState<SandboxStateCardData | null>(null);
   const [sandboxStateLoading, setSandboxStateLoading] = useState(false);
@@ -108,12 +115,12 @@ export function useWorkspaceSandboxController({
   }, []);
 
   const inspectNewChatWorkspace = useCallback(async (): Promise<NewChatWorkspaceState | null> => {
-    if (sandbox.status !== 'ready' || !sandbox.sandboxId) return null;
+    if (sandboxStatus !== 'ready' || !sandboxId) return null;
 
     if (isScratch) {
       try {
         const result = await execInSandbox(
-          sandbox.sandboxId,
+          sandboxId,
           "cd /workspace && total=$(find . -path './.git' -prune -o -type f -print | sed 's#^\\./##' | sort | wc -l | tr -d ' '); printf '__COUNT__%s\\n' \"$total\"; find . -path './.git' -prune -o -type f -print | sed 's#^\\./##' | sort | head -6",
         );
         if (result.exitCode !== 0) return null;
@@ -125,7 +132,7 @@ export function useWorkspaceSandboxController({
 
         return {
           mode: 'scratch',
-          sandboxId: sandbox.sandboxId,
+          sandboxId,
           branch: 'scratch',
           changedFiles: fileCount,
           stagedFiles: 0,
@@ -139,7 +146,7 @@ export function useWorkspaceSandboxController({
       }
     }
 
-    const nextState = await fetchSandboxState(sandbox.sandboxId);
+    const nextState = await fetchSandboxState(sandboxId);
     if (!nextState || nextState.changedFiles <= 0) return null;
 
     return {
@@ -153,37 +160,37 @@ export function useWorkspaceSandboxController({
       preview: nextState.preview,
       fetchedAt: nextState.fetchedAt,
     };
-  }, [fetchSandboxState, isScratch, sandbox.sandboxId, sandbox.status]);
+  }, [fetchSandboxState, isScratch, sandboxId, sandboxStatus]);
 
   useEffect(() => {
-    if (sandbox.status !== 'ready' || !sandbox.sandboxId) {
-      if (sandbox.status === 'idle') {
+    if (sandboxStatus !== 'ready' || !sandboxId) {
+      if (sandboxStatus === 'idle') {
         setSandboxState(null);
         sandboxStateFetchedFor.current = null;
       }
       return;
     }
-    if (sandboxStateFetchedFor.current === sandbox.sandboxId) return;
-    sandboxStateFetchedFor.current = sandbox.sandboxId;
-    void fetchSandboxState(sandbox.sandboxId);
-  }, [sandbox.status, sandbox.sandboxId, fetchSandboxState]);
+    if (sandboxStateFetchedFor.current === sandboxId) return;
+    sandboxStateFetchedFor.current = sandboxId;
+    void fetchSandboxState(sandboxId);
+  }, [sandboxStatus, sandboxId, fetchSandboxState]);
 
   const ensureSandbox = useCallback(async (): Promise<string | null> => {
-    if (sandbox.sandboxId) return sandbox.sandboxId;
-    if (isScratch) return sandbox.start('', 'main');
+    if (sandboxId) return sandboxId;
+    if (isScratch) return sandboxStart('', 'main');
     if (!workspaceRepo) return null;
-    return sandbox.start(workspaceRepo.full_name, workspaceRepo.current_branch || workspaceRepo.default_branch);
-  }, [sandbox, isScratch, workspaceRepo]);
+    return sandboxStart(workspaceRepo.full_name, workspaceRepo.current_branch || workspaceRepo.default_branch);
+  }, [sandboxId, sandboxStart, isScratch, workspaceRepo]);
 
   useEffect(() => {
     setEnsureSandbox(ensureSandbox);
   }, [ensureSandbox, setEnsureSandbox]);
 
   useEffect(() => {
-    setSandboxId(sandbox.sandboxId);
-    if (workspaceSession.sandboxId === sandbox.sandboxId) return;
-    onWorkspaceSessionChange({ ...workspaceSession, sandboxId: sandbox.sandboxId });
-  }, [onWorkspaceSessionChange, sandbox.sandboxId, setSandboxId, workspaceSession]);
+    setSandboxId(sandboxId);
+    if (workspaceSession.sandboxId === sandboxId) return;
+    onWorkspaceSessionChange({ ...workspaceSession, sandboxId });
+  }, [onWorkspaceSessionChange, sandboxId, setSandboxId, workspaceSession]);
 
   useEffect(() => {
     setWorkspaceSessionId(workspaceSession.id ?? null);
@@ -202,12 +209,12 @@ export function useWorkspaceSandboxController({
     if (isStreaming) {
       abortStream();
     }
-    void sandbox.stop();
+    void stopSandbox();
 
     if (workspaceSession.kind === 'scratch') {
       createNewChat();
     }
-  }, [abortStream, createNewChat, isStreaming, sandbox, workspaceSession.id, workspaceSession.kind]);
+  }, [abortStream, createNewChat, isStreaming, stopSandbox, workspaceSession.id, workspaceSession.kind]);
 
   const prevBranchRef = useRef<string | undefined>(workspaceRepo?.current_branch);
   useEffect(() => {
@@ -226,21 +233,20 @@ export function useWorkspaceSandboxController({
     }
 
     console.log(`[WorkspaceScreen] Branch changed: ${prevBranch} → ${currentBranchValue}, tearing down sandbox`);
-    void sandbox.stop();
-  }, [workspaceRepo?.current_branch, isScratch, sandbox, skipBranchTeardownRef]);
+    void stopSandbox();
+  }, [workspaceRepo?.current_branch, isScratch, stopSandbox, skipBranchTeardownRef]);
 
-  const { status: sandboxStatus, sandboxId: currentSandboxId } = sandbox;
   useEffect(() => {
-    if (isScratch && sandboxStatus === 'idle' && !currentSandboxId) {
-      void sandbox.start('', 'main');
+    if (isScratch && sandboxStatus === 'idle' && !sandboxId) {
+      void sandboxStart('', 'main');
     }
-  }, [isScratch, sandboxStatus, currentSandboxId, sandbox]);
+  }, [isScratch, sandboxStatus, sandboxId, sandboxStart]);
 
   const handleSandboxDownload = useCallback(async () => {
-    if (!sandbox.sandboxId || sandboxDownloading) return;
+    if (!sandboxId || sandboxDownloading) return;
     setSandboxDownloading(true);
     try {
-      const result = await downloadFromSandbox(sandbox.sandboxId);
+      const result = await downloadFromSandbox(sandboxId);
       if (result.ok && result.archiveBase64) {
         const raw = atob(result.archiveBase64);
         const bytes = new Uint8Array(raw.length);
@@ -258,17 +264,17 @@ export function useWorkspaceSandboxController({
     } finally {
       setSandboxDownloading(false);
     }
-  }, [sandbox.sandboxId, sandboxDownloading]);
+  }, [sandboxId, sandboxDownloading]);
 
   const handleSandboxRestart = useCallback(async () => {
-    await sandbox.stop();
+    await stopSandbox();
     if (isScratch) {
-      await sandbox.start('', 'main');
+      await sandboxStart('', 'main');
       return;
     }
     if (!workspaceRepo) return;
-    await sandbox.start(workspaceRepo.full_name, workspaceRepo.current_branch || workspaceRepo.default_branch);
-  }, [isScratch, sandbox, workspaceRepo]);
+    await sandboxStart(workspaceRepo.full_name, workspaceRepo.current_branch || workspaceRepo.default_branch);
+  }, [isScratch, stopSandbox, sandboxStart, workspaceRepo]);
 
   const fileBrowserCapabilities: Pick<WorkspaceCapabilities, 'canCommitAndPush'> = {
     canCommitAndPush: !isScratch,
@@ -277,7 +283,7 @@ export function useWorkspaceSandboxController({
   const fileBrowserScratchActions: WorkspaceScratchActions | null = isScratch
     ? buildWorkspaceScratchActions({
       snapshots,
-      sandboxStatus: sandbox.status,
+      sandboxStatus,
       downloadingWorkspace: sandboxDownloading,
       onDownloadWorkspace: () => {
         void handleSandboxDownload();
@@ -302,12 +308,8 @@ export function useWorkspaceSandboxController({
     onDisconnect();
   }, [abortStream, isStreaming, onDisconnect]);
 
-  // Stop sandbox on unmount only. sandbox.stop is a stable useCallback
-  // reference, so this cleanup won't re-fire on every render. Using the
-  // full `sandbox` object as a dep caused stop() to fire on every
-  // re-render (new object identity each time), resetting status to idle
-  // and making "Start sandbox" buttons/banners reappear.
-  const stopSandbox = sandbox.stop;
+  // Stop sandbox on unmount only — stopSandbox is extracted at the top
+  // of the hook as a stable reference.
   useEffect(() => {
     return () => {
       void stopSandbox();
