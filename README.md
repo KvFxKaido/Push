@@ -7,15 +7,21 @@ Push is a mobile-first AI coding notebook with role-based agents for chatting wi
 
 ## Quick orientation
 
-- Chat-first workflow with repo-locked context
-- Role-based agents: Orchestrator, Explorer, Coder, Reviewer, Auditor
-- Web app plus local CLI/TUI
-- Scratch workspaces when you do not want GitHub auth
-- PR-based merge flow for repo work
+- **Chat-first workflow** with repo-locked context
+- **Role-based agents**: 
+  - **Orchestrator** — conversational lead, routes tasks
+  - **Explorer** — read-only codebase investigation
+  - **Coder** — autonomous sandbox implementation
+  - **Reviewer** — advisory diff review
+  - **Auditor** — pre-commit SAFE/UNSAFE gate
+- **Web app** plus **local CLI/TUI** (full-screen TUI in active development)
+- **Modal sandbox** — ephemeral Linux workspaces for code execution
+- **Scratch workspaces** when you don't want GitHub auth
+- **PR-based merge flow** for repo work
 
 ## Start here
 
-For the detailed architecture, workflow, and operating notes, read [CLAUDE.md](CLAUDE.md).
+For detailed architecture, workflow, and operating notes, read [CLAUDE.md](CLAUDE.md).
 
 For the CLI, see [cli/README.md](cli/README.md).
 
