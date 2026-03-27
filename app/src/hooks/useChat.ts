@@ -148,6 +148,8 @@ export function useChat(
   // --- Persistence refs ---
   const dirtyConversationIdsRef = useRef(new Set<string>());
   const deletedConversationIdsRef = useRef(new Set<string>());
+  const saveRetryCountsRef = useRef<Map<string, number>>(new Map());
+
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
   const agentEventsByChatRef = useRef<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
@@ -193,15 +195,16 @@ export function useChat(
     activeChatIdRef.current = activeChatId;
   }, [activeChatId]);
 
-  const updateConversations = useCallback((updater: Record<string, Conversation> | ((prev: Record<string, Conversation>) => Record<string, Conversation>)) => {
-    setConversations((prev) => {
-      const next = typeof updater === 'function'
-        ? updater(prev)
-        : updater;
-      conversationsRef.current = next;
-      return next;
-    });
-  }, []);
+  const updateConversations = useCallback(
+    (updater: Record<string, Conversation> | ((prev: Record<string, Conversation>) => Record<string, Conversation>)) => {
+      setConversations((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        conversationsRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
 
   const replaceAgentEvents = useCallback((next: Record<string, AgentStatusEvent[]>) => {
     agentEventsByChatRef.current = next;
@@ -210,6 +213,75 @@ export function useChat(
     }
   }, []);
 
+  const flushDirty = useCallback(async () => {
+    if (!conversationsLoaded) return;
+    const dirty = dirtyConversationIdsRef.current;
+    const deleted = deletedConversationIdsRef.current;
+    if (dirty.size === 0 && deleted.size === 0) return;
+
+    const dirtyIds = [...dirty];
+    const deletedIds = [...deleted];
+    dirty.clear();
+    deleted.clear();
+
+    const currentConvs = conversationsRef.current;
+    for (const id of dirtyIds) {
+      const conv = currentConvs[id];
+      if (conv) {
+        try {
+          await saveConversationToDB(conv);
+          saveRetryCountsRef.current.delete(id);
+        } catch (err) {
+          const count = saveRetryCountsRef.current.get(id) || 0;
+          if (count < 3) {
+            saveRetryCountsRef.current.set(id, count + 1);
+            dirty.add(id);
+          } else {
+            console.warn(`Failed to save conversation ${id} after 3 retries. Dropping update.`, err);
+            saveRetryCountsRef.current.delete(id);
+          }
+        }
+      }
+    }
+    for (const id of deletedIds) {
+      try {
+        await deleteConversationFromDB(id);
+        saveRetryCountsRef.current.delete(id);
+      } catch (err) {
+        const count = saveRetryCountsRef.current.get(id) || 0;
+        if (count < 3) {
+          saveRetryCountsRef.current.set(id, count + 1);
+          deleted.add(id);
+        } else {
+          console.warn(`Failed to delete conversation ${id} after 3 retries. Dropping deletion.`, err);
+          saveRetryCountsRef.current.delete(id);
+        }
+      }
+    }
+  }, [conversationsLoaded]);
+
+  // Periodic flush
+  useEffect(() => {
+    const interval = setInterval(flushDirty, 3000);
+    return () => clearInterval(interval);
+  }, [flushDirty]);
+
+  // Emergency save on visibility change (mobile app-switch/lock)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        void flushDirty();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [flushDirty]);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const appendRunEvent = useCallback((chatId: string, event: RunEventInput) => {
     updateConversations((prev) => {
       const conversation = prev[chatId];
@@ -229,33 +301,6 @@ export function useChat(
       };
     });
   }, [updateConversations]);
-
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  // --- Dirty conversation flush ---
-  useEffect(() => {
-    if (!conversationsLoaded) return;
-    const dirty = dirtyConversationIdsRef.current;
-    const deleted = deletedConversationIdsRef.current;
-    if (dirty.size === 0 && deleted.size === 0) return;
-
-    const dirtyIds = [...dirty];
-    const deletedIds = [...deleted];
-    dirty.clear();
-    deleted.clear();
-
-    for (const id of dirtyIds) {
-      const conv = conversations[id];
-      if (conv) void saveConversationToDB(conv).catch(() => { dirty.add(id); });
-    }
-    for (const id of deletedIds) {
-      void deleteConversationFromDB(id).catch(() => { deleted.add(id); });
-    }
-  }, [conversations, conversationsLoaded]);
 
   // --- Checkpoint + resume lifecycle ---
   const {
