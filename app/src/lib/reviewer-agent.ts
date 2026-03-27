@@ -13,6 +13,7 @@ import { getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
 import { buildReviewerContextBlock, type ReviewerPromptContext } from './role-context';
 import { readSymbolsFromSandbox, type SandboxSymbol } from './sandbox-client';
+import { SystemPromptBuilder } from './system-prompt-builder';
 import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats, parseDiffIntoFiles, chunkDiffByFile, classifyFilePath } from './diff-utils';
 
@@ -272,10 +273,11 @@ async function runReviewerCore(
     fileStructureBlock = await fetchFileStructure(chunkedDiff, sandboxId);
   }
 
-  const systemPromptParts = [REVIEWER_SYSTEM_PROMPT];
-  if (runtimeContext) systemPromptParts.push(runtimeContext);
-  if (fileStructureBlock) systemPromptParts.push(REVIEWER_FILE_STRUCTURE_NOTE);
-  const systemPrompt = systemPromptParts.join('\n\n');
+  const systemPrompt = new SystemPromptBuilder()
+    .set('identity', REVIEWER_SYSTEM_PROMPT)
+    .set('environment', runtimeContext)
+    .set('custom', fileStructureBlock ? REVIEWER_FILE_STRUCTURE_NOTE : null)
+    .build();
 
   onStatus('Reviewer reading diff…');
   const reviewPreamble = fileStructureBlock ? `${fileStructureBlock}\n\n` : '';

@@ -24,6 +24,7 @@ import { formatCoderState } from './coder-agent';
 
 import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
+import { SystemPromptBuilder } from './system-prompt-builder';
 
 const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
 
@@ -172,9 +173,10 @@ async function runAuditorCore(
   const { streamFn } = getProviderStreamFn(activeProvider);
   const auditorModelId = options?.modelOverride?.trim() || getModelForRole(activeProvider, 'auditor')?.id; // undefined falls back to provider default
   const contextBlock = runtimeContext ?? buildAuditorContextBlock(context);
-  const systemPrompt = contextBlock
-    ? `${AUDITOR_SYSTEM_PROMPT}\n\n${contextBlock}`
-    : AUDITOR_SYSTEM_PROMPT;
+  const systemPrompt = new SystemPromptBuilder()
+    .set('identity', AUDITOR_SYSTEM_PROMPT)
+    .set('environment', contextBlock)
+    .build();
 
   onStatus('Auditor reviewing...');
 
