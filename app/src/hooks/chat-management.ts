@@ -16,6 +16,7 @@ import { replaceAllConversations as replaceAllConversationsInDB } from '@/lib/co
 // ---------------------------------------------------------------------------
 
 export interface ChatManagementParams {
+  conversations: Record<string, Conversation>;
   setConversations: Dispatch<SetStateAction<Record<string, Conversation>>>;
   setActiveChatId: Dispatch<SetStateAction<string>>;
   setAgentEventsByChat: Dispatch<SetStateAction<Record<string, AgentStatusEvent[]>>>;
@@ -26,7 +27,8 @@ export interface ChatManagementParams {
   branchInfoRef: MutableRefObject<{ currentBranch?: string; defaultBranch?: string } | undefined>;
   repoRef: MutableRefObject<string | null>;
   isStreaming: boolean;
-  abortStream: () => void;
+  abortStream: (options?: { clearQueuedFollowUps?: boolean }) => void;
+  clearQueuedFollowUps: (chatId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -34,6 +36,7 @@ export interface ChatManagementParams {
 // ---------------------------------------------------------------------------
 
 export function useChatManagement({
+  conversations,
   setConversations,
   setActiveChatId,
   setAgentEventsByChat,
@@ -45,6 +48,7 @@ export function useChatManagement({
   repoRef,
   isStreaming,
   abortStream,
+  clearQueuedFollowUps,
 }: ChatManagementParams) {
   const createNewChat = useCallback((): string => {
     const id = createId();
@@ -73,12 +77,13 @@ export function useChatManagement({
     (id: string) => {
       if (id === activeChatId) return;
       if (isStreaming) {
-        abortStream();
+        clearQueuedFollowUps(activeChatId);
+        abortStream({ clearQueuedFollowUps: true });
       }
       setActiveChatId(id);
       saveActiveChatId(id);
     },
-    [activeChatId, abortStream, isStreaming, setActiveChatId],
+    [activeChatId, abortStream, clearQueuedFollowUps, isStreaming, setActiveChatId],
   );
 
   const renameChat = useCallback(
@@ -99,6 +104,7 @@ export function useChatManagement({
 
   const deleteChat = useCallback(
     (id: string) => {
+      clearQueuedFollowUps(id);
       setAgentEventsByChat((prev) => {
         if (!prev[id]) return prev;
         const updated = { ...prev };
@@ -148,6 +154,7 @@ export function useChatManagement({
     [
       activeChatId,
       branchInfoRef,
+      clearQueuedFollowUps,
       deletedConversationIdsRef,
       dirtyConversationIdsRef,
       repoRef,
@@ -162,17 +169,26 @@ export function useChatManagement({
     const chatBranch = currentRepo
       ? branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || 'main'
       : undefined;
+    const removedIds = Object.entries(conversations)
+      .filter(([, conv]) => (
+        currentRepo
+          ? conv.repoFullName === currentRepo
+          : !conv.repoFullName
+      ))
+      .map(([cid]) => cid);
+
+    removedIds.forEach((removedId) => {
+      clearQueuedFollowUps(removedId);
+    });
+
     setConversations((prev) => {
       const kept: Record<string, Conversation> = {};
-      const removedIds: string[] = [];
       for (const [cid, conv] of Object.entries(prev)) {
         const belongsToCurrentRepo = currentRepo
           ? conv.repoFullName === currentRepo
           : !conv.repoFullName;
         if (!belongsToCurrentRepo) {
           kept[cid] = conv;
-        } else {
-          removedIds.push(cid);
         }
       }
 
@@ -207,7 +223,7 @@ export function useChatManagement({
       }
       return kept;
     });
-  }, [branchInfoRef, repoRef, setActiveChatId, setAgentEventsByChat, setConversations]);
+  }, [branchInfoRef, clearQueuedFollowUps, conversations, repoRef, setActiveChatId, setAgentEventsByChat, setConversations]);
 
   return { createNewChat, switchChat, renameChat, deleteChat, deleteAllChats };
 }

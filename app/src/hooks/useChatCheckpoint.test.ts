@@ -102,6 +102,8 @@ describe('useChatCheckpoint', () => {
   it('dedupes identical agent status events within the dedupe window', () => {
     let agentStatus: AgentStatus = { active: false, phase: '' };
     let agentEventsByChat: Record<string, AgentStatusEvent[]> = {};
+    const agentEventsByChatRef = { current: agentEventsByChat };
+    let conversations = makeConversation();
 
     const hook = useChatCheckpoint({
       sandboxIdRef: { current: null },
@@ -110,15 +112,18 @@ describe('useChatCheckpoint', () => {
       workspaceSessionIdRef: { current: null },
       ensureSandboxRef: { current: null },
       abortRef: { current: false },
-      setConversations: vi.fn(),
+      setConversations: (next) => {
+        conversations = typeof next === 'function' ? next(conversations) : next;
+      },
       dirtyConversationIdsRef: { current: new Set<string>() },
-      conversations: makeConversation(),
+      conversations,
       setAgentStatus: (next) => {
         agentStatus = typeof next === 'function' ? next(agentStatus) : next;
       },
-      setAgentEventsByChat: (next) => {
-        agentEventsByChat =
-          typeof next === 'function' ? next(agentEventsByChat) : next;
+      agentEventsByChatRef,
+      replaceAgentEvents: (next) => {
+        agentEventsByChat = next;
+        agentEventsByChatRef.current = agentEventsByChat;
       },
       activeChatIdRef: { current: 'chat-1' },
       sendMessageRef: { current: null },
@@ -140,6 +145,7 @@ describe('useChatCheckpoint', () => {
       source: 'orchestrator',
       phase: 'Thinking...',
     });
+    expect(conversations['chat-1'].runState?.agentEvents).toHaveLength(1);
   });
 
   it('resumes expiry checkpoints by sending a reconciliation message through sendMessageRef', async () => {
@@ -153,6 +159,8 @@ describe('useChatCheckpoint', () => {
     checkpointMocks.buildCheckpointReconciliationMessage.mockReturnValue('resume content');
 
     const sendMessage = vi.fn().mockResolvedValue(undefined);
+    let agentEventsByChat: Record<string, AgentStatusEvent[]> = {};
+    const agentEventsByChatRef = { current: agentEventsByChat };
 
     const hook = useChatCheckpoint({
       sandboxIdRef: { current: null },
@@ -165,7 +173,11 @@ describe('useChatCheckpoint', () => {
       dirtyConversationIdsRef: { current: new Set<string>() },
       conversations: makeConversation(),
       setAgentStatus: vi.fn(),
-      setAgentEventsByChat: vi.fn(),
+      agentEventsByChatRef,
+      replaceAgentEvents: (next) => {
+        agentEventsByChat = next;
+        agentEventsByChatRef.current = agentEventsByChat;
+      },
       activeChatIdRef: { current: 'chat-1' },
       sendMessageRef: { current: sendMessage },
       isStreaming: false,

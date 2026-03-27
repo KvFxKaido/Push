@@ -23,6 +23,7 @@ import {
   getToolStatusLabel,
   markLastAssistantToolCall,
 } from '@/lib/chat-tool-messages';
+import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
   executeTool,
   buildToolOutcome,
@@ -48,6 +49,7 @@ import type {
   ChatMessage,
   Conversation,
   CoderWorkingMemory,
+  RunEventInput,
   ToolExecutionResult,
   WorkspaceContext,
 } from '@/types';
@@ -107,6 +109,7 @@ export interface SendLoopContext {
     status: AgentStatus,
     options?: { chatId?: string; source?: AgentStatusSource; log?: boolean },
   ) => void;
+  appendRunEvent: (chatId: string, event: RunEventInput) => void;
   flushCheckpoint: () => void;
   executeDelegateCall: (
     chatId: string,
@@ -265,6 +268,7 @@ export async function processAssistantTurn(
     dirtyConversationIdsRef,
     setConversations,
     updateAgentStatus,
+    appendRunEvent,
     flushCheckpoint,
     executeDelegateCall,
   } = ctx;
@@ -281,6 +285,14 @@ export async function processAssistantTurn(
       apiMessages,
       lockedProvider,
     );
+
+    appendRunEvent(chatId, {
+      type: 'tool.call_malformed',
+      round,
+      reason: 'multiple_mutating_calls',
+      toolName: errorAction.assistantUpdate.toolMeta.toolName,
+      preview: summarizeToolResultPreview(errorAction.errorMessage.content),
+    });
 
     setConversations((prev) => {
       const conv = prev[chatId];
@@ -326,6 +338,7 @@ export async function processAssistantTurn(
   // --- Parallel tool calls (multiple reads + optional trailing mutation) ---
   if (parallelToolCalls.length > 1 || (parallelToolCalls.length > 0 && Boolean(detected.mutating))) {
     console.log(`[Push] Parallel tool calls detected:`, parallelToolCalls);
+    const parallelExecutionIds = parallelToolCalls.map(() => createId());
 
     setConversations((prev) => {
       const conv = prev[chatId];
@@ -341,6 +354,15 @@ export async function processAssistantTurn(
       { active: true, phase: `Executing ${parallelToolCalls.length} tool calls...` },
       { chatId },
     );
+    parallelToolCalls.forEach((call, index) => {
+      appendRunEvent(chatId, {
+        type: 'tool.execution_start',
+        round,
+        executionId: parallelExecutionIds[index],
+        toolName: getToolName(call),
+        toolSource: call.source,
+      });
+    });
 
     const hasParallelSandboxCalls = parallelToolCalls.some((call) => call.source === 'sandbox');
     if (hasParallelSandboxCalls && !sandboxIdRef.current && ensureSandboxRef.current) {
@@ -396,6 +418,18 @@ export async function processAssistantTurn(
     const toolResultMessages = parallelRawResults.map(
       (r) => buildToolOutcome(r, parallelMetaLine, lockedProvider).resultMessage,
     );
+    parallelRawResults.forEach((result, index) => {
+      appendRunEvent(chatId, {
+        type: 'tool.execution_complete',
+        round,
+        executionId: parallelExecutionIds[index],
+        toolName: getToolName(result.call),
+        toolSource: result.call.source,
+        durationMs: result.durationMs,
+        isError: result.raw.text.includes('[Tool Error]'),
+        preview: summarizeToolResultPreview(result.raw.text),
+      });
+    });
 
     setConversations((prev) => {
       const conv = prev[chatId];
@@ -438,8 +472,16 @@ export async function processAssistantTurn(
 
     if (detected.mutating) {
       const mutCall = detected.mutating;
+      const mutExecutionId = createId();
       console.log(`[Push] Trailing mutation after parallel reads:`, mutCall);
       updateAgentStatus({ active: true, phase: getToolStatusLabel(mutCall) }, { chatId });
+      appendRunEvent(chatId, {
+        type: 'tool.execution_start',
+        round,
+        executionId: mutExecutionId,
+        toolName: getToolName(mutCall),
+        toolSource: mutCall.source,
+      });
 
       if (
         (mutCall.source === 'sandbox' ||
@@ -496,6 +538,16 @@ export async function processAssistantTurn(
         mutSandboxStatus,
       );
       const mutOutcome = buildToolOutcome(mutRawResult, mutMetaLine, lockedProvider);
+      appendRunEvent(chatId, {
+        type: 'tool.execution_complete',
+        round,
+        executionId: mutExecutionId,
+        toolName: getToolName(mutCall),
+        toolSource: mutCall.source,
+        durationMs: mutRawResult.durationMs,
+        isError: mutOutcome.raw.text.includes('[Tool Error]'),
+        preview: summarizeToolResultPreview(mutOutcome.raw.text),
+      });
 
       if (mutOutcome.raw.structuredError?.type === 'SANDBOX_UNREACHABLE') {
         runtimeHandlersRef.current?.onSandboxUnreachable?.(mutOutcome.raw.structuredError.message);
@@ -543,6 +595,32 @@ export async function processAssistantTurn(
     // --- No tool call: recovery check or natural completion ---
     const recoveryResult = resolveToolCallRecovery(accumulated, recoveryState);
     const nextRecoveryState = recoveryResult.nextState;
+
+    if (recoveryResult.kind === 'feedback' && recoveryResult.diagnosis) {
+      appendRunEvent(chatId, {
+        type: 'tool.call_malformed',
+        round,
+        reason: recoveryResult.diagnosis.reason,
+        toolName: recoveryResult.diagnosis.toolName || undefined,
+        preview: summarizeToolResultPreview(recoveryResult.diagnosis.errorMessage),
+      });
+    } else if (recoveryResult.kind === 'telemetry_only' || recoveryResult.kind === 'diagnosis_exhausted') {
+      appendRunEvent(chatId, {
+        type: 'tool.call_malformed',
+        round,
+        reason: recoveryResult.diagnosis.reason,
+        toolName: recoveryResult.diagnosis.toolName || undefined,
+        preview: summarizeToolResultPreview(recoveryResult.diagnosis.errorMessage),
+      });
+    } else if (recoveryResult.kind === 'feedback' && recoveryResult.feedback.mode === 'unimplemented_tool') {
+      appendRunEvent(chatId, {
+        type: 'tool.call_malformed',
+        round,
+        reason: 'unimplemented_tool',
+        toolName: recoveryResult.feedback.toolName,
+        preview: summarizeToolResultPreview(recoveryResult.feedback.content),
+      });
+    }
 
     const action = handleRecoveryResult(
       recoveryResult,
@@ -648,6 +726,7 @@ export async function processAssistantTurn(
 
   // Tool call detected — execute it
   console.log(`[Push] Tool call detected:`, toolCall);
+  const executionId = createId();
 
   setConversations((prev) => {
     const conv = prev[chatId];
@@ -664,6 +743,13 @@ export async function processAssistantTurn(
   let singleRawResult: ToolExecRawResult | null = null;
   const statusLabel = getToolStatusLabel(toolCall);
   updateAgentStatus({ active: true, phase: statusLabel }, { chatId });
+  appendRunEvent(chatId, {
+    type: 'tool.execution_start',
+    round,
+    executionId,
+    toolName: getToolName(toolCall),
+    toolSource: toolCall.source,
+  });
 
   let toolExecResult: ToolExecutionResult;
 
@@ -789,6 +875,16 @@ export async function processAssistantTurn(
     const outcome = buildToolOutcome(singleRawResult, metaLine, lockedProvider);
     toolResultMsg = outcome.resultMessage;
     cardsToAttach = outcome.cards;
+    appendRunEvent(chatId, {
+      type: 'tool.execution_complete',
+      round,
+      executionId,
+      toolName: getToolName(toolCall),
+      toolSource: toolCall.source,
+      durationMs: singleRawResult.durationMs,
+      isError: outcome.raw.text.includes('[Tool Error]'),
+      preview: summarizeToolResultPreview(outcome.raw.text),
+    });
   } else {
     toolResultMsg = buildToolResultMessage({
       id: createId(),
@@ -807,6 +903,16 @@ export async function processAssistantTurn(
       toolExecResult.card && toolExecResult.card.type !== 'sandbox-state'
         ? [toolExecResult.card]
         : [];
+    appendRunEvent(chatId, {
+      type: 'tool.execution_complete',
+      round,
+      executionId,
+      toolName: getToolName(toolCall),
+      toolSource: toolCall.source,
+      durationMs: toolExecDurationMs,
+      isError: toolExecResult.text.includes('[Tool Error]'),
+      preview: summarizeToolResultPreview(toolExecResult.text),
+    });
   }
 
   if (cardsToAttach.length > 0) {

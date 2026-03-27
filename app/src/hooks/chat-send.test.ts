@@ -77,6 +77,7 @@ function makeLoopContext(
     },
     dirtyConversationIdsRef: dirtyRef,
     updateAgentStatus: vi.fn(),
+    appendRunEvent: vi.fn(),
     flushCheckpoint: vi.fn(),
     executeDelegateCall: vi.fn(),
     ...overrides,

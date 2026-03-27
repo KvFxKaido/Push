@@ -554,6 +554,85 @@ export interface AgentStatusEvent {
   detail?: string;
 }
 
+export type RunEventSubagent = 'planner' | 'coder' | 'explorer' | 'auditor';
+
+export type RunEventInput =
+  | {
+      type: 'assistant.turn_start';
+      round: number;
+    }
+  | {
+      type: 'assistant.turn_end';
+      round: number;
+      outcome: 'completed' | 'continued' | 'error' | 'aborted';
+    }
+  | {
+      type: 'tool.execution_start';
+      round: number;
+      executionId: string;
+      toolName: string;
+      toolSource: string;
+    }
+  | {
+      type: 'tool.execution_complete';
+      round: number;
+      executionId: string;
+      toolName: string;
+      toolSource: string;
+      durationMs: number;
+      isError: boolean;
+      preview: string;
+    }
+  | {
+      type: 'tool.call_malformed';
+      round: number;
+      reason: string;
+      toolName?: string;
+      preview: string;
+    }
+  | {
+      type: 'subagent.started';
+      executionId: string;
+      agent: RunEventSubagent;
+      detail?: string;
+    }
+  | {
+      type: 'subagent.completed';
+      executionId: string;
+      agent: RunEventSubagent;
+      summary: string;
+    }
+  | {
+      type: 'subagent.failed';
+      executionId: string;
+      agent: RunEventSubagent;
+      error: string;
+    };
+
+export type RunEvent = RunEventInput & {
+  id: string;
+  timestamp: number;
+};
+
+export interface QueuedFollowUpOptions {
+  provider?: AIProviderType | null;
+  model?: string | null;
+  displayText?: string;
+}
+
+export interface QueuedFollowUp {
+  text: string;
+  attachments?: AttachmentData[];
+  options?: QueuedFollowUpOptions;
+  queuedAt: number;
+}
+
+export interface ConversationRunState {
+  agentEvents?: AgentStatusEvent[];
+  runEvents?: RunEvent[];
+  queuedFollowUps?: QueuedFollowUp[];
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -567,6 +646,8 @@ export interface Conversation {
   provider?: AIProviderType;
   /** The model id used on first message for the locked provider (if known). */
   model?: string;
+  /** Persisted, coarse-grained runtime state used to restore the console and queued follow-ups. */
+  runState?: ConversationRunState;
 }
 
 // Onboarding + Active Repo types
@@ -967,7 +1048,7 @@ export interface RunCheckpoint {
  * Used as the App-level bridge so HomeScreen can display conversation history
  * without pulling the full message trees out of WorkspaceScreen.
  */
-export type ConversationMeta = Omit<Conversation, 'messages'>;
+export type ConversationMeta = Omit<Conversation, 'messages' | 'runState'>;
 
 /**
  * Keyed map of slim conversation metadata, emitted upward from WorkspaceScreen

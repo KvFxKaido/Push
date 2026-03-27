@@ -5,15 +5,16 @@ import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
-import type { AgentStatusEvent, AgentStatusSource, ChatMessage } from '@/types';
+import type { AgentStatusEvent, AgentStatusSource, ChatMessage, RunEvent, RunEventSubagent } from '@/types';
 
 interface HubConsoleTabProps {
   messages: ChatMessage[];
   agentEvents: AgentStatusEvent[];
+  runEvents: RunEvent[];
 }
 
 interface ConsoleLogItem {
-  type: 'call' | 'result' | 'status' | 'malformed';
+  type: 'call' | 'result' | 'status' | 'malformed' | 'lifecycle';
   content: string;
   timestamp: number;
   source?: AgentStatusSource;
@@ -35,12 +36,28 @@ function getSourceLabel(source: AgentStatusSource): string {
   }
 }
 
-export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
+function getSubagentLabel(agent: RunEventSubagent): string {
+  switch (agent) {
+    case 'coder':
+      return 'Coder';
+    case 'explorer':
+      return 'Explorer';
+    case 'auditor':
+      return 'Auditor';
+    default:
+      return 'Planner';
+  }
+}
+
+export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTabProps) {
   const [copied, setCopied] = useState(false);
 
   const logs = useMemo(() => {
     const items: ConsoleLogItem[] = [];
+    const firstStructuredEventAt = runEvents[0]?.timestamp ?? Number.POSITIVE_INFINITY;
+
     messages.forEach((m) => {
+      if (m.timestamp >= firstStructuredEventAt) return;
       if (m.role === 'assistant') {
         if (m.isMalformed) {
           const toolName = m.toolMeta?.toolName || 'unknown';
@@ -65,6 +82,71 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
       }
     });
 
+    runEvents.forEach((event) => {
+      switch (event.type) {
+        case 'assistant.turn_start':
+          items.push({
+            type: 'lifecycle',
+            content: `Turn ${event.round + 1} started`,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'assistant.turn_end':
+          items.push({
+            type: 'lifecycle',
+            content: `Turn ${event.round + 1} ${event.outcome}`,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'tool.execution_start':
+          items.push({
+            type: 'call',
+            content: `> ${event.toolName}`,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'tool.execution_complete':
+          items.push({
+            type: 'result',
+            content: `${event.preview} (${event.durationMs}ms)`,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'tool.call_malformed':
+          items.push({
+            type: 'malformed',
+            content: `malformed tool call${event.toolName ? `: ${event.toolName}` : ''} (${event.reason})`,
+            detail: event.preview,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'subagent.started':
+          items.push({
+            type: 'lifecycle',
+            content: `${getSubagentLabel(event.agent)} started`,
+            detail: event.detail,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'subagent.completed':
+          items.push({
+            type: 'lifecycle',
+            content: `${getSubagentLabel(event.agent)} completed`,
+            detail: event.summary,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'subagent.failed':
+          items.push({
+            type: 'malformed',
+            content: `${getSubagentLabel(event.agent)} failed`,
+            detail: event.error,
+            timestamp: event.timestamp,
+          });
+          break;
+      }
+    });
+
     agentEvents.forEach((event) => {
       items.push({
         type: 'status',
@@ -76,7 +158,7 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
     });
 
     return items.sort((a, b) => a.timestamp - b.timestamp);
-  }, [messages, agentEvents]);
+  }, [messages, agentEvents, runEvents]);
 
   const getFormattedLogs = () => {
     return logs
@@ -86,8 +168,13 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
           const detail = log.detail ? ` — ${log.detail}` : '';
           return `[${date}] [${getSourceLabel(log.source)}] ${log.content}${detail}`;
         }
+        if (log.type === 'lifecycle') {
+          const detail = log.detail ? ` — ${log.detail}` : '';
+          return `[${date}] [Lifecycle] ${log.content}${detail}`;
+        }
         if (log.type === 'malformed') {
-          return `[${date}] [MALFORMED] ${log.content}`;
+          const detail = log.detail ? ` — ${log.detail}` : '';
+          return `[${date}] [MALFORMED] ${log.content}${detail}`;
         }
         return `[${date}] ${log.type === 'call' ? '' : '  '}${log.content}`;
       })
@@ -164,12 +251,15 @@ export function HubConsoleTab({ messages, agentEvents }: HubConsoleTabProps) {
                   ? 'text-amber-400'
                   : log.type === 'result'
                   ? 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'
+                  : log.type === 'lifecycle'
+                  ? 'ml-2 border-l border-push-edge/70 pl-2 text-[#9edbaf]'
                   : 'ml-2 border-l border-push-edge/70 pl-2 text-[#86c5ff]'
               }
             >
               {log.type === 'status' && log.source ? `[${getSourceLabel(log.source)}] ` : ''}
+              {log.type === 'lifecycle' ? '[Lifecycle] ' : ''}
               {log.content}
-              {log.type === 'status' && log.detail ? ` — ${log.detail}` : ''}
+              {(log.type === 'status' || log.type === 'lifecycle' || log.type === 'malformed') && log.detail ? ` — ${log.detail}` : ''}
             </div>
           ))}
           {logs.length === 0 && (

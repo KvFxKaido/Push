@@ -35,6 +35,7 @@ import {
   recordResumeEvent,
   saveRunCheckpoint,
 } from '@/lib/checkpoint-manager';
+import { setConversationAgentEvents } from '@/lib/chat-runtime-state';
 import { sandboxStatus, type SandboxStatusResult } from '@/lib/sandbox-client';
 import { createId } from '@/hooks/chat-persistence';
 
@@ -70,7 +71,8 @@ export interface ChatCheckpointParams {
   conversations: Record<string, Conversation>;
   // Agent status — state lives in useChat, setters passed in
   setAgentStatus: Dispatch<SetStateAction<AgentStatus>>;
-  setAgentEventsByChat: Dispatch<SetStateAction<Record<string, AgentStatusEvent[]>>>;
+  agentEventsByChatRef: MutableRefObject<Record<string, AgentStatusEvent[]>>;
+  replaceAgentEvents: (next: Record<string, AgentStatusEvent[]>) => void;
   activeChatIdRef: MutableRefObject<string>;
   // Resume wiring — ref to sendMessage, populated after sendMessage is defined
   sendMessageRef: MutableRefObject<((text: string) => Promise<void>) | null>;
@@ -111,7 +113,8 @@ export function useChatCheckpoint({
   dirtyConversationIdsRef,
   conversations,
   setAgentStatus,
-  setAgentEventsByChat,
+  agentEventsByChatRef,
+  replaceAgentEvents,
   activeChatIdRef,
   sendMessageRef,
   isStreaming,
@@ -148,36 +151,48 @@ export function useChatCheckpoint({
       const detail = status.detail?.trim();
       const now = Date.now();
 
-      setAgentEventsByChat((prev) => {
-        const existing = prev[chatId] || [];
-        const last = existing[existing.length - 1];
-        if (
-          last &&
-          last.source === source &&
-          last.phase === phase &&
-          (last.detail || '') === (detail || '') &&
-          now - last.timestamp < AGENT_EVENT_DEDUPE_WINDOW_MS
-        ) {
-          return prev;
-        }
+      const existing = agentEventsByChatRef.current[chatId] || [];
+      const last = existing[existing.length - 1];
+      if (
+        last &&
+        last.source === source &&
+        last.phase === phase &&
+        (last.detail || '') === (detail || '') &&
+        now - last.timestamp < AGENT_EVENT_DEDUPE_WINDOW_MS
+      ) {
+        return;
+      }
 
-        const nextEvent: AgentStatusEvent = {
-          id: createId(),
-          timestamp: now,
-          source,
-          phase,
-          detail: detail || undefined,
+      const nextEvent: AgentStatusEvent = {
+        id: createId(),
+        timestamp: now,
+        source,
+        phase,
+        detail: detail || undefined,
+      };
+
+      const nextEvents = [...existing, nextEvent];
+      if (nextEvents.length > MAX_AGENT_EVENTS_PER_CHAT) {
+        nextEvents.splice(0, nextEvents.length - MAX_AGENT_EVENTS_PER_CHAT);
+      }
+
+      const nextAgentEventsByChat = {
+        ...agentEventsByChatRef.current,
+        [chatId]: nextEvents,
+      };
+      replaceAgentEvents(nextAgentEventsByChat);
+
+      setConversations((prev) => {
+        const conversation = prev[chatId];
+        if (!conversation) return prev;
+        dirtyConversationIdsRef.current.add(chatId);
+        return {
+          ...prev,
+          [chatId]: setConversationAgentEvents(conversation, nextEvents),
         };
-
-        const next = [...existing, nextEvent];
-        if (next.length > MAX_AGENT_EVENTS_PER_CHAT) {
-          next.splice(0, next.length - MAX_AGENT_EVENTS_PER_CHAT);
-        }
-
-        return { ...prev, [chatId]: next };
       });
     },
-    [setAgentEventsByChat],
+    [agentEventsByChatRef, dirtyConversationIdsRef, replaceAgentEvents, setConversations],
   );
 
   const updateAgentStatus = useCallback(

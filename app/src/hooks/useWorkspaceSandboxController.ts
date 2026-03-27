@@ -57,7 +57,7 @@ type SandboxControllerArgs = {
   };
   snapshots: SnapshotManager;
   isStreaming: boolean;
-  abortStream: () => void;
+  abortStream: (options?: { clearQueuedFollowUps?: boolean }) => void;
   createNewChat: () => string;
   onWorkspaceSessionChange: (session: WorkspaceSession) => void;
   onEndWorkspace: () => void;
@@ -207,7 +207,7 @@ export function useWorkspaceSandboxController({
     sandboxStateFetchedFor.current = null;
 
     if (isStreaming) {
-      abortStream();
+      abortStream({ clearQueuedFollowUps: true });
     }
     void stopSandbox();
 
@@ -294,7 +294,7 @@ export function useWorkspaceSandboxController({
 
   const handleExitWorkspace = useCallback(() => {
     if (isStreaming) {
-      abortStream();
+      abortStream({ clearQueuedFollowUps: true });
     }
     setShowFileBrowser(false);
     onEndWorkspace();
@@ -302,7 +302,7 @@ export function useWorkspaceSandboxController({
 
   const handleDisconnectFromWorkspace = useCallback(() => {
     if (isStreaming) {
-      abortStream();
+      abortStream({ clearQueuedFollowUps: true });
     }
     setShowFileBrowser(false);
     onDisconnect();

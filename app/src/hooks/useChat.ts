@@ -8,8 +8,17 @@ import type {
   ChatMessage,
   ChatSendOptions,
   Conversation,
+  QueuedFollowUp,
+  RunEvent,
+  RunEventInput,
   WorkspaceContext,
 } from '@/types';
+import {
+  buildAgentEventsByChat,
+  buildQueuedFollowUpsByChat,
+  setConversationRunEvents,
+  setConversationQueuedFollowUps,
+} from '@/lib/chat-runtime-state';
 import { getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
@@ -50,6 +59,12 @@ import {
   processAssistantTurn,
   type SendLoopContext,
 } from './chat-send';
+import {
+  appendQueuedItem,
+  clearQueuedItems,
+  shiftQueuedItem,
+  type QueuedItemsByChat,
+} from './chat-queue';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -77,6 +92,29 @@ type SendMessageOptions = Partial<ChatDraftSelection> &
     titleOverride?: string;
   };
 
+type AbortStreamOptions = {
+  clearQueuedFollowUps?: boolean;
+};
+
+function toQueuedFollowUp(
+  text: string,
+  attachments?: AttachmentData[],
+  options?: SendMessageOptions,
+): QueuedFollowUp {
+  const queuedOptions = {
+    provider: options?.provider ?? undefined,
+    model: options?.model ?? undefined,
+    displayText: options?.displayText?.trim() || undefined,
+  };
+
+  return {
+    text,
+    attachments,
+    options: Object.values(queuedOptions).some(Boolean) ? queuedOptions : undefined,
+    queuedAt: Date.now(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -90,22 +128,38 @@ export function useChat(
   runtimeHandlers?: ChatRuntimeHandlers,
   branchInfo?: { currentBranch?: string; defaultBranch?: string },
 ) {
+  const initialConversationsRef = useRef<Record<string, Conversation> | null>(null);
+  if (initialConversationsRef.current === null) {
+    initialConversationsRef.current = loadConversations();
+  }
+  const initialConversations = initialConversationsRef.current;
+  const initialAgentEventsByChat = buildAgentEventsByChat(initialConversations);
+  const initialQueuedFollowUpsByChat = buildQueuedFollowUpsByChat(initialConversations);
+
   // --- Core state ---
-  const [conversations, setConversations] = useState<Record<string, Conversation>>(loadConversations);
-  const [activeChatId, setActiveChatId] = useState<string>(() => loadActiveChatId(conversations));
+  const [conversations, setConversations] = useState<Record<string, Conversation>>(initialConversations);
+  const [activeChatId, setActiveChatId] = useState<string>(() => loadActiveChatId(initialConversations));
   const [conversationsLoaded, setConversationsLoaded] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
-  const [agentEventsByChat, setAgentEventsByChat] = useState<Record<string, AgentStatusEvent[]>>({});
+  const [agentEventsByChat, setAgentEventsByChat] = useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
+  const [queuedFollowUpsByChat, setQueuedFollowUpsByChat] = useState<QueuedItemsByChat<QueuedFollowUp>>(initialQueuedFollowUpsByChat);
 
   // --- Persistence refs ---
   const dirtyConversationIdsRef = useRef(new Set<string>());
   const deletedConversationIdsRef = useRef(new Set<string>());
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
+  const agentEventsByChatRef = useRef<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
+  agentEventsByChatRef.current = agentEventsByChat;
   const activeChatIdRef = useRef(activeChatId);
   const abortRef = useRef(false);
   const processedContentRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const cancelStatusTimerRef = useRef<number | null>(null);
+  const queuedFollowUpsRef = useRef<QueuedItemsByChat<QueuedFollowUp>>(initialQueuedFollowUpsByChat);
+  queuedFollowUpsRef.current = queuedFollowUpsByChat;
+  const isMountedRef = useRef(true);
 
   // --- Session identity refs ---
   const sandboxIdRef = useRef<string | null>(null);
@@ -139,18 +193,47 @@ export function useChat(
     activeChatIdRef.current = activeChatId;
   }, [activeChatId]);
 
-  // --- IndexedDB migration ---
-  useEffect(() => {
-    migrateConversationsToIndexedDB().then((convs) => {
-      if (Object.keys(convs).length > 0) {
-        setConversations(convs);
-        setActiveChatId((prev) => {
-          if (prev && convs[prev]) return prev;
-          return loadActiveChatId(convs);
-        });
-      }
-      setConversationsLoaded(true);
+  const updateConversations = useCallback((updater: Record<string, Conversation> | ((prev: Record<string, Conversation>) => Record<string, Conversation>)) => {
+    setConversations((prev) => {
+      const next = typeof updater === 'function'
+        ? updater(prev)
+        : updater;
+      conversationsRef.current = next;
+      return next;
     });
+  }, []);
+
+  const replaceAgentEvents = useCallback((next: Record<string, AgentStatusEvent[]>) => {
+    agentEventsByChatRef.current = next;
+    if (isMountedRef.current) {
+      setAgentEventsByChat(next);
+    }
+  }, []);
+
+  const appendRunEvent = useCallback((chatId: string, event: RunEventInput) => {
+    updateConversations((prev) => {
+      const conversation = prev[chatId];
+      if (!conversation) return prev;
+      const runEvents = conversation.runState?.runEvents || [];
+      dirtyConversationIdsRef.current.add(chatId);
+      return {
+        ...prev,
+        [chatId]: setConversationRunEvents(conversation, [
+          ...runEvents,
+          {
+            id: createId(),
+            timestamp: Date.now(),
+            ...event,
+          },
+        ]),
+      };
+    });
+  }, [updateConversations]);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   // --- Dirty conversation flush ---
@@ -194,11 +277,12 @@ export function useChat(
     workspaceSessionIdRef,
     ensureSandboxRef,
     abortRef,
-    setConversations,
+    setConversations: updateConversations,
     dirtyConversationIdsRef,
     conversations,
     setAgentStatus,
-    setAgentEventsByChat,
+    agentEventsByChatRef,
+    replaceAgentEvents,
     activeChatIdRef,
     sendMessageRef,
     isStreaming,
@@ -216,6 +300,10 @@ export function useChat(
   const agentEvents = useMemo(
     () => agentEventsByChat[activeChatId] ?? [],
     [agentEventsByChat, activeChatId],
+  );
+  const runEvents = useMemo<RunEvent[]>(
+    () => conversations[activeChatId]?.runState?.runEvents ?? [],
+    [conversations, activeChatId],
   );
   const conversationProvider = conversations[activeChatId]?.provider;
   const conversationModel = normalizeConversationModel(
@@ -236,6 +324,7 @@ export function useChat(
   const isModelLocked = Boolean(conversationModel || conversationProvider);
   const lockedProvider: AIProviderType | null = conversationProvider || null;
   const lockedModel: string | null = conversationModel || null;
+  const queuedFollowUpCount = activeChatId ? (queuedFollowUpsByChat[activeChatId]?.length ?? 0) : 0;
 
   // --- Sorted chat IDs (filtered by repo + branch) ---
   const currentBranch = branchInfo?.currentBranch;
@@ -271,7 +360,7 @@ export function useChat(
           repoFullName: activeRepoFullName,
           branch,
         };
-        setConversations((prev) => {
+        updateConversations((prev) => {
           const updated = { ...prev, [id]: newConv };
           dirtyConversationIdsRef.current.add(id);
           return updated;
@@ -284,7 +373,7 @@ export function useChat(
       setActiveChatId(sortedChatIds[0]);
       saveActiveChatId(sortedChatIds[0]);
     }
-  }, [sortedChatIds, activeChatId, activeRepoFullName]);
+  }, [sortedChatIds, activeChatId, activeRepoFullName, updateConversations]);
 
   // --- Workspace context / sandbox setters ---
   const setWorkspaceContext = useCallback((ctx: WorkspaceContext | null) => {
@@ -315,8 +404,89 @@ export function useChat(
     instructionFilenameRef.current = filename;
   }, []);
 
+  const persistQueuedFollowUps = useCallback((chatId: string, queuedFollowUps: QueuedFollowUp[]) => {
+    updateConversations((prev) => {
+      const conversation = prev[chatId];
+      if (!conversation) return prev;
+      dirtyConversationIdsRef.current.add(chatId);
+      return {
+        ...prev,
+        [chatId]: setConversationQueuedFollowUps(conversation, queuedFollowUps),
+      };
+    });
+  }, [updateConversations]);
+
+  const replaceQueuedFollowUps = useCallback((
+    next: QueuedItemsByChat<QueuedFollowUp>,
+    options?: { persist?: boolean },
+  ) => {
+    const previous = queuedFollowUpsRef.current;
+    queuedFollowUpsRef.current = next;
+    if (isMountedRef.current) {
+      setQueuedFollowUpsByChat(next);
+    }
+    if (!options?.persist) return;
+
+    const changedChatIds = new Set([
+      ...Object.keys(previous),
+      ...Object.keys(next),
+    ]);
+
+    changedChatIds.forEach((chatId) => {
+      if (previous[chatId] === next[chatId]) return;
+      persistQueuedFollowUps(chatId, next[chatId] || []);
+    });
+  }, [persistQueuedFollowUps]);
+
+  const enqueueQueuedFollowUp = useCallback((chatId: string, followUp: QueuedFollowUp) => {
+    replaceQueuedFollowUps(
+      appendQueuedItem(queuedFollowUpsRef.current, chatId, followUp),
+      { persist: true },
+    );
+  }, [replaceQueuedFollowUps]);
+
+  const dequeueQueuedFollowUp = useCallback((chatId: string): QueuedFollowUp | null => {
+    const { next, item } = shiftQueuedItem(queuedFollowUpsRef.current, chatId);
+    if (!item) return null;
+    replaceQueuedFollowUps(next, { persist: true });
+    return item;
+  }, [replaceQueuedFollowUps]);
+
+  const clearQueuedFollowUps = useCallback((chatId: string) => {
+    replaceQueuedFollowUps(
+      clearQueuedItems(queuedFollowUpsRef.current, chatId),
+      { persist: true },
+    );
+  }, [replaceQueuedFollowUps]);
+
+  const hydratePersistedRunState = useCallback((convs: Record<string, Conversation>) => {
+    replaceAgentEvents(buildAgentEventsByChat(convs));
+    replaceQueuedFollowUps(buildQueuedFollowUpsByChat(convs));
+  }, [replaceAgentEvents, replaceQueuedFollowUps]);
+
+  // --- IndexedDB migration ---
+  useEffect(() => {
+    migrateConversationsToIndexedDB().then((convs) => {
+      hydratePersistedRunState(convs);
+      if (Object.keys(convs).length > 0) {
+        updateConversations(convs);
+        setActiveChatId((prev) => {
+          if (prev && convs[prev]) return prev;
+          return loadActiveChatId(convs);
+        });
+      }
+      setConversationsLoaded(true);
+    });
+  }, [hydratePersistedRunState, updateConversations]);
+
   // --- Abort stream ---
-  const abortStream = useCallback(() => {
+  const abortStream = useCallback((options?: AbortStreamOptions) => {
+    if (options?.clearQueuedFollowUps) {
+      const runningChatId = checkpointRefs.chatId.current || activeChatIdRef.current;
+      if (runningChatId) {
+        clearQueuedFollowUps(runningChatId);
+      }
+    }
     abortRef.current = true;
     abortControllerRef.current?.abort();
     setIsStreaming(false);
@@ -328,7 +498,7 @@ export function useChat(
       updateAgentStatus({ active: false, phase: '' });
       cancelStatusTimerRef.current = null;
     }, 1200);
-  }, [updateAgentStatus]);
+  }, [checkpointRefs.chatId, clearQueuedFollowUps, updateAgentStatus]);
 
   useEffect(() => {
     return () => {
@@ -340,7 +510,8 @@ export function useChat(
 
   // --- Chat management ---
   const { createNewChat, switchChat, renameChat, deleteChat, deleteAllChats } = useChatManagement({
-    setConversations,
+    conversations,
+    setConversations: updateConversations,
     setActiveChatId,
     setAgentEventsByChat,
     dirtyConversationIdsRef,
@@ -351,12 +522,14 @@ export function useChat(
     repoRef,
     isStreaming,
     abortStream,
+    clearQueuedFollowUps,
   });
 
   // --- Agent delegation ---
   const { executeDelegateCall } = useAgentDelegation({
-    setConversations,
+    setConversations: updateConversations,
     updateAgentStatus,
+    appendRunEvent,
     branchInfoRef,
     isMainProtectedRef,
     agentsMdRef,
@@ -375,15 +548,29 @@ export function useChat(
 
   const sendMessage = useCallback(
     async (text: string, attachments?: AttachmentData[], options?: SendMessageOptions) => {
-      if ((!text.trim() && (!attachments || attachments.length === 0)) || isStreaming) return;
+      const trimmedText = text.trim();
+      const hasAttachments = Boolean(attachments && attachments.length > 0);
+      if (!trimmedText && !hasAttachments) return;
+
+      if (loopActiveRef.current) {
+        const runningChatId = checkpointRefs.chatId.current;
+        const targetChatId = options?.chatId || activeChatIdRef.current || runningChatId;
+        if (!runningChatId || (targetChatId && targetChatId !== runningChatId)) return;
+
+        enqueueQueuedFollowUp(
+          runningChatId,
+          toQueuedFollowUp(trimmedText, hasAttachments ? attachments : undefined, options),
+        );
+        return;
+      }
 
       let chatId = options?.chatId || activeChatIdRef.current;
-      if (!chatId || !conversations[chatId]) {
+      const conversationsSnapshot = conversationsRef.current;
+      if (!chatId || !conversationsSnapshot[chatId]) {
         chatId = createNewChat();
       }
 
       // --- Prepare context ---
-      const trimmedText = text.trim();
       const displayText = options?.displayText?.trim();
       const userMessage: ChatMessage = options?.existingUserMessage ?? {
         id: createId(),
@@ -395,7 +582,7 @@ export function useChat(
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
       };
 
-      const currentMessages = options?.baseMessages ?? (conversations[chatId]?.messages || []);
+      const currentMessages = options?.baseMessages ?? (conversationsRef.current[chatId]?.messages || []);
       const updatedWithUser = options?.existingUserMessage
         ? currentMessages
         : [...currentMessages, userMessage];
@@ -405,9 +592,9 @@ export function useChat(
         options?.titleOverride ||
         (isFirstMessage
           ? generateTitle(updatedWithUser)
-          : conversations[chatId]?.title || 'New Chat');
+          : conversationsRef.current[chatId]?.title || 'New Chat');
 
-      const existingConversation = conversations[chatId];
+      const existingConversation = conversationsRef.current[chatId];
       const requestedProvider = options?.provider || null;
       const requestedModel = normalizeConversationModel(requestedProvider, options?.model || null);
       const lockedProviderForChat = (
@@ -437,7 +624,7 @@ export function useChat(
         status: 'streaming',
       };
 
-      setConversations((prev) => {
+      updateConversations((prev) => {
         const updated = {
           ...prev,
           [chatId]: {
@@ -499,7 +686,7 @@ export function useChat(
         loopActiveRef.current = false;
         setIsStreaming(false);
         updateAgentStatus({ active: false, phase: '' });
-        setConversations((prev) => {
+        updateConversations((prev) => {
           const existing = prev[chatId];
           if (!existing) return prev;
           const msgs = existing.messages.map((m) =>
@@ -547,9 +734,10 @@ export function useChat(
         checkpointRefs,
         processedContentRef,
         lastCoderStateRef,
-        setConversations,
+        setConversations: updateConversations,
         dirtyConversationIdsRef,
         updateAgentStatus,
+        appendRunEvent,
         flushCheckpoint,
         executeDelegateCall,
       };
@@ -565,6 +753,7 @@ export function useChat(
           checkpointRefs.accumulated.current = '';
           checkpointRefs.thinking.current = '';
           checkpointRefs.phase.current = 'streaming_llm';
+          appendRunEvent(chatId, { type: 'assistant.turn_start', round });
 
           if (round > 0) {
             const newAssistant: ChatMessage = {
@@ -574,7 +763,7 @@ export function useChat(
               timestamp: Date.now(),
               status: 'streaming',
             };
-            setConversations((prev) => {
+            updateConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
               return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, newAssistant] } };
@@ -593,10 +782,14 @@ export function useChat(
             loopCtx,
           );
 
-          if (abortRef.current) break;
+          if (abortRef.current) {
+            appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'aborted' });
+            break;
+          }
 
           if (error) {
-            setConversations((prev) => {
+            appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'error' });
+            updateConversations((prev) => {
               const conv = prev[chatId];
               if (!conv) return prev;
               const msgs = [...conv.messages];
@@ -634,6 +827,15 @@ export function useChat(
           checkpointRefs.apiMessages.current = apiMessages;
 
           if (turnResult.loopCompletedNormally) loopCompletedNormally = true;
+          appendRunEvent(chatId, {
+            type: 'assistant.turn_end',
+            round,
+            outcome: turnResult.loopAction === 'continue'
+              ? 'continued'
+              : turnResult.loopCompletedNormally
+                ? 'completed'
+                : 'aborted',
+          });
           if (turnResult.loopAction === 'break') break;
           // 'continue' → next round
         }
@@ -656,21 +858,40 @@ export function useChat(
           clearInterval(tabLockIntervalRef.current);
           tabLockIntervalRef.current = null;
         }
+
+        if (activeChatIdRef.current !== chatId) {
+          clearQueuedFollowUps(chatId);
+        } else {
+          const nextQueuedFollowUp = dequeueQueuedFollowUp(chatId);
+          if (nextQueuedFollowUp && isMountedRef.current) {
+            queueMicrotask(() => {
+              if (!isMountedRef.current) return;
+              void sendMessage(
+                nextQueuedFollowUp.text,
+                nextQueuedFollowUp.attachments,
+                nextQueuedFollowUp.options,
+              );
+            });
+          }
+        }
       }
     },
     [
-      conversations,
-      isStreaming,
       createNewChat,
       updateAgentStatus,
       flushCheckpoint,
       executeDelegateCall,
       checkpointRefs,
+      dequeueQueuedFollowUp,
+      clearQueuedFollowUps,
+      enqueueQueuedFollowUp,
       loopActiveRef,
       lastCoderStateRef,
       tabLockIntervalRef,
       tabLockIdRef,
       dirtyConversationIdsRef,
+      updateConversations,
+      appendRunEvent,
     ],
   );
 
@@ -691,7 +912,7 @@ export function useChat(
   // --- Card actions ---
   const { injectAssistantCardMessage, handleCardAction } =
     useChatCardActions({
-      setConversations,
+      setConversations: updateConversations,
       dirtyConversationIdsRef,
       activeChatId,
       sandboxIdRef,
@@ -714,7 +935,9 @@ export function useChat(
     sendMessage,
     agentStatus,
     agentEvents,
+    runEvents,
     isStreaming,
+    queuedFollowUpCount,
     lockedProvider,
     isProviderLocked,
     lockedModel,

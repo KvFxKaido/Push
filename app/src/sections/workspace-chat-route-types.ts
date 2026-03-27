@@ -24,6 +24,7 @@ import type {
   GitHubUser,
   NewChatWorkspaceState,
   RepoWithActivity,
+  RunEvent,
   RunCheckpoint,
   SandboxStateCardData,
   UserProfile,
@@ -67,7 +68,9 @@ export interface ChatRouteConversationProps {
   sendMessage: (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => Promise<void> | void;
   agentStatus: AgentStatus;
   agentEvents: AgentStatusEvent[];
+  runEvents: RunEvent[];
   isStreaming: boolean;
+  queuedFollowUpCount: number;
   lockedProvider: AIProviderType | null;
   isProviderLocked: boolean;
   lockedModel: string | null;
@@ -82,7 +85,7 @@ export interface ChatRouteConversationProps {
   editMessageAndResend: (messageId: string, text: string, attachments?: AttachmentData[], options?: ChatSendOptions) => Promise<void> | void;
   handleCardAction: (action: CardAction) => void;
   contextUsage: { used: number; max: number; percent: number };
-  abortStream: () => void;
+  abortStream: (options?: { clearQueuedFollowUps?: boolean }) => void;
   interruptedCheckpoint: RunCheckpoint | null;
   resumeInterruptedRun: () => void;
   dismissResume: () => void;

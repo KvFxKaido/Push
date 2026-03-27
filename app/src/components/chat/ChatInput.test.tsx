@@ -97,4 +97,12 @@ describe('ChatInput', () => {
     expect(html).toContain('gemini-3-flash-preview');
     expect(html).not.toContain('>demo<');
   });
+
+  it('shows queued follow-up status while streaming', () => {
+    const html = renderToStaticMarkup(
+      <ChatInput {...buildProps({ isStreaming: true, queuedFollowUpCount: 2 })} />,
+    );
+
+    expect(html).toContain('2 follow-ups queued');
+  });
 });

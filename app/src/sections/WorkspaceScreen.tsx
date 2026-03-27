@@ -69,7 +69,9 @@ export function WorkspaceScreen({
     sendMessage,
     agentStatus,
     agentEvents,
+    runEvents,
     isStreaming,
+    queuedFollowUpCount,
     lockedProvider,
     isProviderLocked,
     lockedModel,
@@ -295,7 +297,9 @@ export function WorkspaceScreen({
       sendMessage={sendMessageWithChatDraft}
       agentStatus={agentStatus}
       agentEvents={agentEvents}
+      runEvents={runEvents}
       isStreaming={isStreaming}
+      queuedFollowUpCount={queuedFollowUpCount}
       lockedProvider={lockedProvider}
       isProviderLocked={isProviderLocked}
       lockedModel={lockedModel}

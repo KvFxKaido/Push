@@ -4,7 +4,7 @@ export function toConversationIndex(conversations: Record<string, Conversation>)
   const index: ConversationIndex = {};
   for (const [chatId, conversation] of Object.entries(conversations)) {
     index[chatId] = Object.fromEntries(
-      Object.entries(conversation).filter(([key]) => key !== 'messages'),
+      Object.entries(conversation).filter(([key]) => key !== 'messages' && key !== 'runState'),
     ) as ConversationIndex[string];
   }
   return index;

@@ -62,6 +62,7 @@ import type {
   AgentStatusEvent,
   ChatMessage,
   DiffPreviewCardData,
+  RunEvent,
   WorkspaceCapabilities,
   WorkspaceMode,
   WorkspaceScratchActions,
@@ -112,6 +113,7 @@ interface WorkspaceHubSheetProps {
   externalTabRequest?: { tab: HubTab; requestKey: number } | null;
   messages: ChatMessage[];
   agentEvents: AgentStatusEvent[];
+  runEvents: RunEvent[];
   sandboxId: string | null;
   sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
   sandboxError: string | null;
@@ -283,6 +285,7 @@ export function WorkspaceHubSheet({
   externalTabRequest,
   messages,
   agentEvents,
+  runEvents,
   sandboxId,
   sandboxStatus,
   sandboxError,
@@ -1367,7 +1370,7 @@ export function WorkspaceHubSheet({
             )}
 
             {showToolActivity && activeTab === 'console' && (
-              <HubConsoleTab messages={messages} agentEvents={agentEvents} />
+              <HubConsoleTab messages={messages} agentEvents={agentEvents} runEvents={runEvents} />
             )}
 
             {activeTab === 'files' && (

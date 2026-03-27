@@ -39,7 +39,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     sendMessage,
     agentStatus,
     agentEvents,
+    runEvents,
     isStreaming,
+    queuedFollowUpCount,
     lockedProvider,
     isProviderLocked,
     lockedModel,
@@ -442,6 +444,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       onSend: handleComposerSend,
       onStop: abortStream,
       isStreaming,
+      queuedFollowUpCount,
       repoName: activeRepo?.name,
       contextUsage,
       draftKey: activeChatId,
@@ -489,6 +492,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             externalTabRequest={hubTabRequest}
             messages={messages}
             agentEvents={agentEvents}
+            runEvents={runEvents}
             sandboxId={sandbox.sandboxId}
             sandboxStatus={sandbox.status}
             sandboxError={sandbox.error}

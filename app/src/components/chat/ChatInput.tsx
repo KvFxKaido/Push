@@ -73,6 +73,7 @@ interface ChatInputProps {
   onSend: (message: string, attachments?: AttachmentData[]) => void;
   onStop?: () => void;
   isStreaming?: boolean;
+  queuedFollowUpCount?: number;
   repoName?: string;
   contextUsage?: { used: number; max: number; percent: number };
   draftKey?: string | null;
@@ -229,6 +230,7 @@ export function ChatInput({
   onSend,
   onStop,
   isStreaming,
+  queuedFollowUpCount = 0,
   repoName,
   contextUsage,
   draftKey,
@@ -284,7 +286,8 @@ export function ChatInput({
 
   const hasAttachments = stagedAttachments.length > 0;
   const readyAttachments = stagedAttachments.filter((a) => a.status === 'ready');
-  const canSendBase = (value.trim().length > 0 || readyAttachments.length > 0) && !isStreaming;
+  const hasDraftContent = value.trim().length > 0 || readyAttachments.length > 0;
+  const canSendBase = hasDraftContent && !isStreaming;
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -384,7 +387,7 @@ export function ChatInput({
   }, []);
 
   const handleButtonClick = () => {
-    if (isStreaming) {
+    if (isStreaming && !canQueueFollowUp) {
       onStop?.();
     } else {
       handleSend();
@@ -528,9 +531,10 @@ export function ChatInput({
   const hasUnknownImageSupport =
     readyImageAttachments.length > 0 && visionNotice.support === 'unknown';
   const canSend = canSendBase && !hasUnsupportedImageAttachments;
+  const canQueueFollowUp = Boolean(isStreaming) && hasDraftContent && !hasUnsupportedImageAttachments;
 
   const handleSend = () => {
-    if (!canSend) return;
+    if (!canSend && !canQueueFollowUp) return;
 
     const attachments: AttachmentData[] = readyAttachments.map(
       ({ id, type, filename, mimeType, sizeBytes, content, thumbnail }) => ({
@@ -556,7 +560,9 @@ export function ChatInput({
   };
 
   const sendButtonLabel = isStreaming
-    ? 'Stop generating'
+    ? canQueueFollowUp
+      ? 'Queue follow-up'
+      : 'Stop generating'
     : hasUnsupportedImageAttachments
       ? 'Selected model cannot read image attachments'
       : editState
@@ -565,7 +571,25 @@ export function ChatInput({
 
   const statusNotice = (() => {
     if (isStreaming) {
-      return { tone: 'default' as const, text: 'Generating...' };
+      if (hasUnsupportedImageAttachments) {
+        return {
+          tone: 'error' as const,
+          text: `${visionNotice.text} Remove the image attachment${readyImageAttachments.length > 1 ? 's' : ''} to queue this follow-up.`,
+        };
+      }
+      if (canQueueFollowUp) {
+        const queueText = queuedFollowUpCount > 0
+          ? `after ${queuedFollowUpCount} queued follow-up${queuedFollowUpCount === 1 ? '' : 's'}`
+          : 'after the current run finishes';
+        return { tone: 'default' as const, text: `Send queues this follow-up ${queueText}.` };
+      }
+      if (queuedFollowUpCount > 0) {
+        return {
+          tone: 'default' as const,
+          text: `${queuedFollowUpCount} follow-up${queuedFollowUpCount === 1 ? '' : 's'} queued`,
+        };
+      }
+      return { tone: 'default' as const, text: 'Generating... Draft a follow-up or clear the composer to stop.' };
     }
     if (hasUnsupportedImageAttachments) {
       return {
@@ -598,7 +622,7 @@ export function ChatInput({
 
     if (e.key === 'Enter' && !e.shiftKey && !isMobileDevice) {
       e.preventDefault();
-      if (isStreaming) {
+      if (isStreaming && !canQueueFollowUp) {
         onStop?.();
       } else {
         handleSend();
@@ -644,9 +668,8 @@ export function ChatInput({
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={repoName ? `Ask about ${repoName}...` : 'Ask about code...'}
-            disabled={isStreaming}
             rows={1}
-            className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-push-lg leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-push-lg leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none"
           />
         </div>
 
@@ -657,20 +680,15 @@ export function ChatInput({
               <button
                 type="button"
                 onClick={toggleListening}
-                disabled={isStreaming}
                 className={`flex h-10 w-10 items-center justify-center rounded-full border ${
-                  isStreaming
-                    ? 'cursor-not-allowed border-[#1f2430] bg-[#151a22] text-[#545c6e] shadow-none'
-                    : isListening
-                      ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 text-red-400 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
-                      : `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
+                  isListening
+                    ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 text-red-400 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
+                    : `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
                 }`}
                 aria-label={isListening ? 'Stop listening' : 'Voice input'}
                 title={isListening ? 'Stop listening' : 'Voice input'}
               >
-                {!isStreaming && (
-                  <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-                )}
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
                 <VoicePulseIcon className="relative z-10 h-4 w-4" />
                 {isListening && (
                   <span className="absolute top-1.5 right-1.5 z-20 h-2 w-2 rounded-full bg-red-400 animate-pulse" />
@@ -681,18 +699,13 @@ export function ChatInput({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isStreaming}
               className={`flex h-10 w-10 items-center justify-center rounded-full border text-push-fg-secondary ${
-                isStreaming
-                  ? 'cursor-not-allowed border-[#1f2430] bg-[#151a22] text-[#545c6e] shadow-none'
-                  : `${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
+                `${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
               }`}
               aria-label="Attach file"
               title="Attach file"
             >
-              {!isStreaming && (
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-              )}
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
               <AttachmentLinkIcon className="relative z-10 h-4 w-4" />
             </button>
 
@@ -1140,19 +1153,19 @@ export function ChatInput({
             onClick={handleButtonClick}
             disabled={!isStreaming && !canSend}
             className={`flex h-10 w-10 shrink-0 items-center justify-center ${
-              isStreaming
+              isStreaming && !canQueueFollowUp
                 ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 bg-[linear-gradient(180deg,rgba(55,12,18,0.96)_0%,rgba(28,7,11,0.98)_100%)] text-red-300 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
-                : canSend
+                : canSend || canQueueFollowUp
                   ? `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
                   : 'cursor-not-allowed rounded-full border border-[#262c38] bg-[#151a22] text-[#576176] shadow-none'
             }`}
             aria-label={sendButtonLabel}
             title={sendButtonLabel}
           >
-            {(isStreaming || canSend) && (
+            {(isStreaming || canSend || canQueueFollowUp) && (
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
             )}
-            {isStreaming ? (
+            {isStreaming && !canQueueFollowUp ? (
               <Square className="relative z-10 h-4 w-4 fill-current" />
             ) : (
               <SendLiftIcon className="relative z-10 h-4 w-4" />

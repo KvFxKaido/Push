@@ -13,6 +13,7 @@
 import { STORE, clear, getAll, get, put, del, putMany } from './app-db';
 import { safeStorageGet, safeStorageRemove } from './safe-storage';
 import type { Conversation, ChatMessage } from '@/types';
+import { sanitizeConversationRuntimeState } from './chat-runtime-state';
 
 const LEGACY_CONVERSATIONS_KEY = 'diff_conversations';
 const MIGRATION_FLAG_KEY = 'push:idb-conversations-migrated';
@@ -110,7 +111,7 @@ function sanitizeConversations(convs: Record<string, Conversation>): Record<stri
     const cleaned = (convs[id].messages || [])
       .map(sanitizeSandboxStateCards)
       .filter((m): m is ChatMessage => m !== null);
-    convs[id] = { ...convs[id], messages: cleaned };
+    convs[id] = sanitizeConversationRuntimeState({ ...convs[id], messages: cleaned });
   }
   return convs;
 }

@@ -9,7 +9,9 @@ import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
 import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
+import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { formatElapsedTime } from '@/lib/utils';
+import { createId } from '@/hooks/chat-persistence';
 import type {
   ToolExecutionResult,
   ChatMessage,
@@ -19,6 +21,7 @@ import type {
   Conversation,
   AgentStatus,
   AgentStatusSource,
+  RunEventInput,
 } from '@/types';
 
 function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
@@ -30,6 +33,7 @@ function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
 export interface UseAgentDelegationParams {
   setConversations: React.Dispatch<React.SetStateAction<Record<string, Conversation>>>;
   updateAgentStatus: (status: AgentStatus, meta?: { chatId?: string; source?: AgentStatusSource; log?: boolean }) => void;
+  appendRunEvent: (chatId: string, event: RunEventInput) => void;
   branchInfoRef: React.RefObject<{ currentBranch?: string; defaultBranch?: string } | undefined | null>;
   isMainProtectedRef: React.MutableRefObject<boolean>;
   agentsMdRef: React.MutableRefObject<string | null>;
@@ -45,6 +49,7 @@ export interface UseAgentDelegationParams {
 export function useAgentDelegation({
   setConversations,
   updateAgentStatus,
+  appendRunEvent,
   branchInfoRef,
   isMainProtectedRef,
   agentsMdRef,
@@ -66,11 +71,18 @@ export function useAgentDelegation({
     let toolExecResult: ToolExecutionResult = { text: '' };
 
     if (toolCall.call.tool === 'delegate_explorer') {
+      const executionId = createId();
       checkpointPhaseRef.current = 'delegating_explorer';
       const explorerTask = toolCall.call.args.task?.trim();
       if (!explorerTask) {
         toolExecResult = { text: '[Tool Error] delegate_explorer requires a non-empty "task" string.' };
       } else {
+        appendRunEvent(chatId, {
+          type: 'subagent.started',
+          executionId,
+          agent: 'explorer',
+          detail: explorerTask,
+        });
         try {
           const explorerResult = await runExplorerAgent(
             {
@@ -115,17 +127,36 @@ export function useAgentDelegation({
           toolExecResult = {
             text: `[Tool Result — delegate_explorer]\n${explorerResult.summary}\n(${explorerResult.rounds} round${explorerResult.rounds !== 1 ? 's' : ''})`,
           };
+          appendRunEvent(chatId, {
+            type: 'subagent.completed',
+            executionId,
+            agent: 'explorer',
+            summary: summarizeToolResultPreview(explorerResult.summary),
+          });
         } catch (err) {
           const isAbort = err instanceof DOMException && err.name === 'AbortError';
           if (isAbort || abortRef.current) {
             toolExecResult = { text: '[Tool Result — delegate_explorer]\nExplorer cancelled by user.' };
+            appendRunEvent(chatId, {
+              type: 'subagent.completed',
+              executionId,
+              agent: 'explorer',
+              summary: 'Cancelled by user.',
+            });
           } else {
             const msg = err instanceof Error ? err.message : String(err);
             toolExecResult = { text: `[Tool Error] Explorer failed: ${msg}` };
+            appendRunEvent(chatId, {
+              type: 'subagent.failed',
+              executionId,
+              agent: 'explorer',
+              error: summarizeToolResultPreview(msg),
+            });
           }
         }
       }
     } else if (toolCall.call.tool === 'delegate_coder') {
+      const executionId = createId();
       // Handle Coder delegation (Phase 3b)
       checkpointPhaseRef.current = 'delegating_coder';
       lastCoderStateRef.current = null; // Will be populated by onWorkingMemoryUpdate callback
@@ -154,6 +185,12 @@ export function useAgentDelegation({
           if (taskList.length === 0) {
             toolExecResult = { text: '[Tool Error] delegate_coder requires "task" or non-empty "tasks" array.' };
           } else {
+            appendRunEvent(chatId, {
+              type: 'subagent.started',
+              executionId,
+              agent: 'coder',
+              detail: taskList.length === 1 ? taskList[0] : `${taskList.length} tasks`,
+            });
             const allCards: ChatCard[] = [];
             const summaries: string[] = [];
             let totalRounds = 0;
@@ -166,6 +203,13 @@ export function useAgentDelegation({
             // run the planner to decompose into a feature checklist.
             let plannerBrief: string | undefined;
             if (harnessSettings.plannerRequired && taskList.length === 1) {
+              const plannerExecutionId = createId();
+              appendRunEvent(chatId, {
+                type: 'subagent.started',
+                executionId: plannerExecutionId,
+                agent: 'planner',
+                detail: taskList[0],
+              });
               updateAgentStatus(
                 { active: true, phase: 'Planning task...', detail: `Profile: ${harnessSettings.profile}` },
                 { chatId, source: 'coder' },
@@ -181,6 +225,19 @@ export function useAgentDelegation({
               );
               if (plan) {
                 plannerBrief = formatPlannerBrief(plan);
+                appendRunEvent(chatId, {
+                  type: 'subagent.completed',
+                  executionId: plannerExecutionId,
+                  agent: 'planner',
+                  summary: summarizeToolResultPreview(plannerBrief),
+                });
+              } else {
+                appendRunEvent(chatId, {
+                  type: 'subagent.failed',
+                  executionId: plannerExecutionId,
+                  agent: 'planner',
+                  error: 'Planner did not return a plan.',
+                });
               }
               // Fail-open: if planner returns null, Coder proceeds without a plan
             }
@@ -280,7 +337,14 @@ export function useAgentDelegation({
             // mode to assess whether the work is actually complete.
             if (harnessSettings.evaluateAfterCoder && summaries.length > 0) {
               let evalResult: EvaluationResult | null = null;
+              const auditorExecutionId = createId();
               try {
+                appendRunEvent(chatId, {
+                  type: 'subagent.started',
+                  executionId: auditorExecutionId,
+                  agent: 'auditor',
+                  detail: 'Evaluating coder output',
+                });
                 updateAgentStatus(
                   { active: true, phase: 'Evaluating output...' },
                   { chatId, source: 'coder' },
@@ -316,7 +380,28 @@ export function useAgentDelegation({
                     criteriaResults: allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
                   },
                 );
+                if (evalResult) {
+                  appendRunEvent(chatId, {
+                    type: 'subagent.completed',
+                    executionId: auditorExecutionId,
+                    agent: 'auditor',
+                    summary: summarizeToolResultPreview(evalResult.summary),
+                  });
+                } else {
+                  appendRunEvent(chatId, {
+                    type: 'subagent.failed',
+                    executionId: auditorExecutionId,
+                    agent: 'auditor',
+                    error: 'Auditor returned no evaluation.',
+                  });
+                }
               } catch {
+                appendRunEvent(chatId, {
+                  type: 'subagent.failed',
+                  executionId: auditorExecutionId,
+                  agent: 'auditor',
+                  error: 'Evaluation failed.',
+                });
                 // Fail-open: if evaluation fails, Coder result stands as-is
               }
 
@@ -346,22 +431,40 @@ export function useAgentDelegation({
             toolExecResult = {
               text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})`,
             };
+            appendRunEvent(chatId, {
+              type: 'subagent.completed',
+              executionId,
+              agent: 'coder',
+              summary: summarizeToolResultPreview(toolExecResult.text),
+            });
           }
 
         } catch (err) {
           const isAbort = err instanceof DOMException && err.name === 'AbortError';
           if (isAbort || abortRef.current) {
             toolExecResult = { text: '[Tool Result — delegate_coder]\nCoder cancelled by user.' };
+            appendRunEvent(chatId, {
+              type: 'subagent.completed',
+              executionId,
+              agent: 'coder',
+              summary: 'Cancelled by user.',
+            });
           } else {
             const msg = err instanceof Error ? err.message : String(err);
             toolExecResult = { text: `[Tool Error] Coder failed: ${msg}` };
+            appendRunEvent(chatId, {
+              type: 'subagent.failed',
+              executionId,
+              agent: 'coder',
+              error: summarizeToolResultPreview(msg),
+            });
           }
         }
       }
     }
     
     return toolExecResult;
-  }, [setConversations, updateAgentStatus, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef, sandboxIdRef, repoRef, abortControllerRef, abortRef, checkpointPhaseRef, lastCoderStateRef]);
+  }, [setConversations, updateAgentStatus, appendRunEvent, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef, sandboxIdRef, repoRef, abortControllerRef, abortRef, checkpointPhaseRef, lastCoderStateRef]);
 
   return { executeDelegateCall };
 }
