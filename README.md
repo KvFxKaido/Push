@@ -26,7 +26,7 @@ It gives you a chat-first workflow that stays tied to a real repo, real branch s
 
 - Solo builders shipping away from their desk
 - Developers who want mobile-native leverage, not just mobile access
-- Teams or individuals already paying for model providers and wanting execution control
+- Teams or individuals already paying for model providers who want execution control
 - People who want AI coding help without platform lock-in
 
 ## Quick orientation
@@ -39,7 +39,7 @@ It gives you a chat-first workflow that stays tied to a real repo, real branch s
 ## Repo map
 
 - `app/` — web app, Cloudflare Worker, UI, hooks, and app logic
-- `cli/` — local terminal agent, sessions, daemon, and terminal UX work
+- `cli/` — local terminal agent, sessions, daemon, and terminal interface
 - `sandbox/` — Modal sandbox backend
 - `lib/` — shared logic used across app and CLI
 - `documents/` — plans, design notes, and archived references
