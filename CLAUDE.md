@@ -1,13 +1,29 @@
 # Push — Mobile AI Coding Agent
 
-CLAUDE.md is the canonical detailed source for Push. Keep architecture, workflow, and operational details here; the root README.md, AGENTS.md, and GEMINI.md should stay as short compatibility/overview shims that point back to this file.
+CLAUDE.md is the canonical detailed source for Push. Keep architecture, workflow, and operational details here; the root README.md, AGENTS.md, and GEMINI.md should stay as short compatibility/overview shims that point back to this file. `ROADMAP.md` carries the current product priorities.
 
 ## Quick Start
+
+### Web app
 
 ```bash
 cd app
 npm install
 npm run dev
+```
+
+Run the Worker from the repo root in a second terminal:
+
+```bash
+npx wrangler dev --port 8787
+```
+
+### CLI
+
+```bash
+npm install
+./push config init
+./push
 ```
 
 ## Tech Stack
@@ -42,7 +58,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 
 ## Push CLI
 
-Local coding agent for the terminal. Same role-based agent architecture as the web app.
+Local coding agent for the terminal. Same role-based agent architecture as the web app. The current terminal direction is transcript-first CLI ergonomics and TUI-lite improvements; the existing TUI surface is experimental, not a ground-up rewrite target.
 
 ## Notes
 

@@ -1,49 +1,45 @@
 # Push CLI
 
-Local coding agent for your terminal. The terminal surface is moving toward a full-screen TUI, with the classic REPL and headless runs still supported. It uses the same role-based agent architecture as the Push mobile app, but operates directly on your filesystem.
+Local coding agent for your terminal. Push currently ships three terminal surfaces: an interactive REPL, headless runs, and an experimental full-screen TUI. The current product direction is transcript-first CLI ergonomics and TUI-lite improvements, not a ground-up full-screen TUI rewrite. It uses the same role-based agent architecture as the Push mobile app, but operates directly on your filesystem.
 
 ## Quick start
 
 ```bash
 # From repo root
-PUSH_TUI_ENABLED=1 ./push
+npm install
+./push config init
+./push
 ./push run --task "Implement X and run tests"
 
 # Or with Node directly
-node cli/cli.mjs
+node --import tsx cli/cli.ts
 ```
 
-On first run you'll want to configure a provider:
-
-```bash
-./push config init
-```
-
-This walks you through provider, model, API key, and sandbox settings using numbered menus (with free-text fallback). Config is saved to `~/.push/config.json` (mode 0600).
+`./push config init` walks you through provider, model, API key, and sandbox settings using numbered menus (with free-text fallback). Config is saved to `~/.push/config.json` (mode 0600).
 
 ## Modes
 
-### TUI (current terminal focus)
-
-```bash
-PUSH_TUI_ENABLED=1 ./push
-PUSH_TUI_ENABLED=1 ./push --session sess_abc123
-PUSH_TUI_ENABLED=1 ./push tui
-```
-
-Starts the full-screen TUI. This is where most current terminal UX work is landing. When `PUSH_TUI_ENABLED=1`, bare `./push` and `./push --session` open the TUI by default.
-
-### Interactive REPL (default fallback)
+### TUI (current launcher default)
 
 ```bash
 ./push
-./push --provider openrouter --model anthropic/claude-sonnet-4.6:nitro
-./push --session sess_abc123   # resume a previous session
+./push --session sess_abc123
+./push tui
 ```
 
-With TUI disabled, this starts the classic REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (rm -rf, sudo, force-push, etc.) prompt for approval before running, with one-shot, session-trust, and saved-prefix trust options.
+The launcher currently exports `PUSH_TUI_ENABLED=1`, so bare `./push` and `./push --session` open the full-screen TUI by default. Treat this surface as experimental; the active terminal UX work is focused on transcript-first workflows and smaller ergonomics improvements.
 
-If `PUSH_TUI_ENABLED=1`, bare `./push` launches the full-screen TUI by default. Use `./push tui` explicitly to force TUI mode, or unset the flag to use the classic REPL as default.
+### Interactive REPL (transcript-first CLI)
+
+```bash
+PUSH_TUI_ENABLED=0 ./push
+PUSH_TUI_ENABLED=0 ./push --provider openrouter --model anthropic/claude-sonnet-4.6:nitro
+PUSH_TUI_ENABLED=0 ./push --session sess_abc123   # resume a previous session
+```
+
+With TUI disabled, this starts the transcript-first REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (`rm -rf`, `sudo`, force-push, etc.) prompt for approval before running, with one-shot, session-trust, and saved-prefix trust options.
+
+Use `PUSH_TUI_ENABLED=0` to make the REPL the default in your shell, or run `./push tui` explicitly when you want the TUI.
 
 Shared in-session commands:
 
@@ -271,7 +267,7 @@ The `push-sandbox` image must exist locally. File reads/writes still go through 
 `pushd` is a daemon skeleton for IPC-based access to the same engine:
 
 ```bash
-node cli/pushd.mjs
+./push daemon start
 ```
 
 Listens on a Unix domain socket (`~/.push/run/pushd.sock`), speaks NDJSON. Request types: `hello`, `start_session`, `send_user_message`, `attach_session`. This is the foundation for editor integrations and background task runners.
@@ -280,17 +276,18 @@ Listens on a Unix domain socket (`~/.push/run/pushd.sock`), speaks NDJSON. Reque
 
 ```
 cli/
-  cli.mjs               # Entrypoint — arg parsing, interactive/headless dispatch
-  engine.mjs            # Assistant loop, working memory, multi-tool dispatch, context tracking
-  tools.mjs             # Tool executor, workspace guard, hashline edits, risk detection, git tools
-  provider.mjs          # SSE streaming client, retry policy, provider configs
-  workspace-context.mjs # Workspace snapshot + project instruction loading
-  session-store.mjs     # Session state + event persistence
-  config-store.mjs      # ~/.push/config.json read/write/env overlay
-  hashline.mjs          # Hashline protocol (content-hash line refs, multi-line edits)
-  file-ledger.mjs       # File awareness tracking (per-file read/write status)
-  tool-call-metrics.mjs # Malformed tool-call counters
-  pushd.mjs             # Daemon skeleton (Unix socket, NDJSON IPC)
+  cli.ts                # Entrypoint — arg parsing, interactive/headless dispatch
+  engine.ts             # Assistant loop, working memory, multi-tool dispatch, context tracking
+  tools.ts              # Tool executor, workspace guard, hashline edits, risk detection, git tools
+  provider.ts           # SSE streaming client, retry policy, provider configs
+  workspace-context.ts  # Workspace snapshot + project instruction loading
+  session-store.ts      # Session state + event persistence
+  config-store.ts       # ~/.push/config.json read/write/env overlay
+  hashline.ts           # Hashline protocol (content-hash line refs, multi-line edits)
+  file-ledger.ts        # File awareness tracking (per-file read/write status)
+  tool-call-metrics.ts  # Malformed tool-call counters
+  pushd.ts              # Daemon skeleton (Unix socket, NDJSON IPC)
+  tui.ts                # Experimental full-screen terminal UI
   tests/                # node:test suite
 ```
 
