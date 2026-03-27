@@ -9,6 +9,7 @@ while [ -L "$SOURCE" ]; do
   [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
 done
 ROOT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+LOCAL_TSX="$ROOT_DIR/node_modules/.bin/tsx"
 
 # Default to TUI unless explicitly overridden by caller.
 : "${PUSH_TUI_ENABLED:=1}"
@@ -17,11 +18,14 @@ export PUSH_TUI_ENABLED
 # Prefer compiled JS if available, then tsx for TS, then direct .mjs fallback.
 if [ -f "$ROOT_DIR/cli/dist/cli.js" ]; then
   exec node "$ROOT_DIR/cli/dist/cli.js" "$@"
+elif [ -x "$LOCAL_TSX" ]; then
+  exec "$LOCAL_TSX" "$ROOT_DIR/cli/cli.ts" "$@"
 elif command -v tsx >/dev/null 2>&1; then
   exec tsx "$ROOT_DIR/cli/cli.ts" "$@"
 elif [ -f "$ROOT_DIR/cli/cli.mjs" ]; then
   exec node "$ROOT_DIR/cli/cli.mjs" "$@"
 else
-  echo "push: cannot start — no compiled dist, no tsx, and no cli.mjs fallback found." >&2
+  echo "push: cannot start — no compiled CLI build and no tsx runtime found." >&2
+  echo "push: run 'npm install' from the repo root, or build the CLI with 'npm run build:cli'." >&2
   exit 1
 fi
