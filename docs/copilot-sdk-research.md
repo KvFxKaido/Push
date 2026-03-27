@@ -167,14 +167,14 @@ CLI. Exports to OTLP HTTP or local JSON-lines files.
 
 | Dimension | Copilot SDK | Push | Notes |
 |-----------|-------------|------|-------|
-| Agent isolation | Per-agent tool sets + prompts | Allowlists + TurnPolicy beforeToolExec hooks | ✅ Shipped — positive-list via EXPLORER_ALLOWED_TOOLS, tool-registry readOnly filtering |
+| Agent isolation | Per-agent tool sets + prompts | Allowlists + `TurnPolicy` `beforeToolExec` hooks | ✅ Shipped — positive-list via `EXPLORER_ALLOWED_TOOLS`, tool-registry `readOnly` filtering |
 | Delegation | Automatic intent matching | Explicit tool calls | Push is more deterministic |
 | Streaming | Event-driven with ephemeral flag | Activity-based timeout + accumulate | Copilot more composable |
 | Context mgmt | CLI-internal | Multi-phase compaction | Push is more sophisticated |
 | Checkpointing | Session state files | 25-min delta snapshots | Push more robust for mobile |
-| Safety gate | Pre-tool hooks | Auditor + pre/post tool hooks | ✅ Shipped — ToolHookRegistry with PreToolUseHook/PostToolUseHook in tool-dispatch |
+| Safety gate | Pre-tool hooks | Auditor + pre/post tool hooks | ✅ Shipped — `ToolHookRegistry` with `PreToolUseHook`/`PostToolUseHook` in tool-dispatch |
 | Mid-turn redirect | Steering/queueing | Abort + restart | Copilot is better here |
-| System prompts | 10 named sections | 12 named sections via SystemPromptBuilder | ✅ Shipped — all 4 agents migrated to sectioned builder |
+| System prompts | 10 named sections | 12 named sections via `SystemPromptBuilder` | ✅ Shipped — all 4 agents migrated to sectioned builder |
 
 ## Patterns to Adopt
 
