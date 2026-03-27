@@ -610,21 +610,30 @@ Handle directly (no delegation) when:
 }
 
 /**
- * Build the Orchestrator system prompt from named sections.
- *
- * This is the base prompt before workspace/tool/sandbox protocol blocks are
- * appended. Those dynamic blocks are added in `toLLMMessages()` using
- * `SystemPromptBuilder.append()`.
+ * Return a SystemPromptBuilder preconfigured with the base Orchestrator
+ * sections. Shared by `buildOrchestratorBasePrompt()` and `toLLMMessages()`
+ * to avoid drift when updating the base prompt wiring.
  */
-function buildOrchestratorBasePrompt(): string {
+function buildOrchestratorBaseBuilder(): SystemPromptBuilder {
   return new SystemPromptBuilder()
     .set('identity', ORCHESTRATOR_IDENTITY)
     .set('voice', ORCHESTRATOR_VOICE)
     .set('safety', SHARED_SAFETY_SECTION)
     .set('guidelines', buildOrchestratorGuidelines())
     .set('tool_instructions', buildOrchestratorToolInstructions())
-    .set('delegation', buildOrchestratorDelegation())
-    .build();
+    .set('delegation', buildOrchestratorDelegation());
+}
+
+/**
+ * Build the Orchestrator system prompt from named sections.
+ *
+ * This builds the base prompt; workspace/tool/sandbox protocol sections and
+ * runtime context blocks (e.g. user_context, capabilities, environment,
+ * custom, last_instructions) are layered on in `toLLMMessages()` using
+ * `SystemPromptBuilder.set()` and, where appropriate, `append()`.
+ */
+function buildOrchestratorBasePrompt(): string {
+  return buildOrchestratorBaseBuilder().build();
 }
 
 /**
@@ -717,14 +726,8 @@ function toLLMMessages(
     systemContent = systemPromptOverride;
   } else {
     // Build the full orchestrator prompt using the sectioned builder.
-    // Start from the base sections and layer in runtime-dependent blocks.
-    const builder = new SystemPromptBuilder()
-      .set('identity', ORCHESTRATOR_IDENTITY)
-      .set('voice', ORCHESTRATOR_VOICE)
-      .set('safety', SHARED_SAFETY_SECTION)
-      .set('guidelines', buildOrchestratorGuidelines())
-      .set('tool_instructions', buildOrchestratorToolInstructions())
-      .set('delegation', buildOrchestratorDelegation());
+    // Start from the shared base and layer in runtime-dependent blocks.
+    const builder = buildOrchestratorBaseBuilder();
 
     // User identity (name, bio) when configured
     const identityBlock = buildUserIdentityBlock(getUserProfile());
@@ -751,14 +754,16 @@ function toLLMMessages(
     }
 
     // Sandbox tools (when sandbox is active)
-    // Scratchpad, web search, ask-user — grouped as custom tool blocks
+    // Scratchpad, web search, ask-user — grouped as custom tool blocks.
+    // Use \n between protocol blocks (matching prior `+='\n'`) and \n\n
+    // before scratchpad context (matching prior `+='\n\n'`).
     const customParts: string[] = [];
     if (hasSandbox) {
       customParts.push(getSandboxToolProtocol());
     }
     customParts.push(SCRATCHPAD_TOOL_PROTOCOL);
     if (scratchpadContent !== undefined) {
-      customParts.push(buildScratchpadContext(scratchpadContent));
+      customParts.push('\n' + buildScratchpadContext(scratchpadContent));
     }
     customParts.push(WEB_SEARCH_TOOL_PROTOCOL);
     customParts.push(ASK_USER_TOOL_PROTOCOL);
