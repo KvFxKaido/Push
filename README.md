@@ -5,36 +5,36 @@
 
 Mobile-native AI coding agent for developers who ship from anywhere.
 
-Self-hosted. Provider-flexible. Built for repo-grounded execution.
+Self-hosted, provider-flexible, and built to stay tied to real code — not a managed cloud.
 
 ## Why Push exists
 
 Push is for the gap between "I need to check something quickly" and "I need a full desktop IDE session."
 
-It gives you a chat-first workflow that stays tied to a real repo, real branch state, real diffs, and real execution. You can explore code, review changes, run tasks in a sandbox, and ship from your phone or terminal without locking yourself to a single model vendor or managed platform.
+It gives you a chat-first workflow anchored to a real repo, real branch state, real diffs, and real execution. Explore code, review changes, run tasks in a sandbox, and ship from your phone or terminal — without locking yourself to a single model vendor or platform.
 
 ## What makes it different
 
 - **Chat-first, repo-locked workflow** — context stays anchored to one repo and one active branch
-- **Role-based agents** — **Orchestrator**, **Explorer**, **Coder**, **Reviewer**, **Auditor**
+- **Role-based agents** — Orchestrator, Explorer, Coder, Reviewer, Auditor
 - **Self-hosted and provider-flexible** — use your own model stack instead of buying into one AI platform
-- **Scratch workspaces** — start without GitHub auth, prototype in an ephemeral sandbox, export anytime
+- **Scratch workspaces** — prototype in an ephemeral sandbox without GitHub auth, export anytime
 - **GitHub-native flow** — branch-aware chats, PR reviews, commit/push, and merge flow
-- **Harness-first reliability** — safe reads, surgical edits, checkpoints, and execution quality over model hype
+- **Execution-first reliability** — safe reads, surgical edits, and checkpoints over model hype
 
 ## Who it's for
 
-- Solo builders shipping away from their desk
-- Developers who want mobile-native leverage, not just mobile access
-- Teams or individuals already paying for model providers who want execution control
-- People who want AI coding help without platform lock-in
+- Solo builders who ship away from their desk
+- Developers who want real execution leverage, not just chat
+- Anyone already paying for model providers who wants execution control
+- Anyone who wants AI coding help without platform lock-in
 
 ## Quick orientation
 
-- **Web app** for mobile-first repo chat, reviews, sandbox runs, and branch workflows
-- **CLI** for local terminal use with interactive and headless task execution
-- **Modal sandbox** for ephemeral Linux workspaces and code execution
-- **GitHub-backed repo mode** plus **scratch workspace mode** when you do not want auth
+- **Web app** — mobile-first repo chat, reviews, sandbox runs, and branch workflows
+- **CLI** — local terminal use with interactive and headless task execution
+- **Modal sandbox** — ephemeral Linux workspaces and code execution
+- **GitHub-backed repo mode** plus **scratch workspace mode** when you don't need auth
 
 ## Repo map
 
@@ -81,7 +81,7 @@ npm install
 
 ## Current direction
 
-Push is currently focused on transcript-first CLI ergonomics, attach/resume behavior, and TUI-lite improvements rather than a ground-up full-screen TUI rewrite. See [ROADMAP.md](ROADMAP.md) for the canonical plan.
+Push is actively improving CLI ergonomics — transcript-first navigation, attach/resume behavior, and TUI improvements. See [ROADMAP.md](ROADMAP.md) for what's next.
 
 ## License
 
