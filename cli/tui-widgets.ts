@@ -3,6 +3,7 @@
  */
 
 import { drawBox } from './tui-renderer.js';
+import type { Theme } from './tui-theme.js';
 
 export interface ScreenBuffer {
   writeLine(row: number, col: number, text: string): void;

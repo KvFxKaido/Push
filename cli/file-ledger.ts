@@ -17,26 +17,20 @@ export interface FileLedger {
   readBudget: ReadBudget;
 }
 
-interface ReadMeta {
-  total_lines?: number | string;
-  start_line?: number | string;
-  end_line?: number | string;
-  path?: string;
-}
-
 interface ToolCall {
   tool: string;
 }
 
 interface ToolResult {
   ok?: boolean;
-  meta?: ReadMeta;
+  meta?: Record<string, unknown> | null;
 }
 
-function getCoverage(meta: ReadMeta | undefined): 'partial_read' | 'fully_read' {
-  const total = Number(meta?.total_lines || 0);
-  const start = Number(meta?.start_line || 0);
-  const end = Number(meta?.end_line || 0);
+function getCoverage(meta: Record<string, unknown> | null | undefined): 'partial_read' | 'fully_read' {
+  if (!meta) return 'partial_read';
+  const total = Number(meta.total_lines || 0);
+  const start = Number(meta.start_line || 0);
+  const end = Number(meta.end_line || 0);
 
   if (!total || !start || !end) return 'partial_read';
   if (start <= 1 && end >= total) return 'fully_read';
@@ -93,7 +87,7 @@ export function updateFileLedger(ledger: FileLedger, call: ToolCall, result: Too
     return;
   }
 
-  const filePath = result?.meta?.path;
+  const filePath = typeof result?.meta?.path === 'string' ? result.meta.path : undefined;
   if (!filePath) return;
   const entry = ensureEntry(ledger, filePath);
 

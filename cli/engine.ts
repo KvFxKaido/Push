@@ -334,7 +334,7 @@ export async function runAssistantLoop(
       args: call.args,
     });
 
-    const result: ToolResult = await executeToolCall(call, state.cwd, {
+    const rawResult = await executeToolCall(call, state.cwd, {
       approvalFn,
       askUserFn,
       signal,
@@ -344,6 +344,7 @@ export async function runAssistantLoop(
       providerId: providerConfig?.id,
       providerApiKey: apiKey,
     });
+    const result: ToolResult = rawResult ?? { ok: false, text: 'Tool returned no result' };
     const durationMs: number = Date.now() - toolStart;
 
     await appendSessionEvent(state, 'tool_result', {

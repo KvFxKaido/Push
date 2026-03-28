@@ -675,7 +675,7 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function parseToolCallCandidate(candidate) {
+function parseToolCallCandidate(candidate: string): { ok: true; call: { tool: string; args: Record<string, unknown> } } | { ok: false; reason: string } {
   let parsed;
   try {
     parsed = JSON.parse(candidate);
@@ -711,9 +711,9 @@ function isLikelyToolCallCandidate(candidate) {
   return /"tool"\s*:/.test(trimmed);
 }
 
-export function detectAllToolCalls(text) {
-  const calls = [];
-  const malformed = [];
+export function detectAllToolCalls(text: string): { calls: { tool: string; args: Record<string, unknown> }[]; malformed: { reason: string; sample: string }[] } {
+  const calls: { tool: string; args: Record<string, unknown> }[] = [];
+  const malformed: { reason: string; sample: string }[] = [];
 
   const fenceRegex = /```(?:\s*(\w+))?\s*\n?([\s\S]*?)\n?\s*```/g;
   let match;
