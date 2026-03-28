@@ -1,10 +1,9 @@
-import { lazy, Suspense, useEffect, useCallback, useRef } from 'react';
+import { lazy, Suspense, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
-import { useProtectMain } from '@/hooks/useProtectMain';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { useSnapshotManager } from '@/hooks/useSnapshotManager';
 import { useBranchManager } from '@/hooks/useBranchManager';
@@ -12,7 +11,7 @@ import { useProjectInstructions } from '@/hooks/useProjectInstructions';
 import { useWorkspaceComposerState } from '@/hooks/useWorkspaceComposerState';
 import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import { useWorkspaceSandboxController } from '@/hooks/useWorkspaceSandboxController';
-import { toConversationIndex } from '@/lib/conversation-index';
+import { useWorkspaceSessionBridge } from './useWorkspaceSessionBridge';
 import type {
   RepoWithActivity,
   WorkspaceScreenProps,
@@ -137,23 +136,15 @@ export function WorkspaceSessionScreen({
     },
   );
 
-  useEffect(() => {
-    onConversationIndexChange(toConversationIndex(conversations));
-  }, [conversations, onConversationIndexChange]);
-
-  const handledResumeKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!pendingResumeChatId || !conversations[pendingResumeChatId]) return;
-    const resumeKey = `${workspaceSession.id}:${pendingResumeChatId}`;
-    if (handledResumeKeyRef.current === resumeKey) return;
-    handledResumeKeyRef.current = resumeKey;
-    switchChat(pendingResumeChatId);
-  }, [conversations, pendingResumeChatId, switchChat, workspaceSession.id]);
-
-  const protectMain = useProtectMain(workspaceRepo?.full_name ?? undefined);
-  useEffect(() => {
-    setIsMainProtected(protectMain.isProtected);
-  }, [protectMain.isProtected, setIsMainProtected]);
+  const { protectMain } = useWorkspaceSessionBridge({
+    conversations,
+    onConversationIndexChange,
+    pendingResumeChatId,
+    workspaceSessionId: workspaceSession.id,
+    switchChat,
+    setIsMainProtected,
+    repoFullName: workspaceRepo?.full_name ?? undefined,
+  });
 
   const {
     selectedChatProvider,
@@ -286,114 +277,142 @@ export function WorkspaceSessionScreen({
     );
   }
 
+  // Assemble route domains — each group maps to a ChatRoute*Props interface
+  const workspaceDomain = {
+    activeRepo: workspaceRepo,
+    workspaceSession,
+    resolveRepoAppearance,
+    setRepoAppearance,
+    clearRepoAppearance,
+    sandbox,
+    handleStartWorkspace: isScratch ? undefined : onStartScratchWorkspace,
+    handleExitWorkspace,
+    handleDisconnect: handleDisconnectFromWorkspace,
+    handleCreateNewChat,
+    inspectNewChatWorkspace,
+    handleSandboxRestart,
+    handleSandboxDownload,
+    sandboxDownloading,
+    setCurrentBranch,
+    onSandboxBranchSwitch: handleSandboxBranchSwitch,
+    sandboxState,
+    sandboxStateLoading,
+    fetchSandboxState,
+    ensureSandbox,
+  };
+
+  const conversationDomain = {
+    messages,
+    sendMessage: sendMessageWithChatDraft,
+    agentStatus,
+    agentEvents,
+    runEvents,
+    isStreaming,
+    queuedFollowUpCount,
+    lockedProvider,
+    isProviderLocked,
+    lockedModel,
+    isModelLocked,
+    conversations,
+    activeChatId,
+    switchChat,
+    renameChat,
+    deleteChat,
+    deleteAllChats,
+    regenerateLastResponse,
+    editMessageAndResend,
+    handleCardAction,
+    contextUsage,
+    abortStream,
+    interruptedCheckpoint,
+    resumeInterruptedRun,
+    dismissResume,
+    saveExpiryCheckpoint,
+    ciStatus,
+    diagnoseCIFailure,
+  };
+
+  const repositoryDomain = {
+    repos,
+    reposLoading,
+    reposError,
+    branches,
+    handleSelectRepoFromDrawer,
+  };
+
+  const catalogDomain = {
+    catalog,
+    selectedChatProvider,
+    selectedChatModels,
+    handleSelectBackend,
+    handleSelectOllamaModelFromChat,
+    handleSelectOpenRouterModelFromChat,
+    handleSelectZenModelFromChat,
+    handleSelectNvidiaModelFromChat,
+    handleSelectBlackboxModelFromChat,
+    handleSelectKilocodeModelFromChat,
+    handleSelectOpenAdapterModelFromChat,
+    handleSelectAzureModelFromChat,
+    handleSelectBedrockModelFromChat,
+    handleSelectVertexModelFromChat,
+  };
+
+  const workspaceDataDomain = { snapshots, instructions, scratchpad, protectMain };
+
+  const authDomain = {
+    token,
+    patToken,
+    isAppAuth,
+    installationId,
+    validatedUser,
+    appLoading,
+    appError,
+    connectApp,
+    installApp,
+    setInstallationIdManually,
+  };
+
+  const uiStateDomain = {
+    showToolActivity,
+    approvalMode,
+    updateApprovalMode,
+    contextMode,
+    updateContextMode,
+    sandboxStartMode,
+    updateSandboxStartMode,
+    updateShowToolActivity,
+    showInstallIdInput,
+    setShowInstallIdInput,
+    installIdInput,
+    setInstallIdInput,
+    allowlistSecretCmd,
+    copyAllowlistCommand,
+  };
+
+  const profileDomain = {
+    profile,
+    updateProfile,
+    clearProfile,
+    displayNameDraft,
+    setDisplayNameDraft,
+    handleDisplayNameBlur,
+    bioDraft,
+    setBioDraft,
+    handleBioBlur,
+  };
+
   return (
     <Suspense fallback={workspaceRouteFallback}>
       <WorkspaceChatRoute
         key={workspaceSession.id}
-        activeRepo={workspaceRepo}
-        workspaceSession={workspaceSession}
-        resolveRepoAppearance={resolveRepoAppearance}
-        setRepoAppearance={setRepoAppearance}
-        clearRepoAppearance={clearRepoAppearance}
-        sandbox={sandbox}
-        messages={messages}
-        sendMessage={sendMessageWithChatDraft}
-        agentStatus={agentStatus}
-        agentEvents={agentEvents}
-        runEvents={runEvents}
-        isStreaming={isStreaming}
-        queuedFollowUpCount={queuedFollowUpCount}
-        lockedProvider={lockedProvider}
-        isProviderLocked={isProviderLocked}
-        lockedModel={lockedModel}
-        isModelLocked={isModelLocked}
-        conversations={conversations}
-        activeChatId={activeChatId}
-        switchChat={switchChat}
-        renameChat={renameChat}
-        deleteChat={deleteChat}
-        deleteAllChats={deleteAllChats}
-        regenerateLastResponse={regenerateLastResponse}
-        editMessageAndResend={editMessageAndResend}
-        handleCardAction={handleCardAction}
-        contextUsage={contextUsage}
-        abortStream={abortStream}
-        interruptedCheckpoint={interruptedCheckpoint}
-        resumeInterruptedRun={resumeInterruptedRun}
-        dismissResume={dismissResume}
-        saveExpiryCheckpoint={saveExpiryCheckpoint}
-        ciStatus={ciStatus}
-        diagnoseCIFailure={diagnoseCIFailure}
-        repos={repos}
-        reposLoading={reposLoading}
-        reposError={reposError}
-        branches={branches}
-        catalog={catalog}
-        snapshots={snapshots}
-        instructions={instructions}
-        scratchpad={scratchpad}
-        protectMain={protectMain}
-        profile={profile}
-        updateProfile={updateProfile}
-        clearProfile={clearProfile}
-        token={token}
-        patToken={patToken}
-        isAppAuth={isAppAuth}
-        installationId={installationId}
-        validatedUser={validatedUser}
-        appLoading={appLoading}
-        appError={appError}
-        connectApp={connectApp}
-        installApp={installApp}
-        showToolActivity={showToolActivity}
-        handleStartWorkspace={isScratch ? undefined : onStartScratchWorkspace}
-        handleExitWorkspace={handleExitWorkspace}
-        handleCreateNewChat={handleCreateNewChat}
-        inspectNewChatWorkspace={inspectNewChatWorkspace}
-        handleDisconnect={handleDisconnectFromWorkspace}
-        handleSandboxRestart={handleSandboxRestart}
-        handleSandboxDownload={handleSandboxDownload}
-        sandboxDownloading={sandboxDownloading}
-        selectedChatProvider={selectedChatProvider}
-        selectedChatModels={selectedChatModels}
-        handleSelectBackend={handleSelectBackend}
-        handleSelectOllamaModelFromChat={handleSelectOllamaModelFromChat}
-        handleSelectOpenRouterModelFromChat={handleSelectOpenRouterModelFromChat}
-        handleSelectZenModelFromChat={handleSelectZenModelFromChat}
-        handleSelectNvidiaModelFromChat={handleSelectNvidiaModelFromChat}
-        handleSelectBlackboxModelFromChat={handleSelectBlackboxModelFromChat}
-        handleSelectKilocodeModelFromChat={handleSelectKilocodeModelFromChat}
-        handleSelectOpenAdapterModelFromChat={handleSelectOpenAdapterModelFromChat}
-        handleSelectAzureModelFromChat={handleSelectAzureModelFromChat}
-        handleSelectBedrockModelFromChat={handleSelectBedrockModelFromChat}
-        handleSelectVertexModelFromChat={handleSelectVertexModelFromChat}
-        handleSelectRepoFromDrawer={handleSelectRepoFromDrawer}
-        setCurrentBranch={setCurrentBranch}
-        onSandboxBranchSwitch={handleSandboxBranchSwitch}
-        sandboxState={sandboxState}
-        sandboxStateLoading={sandboxStateLoading}
-        fetchSandboxState={fetchSandboxState}
-        approvalMode={approvalMode}
-        updateApprovalMode={updateApprovalMode}
-        contextMode={contextMode}
-        updateContextMode={updateContextMode}
-        sandboxStartMode={sandboxStartMode}
-        updateSandboxStartMode={updateSandboxStartMode}
-        updateShowToolActivity={updateShowToolActivity}
-        showInstallIdInput={showInstallIdInput}
-        setShowInstallIdInput={setShowInstallIdInput}
-        installIdInput={installIdInput}
-        setInstallIdInput={setInstallIdInput}
-        setInstallationIdManually={setInstallationIdManually}
-        allowlistSecretCmd={allowlistSecretCmd}
-        copyAllowlistCommand={copyAllowlistCommand}
-        displayNameDraft={displayNameDraft}
-        setDisplayNameDraft={setDisplayNameDraft}
-        handleDisplayNameBlur={handleDisplayNameBlur}
-        bioDraft={bioDraft}
-        setBioDraft={setBioDraft}
-        handleBioBlur={handleBioBlur}
-        ensureSandbox={ensureSandbox}
+        {...workspaceDomain}
+        {...conversationDomain}
+        {...repositoryDomain}
+        {...catalogDomain}
+        {...workspaceDataDomain}
+        {...authDomain}
+        {...uiStateDomain}
+        {...profileDomain}
       />
     </Suspense>
   );

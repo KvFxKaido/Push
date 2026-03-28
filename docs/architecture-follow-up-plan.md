@@ -2,7 +2,8 @@
 
 ## Status
 - Created: 2026-03-28
-- State: Draft
+- Completed: 2026-03-28
+- State: Done
 - Scope: Post-GitHub-core consolidation and post-workspace-route chunk split cleanup
 - Goal: Finish the remaining architectural seams without reopening the big refactors that already landed cleanly
 
