@@ -10,13 +10,26 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { buildHeaders, githubFetch } from './github-client.js';
-import { redactSensitiveText } from './sensitive-data-guard.js';
+import {
+  formatSensitivePathToolError,
+  isSensitivePath,
+  redactSensitiveText,
+} from './sensitive-data-guard.js';
+import {
+  executeGitHubReadonlyTool,
+  type GitHubReadonlyToolResult,
+  type GitHubReadonlyRuntime,
+  type GitHubReadonlyToolCall,
+} from '../../../lib/github-readonly-tools.js';
 
 const SERVER_NAME = 'push-github-mcp';
 const SERVER_VERSION = '0.1.0';
 const DEFAULT_GITHUB_API_URL = 'https://api.github.com';
 const TOOL_GITHUB_SERVER_INFO = 'github_server_info';
 const TOOL_GITHUB_API_PROBE = 'github_api_probe';
+const TOOL_FETCH_PR = 'fetch_pr';
+const TOOL_LIST_BRANCHES = 'list_branches';
+const TOOL_SEARCH_FILES = 'search_files';
 
 function getGitHubToken(): string {
   return process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '';
@@ -24,6 +37,12 @@ function getGitHubToken(): string {
 
 function getGitHubApiUrl(): string {
   return process.env.GITHUB_API_URL || DEFAULT_GITHUB_API_URL;
+}
+
+function buildGitHubHeaders(accept: string = 'application/vnd.github.v3+json'): Record<string, string> {
+  const headers = buildHeaders(getGitHubToken());
+  headers.Accept = accept;
+  return headers;
 }
 
 function formatTextResult(text: string) {
@@ -35,6 +54,17 @@ function formatTextResult(text: string) {
         text: safeText,
       },
     ],
+  };
+}
+
+function formatToolResult(result: GitHubReadonlyToolResult) {
+  const base = formatTextResult(result.text);
+  if (!result.card) {
+    return base;
+  }
+  return {
+    ...base,
+    structuredContent: { card: result.card },
   };
 }
 
@@ -51,9 +81,9 @@ function getServerInfoText(): string {
     version: SERVER_VERSION,
     githubApiUrl: getGitHubApiUrl(),
     githubTokenConfigured: Boolean(getGitHubToken()),
-    tools: [TOOL_GITHUB_SERVER_INFO, TOOL_GITHUB_API_PROBE],
+    tools: [TOOL_GITHUB_SERVER_INFO, TOOL_GITHUB_API_PROBE, TOOL_FETCH_PR, TOOL_LIST_BRANCHES, TOOL_SEARCH_FILES],
     status:
-      'GitHub tool migration is in progress. This scaffold is now runnable and exposes runtime diagnostics while the full tool surface is ported over.',
+      'GitHub tool migration is in progress. Read-only PR, branch, and code search tools now share the same core implementation as the Push worker bridge.',
   };
 
   return JSON.stringify(summary, null, 2);
@@ -103,6 +133,109 @@ async function getGitHubProbeText(): Promise<string> {
   );
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function asPositiveNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyToolCall | null {
+  const args = asRecord(rawArgs) ?? {};
+  const repo = asString(args.repo);
+  if (!repo) return null;
+
+  if (name === TOOL_FETCH_PR) {
+    const pr = asPositiveNumber(args.pr);
+    return pr ? { tool: 'fetch_pr', args: { repo, pr } } : null;
+  }
+  if (name === TOOL_LIST_BRANCHES) {
+    const maxBranches = asPositiveNumber(args.maxBranches);
+    return { tool: 'list_branches', args: { repo, maxBranches } };
+  }
+  if (name === TOOL_SEARCH_FILES) {
+    const query = asString(args.query);
+    if (!query) return null;
+    return {
+      tool: 'search_files',
+      args: {
+        repo,
+        query,
+        path: asString(args.path),
+        branch: asString(args.branch),
+      },
+    };
+  }
+
+  return null;
+}
+
+const readonlyTools = [
+  {
+    name: TOOL_FETCH_PR,
+    description:
+      'Fetch a pull request summary with linked issues, recent commits, changed files, and a truncated diff.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        pr: { type: 'number', description: 'Pull request number.' },
+      },
+      required: ['repo', 'pr'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_LIST_BRANCHES,
+    description:
+      'List repository branches, marking the default branch and protected branches.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        maxBranches: { type: 'number', description: 'Maximum number of branches to return.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_SEARCH_FILES,
+    description:
+      'Search repository files with GitHub code search, including redaction and sensitive-path filtering.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        query: { type: 'string', description: 'Code search query.' },
+        path: { type: 'string', description: 'Optional path prefix filter.' },
+        branch: { type: 'string', description: 'Optional branch/ref hint.' },
+      },
+      required: ['repo', 'query'],
+      additionalProperties: false,
+    },
+  },
+] as const;
+
+const readonlyRuntime: GitHubReadonlyRuntime = {
+  githubFetch,
+  buildHeaders: buildGitHubHeaders,
+  buildApiUrl: (path) => `${getGitHubApiUrl().replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`,
+  isSensitivePath,
+  redactSensitiveText,
+  formatSensitivePathToolError,
+};
+
 const server = new Server(
   {
     name: SERVER_NAME,
@@ -137,10 +270,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
     },
+    ...readonlyTools,
   ],
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const readonlyToolCall = parseReadonlyToolCall(request.params.name, request.params.arguments);
+  if (readonlyToolCall) {
+    const result = await executeGitHubReadonlyTool(readonlyRuntime, readonlyToolCall);
+    return formatToolResult(result);
+  }
+
+  if (
+    request.params.name === TOOL_FETCH_PR
+    || request.params.name === TOOL_LIST_BRANCHES
+    || request.params.name === TOOL_SEARCH_FILES
+  ) {
+    throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for tool: ${request.params.name}`);
+  }
+
   switch (request.params.name) {
     case TOOL_GITHUB_SERVER_INFO:
       return formatTextResult(getServerInfoText());

@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "description": "Push GitHub MCP server — wraps GitHub REST API with sensitive-data guards, smart aggregation, and structured card metadata.",
-  "main": "dist/index.js",
+  "main": "./dist/mcp/github-server/src/index.js",
+  "types": "./dist/mcp/github-server/src/index.d.ts",
   "bin": {
-    "push-github-mcp": "./dist/index.js"
+    "push-github-mcp": "./dist/mcp/github-server/src/index.js"
   },
   "scripts": {
     "build": "tsc",

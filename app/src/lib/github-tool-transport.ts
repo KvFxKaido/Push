@@ -1,13 +1,10 @@
 import type { BranchListCardData, ToolExecutionResult } from '@/types';
 import { getGitHubAuthHeaders } from './github-auth';
+import type { GitHubReadonlyToolCall } from '@push/lib/github-readonly-tools';
 
 export type GitHubToolBackend = 'legacy' | 'worker';
-export type WorkerGitHubToolName = 'fetch_pr' | 'list_branches' | 'search_files';
-
-export type WorkerGitHubToolCall =
-  | { tool: 'fetch_pr'; args: { repo: string; pr: number } }
-  | { tool: 'list_branches'; args: { repo: string; maxBranches?: number } }
-  | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } };
+export type WorkerGitHubToolName = GitHubReadonlyToolCall['tool'];
+export type WorkerGitHubToolCall = GitHubReadonlyToolCall;
 
 interface WorkerGitHubToolResponse {
   result?: ToolExecutionResult;
