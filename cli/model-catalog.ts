@@ -17,6 +17,7 @@ export const OPENROUTER_MODELS: readonly string[] = [
   'google/gemini-3.1-flash-lite-preview:nitro',
   'google/gemini-3.1-pro-preview:nitro',
   'google/gemini-3.1-pro-preview-customtools:nitro',
+  'inception/mercury-2',
   'meta-llama/llama-4-maverick',
   'minimax/minimax-m2.5',
   'mistralai/codestral-2508',
