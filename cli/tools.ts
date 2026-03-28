@@ -1670,13 +1670,14 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const content = await fs.readFile(filePath, 'utf8');
         const lines = content.split('\n');
 
-        // Find all symbol start positions
-        const symbolStarts: { line: number; name: string; kind: string }[] = [];
+        // Find all top-level symbol start positions (skip nested declarations)
+        const symbolStarts: { line: number; name: string; kind: string; indent: number }[] = [];
         lines.forEach((line, i) => {
           for (const { pat, kind, nameGroup } of SYMBOL_PATTERNS) {
             const m = line.match(pat);
             if (m) {
-              symbolStarts.push({ line: i, name: m[nameGroup] || '', kind });
+              const indent = line.search(/\S/);
+              symbolStarts.push({ line: i, name: m[nameGroup] || '', kind, indent });
               break;
             }
           }
@@ -1694,10 +1695,15 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         }
 
         const startLine = symbolStarts[targetIdx].line;
-        // End at next symbol or end of file
-        const endLine = targetIdx + 1 < symbolStarts.length
-          ? symbolStarts[targetIdx + 1].line - 1
-          : lines.length - 1;
+        const targetIndent = symbolStarts[targetIdx].indent;
+        // End at next symbol at same or lesser indentation (skip nested declarations)
+        let endLine = lines.length - 1;
+        for (let j = targetIdx + 1; j < symbolStarts.length; j++) {
+          if (symbolStarts[j].indent <= targetIndent) {
+            endLine = symbolStarts[j].line - 1;
+            break;
+          }
+        }
 
         // Trim trailing blank lines
         let actualEnd = endLine;
@@ -1879,7 +1885,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               structuredError: { code: 'INVALID_MEMORY_TYPE', message: `Invalid type: ${entryType}`, retryable: false },
             };
           }
-          const content = asString(call.args.content, 'content').slice(0, 200);
+          const content = asString(call.args.content, 'content').slice(0, 500);
           const tags = Array.isArray(call.args.tags) ? call.args.tags.filter(t => typeof t === 'string').slice(0, 5) : [];
           const files = Array.isArray(call.args.files) ? call.args.files.filter(f => typeof f === 'string').slice(0, 10) : [];
 

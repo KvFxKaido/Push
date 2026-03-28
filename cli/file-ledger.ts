@@ -69,14 +69,13 @@ export function updateFileLedger(ledger: FileLedger, call: ToolCall, result: Too
   if (call.tool === 'search_files' && result.ok) {
     const text = (result as any).text || '';
     const fileHits = new Map<string, number>();
+    // ripgrep format: "path/to/file:lineNum:content"
+    // Use :lineNum: regex to handle paths with colons (e.g. Windows C:\path)
+    const rgLinePattern = /^(.+?):(\d+):/;
     for (const line of text.split('\n')) {
-      // ripgrep format: "path/to/file:lineNum:content"
-      const colonIdx = line.indexOf(':');
-      if (colonIdx > 0) {
-        const filePart = line.slice(0, colonIdx);
-        if (filePart && !filePart.includes(' ')) {
-          fileHits.set(filePart, (fileHits.get(filePart) || 0) + 1);
-        }
+      const m = line.match(rgLinePattern);
+      if (m && m[1]) {
+        fileHits.set(m[1], (fileHits.get(m[1]) || 0) + 1);
       }
     }
     for (const [fp, count] of fileHits) {
