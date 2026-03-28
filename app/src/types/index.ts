@@ -1056,17 +1056,30 @@ export type ConversationMeta = Omit<Conversation, 'messages' | 'runState'>;
  */
 export type ConversationIndex = Record<string, ConversationMeta>;
 
-/**
- * Props passed from App (routing shell) into WorkspaceScreen.
- * Everything workspace/chat/sandbox-specific lives *inside* WorkspaceScreen;
- * this interface is the full surface area between the two.
- */
-export interface WorkspaceScreenProps {
-  // Session
+export interface GitHubAuthSession {
+  status: 'signed_out' | 'pat' | 'app';
+  token: string | null;
+  patToken: string | null;
+  validatedUser: GitHubUser | null;
+  isAppAuth: boolean;
+  installationId: string | null;
+  loading: boolean;
+  error: string | null;
+  appLoading: boolean;
+  appError: string | null;
+  connectPat: (token: string) => Promise<boolean>;
+  connectApp: () => void;
+  installApp: () => void;
+  setInstallationIdManually: (id: string) => Promise<boolean>;
+  disconnect: () => void;
+}
+
+export interface WorkspaceScreenSessionProps {
   workspaceSession: WorkspaceSession;
   onWorkspaceSessionChange: (session: WorkspaceSession | null) => void;
+}
 
-  // Repo
+export interface WorkspaceScreenRepoShellProps {
   setActiveRepo: (repo: ActiveRepo) => void;
   setCurrentBranch: (branch: string) => void;
   repos: RepoWithActivity[];
@@ -1075,32 +1088,43 @@ export interface WorkspaceScreenProps {
   resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
   setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
   clearRepoAppearance: (repoFullName: string) => void;
+}
 
-  // Auth — values
-  token: string | null;
-  patToken: string | null;
-  validatedUser: GitHubUser | null;
-  isAppAuth: boolean;
-  installationId: string | null;
-  appLoading: boolean;
-  appError: string | null;
+export type WorkspaceScreenAuthProps = Pick<
+  GitHubAuthSession,
+  | 'token'
+  | 'patToken'
+  | 'validatedUser'
+  | 'isAppAuth'
+  | 'installationId'
+  | 'appLoading'
+  | 'appError'
+  | 'connectApp'
+  | 'installApp'
+  | 'setInstallationIdManually'
+>;
 
-  // Auth — callbacks
-  connectApp: () => void;
-  installApp: () => void;
-  setInstallationIdManually: (id: string) => Promise<boolean>;
-
-  // Navigation
+export interface WorkspaceScreenNavigationProps {
   onDisconnect: () => void;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onStartScratchWorkspace: () => void;
   onEndWorkspace: () => void;
+}
 
-  // Resume intent — App sets this when the user picks a conversation on HomeScreen.
-  // WorkspaceScreen calls switchChat internally when it mounts or the value changes.
+export interface WorkspaceScreenHomeBridgeProps {
   pendingResumeChatId: string | null;
-
-  // Conversation index — WorkspaceScreen calls this whenever conversations change
-  // so App can pass slim metadata to HomeScreen without owning useChat.
   onConversationIndexChange: (index: ConversationIndex) => void;
+}
+
+/**
+ * Props passed from App (routing shell) into WorkspaceScreen.
+ * Everything workspace/chat/sandbox-specific lives inside WorkspaceScreen;
+ * this interface is the grouped surface area between the shell and workspace.
+ */
+export interface WorkspaceScreenProps {
+  workspace: WorkspaceScreenSessionProps;
+  repoShell: WorkspaceScreenRepoShellProps;
+  auth: WorkspaceScreenAuthProps;
+  navigation: WorkspaceScreenNavigationProps;
+  homeBridge: WorkspaceScreenHomeBridgeProps;
 }

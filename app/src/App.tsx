@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
-import { useGitHubAuth } from '@/hooks/useGitHubAuth';
-import { useGitHubAppAuth } from '@/hooks/useGitHubAppAuth';
+import { useAuthSession } from '@/hooks/useAuthSession';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useRepoAppearance } from '@/hooks/useRepoAppearance';
@@ -55,41 +54,32 @@ function App() {
     };
   }, []);
 
+  const auth = useAuthSession();
   const {
-    token: patToken,
-    setTokenManually,
-    logout: patLogout,
-    loading: patLoading,
-    error: patError,
-    validatedUser: patUser,
-  } = useGitHubAuth();
-
-  const {
-    token: appToken,
-    installationId,
-    connect: connectApp,
-    install: installApp,
-    disconnect: appDisconnect,
-    setInstallationIdManually,
-    loading: appLoading,
-    error: appError,
-    validatedUser: appUser,
+    token: authToken,
+    validatedUser,
     isAppAuth,
-  } = useGitHubAppAuth();
-
-  const token = appToken || patToken;
-  const authLoading = appLoading || patLoading;
-  const authError = appError || patError;
-  const validatedUser = appUser || patUser;
+    loading: authLoading,
+    error: authError,
+    patToken,
+    installationId,
+    appLoading,
+    appError,
+    connectPat,
+    connectApp,
+    installApp,
+    setInstallationIdManually,
+    disconnect: disconnectAuth,
+  } = auth;
   const { repos, loading: reposLoading, error: reposError, sync: syncRepos } = useRepos();
 
   const handleConnect = useCallback(
     async (pat: string): Promise<boolean> => {
-      const success = await setTokenManually(pat);
+      const success = await connectPat(pat);
       if (success) syncRepos();
       return success;
     },
-    [setTokenManually, syncRepos],
+    [connectPat, syncRepos],
   );
 
   const handleStartScratchWorkspace = useCallback(() => {
@@ -148,8 +138,7 @@ function App() {
   }, [setCurrentBranch]);
 
   const handleDisconnect = useCallback(() => {
-    appDisconnect();
-    patLogout();
+    disconnectAuth();
     clearActiveRepo();
     setWorkspaceSession(null);
     setPendingResumeChatId(null);
@@ -158,18 +147,18 @@ function App() {
     safeStorageRemove('diff_conversations');
     safeStorageRemove('diff_chat_history');
     void replaceAllConversations({});
-  }, [appDisconnect, clearActiveRepo, patLogout]);
+  }, [clearActiveRepo, disconnectAuth]);
 
   useEffect(() => {
-    if (token) syncRepos();
-  }, [token, syncRepos]);
+    if (authToken) syncRepos();
+  }, [authToken, syncRepos]);
 
   const screen: AppShellScreen = useMemo(() => {
     if (workspaceSession?.kind === 'scratch') return 'workspace';
-    if (!token) return 'onboarding';
+    if (!authToken) return 'onboarding';
     if (workspaceSession?.kind === 'repo') return 'workspace';
     return 'home';
-  }, [token, workspaceSession]);
+  }, [authToken, workspaceSession]);
 
   const suspenseFallback = <div className="h-dvh bg-[#000]" />;
 
@@ -224,32 +213,42 @@ function App() {
   return (
     <Suspense fallback={suspenseFallback}>
       <WorkspaceScreen
-        workspaceSession={workspaceSession}
-        onWorkspaceSessionChange={setWorkspaceSession}
-        setActiveRepo={setActiveRepo}
-        setCurrentBranch={handleSetCurrentBranch}
-        repos={repos}
-        reposLoading={reposLoading}
-        reposError={reposError}
-        resolveRepoAppearance={resolveRepoAppearance}
-        setRepoAppearance={setRepoAppearance}
-        clearRepoAppearance={clearRepoAppearance}
-        token={token}
-        patToken={patToken}
-        validatedUser={validatedUser}
-        isAppAuth={isAppAuth}
-        installationId={installationId}
-        appLoading={appLoading}
-        appError={appError}
-        connectApp={connectApp}
-        installApp={installApp}
-        setInstallationIdManually={setInstallationIdManually}
-        onDisconnect={handleDisconnect}
-        onSelectRepo={handleSelectRepo}
-        onStartScratchWorkspace={handleStartScratchWorkspace}
-        onEndWorkspace={handleEndWorkspace}
-        pendingResumeChatId={pendingResumeChatId}
-        onConversationIndexChange={setConversationIndex}
+        workspace={{
+          workspaceSession,
+          onWorkspaceSessionChange: setWorkspaceSession,
+        }}
+        repoShell={{
+          setActiveRepo,
+          setCurrentBranch: handleSetCurrentBranch,
+          repos,
+          reposLoading,
+          reposError,
+          resolveRepoAppearance,
+          setRepoAppearance,
+          clearRepoAppearance,
+        }}
+        auth={{
+          token: authToken,
+          patToken,
+          validatedUser,
+          isAppAuth,
+          installationId,
+          appLoading,
+          appError,
+          connectApp,
+          installApp,
+          setInstallationIdManually,
+        }}
+        navigation={{
+          onDisconnect: handleDisconnect,
+          onSelectRepo: handleSelectRepo,
+          onStartScratchWorkspace: handleStartScratchWorkspace,
+          onEndWorkspace: handleEndWorkspace,
+        }}
+        homeBridge={{
+          pendingResumeChatId,
+          onConversationIndexChange: setConversationIndex,
+        }}
       />
     </Suspense>
   );

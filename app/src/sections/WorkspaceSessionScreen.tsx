@@ -23,33 +23,43 @@ const WorkspaceChatRoute = lazy(() => import('./WorkspaceChatRoute').then((modul
 const workspaceRouteFallback = <div className="h-dvh bg-[#000]" />;
 
 export function WorkspaceSessionScreen({
-  workspaceSession,
-  onWorkspaceSessionChange,
-  setActiveRepo,
-  setCurrentBranch,
-  repos,
-  reposLoading,
-  reposError,
-  resolveRepoAppearance,
-  setRepoAppearance,
-  clearRepoAppearance,
-  token,
-  patToken,
-  validatedUser,
-  isAppAuth,
-  installationId,
-  appLoading,
-  appError,
-  connectApp,
-  installApp,
-  setInstallationIdManually,
-  onDisconnect,
-  onSelectRepo,
-  onStartScratchWorkspace,
-  onEndWorkspace,
-  pendingResumeChatId,
-  onConversationIndexChange,
+  workspace,
+  repoShell,
+  auth,
+  navigation,
+  homeBridge,
 }: WorkspaceScreenProps) {
+  const { workspaceSession, onWorkspaceSessionChange } = workspace;
+  const {
+    setActiveRepo,
+    setCurrentBranch,
+    repos,
+    reposLoading,
+    reposError,
+    resolveRepoAppearance,
+    setRepoAppearance,
+    clearRepoAppearance,
+  } = repoShell;
+  const {
+    token,
+    patToken,
+    validatedUser,
+    isAppAuth,
+    installationId,
+    appLoading,
+    appError,
+    connectApp,
+    installApp,
+    setInstallationIdManually,
+  } = auth;
+  const {
+    onDisconnect,
+    onSelectRepo,
+    onStartScratchWorkspace,
+    onEndWorkspace,
+  } = navigation;
+  const { pendingResumeChatId, onConversationIndexChange } = homeBridge;
+
   const isScratch = workspaceSession.kind === 'scratch';
   const workspaceRepo = workspaceSession.kind === 'repo' ? workspaceSession.repo : null;
   const scratchpad = useScratchpad(workspaceRepo?.full_name ?? null);
