@@ -1,9 +1,9 @@
 /**
  * Unified hashline implementation for both Node.js and browser environments.
- * 
+ *
  * Runtime detection:
- * - Node.js: uses node:crypto.createHash (sync)
- * - Browser: uses crypto.subtle.digest (async)
+ * - Preferred: Web Crypto SHA-256 when available
+ * - Fallback: deterministic JS hash for environments without Web Crypto
  */
 
 export type HashlineOp =
@@ -23,28 +23,38 @@ export interface HashlineEditResult {
 
 // --- Crypto runtime detection ---
 
-function isNode(): boolean {
-  return typeof process !== 'undefined' && 
-         process.versions != null && 
-         process.versions.node != null;
-}
-
-let cachedNodeCrypto: any = null;
-export async function getNodeCrypto(): Promise<any> {
-  if (cachedNodeCrypto) return cachedNodeCrypto;
-  if (!isNode()) return null;
-  try {
-    cachedNodeCrypto = await import('node:crypto');
-    return cachedNodeCrypto;
-  } catch {
-    return null;
-  }
+function getWebCrypto(): Crypto | null {
+  const candidate = globalThis.crypto;
+  return candidate && candidate.subtle ? candidate : null;
 }
 
 function hasWebCrypto(): boolean {
-  return typeof crypto !== 'undefined' && 
-         crypto.subtle != null && 
-         typeof crypto.subtle.digest === 'function';
+  const webCrypto = getWebCrypto();
+  return webCrypto != null && typeof webCrypto.subtle.digest === 'function';
+}
+
+function fallbackHashHex(input: string): string {
+  // Deterministic non-cryptographic fallback used only when Web Crypto is absent.
+  let primary = 0x811c9dc5;
+  let secondary = 0x9e3779b1;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const code = input.charCodeAt(i);
+    primary ^= code;
+    primary = Math.imul(primary, 0x01000193);
+    secondary ^= code;
+    secondary = Math.imul(secondary, 0x85ebca6b);
+  }
+
+  return `${(primary >>> 0).toString(16).padStart(8, '0')}${(secondary >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function clampHashLength(length: number): number {
+  return Math.min(Math.max(length, 7), 12);
+}
+
+export async function getNodeCrypto(): Promise<null> {
+  return null;
 }
 
 /**
@@ -63,38 +73,26 @@ function hasWebCrypto(): boolean {
  */
 export async function calculateLineHash(line: string, length: number = 7): Promise<string> {
   const trimmed = line.trim();
-  
-  // 1. Prefer Web Crypto (Node 19+, Browsers)
+
+  // 1. Prefer Web Crypto (modern browsers + current Node runtimes)
   if (hasWebCrypto()) {
+    const webCrypto = getWebCrypto();
+    if (!webCrypto) throw new Error('Web Crypto disappeared during hashing');
     const msgUint8 = new TextEncoder().encode(trimmed);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+    const hashBuffer = await webCrypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    return hashHex.slice(0, Math.min(Math.max(length, 7), 12));
+    return hashHex.slice(0, clampHashLength(length));
   }
-  
-  // 2. Fallback to Node crypto
-  const nodeCrypto = await getNodeCrypto();
-  if (nodeCrypto) {
-    const hash = nodeCrypto.createHash('sha256').update(trimmed).digest('hex');
-    return hash.slice(0, Math.min(Math.max(length, 7), 12));
-  }
-  
-  throw new Error('No crypto implementation available');
+
+  return fallbackHashHex(trimmed).slice(0, clampHashLength(length));
 }
 
 /**
- * Sync version for Node.js contexts where async isn't practical.
+ * Sync version for legacy utility callers. Uses the deterministic JS fallback.
  */
 export function calculateLineHashSync(line: string, length: number = 7): string {
-  const trimmed = line.trim();
-  
-  if (cachedNodeCrypto) {
-    const hash = cachedNodeCrypto.createHash('sha256').update(trimmed).digest('hex');
-    return hash.slice(0, Math.min(Math.max(length, 7), 12));
-  }
-  
-  throw new Error('calculateLineHashSync requires getNodeCrypto() to be called once first in ESM');
+  return fallbackHashHex(line.trim()).slice(0, clampHashLength(length));
 }
 
 /**
@@ -106,19 +104,15 @@ export async function calculateContentVersion(content: string): Promise<string> 
 
   // 1. Prefer Web Crypto
   if (hasWebCrypto()) {
+    const webCrypto = getWebCrypto();
+    if (!webCrypto) throw new Error('Web Crypto disappeared during content hashing');
     const msgUint8 = new TextEncoder().encode(str);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+    const hashBuffer = await webCrypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
   }
 
-  // 2. Fallback to Node crypto
-  const nodeCrypto = await getNodeCrypto();
-  if (nodeCrypto) {
-    return nodeCrypto.createHash('sha256').update(str).digest('hex').slice(0, 12);
-  }
-
-  throw new Error('No crypto implementation available');
+  return fallbackHashHex(str).slice(0, 12);
 }
 
 // --- Ref parsing ---
@@ -134,15 +128,6 @@ function parseRef(ref: string): { lineNo: number | null; hash: string } {
 }
 
 async function batchHashLines(lines: string[]): Promise<string[]> {
-  const nodeCrypto = await getNodeCrypto();
-  if (nodeCrypto) {
-    // Optimization: In Node, sync hashing in a loop is much faster for batches
-    // than thousands of async Promise.all calls (handles 2k+ lines efficiently).
-    return lines.map(line => {
-      const hash = nodeCrypto.createHash('sha256').update(line.trim()).digest('hex');
-      return hash.slice(0, 12);
-    });
-  }
   return Promise.all(lines.map(l => calculateLineHash(l, 12)));
 }
 

@@ -214,6 +214,7 @@ interface HealthStatus {
     zen: { status: 'ok' | 'unconfigured'; configured: boolean };
     nvidia: { status: 'ok' | 'unconfigured'; configured: boolean };
     blackbox: { status: 'ok' | 'unconfigured'; configured: boolean };
+    kilocode: { status: 'ok' | 'unconfigured'; configured: boolean };
     openadapter: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -556,10 +557,11 @@ export async function generateGitHubAppJWT(appId: string, privateKeyPEM: string)
 
   const derBytes = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
   const pkcs8Bytes = isPkcs1 ? wrapPkcs1InPkcs8(derBytes) : derBytes;
+  const keyBytes = Uint8Array.from(pkcs8Bytes);
 
   const cryptoKey = await crypto.subtle.importKey(
     'pkcs8',
-    pkcs8Bytes.buffer,
+    keyBytes,
     { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
     false,
     ['sign']

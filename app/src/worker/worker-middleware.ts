@@ -5,6 +5,7 @@
  * only what they need without pulling in the entire monolith.
  */
 
+import type { Fetcher, RateLimit } from '@cloudflare/workers-types';
 import {
   normalizeExperimentalBaseUrl,
   type ExperimentalProviderType,

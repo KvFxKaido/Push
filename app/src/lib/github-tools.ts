@@ -43,6 +43,13 @@ import {
   resolveToolName,
   getToolSourceFromName,
 } from './tool-registry';
+import {
+  executeGitHubToolViaWorker,
+  fetchRepoBranchesViaWorker,
+  getGitHubToolBackend,
+  supportsWorkerGitHubTool,
+  type WorkerGitHubToolCall,
+} from './github-tool-transport';
 
 // --- Tool types ---
 
@@ -275,7 +282,7 @@ function parseNextLink(linkHeader: string | null): string | null {
   return match ? match[1] : null;
 }
 
-export async function fetchRepoBranches(
+async function fetchRepoBranchesLegacy(
   repo: string,
   maxBranches: number = 500,
 ): Promise<{ defaultBranch: string; branches: BranchListCardData['branches'] }> {
@@ -320,6 +327,25 @@ export async function fetchRepoBranches(
     });
 
   return { defaultBranch, branches: branchItems };
+}
+
+function logGitHubWorkerFallback(action: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`[Push] GitHub worker backend failed for ${action}; falling back to legacy.`, message);
+}
+
+export async function fetchRepoBranches(
+  repo: string,
+  maxBranches: number = 500,
+): Promise<{ defaultBranch: string; branches: BranchListCardData['branches'] }> {
+  if (getGitHubToolBackend() === 'worker') {
+    try {
+      return await fetchRepoBranchesViaWorker(repo, maxBranches);
+    } catch (error) {
+      logGitHubWorkerFallback('list_branches', error);
+    }
+  }
+  return fetchRepoBranchesLegacy(repo, maxBranches);
 }
 
 // --- Detection helpers ---
@@ -1041,7 +1067,7 @@ async function executeListDirectory(repo: string, path: string = '', branch?: st
 }
 
 async function executeListBranches(repo: string): Promise<ToolExecutionResult> {
-  const { defaultBranch, branches } = await fetchRepoBranches(repo, 30);
+  const { defaultBranch, branches } = await fetchRepoBranchesLegacy(repo, 30);
 
   if (branches.length === 0) {
     return { text: `[Tool Result — list_branches]\nNo branches found on ${repo}.` };
@@ -2595,7 +2621,11 @@ function normalizeRepoName(repo: string): string {
  * Execute a detected tool call against the GitHub API.
  * Returns text for the LLM + optional structured card for the UI.
  */
-export async function executeToolCall(call: ToolCall, allowedRepo: string): Promise<ToolExecutionResult> {
+function isWorkerGitHubToolCall(call: ToolCall): call is WorkerGitHubToolCall {
+  return supportsWorkerGitHubTool(call.tool);
+}
+
+async function executeToolCallLegacy(call: ToolCall, allowedRepo: string): Promise<ToolExecutionResult> {
   // Delegation tools are handled at a higher level — skip repo validation
   if (call.tool === 'delegate_coder' || call.tool === 'delegate_explorer') {
     return { text: `[${call.tool}] Handled by tool-dispatch layer.` };
@@ -2654,6 +2684,18 @@ export async function executeToolCall(call: ToolCall, allowedRepo: string): Prom
     console.error(`[Push] Tool execution error:`, msg);
     return { text: `[Tool Error] ${msg}` };
   }
+}
+
+export async function executeToolCall(call: ToolCall, allowedRepo: string): Promise<ToolExecutionResult> {
+  if (getGitHubToolBackend() === 'worker' && isWorkerGitHubToolCall(call)) {
+    try {
+      return await executeGitHubToolViaWorker(call, allowedRepo);
+    } catch (error) {
+      logGitHubWorkerFallback(call.tool, error);
+    }
+  }
+
+  return executeToolCallLegacy(call, allowedRepo);
 }
 
 /**

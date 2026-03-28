@@ -26,6 +26,7 @@ export {
 } from './orchestrator-streaming';
 
 import type { StreamProviderConfig, StreamUsage, ChunkMetadata } from './orchestrator-streaming';
+import type { ActiveProvider } from './orchestrator-provider-routing';
 
 
 
@@ -1166,4 +1167,3 @@ async function streamSSEChatOnce(
 // ---------------------------------------------------------------------------
 
 }
-
