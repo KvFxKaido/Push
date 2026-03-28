@@ -126,7 +126,7 @@ export async function calculateContentVersion(content: string): Promise<string> 
 function parseRef(ref: string): { lineNo: number | null; hash: string } {
   const raw = ref.trim();
   if (!raw) throw new Error('ref is required');
-  const m = raw.match(/^(?:(\d+):)?([a-f0-9]{7,12})$/i);
+  const m = raw.match(/^(?:(\d+)[:|])?([a-f0-9]{7,12})$/i);
   if (!m) throw new Error(`invalid ref format: ${raw}`);
   const lineNo = m[1] ? Number(m[1]) : null;
   const hash = m[2].toLowerCase();
@@ -157,6 +157,12 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
 
   const hashCache = await batchHashLines(resultLines);
 
+  /** Format a line snippet for diagnostic output (truncated at 60 chars with ellipsis). */
+  function snippetOf(idx: number): string {
+    const trimmed = resultLines[idx]?.trim() ?? '';
+    return trimmed.length > 60 ? trimmed.slice(0, 60) + '…' : trimmed;
+  }
+
   type ResolvedEdit = { index: number; edit: HashlineOp } | { error: string };
   const resolved: ResolvedEdit[] = [];
 
@@ -172,11 +178,11 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
     if (parsed.lineNo !== null) {
       const idx = parsed.lineNo - 1;
       if (idx < 0 || idx >= resultLines.length) {
-        resolved.push({ error: `Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range.` });
+        resolved.push({ error: `Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${resultLines.length} lines).` });
         continue;
       }
       if (!hashCache[idx].startsWith(parsed.hash)) {
-        resolved.push({ error: `Stale line-qualified ref "${edit.ref}" at line ${parsed.lineNo}.` });
+        resolved.push({ error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Re-read the file to get current hashes.` });
         continue;
       }
       resolved.push({ index: idx, edit });
@@ -193,6 +199,7 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
     }
 
     if (matches.length > 1) {
+      // Try to disambiguate — cache already has 12-char hashes
       if (parsed.hash.length < 12) {
         const distinctGroups = new Map<string, number[]>();
         for (const idx of matches) {
@@ -204,17 +211,39 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
         const candidateGroups = [...distinctGroups.entries()].filter(([lh]) => lh.startsWith(parsed.hash));
         if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
           resolved.push({ index: candidateGroups[0][1][0], edit });
-          continue;
+        } else {
+          const MAX_DIAGNOSTIC_LINES = 5;
+          const diagnostics: string[] = [];
+          for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
+            const idx = matches[k];
+            diagnostics.push(`  L${idx + 1}: ${hashCache[idx]} "${snippetOf(idx)}"`);
+          }
+          if (matches.length > MAX_DIAGNOSTIC_LINES) {
+            diagnostics.push(`  ... and ${matches.length - MAX_DIAGNOSTIC_LINES} more`);
+          }
+          resolved.push({
+            error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches). Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash}") to target a specific line:\n${diagnostics.join('\n')}`,
+          });
         }
+      } else {
+        // Even at max hash length, lines are identical — suggest line-qualified refs
+        const MAX_DIAGNOSTIC_LINES = 5;
+        const diagnostics: string[] = [];
+        for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
+          const idx = matches[k];
+          diagnostics.push(`  L${idx + 1}: "${snippetOf(idx)}"`);
+        }
+        resolved.push({
+          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical content. Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash.slice(0, 7)}") to target a specific line:\n${diagnostics.join('\n')}`,
+        });
       }
-      resolved.push({ error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches).` });
       continue;
     }
 
     resolved.push({ index: matches[0], edit });
   }
 
-  const applied: { originalIndex: number; op: HashlineOp['op']; edit: HashlineOp }[] = [];
+  const applied: { originalIndex: number; op: HashlineOp['op']; edit: HashlineOp; linesAdded: number }[] = [];
   const deletedOriginalIndices = new Set<number>();
 
   for (const r of resolved) {
@@ -226,41 +255,60 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
 
     if (deletedOriginalIndices.has(r.index)) {
       failedCount++;
-      errors.push(`Target line ${r.index + 1} was already deleted by a prior op.`);
+      errors.push(`Target line ${r.index + 1} was already deleted by a prior op in this batch.`);
       continue;
     }
 
-    // Offset adjustment logic (honors array order for same-line inserts/deletes)
+    // Offset adjustment logic (honors array order for same-line inserts/deletes).
+    // Each prior op may shift the target by more than 1 line when content is multi-line.
     let adjustedIdx = r.index;
     for (const prior of applied) {
       if (prior.op === 'insert_after') {
-        if (r.index > prior.originalIndex) adjustedIdx++;
-        else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') adjustedIdx++;
+        if (r.index > prior.originalIndex) adjustedIdx += prior.linesAdded;
+        else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') adjustedIdx += prior.linesAdded;
       } else if (prior.op === 'insert_before' && r.index >= prior.originalIndex) {
-        adjustedIdx++;
+        adjustedIdx += prior.linesAdded;
+      } else if (prior.op === 'replace_line') {
+        // replace_line with multi-line content adds (N-1) extra lines
+        if (r.index > prior.originalIndex) {
+          adjustedIdx += prior.linesAdded - 1;
+        } else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') {
+          // insert_after the same line that was replaced: shift past the full replaced block
+          adjustedIdx += prior.linesAdded - 1;
+        }
       } else if (prior.op === 'delete_line' && r.index > prior.originalIndex) {
         adjustedIdx--;
       }
     }
 
     const edit = r.edit;
+    let linesAdded = 0;
     switch (edit.op) {
-      case 'replace_line':
-        resultLines[adjustedIdx] = edit.content;
+      case 'replace_line': {
+        const newLines = edit.content.split('\n');
+        resultLines.splice(adjustedIdx, 1, ...newLines);
+        linesAdded = newLines.length;
         break;
-      case 'insert_after':
-        resultLines.splice(adjustedIdx + 1, 0, edit.content);
+      }
+      case 'insert_after': {
+        const newLines = edit.content.split('\n');
+        resultLines.splice(adjustedIdx + 1, 0, ...newLines);
+        linesAdded = newLines.length;
         break;
-      case 'insert_before':
-        resultLines.splice(adjustedIdx, 0, edit.content);
+      }
+      case 'insert_before': {
+        const newLines = edit.content.split('\n');
+        resultLines.splice(adjustedIdx, 0, ...newLines);
+        linesAdded = newLines.length;
         break;
+      }
       case 'delete_line':
         resultLines.splice(adjustedIdx, 1);
         break;
     }
     appliedCount++;
     if (edit.op === 'delete_line') deletedOriginalIndices.add(r.index);
-    applied.push({ originalIndex: r.index, op: edit.op, edit });
+    applied.push({ originalIndex: r.index, op: edit.op, edit, linesAdded });
   }
 
   return { content: resultLines.join('\n'), applied: appliedCount, failed: failedCount, errors, resolvedLines: applied.map(a => a.originalIndex + 1) };
