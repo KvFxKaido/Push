@@ -374,10 +374,15 @@ export async function createGitHubRepo(
   if (!response.ok) {
     let details = '';
     try {
-      const body = await response.json() as { message?: string; errors?: Array<{ message?: string }> };
-      details = body.message || body.errors?.[0]?.message || '';
+      const text = await response.text().catch(() => '');
+      try {
+        const body = JSON.parse(text) as { message?: string; errors?: Array<{ message?: string }> };
+        details = body.message || body.errors?.[0]?.message || '';
+      } catch {
+        details = text;
+      }
     } catch {
-      details = await response.text().catch(() => '');
+      details = 'Failed to read response body';
     }
     if (response.status === 422) {
       throw new Error(`Repository creation failed: name likely already exists (${details || 'validation error'}).`);
@@ -423,7 +428,7 @@ export function isLikelyMutatingSandboxExec(command: string): boolean {
 // Git guard — block direct git mutations in sandbox_exec
 // ---------------------------------------------------------------------------
 
-export const GIT_MUTATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+const GIT_MUTATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\bgit\s+commit\b/i, label: 'git commit' },
   { pattern: /\bgit\s+push\b/i, label: 'git push' },
   { pattern: /\bgit\s+merge\b/i, label: 'git merge' },

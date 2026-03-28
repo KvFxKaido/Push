@@ -36,8 +36,8 @@ export interface PrefetchedEditFileState {
   expiresAt: number;
 }
 
-export const PREFETCHED_EDIT_FILE_TTL_MS = 30_000;
-export const prefetchedEditFiles = new Map<string, PrefetchedEditFileState>();
+const PREFETCHED_EDIT_FILE_TTL_MS = 30_000;
+const prefetchedEditFiles = new Map<string, PrefetchedEditFileState>();
 
 export function prefetchedEditFileKey(sandboxId: string, path: string): string {
   return `${sandboxId}:${normalizeSandboxPath(path)}`;
