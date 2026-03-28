@@ -680,7 +680,13 @@ export function parseDuckDuckGoHTML(html: string): { title: string; url: string;
     const rawUrl = match[1];
     const rawTitle = match[2].replace(/<[^>]*>/g, '').trim();
     if (rawUrl && rawTitle && rawUrl.startsWith('http')) {
-      links.push({ url: decodeURIComponent(rawUrl), title: rawTitle });
+      let safeUrl = rawUrl;
+      try {
+        safeUrl = decodeURIComponent(rawUrl);
+      } catch {
+        // If decoding fails, fall back to the raw URL to avoid failing the whole parse.
+      }
+      links.push({ url: safeUrl, title: rawTitle });
     }
   }
 

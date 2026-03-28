@@ -5,11 +5,10 @@ import {
   wlog,
   readBodyText,
   MAX_BODY_SIZE_BYTES,
+  RESTORE_MAX_BODY_SIZE_BYTES,
 } from './worker-middleware';
 import { SANDBOX_ROUTES, resolveModalSandboxBase } from '../lib/sandbox-routes';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
-
-const RESTORE_MAX_BODY_SIZE_BYTES = 12 * 1024 * 1024; // 12MB for snapshot restore payloads
 
 export async function handleSandbox(request: Request, env: Env, requestUrl: URL, route: string): Promise<Response> {
   const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'sandbox');

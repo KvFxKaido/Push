@@ -59,7 +59,7 @@ interface CachedGoogleAccessToken {
   expiresAt: number;
 }
 
-export const googleAccessTokenCache = new Map<string, CachedGoogleAccessToken>();
+const googleAccessTokenCache = new Map<string, CachedGoogleAccessToken>();
 
 function base64UrlEncodeString(value: string): string {
   return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
