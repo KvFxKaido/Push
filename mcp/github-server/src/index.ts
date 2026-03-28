@@ -19,8 +19,11 @@ import {
   executeGitHubCoreTool,
   type GitHubCoreToolResult,
   type GitHubCoreRuntime,
-  type GitHubCoreToolCall,
 } from '../../../lib/github-tool-core.js';
+import {
+  asRecord,
+  parseGitHubCoreToolCall,
+} from '../../../lib/github-tool-parser.js';
 
 const SERVER_NAME = 'push-github-mcp';
 const SERVER_VERSION = '0.1.0';
@@ -169,170 +172,6 @@ async function getGitHubProbeText(): Promise<string> {
   );
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function asPositiveNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
-  if (typeof value === 'string' && value.trim().length > 0) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-  return undefined;
-}
-
-function asPositiveInt(value: unknown): number | undefined {
-  const parsed = asPositiveNumber(value);
-  return typeof parsed === 'number' && Number.isInteger(parsed) ? parsed : undefined;
-}
-
-function asStringRecord(value: unknown): Record<string, string> | undefined {
-  const record = asRecord(value);
-  if (!record) return undefined;
-  const entries = Object.entries(record).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-function parseGitHubToolCall(name: string, rawArgs: unknown): GitHubCoreToolCall | null {
-  const args = asRecord(rawArgs) ?? {};
-  const repo = asString(args.repo);
-  if (!repo) return null;
-
-  if (name === TOOL_FETCH_PR) {
-    const pr = asPositiveNumber(args.pr);
-    return pr ? { tool: 'fetch_pr', args: { repo, pr } } : null;
-  }
-  if (name === TOOL_LIST_PRS) {
-    return { tool: 'list_prs', args: { repo, state: asString(args.state) } };
-  }
-  if (name === TOOL_LIST_COMMITS) {
-    return { tool: 'list_commits', args: { repo, count: asPositiveNumber(args.count) } };
-  }
-  if (name === TOOL_READ_FILE) {
-    const path = asString(args.path);
-    if (!path) return null;
-    return {
-      tool: 'read_file',
-      args: {
-        repo,
-        path,
-        branch: asString(args.branch),
-        start_line: asPositiveInt(args.start_line),
-        end_line: asPositiveInt(args.end_line),
-      },
-    };
-  }
-  if (name === TOOL_GREP_FILE) {
-    const path = asString(args.path);
-    const pattern = asString(args.pattern);
-    if (!path || !pattern) return null;
-    return {
-      tool: 'grep_file',
-      args: { repo, path, pattern, branch: asString(args.branch) },
-    };
-  }
-  if (name === TOOL_LIST_DIRECTORY) {
-    return {
-      tool: 'list_directory',
-      args: { repo, path: asString(args.path), branch: asString(args.branch) },
-    };
-  }
-  if (name === TOOL_LIST_BRANCHES) {
-    const maxBranches = asPositiveNumber(args.maxBranches);
-    return { tool: 'list_branches', args: { repo, maxBranches } };
-  }
-  if (name === TOOL_FETCH_CHECKS) {
-    return { tool: 'fetch_checks', args: { repo, ref: asString(args.ref) } };
-  }
-  if (name === TOOL_SEARCH_FILES) {
-    const query = asString(args.query);
-    if (!query) return null;
-    return {
-      tool: 'search_files',
-      args: {
-        repo,
-        query,
-        path: asString(args.path),
-        branch: asString(args.branch),
-      },
-    };
-  }
-  if (name === TOOL_LIST_COMMIT_FILES) {
-    const ref = asString(args.ref);
-    return ref ? { tool: 'list_commit_files', args: { repo, ref } } : null;
-  }
-  if (name === TOOL_TRIGGER_WORKFLOW) {
-    const workflow = asString(args.workflow);
-    if (!workflow) return null;
-    return {
-      tool: 'trigger_workflow',
-      args: {
-        repo,
-        workflow,
-        ref: asString(args.ref),
-        inputs: asStringRecord(args.inputs),
-      },
-    };
-  }
-  if (name === TOOL_GET_WORKFLOW_RUNS) {
-    return {
-      tool: 'get_workflow_runs',
-      args: {
-        repo,
-        workflow: asString(args.workflow),
-        branch: asString(args.branch),
-        status: asString(args.status),
-        count: asPositiveNumber(args.count),
-      },
-    };
-  }
-  if (name === TOOL_GET_WORKFLOW_LOGS) {
-    const runId = asPositiveNumber(args.run_id);
-    return runId ? { tool: 'get_workflow_logs', args: { repo, run_id: runId } } : null;
-  }
-  if (name === TOOL_CREATE_PR) {
-    const title = asString(args.title);
-    const head = asString(args.head);
-    const base = asString(args.base);
-    if (!title || !head || !base) return null;
-    return {
-      tool: 'create_pr',
-      args: {
-        repo,
-        title,
-        body: asString(args.body) || '',
-        head,
-        base,
-      },
-    };
-  }
-  if (name === TOOL_MERGE_PR) {
-    const prNumber = asPositiveNumber(args.pr_number);
-    return prNumber ? { tool: 'merge_pr', args: { repo, pr_number: prNumber, merge_method: asString(args.merge_method) } } : null;
-  }
-  if (name === TOOL_DELETE_BRANCH) {
-    const branchName = asString(args.branch_name);
-    return branchName ? { tool: 'delete_branch', args: { repo, branch_name: branchName } } : null;
-  }
-  if (name === TOOL_CHECK_PR_MERGEABLE) {
-    const prNumber = asPositiveNumber(args.pr_number);
-    return prNumber ? { tool: 'check_pr_mergeable', args: { repo, pr_number: prNumber } } : null;
-  }
-  if (name === TOOL_FIND_EXISTING_PR) {
-    const headBranch = asString(args.head_branch);
-    return headBranch ? {
-      tool: 'find_existing_pr',
-      args: { repo, head_branch: headBranch, base_branch: asString(args.base_branch) },
-    } : null;
-  }
-
-  return null;
-}
 
 const githubTools = [
   {
@@ -656,7 +495,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const githubToolCall = parseGitHubToolCall(request.params.name, request.params.arguments);
+  const githubToolCall = parseGitHubCoreToolCall(request.params.name, asRecord(request.params.arguments) ?? {});
   if (githubToolCall) {
     const result = await executeGitHubCoreTool(githubToolRuntime, githubToolCall);
     return formatToolResult(result);
