@@ -110,7 +110,12 @@ export interface WorkflowJob {
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting';
   conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
-  steps: { name: string; status: 'queued' | 'in_progress' | 'completed'; conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | null; number: number }[];
+  steps: {
+    name: string;
+    status: 'queued' | 'in_progress' | 'completed';
+    conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+    number: number;
+  }[];
   htmlUrl: string;
 }
 

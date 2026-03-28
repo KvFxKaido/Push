@@ -5,13 +5,17 @@ on:
     branches: [main]
     paths:
       - 'app/**'
+      - 'mcp/**'
       - 'sandbox/**'
+      - 'package.json'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'app/**'
+      - 'mcp/**'
       - 'sandbox/**'
+      - 'package.json'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -45,6 +49,32 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Build
+        run: npm run build
+
+  github-mcp:
+    name: Typecheck, Build (github mcp)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp/github-server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mcp/github-server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Build
         run: npm run build

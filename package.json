@@ -5,8 +5,11 @@
   "scripts": {
     "build": "cd app && npm install && npm run build",
     "build:cli": "cd cli && npx tsc -p tsconfig.json",
+    "build:mcp:github": "cd mcp/github-server && npm run build",
     "dev:cli": "node --import tsx cli/cli.ts",
-    "typecheck": "cd cli && npx tsc --noEmit"
+    "dev:mcp:github": "cd mcp/github-server && npm run dev",
+    "typecheck": "cd cli && npx tsc --noEmit",
+    "typecheck:mcp:github": "cd mcp/github-server && npm run typecheck"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
