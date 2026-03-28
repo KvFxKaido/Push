@@ -14,6 +14,7 @@
 
 import type { ChatMessage } from '@/types';
 import type { TurnPolicy, TurnContext } from '../turn-policy';
+import { isVerificationPhase } from '../turn-policy';
 
 // ---------------------------------------------------------------------------
 // Drift detection (extracted from coder-agent.ts)
@@ -84,6 +85,18 @@ const MAX_CONSECUTIVE_MUTATION_FAILURES = 3;
 const MAX_CONSECUTIVE_DRIFT_ROUNDS = 2;
 
 /**
+ * Sandbox tools that mutate files. During verification phases, these are
+ * blocked to enforce a read-only + run-tests discipline.
+ * sandbox_exec is intentionally excluded — tests/typecheck need to run.
+ */
+const SANDBOX_MUTATION_TOOLS = new Set([
+  'sandbox_write_file',
+  'sandbox_edit_file',
+  'sandbox_edit_range',
+  'sandbox_apply_patchset',
+]);
+
+/**
  * Create a Coder turn policy with its own mutable tracking state.
  * Each Coder delegation gets a fresh policy instance via createCoderPolicy().
  */
@@ -95,6 +108,20 @@ export function createCoderPolicy(): TurnPolicy {
   return {
     name: 'coder-core',
     role: 'coder',
+
+    // -----------------------------------------------------------------
+    // beforeToolExec: phase-aware mutation gating
+    // -----------------------------------------------------------------
+    beforeToolExec: [
+      (toolName: string, _args: Record<string, unknown>, ctx: TurnContext) => {
+        if (!isVerificationPhase(ctx.phase)) return null;
+        if (!SANDBOX_MUTATION_TOOLS.has(toolName)) return null;
+        return {
+          action: 'deny' as const,
+          reason: `Phase "${ctx.phase}" is verification-only. File mutations (${toolName}) are blocked. Run tests, typecheck, or diffs instead.`,
+        };
+      },
+    ],
 
     // -----------------------------------------------------------------
     // afterModelCall: drift detection + no-fake-completion
