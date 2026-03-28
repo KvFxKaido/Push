@@ -1,0 +1,24 @@
+{
+  "name": "@push/github-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Push GitHub MCP server — wraps GitHub REST API with sensitive-data guards, smart aggregation, and structured card metadata.",
+  "main": "dist/index.js",
+  "bin": {
+    "push-github-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
