@@ -217,7 +217,12 @@ export type GitHubReadonlyToolCall =
   | { tool: 'list_commit_files'; args: { repo: string; ref: string } }
   | { tool: 'trigger_workflow'; args: { repo: string; workflow: string; ref?: string; inputs?: Record<string, string> } }
   | { tool: 'get_workflow_runs'; args: { repo: string; workflow?: string; branch?: string; status?: string; count?: number } }
-  | { tool: 'get_workflow_logs'; args: { repo: string; run_id: number } };
+  | { tool: 'get_workflow_logs'; args: { repo: string; run_id: number } }
+  | { tool: 'create_pr'; args: { repo: string; title: string; body: string; head: string; base: string } }
+  | { tool: 'merge_pr'; args: { repo: string; pr_number: number; merge_method?: string } }
+  | { tool: 'delete_branch'; args: { repo: string; branch_name: string } }
+  | { tool: 'check_pr_mergeable'; args: { repo: string; pr_number: number } }
+  | { tool: 'find_existing_pr'; args: { repo: string; head_branch: string; base_branch?: string } };
 
 export interface GitHubReadonlyRuntime {
   githubFetch(url: string, options?: RequestInit): Promise<Response>;
@@ -331,6 +336,15 @@ interface WorkflowJobApi {
   conclusion: string | null;
   html_url: string;
   steps?: WorkflowStepApi[];
+}
+
+interface PullRequestMergeabilityApi {
+  title: string;
+  state: string;
+  mergeable: boolean | null;
+  mergeable_state?: string | null;
+  head?: { ref?: string; sha?: string };
+  base?: { ref?: string };
 }
 
 function parseNextLink(linkHeader: string | null): string | null {
@@ -455,6 +469,10 @@ function buildContentsApiUrl(
 
 function buildDirectoryEntryPath(parentPath: string, entryName: string): string {
   return `${parentPath ? parentPath.replace(/\/$/, '') : ''}/${entryName}`.replace(/^\/+/, '/');
+}
+
+function getRepoOwner(repo: string): string {
+  return repo.split('/')[0] || '';
 }
 
 function normalizeWorkflowRunStatus(status: string | undefined): GitHubReadonlyWorkflowRunItem['status'] {
@@ -1546,6 +1564,236 @@ export async function executeGetWorkflowLogsTool(
   };
 }
 
+export async function executeCreatePRTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  title: string,
+  body: string,
+  head: string,
+  base: string,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls`),
+    {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, body, head, base }),
+    },
+  );
+
+  if (res.status === 422) {
+    const errorData = await res.json().catch(() => null) as { errors?: Array<{ message?: string }>; message?: string } | null;
+    const detail = errorData?.errors?.[0]?.message || errorData?.message || 'Validation failed';
+    throw new Error(`Could not create PR: ${detail}`);
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `creating PR on ${repo}`));
+  }
+
+  const prData = await res.json() as { number: number; title: string; html_url: string };
+  return {
+    text: [
+      `[Tool Result — create_pr]`,
+      `PR #${prData.number} created on ${repo}.`,
+      `Title: ${prData.title}`,
+      `Branch: ${head} → ${base}`,
+      `URL: ${prData.html_url}`,
+    ].join('\n'),
+  };
+}
+
+export async function executeMergePRTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  prNumber: number,
+  mergeMethod?: string,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const method = mergeMethod || 'merge';
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${prNumber}/merge`),
+    {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ merge_method: method }),
+    },
+  );
+
+  if (res.status === 405) {
+    const errorData = await res.json().catch(() => null) as { message?: string } | null;
+    const reason = errorData?.message || 'PR cannot be merged (checks may be failing, or conflicts exist).';
+    throw new Error(`Cannot merge PR #${prNumber}: ${reason}`);
+  }
+  if (res.status === 409) {
+    throw new Error(`Merge conflict on PR #${prNumber}. The head branch is out of date or has conflicts.`);
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `merging PR #${prNumber} on ${repo}`));
+  }
+
+  const data = await res.json() as { sha?: string; message?: string };
+  return {
+    text: [
+      `[Tool Result — merge_pr]`,
+      `PR #${prNumber} merged on ${repo} via ${method}.`,
+      `Merge SHA: ${data.sha?.slice(0, 7) || 'unknown'}`,
+      data.message ? `Message: ${data.message}` : '',
+    ].filter(Boolean).join('\n'),
+  };
+}
+
+export async function executeDeleteBranchTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  branchName: string,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/git/refs/heads/${encodeURIComponent(branchName)}`),
+    {
+      method: 'DELETE',
+      headers,
+    },
+  );
+
+  if (res.status === 422) {
+    throw new Error(`Branch "${branchName}" not found on ${repo}. Use list_branches to see available branches.`);
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `deleting branch "${branchName}" on ${repo}`));
+  }
+
+  return {
+    text: [
+      `[Tool Result — delete_branch]`,
+      `Branch "${branchName}" deleted from ${repo}.`,
+    ].join('\n'),
+  };
+}
+
+export async function executeCheckPRMergeableTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  prNumber: number,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const prRes = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${prNumber}`),
+    { headers },
+  );
+  if (!prRes.ok) {
+    throw new Error(formatGitHubError(prRes.status, `PR #${prNumber} on ${repo}`));
+  }
+
+  const prData = await prRes.json() as PullRequestMergeabilityApi;
+  const headSha = prData.head?.sha;
+  let ciOverall: GitHubReadonlyCIOverallStatus | 'unknown' = 'unknown';
+  let ciChecks: GitHubReadonlyCICheck[] = [];
+  if (headSha) {
+    try {
+      const ciStatus = await fetchCIStatusSummary(runtime, repo, headSha);
+      ciOverall = ciStatus.overall;
+      ciChecks = ciStatus.checks;
+    } catch {
+      // Best-effort CI context only.
+    }
+  }
+
+  const lines: string[] = [
+    `[Tool Result — check_pr_mergeable]`,
+    `PR #${prNumber}: ${prData.title}`,
+    `State: ${prData.state}`,
+    `Mergeable: ${prData.mergeable === null ? 'computing (try again shortly)' : prData.mergeable ? 'yes' : 'no'}`,
+    `Mergeable state: ${prData.mergeable_state || 'unknown'}`,
+    `Branch: ${prData.head?.ref || ''} → ${prData.base?.ref || ''}`,
+    `CI status: ${ciOverall.toUpperCase()}`,
+  ];
+
+  if (ciChecks.length > 0) {
+    lines.push('');
+    for (const check of ciChecks) {
+      const icon = check.conclusion === 'success'
+        ? '✓'
+        : check.conclusion === 'failure'
+          ? '✗'
+          : check.status !== 'completed'
+            ? '⏳'
+            : '—';
+      lines.push(`  ${icon} ${check.name}: ${check.conclusion || check.status}`);
+    }
+  }
+
+  const canMerge = prData.mergeable === true && prData.state === 'open' && ciOverall !== 'failure';
+  lines.push('');
+  lines.push(
+    canMerge
+      ? 'This PR is eligible for merge.'
+      : 'This PR is NOT currently eligible for merge.'
+        + (prData.mergeable === false ? ' There are merge conflicts.' : '')
+        + (ciOverall === 'failure' ? ' CI checks are failing.' : '')
+        + (ciOverall === 'pending' ? ' CI checks are still running.' : '')
+        + (prData.state !== 'open' ? ` PR state is "${prData.state}".` : ''),
+  );
+
+  return { text: lines.join('\n') };
+}
+
+export async function executeFindExistingPRTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  headBranch: string,
+  baseBranch?: string,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const owner = getRepoOwner(repo);
+  if (!owner) {
+    throw new Error(`Could not extract owner from repo "${repo}".`);
+  }
+
+  const base = baseBranch || 'main';
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(
+      runtime,
+      `/repos/${repo}/pulls?head=${encodeURIComponent(`${owner}:${headBranch}`)}&base=${encodeURIComponent(base)}&state=open`,
+    ),
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `searching PRs on ${repo}`));
+  }
+
+  const prs = await res.json() as Array<{
+    number: number;
+    title: string;
+    html_url: string;
+    head?: { ref?: string };
+    base?: { ref?: string };
+    user?: { login?: string };
+  }>;
+  if (!Array.isArray(prs) || prs.length === 0) {
+    return {
+      text: [
+        `[Tool Result — find_existing_pr]`,
+        `No existing open PR found for ${headBranch} → ${base} on ${repo}.`,
+      ].join('\n'),
+    };
+  }
+
+  const pr = prs[0];
+  return {
+    text: [
+      `[Tool Result — find_existing_pr]`,
+      `Found existing PR #${pr.number} on ${repo}.`,
+      `Title: ${pr.title}`,
+      `Branch: ${pr.head?.ref || ''} → ${pr.base?.ref || ''}`,
+      `Author: ${pr.user?.login || 'unknown'}`,
+      `URL: ${pr.html_url}`,
+    ].join('\n'),
+  };
+}
+
 export async function executeSearchFilesTool(
   runtime: GitHubReadonlyRuntime,
   repo: string,
@@ -1766,5 +2014,15 @@ export async function executeGitHubReadonlyTool(
       return executeGetWorkflowRunsTool(runtime, call.args.repo, call.args.workflow, call.args.branch, call.args.status, call.args.count);
     case 'get_workflow_logs':
       return executeGetWorkflowLogsTool(runtime, call.args.repo, call.args.run_id);
+    case 'create_pr':
+      return executeCreatePRTool(runtime, call.args.repo, call.args.title, call.args.body, call.args.head, call.args.base);
+    case 'merge_pr':
+      return executeMergePRTool(runtime, call.args.repo, call.args.pr_number, call.args.merge_method);
+    case 'delete_branch':
+      return executeDeleteBranchTool(runtime, call.args.repo, call.args.branch_name);
+    case 'check_pr_mergeable':
+      return executeCheckPRMergeableTool(runtime, call.args.repo, call.args.pr_number);
+    case 'find_existing_pr':
+      return executeFindExistingPRTool(runtime, call.args.repo, call.args.head_branch, call.args.base_branch);
   }
 }

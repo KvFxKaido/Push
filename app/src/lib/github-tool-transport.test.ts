@@ -29,7 +29,12 @@ describe('github-tool-transport', () => {
     expect(supportsWorkerGitHubTool('trigger_workflow')).toBe(true);
     expect(supportsWorkerGitHubTool('get_workflow_runs')).toBe(true);
     expect(supportsWorkerGitHubTool('get_workflow_logs')).toBe(true);
-    expect(supportsWorkerGitHubTool('create_pr')).toBe(false);
+    expect(supportsWorkerGitHubTool('create_pr')).toBe(true);
+    expect(supportsWorkerGitHubTool('merge_pr')).toBe(true);
+    expect(supportsWorkerGitHubTool('delete_branch')).toBe(true);
+    expect(supportsWorkerGitHubTool('check_pr_mergeable')).toBe(true);
+    expect(supportsWorkerGitHubTool('find_existing_pr')).toBe(true);
+    expect(supportsWorkerGitHubTool('delegate_coder')).toBe(false);
   });
 
   it('returns a parsed branch list payload from the worker', async () => {

@@ -350,4 +350,96 @@ describe('github-readonly-tools shared core', () => {
     expect(result.text).toContain('Run: Deploy #77');
     expect(result.text).toContain('2. Deploy');
   });
+
+  it('creates a pull request through the shared tool core', async () => {
+    const runtime = createRuntime(async (url, options) => {
+      if (url.endsWith('/pulls')) {
+        expect(options?.method).toBe('POST');
+        expect(options?.body).toBe(JSON.stringify({
+          title: 'Bridge GitHub tools',
+          body: 'Ports the last legacy GitHub tools.',
+          head: 'feature/bridge',
+          base: 'main',
+        }));
+        return Response.json({
+          number: 55,
+          title: 'Bridge GitHub tools',
+          html_url: 'https://example.test/pulls/55',
+        });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'create_pr',
+      args: {
+        repo: 'owner/repo',
+        title: 'Bridge GitHub tools',
+        body: 'Ports the last legacy GitHub tools.',
+        head: 'feature/bridge',
+        base: 'main',
+      },
+    });
+
+    expect(result.text).toContain('PR #55 created on owner/repo.');
+    expect(result.text).toContain('URL: https://example.test/pulls/55');
+  });
+
+  it('checks PR mergeability with CI details', async () => {
+    const runtime = createRuntime(async (url) => {
+      if (url.endsWith('/pulls/12')) {
+        return Response.json({
+          title: 'Merge the bridge',
+          state: 'open',
+          mergeable: true,
+          mergeable_state: 'clean',
+          head: { ref: 'feature/bridge', sha: 'abc123' },
+          base: { ref: 'main' },
+        });
+      }
+      if (url.includes('/commits/abc123/check-runs?per_page=50')) {
+        return Response.json({
+          check_runs: [
+            { name: 'build', status: 'completed', conclusion: 'success' },
+          ],
+        });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'check_pr_mergeable',
+      args: { repo: 'owner/repo', pr_number: 12 },
+    });
+
+    expect(result.text).toContain('Mergeable: yes');
+    expect(result.text).toContain('CI status: SUCCESS');
+    expect(result.text).toContain('This PR is eligible for merge.');
+  });
+
+  it('finds an existing PR for a branch pair', async () => {
+    const runtime = createRuntime(async (url) => {
+      if (url.includes('/pulls?head=owner%3Afeature%2Fbridge')) {
+        return Response.json([
+          {
+            number: 91,
+            title: 'Existing bridge PR',
+            html_url: 'https://example.test/pulls/91',
+            head: { ref: 'feature/bridge' },
+            base: { ref: 'main' },
+            user: { login: 'ishaw' },
+          },
+        ]);
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'find_existing_pr',
+      args: { repo: 'owner/repo', head_branch: 'feature/bridge', base_branch: 'main' },
+    });
+
+    expect(result.text).toContain('Found existing PR #91 on owner/repo.');
+    expect(result.text).toContain('Author: ishaw');
+  });
 });

@@ -34,7 +34,12 @@ export function supportsWorkerGitHubTool(name: string): name is WorkerGitHubTool
     || name === 'list_commit_files'
     || name === 'trigger_workflow'
     || name === 'get_workflow_runs'
-    || name === 'get_workflow_logs';
+    || name === 'get_workflow_logs'
+    || name === 'create_pr'
+    || name === 'merge_pr'
+    || name === 'delete_branch'
+    || name === 'check_pr_mergeable'
+    || name === 'find_existing_pr';
 }
 
 async function postGitHubToolRequest(

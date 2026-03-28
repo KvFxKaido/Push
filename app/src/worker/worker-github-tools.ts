@@ -229,6 +229,55 @@ function parseToolPayload(value: unknown): GitHubToolPayload | null {
     const runId = asPositiveNumber(args.run_id);
     return runId ? { tool, args: { repo, run_id: runId }, allowedRepo } : null;
   }
+  if (tool === 'create_pr') {
+    const title = asString(args.title);
+    const head = asString(args.head);
+    const base = asString(args.base);
+    if (!title || !head || !base) return null;
+    return {
+      tool,
+      args: {
+        repo,
+        title,
+        body: asString(args.body) || '',
+        head,
+        base,
+      },
+      allowedRepo,
+    };
+  }
+  if (tool === 'merge_pr') {
+    const prNumber = asPositiveNumber(args.pr_number);
+    return prNumber ? {
+      tool,
+      args: { repo, pr_number: prNumber, merge_method: asString(args.merge_method) },
+      allowedRepo,
+    } : null;
+  }
+  if (tool === 'delete_branch') {
+    const branchName = asString(args.branch_name);
+    return branchName ? {
+      tool,
+      args: { repo, branch_name: branchName },
+      allowedRepo,
+    } : null;
+  }
+  if (tool === 'check_pr_mergeable') {
+    const prNumber = asPositiveNumber(args.pr_number);
+    return prNumber ? {
+      tool,
+      args: { repo, pr_number: prNumber },
+      allowedRepo,
+    } : null;
+  }
+  if (tool === 'find_existing_pr') {
+    const headBranch = asString(args.head_branch);
+    return headBranch ? {
+      tool,
+      args: { repo, head_branch: headBranch, base_branch: asString(args.base_branch) },
+      allowedRepo,
+    } : null;
+  }
 
   return null;
 }

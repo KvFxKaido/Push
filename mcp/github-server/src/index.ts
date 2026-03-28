@@ -40,6 +40,11 @@ const TOOL_LIST_COMMIT_FILES = 'list_commit_files';
 const TOOL_TRIGGER_WORKFLOW = 'trigger_workflow';
 const TOOL_GET_WORKFLOW_RUNS = 'get_workflow_runs';
 const TOOL_GET_WORKFLOW_LOGS = 'get_workflow_logs';
+const TOOL_CREATE_PR = 'create_pr';
+const TOOL_MERGE_PR = 'merge_pr';
+const TOOL_DELETE_BRANCH = 'delete_branch';
+const TOOL_CHECK_PR_MERGEABLE = 'check_pr_mergeable';
+const TOOL_FIND_EXISTING_PR = 'find_existing_pr';
 
 function getGitHubToken(): string {
   return process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '';
@@ -107,6 +112,11 @@ function getServerInfoText(): string {
       TOOL_TRIGGER_WORKFLOW,
       TOOL_GET_WORKFLOW_RUNS,
       TOOL_GET_WORKFLOW_LOGS,
+      TOOL_CREATE_PR,
+      TOOL_MERGE_PR,
+      TOOL_DELETE_BRANCH,
+      TOOL_CHECK_PR_MERGEABLE,
+      TOOL_FIND_EXISTING_PR,
     ],
     status:
       'GitHub tool migration is in progress. Read-only PR, branch, and code search tools now share the same core implementation as the Push worker bridge.',
@@ -284,6 +294,41 @@ function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyTo
   if (name === TOOL_GET_WORKFLOW_LOGS) {
     const runId = asPositiveNumber(args.run_id);
     return runId ? { tool: 'get_workflow_logs', args: { repo, run_id: runId } } : null;
+  }
+  if (name === TOOL_CREATE_PR) {
+    const title = asString(args.title);
+    const head = asString(args.head);
+    const base = asString(args.base);
+    if (!title || !head || !base) return null;
+    return {
+      tool: 'create_pr',
+      args: {
+        repo,
+        title,
+        body: asString(args.body) || '',
+        head,
+        base,
+      },
+    };
+  }
+  if (name === TOOL_MERGE_PR) {
+    const prNumber = asPositiveNumber(args.pr_number);
+    return prNumber ? { tool: 'merge_pr', args: { repo, pr_number: prNumber, merge_method: asString(args.merge_method) } } : null;
+  }
+  if (name === TOOL_DELETE_BRANCH) {
+    const branchName = asString(args.branch_name);
+    return branchName ? { tool: 'delete_branch', args: { repo, branch_name: branchName } } : null;
+  }
+  if (name === TOOL_CHECK_PR_MERGEABLE) {
+    const prNumber = asPositiveNumber(args.pr_number);
+    return prNumber ? { tool: 'check_pr_mergeable', args: { repo, pr_number: prNumber } } : null;
+  }
+  if (name === TOOL_FIND_EXISTING_PR) {
+    const headBranch = asString(args.head_branch);
+    return headBranch ? {
+      tool: 'find_existing_pr',
+      args: { repo, head_branch: headBranch, base_branch: asString(args.base_branch) },
+    } : null;
   }
 
   return null;
@@ -485,6 +530,81 @@ const readonlyTools = [
       additionalProperties: false,
     },
   },
+  {
+    name: TOOL_CREATE_PR,
+    description:
+      'Create a pull request for a branch pair on the active repository.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        title: { type: 'string', description: 'Pull request title.' },
+        body: { type: 'string', description: 'Pull request body.' },
+        head: { type: 'string', description: 'Head branch name.' },
+        base: { type: 'string', description: 'Base branch name.' },
+      },
+      required: ['repo', 'title', 'head', 'base'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_MERGE_PR,
+    description:
+      'Merge a pull request using GitHub merge, squash, or rebase methods.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        pr_number: { type: 'number', description: 'Pull request number.' },
+        merge_method: { type: 'string', description: 'Optional merge method: merge, squash, or rebase.' },
+      },
+      required: ['repo', 'pr_number'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_DELETE_BRANCH,
+    description:
+      'Delete a branch ref from the active repository.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        branch_name: { type: 'string', description: 'Branch name to delete.' },
+      },
+      required: ['repo', 'branch_name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_CHECK_PR_MERGEABLE,
+    description:
+      'Check whether a pull request is currently mergeable and summarize CI status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        pr_number: { type: 'number', description: 'Pull request number.' },
+      },
+      required: ['repo', 'pr_number'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_FIND_EXISTING_PR,
+    description:
+      'Find an existing open pull request for a head branch and optional base branch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        head_branch: { type: 'string', description: 'Head branch name.' },
+        base_branch: { type: 'string', description: 'Optional base branch name.' },
+      },
+      required: ['repo', 'head_branch'],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 const readonlyRuntime: GitHubReadonlyRuntime = {
@@ -556,6 +676,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     || request.params.name === TOOL_TRIGGER_WORKFLOW
     || request.params.name === TOOL_GET_WORKFLOW_RUNS
     || request.params.name === TOOL_GET_WORKFLOW_LOGS
+    || request.params.name === TOOL_CREATE_PR
+    || request.params.name === TOOL_MERGE_PR
+    || request.params.name === TOOL_DELETE_BRANCH
+    || request.params.name === TOOL_CHECK_PR_MERGEABLE
+    || request.params.name === TOOL_FIND_EXISTING_PR
   ) {
     throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for tool: ${request.params.name}`);
   }
