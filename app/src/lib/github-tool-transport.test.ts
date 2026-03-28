@@ -26,6 +26,9 @@ describe('github-tool-transport', () => {
     expect(supportsWorkerGitHubTool('fetch_checks')).toBe(true);
     expect(supportsWorkerGitHubTool('search_files')).toBe(true);
     expect(supportsWorkerGitHubTool('list_commit_files')).toBe(true);
+    expect(supportsWorkerGitHubTool('trigger_workflow')).toBe(true);
+    expect(supportsWorkerGitHubTool('get_workflow_runs')).toBe(true);
+    expect(supportsWorkerGitHubTool('get_workflow_logs')).toBe(true);
     expect(supportsWorkerGitHubTool('create_pr')).toBe(false);
   });
 

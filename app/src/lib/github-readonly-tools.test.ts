@@ -241,4 +241,113 @@ describe('github-readonly-tools shared core', () => {
     expect(result.card.data.totalChanges).toEqual({ additions: 35, deletions: 4 });
     expect(result.text).toContain('Total: +35 -4');
   });
+
+  it('dispatches a workflow using the repo default branch when ref is omitted', async () => {
+    const fetchSpy = vi.fn<GitHubReadonlyRuntime['githubFetch']>(async (url, options) => {
+      if (url.endsWith('/repos/owner/repo')) {
+        return Response.json({ default_branch: 'develop' });
+      }
+      if (url.includes('/actions/workflows/ci.yml/dispatches')) {
+        expect(options?.method).toBe('POST');
+        expect(options?.body).toBe(JSON.stringify({ ref: 'develop', inputs: { environment: 'staging' } }));
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+    const runtime = createRuntime(fetchSpy);
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'trigger_workflow',
+      args: { repo: 'owner/repo', workflow: 'ci.yml', inputs: { environment: 'staging' } },
+    });
+
+    expect(result.card).toBeUndefined();
+    expect(result.text).toContain('Workflow "ci.yml" dispatched on owner/repo (ref: develop).');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('formats workflow runs into a workflow-runs card', async () => {
+    const runtime = createRuntime(async (url) => {
+      if (url.includes('/actions/runs?per_page=2')) {
+        return Response.json({
+          total_count: 5,
+          workflow_runs: [
+            {
+              id: 101,
+              name: 'CI',
+              status: 'completed',
+              conclusion: 'success',
+              head_branch: 'main',
+              event: 'push',
+              created_at: '2026-03-28T16:00:00.000Z',
+              updated_at: '2026-03-28T16:05:00.000Z',
+              html_url: 'https://example.test/runs/101',
+              run_number: 88,
+              actor: { login: 'ishaw' },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'get_workflow_runs',
+      args: { repo: 'owner/repo', count: 2 },
+    });
+
+    expect(result.card?.type).toBe('workflow-runs');
+    if (!result.card || result.card.type !== 'workflow-runs') {
+      throw new Error('expected workflow runs card');
+    }
+    expect(result.card.data.truncated).toBe(true);
+    expect(result.card.data.runs[0].runNumber).toBe(88);
+    expect(result.text).toContain('#88 CI');
+  });
+
+  it('formats workflow logs with job and step details', async () => {
+    const runtime = createRuntime(async (url) => {
+      if (url.endsWith('/actions/runs/77')) {
+        return Response.json({
+          name: 'Deploy',
+          run_number: 77,
+          status: 'completed',
+          conclusion: 'failure',
+          head_branch: 'release',
+          event: 'workflow_dispatch',
+          html_url: 'https://example.test/runs/77',
+        });
+      }
+      if (url.includes('/actions/runs/77/jobs?per_page=50')) {
+        return Response.json({
+          jobs: [
+            {
+              name: 'deploy',
+              status: 'completed',
+              conclusion: 'failure',
+              html_url: 'https://example.test/jobs/1',
+              steps: [
+                { name: 'Checkout', status: 'completed', conclusion: 'success', number: 1 },
+                { name: 'Deploy', status: 'completed', conclusion: 'failure', number: 2 },
+              ],
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'get_workflow_logs',
+      args: { repo: 'owner/repo', run_id: 77 },
+    });
+
+    expect(result.card?.type).toBe('workflow-logs');
+    if (!result.card || result.card.type !== 'workflow-logs') {
+      throw new Error('expected workflow logs card');
+    }
+    expect(result.card.data.jobs[0].steps).toHaveLength(2);
+    expect(result.text).toContain('Run: Deploy #77');
+    expect(result.text).toContain('2. Deploy');
+  });
 });

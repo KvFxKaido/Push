@@ -37,6 +37,9 @@ const TOOL_LIST_BRANCHES = 'list_branches';
 const TOOL_FETCH_CHECKS = 'fetch_checks';
 const TOOL_SEARCH_FILES = 'search_files';
 const TOOL_LIST_COMMIT_FILES = 'list_commit_files';
+const TOOL_TRIGGER_WORKFLOW = 'trigger_workflow';
+const TOOL_GET_WORKFLOW_RUNS = 'get_workflow_runs';
+const TOOL_GET_WORKFLOW_LOGS = 'get_workflow_logs';
 
 function getGitHubToken(): string {
   return process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '';
@@ -101,6 +104,9 @@ function getServerInfoText(): string {
       TOOL_FETCH_CHECKS,
       TOOL_SEARCH_FILES,
       TOOL_LIST_COMMIT_FILES,
+      TOOL_TRIGGER_WORKFLOW,
+      TOOL_GET_WORKFLOW_RUNS,
+      TOOL_GET_WORKFLOW_LOGS,
     ],
     status:
       'GitHub tool migration is in progress. Read-only PR, branch, and code search tools now share the same core implementation as the Push worker bridge.',
@@ -175,6 +181,13 @@ function asPositiveInt(value: unknown): number | undefined {
   return typeof parsed === 'number' && Number.isInteger(parsed) ? parsed : undefined;
 }
 
+function asStringRecord(value: unknown): Record<string, string> | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const entries = Object.entries(record).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyToolCall | null {
   const args = asRecord(rawArgs) ?? {};
   const repo = asString(args.repo);
@@ -242,6 +255,35 @@ function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyTo
   if (name === TOOL_LIST_COMMIT_FILES) {
     const ref = asString(args.ref);
     return ref ? { tool: 'list_commit_files', args: { repo, ref } } : null;
+  }
+  if (name === TOOL_TRIGGER_WORKFLOW) {
+    const workflow = asString(args.workflow);
+    if (!workflow) return null;
+    return {
+      tool: 'trigger_workflow',
+      args: {
+        repo,
+        workflow,
+        ref: asString(args.ref),
+        inputs: asStringRecord(args.inputs),
+      },
+    };
+  }
+  if (name === TOOL_GET_WORKFLOW_RUNS) {
+    return {
+      tool: 'get_workflow_runs',
+      args: {
+        repo,
+        workflow: asString(args.workflow),
+        branch: asString(args.branch),
+        status: asString(args.status),
+        count: asPositiveNumber(args.count),
+      },
+    };
+  }
+  if (name === TOOL_GET_WORKFLOW_LOGS) {
+    const runId = asPositiveNumber(args.run_id);
+    return runId ? { tool: 'get_workflow_logs', args: { repo, run_id: runId } } : null;
   }
 
   return null;
@@ -396,6 +438,53 @@ const readonlyTools = [
       additionalProperties: false,
     },
   },
+  {
+    name: TOOL_TRIGGER_WORKFLOW,
+    description:
+      'Dispatch a GitHub Actions workflow on a ref, with optional workflow_dispatch inputs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        workflow: { type: 'string', description: 'Workflow filename, ID, or name accepted by GitHub.' },
+        ref: { type: 'string', description: 'Optional branch or ref to dispatch on.' },
+        inputs: { type: 'object', description: 'Optional workflow_dispatch input values.' },
+      },
+      required: ['repo', 'workflow'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_GET_WORKFLOW_RUNS,
+    description:
+      'List GitHub Actions workflow runs, optionally scoped by workflow, branch, or status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        workflow: { type: 'string', description: 'Optional workflow filename, ID, or name.' },
+        branch: { type: 'string', description: 'Optional branch filter.' },
+        status: { type: 'string', description: 'Optional status filter.' },
+        count: { type: 'number', description: 'Maximum number of runs to return.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_GET_WORKFLOW_LOGS,
+    description:
+      'Fetch workflow job and step status details for a specific workflow run.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        run_id: { type: 'number', description: 'Workflow run ID.' },
+      },
+      required: ['repo', 'run_id'],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 const readonlyRuntime: GitHubReadonlyRuntime = {
@@ -464,6 +553,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     || request.params.name === TOOL_FETCH_CHECKS
     || request.params.name === TOOL_SEARCH_FILES
     || request.params.name === TOOL_LIST_COMMIT_FILES
+    || request.params.name === TOOL_TRIGGER_WORKFLOW
+    || request.params.name === TOOL_GET_WORKFLOW_RUNS
+    || request.params.name === TOOL_GET_WORKFLOW_LOGS
   ) {
     throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for tool: ${request.params.name}`);
   }

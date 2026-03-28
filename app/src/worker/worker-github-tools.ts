@@ -49,6 +49,13 @@ function asPositiveInt(value: unknown): number | undefined {
   return typeof parsed === 'number' && Number.isInteger(parsed) ? parsed : undefined;
 }
 
+function asStringRecord(value: unknown): Record<string, string> | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const entries = Object.entries(record).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function getGitHubHeaders(request: Request, accept: string = 'application/vnd.github.v3+json'): Record<string, string> {
   const authorization = request.headers.get('Authorization');
   const headers: Record<string, string> = { Accept: accept };
@@ -190,6 +197,37 @@ function parseToolPayload(value: unknown): GitHubToolPayload | null {
   if (tool === 'list_commit_files') {
     const ref = asString(args.ref);
     return ref ? { tool, args: { repo, ref }, allowedRepo } : null;
+  }
+  if (tool === 'trigger_workflow') {
+    const workflow = asString(args.workflow);
+    if (!workflow) return null;
+    return {
+      tool,
+      args: {
+        repo,
+        workflow,
+        ref: asString(args.ref),
+        inputs: asStringRecord(args.inputs),
+      },
+      allowedRepo,
+    };
+  }
+  if (tool === 'get_workflow_runs') {
+    return {
+      tool,
+      args: {
+        repo,
+        workflow: asString(args.workflow),
+        branch: asString(args.branch),
+        status: asString(args.status),
+        count: asPositiveNumber(args.count),
+      },
+      allowedRepo,
+    };
+  }
+  if (tool === 'get_workflow_logs') {
+    const runId = asPositiveNumber(args.run_id);
+    return runId ? { tool, args: { repo, run_id: runId }, allowedRepo } : null;
   }
 
   return null;

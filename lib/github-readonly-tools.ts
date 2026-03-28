@@ -85,6 +85,53 @@ export interface GitHubReadonlyCommitFilesCardData {
   totalChanges: { additions: number; deletions: number };
 }
 
+export interface GitHubReadonlyWorkflowRunItem {
+  id: number;
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'waiting' | 'requested' | 'pending';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  branch: string;
+  event: string;
+  createdAt: string;
+  updatedAt: string;
+  htmlUrl: string;
+  runNumber: number;
+  actor: string;
+}
+
+export interface GitHubReadonlyWorkflowRunsCardData {
+  repo: string;
+  runs: GitHubReadonlyWorkflowRunItem[];
+  workflow?: string;
+  truncated: boolean;
+}
+
+export interface GitHubReadonlyWorkflowJobStep {
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  number: number;
+}
+
+export interface GitHubReadonlyWorkflowJob {
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'waiting';
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  steps: GitHubReadonlyWorkflowJobStep[];
+  htmlUrl: string;
+}
+
+export interface GitHubReadonlyWorkflowLogsCardData {
+  runId: number;
+  runName: string;
+  runNumber: number;
+  status: string;
+  conclusion: string | null;
+  jobs: GitHubReadonlyWorkflowJob[];
+  htmlUrl: string;
+  repo: string;
+}
+
 export interface GitHubReadonlyPRCardData {
   number: number;
   title: string;
@@ -148,7 +195,9 @@ export type GitHubReadonlyCard =
   | { type: 'ci-status'; data: GitHubReadonlyCIStatusCardData }
   | { type: 'editor'; data: GitHubReadonlyEditorCardData }
   | { type: 'file-search'; data: GitHubReadonlyFileSearchCardData }
-  | { type: 'commit-files'; data: GitHubReadonlyCommitFilesCardData };
+  | { type: 'commit-files'; data: GitHubReadonlyCommitFilesCardData }
+  | { type: 'workflow-runs'; data: GitHubReadonlyWorkflowRunsCardData }
+  | { type: 'workflow-logs'; data: GitHubReadonlyWorkflowLogsCardData };
 
 export interface GitHubReadonlyToolResult {
   text: string;
@@ -165,7 +214,10 @@ export type GitHubReadonlyToolCall =
   | { tool: 'list_branches'; args: { repo: string; maxBranches?: number } }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
   | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } }
-  | { tool: 'list_commit_files'; args: { repo: string; ref: string } };
+  | { tool: 'list_commit_files'; args: { repo: string; ref: string } }
+  | { tool: 'trigger_workflow'; args: { repo: string; workflow: string; ref?: string; inputs?: Record<string, string> } }
+  | { tool: 'get_workflow_runs'; args: { repo: string; workflow?: string; branch?: string; status?: string; count?: number } }
+  | { tool: 'get_workflow_logs'; args: { repo: string; run_id: number } };
 
 export interface GitHubReadonlyRuntime {
   githubFetch(url: string, options?: RequestInit): Promise<Response>;
@@ -240,6 +292,45 @@ interface CommitDetailsApi {
     additions?: number;
     deletions?: number;
   }>;
+}
+
+interface WorkflowRunApi {
+  id: number;
+  name: string;
+  status?: string;
+  conclusion?: string | null;
+  head_branch?: string;
+  event: string;
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+  run_number: number;
+  actor?: { login?: string };
+}
+
+interface WorkflowRunDetailsApi {
+  name: string;
+  run_number: number;
+  status: string;
+  conclusion: string | null;
+  head_branch?: string;
+  event: string;
+  html_url: string;
+}
+
+interface WorkflowStepApi {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  number: number;
+}
+
+interface WorkflowJobApi {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  html_url: string;
+  steps?: WorkflowStepApi[];
 }
 
 function parseNextLink(linkHeader: string | null): string | null {
@@ -366,6 +457,60 @@ function buildDirectoryEntryPath(parentPath: string, entryName: string): string 
   return `${parentPath ? parentPath.replace(/\/$/, '') : ''}/${entryName}`.replace(/^\/+/, '/');
 }
 
+function normalizeWorkflowRunStatus(status: string | undefined): GitHubReadonlyWorkflowRunItem['status'] {
+  return status === 'queued'
+    || status === 'in_progress'
+    || status === 'completed'
+    || status === 'waiting'
+    || status === 'requested'
+    || status === 'pending'
+    ? status
+    : 'completed';
+}
+
+function normalizeWorkflowConclusion(
+  value: string | null | undefined,
+): GitHubReadonlyWorkflowRunItem['conclusion'] {
+  return value === null
+    || value === undefined
+    || value === 'success'
+    || value === 'failure'
+    || value === 'cancelled'
+    || value === 'skipped'
+    || value === 'timed_out'
+    || value === 'action_required'
+    || value === 'neutral'
+    ? value ?? null
+    : null;
+}
+
+function normalizeWorkflowJobStatus(status: string): GitHubReadonlyWorkflowJob['status'] {
+  return status === 'queued'
+    || status === 'in_progress'
+    || status === 'completed'
+    || status === 'waiting'
+    ? status
+    : 'completed';
+}
+
+function normalizeWorkflowStepStatus(status: string): GitHubReadonlyWorkflowJobStep['status'] {
+  return status === 'queued'
+    || status === 'in_progress'
+    || status === 'completed'
+    ? status
+    : 'completed';
+}
+
+async function fetchRepoDefaultBranch(runtime: GitHubReadonlyRuntime, repo: string): Promise<string> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const repoRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}`), { headers });
+  if (!repoRes.ok) {
+    throw new Error(formatGitHubError(repoRes.status, `repo info for ${repo}`));
+  }
+  const repoData = await repoRes.json() as { default_branch?: string };
+  return repoData.default_branch || 'main';
+}
+
 export function normalizeGitHubRepoName(repo: string): string {
   return repo
     .trim()
@@ -380,13 +525,7 @@ export async function fetchRepoBranchesData(
   maxBranches: number = 500,
 ): Promise<GitHubReadonlyBranchListCardData> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
-
-  const repoRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}`), { headers });
-  if (!repoRes.ok) {
-    throw new Error(formatGitHubError(repoRes.status, `repo info for ${repo}`));
-  }
-  const repoData = await repoRes.json() as { default_branch?: string };
-  const defaultBranch = repoData.default_branch || 'main';
+  const defaultBranch = await fetchRepoDefaultBranch(runtime, repo);
 
   const pageSize = 100;
   const maxPages = Math.max(1, Math.ceil(maxBranches / pageSize));
@@ -1201,6 +1340,212 @@ export async function executeListCommitFilesTool(
   };
 }
 
+export async function executeTriggerWorkflowTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  workflow: string,
+  ref?: string,
+  inputs?: Record<string, string>,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  let targetRef = ref;
+
+  if (!targetRef) {
+    try {
+      targetRef = await fetchRepoDefaultBranch(runtime, repo);
+    } catch {
+      targetRef = 'main';
+    }
+  }
+
+  const body: Record<string, unknown> = { ref: targetRef };
+  if (inputs && Object.keys(inputs).length > 0) {
+    body.inputs = inputs;
+  }
+
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`),
+    {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+
+  if (res.status === 404) {
+    throw new Error(`Workflow "${workflow}" not found on ${repo}. Use get_workflow_runs to see available workflows.`);
+  }
+  if (res.status === 422) {
+    throw new Error(`Workflow "${workflow}" does not have a workflow_dispatch trigger, or the inputs are invalid.`);
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `triggering workflow "${workflow}" on ${repo}`));
+  }
+
+  return {
+    text: [
+      `[Tool Result — trigger_workflow]`,
+      `Workflow "${workflow}" dispatched on ${repo} (ref: ${targetRef}).`,
+      'Note: GitHub returns no run ID for dispatches. Use get_workflow_runs to check if it started.',
+    ].join('\n'),
+  };
+}
+
+export async function executeGetWorkflowRunsTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  workflow?: string,
+  branch?: string,
+  status?: string,
+  count?: number,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const perPage = Math.max(1, Math.min(count || 10, 20));
+
+  let url = workflow
+    ? buildGitHubApiUrl(runtime, `/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/runs?per_page=${perPage}`)
+    : buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs?per_page=${perPage}`);
+  if (branch) url += `&branch=${encodeURIComponent(branch)}`;
+  if (status) url += `&status=${encodeURIComponent(status)}`;
+
+  const res = await runtime.githubFetch(url, { headers });
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `workflow runs on ${repo}`));
+  }
+
+  const data = await res.json() as { total_count?: number; workflow_runs?: WorkflowRunApi[] };
+  const runs: GitHubReadonlyWorkflowRunItem[] = (data.workflow_runs || []).map((run) => ({
+    id: run.id,
+    name: run.name,
+    status: normalizeWorkflowRunStatus(run.status),
+    conclusion: normalizeWorkflowConclusion(run.conclusion),
+    branch: run.head_branch || '',
+    event: run.event,
+    createdAt: run.created_at,
+    updatedAt: run.updated_at,
+    htmlUrl: run.html_url,
+    runNumber: run.run_number,
+    actor: run.actor?.login || 'unknown',
+  }));
+
+  if (runs.length === 0) {
+    return { text: `[Tool Result — get_workflow_runs]\nNo workflow runs found on ${repo}${workflow ? ` for "${workflow}"` : ''}.` };
+  }
+
+  const lines: string[] = [
+    `[Tool Result — get_workflow_runs]`,
+    `${runs.length} recent run${runs.length > 1 ? 's' : ''} on ${repo}${workflow ? ` (workflow: ${workflow})` : ''}:\n`,
+  ];
+
+  for (const run of runs) {
+    const icon = run.conclusion === 'success'
+      ? '✓'
+      : run.conclusion === 'failure'
+        ? '✗'
+        : run.status !== 'completed'
+          ? '⏳'
+          : '—';
+    lines.push(`  ${icon} #${run.runNumber} ${run.name}`);
+    lines.push(`    ${run.branch} | ${run.event} | ${run.actor} | ${new Date(run.createdAt).toLocaleDateString()}`);
+  }
+
+  return {
+    text: lines.join('\n'),
+    card: {
+      type: 'workflow-runs',
+      data: {
+        repo,
+        runs,
+        workflow,
+        truncated: (data.total_count || 0) > perPage,
+      },
+    },
+  };
+}
+
+export async function executeGetWorkflowLogsTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  runId: number,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+
+  const [runRes, jobsRes] = await Promise.all([
+    runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}`), { headers }),
+    runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}/jobs?per_page=50`), { headers }),
+  ]);
+
+  if (!runRes.ok) {
+    throw new Error(formatGitHubError(runRes.status, `workflow run #${runId} on ${repo}`));
+  }
+
+  const runData = await runRes.json() as WorkflowRunDetailsApi;
+  let jobsData: WorkflowJobApi[] = [];
+  if (jobsRes.ok) {
+    const parsed = await jobsRes.json() as { jobs?: WorkflowJobApi[] };
+    jobsData = parsed.jobs || [];
+  }
+
+  const jobs: GitHubReadonlyWorkflowJob[] = jobsData.map((job) => ({
+    name: job.name,
+    status: normalizeWorkflowJobStatus(job.status),
+    conclusion: normalizeWorkflowConclusion(job.conclusion),
+    htmlUrl: job.html_url,
+    steps: (job.steps || []).map((step) => ({
+      name: step.name,
+      status: normalizeWorkflowStepStatus(step.status),
+      conclusion: normalizeWorkflowConclusion(step.conclusion),
+      number: step.number,
+    })),
+  }));
+
+  const lines: string[] = [
+    `[Tool Result — get_workflow_logs]`,
+    `Run: ${runData.name} #${runData.run_number}`,
+    `Status: ${runData.status} | Conclusion: ${runData.conclusion || 'pending'}`,
+    `Branch: ${runData.head_branch || '—'} | Event: ${runData.event}`,
+    `\nJobs (${jobs.length}):\n`,
+  ];
+
+  for (const job of jobs) {
+    const icon = job.conclusion === 'success'
+      ? '✓'
+      : job.conclusion === 'failure'
+        ? '✗'
+        : job.status !== 'completed'
+          ? '⏳'
+          : '—';
+    lines.push(`  ${icon} ${job.name} — ${job.conclusion || job.status}`);
+    for (const step of job.steps) {
+      const stepIcon = step.conclusion === 'success'
+        ? '✓'
+        : step.conclusion === 'failure'
+          ? '✗'
+          : step.status !== 'completed'
+            ? '⏳'
+            : '—';
+      lines.push(`      ${stepIcon} ${step.number}. ${step.name}`);
+    }
+  }
+
+  return {
+    text: lines.join('\n'),
+    card: {
+      type: 'workflow-logs',
+      data: {
+        runId,
+        runName: runData.name,
+        runNumber: runData.run_number,
+        status: runData.status,
+        conclusion: runData.conclusion,
+        jobs,
+        htmlUrl: runData.html_url,
+        repo,
+      },
+    },
+  };
+}
+
 export async function executeSearchFilesTool(
   runtime: GitHubReadonlyRuntime,
   repo: string,
@@ -1415,5 +1760,11 @@ export async function executeGitHubReadonlyTool(
       return executeSearchFilesTool(runtime, call.args.repo, call.args.query, call.args.path, call.args.branch);
     case 'list_commit_files':
       return executeListCommitFilesTool(runtime, call.args.repo, call.args.ref);
+    case 'trigger_workflow':
+      return executeTriggerWorkflowTool(runtime, call.args.repo, call.args.workflow, call.args.ref, call.args.inputs);
+    case 'get_workflow_runs':
+      return executeGetWorkflowRunsTool(runtime, call.args.repo, call.args.workflow, call.args.branch, call.args.status, call.args.count);
+    case 'get_workflow_logs':
+      return executeGetWorkflowLogsTool(runtime, call.args.repo, call.args.run_id);
   }
 }
