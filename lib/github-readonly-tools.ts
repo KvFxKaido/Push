@@ -19,6 +19,33 @@ export interface GitHubReadonlyPRFile {
   deletions: number;
 }
 
+export interface GitHubReadonlyPRListItem {
+  number: number;
+  title: string;
+  author: string;
+  additions?: number;
+  deletions?: number;
+  createdAt: string;
+}
+
+export interface GitHubReadonlyPRListCardData {
+  repo: string;
+  state: string;
+  prs: GitHubReadonlyPRListItem[];
+}
+
+export interface GitHubReadonlyCommitListItem {
+  sha: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface GitHubReadonlyCommitListCardData {
+  repo: string;
+  commits: GitHubReadonlyCommitListItem[];
+}
+
 export interface GitHubReadonlyPRCardData {
   number: number;
   title: string;
@@ -55,9 +82,30 @@ export interface GitHubReadonlyFileSearchCardData {
   truncated: boolean;
 }
 
+export interface GitHubReadonlyCICheck {
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | null;
+  detailsUrl?: string;
+}
+
+export type GitHubReadonlyCIOverallStatus = 'pending' | 'success' | 'failure' | 'neutral' | 'no-checks';
+
+export interface GitHubReadonlyCIStatusCardData {
+  type: 'ci-status';
+  overall: GitHubReadonlyCIOverallStatus;
+  repo: string;
+  ref: string;
+  fetchedAt: string;
+  checks: GitHubReadonlyCICheck[];
+}
+
 export type GitHubReadonlyCard =
   | { type: 'pr'; data: GitHubReadonlyPRCardData }
+  | { type: 'pr-list'; data: GitHubReadonlyPRListCardData }
+  | { type: 'commit-list'; data: GitHubReadonlyCommitListCardData }
   | { type: 'branch-list'; data: GitHubReadonlyBranchListCardData }
+  | { type: 'ci-status'; data: GitHubReadonlyCIStatusCardData }
   | { type: 'file-search'; data: GitHubReadonlyFileSearchCardData };
 
 export interface GitHubReadonlyToolResult {
@@ -67,7 +115,10 @@ export interface GitHubReadonlyToolResult {
 
 export type GitHubReadonlyToolCall =
   | { tool: 'fetch_pr'; args: { repo: string; pr: number } }
+  | { tool: 'list_prs'; args: { repo: string; state?: string } }
+  | { tool: 'list_commits'; args: { repo: string; count?: number } }
   | { tool: 'list_branches'; args: { repo: string; maxBranches?: number } }
+  | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
   | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } };
 
 export interface GitHubReadonlyRuntime {
@@ -86,6 +137,29 @@ const DIFF_ACCEPT = 'application/vnd.github.v3.diff';
 interface RepoBranchApi {
   name?: string;
   protected?: boolean;
+}
+
+interface PullRequestListApi {
+  number: number;
+  title: string;
+  additions?: number;
+  deletions?: number;
+  created_at: string;
+  user: { login: string };
+}
+
+interface CommitListApi {
+  sha: string;
+  commit: {
+    message: string;
+    author?: {
+      name?: string;
+      date?: string;
+    };
+  };
+  author?: {
+    login?: string;
+  };
 }
 
 function parseNextLink(linkHeader: string | null): string | null {
@@ -353,6 +427,217 @@ export async function executeFetchPRTool(
   return { text: lines.join('\n'), card: { type: 'pr', data: card } };
 }
 
+export async function executeListPRsTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  state: string = 'open',
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(
+      runtime,
+      `/repos/${repo}/pulls?state=${encodeURIComponent(state)}&per_page=20&sort=updated&direction=desc`,
+    ),
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `PRs on ${repo}`));
+  }
+
+  const prs = await res.json() as PullRequestListApi[];
+  if (prs.length === 0) {
+    return { text: `[Tool Result — list_prs]\nNo ${state} PRs found on ${repo}.` };
+  }
+
+  const lines: string[] = [
+    `[Tool Result — list_prs]`,
+    `${prs.length} ${state} PR${prs.length > 1 ? 's' : ''} on ${repo}:\n`,
+  ];
+
+  const prItems: GitHubReadonlyPRListItem[] = [];
+  for (const prItem of prs) {
+    const age = new Date(prItem.created_at).toLocaleDateString();
+    lines.push(`  #${prItem.number} — ${prItem.title}`);
+    lines.push(`    by ${prItem.user.login} | +${prItem.additions || '?'} -${prItem.deletions || '?'} | ${age}`);
+    prItems.push({
+      number: prItem.number,
+      title: prItem.title,
+      author: prItem.user.login,
+      additions: prItem.additions,
+      deletions: prItem.deletions,
+      createdAt: prItem.created_at,
+    });
+  }
+
+  return {
+    text: lines.join('\n'),
+    card: { type: 'pr-list', data: { repo, state, prs: prItems } },
+  };
+}
+
+export async function executeListCommitsTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  count: number = 10,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/commits?per_page=${Math.min(count, 30)}`),
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `commits on ${repo}`));
+  }
+
+  const commits = await res.json() as CommitListApi[];
+  if (commits.length === 0) {
+    return { text: `[Tool Result — list_commits]\nNo commits found on ${repo}.` };
+  }
+
+  const lines: string[] = [
+    `[Tool Result — list_commits]`,
+    `${commits.length} recent commit${commits.length > 1 ? 's' : ''} on ${repo}:\n`,
+  ];
+
+  const commitItems: GitHubReadonlyCommitListItem[] = [];
+  for (const commit of commits) {
+    const shortSha = commit.sha.slice(0, 7);
+    const message = commit.commit.message.split('\n')[0];
+    const author = commit.commit.author?.name || commit.author?.login || 'unknown';
+    const date = commit.commit.author?.date || '';
+    lines.push(`  ${shortSha} ${message}`);
+    lines.push(`    by ${author} | ${new Date(date).toLocaleDateString()}`);
+    commitItems.push({ sha: commit.sha, message, author, date });
+  }
+
+  return {
+    text: lines.join('\n'),
+    card: { type: 'commit-list', data: { repo, commits: commitItems } },
+  };
+}
+
+async function fetchCIStatusSummary(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  ref?: string,
+): Promise<{ overall: GitHubReadonlyCIOverallStatus; checks: GitHubReadonlyCICheck[]; ref: string }> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const commitRef = ref || 'HEAD';
+
+  const checkRunsRes = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/commits/${commitRef}/check-runs?per_page=50`),
+    { headers },
+  );
+
+  let checks: GitHubReadonlyCICheck[] = [];
+  let overall: GitHubReadonlyCIOverallStatus = 'no-checks';
+
+  if (checkRunsRes.ok) {
+    const data = await checkRunsRes.json() as {
+      check_runs?: Array<{
+        name?: string;
+        status?: string;
+        conclusion?: string | null;
+        html_url?: string;
+        details_url?: string;
+      }>;
+    };
+    if (data.check_runs && data.check_runs.length > 0) {
+      checks = data.check_runs.map((checkRun) => ({
+        name: checkRun.name || 'unknown-check',
+        status: (checkRun.status || 'completed') as GitHubReadonlyCICheck['status'],
+        conclusion: (checkRun.conclusion ?? null) as GitHubReadonlyCICheck['conclusion'],
+        detailsUrl: checkRun.html_url || checkRun.details_url,
+      }));
+    }
+  }
+
+  if (checks.length === 0) {
+    const statusRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/commits/${commitRef}/status`),
+      { headers },
+    );
+    if (statusRes.ok) {
+      const statusData = await statusRes.json() as {
+        statuses?: Array<{ context?: string; state?: string; target_url?: string }>;
+      };
+      if (statusData.statuses && statusData.statuses.length > 0) {
+        checks = statusData.statuses.map((statusItem) => ({
+          name: statusItem.context || 'unknown-check',
+          status: 'completed' as const,
+          conclusion: statusItem.state === 'success'
+            ? 'success'
+            : statusItem.state === 'failure' || statusItem.state === 'error'
+              ? 'failure'
+              : statusItem.state === 'pending'
+                ? null
+                : 'neutral',
+          detailsUrl: statusItem.target_url,
+        }));
+        for (const check of checks) {
+          if (check.conclusion === null) {
+            check.status = 'in_progress';
+          }
+        }
+      }
+    }
+  }
+
+  if (checks.length === 0) {
+    overall = 'no-checks';
+  } else if (checks.some((check) => check.status !== 'completed')) {
+    overall = 'pending';
+  } else if (checks.every((check) => check.conclusion === 'success' || check.conclusion === 'skipped' || check.conclusion === 'neutral')) {
+    overall = 'success';
+  } else if (checks.some((check) => check.conclusion === 'failure')) {
+    overall = 'failure';
+  } else {
+    overall = 'neutral';
+  }
+
+  return { overall, checks, ref: commitRef };
+}
+
+export async function executeFetchChecksTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  ref?: string,
+): Promise<GitHubReadonlyToolResult> {
+  const { overall, checks, ref: commitRef } = await fetchCIStatusSummary(runtime, repo, ref);
+  const cardData: GitHubReadonlyCIStatusCardData = {
+    type: 'ci-status',
+    repo,
+    ref: commitRef,
+    checks,
+    overall,
+    fetchedAt: new Date().toISOString(),
+  };
+
+  const lines: string[] = [
+    `[Tool Result — fetch_checks]`,
+    `CI Status for ${repo}@${commitRef}: ${overall.toUpperCase()}`,
+  ];
+
+  if (checks.length === 0) {
+    lines.push('No CI checks configured for this repo.');
+  } else {
+    for (const check of checks) {
+      const icon = check.conclusion === 'success'
+        ? '✓'
+        : check.conclusion === 'failure'
+          ? '✗'
+          : check.status !== 'completed'
+            ? '⏳'
+            : '—';
+      lines.push(`  ${icon} ${check.name}: ${check.conclusion || check.status}`);
+    }
+  }
+
+  return { text: lines.join('\n'), card: { type: 'ci-status', data: cardData } };
+}
+
 export async function executeSearchFilesTool(
   runtime: GitHubReadonlyRuntime,
   repo: string,
@@ -549,8 +834,14 @@ export async function executeGitHubReadonlyTool(
   switch (call.tool) {
     case 'fetch_pr':
       return executeFetchPRTool(runtime, call.args.repo, call.args.pr);
+    case 'list_prs':
+      return executeListPRsTool(runtime, call.args.repo, call.args.state);
+    case 'list_commits':
+      return executeListCommitsTool(runtime, call.args.repo, call.args.count);
     case 'list_branches':
       return executeListBranchesTool(runtime, call.args.repo, call.args.maxBranches ?? 30);
+    case 'fetch_checks':
+      return executeFetchChecksTool(runtime, call.args.repo, call.args.ref);
     case 'search_files':
       return executeSearchFilesTool(runtime, call.args.repo, call.args.query, call.args.path, call.args.branch);
   }

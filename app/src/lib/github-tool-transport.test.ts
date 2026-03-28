@@ -17,7 +17,10 @@ describe('github-tool-transport', () => {
 
   it('recognizes the worker-backed tool subset', () => {
     expect(supportsWorkerGitHubTool('fetch_pr')).toBe(true);
+    expect(supportsWorkerGitHubTool('list_prs')).toBe(true);
+    expect(supportsWorkerGitHubTool('list_commits')).toBe(true);
     expect(supportsWorkerGitHubTool('list_branches')).toBe(true);
+    expect(supportsWorkerGitHubTool('fetch_checks')).toBe(true);
     expect(supportsWorkerGitHubTool('search_files')).toBe(true);
     expect(supportsWorkerGitHubTool('create_pr')).toBe(false);
   });

@@ -123,9 +123,18 @@ function parseToolPayload(value: unknown): GitHubToolPayload | null {
     const pr = asPositiveNumber(args.pr);
     return pr ? { tool, args: { repo, pr }, allowedRepo } : null;
   }
+  if (tool === 'list_prs') {
+    return { tool, args: { repo, state: asString(args.state) }, allowedRepo };
+  }
+  if (tool === 'list_commits') {
+    return { tool, args: { repo, count: asPositiveNumber(args.count) }, allowedRepo };
+  }
   if (tool === 'list_branches') {
     const maxBranches = asPositiveNumber(args.maxBranches);
     return { tool, args: { repo, maxBranches }, allowedRepo };
+  }
+  if (tool === 'fetch_checks') {
+    return { tool, args: { repo, ref: asString(args.ref) }, allowedRepo };
   }
   if (tool === 'search_files') {
     const query = asString(args.query);

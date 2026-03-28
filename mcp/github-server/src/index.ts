@@ -28,7 +28,10 @@ const DEFAULT_GITHUB_API_URL = 'https://api.github.com';
 const TOOL_GITHUB_SERVER_INFO = 'github_server_info';
 const TOOL_GITHUB_API_PROBE = 'github_api_probe';
 const TOOL_FETCH_PR = 'fetch_pr';
+const TOOL_LIST_PRS = 'list_prs';
+const TOOL_LIST_COMMITS = 'list_commits';
 const TOOL_LIST_BRANCHES = 'list_branches';
+const TOOL_FETCH_CHECKS = 'fetch_checks';
 const TOOL_SEARCH_FILES = 'search_files';
 
 function getGitHubToken(): string {
@@ -81,7 +84,16 @@ function getServerInfoText(): string {
     version: SERVER_VERSION,
     githubApiUrl: getGitHubApiUrl(),
     githubTokenConfigured: Boolean(getGitHubToken()),
-    tools: [TOOL_GITHUB_SERVER_INFO, TOOL_GITHUB_API_PROBE, TOOL_FETCH_PR, TOOL_LIST_BRANCHES, TOOL_SEARCH_FILES],
+    tools: [
+      TOOL_GITHUB_SERVER_INFO,
+      TOOL_GITHUB_API_PROBE,
+      TOOL_FETCH_PR,
+      TOOL_LIST_PRS,
+      TOOL_LIST_COMMITS,
+      TOOL_LIST_BRANCHES,
+      TOOL_FETCH_CHECKS,
+      TOOL_SEARCH_FILES,
+    ],
     status:
       'GitHub tool migration is in progress. Read-only PR, branch, and code search tools now share the same core implementation as the Push worker bridge.',
   };
@@ -159,9 +171,18 @@ function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyTo
     const pr = asPositiveNumber(args.pr);
     return pr ? { tool: 'fetch_pr', args: { repo, pr } } : null;
   }
+  if (name === TOOL_LIST_PRS) {
+    return { tool: 'list_prs', args: { repo, state: asString(args.state) } };
+  }
+  if (name === TOOL_LIST_COMMITS) {
+    return { tool: 'list_commits', args: { repo, count: asPositiveNumber(args.count) } };
+  }
   if (name === TOOL_LIST_BRANCHES) {
     const maxBranches = asPositiveNumber(args.maxBranches);
     return { tool: 'list_branches', args: { repo, maxBranches } };
+  }
+  if (name === TOOL_FETCH_CHECKS) {
+    return { tool: 'fetch_checks', args: { repo, ref: asString(args.ref) } };
   }
   if (name === TOOL_SEARCH_FILES) {
     const query = asString(args.query);
@@ -196,6 +217,34 @@ const readonlyTools = [
     },
   },
   {
+    name: TOOL_LIST_PRS,
+    description:
+      'List recent pull requests for a repository, optionally filtered by state.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        state: { type: 'string', description: 'Optional pull request state filter.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_LIST_COMMITS,
+    description:
+      'List recent commits for a repository with commit authors and dates.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        count: { type: 'number', description: 'Maximum number of commits to return.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: TOOL_LIST_BRANCHES,
     description:
       'List repository branches, marking the default branch and protected branches.',
@@ -204,6 +253,20 @@ const readonlyTools = [
       properties: {
         repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
         maxBranches: { type: 'number', description: 'Maximum number of branches to return.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_FETCH_CHECKS,
+    description:
+      'Fetch CI status for a repository ref, including check runs and combined status fallback.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        ref: { type: 'string', description: 'Optional commit SHA or branch ref.' },
       },
       required: ['repo'],
       additionalProperties: false,
@@ -283,7 +346,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   if (
     request.params.name === TOOL_FETCH_PR
+    || request.params.name === TOOL_LIST_PRS
+    || request.params.name === TOOL_LIST_COMMITS
     || request.params.name === TOOL_LIST_BRANCHES
+    || request.params.name === TOOL_FETCH_CHECKS
     || request.params.name === TOOL_SEARCH_FILES
   ) {
     throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for tool: ${request.params.name}`);

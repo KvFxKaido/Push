@@ -97,4 +97,62 @@ describe('github-readonly-tools shared core', () => {
     expect(result.card.data.title).toBe('Add worker bridge');
     expect(result.text).toContain('Linked Issues');
   });
+
+  it('formats a PR list result with list card metadata', async () => {
+    const runtime = createRuntime(async (url) => {
+      if (url.includes('/pulls?state=open')) {
+        return Response.json([
+          {
+            number: 7,
+            title: 'Ship worker bridge',
+            created_at: '2026-03-28T14:00:00.000Z',
+            user: { login: 'ishaw' },
+            additions: 18,
+            deletions: 4,
+          },
+        ]);
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'list_prs',
+      args: { repo: 'owner/repo', state: 'open' },
+    });
+
+    expect(result.card?.type).toBe('pr-list');
+    if (!result.card || result.card.type !== 'pr-list') {
+      throw new Error('expected PR list card');
+    }
+    expect(result.card.data.prs).toHaveLength(1);
+    expect(result.card.data.prs[0].number).toBe(7);
+    expect(result.text).toContain('Ship worker bridge');
+  });
+
+  it('formats CI checks with computed overall status', async () => {
+    const runtime = createRuntime(async (url) => {
+      if (url.includes('/check-runs?per_page=50')) {
+        return Response.json({
+          check_runs: [
+            { name: 'build', status: 'completed', conclusion: 'success', html_url: 'https://example.test/build' },
+            { name: 'lint', status: 'in_progress', conclusion: null, html_url: 'https://example.test/lint' },
+          ],
+        });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'fetch_checks',
+      args: { repo: 'owner/repo', ref: 'feature/bridge' },
+    });
+
+    expect(result.card?.type).toBe('ci-status');
+    if (!result.card || result.card.type !== 'ci-status') {
+      throw new Error('expected CI status card');
+    }
+    expect(result.card.data.overall).toBe('pending');
+    expect(result.card.data.checks).toHaveLength(2);
+    expect(result.text).toContain('CI Status for owner/repo@feature/bridge: PENDING');
+  });
 });

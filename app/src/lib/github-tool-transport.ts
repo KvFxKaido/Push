@@ -22,7 +22,12 @@ export function getGitHubToolBackend(): GitHubToolBackend {
 }
 
 export function supportsWorkerGitHubTool(name: string): name is WorkerGitHubToolName {
-  return name === 'fetch_pr' || name === 'list_branches' || name === 'search_files';
+  return name === 'fetch_pr'
+    || name === 'list_prs'
+    || name === 'list_commits'
+    || name === 'list_branches'
+    || name === 'fetch_checks'
+    || name === 'search_files';
 }
 
 async function postGitHubToolRequest(
