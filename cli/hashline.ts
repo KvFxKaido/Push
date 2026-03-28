@@ -1,37 +1,19 @@
 /**
- * CLI hashline adapter — sync Node.js wrappers around the shared hashline lib.
+ * CLI hashline adapter — sync Node.js wrappers over the shared hashline types.
  *
- * Delegates core edit logic (two-phase resolution, offset tracking, diagnostics)
- * to lib/hashline.ts. Provides synchronous convenience APIs for the CLI where
- * async isn't practical.
+ * The shared lib/hashline.ts is the canonical implementation (async, universal
+ * runtime). This file re-implements the two-phase edit algorithm with sync
+ * Node.js crypto so the CLI can call it without async boundaries.
  *
  * Previously this was a standalone copy using SHA-1 with sequential application.
- * Now unified on SHA-256 + two-phase batch resolution from the shared lib.
+ * Now unified on SHA-256 + two-phase batch resolution matching the shared lib.
  */
 import { createHash } from 'node:crypto';
 import {
-  getNodeCrypto,
-  applyHashlineEdits as sharedApplyHashlineEdits,
-  renderAnchoredRange as sharedRenderAnchoredRange,
   type HashlineOp,
-  type HashlineEditResult,
 } from '../lib/hashline.ts';
 
-export type { HashlineOp, HashlineEditResult };
-
-// ---------------------------------------------------------------------------
-// Bootstrap — prime the shared lib's cached Node crypto reference so that
-// calculateLineHashSync works. This is a no-op after the first call.
-// ---------------------------------------------------------------------------
-let _initialized = false;
-async function ensureInitialized(): Promise<void> {
-  if (_initialized) return;
-  await getNodeCrypto();
-  _initialized = true;
-}
-// Fire-and-forget at import time; by the time any tool handler runs this
-// will have resolved (it's a single synchronous require under the hood).
-const _initPromise = ensureInitialized();
+export type { HashlineOp };
 
 // ---------------------------------------------------------------------------
 // Sync hashing (CLI-specific convenience)
@@ -134,11 +116,6 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
   const resultLines = String(content).split('\n');
   const hashCache = resultLines.map((l) => createHash('sha256').update(l.trim()).digest('hex').slice(0, 12));
 
-  function snippetOf(idx: number): string {
-    const trimmed = resultLines[idx]?.trim() ?? '';
-    return trimmed.length > 60 ? trimmed.slice(0, 60) + '…' : trimmed;
-  }
-
   // --- Phase 1: Resolve all refs against the original content ---
   type ResolvedEdit = { index: number; edit: HashlineOp } | { error: string };
   const resolved: ResolvedEdit[] = [];
@@ -213,7 +190,11 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
       } else if (prior.op === 'insert_before' && r.index >= prior.originalIndex) {
         adjustedIdx += prior.linesAdded;
       } else if (prior.op === 'replace_line') {
-        if (r.index > prior.originalIndex) adjustedIdx += prior.linesAdded - 1;
+        if (r.index > prior.originalIndex) {
+          adjustedIdx += prior.linesAdded - 1;
+        } else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') {
+          adjustedIdx += prior.linesAdded - 1;
+        }
       } else if (prior.op === 'delete_line' && r.index > prior.originalIndex) {
         adjustedIdx--;
       }
@@ -226,7 +207,7 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
         const newLines = edit.content.split('\n');
         resultLines.splice(adjustedIdx, 1, ...newLines);
         linesAdded = newLines.length;
-        applied.push({ op: edit.op, line: r.index + 1, linesInserted: newLines.length });
+        applied.push({ op: edit.op, line: adjustedIdx + 1, linesInserted: newLines.length });
         break;
       }
       case 'insert_after': {
@@ -245,7 +226,7 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
       }
       case 'delete_line':
         resultLines.splice(adjustedIdx, 1);
-        applied.push({ op: edit.op, line: r.index + 1 });
+        applied.push({ op: edit.op, line: adjustedIdx + 1 });
         break;
     }
     if (edit.op === 'delete_line') deletedOriginalIndices.add(r.index);

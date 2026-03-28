@@ -270,7 +270,12 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
         adjustedIdx += prior.linesAdded;
       } else if (prior.op === 'replace_line') {
         // replace_line with multi-line content adds (N-1) extra lines
-        if (r.index > prior.originalIndex) adjustedIdx += prior.linesAdded - 1;
+        if (r.index > prior.originalIndex) {
+          adjustedIdx += prior.linesAdded - 1;
+        } else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') {
+          // insert_after the same line that was replaced: shift past the full replaced block
+          adjustedIdx += prior.linesAdded - 1;
+        }
       } else if (prior.op === 'delete_line' && r.index > prior.originalIndex) {
         adjustedIdx--;
       }
