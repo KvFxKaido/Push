@@ -12,7 +12,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": ".",
+    "rootDir": "..",
+    "allowImportingTsExtensions": true,
     "paths": {
       "@push/lib/*": ["../lib/*"]
     },
@@ -22,6 +23,6 @@
     "allowUnreachableCode": true,
     "noEmit": false
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "../lib/hashline.ts"],
   "exclude": ["node_modules", "dist", "tests"]
 }

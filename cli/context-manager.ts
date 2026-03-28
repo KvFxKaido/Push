@@ -18,7 +18,7 @@
 
 export interface Message {
   role: string;
-  content: string | unknown;
+  content: string;
 }
 
 export interface TrimResult {

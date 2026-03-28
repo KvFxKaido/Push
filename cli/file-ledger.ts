@@ -3,17 +3,18 @@ export interface FileLedgerEntry {
   reads: number;
   writes: number;
   updatedAt: number;
+  relevance: number;  // search hit count — 0 means never appeared in search results
+}
+
+export interface ReadBudget {
+  charsReadThisTurn: number;
+  turnBudgetChars: number;       // soft cap, surfaced to model
+  filesReadThisTurn: number;
 }
 
 export interface FileLedger {
   files: Record<string, FileLedgerEntry>;
-}
-
-interface ReadMeta {
-  total_lines?: number | string;
-  start_line?: number | string;
-  end_line?: number | string;
-  path?: string;
+  readBudget: ReadBudget;
 }
 
 interface ToolCall {
@@ -22,23 +23,32 @@ interface ToolCall {
 
 interface ToolResult {
   ok?: boolean;
-  meta?: ReadMeta;
+  meta?: Record<string, unknown> | null;
 }
 
-function getCoverage(meta: ReadMeta | undefined): 'partial_read' | 'fully_read' {
-  const total = Number(meta?.total_lines || 0);
-  const start = Number(meta?.start_line || 0);
-  const end = Number(meta?.end_line || 0);
+function getCoverage(meta: Record<string, unknown> | null | undefined): 'partial_read' | 'fully_read' {
+  if (!meta) return 'partial_read';
+  const total = Number(meta.total_lines || 0);
+  const start = Number(meta.start_line || 0);
+  const end = Number(meta.end_line || 0);
 
   if (!total || !start || !end) return 'partial_read';
   if (start <= 1 && end >= total) return 'fully_read';
   return 'partial_read';
 }
 
+const DEFAULT_TURN_BUDGET_CHARS = 80_000;
+
 export function createFileLedger(): FileLedger {
   return {
     files: {},
+    readBudget: { charsReadThisTurn: 0, turnBudgetChars: DEFAULT_TURN_BUDGET_CHARS, filesReadThisTurn: 0 },
   };
+}
+
+export function resetTurnBudget(ledger: FileLedger): void {
+  ledger.readBudget.charsReadThisTurn = 0;
+  ledger.readBudget.filesReadThisTurn = 0;
 }
 
 function ensureEntry(ledger: FileLedger, path: string): FileLedgerEntry {
@@ -48,20 +58,46 @@ function ensureEntry(ledger: FileLedger, path: string): FileLedgerEntry {
       reads: 0,
       writes: 0,
       updatedAt: Date.now(),
+      relevance: 0,
     };
   }
   return ledger.files[path];
 }
 
 export function updateFileLedger(ledger: FileLedger, call: ToolCall, result: ToolResult): void {
-  const filePath = result?.meta?.path;
+  // Track search relevance: count matches per file from search_files results
+  if (call.tool === 'search_files' && result.ok) {
+    const text = (result as any).text || '';
+    const fileHits = new Map<string, number>();
+    // ripgrep format: "path/to/file:lineNum:content"
+    // Use :lineNum: regex to handle paths with colons (e.g. Windows C:\path)
+    const rgLinePattern = /^(.+?):(\d+):/;
+    for (const line of text.split('\n')) {
+      const m = line.match(rgLinePattern);
+      if (m && m[1]) {
+        fileHits.set(m[1], (fileHits.get(m[1]) || 0) + 1);
+      }
+    }
+    for (const [fp, count] of fileHits) {
+      const entry = ensureEntry(ledger, fp);
+      entry.relevance += count;
+      entry.updatedAt = Date.now();
+    }
+    return;
+  }
+
+  const filePath = typeof result?.meta?.path === 'string' ? result.meta.path : undefined;
   if (!filePath) return;
   const entry = ensureEntry(ledger, filePath);
 
-  if (call.tool === 'read_file' && result.ok) {
+  if ((call.tool === 'read_file' || call.tool === 'read_symbol') && result.ok) {
     entry.reads += 1;
-    entry.status = getCoverage(result.meta);
+    entry.status = call.tool === 'read_symbol' ? 'partial_read' : getCoverage(result.meta);
     entry.updatedAt = Date.now();
+    // Track read budget
+    const chars = (result as any).text?.length || 0;
+    ledger.readBudget.charsReadThisTurn += chars;
+    ledger.readBudget.filesReadThisTurn += 1;
     return;
   }
 
@@ -74,16 +110,21 @@ export function updateFileLedger(ledger: FileLedger, call: ToolCall, result: Too
 
 export function getLedgerSummary(ledger: FileLedger): {
   total: number;
-  files: Array<{ path: string; status: string; reads: number; writes: number }>;
+  readBudget: ReadBudget;
+  files: Array<{ path: string; status: string; reads: number; writes: number; relevance: number }>;
 } {
   const entries = Object.entries(ledger.files);
+  // Sort by relevance (highest first) then by recency
+  entries.sort(([, a], [, b]) => b.relevance - a.relevance || b.updatedAt - a.updatedAt);
   return {
     total: entries.length,
+    readBudget: { ...ledger.readBudget },
     files: entries.map(([path, v]) => ({
       path,
       status: v.status,
       reads: v.reads,
       writes: v.writes,
+      relevance: v.relevance,
     })),
   };
 }

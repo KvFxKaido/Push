@@ -3,6 +3,7 @@
  * Zero dependencies. Handles alternate screen, cursor, box drawing,
  * text wrapping, and throttled batched writes.
  */
+import type { Theme } from './tui-theme.js';
 
 // ── ANSI escape helpers ─────────────────────────────────────────────
 

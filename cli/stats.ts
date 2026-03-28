@@ -69,7 +69,7 @@ export async function aggregateStats(filter: StatsFilter = {}): Promise<Aggregat
 
     let events: SessionEvent[];
     try {
-      events = await loadSessionEvents(session.sessionId);
+      events = await loadSessionEvents(session.sessionId) as SessionEvent[];
     } catch {
       continue;
     }

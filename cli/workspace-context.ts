@@ -13,6 +13,8 @@ const MAX_TREE_ENTRIES = 40;
 const MAX_INSTRUCTIONS_CHARS = 8000;
 const MAX_MEMORY_CHARS = 4000;
 const MEMORY_PATH = '.push/memory.md';
+const STRUCTURED_MEMORY_PATH = '.push/memory.json';
+const MAX_STRUCTURED_ENTRIES = 20;
 
 const MANIFEST_FILES: readonly string[] = [
   'package.json',
@@ -241,16 +243,50 @@ const INSTRUCTION_FILES: readonly string[] = [
 // ─── loadMemory ────────────────────────────────────────────────
 
 export async function loadMemory(cwd: string): Promise<string | null> {
+  const parts: string[] = [];
+
+  // Load structured memory (memory.json) — recent entries first
+  try {
+    const jsonPath: string = path.join(cwd, STRUCTURED_MEMORY_PATH);
+    const raw: string = await fs.readFile(jsonPath, 'utf8');
+    const entries = JSON.parse(raw);
+    if (Array.isArray(entries) && entries.length > 0) {
+      // Take most recent entries, newest first, max MAX_STRUCTURED_ENTRIES
+      const recent = entries.slice(-MAX_STRUCTURED_ENTRIES).reverse();
+      // Validate and skip malformed entries
+      const lines: string[] = [];
+      for (const e of recent) {
+        if (!e || typeof e !== 'object') continue;
+        const type = typeof e.type === 'string' ? e.type.trim() : '';
+        const content = typeof e.content === 'string' ? e.content.trim() : '';
+        if (!type || !content) continue;
+        const rawTags = Array.isArray(e.tags) ? e.tags : [];
+        const tags = rawTags.filter((t: unknown): t is string => typeof t === 'string' && t.trim().length > 0);
+        const rawFiles = Array.isArray(e.files) ? e.files : [];
+        const files = rawFiles.filter((f: unknown): f is string => typeof f === 'string' && f.trim().length > 0);
+        const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
+        const fileStr = files.length > 0 ? ` (${files.join(', ')})` : '';
+        lines.push(`- [${type}] ${content}${tagStr}${fileStr}`);
+      }
+      if (lines.length > 0) {
+        parts.push('[Structured Memory]\n' + lines.join('\n'));
+      }
+    }
+  } catch { /* no structured memory */ }
+
+  // Load free-text memory (memory.md)
   try {
     const fullPath: string = path.join(cwd, MEMORY_PATH);
     let content: string = await fs.readFile(fullPath, 'utf8');
     if (content.length > MAX_MEMORY_CHARS) {
       content = content.slice(0, MAX_MEMORY_CHARS);
     }
-    return content.trim() || null;
-  } catch {
-    return null;
-  }
+    if (content.trim()) {
+      parts.push(content.trim());
+    }
+  } catch { /* no free-text memory */ }
+
+  return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
 // ─── loadProjectInstructions ────────────────────────────────────
