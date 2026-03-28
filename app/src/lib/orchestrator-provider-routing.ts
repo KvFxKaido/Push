@@ -40,16 +40,16 @@ import {
 import type { PreferredProvider } from './providers';
 import { buildExperimentalProxyHeaders, normalizeExperimentalBaseUrl } from './experimental-providers';
 import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
+import { streamSSEChat } from './orchestrator';
 import {
-  streamSSEChat,
   parseProviderError,
   hasFinishReason,
-} from './orchestrator';
+} from './orchestrator-streaming';
 import type {
   StreamProviderConfig,
   StreamUsage,
   ChunkMetadata,
-} from './orchestrator';
+} from './orchestrator-streaming';
 
 // ---------------------------------------------------------------------------
 // Error / helper functions

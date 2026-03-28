@@ -33,7 +33,7 @@ export interface ContextBudget {
   summarizeTokens: number;
 }
 
-const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
+export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   maxTokens: DEFAULT_CONTEXT_MAX_TOKENS,
   targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
   summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // same as target for non-Gemini
