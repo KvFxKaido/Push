@@ -28,10 +28,33 @@ import type { ToolHookRegistry } from './tool-hooks';
 export type AgentRole = 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'auditor';
 
 // ---------------------------------------------------------------------------
+// Agent phase — well-known phases for phase-aware policy gating
+// ---------------------------------------------------------------------------
+
+/** Well-known agent phases. Agents self-report phase via coder_update_state. */
+export const KNOWN_PHASES = {
+  EXPLORING: 'exploring',
+  PLANNING: 'planning',
+  IMPLEMENTING: 'implementing',
+  VERIFYING: 'verifying',
+  REPORTING: 'reporting',
+} as const;
+
+/**
+ * Matches verification-like phase names (case-insensitive).
+ * Agents may use variations like "testing", "verification", "running tests" —
+ * this matcher catches common patterns.
+ */
+export function isVerificationPhase(phase: string | undefined): boolean {
+  if (!phase) return false;
+  return /\b(verif|test|validat|check|typecheck|lint)/i.test(phase);
+}
+
+// ---------------------------------------------------------------------------
 // Turn context — shared state visible to all policy hooks within a turn
 // ---------------------------------------------------------------------------
 
-/** Current turn state, passed to every hook. Mutable: `round` is updated per turn. */
+/** Current turn state, passed to every hook. Mutable: `round` and `phase` are updated per turn. */
 export interface TurnContext {
   /** Which agent role is running. */
   role: AgentRole;
@@ -39,6 +62,8 @@ export interface TurnContext {
   round: number;
   /** Maximum rounds allowed for this agent run. */
   maxRounds: number;
+  /** Current agent phase, derived from working memory (e.g. "implementing", "verifying"). */
+  phase?: string;
   /** Sandbox ID, if any. */
   sandboxId: string | null;
   /** Active repo (owner/name). */

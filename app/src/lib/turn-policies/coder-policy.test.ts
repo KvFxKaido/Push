@@ -1,14 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { createCoderPolicy, detectCognitiveDrift } from './coder-policy';
+import { isVerificationPhase } from '../turn-policy';
 import type { TurnContext } from '../turn-policy';
 
-function makeCtx(round = 0): TurnContext {
+function makeCtx(round = 0, phase?: string): TurnContext {
   return {
     role: 'coder',
     round,
     maxRounds: 30,
     sandboxId: 'test',
     allowedRepo: 'test/repo',
+    phase,
   };
 }
 
@@ -188,5 +190,96 @@ describe('Coder Policy — mutation failure tracking', () => {
     // 3rd failure on file A — should trigger
     const resultA = await failureHook('sandbox_write_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
     expect(resultA).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isVerificationPhase helper
+// ---------------------------------------------------------------------------
+
+describe('isVerificationPhase', () => {
+  it('returns false for undefined/empty', () => {
+    expect(isVerificationPhase(undefined)).toBe(false);
+    expect(isVerificationPhase('')).toBe(false);
+  });
+
+  it('matches common verification phase names', () => {
+    expect(isVerificationPhase('verifying')).toBe(true);
+    expect(isVerificationPhase('verification')).toBe(true);
+    expect(isVerificationPhase('testing')).toBe(true);
+    expect(isVerificationPhase('running tests')).toBe(true);
+    expect(isVerificationPhase('validation')).toBe(true);
+    expect(isVerificationPhase('typecheck')).toBe(true);
+    expect(isVerificationPhase('linting')).toBe(true);
+  });
+
+  it('does not match non-verification phases', () => {
+    expect(isVerificationPhase('implementing')).toBe(false);
+    expect(isVerificationPhase('planning')).toBe(false);
+    expect(isVerificationPhase('exploring')).toBe(false);
+    expect(isVerificationPhase('reporting')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coder policy — phase-aware mutation gating
+// ---------------------------------------------------------------------------
+
+describe('Coder Policy — phase-aware mutation gating', () => {
+  it('allows mutation tools when phase is not verification', async () => {
+    const policy = createCoderPolicy();
+    const gate = policy.beforeToolExec![0];
+
+    expect(await gate('sandbox_write_file', { path: '/workspace/a.ts' }, makeCtx(0, 'implementing'))).toBeNull();
+    expect(await gate('sandbox_edit_file', { path: '/workspace/a.ts' }, makeCtx(0, 'planning'))).toBeNull();
+    expect(await gate('sandbox_edit_range', { path: '/workspace/a.ts' }, makeCtx(0))).toBeNull();
+  });
+
+  it('denies mutation tools during verification phase', async () => {
+    const policy = createCoderPolicy();
+    const gate = policy.beforeToolExec![0];
+    const ctx = makeCtx(5, 'verifying');
+
+    const result = await gate('sandbox_write_file', { path: '/workspace/a.ts' }, ctx);
+    expect(result).not.toBeNull();
+    expect(result!.action).toBe('deny');
+    expect(result!.reason).toContain('verification-only');
+  });
+
+  it('denies all file-mutation tools during verification', async () => {
+    const policy = createCoderPolicy();
+    const gate = policy.beforeToolExec![0];
+    const ctx = makeCtx(5, 'testing');
+
+    for (const tool of ['sandbox_write_file', 'sandbox_edit_file', 'sandbox_edit_range', 'sandbox_apply_patchset']) {
+      const result = await gate(tool, {}, ctx);
+      expect(result?.action).toBe('deny');
+    }
+  });
+
+  it('allows sandbox_exec during verification (needed for running tests)', async () => {
+    const policy = createCoderPolicy();
+    const gate = policy.beforeToolExec![0];
+    const ctx = makeCtx(5, 'verifying');
+
+    expect(await gate('sandbox_exec', { command: 'npm test' }, ctx)).toBeNull();
+  });
+
+  it('allows sandbox_read_file during verification', async () => {
+    const policy = createCoderPolicy();
+    const gate = policy.beforeToolExec![0];
+    const ctx = makeCtx(5, 'verifying');
+
+    expect(await gate('sandbox_read_file', { path: '/workspace/a.ts' }, ctx)).toBeNull();
+  });
+
+  it('matches various verification phase names', async () => {
+    const policy = createCoderPolicy();
+    const gate = policy.beforeToolExec![0];
+
+    for (const phase of ['verifying', 'testing', 'validation', 'running tests', 'typecheck', 'linting']) {
+      const result = await gate('sandbox_write_file', {}, makeCtx(0, phase));
+      expect(result?.action).toBe('deny');
+    }
   });
 });

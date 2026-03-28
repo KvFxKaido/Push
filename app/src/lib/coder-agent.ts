@@ -1018,6 +1018,23 @@ ${truncatedResult}
       }
       if (trailingMutation) {
         const mutCall = trailingMutation.call as Parameters<typeof executeSandboxToolCall>[0];
+
+        // Phase-aware tool gating for trailing mutation
+        const mutGateResult = await policyRegistry.evaluateBeforeTool(
+          mutCall.tool,
+          mutCall.args as Record<string, unknown>,
+          turnCtx,
+        );
+        if (mutGateResult?.action === 'deny') {
+          messages.push({
+            id: `coder-mut-denied-${round}`,
+            role: 'user',
+            content: `[TOOL_DENIED] ${mutGateResult.reason} [/TOOL_DENIED]`,
+            timestamp: Date.now(),
+          });
+          continue;
+        }
+
         const mutResult = await executeSandboxToolCall(mutCall, sandboxId, {
           auditorProviderOverride: activeProvider,
           auditorModelOverride: coderModelId,
@@ -1119,7 +1136,10 @@ ${truncatedResult}
       if (stateUpdate.filesTouched) workingMemory.filesTouched = [...new Set([...(workingMemory.filesTouched || []), ...stateUpdate.filesTouched])];
       if (stateUpdate.assumptions) workingMemory.assumptions = stateUpdate.assumptions;
       if (stateUpdate.errorsEncountered) workingMemory.errorsEncountered = [...new Set([...(workingMemory.errorsEncountered || []), ...stateUpdate.errorsEncountered])];
-      if (stateUpdate.currentPhase !== undefined) workingMemory.currentPhase = stateUpdate.currentPhase;
+      if (stateUpdate.currentPhase !== undefined) {
+        workingMemory.currentPhase = stateUpdate.currentPhase;
+        turnCtx.phase = stateUpdate.currentPhase;
+      }
       if (stateUpdate.completedPhases) workingMemory.completedPhases = stateUpdate.completedPhases;
       if (stateUpdate.observations) {
         workingMemory.observations = applyObservationUpdates(workingMemory.observations, stateUpdate.observations, round);
@@ -1343,6 +1363,21 @@ ${truncatedResult}
       throw new DOMException('Coder cancelled by user.', 'AbortError');
     }
 
+    // Phase-aware tool gating — check before executing
+    const toolGateResult = await policyRegistry.evaluateBeforeTool(
+      toolCall.tool,
+      toolCall.args as Record<string, unknown>,
+      turnCtx,
+    );
+    if (toolGateResult?.action === 'deny') {
+      messages.push({
+        id: `coder-tool-denied-${round}`,
+        role: 'user',
+        content: `[TOOL_DENIED] ${toolGateResult.reason} [/TOOL_DENIED]`,
+        timestamp: Date.now(),
+      });
+      continue;
+    }
 
     statusFn('Coder executing...', toolCall.tool);
     const result = await executeSandboxToolCall(toolCall, sandboxId, {
