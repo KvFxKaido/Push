@@ -1,55 +1,15 @@
-import type { AIProviderType, ChatMessage, WorkspaceContext } from '@/types';
+import type { ChatMessage, WorkspaceContext } from '@/types';
 import { TOOL_PROTOCOL } from './github-tools';
 import { getSandboxToolProtocol } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
-import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
 import { recordContextMetric } from './context-metrics';
 import type { SummarizationCause } from './context-metrics';
-import { getOllamaKey } from '@/hooks/useOllamaConfig';
-import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
-import { getZenKey } from '@/hooks/useZenConfig';
-import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
-import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
-import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
-import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
-import {
-  getAzureBaseUrl,
-  getAzureKey,
-  getAzureModelName,
-  getBedrockBaseUrl,
-  getBedrockKey,
-  getBedrockModelName,
-} from '@/hooks/useExperimentalProviderConfig';
-import {
-  getVertexKey,
-  getVertexModelName,
-  getVertexBaseUrl,
-  getVertexMode,
-  getVertexRegion,
-} from '@/hooks/useVertexConfig';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
-import {
-  getOllamaModelName,
-  getPreferredProvider,
-  getLastUsedProvider,
-  getOpenRouterModelName,
-  getZenModelName,
-  getNvidiaModelName,
-  getBlackboxModelName,
-  getKiloCodeModelName,
-  getOpenAdapterModelName,
-  PROVIDER_URLS,
-  ZEN_GO_URLS,
-  getZenGoMode,
-} from './providers';
-import type { PreferredProvider } from './providers';
-import { buildExperimentalProxyHeaders, normalizeExperimentalBaseUrl } from './experimental-providers';
 import { extractProviderErrorDetail } from './provider-error-utils';
-import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
 import { buildContextSummaryBlock, compactChatMessage } from './context-compaction';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
@@ -61,7 +21,7 @@ import { SHARED_SAFETY_SECTION } from './system-prompt-sections';
 // Types
 // ---------------------------------------------------------------------------
 
-interface StreamUsage {
+export interface StreamUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
@@ -73,216 +33,54 @@ export interface ChunkMetadata {
 
 import { asRecord } from './utils';
 
-function parseProviderError(parsed: unknown, fallback: string, includeTopLevelMessage = false): string {
+export function parseProviderError(parsed: unknown, fallback: string, includeTopLevelMessage = false): string {
   return extractProviderErrorDetail(parsed, fallback, includeTopLevelMessage);
 }
 
-function hasFinishReason(choice: unknown, reasons: string[]): boolean {
+export function hasFinishReason(choice: unknown, reasons: string[]): boolean {
   const record = asRecord(choice);
   const finishReason = record?.finish_reason;
   return typeof finishReason === 'string' && reasons.includes(finishReason);
 }
 
 
-// Provider chat URLs are now centralised in PROVIDER_URLS (providers.ts).
 
+// --- Imports from extracted modules ---
+import {
+  getContextMode,
+  getContextBudget,
+  estimateMessageTokens,
+  estimateContextTokens,
+  type ContextBudget,
+} from './orchestrator-context';
 
-// Context mode config (runtime toggle from Settings)
-const CONTEXT_MODE_STORAGE_KEY = 'push_context_mode';
-export type ContextMode = 'graceful' | 'none';
+// --- Barrel re-exports (preserve existing consumer import paths) ---
+export {
+  getContextMode,
+  setContextMode,
+  getContextBudget,
+  estimateContextTokens,
+  type ContextMode,
+  type ContextBudget,
+} from './orchestrator-context';
 
-// Rolling window config — token-based context management
-const DEFAULT_CONTEXT_MAX_TOKENS = 100_000; // Hard cap
-const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for system prompt + response
-// Gemini models (1M context window) — Google, Ollama, OpenRouter, and Zen with Gemini models
-// Keep a ~20% margin below the 1,048,576 API limit because estimateTokens (len/3.5) can
-// undercount on code-dense or CJK-heavy conversations.
-const GEMINI_CONTEXT_MAX_TOKENS = 850_000;
-const GEMINI_CONTEXT_TARGET_TOKENS = 800_000;
-// GPT-5.4 models expose a large context window, but we keep a more conservative
-// target than Grok because long prompts are materially more expensive.
-const GPT5_PRO_CONTEXT_MAX_TOKENS = 850_000;
-const GPT5_PRO_CONTEXT_TARGET_TOKENS = 725_000;
-const GPT5_PRO_CONTEXT_SUMMARIZE_TOKENS = 160_000;
-// Grok models on OpenRouter can expose ~2M context. Keep a larger margin than
-// Gemini because token estimation is rough and our tool/system prompt overhead is
-// substantial on long-running sessions.
-const GROK_CONTEXT_MAX_TOKENS = 1_500_000;
-const GROK_CONTEXT_TARGET_TOKENS = 1_350_000;
-const GROK_CONTEXT_SUMMARIZE_TOKENS = 180_000;
+export {
+  type ActiveProvider,
+  getActiveProvider,
+  getProviderStreamFn,
+  streamChat,
+  streamOllamaChat,
+  streamOpenRouterChat,
+  streamZenChat,
+  streamNvidiaChat,
+  streamBlackboxChat,
+  streamKilocodeChat,
+  streamOpenAdapterChat,
+  streamAzureChat,
+  streamBedrockChat,
+  streamVertexChat,
+} from './orchestrator-provider-routing';
 
-export interface ContextBudget {
-  maxTokens: number;
-  targetTokens: number;
-  /** Threshold at which old tool results get summarized. Decoupled from
-   *  targetTokens so large-context models (Gemini) still get lean working
-   *  context without premature message dropping. */
-  summarizeTokens: number;
-}
-
-const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: DEFAULT_CONTEXT_MAX_TOKENS,
-  targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // same as target for non-Gemini
-};
-
-const GEMINI_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GEMINI_CONTEXT_MAX_TOKENS,
-  targetTokens: GEMINI_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // summarize early like other providers
-};
-
-const CLAUDE_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GEMINI_CONTEXT_MAX_TOKENS,
-  targetTokens: GEMINI_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
-};
-
-const GPT5_PRO_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GPT5_PRO_CONTEXT_MAX_TOKENS,
-  targetTokens: GPT5_PRO_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: GPT5_PRO_CONTEXT_SUMMARIZE_TOKENS,
-};
-
-const GROK_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GROK_CONTEXT_MAX_TOKENS,
-  targetTokens: GROK_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: GROK_CONTEXT_SUMMARIZE_TOKENS,
-};
-
-function normalizeModelName(model?: string): string {
-  return (model || '').trim().toLowerCase();
-}
-
-export function getContextBudget(
-  provider?: AIProviderType,
-  model?: string,
-): ContextBudget {
-  const normalizedModel = normalizeModelName(model);
-  // GPT-5.4 models get a large-context profile, but with a conservative target
-  // to avoid turning long sessions into runaway expensive prompts.
-  if (normalizedModel.includes('gpt-5.4')) {
-    return GPT5_PRO_CONTEXT_BUDGET;
-  }
-
-  // Non-Haiku Claude models get the larger 1M-class profile.
-  if (normalizedModel.includes('claude') && !normalizedModel.includes('haiku')) {
-    return CLAUDE_CONTEXT_BUDGET;
-  }
-
-  // OpenRouter or other providers running a Grok model — larger long-term
-  // history, but still summarize well before the hard cap.
-  if (normalizedModel.includes('grok')) {
-    return GROK_CONTEXT_BUDGET;
-  }
-
-  // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
-  if (
-    (provider === 'ollama'
-      || provider === 'openrouter'
-      || provider === 'zen'
-      || provider === 'vertex') &&
-    normalizedModel.includes('gemini')
-  ) {
-    return GEMINI_CONTEXT_BUDGET;
-  }
-
-  return DEFAULT_CONTEXT_BUDGET;
-}
-
-export function getContextMode(): ContextMode {
-  try {
-    const stored = localStorage.getItem(CONTEXT_MODE_STORAGE_KEY);
-    if (stored === 'none') return 'none';
-  } catch {
-    // ignore storage errors
-  }
-  return 'graceful';
-}
-
-export function setContextMode(mode: ContextMode): void {
-  try {
-    localStorage.setItem(CONTEXT_MODE_STORAGE_KEY, mode);
-  } catch {
-    // ignore storage errors
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Token Estimation — rough heuristic, no tokenizer dependency
-// ---------------------------------------------------------------------------
-
-/**
- * Estimate token count from text using content-aware heuristics.
- *
- * Different content types tokenize at different rates:
- * - Dense code (brackets, operators, short names): ~3.0 chars/token
- * - Mixed code/prose (tool results, diffs): ~3.5 chars/token
- * - English prose: ~4.0 chars/token
- * - CJK / non-ASCII text: ~1.5 chars/token (each char is typically its own token)
- *
- * We sample the text to pick an appropriate ratio instead of using a single
- * fixed divisor.  Still conservative (slightly over-estimates) to avoid
- * blowing past real limits.
- */
-function estimateTokens(text: string): number {
-  if (!text) return 0;
-  const len = text.length;
-
-  // For short text, the overhead of sampling isn't worth it
-  if (len < 200) return Math.ceil(len / 3.2);
-
-  // Sample up to 500 chars from the middle of the text to classify content
-  const sampleStart = Math.max(0, Math.floor(len / 2) - 250);
-  const sample = text.slice(sampleStart, sampleStart + 500);
-
-  // Count content signals
-  const nonAsciiCount = (sample.match(/[^\u0020-\u007E\n\r\t]/g) || []).length;
-  const codeSymbolCount = (sample.match(/[{}()[\];=<>|&!+\-*/^~@#$%]/g) || []).length;
-  const sampleLen = sample.length;
-
-  // High non-ASCII ratio → CJK/emoji-heavy, each char ≈ 1 token
-  if (nonAsciiCount / sampleLen > 0.3) {
-    // Blend: non-ASCII chars at 1.5, ASCII chars at 3.5
-    const nonAsciiRatio = nonAsciiCount / sampleLen;
-    const blendedRate = nonAsciiRatio * 1.5 + (1 - nonAsciiRatio) * 3.5;
-    return Math.ceil(len / blendedRate);
-  }
-
-  // High code-symbol density → dense code, tighter tokenization
-  if (codeSymbolCount / sampleLen > 0.12) {
-    return Math.ceil(len / 3.0);
-  }
-
-  // Default: mixed content
-  return Math.ceil(len / 3.5);
-}
-
-function estimateMessageTokens(msg: ChatMessage): number {
-  let tokens = estimateTokens(msg.content) + 4; // 4 tokens overhead per message
-  if (msg.thinking) tokens += estimateTokens(msg.thinking);
-  if (msg.attachments) {
-    for (const att of msg.attachments) {
-      if (att.type === 'image') tokens += 1000; // rough estimate for vision
-      else tokens += estimateTokens(att.content);
-    }
-  }
-  return tokens;
-}
-
-/**
- * Estimate total tokens for an array of chat messages.
- * Exported so useChat can expose context usage to the UI.
- */
-export function estimateContextTokens(messages: ChatMessage[]): number {
-  let total = 0;
-  for (const msg of messages) {
-    total += estimateMessageTokens(msg);
-  }
-  return total;
-}
-
-// ---------------------------------------------------------------------------
 // Smart Context Management — summarize instead of drop, pin first message
 // ---------------------------------------------------------------------------
 
@@ -641,17 +439,6 @@ function buildOrchestratorBasePrompt(): string {
  * Now built from composable sections instead of a single template literal.
  */
 export const ORCHESTRATOR_SYSTEM_PROMPT = buildOrchestratorBasePrompt();
-
-const DEMO_WELCOME = `Welcome to **Push** — your AI coding agent with direct repo access.
-
-Here's what I can help with:
-
-- **Review PRs** — paste a GitHub PR link and I'll analyze it
-- **Explore repos** — ask about any repo's structure, recent changes, or open issues
-- **Ship changes** — describe what you want changed and I'll draft the code
-- **Monitor pipelines** — check CI/CD status and deployment health
-
-Connect your GitHub account in settings to get started, or just ask me anything about code.`;
 
 // Multimodal content types (OpenAI-compatible)
 interface LLMMessageContentText {
@@ -1017,7 +804,7 @@ function createChunkedEmitter(
 // Shared: generic SSE streaming with timeouts
 // ---------------------------------------------------------------------------
 
-interface StreamProviderConfig {
+export interface StreamProviderConfig {
   name: string;
   apiUrl: string;
   apiKey: string;
@@ -1054,7 +841,7 @@ interface AutoRetryConfig {
 }
 
 
-async function streamSSEChat(
+export async function streamSSEChat(
   config: StreamProviderConfig,
   messages: ChatMessage[],
   onToken: (token: string, meta?: ChunkMetadata) => void,
@@ -1426,448 +1213,3 @@ async function streamSSEChatOnce(
 
 }
 
-/** Build a standard set of timeout error messages for a provider. */
-function buildErrorMessages(name: string, connectHint = 'server may be down.'): StreamProviderConfig['errorMessages'] {
-  return {
-    keyMissing: `${name} API key not configured`,
-    connect: (s) => `${name} API didn't respond within ${s}s — ${connectHint}`,
-    idle: (s) => `${name} API stream stalled — no data for ${s}s.`,
-    stall: (s) => `${name} API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
-    total: (s) => `${name} API response exceeded ${s}s total time limit.`,
-    network: `Cannot reach ${name} — network error. Check your connection.`,
-  };
-}
-
-/** Standard timeout config used by most providers. */
-const STANDARD_TIMEOUTS = { connectTimeoutMs: 30_000, idleTimeoutMs: 60_000, stallTimeoutMs: 60_000, totalTimeoutMs: 180_000 } as const;
-
-interface ProviderStreamEntry {
-  getKey: () => string | null;
-  buildConfig: (apiKey: string, modelOverride?: string) => Promise<StreamProviderConfig> | StreamProviderConfig;
-}
-
-function buildExperimentalStreamConfig(
-  provider: 'azure' | 'bedrock' | 'vertex',
-  name: string,
-  apiKey: string,
-  baseUrl: string,
-  model: string,
-): StreamProviderConfig {
-  const headers = buildExperimentalProxyHeaders(provider, baseUrl);
-  if (!headers['X-Push-Upstream-Base']) {
-    throw new Error(`${name} base URL is missing or invalid`);
-  }
-
-  return {
-    name,
-    apiUrl: PROVIDER_URLS[provider].chat,
-    apiKey,
-    model,
-    ...STANDARD_TIMEOUTS,
-    errorMessages: buildErrorMessages(name),
-    parseError: (p, f) => parseProviderError(p, f, true),
-    checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-    providerType: provider,
-    extraHeaders: headers,
-    shouldResetStallOnReasoning: true,
-  };
-}
-
-function buildVertexStreamConfig(modelOverride?: string): StreamProviderConfig {
-  const mode = getVertexMode();
-  const model = modelOverride || getVertexModelName();
-
-  if (mode === 'legacy') {
-    const legacyKey = getVertexKey();
-    if (!legacyKey) {
-      throw new Error('Google Vertex credentials are missing');
-    }
-    return buildExperimentalStreamConfig(
-      'vertex',
-      'Google Vertex',
-      legacyKey,
-      getVertexBaseUrl(),
-      model,
-    );
-  }
-
-  const serviceAccount = getVertexKey();
-  if (!serviceAccount) {
-    throw new Error('Google Vertex service account is missing');
-  }
-  const encodedServiceAccount = encodeVertexServiceAccountHeader(serviceAccount);
-  if (!encodedServiceAccount) {
-    throw new Error('Google Vertex service account is invalid');
-  }
-
-  const region = getVertexRegion();
-  const normalizedRegion = normalizeVertexRegion(region);
-  if (!normalizedRegion.ok) {
-    throw new Error(normalizedRegion.error);
-  }
-
-  return {
-    name: 'Google Vertex',
-    apiUrl: PROVIDER_URLS.vertex.chat,
-    apiKey: '',
-    authHeader: null,
-    model,
-    ...STANDARD_TIMEOUTS,
-    errorMessages: buildErrorMessages('Google Vertex'),
-    parseError: (p, f) => parseProviderError(p, f, true),
-    checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-    providerType: 'vertex',
-    extraHeaders: {
-      'X-Push-Vertex-Service-Account': encodedServiceAccount,
-      'X-Push-Vertex-Region': normalizedRegion.normalized,
-    },
-  };
-}
-
-const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
-  ollama: {
-    getKey: getOllamaKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Ollama Cloud',
-      apiUrl: PROVIDER_URLS.ollama.chat,
-      apiKey,
-      model: modelOverride || getOllamaModelName(),
-      connectTimeoutMs: 30_000,
-      idleTimeoutMs: 45_000,
-      stallTimeoutMs: 60_000,
-      totalTimeoutMs: 180_000,
-      errorMessages: buildErrorMessages('Ollama Cloud', 'server may be cold-starting.'),
-      parseError: (p, f) => parseProviderError(p, f),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls', 'function_call']),
-      shouldResetStallOnReasoning: true,
-      providerType: 'ollama',
-    }),
-  },
-  openrouter: {
-    getKey: getOpenRouterKey,
-    buildConfig: (apiKey, modelOverride) => {
-      const model = modelOverride || getOpenRouterModelName();
-      const supportsReasoning = openRouterModelSupportsReasoning(model);
-      const effort = getReasoningEffort('openrouter');
-      const useReasoning = supportsReasoning && effort !== 'off';
-      return {
-        name: 'OpenRouter',
-        apiUrl: PROVIDER_URLS.openrouter.chat,
-        apiKey,
-        model,
-        ...STANDARD_TIMEOUTS,
-        errorMessages: buildErrorMessages('OpenRouter'),
-        parseError: (p, f) => parseProviderError(p, f, true),
-        checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-        providerType: 'openrouter',
-        shouldResetStallOnReasoning: useReasoning,
-        bodyTransform: useReasoning
-          ? (body) => ({ ...body, reasoning: { effort } })
-          : undefined,
-      };
-    },
-  },
-  zen: {
-    getKey: getZenKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'OpenCode Zen',
-      apiUrl: getZenGoMode() ? ZEN_GO_URLS.chat : PROVIDER_URLS.zen.chat,
-      apiKey,
-      model: modelOverride || getZenModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('OpenCode Zen'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'zen',
-    }),
-  },
-  nvidia: {
-    getKey: getNvidiaKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Nvidia NIM',
-      apiUrl: PROVIDER_URLS.nvidia.chat,
-      apiKey,
-      model: modelOverride || getNvidiaModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('Nvidia NIM'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'nvidia',
-    }),
-  },
-  blackbox: {
-    getKey: getBlackboxKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Blackbox AI',
-      apiUrl: PROVIDER_URLS.blackbox.chat,
-      apiKey,
-      model: modelOverride || getBlackboxModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('Blackbox AI'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      shouldResetStallOnReasoning: true,
-      providerType: 'blackbox',
-    }),
-  },
-  kilocode: {
-    getKey: getKilocodeKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Kilo Code',
-      apiUrl: PROVIDER_URLS.kilocode.chat,
-      apiKey,
-      model: modelOverride || getKiloCodeModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('Kilo Code'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'kilocode',
-    }),
-  },
-  openadapter: {
-    getKey: getOpenAdapterKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'OpenAdapter',
-      apiUrl: PROVIDER_URLS.openadapter.chat,
-      apiKey,
-      model: modelOverride || getOpenAdapterModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('OpenAdapter'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'openadapter',
-    }),
-  },
-  azure: {
-    getKey: getAzureKey,
-    buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
-      'azure',
-      'Azure OpenAI',
-      apiKey,
-      getAzureBaseUrl(),
-      modelOverride || getAzureModelName(),
-    ),
-  },
-  bedrock: {
-    getKey: getBedrockKey,
-    buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
-      'bedrock',
-      'AWS Bedrock',
-      apiKey,
-      getBedrockBaseUrl(),
-      modelOverride || getBedrockModelName(),
-    ),
-  },
-  vertex: {
-    getKey: getVertexKey,
-    buildConfig: (_apiKey, modelOverride) => buildVertexStreamConfig(modelOverride),
-  },
-};
-
-/** Core streaming function — looks up provider config and delegates to streamSSEChat. */
-async function streamProviderChat(
-  providerType: string,
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: WorkspaceContext,
-  hasSandbox?: boolean,
-  modelOverride?: string,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
-): Promise<void> {
-  const entry = PROVIDER_STREAM_CONFIGS[providerType];
-  if (!entry) {
-    onError(new Error(`Unknown provider: ${providerType}`));
-    return;
-  }
-
-  const apiKey = entry.getKey();
-  if (!apiKey) {
-    onError(new Error(`${providerType.charAt(0).toUpperCase() + providerType.slice(1)} API key not configured`));
-    return;
-  }
-
-  let config: StreamProviderConfig;
-  try {
-    config = await entry.buildConfig(apiKey, modelOverride);
-  } catch (err) {
-    onError(err instanceof Error ? err : new Error(String(err)));
-    return;
-  }
-
-  return streamSSEChat(
-    config, messages, onToken, onDone, onError, onThinkingToken,
-    workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal, undefined, onPreCompact,
-  );
-}
-
-// --- Thin wrappers preserving existing exports ---
-
-type StreamChatFn = (
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: WorkspaceContext,
-  hasSandbox?: boolean,
-  modelOverride?: string,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
-) => Promise<void>;
-
-export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
-export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
-export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
-export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
-export const streamBlackboxChat: StreamChatFn = (...args) => streamProviderChat('blackbox', ...args);
-export const streamKilocodeChat: StreamChatFn = (...args) => streamProviderChat('kilocode', ...args);
-export const streamOpenAdapterChat: StreamChatFn = (...args) => streamProviderChat('openadapter', ...args);
-export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
-export const streamBedrockChat: StreamChatFn = (...args) => streamProviderChat('bedrock', ...args);
-export const streamVertexChat: StreamChatFn = (...args) => streamProviderChat('vertex', ...args);
-
-// ---------------------------------------------------------------------------
-// Active provider detection
-// ---------------------------------------------------------------------------
-
-export type ActiveProvider =
-  | 'ollama'
-  | 'openrouter'
-  | 'zen'
-  | 'nvidia'
-  | 'blackbox'
-  | 'azure'
-  | 'kilocode'
-  | 'openadapter'
-  | 'bedrock'
-  | 'vertex'
-  | 'demo';
-
-const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
-  ollama: () => Boolean(getOllamaKey()),
-  openrouter: () => Boolean(getOpenRouterKey()),
-  zen: () => Boolean(getZenKey()),
-  nvidia: () => Boolean(getNvidiaKey()),
-  blackbox: () => Boolean(getBlackboxKey()),
-  kilocode: () => Boolean(getKilocodeKey()),
-  openadapter: () => Boolean(getOpenAdapterKey()),
-  azure: () => Boolean(getAzureKey() && normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok && getAzureModelName()),
-  bedrock: () => Boolean(getBedrockKey() && normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok && getBedrockModelName()),
-  vertex: () => {
-    const mode = getVertexMode();
-    if (mode === 'native') {
-      return Boolean(getVertexKey() && normalizeVertexRegion(getVertexRegion()).ok && getVertexModelName());
-    }
-    return Boolean(getVertexKey() && normalizeExperimentalBaseUrl('vertex', getVertexBaseUrl()).ok && getVertexModelName());
-  },
-};
-
-/**
- * Fallback order when no preference or last-used provider is available.
- * Neutral ordering — no provider is favoured.
- */
-const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama', 'openrouter', 'zen', 'nvidia', 'blackbox', 'kilocode', 'openadapter',
-];
-
-/**
- * Determine which provider is active.
- *
- * 1. If the user set a preference AND that provider has a key → use it.
- * 2. Use the last provider the user picked (if still configured).
- * 3. Otherwise, use whichever provider has a key (first available wins).
- * 4. No keys → demo.
- */
-export function getActiveProvider(): ActiveProvider {
-  const preferred = getPreferredProvider();
-
-  // Honour explicit preference when the provider is fully configured.
-  if (preferred && PROVIDER_READY_CHECKS[preferred]()) return preferred;
-
-  // No preference — use the last provider the user picked, if still ready.
-  const lastUsed = getLastUsedProvider();
-  if (lastUsed && PROVIDER_READY_CHECKS[lastUsed]()) return lastUsed;
-
-  // Fall back to any available provider.
-  for (const p of PROVIDER_FALLBACK_ORDER) {
-    if (PROVIDER_READY_CHECKS[p]()) return p;
-  }
-  return 'demo';
-}
-
-/**
- * Map an active provider to its stream function and provider type.
- * Centralises the provider → function routing used by Coder / Auditor agents.
- */
-export function getProviderStreamFn(provider: ActiveProvider) {
-  switch (provider) {
-    case 'ollama':  return { providerType: 'ollama' as const,  streamFn: streamOllamaChat };
-    case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
-    case 'zen': return { providerType: 'zen' as const, streamFn: streamZenChat };
-    case 'nvidia': return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
-    case 'blackbox': return { providerType: 'blackbox' as const, streamFn: streamBlackboxChat };
-    case 'kilocode': return { providerType: 'kilocode' as const, streamFn: streamKilocodeChat };
-    case 'openadapter': return { providerType: 'openadapter' as const, streamFn: streamOpenAdapterChat };
-    case 'azure': return { providerType: 'azure' as const, streamFn: streamAzureChat };
-    case 'bedrock': return { providerType: 'bedrock' as const, streamFn: streamBedrockChat };
-    case 'vertex': return { providerType: 'vertex' as const, streamFn: streamVertexChat };
-    default:        return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Public router — picks the right provider at runtime
-// ---------------------------------------------------------------------------
-
-export async function streamChat(
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: WorkspaceContext,
-  hasSandbox?: boolean,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-  providerOverride?: ActiveProvider,
-  modelOverride?: string,
-  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
-): Promise<void> {
-  const provider = providerOverride || getActiveProvider();
-  const { streamFn } = getProviderStreamFn(provider);
-
-  // Demo mode: no API keys in dev → show welcome message
-  if (provider === 'demo' && import.meta.env.DEV) {
-    const words = DEMO_WELCOME.split(' ');
-    let chunkIndex = 0;
-    for (let i = 0; i < words.length; i++) {
-      chunkIndex++;
-      await new Promise((r) => setTimeout(r, 12));
-      onToken(words[i] + (i < words.length - 1 ? ' ' : ''), { chunkIndex });
-    }
-    onDone();
-    return;
-  }
-  return streamFn(
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    modelOverride,
-    undefined,
-    scratchpadContent,
-    signal,
-    onPreCompact,
-  );
-}
