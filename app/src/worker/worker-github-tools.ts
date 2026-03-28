@@ -44,6 +44,11 @@ function asPositiveNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function asPositiveInt(value: unknown): number | undefined {
+  const parsed = asPositiveNumber(value);
+  return typeof parsed === 'number' && Number.isInteger(parsed) ? parsed : undefined;
+}
+
 function getGitHubHeaders(request: Request, accept: string = 'application/vnd.github.v3+json'): Record<string, string> {
   const authorization = request.headers.get('Authorization');
   const headers: Record<string, string> = { Accept: accept };
@@ -129,6 +134,38 @@ function parseToolPayload(value: unknown): GitHubToolPayload | null {
   if (tool === 'list_commits') {
     return { tool, args: { repo, count: asPositiveNumber(args.count) }, allowedRepo };
   }
+  if (tool === 'read_file') {
+    const path = asString(args.path);
+    if (!path) return null;
+    return {
+      tool,
+      args: {
+        repo,
+        path,
+        branch: asString(args.branch),
+        start_line: asPositiveInt(args.start_line),
+        end_line: asPositiveInt(args.end_line),
+      },
+      allowedRepo,
+    };
+  }
+  if (tool === 'grep_file') {
+    const path = asString(args.path);
+    const pattern = asString(args.pattern);
+    if (!path || !pattern) return null;
+    return {
+      tool,
+      args: { repo, path, pattern, branch: asString(args.branch) },
+      allowedRepo,
+    };
+  }
+  if (tool === 'list_directory') {
+    return {
+      tool,
+      args: { repo, path: asString(args.path), branch: asString(args.branch) },
+      allowedRepo,
+    };
+  }
   if (tool === 'list_branches') {
     const maxBranches = asPositiveNumber(args.maxBranches);
     return { tool, args: { repo, maxBranches }, allowedRepo };
@@ -149,6 +186,10 @@ function parseToolPayload(value: unknown): GitHubToolPayload | null {
       },
       allowedRepo,
     };
+  }
+  if (tool === 'list_commit_files') {
+    const ref = asString(args.ref);
+    return ref ? { tool, args: { repo, ref }, allowedRepo } : null;
   }
 
   return null;
@@ -200,6 +241,7 @@ export async function handleGitHubTools(request: Request, env: Env): Promise<Res
       githubFetch,
       buildHeaders: (accept = 'application/vnd.github.v3+json') => getGitHubHeaders(request, accept),
       buildApiUrl: (path) => `https://api.github.com${path.startsWith('/') ? path : `/${path}`}`,
+      decodeBase64: (content) => atob(content),
       isSensitivePath,
       redactSensitiveText,
       formatSensitivePathToolError,

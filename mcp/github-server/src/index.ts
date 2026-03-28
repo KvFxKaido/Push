@@ -30,9 +30,13 @@ const TOOL_GITHUB_API_PROBE = 'github_api_probe';
 const TOOL_FETCH_PR = 'fetch_pr';
 const TOOL_LIST_PRS = 'list_prs';
 const TOOL_LIST_COMMITS = 'list_commits';
+const TOOL_READ_FILE = 'read_file';
+const TOOL_GREP_FILE = 'grep_file';
+const TOOL_LIST_DIRECTORY = 'list_directory';
 const TOOL_LIST_BRANCHES = 'list_branches';
 const TOOL_FETCH_CHECKS = 'fetch_checks';
 const TOOL_SEARCH_FILES = 'search_files';
+const TOOL_LIST_COMMIT_FILES = 'list_commit_files';
 
 function getGitHubToken(): string {
   return process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '';
@@ -90,9 +94,13 @@ function getServerInfoText(): string {
       TOOL_FETCH_PR,
       TOOL_LIST_PRS,
       TOOL_LIST_COMMITS,
+      TOOL_READ_FILE,
+      TOOL_GREP_FILE,
+      TOOL_LIST_DIRECTORY,
       TOOL_LIST_BRANCHES,
       TOOL_FETCH_CHECKS,
       TOOL_SEARCH_FILES,
+      TOOL_LIST_COMMIT_FILES,
     ],
     status:
       'GitHub tool migration is in progress. Read-only PR, branch, and code search tools now share the same core implementation as the Push worker bridge.',
@@ -162,6 +170,11 @@ function asPositiveNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function asPositiveInt(value: unknown): number | undefined {
+  const parsed = asPositiveNumber(value);
+  return typeof parsed === 'number' && Number.isInteger(parsed) ? parsed : undefined;
+}
+
 function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyToolCall | null {
   const args = asRecord(rawArgs) ?? {};
   const repo = asString(args.repo);
@@ -176,6 +189,35 @@ function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyTo
   }
   if (name === TOOL_LIST_COMMITS) {
     return { tool: 'list_commits', args: { repo, count: asPositiveNumber(args.count) } };
+  }
+  if (name === TOOL_READ_FILE) {
+    const path = asString(args.path);
+    if (!path) return null;
+    return {
+      tool: 'read_file',
+      args: {
+        repo,
+        path,
+        branch: asString(args.branch),
+        start_line: asPositiveInt(args.start_line),
+        end_line: asPositiveInt(args.end_line),
+      },
+    };
+  }
+  if (name === TOOL_GREP_FILE) {
+    const path = asString(args.path);
+    const pattern = asString(args.pattern);
+    if (!path || !pattern) return null;
+    return {
+      tool: 'grep_file',
+      args: { repo, path, pattern, branch: asString(args.branch) },
+    };
+  }
+  if (name === TOOL_LIST_DIRECTORY) {
+    return {
+      tool: 'list_directory',
+      args: { repo, path: asString(args.path), branch: asString(args.branch) },
+    };
   }
   if (name === TOOL_LIST_BRANCHES) {
     const maxBranches = asPositiveNumber(args.maxBranches);
@@ -196,6 +238,10 @@ function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyTo
         branch: asString(args.branch),
       },
     };
+  }
+  if (name === TOOL_LIST_COMMIT_FILES) {
+    const ref = asString(args.ref);
+    return ref ? { tool: 'list_commit_files', args: { repo, ref } } : null;
   }
 
   return null;
@@ -245,6 +291,54 @@ const readonlyTools = [
     },
   },
   {
+    name: TOOL_READ_FILE,
+    description:
+      'Read a repository file, with optional line range support and redaction-aware truncation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        path: { type: 'string', description: 'Repository-relative file path.' },
+        branch: { type: 'string', description: 'Optional branch or ref.' },
+        start_line: { type: 'number', description: 'Optional 1-based start line.' },
+        end_line: { type: 'number', description: 'Optional 1-based end line.' },
+      },
+      required: ['repo', 'path'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_GREP_FILE,
+    description:
+      'Search within a single repository file with line-numbered context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        path: { type: 'string', description: 'Repository-relative file path.' },
+        pattern: { type: 'string', description: 'Regex or substring pattern.' },
+        branch: { type: 'string', description: 'Optional branch or ref.' },
+      },
+      required: ['repo', 'path', 'pattern'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_LIST_DIRECTORY,
+    description:
+      'List files and directories for a repository path with sensitive entries hidden.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        path: { type: 'string', description: 'Optional repository-relative directory path.' },
+        branch: { type: 'string', description: 'Optional branch or ref.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: TOOL_LIST_BRANCHES,
     description:
       'List repository branches, marking the default branch and protected branches.',
@@ -288,12 +382,27 @@ const readonlyTools = [
       additionalProperties: false,
     },
   },
+  {
+    name: TOOL_LIST_COMMIT_FILES,
+    description:
+      'List the files changed by a commit, including per-file and total change counts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        ref: { type: 'string', description: 'Commit SHA or ref to inspect.' },
+      },
+      required: ['repo', 'ref'],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 const readonlyRuntime: GitHubReadonlyRuntime = {
   githubFetch,
   buildHeaders: buildGitHubHeaders,
   buildApiUrl: (path) => `${getGitHubApiUrl().replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`,
+  decodeBase64: (content) => Buffer.from(content, 'base64').toString('utf8'),
   isSensitivePath,
   redactSensitiveText,
   formatSensitivePathToolError,
@@ -348,9 +457,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     request.params.name === TOOL_FETCH_PR
     || request.params.name === TOOL_LIST_PRS
     || request.params.name === TOOL_LIST_COMMITS
+    || request.params.name === TOOL_READ_FILE
+    || request.params.name === TOOL_GREP_FILE
+    || request.params.name === TOOL_LIST_DIRECTORY
     || request.params.name === TOOL_LIST_BRANCHES
     || request.params.name === TOOL_FETCH_CHECKS
     || request.params.name === TOOL_SEARCH_FILES
+    || request.params.name === TOOL_LIST_COMMIT_FILES
   ) {
     throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for tool: ${request.params.name}`);
   }

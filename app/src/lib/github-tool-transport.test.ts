@@ -19,9 +19,13 @@ describe('github-tool-transport', () => {
     expect(supportsWorkerGitHubTool('fetch_pr')).toBe(true);
     expect(supportsWorkerGitHubTool('list_prs')).toBe(true);
     expect(supportsWorkerGitHubTool('list_commits')).toBe(true);
+    expect(supportsWorkerGitHubTool('read_file')).toBe(true);
+    expect(supportsWorkerGitHubTool('grep_file')).toBe(true);
+    expect(supportsWorkerGitHubTool('list_directory')).toBe(true);
     expect(supportsWorkerGitHubTool('list_branches')).toBe(true);
     expect(supportsWorkerGitHubTool('fetch_checks')).toBe(true);
     expect(supportsWorkerGitHubTool('search_files')).toBe(true);
+    expect(supportsWorkerGitHubTool('list_commit_files')).toBe(true);
     expect(supportsWorkerGitHubTool('create_pr')).toBe(false);
   });
 

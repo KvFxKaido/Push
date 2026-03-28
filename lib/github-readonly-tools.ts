@@ -46,6 +46,45 @@ export interface GitHubReadonlyCommitListCardData {
   commits: GitHubReadonlyCommitListItem[];
 }
 
+export interface GitHubReadonlyFileListEntry {
+  name: string;
+  type: 'file' | 'directory';
+  size?: number;
+}
+
+export interface GitHubReadonlyFileListCardData {
+  repo?: string;
+  path: string;
+  entries: GitHubReadonlyFileListEntry[];
+}
+
+export interface GitHubReadonlyEditorCardData {
+  path: string;
+  content: string;
+  language: string;
+  truncated: boolean;
+  source: 'github';
+  repo: string;
+}
+
+export interface GitHubReadonlyCommitFileItem {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface GitHubReadonlyCommitFilesCardData {
+  repo: string;
+  ref: string;
+  sha: string;
+  message: string;
+  author: string;
+  date: string;
+  files: GitHubReadonlyCommitFileItem[];
+  totalChanges: { additions: number; deletions: number };
+}
+
 export interface GitHubReadonlyPRCardData {
   number: number;
   title: string;
@@ -105,8 +144,11 @@ export type GitHubReadonlyCard =
   | { type: 'pr-list'; data: GitHubReadonlyPRListCardData }
   | { type: 'commit-list'; data: GitHubReadonlyCommitListCardData }
   | { type: 'branch-list'; data: GitHubReadonlyBranchListCardData }
+  | { type: 'file-list'; data: GitHubReadonlyFileListCardData }
   | { type: 'ci-status'; data: GitHubReadonlyCIStatusCardData }
-  | { type: 'file-search'; data: GitHubReadonlyFileSearchCardData };
+  | { type: 'editor'; data: GitHubReadonlyEditorCardData }
+  | { type: 'file-search'; data: GitHubReadonlyFileSearchCardData }
+  | { type: 'commit-files'; data: GitHubReadonlyCommitFilesCardData };
 
 export interface GitHubReadonlyToolResult {
   text: string;
@@ -117,14 +159,19 @@ export type GitHubReadonlyToolCall =
   | { tool: 'fetch_pr'; args: { repo: string; pr: number } }
   | { tool: 'list_prs'; args: { repo: string; state?: string } }
   | { tool: 'list_commits'; args: { repo: string; count?: number } }
+  | { tool: 'read_file'; args: { repo: string; path: string; branch?: string; start_line?: number; end_line?: number } }
+  | { tool: 'grep_file'; args: { repo: string; path: string; pattern: string; branch?: string } }
+  | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string; maxBranches?: number } }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
-  | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } };
+  | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } }
+  | { tool: 'list_commit_files'; args: { repo: string; ref: string } };
 
 export interface GitHubReadonlyRuntime {
   githubFetch(url: string, options?: RequestInit): Promise<Response>;
   buildHeaders(accept?: string): Record<string, string>;
   buildApiUrl(path: string): string;
+  decodeBase64(content: string): string;
   isSensitivePath(path: string): boolean;
   redactSensitiveText(text: string): { text: string; redacted: boolean };
   formatSensitivePathToolError(path: string): string;
@@ -133,10 +180,25 @@ export interface GitHubReadonlyRuntime {
 const DEFAULT_ACCEPT = 'application/vnd.github.v3+json';
 const SEARCH_ACCEPT = 'application/vnd.github.v3.text-match+json';
 const DIFF_ACCEPT = 'application/vnd.github.v3.diff';
+const READ_FILE_RANGE_CHAR_LIMIT = 30_000;
+const READ_FILE_FULL_CHAR_LIMIT = 15_000;
+const utf8Encoder = new TextEncoder();
 
 interface RepoBranchApi {
   name?: string;
   protected?: boolean;
+}
+
+interface RepoContentEntryApi {
+  name?: string;
+  type?: string;
+  size?: number;
+}
+
+interface RepoFileContentApi {
+  type?: string;
+  size?: number;
+  content?: string;
 }
 
 interface PullRequestListApi {
@@ -160,6 +222,24 @@ interface CommitListApi {
   author?: {
     login?: string;
   };
+}
+
+interface CommitDetailsApi {
+  sha: string;
+  author?: { login?: string };
+  commit: {
+    message: string;
+    author?: {
+      name?: string;
+      date?: string;
+    };
+  };
+  files?: Array<{
+    filename: string;
+    status: string;
+    additions?: number;
+    deletions?: number;
+  }>;
 }
 
 function parseNextLink(linkHeader: string | null): string | null {
@@ -191,6 +271,99 @@ function formatGitHubError(status: number, context: string, branch?: string): st
 
 function buildGitHubApiUrl(runtime: GitHubReadonlyRuntime, path: string): string {
   return runtime.buildApiUrl(path.startsWith('/') ? path : `/${path}`);
+}
+
+function byteLength(text: string): number {
+  return utf8Encoder.encode(text).length;
+}
+
+function truncateDisplayLines(
+  sourceLines: string[],
+  displayLines: string[],
+  startLine: number,
+  maxChars: number,
+): {
+  displayLines: string[];
+  truncated: boolean;
+  truncatedAtLine?: number;
+  remainingBytes?: number;
+} {
+  if (displayLines.length === 0) {
+    return { displayLines, truncated: false };
+  }
+
+  let keptCount = 0;
+  let usedChars = 0;
+  for (let i = 0; i < displayLines.length; i += 1) {
+    const lineChars = displayLines[i].length + (i > 0 ? 1 : 0);
+    if (usedChars + lineChars > maxChars) {
+      if (keptCount === 0) keptCount = 1;
+      break;
+    }
+    usedChars += lineChars;
+    keptCount += 1;
+  }
+
+  if (keptCount >= displayLines.length) {
+    return { displayLines, truncated: false };
+  }
+
+  return {
+    displayLines: displayLines.slice(0, keptCount),
+    truncated: true,
+    truncatedAtLine: startLine + keptCount,
+    remainingBytes: byteLength(sourceLines.slice(keptCount).join('\n')),
+  };
+}
+
+function buildReadTruncationLines(truncatedAtLine?: number, remainingBytes?: number): string[] {
+  return [
+    typeof truncatedAtLine === 'number' ? `truncated_at_line: ${truncatedAtLine}` : null,
+    typeof remainingBytes === 'number' ? `remaining_bytes: ${remainingBytes}` : null,
+  ].filter((line): line is string => Boolean(line));
+}
+
+function guessLanguageFromPath(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  const langMap: Record<string, string> = {
+    ts: 'typescript',
+    tsx: 'typescript',
+    js: 'javascript',
+    jsx: 'javascript',
+    py: 'python',
+    rs: 'rust',
+    go: 'go',
+    rb: 'ruby',
+    java: 'java',
+    md: 'markdown',
+    json: 'json',
+    yaml: 'yaml',
+    yml: 'yaml',
+    css: 'css',
+    html: 'html',
+    sh: 'shell',
+    bash: 'shell',
+    toml: 'toml',
+    sql: 'sql',
+    c: 'c',
+    cpp: 'cpp',
+    h: 'c',
+  };
+  return langMap[ext] || ext;
+}
+
+function buildContentsApiUrl(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  path: string,
+  branch?: string,
+): string {
+  const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+  return buildGitHubApiUrl(runtime, `/repos/${repo}/contents/${encodeURIComponent(path)}${ref}`);
+}
+
+function buildDirectoryEntryPath(parentPath: string, entryName: string): string {
+  return `${parentPath ? parentPath.replace(/\/$/, '') : ''}/${entryName}`.replace(/^\/+/, '/');
 }
 
 export function normalizeGitHubRepoName(repo: string): string {
@@ -518,6 +691,329 @@ export async function executeListCommitsTool(
   };
 }
 
+export async function executeReadFileTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  path: string,
+  branch?: string,
+  startLine?: number,
+  endLine?: number,
+): Promise<GitHubReadonlyToolResult> {
+  if (runtime.isSensitivePath(path)) {
+    return { text: runtime.formatSensitivePathToolError(path) };
+  }
+
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(buildContentsApiUrl(runtime, repo, path, branch), { headers });
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `${path} on ${repo}`, branch));
+  }
+
+  const data = await res.json() as RepoFileContentApi | RepoContentEntryApi[];
+  if (Array.isArray(data)) {
+    const entries = data
+      .map((entry) => `  ${entry.type === 'dir' ? 'DIR' : 'FILE'} ${entry.name || 'unknown'}`)
+      .join('\n');
+    return {
+      text: `[Tool Error] "${path}" is a directory, not a file. Use list_directory to browse directories, then read_file on a specific file.\n\nDirectory contents:\n${entries}`,
+    };
+  }
+
+  if (data.type !== 'file' || !data.content) {
+    throw new Error(`${path} is not a readable file`);
+  }
+
+  const fullContent = runtime.decodeBase64(data.content.replace(/\n/g, ''));
+  const language = guessLanguageFromPath(path);
+  const isRangeRead = startLine !== undefined || endLine !== undefined;
+
+  if (isRangeRead) {
+    const allLines = fullContent.split('\n');
+    const totalLines = allLines.length;
+    const rangeStart = startLine ?? 1;
+    const rangeEnd = endLine ?? totalLines;
+    const sliced = allLines.slice(rangeStart - 1, rangeEnd);
+
+    if (sliced.length === 0) {
+      return {
+        text: [
+          `[Tool Result — read_file]`,
+          `File: ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''} (${totalLines} lines total)`,
+          `No content in requested range (lines ${rangeStart}-${rangeEnd}). The file has ${totalLines} lines.`,
+        ].join('\n'),
+      };
+    }
+
+    const safeRange = runtime.redactSensitiveText(sliced.join('\n'));
+    const safeRangeLines = safeRange.text.split('\n');
+    const maxLineNum = rangeStart + sliced.length - 1;
+    const padWidth = String(maxLineNum).length;
+    const numberedContent = safeRangeLines
+      .map((line, index) => `${String(rangeStart + index).padStart(padWidth)}\t${line}`)
+      .join('\n');
+    const rangeDisplayLines = numberedContent.split('\n');
+    const truncatedRange = truncateDisplayLines(safeRangeLines, rangeDisplayLines, rangeStart, READ_FILE_RANGE_CHAR_LIMIT);
+    const truncated = truncatedRange.truncated;
+    let displayContent = truncatedRange.displayLines.join('\n');
+    if (truncated) {
+      displayContent += `\n\n[...truncated — showing ${truncatedRange.displayLines.length} of ${sliced.length} lines in range]`;
+    }
+    const truncationLines = buildReadTruncationLines(
+      truncatedRange.truncatedAtLine,
+      truncatedRange.remainingBytes,
+    );
+
+    const lines: string[] = [
+      `[Tool Result — read_file]`,
+      `Lines ${rangeStart}-${Math.min(rangeEnd, totalLines)} of ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''} (${totalLines} lines total)`,
+      `Language: ${language}`,
+      safeRange.redacted ? 'Redactions: secret-like values hidden.' : '',
+      truncated ? '(truncated)\n' : '',
+      ...truncationLines,
+      displayContent,
+    ].filter(Boolean);
+
+    return {
+      text: lines.join('\n'),
+      card: {
+        type: 'editor',
+        data: {
+          path,
+          content: truncated ? displayContent : safeRangeLines.join('\n'),
+          language,
+          truncated,
+          source: 'github',
+          repo,
+        },
+      },
+    };
+  }
+
+  const safeFull = runtime.redactSensitiveText(fullContent);
+  let content = safeFull.text;
+  const fullSourceLines = safeFull.text.split('\n');
+  const truncatedFull = truncateDisplayLines(fullSourceLines, fullSourceLines, 1, READ_FILE_FULL_CHAR_LIMIT);
+  const truncated = truncatedFull.truncated;
+  if (truncated) {
+    const totalLines = fullSourceLines.length;
+    content = truncatedFull.displayLines.join('\n')
+      + `\n\n[...truncated at ${READ_FILE_FULL_CHAR_LIMIT / 1000}K chars — file has ${totalLines} lines. Use read_file with start_line/end_line to continue from line ${truncatedFull.truncatedAtLine}, search_files to find content, or grep_file for pattern matching.]`;
+  }
+  const fullTruncationLines = buildReadTruncationLines(
+    truncatedFull.truncatedAtLine,
+    truncatedFull.remainingBytes,
+  );
+
+  const lines: string[] = [
+    `[Tool Result — read_file]`,
+    `File: ${path} on ${repo}${branch ? ` (branch: ${branch})` : ''}`,
+    `Size: ${data.size ?? 0} bytes | Language: ${language}`,
+    safeFull.redacted ? 'Redactions: secret-like values hidden.' : '',
+    truncated ? '(truncated to 15K chars)\n' : '',
+    ...fullTruncationLines,
+    `\`\`\`${language}`,
+    content,
+    '```',
+  ];
+
+  return {
+    text: lines.join('\n'),
+    card: {
+      type: 'editor',
+      data: { path, content, language, truncated, source: 'github', repo },
+    },
+  };
+}
+
+export async function executeGrepFileTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  path: string,
+  pattern: string,
+  branch?: string,
+): Promise<GitHubReadonlyToolResult> {
+  if (runtime.isSensitivePath(path)) {
+    return { text: runtime.formatSensitivePathToolError(path) };
+  }
+
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(buildContentsApiUrl(runtime, repo, path, branch), { headers });
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `${path} on ${repo}`, branch));
+  }
+
+  const data = await res.json() as RepoFileContentApi | RepoContentEntryApi[];
+  if (Array.isArray(data)) {
+    return {
+      text: `[Tool Error] "${path}" is a directory. grep_file only works on individual files. Use search_files to search across a directory.`,
+    };
+  }
+
+  if (data.type !== 'file' || !data.content) {
+    throw new Error(`${path} is not a readable file`);
+  }
+
+  const fullContent = runtime.decodeBase64(data.content.replace(/\n/g, ''));
+  const safeContent = runtime.redactSensitiveText(fullContent);
+  const allLines = safeContent.text.split('\n');
+
+  let matcher: (line: string) => boolean;
+  try {
+    const regex = new RegExp(pattern, 'i');
+    matcher = (line: string) => regex.test(line);
+  } catch {
+    const lowerPattern = pattern.toLowerCase();
+    matcher = (line: string) => line.toLowerCase().includes(lowerPattern);
+  }
+
+  const matchLineNums = new Set<number>();
+  for (let i = 0; i < allLines.length; i += 1) {
+    if (matcher(allLines[i])) {
+      matchLineNums.add(i);
+    }
+  }
+
+  if (matchLineNums.size === 0) {
+    return {
+      text: [
+        `[Tool Result — grep_file]`,
+        `No matches for "${pattern}" in ${path} (${allLines.length} lines scanned).`,
+      ].join('\n'),
+    };
+  }
+
+  const contextLineNums = new Set<number>();
+  for (const lineNum of matchLineNums) {
+    if (lineNum > 0) contextLineNums.add(lineNum - 1);
+    contextLineNums.add(lineNum);
+    if (lineNum < allLines.length - 1) contextLineNums.add(lineNum + 1);
+  }
+  const sortedNums = [...contextLineNums].sort((a, b) => a - b);
+
+  const padWidth = String(sortedNums[sortedNums.length - 1] + 1).length;
+  const outputLines: string[] = [];
+  const MAX_OUTPUT_MATCHES = 100;
+  let matchesShown = 0;
+  let prevNum = -2;
+  for (const num of sortedNums) {
+    if (matchLineNums.has(num)) matchesShown += 1;
+    if (matchesShown > MAX_OUTPUT_MATCHES && !matchLineNums.has(num)) continue;
+    if (matchesShown > MAX_OUTPUT_MATCHES) {
+      outputLines.push(`\n[...truncated — showing first ${MAX_OUTPUT_MATCHES} of ${matchLineNums.size} matches]`);
+      break;
+    }
+    if (num > prevNum + 1 && outputLines.length > 0) {
+      outputLines.push('  ---');
+    }
+    const lineNum1 = num + 1;
+    const marker = matchLineNums.has(num) ? '>' : ' ';
+    outputLines.push(`${marker}${String(lineNum1).padStart(padWidth)}\t${allLines[num]}`);
+    prevNum = num;
+  }
+
+  const lines: string[] = [
+    `[Tool Result — grep_file]`,
+    `${matchLineNums.size} match${matchLineNums.size !== 1 ? 'es' : ''} for "${pattern}" in ${path}${branch ? ` (branch: ${branch})` : ''} (${allLines.length} lines total)`,
+    safeContent.redacted ? 'Redactions: secret-like values hidden.' : '',
+    '',
+    ...outputLines,
+  ];
+
+  const matchItems: GitHubReadonlyFileSearchMatch[] = [];
+  for (const num of matchLineNums) {
+    if (matchItems.length >= 50) break;
+    matchItems.push({ path, line: num + 1, content: allLines[num].trim().slice(0, 200) });
+  }
+
+  return {
+    text: lines.join('\n'),
+    card: {
+      type: 'file-search',
+      data: {
+        repo,
+        query: pattern,
+        path,
+        matches: matchItems,
+        totalCount: matchLineNums.size,
+        truncated: matchLineNums.size > MAX_OUTPUT_MATCHES,
+      },
+    },
+  };
+}
+
+export async function executeListDirectoryTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  path: string = '',
+  branch?: string,
+): Promise<GitHubReadonlyToolResult> {
+  if (path && runtime.isSensitivePath(path)) {
+    return { text: runtime.formatSensitivePathToolError(path) };
+  }
+
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const apiPath = path ? encodeURIComponent(path) : '';
+  const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/contents/${apiPath}${ref}`),
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `path "${path || '/'}" on ${repo}`, branch));
+  }
+
+  const data = await res.json() as RepoContentEntryApi[] | RepoFileContentApi;
+  if (!Array.isArray(data)) {
+    return { text: `[Tool Error] "${path}" is a file, not a directory. Use read_file to read its contents.` };
+  }
+
+  const normalizedEntries = data.map((entry) => ({
+    name: entry.name || '',
+    type: entry.type === 'dir' ? 'directory' as const : 'file' as const,
+    size: entry.size,
+    path: buildDirectoryEntryPath(path, entry.name || ''),
+  }));
+  const visibleEntries: GitHubReadonlyFileListEntry[] = [];
+  let hiddenCount = 0;
+  for (const entry of normalizedEntries) {
+    if (runtime.isSensitivePath(entry.path)) {
+      hiddenCount += 1;
+      continue;
+    }
+    visibleEntries.push({ name: entry.name, type: entry.type, size: entry.size });
+  }
+
+  const dirs = visibleEntries.filter((entry) => entry.type === 'directory');
+  const files = visibleEntries.filter((entry) => entry.type === 'file');
+  const lines: string[] = [
+    `[Tool Result — list_directory]`,
+    `Directory: ${path || '/'} on ${repo}${branch ? ` (branch: ${branch})` : ''}`,
+    `${dirs.length} directories, ${files.length} files\n`,
+    hiddenCount > 0 ? `(${hiddenCount} sensitive entr${hiddenCount === 1 ? 'y' : 'ies'} hidden)\n` : '',
+  ];
+
+  for (const dir of dirs) {
+    lines.push(`  DIR ${dir.name}/`);
+  }
+  for (const file of files) {
+    const size = file.size ? ` (${file.size} bytes)` : '';
+    lines.push(`  FILE ${file.name}${size}`);
+  }
+
+  return {
+    text: lines.join('\n'),
+    card: {
+      type: 'file-list',
+      data: {
+        repo,
+        path: path || '/',
+        entries: [...dirs, ...files],
+      },
+    },
+  };
+}
+
 async function fetchCIStatusSummary(
   runtime: GitHubReadonlyRuntime,
   repo: string,
@@ -636,6 +1132,73 @@ export async function executeFetchChecksTool(
   }
 
   return { text: lines.join('\n'), card: { type: 'ci-status', data: cardData } };
+}
+
+export async function executeListCommitFilesTool(
+  runtime: GitHubReadonlyRuntime,
+  repo: string,
+  ref: string,
+): Promise<GitHubReadonlyToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/commits/${encodeURIComponent(ref)}`),
+    { headers },
+  );
+
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `commit ${ref} on ${repo}`));
+  }
+
+  const commit = await res.json() as CommitDetailsApi;
+  const files = commit.files || [];
+  const lines: string[] = [
+    `[Tool Result — list_commit_files]`,
+    `Commit: ${commit.sha.slice(0, 7)} — ${commit.commit.message.split('\n')[0]}`,
+    `Author: ${commit.commit.author?.name || commit.author?.login || 'unknown'}`,
+    `Date: ${new Date(commit.commit.author?.date || '').toLocaleDateString()}`,
+    `\n${files.length} file${files.length !== 1 ? 's' : ''} changed:\n`,
+  ];
+
+  let totalAdditions = 0;
+  let totalDeletions = 0;
+  for (const file of files) {
+    totalAdditions += file.additions || 0;
+    totalDeletions += file.deletions || 0;
+  }
+
+  const fileItems: GitHubReadonlyCommitFileItem[] = [];
+  for (const file of files.slice(0, 50)) {
+    const icon = file.status === 'added' ? '+' : file.status === 'removed' ? '-' : '~';
+    lines.push(`  ${icon} ${file.filename} (+${file.additions || 0} -${file.deletions || 0})`);
+    fileItems.push({
+      filename: file.filename,
+      status: file.status,
+      additions: file.additions || 0,
+      deletions: file.deletions || 0,
+    });
+  }
+
+  if (files.length > 50) {
+    lines.push(`  ...and ${files.length - 50} more files`);
+  }
+
+  lines.push(`\nTotal: +${totalAdditions} -${totalDeletions}`);
+
+  const cardData: GitHubReadonlyCommitFilesCardData = {
+    repo,
+    ref,
+    sha: commit.sha,
+    message: commit.commit.message.split('\n')[0],
+    author: commit.commit.author?.name || commit.author?.login || 'unknown',
+    date: commit.commit.author?.date || '',
+    files: fileItems,
+    totalChanges: { additions: totalAdditions, deletions: totalDeletions },
+  };
+
+  return {
+    text: lines.join('\n'),
+    card: { type: 'commit-files', data: cardData },
+  };
 }
 
 export async function executeSearchFilesTool(
@@ -838,11 +1401,19 @@ export async function executeGitHubReadonlyTool(
       return executeListPRsTool(runtime, call.args.repo, call.args.state);
     case 'list_commits':
       return executeListCommitsTool(runtime, call.args.repo, call.args.count);
+    case 'read_file':
+      return executeReadFileTool(runtime, call.args.repo, call.args.path, call.args.branch, call.args.start_line, call.args.end_line);
+    case 'grep_file':
+      return executeGrepFileTool(runtime, call.args.repo, call.args.path, call.args.pattern, call.args.branch);
+    case 'list_directory':
+      return executeListDirectoryTool(runtime, call.args.repo, call.args.path, call.args.branch);
     case 'list_branches':
       return executeListBranchesTool(runtime, call.args.repo, call.args.maxBranches ?? 30);
     case 'fetch_checks':
       return executeFetchChecksTool(runtime, call.args.repo, call.args.ref);
     case 'search_files':
       return executeSearchFilesTool(runtime, call.args.repo, call.args.query, call.args.path, call.args.branch);
+    case 'list_commit_files':
+      return executeListCommitFilesTool(runtime, call.args.repo, call.args.ref);
   }
 }

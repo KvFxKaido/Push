@@ -25,9 +25,13 @@ export function supportsWorkerGitHubTool(name: string): name is WorkerGitHubTool
   return name === 'fetch_pr'
     || name === 'list_prs'
     || name === 'list_commits'
+    || name === 'read_file'
+    || name === 'grep_file'
+    || name === 'list_directory'
     || name === 'list_branches'
     || name === 'fetch_checks'
-    || name === 'search_files';
+    || name === 'search_files'
+    || name === 'list_commit_files';
 }
 
 async function postGitHubToolRequest(

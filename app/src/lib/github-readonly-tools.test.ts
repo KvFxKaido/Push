@@ -10,6 +10,7 @@ function createRuntime(fetchImpl: (url: string, options?: RequestInit) => Promis
     githubFetch: fetchImpl,
     buildHeaders: (accept = 'application/vnd.github.v3+json') => ({ Accept: accept, Authorization: 'token test-token' }),
     buildApiUrl: (path) => `https://api.github.com${path}`,
+    decodeBase64: (content) => atob(content),
     isSensitivePath: (path) => path.includes('.env'),
     redactSensitiveText: (text) => ({ text, redacted: false }),
     formatSensitivePathToolError: (path) => `blocked: ${path}`,
@@ -154,5 +155,90 @@ describe('github-readonly-tools shared core', () => {
     expect(result.card.data.overall).toBe('pending');
     expect(result.card.data.checks).toHaveLength(2);
     expect(result.text).toContain('CI Status for owner/repo@feature/bridge: PENDING');
+  });
+
+  it('reads a file range with numbered lines', async () => {
+    const content = btoa('first line\nsecond line\nthird line');
+    const runtime = createRuntime(async (url) => {
+      if (url.includes('/contents/src%2Fdemo.ts')) {
+        return Response.json({
+          type: 'file',
+          size: 33,
+          content,
+        });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'read_file',
+      args: { repo: 'owner/repo', path: 'src/demo.ts', start_line: 2, end_line: 3 },
+    });
+
+    expect(result.card?.type).toBe('editor');
+    if (!result.card || result.card.type !== 'editor') {
+      throw new Error('expected editor card');
+    }
+    expect(result.card.data.language).toBe('typescript');
+    expect(result.text).toContain('2\tsecond line');
+    expect(result.text).toContain('3\tthird line');
+  });
+
+  it('lists visible directory entries and hides sensitive ones', async () => {
+    const runtime = createRuntime(async (url) => {
+      if (url.endsWith('/contents/src')) {
+        return Response.json([
+          { name: 'components', type: 'dir' },
+          { name: 'index.ts', type: 'file', size: 120 },
+          { name: '.env', type: 'file', size: 24 },
+        ]);
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'list_directory',
+      args: { repo: 'owner/repo', path: 'src' },
+    });
+
+    expect(result.card?.type).toBe('file-list');
+    if (!result.card || result.card.type !== 'file-list') {
+      throw new Error('expected file list card');
+    }
+    expect(result.card.data.entries).toHaveLength(2);
+    expect(result.text).toContain('1 sensitive entry hidden');
+    expect(result.text).toContain('DIR components/');
+  });
+
+  it('lists commit files with totals', async () => {
+    const runtime = createRuntime(async (url) => {
+      if (url.endsWith('/commits/abc123')) {
+        return Response.json({
+          sha: 'abc123456789',
+          author: { login: 'ishaw' },
+          commit: {
+            message: 'Refactor shared core\n\nbody',
+            author: { name: 'Shawn', date: '2026-03-28T18:00:00.000Z' },
+          },
+          files: [
+            { filename: 'lib/github-readonly-tools.ts', status: 'modified', additions: 25, deletions: 4 },
+            { filename: 'app/src/worker/worker-github-tools.ts', status: 'added', additions: 10, deletions: 0 },
+          ],
+        });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubReadonlyTool(runtime, {
+      tool: 'list_commit_files',
+      args: { repo: 'owner/repo', ref: 'abc123' },
+    });
+
+    expect(result.card?.type).toBe('commit-files');
+    if (!result.card || result.card.type !== 'commit-files') {
+      throw new Error('expected commit files card');
+    }
+    expect(result.card.data.totalChanges).toEqual({ additions: 35, deletions: 4 });
+    expect(result.text).toContain('Total: +35 -4');
   });
 });
