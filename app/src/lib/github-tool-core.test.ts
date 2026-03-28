@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  executeGitHubReadonlyTool,
+  executeGitHubCoreTool,
   fetchRepoBranchesData,
-  type GitHubReadonlyRuntime,
-} from '@push/lib/github-readonly-tools';
+  type GitHubCoreRuntime,
+} from '@push/lib/github-tool-core';
 
-function createRuntime(fetchImpl: (url: string, options?: RequestInit) => Promise<Response>): GitHubReadonlyRuntime {
+function createRuntime(fetchImpl: (url: string, options?: RequestInit) => Promise<Response>): GitHubCoreRuntime {
   return {
     githubFetch: fetchImpl,
     buildHeaders: (accept = 'application/vnd.github.v3+json') => ({ Accept: accept, Authorization: 'token test-token' }),
@@ -17,7 +17,7 @@ function createRuntime(fetchImpl: (url: string, options?: RequestInit) => Promis
   };
 }
 
-describe('github-readonly-tools shared core', () => {
+describe('github-tool-core shared core', () => {
   it('fetches branches with default branch ordering', async () => {
     const runtime = createRuntime(async (url) => {
       if (url.endsWith('/repos/owner/repo')) {
@@ -40,10 +40,10 @@ describe('github-readonly-tools shared core', () => {
   });
 
   it('blocks sensitive search paths before making a request', async () => {
-    const fetchSpy = vi.fn<GitHubReadonlyRuntime['githubFetch']>().mockResolvedValue(Response.json({}));
+    const fetchSpy = vi.fn<GitHubCoreRuntime['githubFetch']>().mockResolvedValue(Response.json({}));
     const runtime = createRuntime(fetchSpy);
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'search_files',
       args: { repo: 'owner/repo', query: 'token', path: '.env' },
     });
@@ -86,7 +86,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'fetch_pr',
       args: { repo: 'owner/repo', pr: 42 },
     });
@@ -116,7 +116,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'list_prs',
       args: { repo: 'owner/repo', state: 'open' },
     });
@@ -143,7 +143,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'fetch_checks',
       args: { repo: 'owner/repo', ref: 'feature/bridge' },
     });
@@ -170,7 +170,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'read_file',
       args: { repo: 'owner/repo', path: 'src/demo.ts', start_line: 2, end_line: 3 },
     });
@@ -196,7 +196,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'list_directory',
       args: { repo: 'owner/repo', path: 'src' },
     });
@@ -221,7 +221,7 @@ describe('github-readonly-tools shared core', () => {
             author: { name: 'Shawn', date: '2026-03-28T18:00:00.000Z' },
           },
           files: [
-            { filename: 'lib/github-readonly-tools.ts', status: 'modified', additions: 25, deletions: 4 },
+            { filename: 'lib/github-tool-core.ts', status: 'modified', additions: 25, deletions: 4 },
             { filename: 'app/src/worker/worker-github-tools.ts', status: 'added', additions: 10, deletions: 0 },
           ],
         });
@@ -229,7 +229,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'list_commit_files',
       args: { repo: 'owner/repo', ref: 'abc123' },
     });
@@ -243,7 +243,7 @@ describe('github-readonly-tools shared core', () => {
   });
 
   it('dispatches a workflow using the repo default branch when ref is omitted', async () => {
-    const fetchSpy = vi.fn<GitHubReadonlyRuntime['githubFetch']>(async (url, options) => {
+    const fetchSpy = vi.fn<GitHubCoreRuntime['githubFetch']>(async (url, options) => {
       if (url.endsWith('/repos/owner/repo')) {
         return Response.json({ default_branch: 'develop' });
       }
@@ -256,7 +256,7 @@ describe('github-readonly-tools shared core', () => {
     });
     const runtime = createRuntime(fetchSpy);
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'trigger_workflow',
       args: { repo: 'owner/repo', workflow: 'ci.yml', inputs: { environment: 'staging' } },
     });
@@ -291,7 +291,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'get_workflow_runs',
       args: { repo: 'owner/repo', count: 2 },
     });
@@ -337,7 +337,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'get_workflow_logs',
       args: { repo: 'owner/repo', run_id: 77 },
     });
@@ -370,7 +370,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'create_pr',
       args: {
         repo: 'owner/repo',
@@ -407,7 +407,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'check_pr_mergeable',
       args: { repo: 'owner/repo', pr_number: 12 },
     });
@@ -434,7 +434,7 @@ describe('github-readonly-tools shared core', () => {
       throw new Error(`unexpected url: ${url}`);
     });
 
-    const result = await executeGitHubReadonlyTool(runtime, {
+    const result = await executeGitHubCoreTool(runtime, {
       tool: 'find_existing_pr',
       args: { repo: 'owner/repo', head_branch: 'feature/bridge', base_branch: 'main' },
     });

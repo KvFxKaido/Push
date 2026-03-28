@@ -12,11 +12,11 @@ import {
   redactSensitiveText,
 } from '../lib/sensitive-data-guard';
 import {
-  executeGitHubReadonlyTool,
+  executeGitHubCoreTool,
   normalizeGitHubRepoName,
-  type GitHubReadonlyRuntime,
-  type GitHubReadonlyToolCall,
-} from '@push/lib/github-readonly-tools';
+  type GitHubCoreRuntime,
+  type GitHubCoreToolCall,
+} from '@push/lib/github-tool-core';
 import type {
   ToolExecutionResult,
 } from '../types';
@@ -25,7 +25,7 @@ const GITHUB_TIMEOUT_MS = 15_000;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 
-type GitHubToolPayload = GitHubReadonlyToolCall & { allowedRepo: string };
+type GitHubToolPayload = GitHubCoreToolCall & { allowedRepo: string };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -324,7 +324,7 @@ export async function handleGitHubTools(request: Request, env: Env): Promise<Res
   }
 
   try {
-    const runtime: GitHubReadonlyRuntime = {
+    const runtime: GitHubCoreRuntime = {
       githubFetch,
       buildHeaders: (accept = 'application/vnd.github.v3+json') => getGitHubHeaders(request, accept),
       buildApiUrl: (path) => `https://api.github.com${path.startsWith('/') ? path : `/${path}`}`,
@@ -333,7 +333,7 @@ export async function handleGitHubTools(request: Request, env: Env): Promise<Res
       redactSensitiveText,
       formatSensitivePathToolError,
     };
-    const result = await executeGitHubReadonlyTool(runtime, parsed) as ToolExecutionResult;
+    const result = await executeGitHubCoreTool(runtime, parsed) as ToolExecutionResult;
 
     return Response.json({ result }, {
       headers: { [REQUEST_ID_HEADER]: requestId },

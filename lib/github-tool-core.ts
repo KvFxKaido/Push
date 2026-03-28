@@ -1,25 +1,25 @@
 /**
- * Shared read-only GitHub tool core.
+ * Shared GitHub tool core.
  *
  * This module is runtime-agnostic: callers provide fetch/auth/sensitive-data
  * primitives, and the shared core handles GitHub API orchestration plus the
- * user-facing text/card shaping for the read-only tool subset.
+ * user-facing text/card shaping for the shared GitHub tool surface.
  */
 
-export interface GitHubReadonlyBranch {
+export interface GitHubCoreBranch {
   name: string;
   isDefault: boolean;
   isProtected: boolean;
 }
 
-export interface GitHubReadonlyPRFile {
+export interface GitHubCorePRFile {
   filename: string;
   status: string;
   additions: number;
   deletions: number;
 }
 
-export interface GitHubReadonlyPRListItem {
+export interface GitHubCorePRListItem {
   number: number;
   title: string;
   author: string;
@@ -28,37 +28,37 @@ export interface GitHubReadonlyPRListItem {
   createdAt: string;
 }
 
-export interface GitHubReadonlyPRListCardData {
+export interface GitHubCorePRListCardData {
   repo: string;
   state: string;
-  prs: GitHubReadonlyPRListItem[];
+  prs: GitHubCorePRListItem[];
 }
 
-export interface GitHubReadonlyCommitListItem {
+export interface GitHubCoreCommitListItem {
   sha: string;
   message: string;
   author: string;
   date: string;
 }
 
-export interface GitHubReadonlyCommitListCardData {
+export interface GitHubCoreCommitListCardData {
   repo: string;
-  commits: GitHubReadonlyCommitListItem[];
+  commits: GitHubCoreCommitListItem[];
 }
 
-export interface GitHubReadonlyFileListEntry {
+export interface GitHubCoreFileListEntry {
   name: string;
   type: 'file' | 'directory';
   size?: number;
 }
 
-export interface GitHubReadonlyFileListCardData {
+export interface GitHubCoreFileListCardData {
   repo?: string;
   path: string;
-  entries: GitHubReadonlyFileListEntry[];
+  entries: GitHubCoreFileListEntry[];
 }
 
-export interface GitHubReadonlyEditorCardData {
+export interface GitHubCoreEditorCardData {
   path: string;
   content: string;
   language: string;
@@ -67,25 +67,25 @@ export interface GitHubReadonlyEditorCardData {
   repo: string;
 }
 
-export interface GitHubReadonlyCommitFileItem {
+export interface GitHubCoreCommitFileItem {
   filename: string;
   status: string;
   additions: number;
   deletions: number;
 }
 
-export interface GitHubReadonlyCommitFilesCardData {
+export interface GitHubCoreCommitFilesCardData {
   repo: string;
   ref: string;
   sha: string;
   message: string;
   author: string;
   date: string;
-  files: GitHubReadonlyCommitFileItem[];
+  files: GitHubCoreCommitFileItem[];
   totalChanges: { additions: number; deletions: number };
 }
 
-export interface GitHubReadonlyWorkflowRunItem {
+export interface GitHubCoreWorkflowRunItem {
   id: number;
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting' | 'requested' | 'pending';
@@ -99,40 +99,40 @@ export interface GitHubReadonlyWorkflowRunItem {
   actor: string;
 }
 
-export interface GitHubReadonlyWorkflowRunsCardData {
+export interface GitHubCoreWorkflowRunsCardData {
   repo: string;
-  runs: GitHubReadonlyWorkflowRunItem[];
+  runs: GitHubCoreWorkflowRunItem[];
   workflow?: string;
   truncated: boolean;
 }
 
-export interface GitHubReadonlyWorkflowJobStep {
+export interface GitHubCoreWorkflowJobStep {
   name: string;
   status: 'queued' | 'in_progress' | 'completed';
   conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
   number: number;
 }
 
-export interface GitHubReadonlyWorkflowJob {
+export interface GitHubCoreWorkflowJob {
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting';
   conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
-  steps: GitHubReadonlyWorkflowJobStep[];
+  steps: GitHubCoreWorkflowJobStep[];
   htmlUrl: string;
 }
 
-export interface GitHubReadonlyWorkflowLogsCardData {
+export interface GitHubCoreWorkflowLogsCardData {
   runId: number;
   runName: string;
   runNumber: number;
   status: string;
   conclusion: string | null;
-  jobs: GitHubReadonlyWorkflowJob[];
+  jobs: GitHubCoreWorkflowJob[];
   htmlUrl: string;
   repo: string;
 }
 
-export interface GitHubReadonlyPRCardData {
+export interface GitHubCorePRCardData {
   number: number;
   title: string;
   author: string;
@@ -144,67 +144,67 @@ export interface GitHubReadonlyPRCardData {
   baseBranch: string;
   createdAt: string;
   description?: string;
-  files?: GitHubReadonlyPRFile[];
+  files?: GitHubCorePRFile[];
 }
 
-export interface GitHubReadonlyBranchListCardData {
+export interface GitHubCoreBranchListCardData {
   repo: string;
   defaultBranch: string;
-  branches: GitHubReadonlyBranch[];
+  branches: GitHubCoreBranch[];
 }
 
-export interface GitHubReadonlyFileSearchMatch {
+export interface GitHubCoreFileSearchMatch {
   path: string;
   line: number;
   content: string;
 }
 
-export interface GitHubReadonlyFileSearchCardData {
+export interface GitHubCoreFileSearchCardData {
   repo: string;
   query: string;
   path?: string;
-  matches: GitHubReadonlyFileSearchMatch[];
+  matches: GitHubCoreFileSearchMatch[];
   totalCount: number;
   truncated: boolean;
 }
 
-export interface GitHubReadonlyCICheck {
+export interface GitHubCoreCICheck {
   name: string;
   status: 'queued' | 'in_progress' | 'completed';
   conclusion: 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | null;
   detailsUrl?: string;
 }
 
-export type GitHubReadonlyCIOverallStatus = 'pending' | 'success' | 'failure' | 'neutral' | 'no-checks';
+export type GitHubCoreCIOverallStatus = 'pending' | 'success' | 'failure' | 'neutral' | 'no-checks';
 
-export interface GitHubReadonlyCIStatusCardData {
+export interface GitHubCoreCIStatusCardData {
   type: 'ci-status';
-  overall: GitHubReadonlyCIOverallStatus;
+  overall: GitHubCoreCIOverallStatus;
   repo: string;
   ref: string;
   fetchedAt: string;
-  checks: GitHubReadonlyCICheck[];
+  checks: GitHubCoreCICheck[];
 }
 
-export type GitHubReadonlyCard =
-  | { type: 'pr'; data: GitHubReadonlyPRCardData }
-  | { type: 'pr-list'; data: GitHubReadonlyPRListCardData }
-  | { type: 'commit-list'; data: GitHubReadonlyCommitListCardData }
-  | { type: 'branch-list'; data: GitHubReadonlyBranchListCardData }
-  | { type: 'file-list'; data: GitHubReadonlyFileListCardData }
-  | { type: 'ci-status'; data: GitHubReadonlyCIStatusCardData }
-  | { type: 'editor'; data: GitHubReadonlyEditorCardData }
-  | { type: 'file-search'; data: GitHubReadonlyFileSearchCardData }
-  | { type: 'commit-files'; data: GitHubReadonlyCommitFilesCardData }
-  | { type: 'workflow-runs'; data: GitHubReadonlyWorkflowRunsCardData }
-  | { type: 'workflow-logs'; data: GitHubReadonlyWorkflowLogsCardData };
+export type GitHubCoreCard =
+  | { type: 'pr'; data: GitHubCorePRCardData }
+  | { type: 'pr-list'; data: GitHubCorePRListCardData }
+  | { type: 'commit-list'; data: GitHubCoreCommitListCardData }
+  | { type: 'branch-list'; data: GitHubCoreBranchListCardData }
+  | { type: 'file-list'; data: GitHubCoreFileListCardData }
+  | { type: 'ci-status'; data: GitHubCoreCIStatusCardData }
+  | { type: 'editor'; data: GitHubCoreEditorCardData }
+  | { type: 'file-search'; data: GitHubCoreFileSearchCardData }
+  | { type: 'commit-files'; data: GitHubCoreCommitFilesCardData }
+  | { type: 'workflow-runs'; data: GitHubCoreWorkflowRunsCardData }
+  | { type: 'workflow-logs'; data: GitHubCoreWorkflowLogsCardData };
 
-export interface GitHubReadonlyToolResult {
+export interface GitHubCoreToolResult {
   text: string;
-  card?: GitHubReadonlyCard;
+  card?: GitHubCoreCard;
 }
 
-export type GitHubReadonlyToolCall =
+export type GitHubCoreToolCall =
   | { tool: 'fetch_pr'; args: { repo: string; pr: number } }
   | { tool: 'list_prs'; args: { repo: string; state?: string } }
   | { tool: 'list_commits'; args: { repo: string; count?: number } }
@@ -224,7 +224,7 @@ export type GitHubReadonlyToolCall =
   | { tool: 'check_pr_mergeable'; args: { repo: string; pr_number: number } }
   | { tool: 'find_existing_pr'; args: { repo: string; head_branch: string; base_branch?: string } };
 
-export interface GitHubReadonlyRuntime {
+export interface GitHubCoreRuntime {
   githubFetch(url: string, options?: RequestInit): Promise<Response>;
   buildHeaders(accept?: string): Record<string, string>;
   buildApiUrl(path: string): string;
@@ -374,7 +374,7 @@ function formatGitHubError(status: number, context: string, branch?: string): st
   }
 }
 
-function buildGitHubApiUrl(runtime: GitHubReadonlyRuntime, path: string): string {
+function buildGitHubApiUrl(runtime: GitHubCoreRuntime, path: string): string {
   return runtime.buildApiUrl(path.startsWith('/') ? path : `/${path}`);
 }
 
@@ -458,7 +458,7 @@ function guessLanguageFromPath(path: string): string {
 }
 
 function buildContentsApiUrl(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   path: string,
   branch?: string,
@@ -475,7 +475,7 @@ function getRepoOwner(repo: string): string {
   return repo.split('/')[0] || '';
 }
 
-function normalizeWorkflowRunStatus(status: string | undefined): GitHubReadonlyWorkflowRunItem['status'] {
+function normalizeWorkflowRunStatus(status: string | undefined): GitHubCoreWorkflowRunItem['status'] {
   return status === 'queued'
     || status === 'in_progress'
     || status === 'completed'
@@ -488,7 +488,7 @@ function normalizeWorkflowRunStatus(status: string | undefined): GitHubReadonlyW
 
 function normalizeWorkflowConclusion(
   value: string | null | undefined,
-): GitHubReadonlyWorkflowRunItem['conclusion'] {
+): GitHubCoreWorkflowRunItem['conclusion'] {
   return value === null
     || value === undefined
     || value === 'success'
@@ -502,7 +502,7 @@ function normalizeWorkflowConclusion(
     : null;
 }
 
-function normalizeWorkflowJobStatus(status: string): GitHubReadonlyWorkflowJob['status'] {
+function normalizeWorkflowJobStatus(status: string): GitHubCoreWorkflowJob['status'] {
   return status === 'queued'
     || status === 'in_progress'
     || status === 'completed'
@@ -511,7 +511,7 @@ function normalizeWorkflowJobStatus(status: string): GitHubReadonlyWorkflowJob['
     : 'completed';
 }
 
-function normalizeWorkflowStepStatus(status: string): GitHubReadonlyWorkflowJobStep['status'] {
+function normalizeWorkflowStepStatus(status: string): GitHubCoreWorkflowJobStep['status'] {
   return status === 'queued'
     || status === 'in_progress'
     || status === 'completed'
@@ -519,7 +519,7 @@ function normalizeWorkflowStepStatus(status: string): GitHubReadonlyWorkflowJobS
     : 'completed';
 }
 
-async function fetchRepoDefaultBranch(runtime: GitHubReadonlyRuntime, repo: string): Promise<string> {
+async function fetchRepoDefaultBranch(runtime: GitHubCoreRuntime, repo: string): Promise<string> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const repoRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}`), { headers });
   if (!repoRes.ok) {
@@ -538,10 +538,10 @@ export function normalizeGitHubRepoName(repo: string): string {
 }
 
 export async function fetchRepoBranchesData(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   maxBranches: number = 500,
-): Promise<GitHubReadonlyBranchListCardData> {
+): Promise<GitHubCoreBranchListCardData> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const defaultBranch = await fetchRepoDefaultBranch(runtime, repo);
 
@@ -563,7 +563,7 @@ export async function fetchRepoBranchesData(
     pageCount += 1;
   }
 
-  const branches: GitHubReadonlyBranch[] = all
+  const branches: GitHubCoreBranch[] = all
     .filter((branch) => typeof branch.name === 'string' && branch.name.trim().length > 0)
     .map((branch) => ({
       name: branch.name as string,
@@ -580,10 +580,10 @@ export async function fetchRepoBranchesData(
 }
 
 export async function executeListBranchesTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   maxBranches: number = 30,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const cardData = await fetchRepoBranchesData(runtime, repo, maxBranches);
   const { defaultBranch, branches } = cardData;
 
@@ -609,10 +609,10 @@ export async function executeListBranchesTool(
 }
 
 export async function executeFetchPRTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   pr: number,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
 
   const prRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}`), { headers });
@@ -685,10 +685,10 @@ export async function executeFetchPRTool(
   }
 
   const filesRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/files`), { headers });
-  let filesData: GitHubReadonlyPRFile[] = [];
+  let filesData: GitHubCorePRFile[] = [];
   let filesSummary = '';
   if (filesRes.ok) {
-    const files = await filesRes.json() as GitHubReadonlyPRFile[];
+    const files = await filesRes.json() as GitHubCorePRFile[];
     filesData = files.slice(0, 20).map((file) => ({
       filename: file.filename,
       status: file.status,
@@ -739,7 +739,7 @@ export async function executeFetchPRTool(
     lines.push(`\n--- Diff ---\n${diff}`);
   }
 
-  const card: GitHubReadonlyPRCardData = {
+  const card: GitHubCorePRCardData = {
     number: pr,
     title: prData.title,
     author: prData.user.login,
@@ -758,10 +758,10 @@ export async function executeFetchPRTool(
 }
 
 export async function executeListPRsTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   state: string = 'open',
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const res = await runtime.githubFetch(
     buildGitHubApiUrl(
@@ -785,7 +785,7 @@ export async function executeListPRsTool(
     `${prs.length} ${state} PR${prs.length > 1 ? 's' : ''} on ${repo}:\n`,
   ];
 
-  const prItems: GitHubReadonlyPRListItem[] = [];
+  const prItems: GitHubCorePRListItem[] = [];
   for (const prItem of prs) {
     const age = new Date(prItem.created_at).toLocaleDateString();
     lines.push(`  #${prItem.number} — ${prItem.title}`);
@@ -807,10 +807,10 @@ export async function executeListPRsTool(
 }
 
 export async function executeListCommitsTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   count: number = 10,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const res = await runtime.githubFetch(
     buildGitHubApiUrl(runtime, `/repos/${repo}/commits?per_page=${Math.min(count, 30)}`),
@@ -831,7 +831,7 @@ export async function executeListCommitsTool(
     `${commits.length} recent commit${commits.length > 1 ? 's' : ''} on ${repo}:\n`,
   ];
 
-  const commitItems: GitHubReadonlyCommitListItem[] = [];
+  const commitItems: GitHubCoreCommitListItem[] = [];
   for (const commit of commits) {
     const shortSha = commit.sha.slice(0, 7);
     const message = commit.commit.message.split('\n')[0];
@@ -849,13 +849,13 @@ export async function executeListCommitsTool(
 }
 
 export async function executeReadFileTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   path: string,
   branch?: string,
   startLine?: number,
   endLine?: number,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   if (runtime.isSensitivePath(path)) {
     return { text: runtime.formatSensitivePathToolError(path) };
   }
@@ -983,12 +983,12 @@ export async function executeReadFileTool(
 }
 
 export async function executeGrepFileTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   path: string,
   pattern: string,
   branch?: string,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   if (runtime.isSensitivePath(path)) {
     return { text: runtime.formatSensitivePathToolError(path) };
   }
@@ -1076,7 +1076,7 @@ export async function executeGrepFileTool(
     ...outputLines,
   ];
 
-  const matchItems: GitHubReadonlyFileSearchMatch[] = [];
+  const matchItems: GitHubCoreFileSearchMatch[] = [];
   for (const num of matchLineNums) {
     if (matchItems.length >= 50) break;
     matchItems.push({ path, line: num + 1, content: allLines[num].trim().slice(0, 200) });
@@ -1099,11 +1099,11 @@ export async function executeGrepFileTool(
 }
 
 export async function executeListDirectoryTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   path: string = '',
   branch?: string,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   if (path && runtime.isSensitivePath(path)) {
     return { text: runtime.formatSensitivePathToolError(path) };
   }
@@ -1131,7 +1131,7 @@ export async function executeListDirectoryTool(
     size: entry.size,
     path: buildDirectoryEntryPath(path, entry.name || ''),
   }));
-  const visibleEntries: GitHubReadonlyFileListEntry[] = [];
+  const visibleEntries: GitHubCoreFileListEntry[] = [];
   let hiddenCount = 0;
   for (const entry of normalizedEntries) {
     if (runtime.isSensitivePath(entry.path)) {
@@ -1172,10 +1172,10 @@ export async function executeListDirectoryTool(
 }
 
 async function fetchCIStatusSummary(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   ref?: string,
-): Promise<{ overall: GitHubReadonlyCIOverallStatus; checks: GitHubReadonlyCICheck[]; ref: string }> {
+): Promise<{ overall: GitHubCoreCIOverallStatus; checks: GitHubCoreCICheck[]; ref: string }> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const commitRef = ref || 'HEAD';
 
@@ -1184,8 +1184,8 @@ async function fetchCIStatusSummary(
     { headers },
   );
 
-  let checks: GitHubReadonlyCICheck[] = [];
-  let overall: GitHubReadonlyCIOverallStatus = 'no-checks';
+  let checks: GitHubCoreCICheck[] = [];
+  let overall: GitHubCoreCIOverallStatus = 'no-checks';
 
   if (checkRunsRes.ok) {
     const data = await checkRunsRes.json() as {
@@ -1200,8 +1200,8 @@ async function fetchCIStatusSummary(
     if (data.check_runs && data.check_runs.length > 0) {
       checks = data.check_runs.map((checkRun) => ({
         name: checkRun.name || 'unknown-check',
-        status: (checkRun.status || 'completed') as GitHubReadonlyCICheck['status'],
-        conclusion: (checkRun.conclusion ?? null) as GitHubReadonlyCICheck['conclusion'],
+        status: (checkRun.status || 'completed') as GitHubCoreCICheck['status'],
+        conclusion: (checkRun.conclusion ?? null) as GitHubCoreCICheck['conclusion'],
         detailsUrl: checkRun.html_url || checkRun.details_url,
       }));
     }
@@ -1254,12 +1254,12 @@ async function fetchCIStatusSummary(
 }
 
 export async function executeFetchChecksTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   ref?: string,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const { overall, checks, ref: commitRef } = await fetchCIStatusSummary(runtime, repo, ref);
-  const cardData: GitHubReadonlyCIStatusCardData = {
+  const cardData: GitHubCoreCIStatusCardData = {
     type: 'ci-status',
     repo,
     ref: commitRef,
@@ -1292,10 +1292,10 @@ export async function executeFetchChecksTool(
 }
 
 export async function executeListCommitFilesTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   ref: string,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const res = await runtime.githubFetch(
     buildGitHubApiUrl(runtime, `/repos/${repo}/commits/${encodeURIComponent(ref)}`),
@@ -1323,7 +1323,7 @@ export async function executeListCommitFilesTool(
     totalDeletions += file.deletions || 0;
   }
 
-  const fileItems: GitHubReadonlyCommitFileItem[] = [];
+  const fileItems: GitHubCoreCommitFileItem[] = [];
   for (const file of files.slice(0, 50)) {
     const icon = file.status === 'added' ? '+' : file.status === 'removed' ? '-' : '~';
     lines.push(`  ${icon} ${file.filename} (+${file.additions || 0} -${file.deletions || 0})`);
@@ -1341,7 +1341,7 @@ export async function executeListCommitFilesTool(
 
   lines.push(`\nTotal: +${totalAdditions} -${totalDeletions}`);
 
-  const cardData: GitHubReadonlyCommitFilesCardData = {
+  const cardData: GitHubCoreCommitFilesCardData = {
     repo,
     ref,
     sha: commit.sha,
@@ -1359,12 +1359,12 @@ export async function executeListCommitFilesTool(
 }
 
 export async function executeTriggerWorkflowTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   workflow: string,
   ref?: string,
   inputs?: Record<string, string>,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   let targetRef = ref;
 
@@ -1410,13 +1410,13 @@ export async function executeTriggerWorkflowTool(
 }
 
 export async function executeGetWorkflowRunsTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   workflow?: string,
   branch?: string,
   status?: string,
   count?: number,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const perPage = Math.max(1, Math.min(count || 10, 20));
 
@@ -1432,7 +1432,7 @@ export async function executeGetWorkflowRunsTool(
   }
 
   const data = await res.json() as { total_count?: number; workflow_runs?: WorkflowRunApi[] };
-  const runs: GitHubReadonlyWorkflowRunItem[] = (data.workflow_runs || []).map((run) => ({
+  const runs: GitHubCoreWorkflowRunItem[] = (data.workflow_runs || []).map((run) => ({
     id: run.id,
     name: run.name,
     status: normalizeWorkflowRunStatus(run.status),
@@ -1482,10 +1482,10 @@ export async function executeGetWorkflowRunsTool(
 }
 
 export async function executeGetWorkflowLogsTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   runId: number,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
 
   const [runRes, jobsRes] = await Promise.all([
@@ -1504,7 +1504,7 @@ export async function executeGetWorkflowLogsTool(
     jobsData = parsed.jobs || [];
   }
 
-  const jobs: GitHubReadonlyWorkflowJob[] = jobsData.map((job) => ({
+  const jobs: GitHubCoreWorkflowJob[] = jobsData.map((job) => ({
     name: job.name,
     status: normalizeWorkflowJobStatus(job.status),
     conclusion: normalizeWorkflowConclusion(job.conclusion),
@@ -1565,13 +1565,13 @@ export async function executeGetWorkflowLogsTool(
 }
 
 export async function executeCreatePRTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   title: string,
   body: string,
   head: string,
   base: string,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const res = await runtime.githubFetch(
     buildGitHubApiUrl(runtime, `/repos/${repo}/pulls`),
@@ -1604,11 +1604,11 @@ export async function executeCreatePRTool(
 }
 
 export async function executeMergePRTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   prNumber: number,
   mergeMethod?: string,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const method = mergeMethod || 'merge';
   const res = await runtime.githubFetch(
@@ -1644,10 +1644,10 @@ export async function executeMergePRTool(
 }
 
 export async function executeDeleteBranchTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   branchName: string,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const res = await runtime.githubFetch(
     buildGitHubApiUrl(runtime, `/repos/${repo}/git/refs/heads/${encodeURIComponent(branchName)}`),
@@ -1673,10 +1673,10 @@ export async function executeDeleteBranchTool(
 }
 
 export async function executeCheckPRMergeableTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   prNumber: number,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const prRes = await runtime.githubFetch(
     buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${prNumber}`),
@@ -1688,8 +1688,8 @@ export async function executeCheckPRMergeableTool(
 
   const prData = await prRes.json() as PullRequestMergeabilityApi;
   const headSha = prData.head?.sha;
-  let ciOverall: GitHubReadonlyCIOverallStatus | 'unknown' = 'unknown';
-  let ciChecks: GitHubReadonlyCICheck[] = [];
+  let ciOverall: GitHubCoreCIOverallStatus | 'unknown' = 'unknown';
+  let ciChecks: GitHubCoreCICheck[] = [];
   if (headSha) {
     try {
       const ciStatus = await fetchCIStatusSummary(runtime, repo, headSha);
@@ -1740,11 +1740,11 @@ export async function executeCheckPRMergeableTool(
 }
 
 export async function executeFindExistingPRTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   headBranch: string,
   baseBranch?: string,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const owner = getRepoOwner(repo);
   if (!owner) {
@@ -1795,12 +1795,12 @@ export async function executeFindExistingPRTool(
 }
 
 export async function executeSearchFilesTool(
-  runtime: GitHubReadonlyRuntime,
+  runtime: GitHubCoreRuntime,
   repo: string,
   query: string,
   path?: string,
   branch?: string,
-): Promise<GitHubReadonlyToolResult> {
+): Promise<GitHubCoreToolResult> {
   if (path && runtime.isSensitivePath(path)) {
     return { text: runtime.formatSensitivePathToolError(path) };
   }
@@ -1873,7 +1873,7 @@ export async function executeSearchFilesTool(
     };
   }
 
-  const matches: GitHubReadonlyFileSearchMatch[] = [];
+  const matches: GitHubCoreFileSearchMatch[] = [];
   const truncated = totalCount > 25;
   let hiddenResults = 0;
   let redactedResults = false;
@@ -1926,7 +1926,7 @@ export async function executeSearchFilesTool(
     redactedResults ? 'Redactions: secret-like values hidden.\n' : '',
   ];
 
-  const byFile = new Map<string, GitHubReadonlyFileSearchMatch[]>();
+  const byFile = new Map<string, GitHubCoreFileSearchMatch[]>();
   for (const match of matches) {
     if (!byFile.has(match.path)) byFile.set(match.path, []);
     byFile.get(match.path)?.push(match);
@@ -1971,7 +1971,7 @@ export async function executeSearchFilesTool(
     lines.push('Tip: Use grep_file(repo, path, pattern) to search within a specific file with line numbers and context.');
   }
 
-  const cardData: GitHubReadonlyFileSearchCardData = {
+  const cardData: GitHubCoreFileSearchCardData = {
     repo,
     query,
     path,
@@ -1983,10 +1983,10 @@ export async function executeSearchFilesTool(
   return { text: lines.join('\n'), card: { type: 'file-search', data: cardData } };
 }
 
-export async function executeGitHubReadonlyTool(
-  runtime: GitHubReadonlyRuntime,
-  call: GitHubReadonlyToolCall,
-): Promise<GitHubReadonlyToolResult> {
+export async function executeGitHubCoreTool(
+  runtime: GitHubCoreRuntime,
+  call: GitHubCoreToolCall,
+): Promise<GitHubCoreToolResult> {
   switch (call.tool) {
     case 'fetch_pr':
       return executeFetchPRTool(runtime, call.args.repo, call.args.pr);

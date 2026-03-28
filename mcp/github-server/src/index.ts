@@ -16,11 +16,11 @@ import {
   redactSensitiveText,
 } from './sensitive-data-guard.js';
 import {
-  executeGitHubReadonlyTool,
-  type GitHubReadonlyToolResult,
-  type GitHubReadonlyRuntime,
-  type GitHubReadonlyToolCall,
-} from '../../../lib/github-readonly-tools.js';
+  executeGitHubCoreTool,
+  type GitHubCoreToolResult,
+  type GitHubCoreRuntime,
+  type GitHubCoreToolCall,
+} from '../../../lib/github-tool-core.js';
 
 const SERVER_NAME = 'push-github-mcp';
 const SERVER_VERSION = '0.1.0';
@@ -72,7 +72,7 @@ function formatTextResult(text: string) {
   };
 }
 
-function formatToolResult(result: GitHubReadonlyToolResult) {
+function formatToolResult(result: GitHubCoreToolResult) {
   const base = formatTextResult(result.text);
   if (!result.card) {
     return base;
@@ -119,7 +119,7 @@ function getServerInfoText(): string {
       TOOL_FIND_EXISTING_PR,
     ],
     status:
-      'GitHub tool migration is in progress. Read-only PR, branch, and code search tools now share the same core implementation as the Push worker bridge.',
+      'Push now shares a common GitHub tool core across the app worker bridge and the MCP server.',
   };
 
   return JSON.stringify(summary, null, 2);
@@ -198,7 +198,7 @@ function asStringRecord(value: unknown): Record<string, string> | undefined {
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyToolCall | null {
+function parseGitHubToolCall(name: string, rawArgs: unknown): GitHubCoreToolCall | null {
   const args = asRecord(rawArgs) ?? {};
   const repo = asString(args.repo);
   if (!repo) return null;
@@ -334,7 +334,7 @@ function parseReadonlyToolCall(name: string, rawArgs: unknown): GitHubReadonlyTo
   return null;
 }
 
-const readonlyTools = [
+const githubTools = [
   {
     name: TOOL_FETCH_PR,
     description:
@@ -607,7 +607,7 @@ const readonlyTools = [
   },
 ] as const;
 
-const readonlyRuntime: GitHubReadonlyRuntime = {
+const githubToolRuntime: GitHubCoreRuntime = {
   githubFetch,
   buildHeaders: buildGitHubHeaders,
   buildApiUrl: (path) => `${getGitHubApiUrl().replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`,
@@ -651,14 +651,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
     },
-    ...readonlyTools,
+    ...githubTools,
   ],
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const readonlyToolCall = parseReadonlyToolCall(request.params.name, request.params.arguments);
-  if (readonlyToolCall) {
-    const result = await executeGitHubReadonlyTool(readonlyRuntime, readonlyToolCall);
+  const githubToolCall = parseGitHubToolCall(request.params.name, request.params.arguments);
+  if (githubToolCall) {
+    const result = await executeGitHubCoreTool(githubToolRuntime, githubToolCall);
     return formatToolResult(result);
   }
 
