@@ -28,7 +28,20 @@ const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_
 const OLLAMA_API_KEY_ENV_VARS = ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'];
 const WEB_SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
-const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'git_status', 'git_diff', 'lsp_diagnostics', 'exec_poll', 'exec_list_sessions']);
+const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'read_symbol', 'git_status', 'git_diff', 'lsp_diagnostics', 'exec_poll', 'exec_list_sessions']);
+
+// Shared symbol-detection patterns used by read_symbols and read_symbol
+const SYMBOL_PATTERNS = [
+  { pat: /^\s*(export\s+)?(default\s+)?(async\s+)?function\s+(\w+)/, kind: 'function', nameGroup: 4 },
+  { pat: /^\s*(export\s+)?(default\s+)?class\s+(\w+)/, kind: 'class', nameGroup: 3 },
+  { pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(/, kind: 'function', nameGroup: 2 },
+  { pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function/, kind: 'function', nameGroup: 2 },
+  { pat: /^\s*def\s+(\w+)/, kind: 'function', nameGroup: 1 },
+  { pat: /^\s*(async\s+)?fn\s+(\w+)/, kind: 'function', nameGroup: 2 },
+  { pat: /^\s*func\s+(\w+)/, kind: 'function', nameGroup: 1 },
+  { pat: /^\s*type\s+(\w+)/, kind: 'type', nameGroup: 1 },
+  { pat: /^\s*(export\s+)?interface\s+(\w+)/, kind: 'interface', nameGroup: 2 },
+];
 
 const EXEC_SESSIONS = new Map();
 let EXEC_SESSION_COUNTER = 0;
@@ -563,12 +576,13 @@ Available tools:
 - write_file(path, content) — write full file content
 - edit_file(path, edits, expected_version?) — surgical hashline edits. edits[] ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content
 - read_symbols(path) — extract function/class/type declarations from a file
+- read_symbol(path, symbol) — read a specific symbol's full body (function, class, type, interface) by name. More efficient than reading the whole file when you know which symbol you need.
 - git_status() — workspace git status (branch, dirty files)
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - git_commit(message, paths?) — stage and commit files (all files if paths not specified)
 - undo_edit(path) — restore a file from its most recent backup (created before each write/edit)
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
-- save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session.
+- save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session. Structured form: save_memory(type, content, tags?, files?) where type is decision|task|next|fact|blocker — stored in .push/memory.json as typed entries.
 - coder_update_state(plan?, openTasks?, filesTouched?, assumptions?, errorsEncountered?, currentPhase?, completedPhases?) — update working memory (no filesystem action). currentPhase is the current task phase; completedPhases is a list of completed phases (retroactive tracking supported).
 - ask_user(question, choices?) — pause and ask the operator a clarifying question; choices is an optional string[] of suggested answers. Use only when a critical ambiguity would cause significant wasted work — avoid for questions you can reasonably assume.
 
@@ -579,7 +593,10 @@ Rules:
 - Emit at most one mutating filesystem/exec tool call per reply; read-only calls can be batched.
 - Prefer edit_file over full-file rewrites when possible.
 - If a tool fails, correct the call and retry when appropriate.
-- Do not describe tool calls in prose. Emit only JSON blocks for tool calls.`;
+- Do not describe tool calls in prose. Emit only JSON blocks for tool calls.
+- Prefer read_symbol over read_file when you know which function/class you need — it returns only that symbol's body.
+- Check the ledger in [meta] for files with high relevance scores — those appeared most in search results and are likely the best read targets.
+- The readBudget in [meta] shows chars read this turn. Use it to pace reads — prefer targeted reads (read_symbol, ranged read_file) over full-file reads when budget is high.`;
 
 export function truncateText(text, max = MAX_TOOL_OUTPUT_CHARS) {
   if (text.length <= max) return text;
@@ -1628,19 +1645,8 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const content = await fs.readFile(filePath, 'utf8');
         const lines = content.split('\n');
         const symbols = [];
-        const patterns = [
-          { pat: /^\s*(export\s+)?(default\s+)?(async\s+)?function\s+(\w+)/, kind: 'function' },
-          { pat: /^\s*(export\s+)?(default\s+)?class\s+(\w+)/, kind: 'class' },
-          { pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(/, kind: 'function' },
-          { pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function/, kind: 'function' },
-          { pat: /^\s*def\s+(\w+)/, kind: 'function' },
-          { pat: /^\s*(async\s+)?fn\s+(\w+)/, kind: 'function' },
-          { pat: /^\s*func\s+(\w+)/, kind: 'function' },
-          { pat: /^\s*type\s+(\w+)/, kind: 'type' },
-          { pat: /^\s*(export\s+)?interface\s+(\w+)/, kind: 'interface' },
-        ];
         lines.forEach((line, i) => {
-          for (const { pat, kind } of patterns) {
+          for (const { pat, kind } of SYMBOL_PATTERNS) {
             if (pat.test(line)) {
               symbols.push({ line: i + 1, kind, text: line.trim() });
               break;
@@ -1654,6 +1660,62 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           ok: true,
           text: truncateText(text),
           meta: { path: filePath, symbolCount: symbols.length },
+        };
+      }
+
+      case 'read_symbol': {
+        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const symbolName = asString(call.args.symbol, 'symbol').trim();
+        if (!symbolName) throw new Error('symbol cannot be empty');
+        const content = await fs.readFile(filePath, 'utf8');
+        const lines = content.split('\n');
+
+        // Find all symbol start positions
+        const symbolStarts: { line: number; name: string; kind: string }[] = [];
+        lines.forEach((line, i) => {
+          for (const { pat, kind, nameGroup } of SYMBOL_PATTERNS) {
+            const m = line.match(pat);
+            if (m) {
+              symbolStarts.push({ line: i, name: m[nameGroup] || '', kind });
+              break;
+            }
+          }
+        });
+
+        // Find the target symbol
+        const targetIdx = symbolStarts.findIndex(s => s.name === symbolName);
+        if (targetIdx === -1) {
+          const available = symbolStarts.map(s => s.name).filter(Boolean).join(', ');
+          return {
+            ok: false,
+            text: `Symbol "${symbolName}" not found.${available ? ` Available: ${available}` : ''}`,
+            structuredError: { code: 'SYMBOL_NOT_FOUND', message: `Symbol "${symbolName}" not found`, retryable: false },
+          };
+        }
+
+        const startLine = symbolStarts[targetIdx].line;
+        // End at next symbol or end of file
+        const endLine = targetIdx + 1 < symbolStarts.length
+          ? symbolStarts[targetIdx + 1].line - 1
+          : lines.length - 1;
+
+        // Trim trailing blank lines
+        let actualEnd = endLine;
+        while (actualEnd > startLine && lines[actualEnd].trim() === '') actualEnd--;
+
+        const symbolLines = lines.slice(startLine, actualEnd + 1);
+        const numbered = symbolLines.map((l, i) => `${startLine + i + 1}| ${l}`).join('\n');
+        return {
+          ok: true,
+          text: truncateText(numbered),
+          meta: {
+            path: filePath,
+            symbol: symbolName,
+            kind: symbolStarts[targetIdx].kind,
+            start_line: startLine + 1,
+            end_line: actualEnd + 1,
+            lines: actualEnd - startLine + 1,
+          },
         };
       }
 
@@ -1803,10 +1865,46 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'save_memory': {
-        const content = asString(call.args.content, 'content');
         const memoryDir = path.join(workspaceRoot, '.push');
-        const memoryPath = path.join(memoryDir, 'memory.md');
         await fs.mkdir(memoryDir, { recursive: true });
+
+        // Structured entry: save_memory({type, content, tags?, files?})
+        const entryType = typeof call.args.type === 'string' ? call.args.type.trim() : '';
+        if (entryType) {
+          const VALID_TYPES = ['decision', 'task', 'next', 'fact', 'blocker'];
+          if (!VALID_TYPES.includes(entryType)) {
+            return {
+              ok: false,
+              text: `Invalid memory type "${entryType}". Use one of: ${VALID_TYPES.join(', ')}`,
+              structuredError: { code: 'INVALID_MEMORY_TYPE', message: `Invalid type: ${entryType}`, retryable: false },
+            };
+          }
+          const content = asString(call.args.content, 'content').slice(0, 200);
+          const tags = Array.isArray(call.args.tags) ? call.args.tags.filter(t => typeof t === 'string').slice(0, 5) : [];
+          const files = Array.isArray(call.args.files) ? call.args.files.filter(f => typeof f === 'string').slice(0, 10) : [];
+
+          const memoryJsonPath = path.join(memoryDir, 'memory.json');
+          let entries = [];
+          try {
+            const raw = await fs.readFile(memoryJsonPath, 'utf8');
+            entries = JSON.parse(raw);
+            if (!Array.isArray(entries)) entries = [];
+          } catch { /* no existing file */ }
+
+          entries.push({ type: entryType, content, tags, files, date: new Date().toISOString() });
+          // Keep max 50 entries, drop oldest
+          if (entries.length > 50) entries = entries.slice(-50);
+          await fs.writeFile(memoryJsonPath, JSON.stringify(entries, null, 2), 'utf8');
+          return {
+            ok: true,
+            text: `Memory entry saved (${entryType}: ${content.slice(0, 60)}…). ${entries.length} total entries.`,
+            meta: { path: memoryJsonPath, type: entryType, totalEntries: entries.length },
+          };
+        }
+
+        // Legacy: free-text save_memory({content})
+        const content = asString(call.args.content, 'content');
+        const memoryPath = path.join(memoryDir, 'memory.md');
         await fs.writeFile(memoryPath, content, 'utf8');
         return {
           ok: true,
@@ -1869,7 +1967,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, git_status, git_diff, git_commit, save_memory, lsp_diagnostics`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, read_symbol, git_status, git_diff, git_commit, save_memory, lsp_diagnostics`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,

@@ -2,7 +2,7 @@ import process from 'node:process';
 import { detectAllToolCalls, executeToolCall, isReadOnlyToolCall, truncateText, TOOL_PROTOCOL } from './tools.js';
 import { appendSessionEvent, saveSessionState, makeRunId } from './session-store.js';
 import { streamCompletion } from './provider.js';
-import { createFileLedger, getLedgerSummary, updateFileLedger } from './file-ledger.js';
+import { createFileLedger, getLedgerSummary, updateFileLedger, resetTurnBudget } from './file-ledger.js';
 import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.js';
 import { trimContext, distillContext, estimateContextTokens, getContextBudget } from './context-manager.js';
@@ -385,6 +385,7 @@ export async function runAssistantLoop(
   let lastTrimResult: TrimResult | null = null;
 
   for (let round = 1; round <= maxRounds; round++) {
+    resetTurnBudget(fileLedger);
     contextChars = (state.messages as Message[]).reduce(
       (sum: number, m: Message) => sum + (typeof m.content === 'string' ? m.content.length : 0),
       0,
