@@ -64,7 +64,7 @@ export function isVerificationPhase(phase: string | undefined): boolean {
 const MUTATION_TOOLS = new Set([
   'write_file',
   'edit_file',
-  'apply_diff',
+  'undo_edit',
 ]);
 
 // ---------------------------------------------------------------------------

@@ -1031,6 +1031,7 @@ ${truncatedResult}
             role: 'user',
             content: `[TOOL_DENIED] ${mutGateResult.reason} [/TOOL_DENIED]`,
             timestamp: Date.now(),
+            isToolResult: true,
           });
           continue;
         }
@@ -1375,6 +1376,7 @@ ${truncatedResult}
         role: 'user',
         content: `[TOOL_DENIED] ${toolGateResult.reason} [/TOOL_DENIED]`,
         timestamp: Date.now(),
+        isToolResult: true,
       });
       continue;
     }

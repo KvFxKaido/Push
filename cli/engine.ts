@@ -477,12 +477,19 @@ export async function runAssistantLoop(
     // --- Turn policy: afterModelCall evaluation ---
     const policyResult = policyRegistry.evaluateAfterModel(finalAssistantText, turnCtx);
     if (policyResult?.action === 'halt') {
+      await appendSessionEvent(state, 'run_complete', {
+        runId,
+        outcome: 'failed',
+        summary: policyResult.summary,
+      }, runId);
+      await saveSessionState(state);
       dispatchEvent('run_complete', { outcome: 'failed', summary: policyResult.summary });
       return { outcome: 'error', finalAssistantText: policyResult.summary, rounds: round, runId };
     }
     if (policyResult?.action === 'inject') {
       (state.messages as Message[]).push({ role: 'user', content: policyResult.message });
       dispatchEvent('status', { source: 'policy', phase: 'correction', detail: policyResult.message.slice(0, 100) });
+      await saveSessionState(state);
       continue;
     }
 
@@ -515,7 +522,9 @@ export async function runAssistantLoop(
     for (const call of memoryCalls) {
       const updated: WorkingMemory = applyWorkingMemoryUpdate(state, (call.args || {}) as Partial<WorkingMemory>);
       // Sync phase into turn context for policy gating
-      if (updated.currentPhase) turnCtx.phase = updated.currentPhase;
+      if ('currentPhase' in (call.args || {})) {
+        turnCtx.phase = updated.currentPhase || undefined;
+      }
       await appendSessionEvent(state, 'working_memory_updated', {
         keys: Object.keys(updated),
       }, runId);
@@ -588,9 +597,41 @@ export async function runAssistantLoop(
         turnCtx,
       );
       if (gateResult?.action === 'deny') {
+        const deniedCall: ToolCall = mutateCalls[0];
+        const denialMessage: string = gateResult.reason || 'Tool call denied by policy';
+        const deniedResult: ToolResult = {
+          ok: false,
+          text: denialMessage,
+          structuredError: {
+            code: 'TOOL_DENIED',
+            message: denialMessage,
+            retryable: false,
+          },
+        };
+
+        await appendSessionEvent(state, 'tool_result', {
+          source: deniedCall.source || 'sandbox',
+          toolName: deniedCall.tool,
+          durationMs: 0,
+          isError: true,
+          text: deniedResult.text,
+          structuredError: deniedResult.structuredError,
+        }, runId);
+
         (state.messages as Message[]).push({
           role: 'user',
-          content: `[TOOL_DENIED] ${gateResult.reason} [/TOOL_DENIED]`,
+          content: buildToolResultMessage(
+            deniedCall,
+            deniedResult,
+            { runId, round, contextChars, trimmed: false, estimatedTokens: 0, ledger: getLedgerSummary(fileLedger), workingMemory: state.workingMemory },
+          ),
+        });
+        toolsUsed.add(deniedCall.tool);
+        dispatchEvent('tool_result', {
+          source: deniedCall.source || 'sandbox',
+          toolName: deniedCall.tool,
+          isError: true,
+          text: deniedResult.text,
         });
         await saveSessionState(state);
         continue;
