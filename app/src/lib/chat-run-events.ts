@@ -1,4 +1,4 @@
-import type { RunEvent } from '@/types';
+import type { RunEvent, RunEventInput } from '@/types';
 
 export const MAX_RUN_EVENTS_PER_CHAT = 400;
 
@@ -7,6 +7,29 @@ export function trimRunEvents(events: RunEvent[]): RunEvent[] {
     return events;
   }
   return events.slice(events.length - MAX_RUN_EVENTS_PER_CHAT);
+}
+
+export function shouldPersistRunEvent(event: RunEventInput): boolean {
+  switch (event.type) {
+    case 'assistant.turn_start':
+    case 'tool.execution_start':
+    case 'subagent.started':
+    case 'user.follow_up_queued':
+    case 'user.follow_up_steered':
+      return false;
+    default:
+      return true;
+  }
+}
+
+export function mergeRunEventStreams(...streams: readonly RunEvent[][]): RunEvent[] {
+  const merged = streams.flat();
+  if (merged.length <= 1) {
+    return merged[0] ? trimRunEvents([...merged]) : [];
+  }
+  return trimRunEvents(
+    [...merged].sort((left, right) => left.timestamp - right.timestamp),
+  );
 }
 
 export function summarizeToolResultPreview(text: string, maxLength = 220): string {

@@ -56,6 +56,7 @@ export interface QuickPrompt {
 
 export interface ChatSendOptions {
   displayText?: string;
+  streamingBehavior?: 'queue' | 'steer';
 }
 
 export const USER_PROFILE_DEFAULTS: UserProfile = {
@@ -610,7 +611,7 @@ export type RunEventInput =
   | {
       type: 'assistant.turn_end';
       round: number;
-      outcome: 'completed' | 'continued' | 'error' | 'aborted';
+      outcome: 'completed' | 'continued' | 'error' | 'aborted' | 'steered';
     }
   | {
       type: 'tool.execution_start';
@@ -653,6 +654,18 @@ export type RunEventInput =
       executionId: string;
       agent: RunEventSubagent;
       error: string;
+    }
+  | {
+      type: 'user.follow_up_queued';
+      round: number;
+      position: number;
+      preview: string;
+    }
+  | {
+      type: 'user.follow_up_steered';
+      round: number;
+      preview: string;
+      replacedPending: boolean;
     };
 
 export type RunEvent = RunEventInput & {

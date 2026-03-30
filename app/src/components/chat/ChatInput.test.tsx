@@ -105,4 +105,12 @@ describe('ChatInput', () => {
 
     expect(html).toContain('2 follow-ups queued');
   });
+
+  it('shows pending steering status while streaming', () => {
+    const html = renderToStaticMarkup(
+      <ChatInput {...buildProps({ isStreaming: true, pendingSteerCount: 1 })} />,
+    );
+
+    expect(html).toContain('Steering update captured. It will apply after the current step.');
+  });
 });

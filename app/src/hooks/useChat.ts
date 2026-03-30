@@ -9,6 +9,7 @@ import type {
   ChatSendOptions,
   Conversation,
   QueuedFollowUp,
+  QueuedFollowUpOptions,
   RunEvent,
   RunEventInput,
   WorkspaceContext,
@@ -65,6 +66,11 @@ import {
   shiftQueuedItem,
   type QueuedItemsByChat,
 } from './chat-queue';
+import {
+  mergeRunEventStreams,
+  shouldPersistRunEvent,
+  trimRunEvents,
+} from '@/lib/chat-run-events';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -96,22 +102,92 @@ type AbortStreamOptions = {
   clearQueuedFollowUps?: boolean;
 };
 
-function toQueuedFollowUp(
-  text: string,
-  attachments?: AttachmentData[],
-  options?: SendMessageOptions,
-): QueuedFollowUp {
+interface PendingSteerRequest {
+  text: string;
+  attachments?: AttachmentData[];
+  options?: QueuedFollowUpOptions;
+  requestedAt: number;
+}
+
+type PendingSteersByChat = Record<string, PendingSteerRequest>;
+
+function getQueuedFollowUpOptions(options?: SendMessageOptions): QueuedFollowUpOptions | undefined {
   const queuedOptions = {
     provider: options?.provider ?? undefined,
     model: options?.model ?? undefined,
     displayText: options?.displayText?.trim() || undefined,
   };
 
+  return Object.values(queuedOptions).some(Boolean) ? queuedOptions : undefined;
+}
+
+function summarizeQueuedInputPreview(
+  text: string,
+  attachments?: AttachmentData[],
+  displayText?: string,
+  maxLength = 96,
+): string {
+  const candidate = displayText?.trim() || text.trim();
+  const attachmentCount = attachments?.length ?? 0;
+  const attachmentLabel = attachmentCount > 0
+    ? `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}`
+    : '';
+
+  const base = candidate
+    ? attachmentLabel
+      ? `${candidate} (+${attachmentLabel})`
+      : candidate
+    : attachmentLabel || '[no text]';
+
+  return base.length <= maxLength
+    ? base
+    : `${base.slice(0, maxLength - 1).trimEnd()}...`;
+}
+
+function buildRuntimeUserMessage(
+  text: string,
+  attachments?: AttachmentData[],
+  displayText?: string,
+): ChatMessage {
+  const trimmedText = text.trim();
+  const trimmedDisplayText = displayText?.trim();
+
+  return {
+    id: createId(),
+    role: 'user',
+    content: trimmedText,
+    displayContent: trimmedDisplayText && trimmedDisplayText !== trimmedText
+      ? trimmedDisplayText
+      : undefined,
+    timestamp: Date.now(),
+    status: 'done',
+    attachments: attachments && attachments.length > 0 ? attachments : undefined,
+  };
+}
+
+function toQueuedFollowUp(
+  text: string,
+  attachments?: AttachmentData[],
+  options?: SendMessageOptions,
+): QueuedFollowUp {
   return {
     text,
     attachments,
-    options: Object.values(queuedOptions).some(Boolean) ? queuedOptions : undefined,
+    options: getQueuedFollowUpOptions(options),
     queuedAt: Date.now(),
+  };
+}
+
+function toPendingSteerRequest(
+  text: string,
+  attachments?: AttachmentData[],
+  options?: SendMessageOptions,
+): PendingSteerRequest {
+  return {
+    text,
+    attachments,
+    options: getQueuedFollowUpOptions(options),
+    requestedAt: Date.now(),
   };
 }
 
@@ -144,6 +220,8 @@ export function useChat(
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
   const [agentEventsByChat, setAgentEventsByChat] = useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
   const [queuedFollowUpsByChat, setQueuedFollowUpsByChat] = useState<QueuedItemsByChat<QueuedFollowUp>>(initialQueuedFollowUpsByChat);
+  const [liveRunEventsByChat, setLiveRunEventsByChat] = useState<Record<string, RunEvent[]>>({});
+  const [pendingSteersByChat, setPendingSteersByChat] = useState<PendingSteersByChat>({});
 
   // --- Persistence refs ---
   const dirtyConversationIdsRef = useRef(new Set<string>());
@@ -154,6 +232,8 @@ export function useChat(
   conversationsRef.current = conversations;
   const agentEventsByChatRef = useRef<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
   agentEventsByChatRef.current = agentEventsByChat;
+  const liveRunEventsByChatRef = useRef<Record<string, RunEvent[]>>({});
+  liveRunEventsByChatRef.current = liveRunEventsByChat;
   const activeChatIdRef = useRef(activeChatId);
   const abortRef = useRef(false);
   const processedContentRef = useRef<Set<string>>(new Set());
@@ -161,6 +241,8 @@ export function useChat(
   const cancelStatusTimerRef = useRef<number | null>(null);
   const queuedFollowUpsRef = useRef<QueuedItemsByChat<QueuedFollowUp>>(initialQueuedFollowUpsByChat);
   queuedFollowUpsRef.current = queuedFollowUpsByChat;
+  const pendingSteersByChatRef = useRef<PendingSteersByChat>({});
+  pendingSteersByChatRef.current = pendingSteersByChat;
   const isMountedRef = useRef(true);
 
   // --- Session identity refs ---
@@ -210,6 +292,20 @@ export function useChat(
     agentEventsByChatRef.current = next;
     if (isMountedRef.current) {
       setAgentEventsByChat(next);
+    }
+  }, []);
+
+  const replaceLiveRunEvents = useCallback((next: Record<string, RunEvent[]>) => {
+    liveRunEventsByChatRef.current = next;
+    if (isMountedRef.current) {
+      setLiveRunEventsByChat(next);
+    }
+  }, []);
+
+  const replacePendingSteers = useCallback((next: PendingSteersByChat) => {
+    pendingSteersByChatRef.current = next;
+    if (isMountedRef.current) {
+      setPendingSteersByChat(next);
     }
   }, []);
 
@@ -283,6 +379,23 @@ export function useChat(
     };
   }, []);
   const appendRunEvent = useCallback((chatId: string, event: RunEventInput) => {
+    const nextEvent: RunEvent = {
+      id: createId(),
+      timestamp: Date.now(),
+      ...event,
+    };
+
+    if (!shouldPersistRunEvent(event)) {
+      replaceLiveRunEvents({
+        ...liveRunEventsByChatRef.current,
+        [chatId]: trimRunEvents([
+          ...(liveRunEventsByChatRef.current[chatId] || []),
+          nextEvent,
+        ]),
+      });
+      return;
+    }
+
     updateConversations((prev) => {
       const conversation = prev[chatId];
       if (!conversation) return prev;
@@ -292,15 +405,11 @@ export function useChat(
         ...prev,
         [chatId]: setConversationRunEvents(conversation, [
           ...runEvents,
-          {
-            id: createId(),
-            timestamp: Date.now(),
-            ...event,
-          },
+          nextEvent,
         ]),
       };
     });
-  }, [updateConversations]);
+  }, [replaceLiveRunEvents, updateConversations]);
 
   // --- Checkpoint + resume lifecycle ---
   const {
@@ -347,8 +456,11 @@ export function useChat(
     [agentEventsByChat, activeChatId],
   );
   const runEvents = useMemo<RunEvent[]>(
-    () => conversations[activeChatId]?.runState?.runEvents ?? [],
-    [conversations, activeChatId],
+    () => mergeRunEventStreams(
+      conversations[activeChatId]?.runState?.runEvents ?? [],
+      liveRunEventsByChat[activeChatId] ?? [],
+    ),
+    [conversations, activeChatId, liveRunEventsByChat],
   );
   const conversationProvider = conversations[activeChatId]?.provider;
   const conversationModel = normalizeConversationModel(
@@ -370,6 +482,7 @@ export function useChat(
   const lockedProvider: AIProviderType | null = conversationProvider || null;
   const lockedModel: string | null = conversationModel || null;
   const queuedFollowUpCount = activeChatId ? (queuedFollowUpsByChat[activeChatId]?.length ?? 0) : 0;
+  const pendingSteerCount = activeChatId && pendingSteersByChat[activeChatId] ? 1 : 0;
 
   // --- Sorted chat IDs (filtered by repo + branch) ---
   const currentBranch = branchInfo?.currentBranch;
@@ -504,6 +617,29 @@ export function useChat(
     );
   }, [replaceQueuedFollowUps]);
 
+  const setPendingSteer = useCallback((chatId: string, steer: PendingSteerRequest) => {
+    replacePendingSteers({
+      ...pendingSteersByChatRef.current,
+      [chatId]: steer,
+    });
+  }, [replacePendingSteers]);
+
+  const consumePendingSteer = useCallback((chatId: string): PendingSteerRequest | null => {
+    const current = pendingSteersByChatRef.current[chatId];
+    if (!current) return null;
+    const next = { ...pendingSteersByChatRef.current };
+    delete next[chatId];
+    replacePendingSteers(next);
+    return current;
+  }, [replacePendingSteers]);
+
+  const clearPendingSteer = useCallback((chatId: string) => {
+    if (!pendingSteersByChatRef.current[chatId]) return;
+    const next = { ...pendingSteersByChatRef.current };
+    delete next[chatId];
+    replacePendingSteers(next);
+  }, [replacePendingSteers]);
+
   const hydratePersistedRunState = useCallback((convs: Record<string, Conversation>) => {
     replaceAgentEvents(buildAgentEventsByChat(convs));
     replaceQueuedFollowUps(buildQueuedFollowUpsByChat(convs));
@@ -602,10 +738,38 @@ export function useChat(
         const targetChatId = options?.chatId || activeChatIdRef.current || runningChatId;
         if (!runningChatId || (targetChatId && targetChatId !== runningChatId)) return;
 
+        const inputPreview = summarizeQueuedInputPreview(
+          trimmedText,
+          hasAttachments ? attachments : undefined,
+          options?.displayText,
+        );
+        const round = checkpointRefs.round.current;
+        if (options?.streamingBehavior === 'steer') {
+          const replacedPending = Boolean(pendingSteersByChatRef.current[runningChatId]);
+          setPendingSteer(
+            runningChatId,
+            toPendingSteerRequest(trimmedText, hasAttachments ? attachments : undefined, options),
+          );
+          appendRunEvent(runningChatId, {
+            type: 'user.follow_up_steered',
+            round,
+            preview: inputPreview,
+            replacedPending,
+          });
+          return;
+        }
+
+        const queuePosition = (queuedFollowUpsRef.current[runningChatId]?.length ?? 0) + 1;
         enqueueQueuedFollowUp(
           runningChatId,
           toQueuedFollowUp(trimmedText, hasAttachments ? attachments : undefined, options),
         );
+        appendRunEvent(runningChatId, {
+          type: 'user.follow_up_queued',
+          round,
+          position: queuePosition,
+          preview: inputPreview,
+        });
         return;
       }
 
@@ -617,15 +781,8 @@ export function useChat(
 
       // --- Prepare context ---
       const displayText = options?.displayText?.trim();
-      const userMessage: ChatMessage = options?.existingUserMessage ?? {
-        id: createId(),
-        role: 'user',
-        content: trimmedText,
-        displayContent: displayText && displayText !== trimmedText ? displayText : undefined,
-        timestamp: Date.now(),
-        status: 'done',
-        attachments: attachments && attachments.length > 0 ? attachments : undefined,
-      };
+      const userMessage: ChatMessage = options?.existingUserMessage
+        ?? buildRuntimeUserMessage(trimmedText, attachments, displayText);
 
       const currentMessages = options?.baseMessages ?? (conversationsRef.current[chatId]?.messages || []);
       const updatedWithUser = options?.existingUserMessage
@@ -853,6 +1010,63 @@ export function useChat(
             break;
           }
 
+          const pendingSteerBeforeToolDispatch = consumePendingSteer(chatId);
+          if (pendingSteerBeforeToolDispatch) {
+            const steerUserMessage = buildRuntimeUserMessage(
+              pendingSteerBeforeToolDispatch.text,
+              pendingSteerBeforeToolDispatch.attachments,
+              pendingSteerBeforeToolDispatch.options?.displayText,
+            );
+            const shouldKeepAssistantDraft = accumulated.trim().length > 0;
+
+            updateConversations((prev) => {
+              const conv = prev[chatId];
+              if (!conv) return prev;
+              const msgs = [...conv.messages];
+              const lastIdx = msgs.length - 1;
+              if (msgs[lastIdx]?.role === 'assistant') {
+                if (shouldKeepAssistantDraft) {
+                  msgs[lastIdx] = {
+                    ...msgs[lastIdx],
+                    content: accumulated,
+                    thinking: thinkingAccumulated || undefined,
+                    status: 'done',
+                  };
+                } else {
+                  msgs.pop();
+                }
+              }
+              const updated = {
+                ...prev,
+                [chatId]: {
+                  ...conv,
+                  messages: [...msgs, steerUserMessage],
+                  lastMessageAt: Date.now(),
+                },
+              };
+              dirtyConversationIdsRef.current.add(chatId);
+              return updated;
+            });
+
+            apiMessages = [
+              ...apiMessages,
+              ...(shouldKeepAssistantDraft
+                ? [{
+                    id: createId(),
+                    role: 'assistant' as const,
+                    content: accumulated,
+                    timestamp: Date.now(),
+                    status: 'done' as const,
+                  }]
+                : []),
+              steerUserMessage,
+            ];
+            checkpointRefs.apiMessages.current = apiMessages;
+            flushCheckpoint();
+            appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'steered' });
+            continue;
+          }
+
           // Checkpoint after streaming, before tool dispatch
           checkpointRefs.phase.current = 'executing_tools';
           flushCheckpoint();
@@ -871,15 +1085,48 @@ export function useChat(
           toolCallRecoveryState = turnResult.nextRecoveryState;
           checkpointRefs.apiMessages.current = apiMessages;
 
+          const pendingSteerAfterTurn = consumePendingSteer(chatId);
+          if (pendingSteerAfterTurn) {
+            const steerUserMessage = buildRuntimeUserMessage(
+              pendingSteerAfterTurn.text,
+              pendingSteerAfterTurn.attachments,
+              pendingSteerAfterTurn.options?.displayText,
+            );
+            updateConversations((prev) => {
+              const conv = prev[chatId];
+              if (!conv) return prev;
+              const updated = {
+                ...prev,
+                [chatId]: {
+                  ...conv,
+                  messages: [...conv.messages, steerUserMessage],
+                  lastMessageAt: Date.now(),
+                },
+              };
+              dirtyConversationIdsRef.current.add(chatId);
+              return updated;
+            });
+            apiMessages = [...apiMessages, steerUserMessage];
+            checkpointRefs.apiMessages.current = apiMessages;
+            flushCheckpoint();
+            appendRunEvent(chatId, {
+              type: 'assistant.turn_end',
+              round,
+              outcome: 'steered',
+            });
+            continue;
+          }
+
+          const turnOutcome = turnResult.loopAction === 'continue'
+            ? 'continued'
+            : turnResult.loopCompletedNormally
+              ? 'completed'
+              : 'aborted';
           if (turnResult.loopCompletedNormally) loopCompletedNormally = true;
           appendRunEvent(chatId, {
             type: 'assistant.turn_end',
             round,
-            outcome: turnResult.loopAction === 'continue'
-              ? 'continued'
-              : turnResult.loopCompletedNormally
-                ? 'completed'
-                : 'aborted',
+            outcome: turnOutcome,
           });
           if (turnResult.loopAction === 'break') break;
           // 'continue' → next round
@@ -905,8 +1152,10 @@ export function useChat(
         }
 
         if (activeChatIdRef.current !== chatId) {
+          clearPendingSteer(chatId);
           clearQueuedFollowUps(chatId);
         } else {
+          clearPendingSteer(chatId);
           const nextQueuedFollowUp = dequeueQueuedFollowUp(chatId);
           if (nextQueuedFollowUp && isMountedRef.current) {
             queueMicrotask(() => {
@@ -927,9 +1176,12 @@ export function useChat(
       flushCheckpoint,
       executeDelegateCall,
       checkpointRefs,
+      consumePendingSteer,
+      clearPendingSteer,
       dequeueQueuedFollowUp,
       clearQueuedFollowUps,
       enqueueQueuedFollowUp,
+      setPendingSteer,
       loopActiveRef,
       lastCoderStateRef,
       tabLockIntervalRef,
@@ -983,6 +1235,7 @@ export function useChat(
     runEvents,
     isStreaming,
     queuedFollowUpCount,
+    pendingSteerCount,
     lockedProvider,
     isProviderLocked,
     lockedModel,

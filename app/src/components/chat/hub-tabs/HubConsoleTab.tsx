@@ -94,7 +94,9 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
         case 'assistant.turn_end':
           items.push({
             type: 'lifecycle',
-            content: `Turn ${event.round + 1} ${event.outcome}`,
+            content: event.outcome === 'steered'
+              ? `Turn ${event.round + 1} steered`
+              : `Turn ${event.round + 1} ${event.outcome}`,
             timestamp: event.timestamp,
           });
           break;
@@ -141,6 +143,22 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
             type: 'malformed',
             content: `${getSubagentLabel(event.agent)} failed`,
             detail: event.error,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'user.follow_up_queued':
+          items.push({
+            type: 'lifecycle',
+            content: `Queued follow-up #${event.position}`,
+            detail: event.preview,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'user.follow_up_steered':
+          items.push({
+            type: 'lifecycle',
+            content: event.replacedPending ? 'Updated steering request' : 'Steering request captured',
+            detail: event.preview,
             timestamp: event.timestamp,
           });
           break;

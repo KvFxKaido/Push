@@ -175,7 +175,7 @@ CLI. Exports to OTLP HTTP or local JSON-lines files.
 | Context mgmt | CLI-internal | Multi-phase compaction | Push is more sophisticated |
 | Checkpointing | Session state files | 25-min delta snapshots | Push more robust for mobile |
 | Safety gate | Pre-tool hooks | Auditor + pre/post tool hooks | ✅ Shipped — `ToolHookRegistry` with `PreToolUseHook`/`PostToolUseHook` in tool-dispatch |
-| Mid-turn redirect | Steering/queueing | Abort + restart | Copilot is better here |
+| Mid-turn redirect | Steering/queueing | Boundary steering + FIFO queueing | Push now covers the main workflow without true in-flight token injection |
 | System prompts | 10 named sections | 12 named sections via `SystemPromptBuilder` | ✅ Shipped — all 4 agents migrated to sectioned builder |
 
 ## Patterns to Adopt
@@ -183,9 +183,9 @@ CLI. Exports to OTLP HTTP or local JSON-lines files.
 Priority order for Push:
 
 1. ~~**Sectioned system prompts**~~ ✅ **Done** — `SystemPromptBuilder` with 12 named sections, all agents migrated. See `app/src/lib/system-prompt-builder.ts`.
-2. **Steering/queueing** — Mid-turn user injection without aborting agent work.
-3. **Ephemeral vs persisted events** — Reduce IndexedDB writes, simplify resume.
+2. ~~**Steering/queueing**~~ ✅ **Done** — Streaming turns now support an explicit steer-vs-queue split in the composer, with pending steer requests applied at the next safe orchestration boundary instead of forcing abort-and-restart. See `app/src/hooks/useChat.ts` and `app/src/components/chat/ChatInput.tsx`.
+3. ~~**Ephemeral vs persisted events**~~ ✅ **Done** — The console now merges live-only run telemetry with a smaller persisted run-event stream, reducing stored chatter while preserving resume-relevant outcomes. See `app/src/lib/chat-run-events.ts`, `app/src/hooks/useChat.ts`, and `app/src/components/chat/hub-tabs/HubConsoleTab.tsx`.
 4. ~~**Per-agent tool scoping**~~ ✅ **Done** — Positive-list allowlists (`EXPLORER_ALLOWED_TOOLS`), `TurnPolicy` framework with `beforeToolExec` hooks, tool-registry `readOnly` filtering. See `app/src/lib/turn-policy.ts`, `app/src/lib/explorer-constants.ts`.
-5. ~~**Lifecycle events**~~ ✅ **Mostly done** — run events now cover assistant turns, tool execution, and subagent state. The remaining gap is richer exec/session lifecycle detail plus a cleaner ephemeral-vs-persisted split.
+5. ~~**Lifecycle events**~~ ✅ **Mostly done** — run events now cover assistant turns, tool execution, queue/steer capture, and subagent state. The remaining gap is richer exec/session/permission lifecycle detail.
 6. ~~**Pre/post tool hooks**~~ ✅ **Done** — `ToolHookRegistry` with `PreToolUseHook`/`PostToolUseHook`, integrated into `tool-dispatch.ts`, turn policy bridge. See `app/src/lib/tool-hooks.ts`.
 7. **Task agent** — Split test/build from Coder.

@@ -16,7 +16,7 @@ import {
   REASONING_EFFORT_LABELS,
   type ReasoningEffort,
 } from '@/lib/model-catalog';
-import type { AIProviderType, AttachmentData } from '@/types';
+import type { AIProviderType, AttachmentData, ChatSendOptions } from '@/types';
 import {
   formatModelDisplayName,
   getModelDisplayGroupKey,
@@ -70,10 +70,11 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-st
 import { AttachmentLinkIcon, SendLiftIcon, VoicePulseIcon } from '@/components/icons/push-custom-icons';
 
 interface ChatInputProps {
-  onSend: (message: string, attachments?: AttachmentData[]) => void;
+  onSend: (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => void;
   onStop?: () => void;
   isStreaming?: boolean;
   queuedFollowUpCount?: number;
+  pendingSteerCount?: number;
   repoName?: string;
   contextUsage?: { used: number; max: number; percent: number };
   draftKey?: string | null;
@@ -231,6 +232,7 @@ export function ChatInput({
   onStop,
   isStreaming,
   queuedFollowUpCount = 0,
+  pendingSteerCount = 0,
   repoName,
   contextUsage,
   draftKey,
@@ -387,10 +389,10 @@ export function ChatInput({
   }, []);
 
   const handleButtonClick = () => {
-    if (isStreaming && !canQueueFollowUp) {
+    if (isStreaming && !canStreamWithDraft) {
       onStop?.();
     } else {
-      handleSend();
+      handleSend(isStreaming ? 'steer' : undefined);
     }
   };
 
@@ -531,10 +533,10 @@ export function ChatInput({
   const hasUnknownImageSupport =
     readyImageAttachments.length > 0 && visionNotice.support === 'unknown';
   const canSend = canSendBase && !hasUnsupportedImageAttachments;
-  const canQueueFollowUp = Boolean(isStreaming) && hasDraftContent && !hasUnsupportedImageAttachments;
+  const canStreamWithDraft = Boolean(isStreaming) && hasDraftContent && !hasUnsupportedImageAttachments;
 
-  const handleSend = () => {
-    if (!canSend && !canQueueFollowUp) return;
+  const handleSend = (streamingBehavior?: ChatSendOptions['streamingBehavior']) => {
+    if (!canSend && !canStreamWithDraft) return;
 
     const attachments: AttachmentData[] = readyAttachments.map(
       ({ id, type, filename, mimeType, sizeBytes, content, thumbnail }) => ({
@@ -548,7 +550,11 @@ export function ChatInput({
       }),
     );
 
-    onSend(value.trim(), attachments.length > 0 ? attachments : undefined);
+    onSend(
+      value.trim(),
+      attachments.length > 0 ? attachments : undefined,
+      streamingBehavior ? { streamingBehavior } : undefined,
+    );
     setValue('');
     setStagedAttachments([]);
 
@@ -560,8 +566,8 @@ export function ChatInput({
   };
 
   const sendButtonLabel = isStreaming
-    ? canQueueFollowUp
-      ? 'Queue follow-up'
+    ? canStreamWithDraft
+      ? 'Steer current run'
       : 'Stop generating'
     : hasUnsupportedImageAttachments
       ? 'Selected model cannot read image attachments'
@@ -577,11 +583,20 @@ export function ChatInput({
           text: `${visionNotice.text} Remove the image attachment${readyImageAttachments.length > 1 ? 's' : ''} to queue this follow-up.`,
         };
       }
-      if (canQueueFollowUp) {
+      if (canStreamWithDraft) {
         const queueText = queuedFollowUpCount > 0
-          ? `after ${queuedFollowUpCount} queued follow-up${queuedFollowUpCount === 1 ? '' : 's'}`
-          : 'after the current run finishes';
-        return { tone: 'default' as const, text: `Send queues this follow-up ${queueText}.` };
+          ? `Queue waits behind ${queuedFollowUpCount} queued follow-up${queuedFollowUpCount === 1 ? '' : 's'}.`
+          : 'Queue waits until the current run finishes.';
+        return {
+          tone: 'default' as const,
+          text: `Send steers the next turn. ${queueText}`,
+        };
+      }
+      if (pendingSteerCount > 0) {
+        return {
+          tone: 'default' as const,
+          text: 'Steering update captured. It will apply after the current step.',
+        };
       }
       if (queuedFollowUpCount > 0) {
         return {
@@ -589,7 +604,7 @@ export function ChatInput({
           text: `${queuedFollowUpCount} follow-up${queuedFollowUpCount === 1 ? '' : 's'} queued`,
         };
       }
-      return { tone: 'default' as const, text: 'Generating... Draft a follow-up or clear the composer to stop.' };
+      return { tone: 'default' as const, text: 'Generating... Draft a steer or clear the composer to stop.' };
     }
     if (hasUnsupportedImageAttachments) {
       return {
@@ -622,10 +637,10 @@ export function ChatInput({
 
     if (e.key === 'Enter' && !e.shiftKey && !isMobileDevice) {
       e.preventDefault();
-      if (isStreaming && !canQueueFollowUp) {
+      if (isStreaming && !canStreamWithDraft) {
         onStop?.();
       } else {
-        handleSend();
+        handleSend(isStreaming ? 'steer' : undefined);
       }
     }
   };
@@ -1147,25 +1162,40 @@ export function ChatInput({
             ) : null}
           </div>
 
+          {canStreamWithDraft && (
+            <button
+              type="button"
+              onClick={() => handleSend('queue')}
+              className={`flex h-10 shrink-0 items-center rounded-full px-3 text-xs text-push-fg-secondary ${
+                `${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
+              }`}
+              aria-label="Queue follow-up"
+              title="Queue follow-up"
+            >
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
+              <span className="relative z-10">Queue</span>
+            </button>
+          )}
+
           {/* Send/Stop button */}
           <button
             type="button"
             onClick={handleButtonClick}
             disabled={!isStreaming && !canSend}
             className={`flex h-10 w-10 shrink-0 items-center justify-center ${
-              isStreaming && !canQueueFollowUp
+              isStreaming && !canStreamWithDraft
                 ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 bg-[linear-gradient(180deg,rgba(55,12,18,0.96)_0%,rgba(28,7,11,0.98)_100%)] text-red-300 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
-                : canSend || canQueueFollowUp
+                : canSend || canStreamWithDraft
                   ? `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
                   : 'cursor-not-allowed rounded-full border border-[#262c38] bg-[#151a22] text-[#576176] shadow-none'
             }`}
             aria-label={sendButtonLabel}
             title={sendButtonLabel}
           >
-            {(isStreaming || canSend || canQueueFollowUp) && (
+            {(isStreaming || canSend || canStreamWithDraft) && (
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
             )}
-            {isStreaming && !canQueueFollowUp ? (
+            {isStreaming && !canStreamWithDraft ? (
               <Square className="relative z-10 h-4 w-4 fill-current" />
             ) : (
               <SendLiftIcon className="relative z-10 h-4 w-4" />

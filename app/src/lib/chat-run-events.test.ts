@@ -1,34 +1,101 @@
 import { describe, expect, it } from 'vitest';
-import type { RunEvent } from '@/types';
-import { MAX_RUN_EVENTS_PER_CHAT, summarizeToolResultPreview, trimRunEvents } from './chat-run-events';
+import type { RunEvent, RunEventInput } from '@/types';
+import {
+  mergeRunEventStreams,
+  shouldPersistRunEvent,
+  trimRunEvents,
+  MAX_RUN_EVENTS_PER_CHAT,
+} from './chat-run-events';
 
-function makeRunEvent(id: number): RunEvent {
+function makeRunEvent(
+  overrides: Partial<Extract<RunEvent, { type: 'tool.execution_complete' }>> = {},
+): Extract<RunEvent, { type: 'tool.execution_complete' }> {
   return {
-    id: `event-${id}`,
-    timestamp: id,
-    type: 'assistant.turn_start',
-    round: id,
+    id: 'run-1',
+    timestamp: 1,
+    type: 'tool.execution_complete',
+    round: 0,
+    executionId: 'exec-1',
+    toolName: 'Read file',
+    toolSource: 'sandbox',
+    durationMs: 12,
+    isError: false,
+    preview: 'Loaded file',
+    ...overrides,
   };
 }
 
 describe('chat-run-events', () => {
-  it('trims persisted run events to the newest entries', () => {
-    const events = Array.from({ length: MAX_RUN_EVENTS_PER_CHAT + 2 }, (_, index) => makeRunEvent(index));
+  it('keeps live-only telemetry out of persisted run state', () => {
+    const liveOnlyEvents: RunEventInput[] = [
+      { type: 'assistant.turn_start', round: 0 },
+      {
+        type: 'tool.execution_start',
+        round: 0,
+        executionId: 'exec-1',
+        toolName: 'Read file',
+        toolSource: 'sandbox',
+      },
+      {
+        type: 'user.follow_up_queued',
+        round: 0,
+        position: 1,
+        preview: 'Look at the failing test next.',
+      },
+      {
+        type: 'user.follow_up_steered',
+        round: 0,
+        preview: 'Actually inspect lint first.',
+        replacedPending: false,
+      },
+      {
+        type: 'subagent.started',
+        executionId: 'sub-1',
+        agent: 'coder',
+      },
+    ];
 
-    const trimmed = trimRunEvents(events);
+    liveOnlyEvents.forEach((event) => {
+      expect(shouldPersistRunEvent(event)).toBe(false);
+    });
 
-    expect(trimmed).toHaveLength(MAX_RUN_EVENTS_PER_CHAT);
-    expect(trimmed[0]?.id).toBe('event-2');
-    expect(trimmed.at(-1)?.id).toBe(`event-${MAX_RUN_EVENTS_PER_CHAT + 1}`);
+    expect(shouldPersistRunEvent({
+      type: 'assistant.turn_end',
+      round: 0,
+      outcome: 'completed',
+    })).toBe(true);
   });
 
-  it('builds compact previews from tool result text', () => {
-    const preview = summarizeToolResultPreview(`
-      [Tool Result — delegate_coder]
+  it('merges persisted and live streams in timestamp order', () => {
+    const merged = mergeRunEventStreams(
+      [
+        makeRunEvent({
+          id: 'persisted',
+          timestamp: 30,
+          preview: 'Persisted result',
+        }),
+      ],
+      [
+        makeRunEvent({
+          id: 'live',
+          timestamp: 10,
+          preview: 'Live result',
+        }),
+      ],
+    );
 
-      Updated auth flow and added tests.
-    `);
+    expect(merged.map((event) => event.id)).toEqual(['live', 'persisted']);
+  });
 
-    expect(preview).toBe('Updated auth flow and added tests.');
+  it('still trims merged streams to the configured cap', () => {
+    const overLimit = Array.from({ length: MAX_RUN_EVENTS_PER_CHAT + 5 }, (_, index) =>
+      makeRunEvent({
+        id: `run-${index}`,
+        timestamp: index,
+      }),
+    );
+
+    expect(trimRunEvents(overLimit)).toHaveLength(MAX_RUN_EVENTS_PER_CHAT);
+    expect(mergeRunEventStreams(overLimit)).toHaveLength(MAX_RUN_EVENTS_PER_CHAT);
   });
 });

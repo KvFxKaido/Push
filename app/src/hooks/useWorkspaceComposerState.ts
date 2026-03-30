@@ -235,9 +235,9 @@ export function useWorkspaceComposerState({
       rememberChatModel(activeChatDraft.provider, activeChatDraft.models[activeChatDraft.provider]);
     }
     return sendMessage(message, attachments, {
+      ...options,
       provider: activeChatDraft.provider,
       model: activeChatDraft.provider ? activeChatDraft.models[activeChatDraft.provider] : null,
-      displayText: options?.displayText,
     });
   }, [activeChatDraft, rememberChatModel, sendMessage]);
 

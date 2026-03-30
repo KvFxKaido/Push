@@ -71,6 +71,7 @@ export interface ChatRouteConversationProps {
   runEvents: RunEvent[];
   isStreaming: boolean;
   queuedFollowUpCount: number;
+  pendingSteerCount: number;
   lockedProvider: AIProviderType | null;
   isProviderLocked: boolean;
   lockedModel: string | null;

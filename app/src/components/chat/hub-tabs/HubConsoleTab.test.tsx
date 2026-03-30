@@ -51,6 +51,21 @@ describe('HubConsoleTab', () => {
             agent: 'coder',
             summary: 'Patched tests.',
           },
+          {
+            id: 'event-5',
+            timestamp: 6,
+            type: 'user.follow_up_steered',
+            round: 0,
+            preview: 'Skip that and inspect the failing test instead.',
+            replacedPending: false,
+          },
+          {
+            id: 'event-6',
+            timestamp: 7,
+            type: 'assistant.turn_end',
+            round: 0,
+            outcome: 'steered',
+          },
         ]}
       />,
     );
@@ -59,6 +74,8 @@ describe('HubConsoleTab', () => {
     expect(html).toContain('&gt; Read file');
     expect(html).toContain('Loaded app.ts (12ms)');
     expect(html).toContain('Coder completed');
+    expect(html).toContain('Steering request captured');
+    expect(html).toContain('Turn 1 steered');
     expect(html).toContain('Thinking...');
   });
 });
