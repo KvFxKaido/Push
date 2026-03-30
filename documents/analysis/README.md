@@ -15,6 +15,7 @@ This folder is a mix of current architecture analysis, comparative research, and
 | Document | Status | Notes |
 |---|---|---|
 | `Agent Experience Wishlist.md` | Historical | Shipped on 2026-02-19; useful for provenance and feature rationale. |
+| `Architecture Rating Snapshot.md` | Reference snapshot, added 2026-03-30 | Concise point-in-time assessment of Push's architecture quality after the harness runtime evolution rollout. |
 | `Agent Tool Patterns — Claude Code Cross-Reference.md` | Reference, refreshed 2026-03-30 | Comparative design notes; several February borrow items are now shipped or partial (`ask_user`, typed delegation, adaptive web-side working-memory reinjection). The main remaining follow-up is bringing the CLI working-memory path to the same standard. |
 | `AgentScope Architecture Review.md` | Current, refreshed after tracing pass | Web-side OTel spans are now in place for model/tool/sandbox/delegation boundaries; the main remaining work is Worker/server propagation and sandbox-provider abstraction. |
 | `Copilot SDK Research.md` | Current, partially superseded | Prompt sections, tool scoping, steering/queueing, and the live-vs-persisted event split are now in place; the main still-open carry-over is a dedicated task agent plus richer session/permission telemetry. |
