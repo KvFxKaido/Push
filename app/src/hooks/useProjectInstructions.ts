@@ -194,7 +194,7 @@ export function useProjectInstructions(
         + ' You have full access to the sandbox filesystem and can create, edit, and run files freely.'
         + ' Nothing is saved or committed unless the user explicitly downloads their work.'
         + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.';
-      setWorkspaceContext({ description, includeGitHubTools: false });
+      setWorkspaceContext({ description, includeGitHubTools: false, mode: 'scratch' });
       return;
     }
     if (repos.length > 0) {
@@ -203,7 +203,7 @@ export function useProjectInstructions(
         const safe = sanitizeProjectInstructions(agentsMdContent);
         description += '\n\n[PROJECT INSTRUCTIONS]\n' + safe + '\n[/PROJECT INSTRUCTIONS]';
       }
-      setWorkspaceContext({ description, includeGitHubTools: true });
+      setWorkspaceContext({ description, includeGitHubTools: true, mode: 'repo' });
     } else {
       setWorkspaceContext(null);
     }

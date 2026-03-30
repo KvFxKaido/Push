@@ -552,7 +552,21 @@ describe('executeSandboxToolCall -- edit guard', () => {
     );
 
     expect(result.text).toContain('Wrote /workspace/src/foo.ts');
+    expect(result.text).toContain('[POSTCONDITIONS]');
     expect(result.text).not.toContain('Edit guard');
+    expect(result.postconditions?.touchedFiles).toEqual([
+      expect.objectContaining({
+        path: '/workspace/src/foo.ts',
+        mutation: 'write',
+        versionBefore: 'v1',
+        versionAfter: 'v2',
+      }),
+    ]);
+    expect(result.postconditions?.diagnostics?.[0]).toMatchObject({
+      scope: 'single-file',
+      path: '/workspace/src/foo.ts',
+      status: 'clean',
+    });
   });
 
   it('auto-expand allows new-file creation when file does not exist', async () => {
@@ -1814,9 +1828,23 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     );
 
     expect(result.text).toContain('[Tool Result — sandbox_apply_patchset]');
+    expect(result.text).toContain('[POSTCONDITIONS]');
     expect(result.text).not.toContain('Guard warnings:');
     expect(result.text).toContain(path);
     expect(vi.mocked(sandboxClient.batchWriteToSandbox)).toHaveBeenCalled();
+    expect(result.postconditions?.touchedFiles).toEqual([
+      expect.objectContaining({
+        path,
+        mutation: 'patchset',
+        versionBefore: 'v1',
+        versionAfter: 'v2',
+      }),
+    ]);
+    expect(result.postconditions?.diagnostics?.[0]).toMatchObject({
+      scope: 'project',
+      label: 'project typecheck',
+      status: 'clean',
+    });
   });
 
   it('blocks patchset when guard auto-expand remains truncated', async () => {

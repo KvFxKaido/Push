@@ -19,6 +19,11 @@ import type {
   FileListCardData,
   TestResultsCardData,
   TypeCheckCardData,
+  ToolMutationCheckResult,
+  ToolMutationDiagnostic,
+  ToolMutationFilePostcondition,
+  ToolMutationPostconditions,
+  ToolMutationSpan,
 } from '@/types';
 import {
   execInSandbox,
@@ -113,6 +118,145 @@ export {
   SANDBOX_TOOL_PROTOCOL,
   getSandboxToolProtocol,
 } from './sandbox-tool-detection';
+
+const POSTCONDITION_OUTPUT_LIMIT = 1200;
+const SUPPORTED_PER_EDIT_DIAGNOSTIC_EXT_RE = /\.(ts|tsx|js|jsx|py)$/i;
+const SUPPORTED_PATCHSET_DIAGNOSTIC_EXT_RE = /\.(ts|tsx)$/i;
+
+function buildLineRanges(lineNumbers: readonly number[]): Array<{ startLine: number; endLine: number }> {
+  const sorted = [...new Set(lineNumbers.filter((lineNo) => Number.isFinite(lineNo) && lineNo > 0))]
+    .sort((a, b) => a - b);
+  if (sorted.length === 0) return [];
+
+  const ranges: Array<{ startLine: number; endLine: number }> = [];
+  let startLine = sorted[0];
+  let endLine = sorted[0];
+
+  for (let i = 1; i < sorted.length; i += 1) {
+    const lineNo = sorted[i];
+    if (lineNo === endLine + 1) {
+      endLine = lineNo;
+      continue;
+    }
+    ranges.push({ startLine, endLine });
+    startLine = lineNo;
+    endLine = lineNo;
+  }
+
+  ranges.push({ startLine, endLine });
+  return ranges;
+}
+
+function buildHashlineChangedSpans(
+  ops: readonly HashlineOp[],
+  resolvedLines: readonly number[],
+): ToolMutationSpan[] {
+  const refs = [...new Set(ops.map((op) => op.ref))];
+  const opNames = [...new Set(ops.map((op) => op.op))];
+  const ranges = buildLineRanges(resolvedLines);
+
+  if (ranges.length === 0) {
+    return [{ kind: 'hashline', refs, ops: opNames }];
+  }
+
+  return ranges.map(({ startLine, endLine }) => ({
+    kind: 'hashline',
+    startLine,
+    endLine,
+    lineNumbers: resolvedLines.filter((lineNo) => lineNo >= startLine && lineNo <= endLine),
+    refs,
+    ops: opNames,
+  }));
+}
+
+function buildPerEditDiagnosticSummary(
+  filePath: string,
+  output: string | null,
+): ToolMutationDiagnostic {
+  return {
+    scope: 'single-file',
+    label: 'syntax check',
+    path: filePath,
+    status: output
+      ? 'issues'
+      : SUPPORTED_PER_EDIT_DIAGNOSTIC_EXT_RE.test(filePath)
+        ? 'clean'
+        : 'skipped',
+    ...(output ? { output } : {}),
+  };
+}
+
+function buildPatchsetDiagnosticSummary(
+  changedFiles: readonly string[],
+  enabled: boolean,
+  output: string | null,
+): ToolMutationDiagnostic {
+  const hasSupportedFile = changedFiles.some((filePath) => SUPPORTED_PATCHSET_DIAGNOSTIC_EXT_RE.test(filePath));
+  return {
+    scope: 'project',
+    label: 'project typecheck',
+    status: !enabled ? 'skipped' : output ? 'issues' : hasSupportedFile ? 'clean' : 'skipped',
+    ...(output ? { output } : {}),
+  };
+}
+
+function truncatePostconditionOutput(output?: string): string | undefined {
+  const trimmed = output?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length <= POSTCONDITION_OUTPUT_LIMIT) return trimmed;
+  return `${trimmed.slice(0, POSTCONDITION_OUTPUT_LIMIT)}\n[truncated]`;
+}
+
+function appendMutationPostconditions(
+  lines: string[],
+  postconditions?: ToolMutationPostconditions,
+): void {
+  if (!postconditions || postconditions.touchedFiles.length === 0) return;
+
+  const payload = {
+    touchedFiles: postconditions.touchedFiles,
+    diagnostics: postconditions.diagnostics?.map((diagnostic) => ({
+      ...diagnostic,
+      output: truncatePostconditionOutput(diagnostic.output),
+    })),
+    checks: postconditions.checks?.map((check) => ({
+      ...check,
+      output: truncatePostconditionOutput(check.output),
+    })),
+    guardWarnings: postconditions.guardWarnings?.slice(0, 8),
+    writeVerified: postconditions.writeVerified,
+    rollbackApplied: postconditions.rollbackApplied,
+  };
+
+  lines.push('', '[POSTCONDITIONS]', JSON.stringify(payload, null, 2), '[/POSTCONDITIONS]');
+}
+
+function buildPatchsetTouchedFiles(
+  editResults: ReadonlyArray<{
+    path: string;
+    version?: string;
+    resolvedLines: number[];
+    ops: HashlineOp[];
+  }>,
+  successfulWrites: ReadonlyMap<string, { bytesWritten?: number; versionAfter?: string | null }>,
+): ToolMutationFilePostcondition[] {
+  const touchedFiles: ToolMutationFilePostcondition[] = [];
+
+  for (const editResult of editResults) {
+    const success = successfulWrites.get(editResult.path);
+    if (!success) continue;
+    touchedFiles.push({
+      path: editResult.path,
+      mutation: 'patchset',
+      bytesWritten: success.bytesWritten,
+      versionBefore: editResult.version ?? null,
+      versionAfter: success.versionAfter ?? null,
+      changedSpans: buildHashlineChangedSpans(editResult.ops, editResult.resolvedLines),
+    });
+  }
+
+  return touchedFiles;
+}
 
 // --- Execution ---
 
@@ -932,8 +1076,24 @@ export async function executeSandboxToolCall(
         if (diagnostics) {
           editLines.push('', '[DIAGNOSTICS]', diagnostics);
         }
+        const postconditionWarnings = [symbolicWarning, autoRetryNote, writeVerified ? null : verifyWarning]
+          .filter((warning): warning is string => Boolean(warning));
+        const editPostconditions: ToolMutationPostconditions = {
+          touchedFiles: [{
+            path,
+            mutation: 'edit',
+            bytesWritten: editWriteResult.bytes_written ?? editResult.content.length,
+            versionBefore: readResult.version ?? null,
+            versionAfter: editWriteResult.new_version ?? null,
+            changedSpans: buildHashlineChangedSpans(edits, editResult.resolvedLines),
+          }],
+          diagnostics: [buildPerEditDiagnosticSummary(path, diagnostics)],
+          guardWarnings: postconditionWarnings.length > 0 ? postconditionWarnings : undefined,
+          writeVerified,
+        };
+        appendMutationPostconditions(editLines, editPostconditions);
 
-        return { text: editLines.join('\n') };
+        return { text: editLines.join('\n'), postconditions: editPostconditions };
       }
 
       case 'sandbox_edit_range': {
@@ -1504,11 +1664,30 @@ export async function executeSandboxToolCall(
           fileLedger.recordMutation(call.args.path, 'agent');
           symbolLedger.invalidate(call.args.path);
 
+          const writeDiagnostics = await runPerEditDiagnostics(sandboxId, call.args.path);
+          if (writeDiagnostics) {
+            lines.push('', '[DIAGNOSTICS]', writeDiagnostics);
+          }
+
+          const writePostconditions: ToolMutationPostconditions = {
+            touchedFiles: [{
+              path: call.args.path,
+              mutation: 'write',
+              bytesWritten: result.bytes_written ?? call.args.content.length,
+              versionBefore: freshVersion ?? previousVersion ?? null,
+              versionAfter: result.new_version ?? null,
+              changedSpans: [{ kind: 'full_write' }],
+            }],
+            diagnostics: [buildPerEditDiagnosticSummary(call.args.path, writeDiagnostics)],
+            guardWarnings: staleWarning ? [staleWarning] : undefined,
+          };
+          appendMutationPostconditions(lines, writePostconditions);
+
           recordWriteFileMetric({
             durationMs: Date.now() - writeStart,
             outcome: 'success',
           });
-          return { text: lines.join('\n') };
+          return { text: lines.join('\n'), postconditions: writePostconditions };
         } catch (writeErr) {
           const errMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
           const errCode = errMsg.match(/\(([A-Z_]+)\)/)?.[1] || 'WRITE_EXCEPTION';
@@ -2440,7 +2619,15 @@ export async function executeSandboxToolCall(
         const fileContents = new Map<string, { content: string; version?: string; workspaceRevision?: number }>();
         const validationErrors: string[] = [];
         const phase1HydrationBlocked: string[] = [];
-        const editResults: Array<{ path: string; content: string; applied: number; version?: string; workspaceRevision?: number }> = [];
+        const editResults: Array<{
+          path: string;
+          content: string;
+          applied: number;
+          version?: string;
+          workspaceRevision?: number;
+          resolvedLines: number[];
+          ops: HashlineOp[];
+        }> = [];
 
         // Read all files in parallel (reuse cached content from guard auto-expand)
         const readPromises = edits.map(async (edit) => {
@@ -2567,6 +2754,8 @@ export async function executeSandboxToolCall(
               applied: editResult.applied,
               version: fileData.version,
               workspaceRevision: fileData.workspaceRevision,
+              resolvedLines: [...editResult.resolvedLines],
+              ops: [...edit.ops],
             });
           }
         }
@@ -2628,6 +2817,7 @@ export async function executeSandboxToolCall(
         // Phase 2: Batch write all files in a single HTTP request
         const writeResults: string[] = [];
         const writeFailures: string[] = [];
+        const successfulWrites = new Map<string, { bytesWritten?: number; versionAfter?: string | null }>();
         let staleFailureCount = 0;
 
         // Build index for lookup by path
@@ -2703,6 +2893,10 @@ export async function executeSandboxToolCall(
               fileLedger.recordCreation(entry.path);
               fileLedger.recordMutation(entry.path, 'agent');
               symbolLedger.invalidate(entry.path);
+              successfulWrites.set(entry.path, {
+                bytesWritten: entry.bytes_written,
+                versionAfter: entry.new_version ?? null,
+              });
               writeResults.push(`${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`);
             } else {
               if (entry.code === 'STALE_FILE') {
@@ -2778,6 +2972,10 @@ export async function executeSandboxToolCall(
                 fileLedger.recordCreation(r.path);
                 fileLedger.recordMutation(r.path, 'agent');
                 symbolLedger.invalidate(r.path);
+                successfulWrites.set(r.path, {
+                  bytesWritten: writeResult.bytes_written ?? r.content.length,
+                  versionAfter: writeResult.new_version ?? null,
+                });
                 writeResults.push(`${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`);
               }
             } catch (e) {
@@ -2815,14 +3013,22 @@ export async function executeSandboxToolCall(
             lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
           }
           lines.push('Re-read failed files before retrying to avoid stale or partial-overwrite risk.');
+          const partialPostconditions = successfulWrites.size > 0
+            ? {
+                touchedFiles: buildPatchsetTouchedFiles(editResults, successfulWrites),
+                guardWarnings: guardWarnings.length > 0 ? guardWarnings : undefined,
+              } satisfies ToolMutationPostconditions
+            : undefined;
+          appendMutationPostconditions(lines, partialPostconditions);
           return {
             text: formatStructuredError(err, lines.join('\n')),
             structuredError: err,
+            ...(partialPostconditions ? { postconditions: partialPostconditions } : {}),
           };
         }
 
         // Phase 3: Run post-write checks (if provided)
-        const checksResults: Array<{ command: string; passed: boolean; exitCode: number; output: string }> = [];
+        const checksResults: ToolMutationCheckResult[] = [];
         let checksFailed = false;
         if (checks?.length) {
           for (const check of checks) {
@@ -2851,6 +3057,7 @@ export async function executeSandboxToolCall(
         if (checksFailed && rollbackOnFailure) {
           const rollbackResults: string[] = [];
           const rollbackErrors: string[] = [];
+          const rollbackWrites = new Map<string, { bytesWritten?: number; versionAfter?: string | null }>();
           for (const edit of edits) {
             const original = fileContents.get(edit.path);
             if (!original) {
@@ -2866,6 +3073,10 @@ export async function executeSandboxToolCall(
                 if (typeof restoreResult.new_version === 'string' && restoreResult.new_version) {
                   versionCacheSet(cacheKey, restoreResult.new_version);
                 }
+                rollbackWrites.set(edit.path, {
+                  bytesWritten: original.content.length,
+                  versionAfter: restoreResult.new_version ?? original.version ?? null,
+                });
                 rollbackResults.push(edit.path);
               } else {
                 rollbackErrors.push(`${edit.path}: ${restoreResult.error || 'restore failed'}`);
@@ -2913,7 +3124,14 @@ export async function executeSandboxToolCall(
             rollbackLines.push(`Rollback errors: ${rollbackErrors.join('; ')}`);
           }
           rollbackLines.push('Fix the issue and retry the patchset.');
-          return { text: rollbackLines.join('\n') };
+          const rollbackPostconditions: ToolMutationPostconditions = {
+            touchedFiles: buildPatchsetTouchedFiles(editResults, rollbackWrites),
+            checks: checksResults,
+            guardWarnings: guardWarnings.length > 0 ? guardWarnings : undefined,
+            rollbackApplied: true,
+          };
+          appendMutationPostconditions(rollbackLines, rollbackPostconditions);
+          return { text: rollbackLines.join('\n'), postconditions: rollbackPostconditions };
         }
 
         const lines: string[] = [
@@ -2935,15 +3153,27 @@ export async function executeSandboxToolCall(
         }
 
         // Tier 2 ambient diagnostics: full project typecheck after patchset (1A)
+        let patchDiagnostics: string | null = null;
         if (call.args.diagnostics !== false) {
           const changedPaths = editResults.map(r => r.path);
-          const patchDiagnostics = await runPatchsetDiagnostics(sandboxId, changedPaths);
+          patchDiagnostics = await runPatchsetDiagnostics(sandboxId, changedPaths);
           if (patchDiagnostics) {
             lines.push('', '[DIAGNOSTICS — project typecheck]', patchDiagnostics);
           }
         }
+        const patchsetPostconditions: ToolMutationPostconditions = {
+          touchedFiles: buildPatchsetTouchedFiles(editResults, successfulWrites),
+          diagnostics: [buildPatchsetDiagnosticSummary(
+            editResults.map((result) => result.path),
+            call.args.diagnostics !== false,
+            patchDiagnostics,
+          )],
+          checks: checksResults.length > 0 ? checksResults : undefined,
+          guardWarnings: guardWarnings.length > 0 ? guardWarnings : undefined,
+        };
+        appendMutationPostconditions(lines, patchsetPostconditions);
 
-        return { text: lines.join('\n') };
+        return { text: lines.join('\n'), postconditions: patchsetPostconditions };
       }
 
       default:
@@ -2956,4 +3186,3 @@ export async function executeSandboxToolCall(
     return { text: formatStructuredError(catchErr, `[Tool Error] ${msg}`), structuredError: catchErr };
   }
 }
-

@@ -24,6 +24,8 @@ export interface WorkspaceContext {
   description: string;
   /** Whether to include GitHub tool protocol (false for scratch workspaces) */
   includeGitHubTools: boolean;
+  /** Logical workspace mode for runtime/session prompt blocks. */
+  mode: WorkspaceMode;
 }
 
 export interface WorkspaceCapabilities {
@@ -320,6 +322,48 @@ export interface CriterionResult {
   output: string;
 }
 
+export interface ToolMutationSpan {
+  kind: 'hashline' | 'full_write';
+  startLine?: number;
+  endLine?: number;
+  lineNumbers?: number[];
+  refs?: string[];
+  ops?: string[];
+}
+
+export interface ToolMutationFilePostcondition {
+  path: string;
+  mutation: 'edit' | 'write' | 'patchset';
+  bytesWritten?: number;
+  versionBefore?: string | null;
+  versionAfter?: string | null;
+  changedSpans?: ToolMutationSpan[];
+}
+
+export interface ToolMutationDiagnostic {
+  scope: 'single-file' | 'project';
+  label: string;
+  path?: string;
+  status: 'clean' | 'issues' | 'skipped';
+  output?: string;
+}
+
+export interface ToolMutationCheckResult {
+  command: string;
+  passed: boolean;
+  exitCode: number;
+  output?: string;
+}
+
+export interface ToolMutationPostconditions {
+  touchedFiles: ToolMutationFilePostcondition[];
+  diagnostics?: ToolMutationDiagnostic[];
+  checks?: ToolMutationCheckResult[];
+  guardWarnings?: string[];
+  writeVerified?: boolean;
+  rollbackApplied?: boolean;
+}
+
 // --- Tool result meta envelope ---
 
 /** Lightweight metadata prepended to every tool result text. */
@@ -369,6 +413,8 @@ export interface ToolExecutionResult {
   card?: ChatCard;
   /** Structured error metadata — present when the tool failed. */
   structuredError?: StructuredToolError;
+  /** Structured write/mutation summary for ambient runtime awareness. */
+  postconditions?: ToolMutationPostconditions;
   promotion?: {
     repo: ActiveRepo;
     pushed: boolean;

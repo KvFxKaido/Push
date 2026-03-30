@@ -14,6 +14,7 @@ import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
 import { buildModelCapabilityAwarenessBlock } from './model-capabilities';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
+import { buildSessionCapabilityBlock } from './workspace-context';
 import { SystemPromptBuilder } from './system-prompt-builder';
 import { SHARED_SAFETY_SECTION } from './system-prompt-sections';
 // --- Re-exports from orchestrator-streaming (break circular dependency) ---
@@ -520,6 +521,10 @@ function toLLMMessages(
     // Workspace description + GitHub tool protocol
     if (workspaceContext) {
       let envContent = workspaceContext.description;
+      const capabilityBlock = buildSessionCapabilityBlock(workspaceContext, hasSandbox);
+      if (capabilityBlock) {
+        envContent += '\n\n' + capabilityBlock;
+      }
       if (workspaceContext.includeGitHubTools) {
         envContent += '\n' + TOOL_PROTOCOL;
       }

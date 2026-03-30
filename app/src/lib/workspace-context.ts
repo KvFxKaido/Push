@@ -1,4 +1,5 @@
-import type { RepoWithActivity, ActiveRepo } from '@/types';
+import type { RepoWithActivity, ActiveRepo, WorkspaceContext } from '@/types';
+import { getSandboxEnvironment } from './sandbox-client';
 
 /**
  * Builds a compact workspace summary for injection into the system prompt.
@@ -136,4 +137,35 @@ export function buildWorkspaceContext(
   sections.push('\nUse the tools below to get PR details, commits, or file contents.');
 
   return sections.join('\n');
+}
+
+export function buildSessionCapabilityBlock(
+  workspaceContext: Pick<WorkspaceContext, 'mode' | 'includeGitHubTools'>,
+  hasSandbox?: boolean,
+): string {
+  const sandboxEnv = hasSandbox ? getSandboxEnvironment() : null;
+  const payload = {
+    workspaceMode: workspaceContext.mode,
+    githubTools: workspaceContext.includeGitHubTools,
+    sandbox: {
+      available: Boolean(hasSandbox),
+      writableRoot: sandboxEnv?.writable_root ?? (hasSandbox ? '/workspace' : null),
+      gitAvailable: sandboxEnv?.git_available ?? null,
+      containerTtl: sandboxEnv?.container_ttl ?? null,
+      toolVersions: sandboxEnv?.tools ?? {},
+      projectMarkers: sandboxEnv?.project_markers?.slice(0, 8) ?? [],
+      scripts: sandboxEnv?.scripts ? Object.keys(sandboxEnv.scripts).sort() : [],
+      warnings: sandboxEnv?.warnings?.slice(0, 4) ?? [],
+    },
+    workflow: {
+      branchSwitching: workspaceContext.mode === 'repo' ? 'explicit_ui_only' : 'not_applicable',
+      commitTarget: workspaceContext.mode === 'repo' ? 'active_branch' : 'none',
+      mergeFlow: workspaceContext.mode === 'repo' ? 'github_pr_only' : 'not_applicable',
+    },
+    mutationContract: {
+      writesReturn: ['touched_files', 'changed_spans', 'new_versions', 'diagnostics'],
+    },
+  };
+
+  return ['[SESSION_CAPABILITIES]', JSON.stringify(payload, null, 2), '[/SESSION_CAPABILITIES]'].join('\n');
 }

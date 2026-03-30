@@ -13,7 +13,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { streamChat } from '@/lib/orchestrator';
 import type { ActiveProvider } from '@/lib/orchestrator';
-import { detectAnyToolCall, detectAllToolCalls } from '@/lib/tool-dispatch';
+import { detectAnyToolCall, detectAllToolCalls, isReadOnlyToolCall } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import {
   appendCardsToLatestToolCall,
@@ -76,6 +76,23 @@ export interface ChatRuntimeHandlers {
   onBranchSwitch?: (branch: string) => void;
   /** Called when a tool result indicates the sandbox is unreachable. */
   onSandboxUnreachable?: (reason: string) => void;
+}
+
+const TOOL_RESULT_PULSE_INTERVAL = 3;
+
+function shouldEmitPeriodicPulse(round: number): boolean {
+  return (round + 1) % TOOL_RESULT_PULSE_INTERVAL === 0;
+}
+
+function extractChangedPathFromStatusLine(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const candidate = trimmed.slice(3).trim();
+  if (!candidate) return null;
+  if (candidate.includes(' -> ')) {
+    return candidate.split(' -> ').pop()?.trim() || null;
+  }
+  return candidate;
 }
 
 // ---------------------------------------------------------------------------
@@ -315,20 +332,72 @@ export async function processAssistantTurn(
   }
 
   // Per-round sandbox status cache — fetched lazily after the first tool executes
-  let roundSandboxStatus: { dirty: boolean; files: number } | null = null;
+  let roundSandboxStatus: {
+    dirty: boolean;
+    files: number;
+    branch?: string;
+    head?: string;
+    changedFiles?: string[];
+  } | null = null;
   let roundSandboxStatusFetched = false;
 
-  const getRoundSandboxStatus = async (): Promise<{ dirty: boolean; files: number } | null> => {
+  const getRoundSandboxStatus = async (): Promise<{
+    dirty: boolean;
+    files: number;
+    branch?: string;
+    head?: string;
+    changedFiles?: string[];
+  } | null> => {
     if (roundSandboxStatusFetched) return roundSandboxStatus;
     roundSandboxStatusFetched = true;
     if (!sandboxIdRef.current) return null;
     try {
       const statusResult = await execInSandbox(
         sandboxIdRef.current,
-        'cd /workspace && git status --porcelain 2>/dev/null | head -20',
+        [
+          'cd /workspace || exit 1',
+          'echo "---BRANCH---"',
+          'git branch --show-current 2>/dev/null',
+          'echo "---HEAD---"',
+          'git rev-parse --short HEAD 2>/dev/null',
+          'echo "---STATUS---"',
+          'git status --porcelain 2>/dev/null | head -20',
+        ].join('\n'),
       );
-      const lines = statusResult.stdout.trim().split('\n').filter(Boolean);
-      roundSandboxStatus = { dirty: lines.length > 0, files: lines.length };
+      const sections: Record<string, string[]> = {};
+      let currentSection: string | null = null;
+      for (const line of statusResult.stdout.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed === '---BRANCH---') {
+          currentSection = 'branch';
+          sections[currentSection] = [];
+          continue;
+        }
+        if (trimmed === '---HEAD---') {
+          currentSection = 'head';
+          sections[currentSection] = [];
+          continue;
+        }
+        if (trimmed === '---STATUS---') {
+          currentSection = 'status';
+          sections[currentSection] = [];
+          continue;
+        }
+        if (currentSection) {
+          sections[currentSection].push(line);
+        }
+      }
+      const statusLines = (sections.status || []).map((line) => line.trimEnd()).filter(Boolean);
+      roundSandboxStatus = {
+        dirty: statusLines.length > 0,
+        files: statusLines.length,
+        branch: sections.branch?.map((line) => line.trim()).find(Boolean),
+        head: sections.head?.map((line) => line.trim()).find(Boolean),
+        changedFiles: statusLines
+          .map(extractChangedPathFromStatusLine)
+          .filter((value): value is string => Boolean(value))
+          .slice(0, 6),
+      };
     } catch {
       // Best-effort — don't block tool execution
     }
@@ -414,6 +483,9 @@ export async function processAssistantTurn(
       lockedProvider,
       resolvedModel,
       parallelSandboxStatus,
+      shouldEmitPeriodicPulse(round) && !detected.mutating
+        ? { includePulse: true, pulseReason: 'periodic' }
+        : undefined,
     );
     const toolResultMessages = parallelRawResults.map(
       (r) => buildToolOutcome(r, parallelMetaLine, lockedProvider).resultMessage,
@@ -536,6 +608,7 @@ export async function processAssistantTurn(
         lockedProvider,
         resolvedModel,
         mutSandboxStatus,
+        { includePulse: true, pulseReason: 'mutation' },
       );
       const mutOutcome = buildToolOutcome(mutRawResult, mutMetaLine, lockedProvider);
       appendRunEvent(chatId, {
@@ -867,7 +940,18 @@ export async function processAssistantTurn(
   // Build result message with post-execution sandbox status
   roundSandboxStatusFetched = false;
   const sbStatus = await getRoundSandboxStatus();
-  const metaLine = buildMetaLine(round, apiMessages, lockedProvider, resolvedModel, sbStatus);
+  const metaLine = buildMetaLine(
+    round,
+    apiMessages,
+    lockedProvider,
+    resolvedModel,
+    sbStatus,
+    !isReadOnlyToolCall(toolCall)
+      ? { includePulse: true, pulseReason: 'mutation' }
+      : shouldEmitPeriodicPulse(round)
+        ? { includePulse: true, pulseReason: 'periodic' }
+        : undefined,
+  );
 
   let toolResultMsg: ChatMessage;
   let cardsToAttach: ChatCard[];

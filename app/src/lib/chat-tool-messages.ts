@@ -10,6 +10,7 @@ import {
   type ActiveProvider,
 } from './orchestrator';
 import { fileLedger } from './file-awareness-ledger';
+import { getSandboxEnvironment } from './sandbox-client';
 import type { AnyToolCall } from './tool-dispatch';
 import { formatToolResultEnvelope } from './tool-call-recovery';
 import { getToolStatusLabelFromName, getToolPublicName } from './tool-registry';
@@ -17,6 +18,14 @@ import { getToolStatusLabelFromName, getToolPublicName } from './tool-registry';
 export interface ToolResultMetaSnapshot {
   dirty: boolean;
   files: number;
+  branch?: string;
+  head?: string;
+  changedFiles?: string[];
+}
+
+export interface BuildToolResultMetaLineOptions {
+  includePulse?: boolean;
+  pulseReason?: 'mutation' | 'periodic';
 }
 
 export interface BuildToolMetaOptions {
@@ -57,15 +66,27 @@ export function buildToolResultMetaLine(
   provider: ActiveProvider,
   model: string | null | undefined,
   sandboxStatusCache?: ToolResultMetaSnapshot | null,
+  options?: BuildToolResultMetaLineOptions,
 ): string {
   const contextChars = apiMessages.reduce((sum, message) => sum + message.content.length, 0);
   const contextKb = Math.round(contextChars / 1024);
   const contextTokens = estimateContextTokens(apiMessages as ChatMessage[]);
   const budget = getContextBudget(provider, model || undefined);
+  const contextPressurePct = budget.maxTokens > 0
+    ? Math.max(0, Math.round((contextTokens / budget.maxTokens) * 100))
+    : 0;
+  const contextPressure = contextPressurePct >= 95
+    ? 'critical'
+    : contextPressurePct >= 80
+      ? 'high'
+      : contextPressurePct >= 60
+        ? 'elevated'
+        : 'low';
+
   const parts = [
     `[meta] round=${round} ctx=${contextKb}kb tok=${Math.round(contextTokens / 1000)}k/${Math.round(
       budget.maxTokens / 1000,
-    )}k`,
+    )}k pressure=${contextPressure} pct=${contextPressurePct}`,
   ];
 
   if (sandboxStatusCache) {
@@ -88,7 +109,22 @@ export function buildToolResultMetaLine(
     }
   }
 
-  return parts.join(' ');
+  const lines = [parts.join(' ')];
+  if (sandboxStatusCache && options?.includePulse) {
+    const sandboxEnv = getSandboxEnvironment();
+    const pulsePayload = {
+      reason: options.pulseReason ?? 'periodic',
+      branch: sandboxStatusCache.branch ?? null,
+      head: sandboxStatusCache.head ?? null,
+      dirty: sandboxStatusCache.dirty,
+      files: sandboxStatusCache.files,
+      changedFiles: sandboxStatusCache.changedFiles?.slice(0, 6) ?? [],
+      warnings: sandboxEnv?.warnings?.slice(0, 2) ?? [],
+    };
+    lines.push(`[pulse] ${JSON.stringify(pulsePayload)}`);
+  }
+
+  return lines.join('\n');
 }
 
 export function buildToolMeta(options: BuildToolMetaOptions): ToolMeta {

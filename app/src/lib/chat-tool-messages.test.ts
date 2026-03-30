@@ -6,10 +6,12 @@ const {
   mockEstimateContextTokens,
   mockGetContextBudget,
   mockGetDirtyFilesWithProvenance,
+  mockGetSandboxEnvironment,
 } = vi.hoisted(() => ({
   mockEstimateContextTokens: vi.fn(),
   mockGetContextBudget: vi.fn(),
   mockGetDirtyFilesWithProvenance: vi.fn(),
+  mockGetSandboxEnvironment: vi.fn(),
 }));
 
 vi.mock('./orchestrator', () => ({
@@ -22,6 +24,10 @@ vi.mock('./file-awareness-ledger', () => ({
     getDirtyFilesWithProvenance: (...args: unknown[]) =>
       mockGetDirtyFilesWithProvenance(...args),
   },
+}));
+
+vi.mock('./sandbox-client', () => ({
+  getSandboxEnvironment: (...args: unknown[]) => mockGetSandboxEnvironment(...args),
 }));
 
 import {
@@ -61,6 +67,7 @@ describe('chat-tool-messages', () => {
     mockEstimateContextTokens.mockReset().mockReturnValue(4096);
     mockGetContextBudget.mockReset().mockReturnValue({ maxTokens: 128000 });
     mockGetDirtyFilesWithProvenance.mockReset().mockReturnValue([]);
+    mockGetSandboxEnvironment.mockReset().mockReturnValue(null);
   });
 
   it('maps tool calls to user-facing status labels', () => {
@@ -105,8 +112,38 @@ describe('chat-tool-messages', () => {
     );
 
     expect(metaLine).toContain('[meta] round=3');
+    expect(metaLine).toContain('pressure=low pct=3');
     expect(metaLine).toContain('dirty=true files=3');
     expect(metaLine).toContain('by:[agent=1,user=1,unknown=1]');
+  });
+
+  it('emits workspace pulse lines when requested', () => {
+    mockGetSandboxEnvironment.mockReturnValue({
+      tools: { node: 'v22.0.0' },
+      warnings: ['Low disk space: 420M'],
+    });
+
+    const metaLine = buildToolResultMetaLine(
+      2,
+      [assistantMessage({ content: 'Inspect repo state' })],
+      'openrouter',
+      'claude-sonnet-4.6:nitro',
+      {
+        dirty: true,
+        files: 2,
+        branch: 'feature/runtime-contract',
+        head: 'abc1234',
+        changedFiles: ['src/a.ts', 'src/b.ts'],
+      },
+      { includePulse: true, pulseReason: 'mutation' },
+    );
+
+    expect(metaLine).toContain('[pulse]');
+    expect(metaLine).toContain('"reason":"mutation"');
+    expect(metaLine).toContain('"branch":"feature/runtime-contract"');
+    expect(metaLine).toContain('"head":"abc1234"');
+    expect(metaLine).toContain('"changedFiles":["src/a.ts","src/b.ts"]');
+    expect(metaLine).toContain('"warnings":["Low disk space: 420M"]');
   });
 
   it('builds tool result messages with wrapped content and tool metadata', () => {

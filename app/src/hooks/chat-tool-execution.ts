@@ -20,6 +20,7 @@ import {
   buildToolResultMessage,
   buildToolResultMetaLine,
   getToolName,
+  type BuildToolResultMetaLineOptions,
   type ToolResultMetaSnapshot,
 } from '@/lib/chat-tool-messages';
 import type { ActiveProvider } from '@/lib/orchestrator';
@@ -154,8 +155,9 @@ export function buildMetaLine(
   provider: ActiveProvider,
   model: string | null | undefined,
   sandboxStatus: ToolResultMetaSnapshot | null,
+  options?: BuildToolResultMetaLineOptions,
 ): string {
-  return buildToolResultMetaLine(round, apiMessages, provider, model, sandboxStatus);
+  return buildToolResultMetaLine(round, apiMessages, provider, model, sandboxStatus, options);
 }
 
 // ---------------------------------------------------------------------------
