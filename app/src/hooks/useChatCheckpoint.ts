@@ -322,7 +322,7 @@ export function useChatCheckpoint({
       repoRef.current,
       workspaceSessionIdRef.current,
     ).then(setInterruptedCheckpoint);
-  }, [activeChatId, branchInfoRef, isStreaming, repoRef, sandboxIdRef, workspaceSessionIdRef]);
+  }, [activeChatId, branchInfoRef, isStreaming, repoRef, runEngineStateRef, sandboxIdRef, workspaceSessionIdRef]);
 
   // --- Resume callbacks ---
 
