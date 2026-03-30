@@ -41,6 +41,7 @@ import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-
 import { createId } from '@/hooks/chat-persistence';
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
 import { createOrchestratorPolicy } from '@/lib/turn-policies/orchestrator-policy';
+import type { RunEngineEvent } from '@/lib/run-engine';
 import type {
   ActiveRepo,
   AgentStatus,
@@ -127,6 +128,7 @@ export interface SendLoopContext {
     options?: { chatId?: string; source?: AgentStatusSource; log?: boolean },
   ) => void;
   appendRunEvent: (chatId: string, event: RunEventInput) => void;
+  emitRunEngineEvent: (event: RunEngineEvent) => void;
   flushCheckpoint: () => void;
   executeDelegateCall: (
     chatId: string,
@@ -163,7 +165,6 @@ export async function streamAssistantRound(
     resolvedModel,
     abortRef,
     processedContentRef,
-    checkpointRefs,
     scratchpadRef,
     usageHandlerRef,
     workspaceContextRef,
@@ -171,6 +172,7 @@ export async function streamAssistantRound(
     sandboxIdRef,
     setConversations,
     updateAgentStatus,
+    emitRunEngineEvent,
   } = ctx;
 
   let accumulated = '';
@@ -186,7 +188,12 @@ export async function streamAssistantRound(
         if (processedContentRef.current.has(contentKey)) return;
         processedContentRef.current.add(contentKey);
         accumulated += token;
-        checkpointRefs.accumulated.current = accumulated;
+        emitRunEngineEvent({
+          type: 'ACCUMULATED_UPDATED',
+          timestamp: Date.now(),
+          text: accumulated,
+          thinking: thinkingAccumulated,
+        });
         updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
         setConversations((prev) => {
           const conv = prev[chatId];
@@ -216,7 +223,12 @@ export async function streamAssistantRound(
         if (processedContentRef.current.has(thinkingKey)) return;
         processedContentRef.current.add(thinkingKey);
         thinkingAccumulated += thinkingToken;
-        checkpointRefs.thinking.current = thinkingAccumulated;
+        emitRunEngineEvent({
+          type: 'ACCUMULATED_UPDATED',
+          timestamp: Date.now(),
+          text: accumulated,
+          thinking: thinkingAccumulated,
+        });
         updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
         setConversations((prev) => {
           const conv = prev[chatId];
@@ -286,9 +298,13 @@ export async function processAssistantTurn(
     setConversations,
     updateAgentStatus,
     appendRunEvent,
+    emitRunEngineEvent,
     flushCheckpoint,
     executeDelegateCall,
   } = ctx;
+
+  // checkpointRefs.apiMessages is the only remaining checkpoint ref;
+  // phase/round/accumulated are read from RunEngineState.
 
   // --- Check for multiple independent read-only tool calls in one turn ---
   const detected = detectAllToolCalls(accumulated);
@@ -577,8 +593,12 @@ export async function processAssistantTurn(
           lockedProvider,
           resolvedModel || undefined,
         );
-        checkpointRefs.phase.current = 'executing_tools';
         lastCoderStateRef.current = null;
+        emitRunEngineEvent({
+          type: 'DELEGATION_COMPLETED',
+          timestamp: Date.now(),
+          agent: mutCall.call.tool === 'delegate_explorer' ? 'explorer' : 'coder',
+        });
 
         const mutCards =
           mutResult.card && mutResult.card.type !== 'sandbox-state' ? [mutResult.card] : [];
@@ -877,8 +897,12 @@ export async function processAssistantTurn(
       resolvedModel || undefined,
     );
     toolExecDurationMs = Date.now() - toolExecStart;
-    checkpointRefs.phase.current = 'executing_tools';
     lastCoderStateRef.current = null;
+    emitRunEngineEvent({
+      type: 'DELEGATION_COMPLETED',
+      timestamp: Date.now(),
+      agent: toolCall.call.tool === 'delegate_explorer' ? 'explorer' : 'coder',
+    });
   } else {
     const singleCtx: ToolExecRunContext = {
       repoFullName: repoRef.current,

@@ -10,6 +10,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { AgentStatusEvent, Conversation } from '@/types';
 import { createId, saveActiveChatId } from '@/hooks/chat-persistence';
 import { replaceAllConversations as replaceAllConversationsInDB } from '@/lib/conversation-store';
+import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 
 // ---------------------------------------------------------------------------
 // Params
@@ -62,6 +63,7 @@ export function useChatManagement({
       lastMessageAt: Date.now(),
       repoFullName: activeRepoFullName || undefined,
       branch: activeRepoFullName ? branch : undefined,
+      verificationPolicy: getDefaultVerificationPolicy(),
     };
     setConversations((prev) => {
       const updated = { ...prev, [id]: newConv };
@@ -140,6 +142,7 @@ export function useChatManagement({
                   branchInfoRef.current?.defaultBranch ||
                   'main'
                 : undefined,
+              verificationPolicy: getDefaultVerificationPolicy(),
             };
             setActiveChatId(newId);
             saveActiveChatId(newId);
@@ -201,6 +204,7 @@ export function useChatManagement({
         lastMessageAt: Date.now(),
         repoFullName: currentRepo || undefined,
         branch: chatBranch,
+        verificationPolicy: getDefaultVerificationPolicy(),
       };
 
       setActiveChatId(id);

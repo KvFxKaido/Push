@@ -1,4 +1,5 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
+import { formatVerificationPolicyBlock } from './verification-policy';
 import { TOOL_PROTOCOL } from './github-tools';
 import { getSandboxToolProtocol } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
@@ -537,6 +538,12 @@ function toLLMMessages(
         envContent += '\n' + TOOL_PROTOCOL;
       }
       builder.set('environment', envContent);
+    }
+
+    // Session-level verification policy (from workspace context)
+    const verificationPolicyBlock = formatVerificationPolicyBlock(workspaceContext?.verificationPolicy);
+    if (verificationPolicyBlock) {
+      builder.append('guidelines', verificationPolicyBlock);
     }
 
     // Sandbox tools (when sandbox is active)

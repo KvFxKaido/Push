@@ -7,13 +7,14 @@
  */
 
 const DB_NAME = 'push-app-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export const STORE = {
   conversations: 'conversations',
   modelMetadata: 'model_metadata',
   checkpoints: 'checkpoints',
   usageLog: 'usage_log',
+  runJournal: 'run_journal',
 } as const;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -55,6 +56,13 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE.usageLog)) {
         const usageStore = db.createObjectStore(STORE.usageLog, { keyPath: 'id', autoIncrement: true });
         usageStore.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+
+      // Run journal — one entry per run, keyed by runId (Track B)
+      if (!db.objectStoreNames.contains(STORE.runJournal)) {
+        const journalStore = db.createObjectStore(STORE.runJournal, { keyPath: 'runId' });
+        journalStore.createIndex('chatId', 'chatId', { unique: false });
+        journalStore.createIndex('startedAt', 'startedAt', { unique: false });
       }
     };
 

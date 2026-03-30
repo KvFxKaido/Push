@@ -6,6 +6,7 @@ import type {
   Conversation,
   RunCheckpoint,
 } from '@/types';
+import { IDLE_RUN_STATE } from '@/lib/run-engine';
 
 const hookState = vi.hoisted(() => ({
   interruptedCheckpoint: null as RunCheckpoint | null,
@@ -106,6 +107,7 @@ describe('useChatCheckpoint', () => {
     let conversations = makeConversation();
 
     const hook = useChatCheckpoint({
+      runEngineStateRef: { current: { ...IDLE_RUN_STATE } },
       sandboxIdRef: { current: null },
       branchInfoRef: { current: undefined },
       repoRef: { current: null },
@@ -163,6 +165,7 @@ describe('useChatCheckpoint', () => {
     const agentEventsByChatRef = { current: agentEventsByChat };
 
     const hook = useChatCheckpoint({
+      runEngineStateRef: { current: { ...IDLE_RUN_STATE } },
       sandboxIdRef: { current: null },
       branchInfoRef: { current: { currentBranch: 'feature/checkpoint', defaultBranch: 'main' } },
       repoRef: { current: 'owner/repo' },

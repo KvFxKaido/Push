@@ -25,6 +25,7 @@ import { formatCoderState } from './coder-agent';
 import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
 import { SystemPromptBuilder } from './system-prompt-builder';
+import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 
 const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
 
@@ -339,6 +340,7 @@ export async function runAuditorEvaluation(
     coderRounds?: number;
     coderMaxRounds?: number;
     criteriaResults?: { id: string; passed: boolean; output: string }[];
+    verificationPolicy?: VerificationPolicy;
   },
 ): Promise<EvaluationResult> {
   // Fail-safe default
@@ -387,6 +389,13 @@ export async function runAuditorEvaluation(
       `  ${r.passed ? 'PASS' : 'FAIL'} ${r.id}${r.passed ? '' : `: ${r.output.slice(0, 200)}`}`,
     );
     sections.push(`[ACCEPTANCE CRITERIA] ${passed}/${total} passed\n${lines.join('\n')}\n[/ACCEPTANCE CRITERIA]`);
+  }
+
+  // Session-level verification policy — gives the auditor awareness of
+  // what verification rules the session expects so it can flag gaps.
+  const policyBlock = formatVerificationPolicyBlock(options?.verificationPolicy);
+  if (policyBlock) {
+    sections.push(policyBlock);
   }
 
   if (diff) {

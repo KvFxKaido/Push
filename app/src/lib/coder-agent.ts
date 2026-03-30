@@ -32,6 +32,7 @@ import { SHARED_SAFETY_SECTION } from './system-prompt-sections';
 import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
 import { createCoderPolicy } from './turn-policies/coder-policy';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
+import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 
 const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — resets on each token)
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
@@ -717,6 +718,7 @@ export async function runCoderAgent(
     instructionFilename?: string;
     harnessSettings?: HarnessProfileSettings;
     plannerBrief?: string;
+    verificationPolicy?: VerificationPolicy;
   },
 ): Promise<CoderResult> {
   // Normalise: envelope-based call → unified locals
@@ -757,6 +759,7 @@ export async function runCoderAgent(
       constraints: envelope.constraints,
       branchContext: envelope.branchContext,
       instructionFilename: envelope.instructionFilename,
+      verificationPolicy: envelope.verificationPolicy,
     };
   } else {
     // Legacy positional invocation
@@ -825,6 +828,12 @@ export async function runCoderAgent(
   }
   customParts.push(WEB_SEARCH_TOOL_PROTOCOL);
   promptBuilder.set('custom', customParts.join('\n'));
+
+  // Session-level verification policy
+  const policyBlock = formatVerificationPolicyBlock(effectiveDelegationContext?.verificationPolicy);
+  if (policyBlock) {
+    promptBuilder.append('guidelines', policyBlock);
+  }
 
   const systemPrompt = promptBuilder.build();
 

@@ -71,6 +71,29 @@ import {
   shouldPersistRunEvent,
   trimRunEvents,
 } from '@/lib/chat-run-events';
+import {
+  IDLE_RUN_STATE,
+  isRunActive,
+  runEngineReducer,
+  type RunEngineEvent,
+  type RunEngineState,
+} from '@/lib/run-engine';
+import {
+  appendJournalEvent,
+  createJournalEntry,
+  finalizeJournalEntry,
+  loadJournalEntriesForChat,
+  pruneJournalEntries,
+  saveJournalEntry,
+  updateJournalPhase,
+  markJournalCheckpoint,
+  type RunJournalEntry,
+} from '@/lib/run-journal';
+import {
+  getDefaultVerificationPolicy,
+  resolveVerificationPolicy,
+  type VerificationPolicy,
+} from '@/lib/verification-policy';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -221,6 +244,7 @@ export function useChat(
   const [agentEventsByChat, setAgentEventsByChat] = useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
   const [queuedFollowUpsByChat, setQueuedFollowUpsByChat] = useState<QueuedItemsByChat<QueuedFollowUp>>(initialQueuedFollowUpsByChat);
   const [liveRunEventsByChat, setLiveRunEventsByChat] = useState<Record<string, RunEvent[]>>({});
+  const [journalRunEventsByChat, setJournalRunEventsByChat] = useState<Record<string, RunEvent[]>>({});
   const [pendingSteersByChat, setPendingSteersByChat] = useState<PendingSteersByChat>({});
 
   // --- Persistence refs ---
@@ -272,6 +296,9 @@ export function useChat(
   // --- sendMessage forward ref (populated after sendMessage is defined) ---
   // Passed to useChatCheckpoint so resumeInterruptedRun can call it.
   const sendMessageRef = useRef<((text: string) => Promise<void>) | null>(null);
+  const runEngineStateRef = useRef<RunEngineState>(IDLE_RUN_STATE);
+  const runJournalEntryRef = useRef<RunJournalEntry | null>(null);
+  const baseWorkspaceContextRef = useRef<WorkspaceContext | null>(null);
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -385,6 +412,15 @@ export function useChat(
       ...event,
     };
 
+    // Track B: append persisted events to the journal entry
+    if (shouldPersistRunEvent(event) && runJournalEntryRef.current) {
+      runJournalEntryRef.current = appendJournalEvent(
+        runJournalEntryRef.current,
+        nextEvent,
+      );
+      void saveJournalEntry(runJournalEntryRef.current);
+    }
+
     if (!shouldPersistRunEvent(event)) {
       replaceLiveRunEvents({
         ...liveRunEventsByChatRef.current,
@@ -420,11 +456,10 @@ export function useChat(
     saveExpiryCheckpoint,
     flushCheckpoint,
     checkpointRefs,
-    loopActiveRef,
     lastCoderStateRef,
     tabLockIntervalRef,
-    tabLockIdRef,
   } = useChatCheckpoint({
+    runEngineStateRef,
     sandboxIdRef,
     branchInfoRef,
     repoRef,
@@ -443,13 +478,171 @@ export function useChat(
     activeChatId,
   });
 
+  const getVerificationPolicyForChat = useCallback((chatId: string | null | undefined): VerificationPolicy => {
+    if (!chatId) return getDefaultVerificationPolicy();
+    return resolveVerificationPolicy(conversationsRef.current[chatId]?.verificationPolicy);
+  }, []);
+
+  const applyWorkspaceContext = useCallback((ctx: WorkspaceContext | null, chatId: string | null | undefined) => {
+    if (!ctx) {
+      workspaceContextRef.current = null;
+      return;
+    }
+    workspaceContextRef.current = {
+      ...ctx,
+      verificationPolicy: getVerificationPolicyForChat(chatId),
+    };
+  }, [getVerificationPolicyForChat]);
+
+  const persistRunJournal = useCallback((entry: RunJournalEntry | null, options?: { prune?: boolean }) => {
+    if (!entry) return;
+    void saveJournalEntry(entry);
+    if (options?.prune) {
+      void pruneJournalEntries();
+    }
+  }, []);
+
+  /**
+   * Emit a run engine event — the single mutation path for run state.
+   *
+   * Track A cutover: the engine is now authoritative. All run state reads
+   * (phase, round, accumulated, chatId, tabLockId, etc.) come from
+   * runEngineStateRef.current.
+   *
+   * Track B: also maintains the run journal entry for lifecycle persistence.
+   */
+  const emitRunEngineEvent = useCallback((event: RunEngineEvent) => {
+    runEngineStateRef.current = runEngineReducer(runEngineStateRef.current, event);
+
+    // --- Track B: journal lifecycle ---
+    const engineState = runEngineStateRef.current;
+    switch (event.type) {
+      case 'RUN_STARTED':
+        runJournalEntryRef.current = createJournalEntry({
+          runId: event.runId,
+          chatId: event.chatId,
+          provider: event.provider,
+          model: event.model,
+          baseMessageCount: event.baseMessageCount,
+          startedAt: event.timestamp,
+        });
+        persistRunJournal(runJournalEntryRef.current);
+        break;
+
+      case 'ROUND_STARTED':
+        if (runJournalEntryRef.current) {
+          runJournalEntryRef.current = updateJournalPhase(
+            runJournalEntryRef.current,
+            engineState.phase,
+            event.round,
+          );
+          persistRunJournal(runJournalEntryRef.current);
+        }
+        break;
+
+      case 'LOOP_COMPLETED':
+        if (runJournalEntryRef.current) {
+          runJournalEntryRef.current = finalizeJournalEntry(
+            runJournalEntryRef.current, 'completed',
+          );
+          persistRunJournal(runJournalEntryRef.current, { prune: true });
+          runJournalEntryRef.current = null;
+        }
+        break;
+
+      case 'LOOP_ABORTED':
+        if (runJournalEntryRef.current) {
+          runJournalEntryRef.current = finalizeJournalEntry(
+            runJournalEntryRef.current, 'aborted',
+          );
+          persistRunJournal(runJournalEntryRef.current, { prune: true });
+          runJournalEntryRef.current = null;
+        }
+        break;
+
+      case 'LOOP_FAILED':
+        if (runJournalEntryRef.current) {
+          runJournalEntryRef.current = finalizeJournalEntry(
+            runJournalEntryRef.current, 'failed', event.reason,
+          );
+          persistRunJournal(runJournalEntryRef.current, { prune: true });
+          runJournalEntryRef.current = null;
+        }
+        break;
+
+      case 'ACCUMULATED_UPDATED':
+        break;
+
+      default:
+        // Phase updates for delegation, tools, etc.
+        if (runJournalEntryRef.current) {
+          runJournalEntryRef.current = updateJournalPhase(
+            runJournalEntryRef.current,
+            engineState.phase,
+            engineState.round,
+          );
+          persistRunJournal(runJournalEntryRef.current);
+        }
+        break;
+    }
+  }, [persistRunJournal]);
+
   // --- CI poller ---
   const { ciStatus } = useCIPoller(activeChatId, activeRepoFullName, branchInfo);
 
+  const activeConversation = activeChatId ? conversations[activeChatId] : undefined;
+  const activePersistedRunEventCount = activeConversation?.runState?.runEvents?.length ?? 0;
+
+  useEffect(() => {
+    if (!activeChatId) return;
+    if (activePersistedRunEventCount > 0) {
+      setJournalRunEventsByChat((prev) => {
+        if (!prev[activeChatId]) return prev;
+        const next = { ...prev };
+        delete next[activeChatId];
+        return next;
+      });
+      return;
+    }
+
+    let cancelled = false;
+    void loadJournalEntriesForChat(activeChatId)
+      .then((entries) => {
+        if (cancelled) return;
+        const latestEvents = entries[0]?.events ?? [];
+        setJournalRunEventsByChat((prev) => {
+          if (latestEvents.length === 0) {
+            if (!prev[activeChatId]) return prev;
+            const next = { ...prev };
+            delete next[activeChatId];
+            return next;
+          }
+          const existing = prev[activeChatId];
+          if (
+            existing?.length === latestEvents.length &&
+            existing[existing.length - 1]?.id === latestEvents[latestEvents.length - 1]?.id
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            [activeChatId]: latestEvents,
+          };
+        });
+      })
+      .catch(() => {
+        // Journal fallback is best-effort only.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeChatId, activePersistedRunEventCount]);
+
   // --- Derived state ---
   const messages = useMemo(
-    () => conversations[activeChatId]?.messages ?? [],
-    [conversations, activeChatId],
+    () => activeConversation?.messages ?? [],
+    [activeConversation],
   );
   const agentEvents = useMemo(
     () => agentEventsByChat[activeChatId] ?? [],
@@ -457,15 +650,15 @@ export function useChat(
   );
   const runEvents = useMemo<RunEvent[]>(
     () => mergeRunEventStreams(
-      conversations[activeChatId]?.runState?.runEvents ?? [],
+      activeConversation?.runState?.runEvents ?? journalRunEventsByChat[activeChatId] ?? [],
       liveRunEventsByChat[activeChatId] ?? [],
     ),
-    [conversations, activeChatId, liveRunEventsByChat],
+    [activeConversation, activeChatId, journalRunEventsByChat, liveRunEventsByChat],
   );
-  const conversationProvider = conversations[activeChatId]?.provider;
+  const conversationProvider = activeConversation?.provider;
   const conversationModel = normalizeConversationModel(
     conversationProvider,
-    conversations[activeChatId]?.model,
+    activeConversation?.model,
   );
 
   const contextUsage = useMemo(() => {
@@ -517,6 +710,7 @@ export function useChat(
           lastMessageAt: Date.now(),
           repoFullName: activeRepoFullName,
           branch,
+          verificationPolicy: getDefaultVerificationPolicy(),
         };
         updateConversations((prev) => {
           const updated = { ...prev, [id]: newConv };
@@ -535,8 +729,13 @@ export function useChat(
 
   // --- Workspace context / sandbox setters ---
   const setWorkspaceContext = useCallback((ctx: WorkspaceContext | null) => {
-    workspaceContextRef.current = ctx;
-  }, []);
+    baseWorkspaceContextRef.current = ctx;
+    applyWorkspaceContext(ctx, activeChatIdRef.current);
+  }, [applyWorkspaceContext]);
+
+  useEffect(() => {
+    applyWorkspaceContext(baseWorkspaceContextRef.current, activeChatId);
+  }, [activeChatId, activeConversation?.verificationPolicy, applyWorkspaceContext]);
 
   const setSandboxId = useCallback((id: string | null) => {
     sandboxIdRef.current = id;
@@ -633,11 +832,12 @@ export function useChat(
     return current;
   }, [replacePendingSteers]);
 
-  const clearPendingSteer = useCallback((chatId: string) => {
-    if (!pendingSteersByChatRef.current[chatId]) return;
+  const clearPendingSteer = useCallback((chatId: string): boolean => {
+    if (!pendingSteersByChatRef.current[chatId]) return false;
     const next = { ...pendingSteersByChatRef.current };
     delete next[chatId];
     replacePendingSteers(next);
+    return true;
   }, [replacePendingSteers]);
 
   const hydratePersistedRunState = useCallback((convs: Record<string, Conversation>) => {
@@ -663,9 +863,13 @@ export function useChat(
   // --- Abort stream ---
   const abortStream = useCallback((options?: AbortStreamOptions) => {
     if (options?.clearQueuedFollowUps) {
-      const runningChatId = checkpointRefs.chatId.current || activeChatIdRef.current;
+      const runningChatId = runEngineStateRef.current.chatId || activeChatIdRef.current;
       if (runningChatId) {
+        const hadQueuedFollowUps = (queuedFollowUpsRef.current[runningChatId]?.length ?? 0) > 0;
         clearQueuedFollowUps(runningChatId);
+        if (hadQueuedFollowUps) {
+          emitRunEngineEvent({ type: 'FOLLOW_UP_QUEUE_CLEARED', timestamp: Date.now() });
+        }
       }
     }
     abortRef.current = true;
@@ -679,7 +883,7 @@ export function useChat(
       updateAgentStatus({ active: false, phase: '' });
       cancelStatusTimerRef.current = null;
     }, 1200);
-  }, [checkpointRefs.chatId, clearQueuedFollowUps, updateAgentStatus]);
+  }, [clearQueuedFollowUps, emitRunEngineEvent, updateAgentStatus]);
 
   useEffect(() => {
     return () => {
@@ -711,6 +915,8 @@ export function useChat(
     setConversations: updateConversations,
     updateAgentStatus,
     appendRunEvent,
+    emitRunEngineEvent,
+    getVerificationPolicyForChat,
     branchInfoRef,
     isMainProtectedRef,
     agentsMdRef,
@@ -719,7 +925,6 @@ export function useChat(
     repoRef,
     abortControllerRef,
     abortRef,
-    checkpointPhaseRef: checkpointRefs.phase as unknown as import('react').MutableRefObject<string | null>,
     lastCoderStateRef,
   });
 
@@ -733,8 +938,8 @@ export function useChat(
       const hasAttachments = Boolean(attachments && attachments.length > 0);
       if (!trimmedText && !hasAttachments) return;
 
-      if (loopActiveRef.current) {
-        const runningChatId = checkpointRefs.chatId.current;
+      if (isRunActive(runEngineStateRef.current)) {
+        const runningChatId = runEngineStateRef.current.chatId;
         const targetChatId = options?.chatId || activeChatIdRef.current || runningChatId;
         if (!runningChatId || (targetChatId && targetChatId !== runningChatId)) return;
 
@@ -743,13 +948,18 @@ export function useChat(
           hasAttachments ? attachments : undefined,
           options?.displayText,
         );
-        const round = checkpointRefs.round.current;
+        const round = runEngineStateRef.current.round;
         if (options?.streamingBehavior === 'steer') {
           const replacedPending = Boolean(pendingSteersByChatRef.current[runningChatId]);
           setPendingSteer(
             runningChatId,
             toPendingSteerRequest(trimmedText, hasAttachments ? attachments : undefined, options),
           );
+          emitRunEngineEvent({
+            type: 'STEER_SET',
+            timestamp: Date.now(),
+            preview: inputPreview,
+          });
           appendRunEvent(runningChatId, {
             type: 'user.follow_up_steered',
             round,
@@ -760,10 +970,13 @@ export function useChat(
         }
 
         const queuePosition = (queuedFollowUpsRef.current[runningChatId]?.length ?? 0) + 1;
-        enqueueQueuedFollowUp(
-          runningChatId,
-          toQueuedFollowUp(trimmedText, hasAttachments ? attachments : undefined, options),
-        );
+        const queuedFollowUp = toQueuedFollowUp(trimmedText, hasAttachments ? attachments : undefined, options);
+        enqueueQueuedFollowUp(runningChatId, queuedFollowUp);
+        emitRunEngineEvent({
+          type: 'FOLLOW_UP_ENQUEUED',
+          timestamp: Date.now(),
+          followUp: queuedFollowUp,
+        });
         appendRunEvent(runningChatId, {
           type: 'user.follow_up_queued',
           round,
@@ -834,6 +1047,7 @@ export function useChat(
             messages: [...updatedWithUser, firstAssistant],
             title: newTitle,
             lastMessageAt: Date.now(),
+            verificationPolicy: prev[chatId]?.verificationPolicy ?? getDefaultVerificationPolicy(),
             ...(shouldPersistProvider ? { provider: lockedProviderForChat } : {}),
             ...(shouldPersistModel && resolvedModelForChat ? { model: resolvedModelForChat } : {}),
           },
@@ -872,20 +1086,24 @@ export function useChat(
         recoveryAttempted: false,
       };
 
-      // --- Initialize checkpoint refs ---
-      checkpointRefs.chatId.current = chatId;
-      checkpointRefs.provider.current = lockedProviderForChat;
-      checkpointRefs.model.current = resolvedModelForChat || '';
-      checkpointRefs.baseMessageCount.current = updatedWithUser.length;
+      // --- Initialize run ---
+      // apiMessages is the only checkpoint ref; all other state is
+      // managed by the engine via emitRunEngineEvent.
       checkpointRefs.apiMessages.current = apiMessages;
-      checkpointRefs.accumulated.current = '';
-      checkpointRefs.thinking.current = '';
-      loopActiveRef.current = true;
+      emitRunEngineEvent({
+        type: 'RUN_STARTED',
+        timestamp: Date.now(),
+        runId: createId(),
+        chatId,
+        provider: lockedProviderForChat,
+        model: resolvedModelForChat || '',
+        baseMessageCount: updatedWithUser.length,
+      });
 
       // Acquire multi-tab lock
       const acquiredTabId = acquireRunTabLock(chatId);
       if (!acquiredTabId) {
-        loopActiveRef.current = false;
+        emitRunEngineEvent({ type: 'TAB_LOCK_DENIED', timestamp: Date.now() });
         setIsStreaming(false);
         updateAgentStatus({ active: false, phase: '' });
         updateConversations((prev) => {
@@ -910,7 +1128,7 @@ export function useChat(
         });
         return;
       }
-      tabLockIdRef.current = acquiredTabId;
+      emitRunEngineEvent({ type: 'TAB_LOCK_ACQUIRED', timestamp: Date.now(), tabLockId: acquiredTabId });
       if (tabLockIntervalRef.current) clearInterval(tabLockIntervalRef.current);
       tabLockIntervalRef.current = setInterval(
         () => heartbeatRunTabLock(chatId, acquiredTabId),
@@ -942,6 +1160,7 @@ export function useChat(
         appendRunEvent,
         flushCheckpoint,
         executeDelegateCall,
+        emitRunEngineEvent,
       };
 
       let loopCompletedNormally = false;
@@ -950,11 +1169,7 @@ export function useChat(
           if (abortRef.current) break;
           fileLedger.advanceRound();
 
-          // Update round checkpoint refs
-          checkpointRefs.round.current = round;
-          checkpointRefs.accumulated.current = '';
-          checkpointRefs.thinking.current = '';
-          checkpointRefs.phase.current = 'streaming_llm';
+          emitRunEngineEvent({ type: 'ROUND_STARTED', timestamp: Date.now(), round });
           appendRunEvent(chatId, { type: 'assistant.turn_start', round });
 
           if (round > 0) {
@@ -990,6 +1205,11 @@ export function useChat(
           }
 
           if (error) {
+            emitRunEngineEvent({
+              type: 'LOOP_FAILED',
+              timestamp: Date.now(),
+              reason: error.message,
+            });
             appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'error' });
             updateConversations((prev) => {
               const conv = prev[chatId];
@@ -1009,9 +1229,16 @@ export function useChat(
             });
             break;
           }
+          emitRunEngineEvent({
+            type: 'STREAMING_COMPLETED',
+            timestamp: Date.now(),
+            accumulated,
+            thinking: thinkingAccumulated,
+          });
 
           const pendingSteerBeforeToolDispatch = consumePendingSteer(chatId);
           if (pendingSteerBeforeToolDispatch) {
+            emitRunEngineEvent({ type: 'STEER_CONSUMED', timestamp: Date.now() });
             const steerUserMessage = buildRuntimeUserMessage(
               pendingSteerBeforeToolDispatch.text,
               pendingSteerBeforeToolDispatch.attachments,
@@ -1063,13 +1290,18 @@ export function useChat(
             ];
             checkpointRefs.apiMessages.current = apiMessages;
             flushCheckpoint();
+            emitRunEngineEvent({ type: 'TURN_STEERED', timestamp: Date.now() });
             appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'steered' });
             continue;
           }
 
           // Checkpoint after streaming, before tool dispatch
-          checkpointRefs.phase.current = 'executing_tools';
+          emitRunEngineEvent({ type: 'TOOLS_STARTED', timestamp: Date.now() });
           flushCheckpoint();
+          if (runJournalEntryRef.current) {
+            runJournalEntryRef.current = markJournalCheckpoint(runJournalEntryRef.current, true);
+            persistRunJournal(runJournalEntryRef.current);
+          }
 
           // --- Process the assistant's response ---
           const turnResult = await processAssistantTurn(
@@ -1087,6 +1319,7 @@ export function useChat(
 
           const pendingSteerAfterTurn = consumePendingSteer(chatId);
           if (pendingSteerAfterTurn) {
+            emitRunEngineEvent({ type: 'STEER_CONSUMED', timestamp: Date.now() });
             const steerUserMessage = buildRuntimeUserMessage(
               pendingSteerAfterTurn.text,
               pendingSteerAfterTurn.attachments,
@@ -1109,6 +1342,7 @@ export function useChat(
             apiMessages = [...apiMessages, steerUserMessage];
             checkpointRefs.apiMessages.current = apiMessages;
             flushCheckpoint();
+            emitRunEngineEvent({ type: 'TURN_STEERED', timestamp: Date.now() });
             appendRunEvent(chatId, {
               type: 'assistant.turn_end',
               round,
@@ -1129,34 +1363,64 @@ export function useChat(
             outcome: turnOutcome,
           });
           if (turnResult.loopAction === 'break') break;
+          emitRunEngineEvent({ type: 'TURN_CONTINUED', timestamp: Date.now() });
           // 'continue' → next round
         }
+      } catch (err) {
+        emitRunEngineEvent({
+          type: 'LOOP_FAILED',
+          timestamp: Date.now(),
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
       } finally {
+        // Capture tab lock ID before the terminal event clears it.
+        const tabLockToRelease = runEngineStateRef.current.tabLockId;
+
+        const currentRunPhase = runEngineStateRef.current.phase;
+        const runAlreadyTerminal =
+          currentRunPhase === 'completed'
+          || currentRunPhase === 'aborted'
+          || currentRunPhase === 'failed';
+        if (!runAlreadyTerminal) {
+          emitRunEngineEvent({
+            type: loopCompletedNormally ? 'LOOP_COMPLETED' : 'LOOP_ABORTED',
+            timestamp: Date.now(),
+          });
+        }
         setIsStreaming(false);
         if (cancelStatusTimerRef.current === null) {
           updateAgentStatus({ active: false, phase: '' });
         }
         abortControllerRef.current = null;
 
-        loopActiveRef.current = false;
-        checkpointRefs.chatId.current = null;
         if (loopCompletedNormally) {
           clearRunCheckpoint(chatId);
         }
 
-        releaseRunTabLock(chatId, tabLockIdRef.current);
-        tabLockIdRef.current = null;
+        releaseRunTabLock(chatId, tabLockToRelease);
         if (tabLockIntervalRef.current) {
           clearInterval(tabLockIntervalRef.current);
           tabLockIntervalRef.current = null;
         }
 
         if (activeChatIdRef.current !== chatId) {
-          clearPendingSteer(chatId);
+          if (clearPendingSteer(chatId)) {
+            emitRunEngineEvent({ type: 'STEER_CLEARED', timestamp: Date.now() });
+          }
+          const hadQueuedFollowUps = (queuedFollowUpsRef.current[chatId]?.length ?? 0) > 0;
           clearQueuedFollowUps(chatId);
+          if (hadQueuedFollowUps) {
+            emitRunEngineEvent({ type: 'FOLLOW_UP_QUEUE_CLEARED', timestamp: Date.now() });
+          }
         } else {
-          clearPendingSteer(chatId);
+          if (clearPendingSteer(chatId)) {
+            emitRunEngineEvent({ type: 'STEER_CLEARED', timestamp: Date.now() });
+          }
           const nextQueuedFollowUp = dequeueQueuedFollowUp(chatId);
+          if (nextQueuedFollowUp) {
+            emitRunEngineEvent({ type: 'FOLLOW_UP_DEQUEUED', timestamp: Date.now() });
+          }
           if (nextQueuedFollowUp && isMountedRef.current) {
             queueMicrotask(() => {
               if (!isMountedRef.current) return;
@@ -1182,13 +1446,13 @@ export function useChat(
       clearQueuedFollowUps,
       enqueueQueuedFollowUp,
       setPendingSteer,
-      loopActiveRef,
       lastCoderStateRef,
       tabLockIntervalRef,
-      tabLockIdRef,
       dirtyConversationIdsRef,
       updateConversations,
       appendRunEvent,
+      emitRunEngineEvent,
+      persistRunJournal,
     ],
   );
 

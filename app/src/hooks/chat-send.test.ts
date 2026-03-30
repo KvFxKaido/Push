@@ -59,15 +59,7 @@ function makeLoopContext(
     isMainProtectedRef: { current: false },
     branchInfoRef: { current: undefined },
     checkpointRefs: {
-      accumulated: { current: '' },
-      thinking: { current: '' },
-      round: { current: 0 },
-      phase: { current: 'streaming_llm' },
       apiMessages: { current: [] },
-      baseMessageCount: { current: 0 },
-      chatId: { current: 'chat-1' },
-      provider: { current: 'openrouter' },
-      model: { current: 'anthropic/claude-sonnet-4.6:nitro' },
     },
     processedContentRef: { current: new Set<string>() },
     lastCoderStateRef: { current: null },
@@ -78,6 +70,7 @@ function makeLoopContext(
     dirtyConversationIdsRef: dirtyRef,
     updateAgentStatus: vi.fn(),
     appendRunEvent: vi.fn(),
+    emitRunEngineEvent: vi.fn(),
     flushCheckpoint: vi.fn(),
     executeDelegateCall: vi.fn(),
     ...overrides,
@@ -130,8 +123,16 @@ describe('chat-send', () => {
       thinking: 'Need to inspect',
       status: 'streaming',
     });
-    expect(ctx.checkpointRefs.accumulated.current).toBe('Hello world');
-    expect(ctx.checkpointRefs.thinking.current).toBe('Need to inspect');
+    // Accumulation is now tracked via engine events, not checkpoint refs.
+    // Verify the engine received ACCUMULATED_UPDATED events with final content.
+    const engineCalls = (ctx.emitRunEngineEvent as ReturnType<typeof vi.fn>).mock.calls;
+    const accumulatedEvents = engineCalls
+      .map(([event]) => event)
+      .filter((e: { type: string }) => e.type === 'ACCUMULATED_UPDATED');
+    expect(accumulatedEvents.length).toBeGreaterThan(0);
+    const lastAccumulated = accumulatedEvents.at(-1);
+    expect(lastAccumulated.text).toBe('Hello world');
+    expect(lastAccumulated.thinking).toBe('Need to inspect');
     expect(usageHandler.trackUsage).toHaveBeenCalledWith('k2p5', 11, 7);
   });
 

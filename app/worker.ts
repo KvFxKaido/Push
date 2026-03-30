@@ -109,7 +109,7 @@ type ExactApiRoute = {
 };
 
 const EXACT_API_ROUTES: ExactApiRoute[] = [
-  { path: '/api/health', method: 'GET', handler: (_request, env) => handleHealthCheck(env) },
+  { path: '/api/health', method: 'GET', handler: (request, env) => handleHealthCheck(env, request) },
   { path: '/api/github/app-token', method: 'POST', handler: handleGitHubAppToken },
   { path: '/api/github/app-oauth', method: 'POST', handler: handleGitHubAppOAuth },
   { path: '/api/github/tools', method: 'POST', handler: handleGitHubTools },

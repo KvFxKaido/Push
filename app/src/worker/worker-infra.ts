@@ -9,9 +9,17 @@ import {
 } from './worker-middleware';
 import { SANDBOX_ROUTES, resolveModalSandboxBase } from '../lib/sandbox-routes';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
+import {
+  createSpanContext,
+  buildTraceparent,
+  createChildContext,
+  formatSpanForLog,
+  type WorkerSpan,
+} from './worker-tracing';
 
 export async function handleSandbox(request: Request, env: Env, requestUrl: URL, route: string): Promise<Response> {
   const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'sandbox');
+  const spanCtx = createSpanContext(request, requestId);
   const modalFunction = SANDBOX_ROUTES[route];
   if (!modalFunction) {
     return Response.json({ error: `Unknown sandbox route: ${route}` }, { status: 404 });
@@ -100,6 +108,10 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
   // so give it 120s here to receive that response. All other routes stay at 60s.
   const routeTimeoutMs = route === 'exec' ? 120_000 : 60_000;
 
+  // Create child context for the sandbox upstream call
+  const sandboxUpstreamCtx = createChildContext(spanCtx);
+  const sandboxStartTime = Date.now();
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), routeTimeoutMs);
@@ -110,6 +122,7 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
         headers: {
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
+          'traceparent': buildTraceparent(sandboxUpstreamCtx),
         },
         body: forwardBodyText,
         signal: controller.signal,
@@ -122,6 +135,7 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
           route,
           status: upstream.status,
           body: errBody.slice(0, 500),
+          trace_id: spanCtx.traceId,
         });
 
         // Provide actionable error messages based on status code
@@ -167,6 +181,21 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
       }
 
       const data: unknown = await upstream.json();
+
+      // Log completed sandbox span
+      const sandboxSpan: WorkerSpan = {
+        context: sandboxUpstreamCtx,
+        name: `sandbox.${route}`,
+        startTime: sandboxStartTime,
+        attributes: {
+          'push.sandbox.route': route,
+          'push.sandbox.timeout_ms': routeTimeoutMs,
+          'push.sandbox.status': upstream.status,
+        },
+        status: 'ok',
+      };
+      wlog('info', 'span_complete', formatSpanForLog(sandboxSpan));
+
       return Response.json(data);
     } finally {
       clearTimeout(timeoutId);
@@ -174,7 +203,7 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isTimeout = err instanceof Error && err.name === 'AbortError';
-    wlog('error', 'sandbox_error', { requestId, route, message, timeout: isTimeout });
+    wlog('error', 'sandbox_error', { requestId, route, message, timeout: isTimeout, trace_id: spanCtx.traceId });
 
     if (isTimeout) {
       return Response.json({
@@ -223,7 +252,8 @@ interface HealthStatus {
   version: string;
 }
 
-export async function handleHealthCheck(env: Env): Promise<Response> {
+export async function handleHealthCheck(env: Env, request?: Request): Promise<Response> {
+  const healthStartTime = Date.now();
   const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
   const openRouterConfigured = Boolean(env.OPENROUTER_API_KEY);
   const zenConfigured = Boolean(env.ZEN_API_KEY);
@@ -269,6 +299,12 @@ export async function handleHealthCheck(env: Env): Promise<Response> {
     },
     version: '1.0.0',
   };
+
+  wlog('info', 'health_check', {
+    status: overallStatus,
+    duration_ms: Date.now() - healthStartTime,
+    ...(request ? { trace_id: createSpanContext(request, 'health').traceId } : {}),
+  });
 
   return Response.json(health, {
     status: overallStatus === 'unhealthy' ? 503 : 200,

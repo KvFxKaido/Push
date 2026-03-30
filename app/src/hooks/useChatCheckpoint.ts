@@ -3,8 +3,13 @@
  *
  * Extracted from useChat.ts — checkpoint and resume lifecycle.
  *
- * Owns all checkpoint refs, the visibility-change flush, the interrupted-run
+ * Owns the apiMessages ref, the visibility-change flush, the interrupted-run
  * detection effect, and the resume/dismiss callbacks.
+ *
+ * Track A cutover: checkpoint state (phase, round, accumulated, thinking,
+ * chatId, provider, model, baseMessageCount, tabLockId) is now read from
+ * the authoritative RunEngineState ref. Only apiMessages remains as a
+ * separate ref because it is too large for the serializable engine state.
  *
  * Also owns appendAgentEvent / updateAgentStatus — these live here because
  * they are the primary mutation path for the checkpoint phase annotations.
@@ -23,7 +28,6 @@ import type {
   ChatMessage,
   Conversation,
   CoderWorkingMemory,
-  LoopPhase,
   RunCheckpoint,
 } from '@/types';
 import {
@@ -35,7 +39,9 @@ import {
   recordResumeEvent,
   saveRunCheckpoint,
 } from '@/lib/checkpoint-manager';
+import { isRunActive, type RunEnginePhase, type RunEngineState } from '@/lib/run-engine';
 import { setConversationAgentEvents } from '@/lib/chat-runtime-state';
+import type { LoopPhase } from '@/types';
 import { sandboxStatus, type SandboxStatusResult } from '@/lib/sandbox-client';
 import { createId } from '@/hooks/chat-persistence';
 
@@ -45,6 +51,24 @@ import { createId } from '@/hooks/chat-persistence';
 
 const MAX_AGENT_EVENTS_PER_CHAT = 200;
 const AGENT_EVENT_DEDUPE_WINDOW_MS = 1500;
+
+/**
+ * Coerce RunEnginePhase to LoopPhase for checkpoint serialization.
+ * Lifecycle bookend phases ('idle', 'starting', 'completed', 'aborted', 'failed')
+ * default to 'streaming_llm' — checkpoints are only saved during active runs,
+ * so this fallback is a safety net, not a normal path.
+ */
+function toLoopPhase(phase: RunEnginePhase): LoopPhase {
+  switch (phase) {
+    case 'streaming_llm':
+    case 'executing_tools':
+    case 'delegating_coder':
+    case 'delegating_explorer':
+      return phase;
+    default:
+      return 'streaming_llm';
+  }
+}
 
 const EMPTY_SANDBOX_STATUS: SandboxStatusResult = {
   head: 'unknown',
@@ -58,6 +82,8 @@ const EMPTY_SANDBOX_STATUS: SandboxStatusResult = {
 // ---------------------------------------------------------------------------
 
 export interface ChatCheckpointParams {
+  // Run engine state — authoritative source for phase, round, accumulated, etc.
+  runEngineStateRef: MutableRefObject<RunEngineState>;
   // Session identity refs (stay in useChat, passed by ref so always fresh)
   sandboxIdRef: MutableRefObject<string | null>;
   branchInfoRef: MutableRefObject<{ currentBranch?: string; defaultBranch?: string } | undefined>;
@@ -85,17 +111,16 @@ export interface ChatCheckpointParams {
 // Return shape
 // ---------------------------------------------------------------------------
 
-/** The checkpoint refs bundle — populated by sendMessage on each loop entry. */
+/**
+ * Checkpoint refs bundle — the only ref not covered by RunEngineState.
+ *
+ * apiMessages is kept as a separate ref because the full message array is
+ * too large and non-serializable for the engine state model. Everything
+ * else (phase, round, accumulated, thinking, chatId, provider, model,
+ * baseMessageCount, tabLockId) is read from runEngineStateRef.
+ */
 export interface CheckpointRefs {
-  accumulated: MutableRefObject<string>;
-  thinking: MutableRefObject<string>;
-  round: MutableRefObject<number>;
-  phase: MutableRefObject<LoopPhase>;
   apiMessages: MutableRefObject<ChatMessage[]>;
-  baseMessageCount: MutableRefObject<number>;
-  chatId: MutableRefObject<string | null>;
-  provider: MutableRefObject<string>;
-  model: MutableRefObject<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +128,7 @@ export interface CheckpointRefs {
 // ---------------------------------------------------------------------------
 
 export function useChatCheckpoint({
+  runEngineStateRef,
   sandboxIdRef,
   branchInfoRef,
   repoRef,
@@ -120,24 +146,16 @@ export function useChatCheckpoint({
   isStreaming,
   activeChatId,
 }: ChatCheckpointParams) {
-  // --- Checkpoint refs (synchronous state for flush on visibility change) ---
-  const checkpointAccumulatedRef = useRef('');
-  const checkpointThinkingRef = useRef('');
-  const checkpointRoundRef = useRef(0);
-  const checkpointPhaseRef = useRef<LoopPhase>('streaming_llm');
+  // --- Checkpoint refs ---
+  // Only apiMessages remains as a separate ref; everything else is read
+  // from runEngineStateRef.current (the authoritative engine state).
   const checkpointApiMessagesRef = useRef<ChatMessage[]>([]);
-  const checkpointBaseMessageCountRef = useRef(0);
-  const checkpointChatIdRef = useRef<string | null>(null);
-  const checkpointProviderRef = useRef<string>('');
-  const checkpointModelRef = useRef<string>('');
-  const loopActiveRef = useRef(false);
 
   // Phase 3: last Coder working memory state
   const lastCoderStateRef = useRef<CoderWorkingMemory | null>(null);
 
-  // Tab lock refs
+  // Tab lock heartbeat interval (side-effect ref, not state)
   const tabLockIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const tabLockIdRef = useRef<string | null>(null);
 
   // Resume state
   const [interruptedCheckpoint, setInterruptedCheckpoint] = useState<RunCheckpoint | null>(null);
@@ -221,20 +239,21 @@ export function useChatCheckpoint({
     (savedDiff: string) => {
       const chatId = activeChatId;
       if (!chatId) return;
+      const engineState = runEngineStateRef.current;
       // Skip if no agent work has happened this session (round 0, no diff).
-      if (checkpointRoundRef.current === 0 && !savedDiff) return;
+      if (engineState.round === 0 && !savedDiff) return;
 
       const checkpoint = buildRunCheckpoint({
         chatId,
-        round: checkpointRoundRef.current,
-        phase: checkpointPhaseRef.current,
-        baseMessageCount: checkpointBaseMessageCountRef.current,
+        round: engineState.round,
+        phase: toLoopPhase(engineState.phase),
+        baseMessageCount: engineState.baseMessageCount,
         apiMessages: checkpointApiMessagesRef.current,
         accumulated: '',
         thinkingAccumulated: '',
         lastCoderState: lastCoderStateRef.current,
-        provider: checkpointProviderRef.current as AIProviderType,
-        model: checkpointModelRef.current,
+        provider: engineState.provider as AIProviderType,
+        model: engineState.model,
         sandboxSessionId: sandboxIdRef.current || '',
         activeBranch:
           branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || '',
@@ -246,26 +265,26 @@ export function useChatCheckpoint({
 
       saveRunCheckpoint(checkpoint);
     },
-    [activeChatId, branchInfoRef, repoRef, sandboxIdRef, workspaceSessionIdRef],
+    [activeChatId, branchInfoRef, repoRef, runEngineStateRef, sandboxIdRef, workspaceSessionIdRef],
   );
 
   // --- flushCheckpoint ---
 
   const flushCheckpoint = useCallback(() => {
-    const chatId = checkpointChatIdRef.current;
-    if (!chatId || !loopActiveRef.current) return;
+    const engineState = runEngineStateRef.current;
+    if (!engineState.chatId || !isRunActive(engineState)) return;
 
     const checkpoint = buildRunCheckpoint({
-      chatId,
-      round: checkpointRoundRef.current,
-      phase: checkpointPhaseRef.current,
-      baseMessageCount: checkpointBaseMessageCountRef.current,
+      chatId: engineState.chatId,
+      round: engineState.round,
+      phase: toLoopPhase(engineState.phase),
+      baseMessageCount: engineState.baseMessageCount,
       apiMessages: checkpointApiMessagesRef.current,
-      accumulated: checkpointAccumulatedRef.current,
-      thinkingAccumulated: checkpointThinkingRef.current,
+      accumulated: engineState.accumulatedText,
+      thinkingAccumulated: engineState.accumulatedThinking,
       lastCoderState: lastCoderStateRef.current,
-      provider: checkpointProviderRef.current as AIProviderType,
-      model: checkpointModelRef.current,
+      provider: engineState.provider as AIProviderType,
+      model: engineState.model,
       sandboxSessionId: sandboxIdRef.current || '',
       activeBranch:
         branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || '',
@@ -275,25 +294,25 @@ export function useChatCheckpoint({
     });
 
     saveRunCheckpoint(checkpoint);
-  }, [abortRef, branchInfoRef, repoRef, sandboxIdRef, workspaceSessionIdRef]);
+  }, [abortRef, branchInfoRef, repoRef, runEngineStateRef, sandboxIdRef, workspaceSessionIdRef]);
 
   // --- Visibility change: flush on tab hide ---
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden' && loopActiveRef.current) {
+      if (document.visibilityState === 'hidden' && isRunActive(runEngineStateRef.current)) {
         flushCheckpoint();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [flushCheckpoint]);
+  }, [flushCheckpoint, runEngineStateRef]);
 
   // --- Interrupted run detection ---
 
   // Detect interrupted runs when the chat becomes idle (not streaming, loop not active)
   useEffect(() => {
-    if (isStreaming || loopActiveRef.current) return;
+    if (isStreaming || isRunActive(runEngineStateRef.current)) return;
     if (!activeChatId) return;
 
     detectInterruptedRunFromManager(
@@ -488,15 +507,7 @@ export function useChatCheckpoint({
   // without re-creating when the lock changes.
 
   const checkpointRefs: CheckpointRefs = {
-    accumulated: checkpointAccumulatedRef,
-    thinking: checkpointThinkingRef,
-    round: checkpointRoundRef,
-    phase: checkpointPhaseRef,
     apiMessages: checkpointApiMessagesRef,
-    baseMessageCount: checkpointBaseMessageCountRef,
-    chatId: checkpointChatIdRef,
-    provider: checkpointProviderRef,
-    model: checkpointModelRef,
   };
 
   return {
@@ -510,11 +521,9 @@ export function useChatCheckpoint({
     // Checkpoint I/O
     saveExpiryCheckpoint,
     flushCheckpoint,
-    // Ref bundles (sendMessage populates and reads these during a loop run)
+    // Ref bundles
     checkpointRefs,
-    loopActiveRef,
     lastCoderStateRef,
     tabLockIntervalRef,
-    tabLockIdRef,
   };
 }

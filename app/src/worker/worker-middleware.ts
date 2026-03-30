@@ -16,6 +16,12 @@ import {
 } from '../lib/vertex-provider';
 import { validateAndNormalizeChatRequest } from '../lib/chat-request-guardrails';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
+import {
+  createSpanContext,
+  buildTraceparent,
+  createChildContext,
+  type WorkerSpanContext,
+} from './worker-tracing';
 
 // ---------------------------------------------------------------------------
 // Env interface
@@ -284,6 +290,7 @@ export interface PreambleOk {
   authHeader: string;
   bodyText: string;
   requestId: string;
+  spanCtx: WorkerSpanContext;
 }
 
 export async function runPreamble(
@@ -297,6 +304,7 @@ export async function runPreamble(
   },
 ): Promise<Response | PreambleOk> {
   const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
+  const spanCtx = createSpanContext(request, requestId);
   const requestUrl = new URL(request.url);
   const originCheck = validateOrigin(request, requestUrl, env);
   if (!originCheck.ok) {
@@ -333,7 +341,7 @@ export async function runPreamble(
     bodyText = bodyResult.text;
   }
 
-  return { authHeader: authHeader ?? '', bodyText, requestId };
+  return { authHeader: authHeader ?? '', bodyText, requestId, spanCtx };
 }
 
 // ---------------------------------------------------------------------------
@@ -454,7 +462,7 @@ export function createStreamProxyHandler(
       needsBody: true,
     });
     if (preamble instanceof Response) return preamble;
-    const { authHeader, bodyText, requestId } = preamble;
+    const { authHeader, bodyText, requestId, spanCtx } = preamble;
 
     const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
       routeLabel: config.name,
@@ -486,6 +494,15 @@ export function createStreamProxyHandler(
       ? config.extraFetchHeaders(request)
       : (config.extraFetchHeaders ?? {});
 
+    // Trace context headers for response correlation
+    const traceResponseHeaders: Record<string, string> = {
+      'X-Push-Trace-Id': spanCtx.traceId,
+      'X-Push-Span-Id': spanCtx.spanId,
+    };
+
+    // Create child context for upstream propagation
+    const upstreamCtx = createChildContext(spanCtx);
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
@@ -498,6 +515,7 @@ export function createStreamProxyHandler(
             'Content-Type': 'application/json',
             'Authorization': authHeader,
             [REQUEST_ID_HEADER]: requestId,
+            'traceparent': buildTraceparent(upstreamCtx),
             ...extraHeaders,
           },
           body: normalizedRequest.value.bodyText,
@@ -507,7 +525,7 @@ export function createStreamProxyHandler(
         clearTimeout(timeoutId);
       }
 
-      wlog('info', 'upstream_ok', { requestId, route: config.logTag, status: upstream.status });
+      wlog('info', 'upstream_ok', { requestId, route: config.logTag, status: upstream.status, trace_id: spanCtx.traceId });
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
@@ -541,6 +559,7 @@ export function createStreamProxyHandler(
             'Connection': 'keep-alive',
             [REQUEST_ID_HEADER]: requestId,
             'X-Accel-Buffering': 'no',
+            ...traceResponseHeaders,
           },
         });
       }
@@ -554,6 +573,7 @@ export function createStreamProxyHandler(
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
             [REQUEST_ID_HEADER]: requestId,
+            ...traceResponseHeaders,
           },
         });
       }
@@ -603,11 +623,21 @@ export function createJsonProxyHandler(
       needsBody,
     });
     if (preamble instanceof Response) return preamble;
-    const { authHeader, bodyText, requestId } = preamble;
+    const { authHeader, bodyText, requestId, spanCtx } = preamble;
+
+    // Trace context headers for response correlation
+    const traceResponseHeaders: Record<string, string> = {
+      'X-Push-Trace-Id': spanCtx.traceId,
+      'X-Push-Span-Id': spanCtx.spanId,
+    };
+
+    // Create child context for upstream propagation
+    const upstreamCtx = createChildContext(spanCtx);
 
     wlog('info', 'request', {
       requestId,
       route: config.logTag,
+      trace_id: spanCtx.traceId,
       ...(needsBody ? { bytes: bodyText.length } : {}),
     });
 
@@ -622,6 +652,7 @@ export function createJsonProxyHandler(
           headers: {
             'Authorization': authHeader,
             [REQUEST_ID_HEADER]: requestId,
+            'traceparent': buildTraceparent(upstreamCtx),
             ...(needsBody ? { 'Content-Type': 'application/json' } : {}),
             ...(config.extraFetchHeaders ?? {}),
           },
@@ -640,6 +671,7 @@ export function createJsonProxyHandler(
           route: config.logTag,
           status: upstream.status,
           body: errBody.slice(0, 500),
+          trace_id: spanCtx.traceId,
         });
         if (config.formatUpstreamError) {
           const formatted = config.formatUpstreamError(upstream.status, errBody);
@@ -653,7 +685,7 @@ export function createJsonProxyHandler(
 
       const data: unknown = await upstream.json();
       return Response.json(data, {
-        headers: { [REQUEST_ID_HEADER]: requestId },
+        headers: { [REQUEST_ID_HEADER]: requestId, ...traceResponseHeaders },
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

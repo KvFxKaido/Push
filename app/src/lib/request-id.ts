@@ -20,3 +20,19 @@ export function getOrCreateRequestId(
 ): string {
   return normalizeIncomingRequestId(incomingValue) ?? createRequestId(prefix);
 }
+
+/**
+ * Build a correlation object from request ID and trace headers.
+ * Used for log correlation across client/worker boundaries.
+ */
+export function buildCorrelation(
+  requestId: string,
+  traceId?: string | null,
+  spanId?: string | null,
+): { requestId: string; traceId?: string; spanId?: string } {
+  return {
+    requestId,
+    ...(traceId ? { traceId } : {}),
+    ...(spanId ? { spanId } : {}),
+  };
+}

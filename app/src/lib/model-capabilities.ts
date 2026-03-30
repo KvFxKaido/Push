@@ -1,4 +1,5 @@
 import type { AIProviderType, ModelCapabilities, ModelCapabilitySupport, HarnessProfile, HarnessProfileSettings } from '@/types';
+import { computeAdaptiveProfile, logAdaptiveProfile } from './harness-profiles';
 
 type CapabilityRule = {
   providers: AIProviderType[] | 'any';
@@ -282,5 +283,9 @@ export function resolveHarnessSettings(
   provider: AIProviderType,
   modelId: string | null | undefined,
 ): HarnessProfileSettings {
-  return getHarnessProfileSettings(getHarnessProfile(provider, modelId));
+  const profile = getHarnessProfile(provider, modelId);
+  const settings = getHarnessProfileSettings(profile);
+  const adaptiveResult = computeAdaptiveProfile(settings, provider, modelId ?? undefined);
+  logAdaptiveProfile(adaptiveResult, provider, modelId ?? undefined);
+  return adaptiveResult.adaptedProfile;
 }

@@ -317,4 +317,5 @@ Status on 2026-03-30:
 
 - Agent Experience Wishlist work is already shipped and should be treated as historical in this doc.
 - Track D (server-side background jobs) remains deferred unless roadmap scope changes.
-- There is no single live next step owned by this plan; current follow-up work is better represented in `documents/analysis/` and the more current plans in this folder.
+- `documents/plans/Harness Runtime Evolution Plan.md` is now also complete and should be read as follow-up implementation history, not as the active roadmap.
+- This doc should be treated as rollout history and rationale for the first harness wave.

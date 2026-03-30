@@ -1,4 +1,5 @@
 import type { RepoAppearance } from '@/lib/repo-appearance';
+import type { VerificationPolicy } from '@/lib/verification-policy';
 
 // User profile — persisted in localStorage, injected into system prompt
 export interface UserProfile {
@@ -26,6 +27,8 @@ export interface WorkspaceContext {
   includeGitHubTools: boolean;
   /** Logical workspace mode for runtime/session prompt blocks. */
   mode: WorkspaceMode;
+  /** Session-level verification policy — injected into the system prompt when present. */
+  verificationPolicy?: VerificationPolicy;
 }
 
 export interface WorkspaceCapabilities {
@@ -707,6 +710,8 @@ export interface Conversation {
   model?: string;
   /** Persisted, coarse-grained runtime state used to restore the console and queued follow-ups. */
   runState?: ConversationRunState;
+  /** Session-level verification policy — durable reliability rules for this conversation. */
+  verificationPolicy?: VerificationPolicy;
 }
 
 // Onboarding + Active Repo types
@@ -963,6 +968,8 @@ export interface DelegationEnvelope extends DelegationBriefFields {
   harnessSettings?: HarnessProfileSettings;
   /** Pre-computed planner brief to inject into the Coder's task preamble. */
   plannerBrief?: string;
+  /** Session-level verification policy passed through from the conversation. */
+  verificationPolicy?: VerificationPolicy;
 }
 
 /** Runtime callbacks for the Coder agent loop. */

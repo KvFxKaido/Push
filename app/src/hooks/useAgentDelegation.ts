@@ -13,6 +13,8 @@ import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { formatElapsedTime } from '@/lib/utils';
 import { createId } from '@/hooks/chat-persistence';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
+import type { RunEngineEvent } from '@/lib/run-engine';
+import type { VerificationPolicy } from '@/lib/verification-policy';
 import type {
   ToolExecutionResult,
   ChatMessage,
@@ -35,6 +37,8 @@ export interface UseAgentDelegationParams {
   setConversations: React.Dispatch<React.SetStateAction<Record<string, Conversation>>>;
   updateAgentStatus: (status: AgentStatus, meta?: { chatId?: string; source?: AgentStatusSource; log?: boolean }) => void;
   appendRunEvent: (chatId: string, event: RunEventInput) => void;
+  emitRunEngineEvent: (event: RunEngineEvent) => void;
+  getVerificationPolicyForChat: (chatId: string) => VerificationPolicy;
   branchInfoRef: React.RefObject<{ currentBranch?: string; defaultBranch?: string } | undefined | null>;
   isMainProtectedRef: React.MutableRefObject<boolean>;
   agentsMdRef: React.MutableRefObject<string | null>;
@@ -43,7 +47,6 @@ export interface UseAgentDelegationParams {
   repoRef: React.MutableRefObject<string | null>;
   abortControllerRef: React.MutableRefObject<AbortController | null>;
   abortRef: React.MutableRefObject<boolean>;
-  checkpointPhaseRef: React.MutableRefObject<string | null>;
   lastCoderStateRef: React.MutableRefObject<CoderWorkingMemory | null>;
 }
 
@@ -51,6 +54,8 @@ export function useAgentDelegation({
   setConversations,
   updateAgentStatus,
   appendRunEvent,
+  emitRunEngineEvent,
+  getVerificationPolicyForChat,
   branchInfoRef,
   isMainProtectedRef,
   agentsMdRef,
@@ -59,7 +64,6 @@ export function useAgentDelegation({
   repoRef,
   abortControllerRef,
   abortRef,
-  checkpointPhaseRef,
   lastCoderStateRef,
 }: UseAgentDelegationParams) {
   const executeDelegateCall = useCallback(async (
@@ -70,10 +74,15 @@ export function useAgentDelegation({
     resolvedModelForChat: string | undefined,
   ): Promise<ToolExecutionResult> => {
     let toolExecResult: ToolExecutionResult = { text: '' };
+    const verificationPolicy = getVerificationPolicyForChat(chatId);
 
     if (toolCall.call.tool === 'delegate_explorer') {
       const executionId = createId();
-      checkpointPhaseRef.current = 'delegating_explorer';
+      emitRunEngineEvent({
+        type: 'DELEGATION_STARTED',
+        timestamp: Date.now(),
+        agent: 'explorer',
+      });
       const explorerTask = toolCall.call.args.task?.trim();
       const explorerArgs = toolCall.call.args;
       if (!explorerTask) {
@@ -180,7 +189,11 @@ export function useAgentDelegation({
     } else if (toolCall.call.tool === 'delegate_coder') {
       const executionId = createId();
       // Handle Coder delegation (Phase 3b)
-      checkpointPhaseRef.current = 'delegating_coder';
+      emitRunEngineEvent({
+        type: 'DELEGATION_STARTED',
+        timestamp: Date.now(),
+        agent: 'coder',
+      });
       lastCoderStateRef.current = null; // Will be populated by onWorkingMemoryUpdate callback
       const currentSandboxId = sandboxIdRef.current;
       if (!currentSandboxId) {
@@ -366,6 +379,7 @@ export function useAgentDelegation({
                     instructionFilename: instructionFilenameRef.current || undefined,
                     harnessSettings,
                     plannerBrief,
+                    verificationPolicy,
                   },
                 );
                 setSpanAttributes(span, {
@@ -449,6 +463,7 @@ export function useAgentDelegation({
                       coderRounds: totalRounds,
                       coderMaxRounds: evalMaxRounds,
                       criteriaResults: allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
+                      verificationPolicy,
                     },
                   );
                   if (result) {
@@ -544,7 +559,7 @@ export function useAgentDelegation({
     }
     
     return toolExecResult;
-  }, [setConversations, updateAgentStatus, appendRunEvent, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef, sandboxIdRef, repoRef, abortControllerRef, abortRef, checkpointPhaseRef, lastCoderStateRef]);
+  }, [setConversations, updateAgentStatus, appendRunEvent, emitRunEngineEvent, getVerificationPolicyForChat, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef, sandboxIdRef, repoRef, abortControllerRef, abortRef, lastCoderStateRef]);
 
   return { executeDelegateCall };
 }
