@@ -168,23 +168,24 @@ Remaining surface differences are mostly ergonomic rather than semantic:
 
 This is now a good example of a previously drifted concept that was successfully consolidated.
 
-### 4b. Model catalog logic exists on both surfaces
+### 4b. Model catalog data was a drift seam, and is now partially consolidated
 
 Files:
 
+- `lib/provider-models.ts`
 - `app/src/lib/model-catalog.ts`
 - `cli/model-catalog.ts`
 - `app/src/lib/providers.ts`
 
-Both surfaces maintain curated defaults, model lists, and live `/models` fetching logic, but they do so differently:
+The highest-risk split source of truth here was the curated/default provider-model data. That is now shared through `lib/provider-models.ts`, which both the app and CLI import.
 
-- different curated catalogs
-- different default model strings
+What still differs intentionally across surfaces is the live catalog behavior:
+
 - different normalization breadth
 - different fallback behavior
 - different placement of provider metadata
 
-This is not just symmetry. It is split source-of-truth risk.
+That remaining asymmetry is narrower and more defensible: the web app has richer filtering/capability logic, while the CLI keeps a simpler curated-plus-live merge path.
 
 ### 4c. Tool-call metrics are parallel, but not parity-aligned
 
@@ -264,13 +265,14 @@ These areas are repetitive in shape, but the repetition has been pushed into con
 
 ### Highest drift risk
 
-- `app/src/lib/model-catalog.ts` plus `app/src/lib/providers.ts` vs `cli/model-catalog.ts`
+- live model-fetch / normalization behavior in `app/src/lib/model-catalog.ts` vs `cli/model-catalog.ts`
 - project-instruction loading paths across web, sandbox, and CLI
 - `app/src/lib/tool-call-metrics.ts` vs `cli/tool-call-metrics.ts`
 
 ### Recently resolved drift
 
 - `app/src/lib/hashline.ts` / `lib/hashline.ts` / `cli/hashline.ts`
+- `lib/provider-models.ts` shared by `app/src/lib/providers.ts`, `app/src/lib/model-catalog.ts`, `cli/model-catalog.ts`, and `cli/provider.ts`
 
 ## Bottom Line
 

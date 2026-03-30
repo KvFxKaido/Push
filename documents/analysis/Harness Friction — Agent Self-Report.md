@@ -35,9 +35,9 @@ Observed during multi-file edits, test runs, and review workflows in the Push co
 
 **Problem:** After the initial system prompt, the agent has no ambient awareness of workspace state. Checking dirty files, HEAD position, or diff size costs 1-2 tool calls just to orient.
 
-**Push status:** `sandboxStatus()` provides HEAD + dirty files + diff in one call. The `[meta]` envelope gives per-tool-result context. But neither is injected automatically — the agent has to ask.
+**Push status:** Largely addressed on the main web path. The orchestrator now gets a machine-readable session capability block at startup, and tool results can carry an automatic `[pulse]` line after mutations and on a periodic cadence with branch/HEAD/dirty-file context.
 
-**Recommendation:** Inject a one-line workspace pulse into every N-th tool result (or after every mutation):
+**Recommendation:** Shipped in spirit. The remaining follow-up is parity and tuning: extend the same ambient pulse behavior to other agent surfaces where useful, and decide whether the pulse should include diff-size or budget-remaining hints in addition to branch/dirty state.
 ```
 [workspace] main@a700e77 | 3 dirty | +47/-12 | 2.1k ctx remaining
 ```
@@ -59,9 +59,9 @@ Zero tool calls. Ambient awareness. The Orchestrator should get an equivalent si
 
 **Problem:** The agent has no token counter or budget indicator. Context limits are hit silently — the system compresses prior messages without warning. The agent can't proactively decide "I should summarize now before I lose my findings."
 
-**Push status:** The Coder gets context size in the `[meta]` envelope and has a ~120k-char cap. `CoderWorkingMemory` survives context trimming by re-injection. This is one of Push's most deliberate harness investments.
+**Push status:** Mostly addressed on the main web path. Tool results now expose context pressure as a percentage and severity inside the `[meta]` envelope, alongside the existing working-memory reinjection pattern.
 
-**Recommendation:** Expose context budget as a percentage in the workspace pulse (see #3). Add a threshold alert: when context exceeds 80%, inject a `[CONTEXT_PRESSURE]` signal encouraging the agent to compact its working memory. Push's `CoderWorkingMemory` pattern is the gold standard here — state that survives trimming by structural re-injection rather than hoping it stays in the window.
+**Recommendation:** Keep the remaining work focused on actionability rather than visibility: decide whether pressure should trigger explicit compaction hints or working-memory summarization prompts once thresholds are crossed.
 
 ---
 
@@ -158,9 +158,9 @@ Consulted 2026-03-11. Codex's gripes lean toward contracts, provenance, and quer
 
 **Problem:** Writable roots, network access, approval policy, timeout ceilings, and available tools are inferred from prose instructions instead of a queryable capability object. Planning is brittle; turns are wasted on actions that were never possible.
 
-**Push status:** Partially addressed. `[meta]` gives round/context/dirty state but not the execution contract itself.
+**Push status:** Largely addressed on the main web path. The orchestrator prompt now includes a machine-readable session capability block with workspace mode, GitHub/sandbox availability, writable root, git availability, container TTL, warnings, and the mutation contract.
 
-**Recommendation:** Emit a machine-readable session capability block at startup and whenever the environment changes: available tools, network policy, writable roots, approval mode, timeouts, git availability, background-process support.
+**Recommendation:** Shipped for startup/session context. The remaining gap is broader contract coverage: approval/network/timeout details and non-web-surface parity.
 
 ---
 
@@ -198,9 +198,9 @@ Consulted 2026-03-11. Codex's gripes lean toward contracts, provenance, and quer
 
 **Problem:** After an edit, "success" is too weak. The agent wants exact changed spans, updated hashes, invalidated read handles, and obvious follow-up risks. Without these, the next turn starts with another read or diff.
 
-**Push status:** Mostly addressed — hashline edits and patchsets return diffs. But not all mutation tools return structured postconditions consistently.
+**Push status:** Now largely addressed on the main web path. `sandbox_edit_file`, `sandbox_write_file`, and `sandbox_apply_patchset` return structured mutation postconditions with touched files, versions, changed spans/full-write markers, diagnostics, and rollback/check metadata where available.
 
-**Recommendation:** Make every mutating tool return structured postconditions: touched files, changed hunks, new hashes, stale prior handles, and optional targeted diagnostics. Standardize the shape across all mutation tools.
+**Recommendation:** The remaining work is breadth and reuse: extend the same contract to any remaining mutating tools and make more of the structured payload referenceable by later turns.
 
 ---
 
@@ -271,7 +271,7 @@ Consulted 2026-03-11. Codex's gripes lean toward contracts, provenance, and quer
 |---|---|---|---|
 | **Ambient post-mutation diagnostics** (LSP/compiler check on edit) | Gemini #2 | Partially shipped | Medium-High — move from text-only checks to universal structured diagnostics |
 | **Artifact handles** on tool results (referenceable IDs) | Codex #2 | Not shipped | High — eliminates re-tokenization |
-| **Session capability block** (machine-readable environment contract) | Codex #1 | Not shipped | Medium — eliminates impossible-action turns |
+| **Session capability block** (machine-readable environment contract) | Codex #1 | Shipped on main web path | Medium — eliminates impossible-action turns |
 | **Guarded apply-check-rollback** (single atomic verified-change primitive) | Codex #6 | Mostly shipped for patchsets | Medium — extend the verified-change contract across more flows |
 | **Interactive trap detection** (PTY stdin-wait heuristic) | Gemini #4 | Not shipped | Medium — prevents timeout waste |
 | **Dirty state provenance** (`modified_by` / `last_tool` per file) | Codex #4 | Not shipped | Medium — enables cautious editing in dirty trees |
@@ -282,14 +282,14 @@ Consulted 2026-03-11. Codex's gripes lean toward contracts, provenance, and quer
 ### Prioritized recommendations for Push
 
 **Tier 1 — Highest leverage, builds on shipped infrastructure:**
-1. **Ambient post-mutation diagnostics** — Standardize the diagnostics that already exist so every mutation tool returns comparable, structured follow-up state.
+1. **Invalidation-aware working memory** — Extend `CoderWorkingMemory` to track which files each conclusion depends on and mark entries stale on mutation.
 2. **Guarded apply-check-rollback** — Promote the verified-change contract beyond advanced patchset flows so it becomes the default safe path instead of a specialized one.
-3. **Invalidation-aware working memory** — Extend `CoderWorkingMemory` to track which files each conclusion depends on and mark entries stale on mutation.
+3. **Ambient diagnostics parity** — Extend the now-structured mutation diagnostics contract across the remaining edit/mutation surfaces.
 
 **Tier 2 — High value, moderate implementation cost:**
 4. **`find_implementations` / call-graph queries** — Extend the new declaration-plus-reference layer into richer structural navigation.
-5. **Session capability block** — Emit environment contract at startup. Eliminates a class of wasted turns.
-6. **Dirty state provenance** — Add `modified_by` to the file-awareness ledger.
+5. **Dirty state provenance** — Add `modified_by` to the file-awareness ledger.
+6. **Non-web parity for runtime contract** — Decide how much of the new session-capability/workspace-pulse contract should carry into other agent surfaces.
 
 **Tier 3 — Novel but longer horizon:**
 7. **Artifact handles** on tool results (requires protocol-level change)

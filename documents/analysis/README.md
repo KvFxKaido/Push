@@ -18,13 +18,13 @@ This folder is a mix of current architecture analysis, comparative research, and
 | `Agent Tool Patterns — Claude Code Cross-Reference.md` | Reference | Comparative design notes; still useful, but not a task list. |
 | `AgentScope Architecture Review.md` | Current | Main still-open takeaways: OTel tracing and sandbox-provider abstraction. |
 | `Copilot SDK Research.md` | Current, partially superseded | Prompt sections, tool scoping, and tool hooks are done; steering/queueing and event persistence split remain interesting. |
-| `Duplication and Structural Symmetry Analysis.md` | Current, refreshed 2026-03-30 | `hashline` drift has been resolved; model catalog/settings and mirrored web/CLI modules remain the main cleanup targets. |
-| `Harness Friction — Agent Self-Report.md` | Current, refreshed 2026-03-30 | Ambient runtime state, stronger postconditions, capability discovery, and working-memory evolution remain the main open themes. |
+| `Duplication and Structural Symmetry Analysis.md` | Current, refreshed 2026-03-30 | `hashline` drift and shared provider-model catalog drift are now resolved; remaining cleanup is more about Settings state surfaces and other mirrored modules. |
+| `Harness Friction — Agent Self-Report.md` | Current, refreshed 2026-03-30 | Ambient runtime state, capability discovery, and structured mutation postconditions are now shipped on the main web path; working-memory evolution and richer structural navigation remain open. |
 
 ## Quick Triage
 
-If we are choosing implementation work from this folder, the best live clusters are:
+If we are choosing implementation work from this folder, the best live clusters are now:
 
-1. Agent runtime contract and ambient state.
-2. Structured mutation postconditions and diagnostics.
-3. Settings/model-catalog consolidation and other mirrored-surface drift.
+1. OpenTelemetry tracing and runtime observability.
+2. Working-memory evolution and invalidation-aware investigation state.
+3. Richer structural navigation (`read_symbol_body`, implementations, call-graph queries).
