@@ -8,12 +8,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { RunEvent } from '@/types';
+import type { DelegationOutcome, RunEvent } from '@/types';
 import {
   appendJournalEvent,
   createJournalEntry,
   finalizeJournalEntry,
   markJournalCheckpoint,
+  recordDelegationOutcome,
   updateJournalPhase,
   type RunJournalEntry,
 } from './run-journal';
@@ -43,6 +44,23 @@ function makeEvent(overrides: Partial<RunEvent> = {}): RunEvent {
     outcome: 'completed',
     ...overrides,
   } as RunEvent;
+}
+
+function makeDelegationOutcome(overrides: Partial<DelegationOutcome> = {}): DelegationOutcome {
+  return {
+    agent: 'coder',
+    status: 'complete',
+    summary: 'Implemented the requested change.',
+    evidence: [],
+    checks: [],
+    gateVerdicts: [],
+    missingRequirements: [],
+    nextRequiredAction: null,
+    rounds: 2,
+    checkpoints: 0,
+    elapsedMs: 2500,
+    ...overrides,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +189,16 @@ describe('run-journal', () => {
     expect(unmarked.hadCheckpoint).toBe(false);
   });
 
+  it('records the latest structured delegation outcome', () => {
+    const entry = makeEntry();
+    const outcome = makeDelegationOutcome();
+
+    const updated = recordDelegationOutcome(entry, outcome);
+
+    expect(updated.delegationOutcome).toEqual(outcome);
+    expect(entry.delegationOutcome).toBeNull();
+  });
+
   // ─── Immutability ────────────────────────────────────────────────────
 
   it('all mutations return new objects without modifying originals', () => {
@@ -181,6 +209,7 @@ describe('run-journal', () => {
     const afterPhase = updateJournalPhase(original, 'streaming_llm', 0);
     const afterFinalize = finalizeJournalEntry(original, 'completed');
     const afterCheckpoint = markJournalCheckpoint(original, true);
+    const afterDelegationOutcome = recordDelegationOutcome(original, makeDelegationOutcome());
 
     // Original is unchanged
     expect(original.events).toHaveLength(0);
@@ -193,6 +222,7 @@ describe('run-journal', () => {
     expect(afterPhase).not.toBe(original);
     expect(afterFinalize).not.toBe(original);
     expect(afterCheckpoint).not.toBe(original);
+    expect(afterDelegationOutcome).not.toBe(original);
   });
 
   // ─── Full lifecycle replay ───────────────────────────────────────────

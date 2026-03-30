@@ -12,6 +12,8 @@ import type {
   ChatCard,
   ToolExecutionResult,
 } from '@/types';
+import type { ApprovalGateRegistry } from '@/lib/approval-gates';
+import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { executeAnyToolCall } from '@/lib/tool-dispatch';
 import {
@@ -38,6 +40,8 @@ import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/l
 // Types
 // ---------------------------------------------------------------------------
 
+const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
+
 /** Context that stays constant for the duration of a sendMessage call. */
 export interface ToolExecRunContext {
   repoFullName: string | null;
@@ -46,6 +50,7 @@ export interface ToolExecRunContext {
   defaultBranch: string | undefined;
   provider: ActiveProvider;
   model: string | undefined;
+  approvalGates?: ApprovalGateRegistry;
 }
 
 /** Raw result from executing a tool call (before building the ChatMessage). */
@@ -100,6 +105,8 @@ export async function executeTool(
         ctx.defaultBranch,
         ctx.provider,
         ctx.model,
+        undefined,
+        ctx.approvalGates ?? DEFAULT_APPROVAL_GATES,
       );
     }
 

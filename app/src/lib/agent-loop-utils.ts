@@ -6,6 +6,7 @@
  */
 
 import type { ChatCard } from '@/types';
+import { createDefaultApprovalGates } from './approval-gates';
 import {
   executeAnyToolCall,
   type AnyToolCall,
@@ -16,6 +17,7 @@ import { formatToolResultEnvelope } from './tool-call-recovery';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
 
 const MAX_TOOL_RESULT_SIZE = 8_000;
+const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
 
 /** Truncate content with a descriptive tail marker. */
 export function truncateAgentContent(content: string, maxLen: number, label = 'content'): string {
@@ -79,6 +81,7 @@ export async function executeReadOnlyTool(
       activeProvider,
       activeModel,
       hooks,
+      DEFAULT_APPROVAL_GATES,
     );
     resultText = result.text;
     const resultCard = result.card;

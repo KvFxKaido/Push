@@ -86,6 +86,7 @@ import {
   finalizeJournalEntry,
   loadJournalEntriesForChat,
   pruneJournalEntries,
+  recordDelegationOutcome,
   saveJournalEntry,
   updateJournalPhase,
   updateJournalVerificationState,
@@ -424,6 +425,12 @@ export function useChat(
         runJournalEntryRef.current,
         nextEvent,
       );
+      if (event.type === 'subagent.completed' && event.delegationOutcome) {
+        runJournalEntryRef.current = recordDelegationOutcome(
+          runJournalEntryRef.current,
+          event.delegationOutcome,
+        );
+      }
       void saveJournalEntry(runJournalEntryRef.current);
     }
 

@@ -19,6 +19,7 @@ This folder mixes active plans, partially completed roadmaps, deferred designs, 
 | `Efficiency Plan.md` | Historical, partially shipped | Core decisions landed; doc still contains pre-ship reasoning and is useful mainly as rationale. |
 | `Harness Reliability Plan.md` | Historical tracking | Tracks A/B/C/E largely shipped; Track D deferred. Best used as implementation history and rationale. |
 | `Harness Runtime Evolution Plan.md` | Historical, completed 2026-03-30 | All five harness-runtime tracks shipped; use as implementation history and follow-up rationale, not as the live roadmap. |
+| `Runtime Enforcement Follow-up Plan.md` | Historical, completed 2026-03-30 | Structured delegation outcomes, post-tool bridge activation, and approval-sensitive runtime gates are now shipped; use this as implementation history. |
 | `UX Nice-to-Haves Plan.md` | Wishlist / reference | Still a valid idea bank, but not current roadmap. |
 | `Web-CLI Parity Plan.md` | Current, refreshed 2026-03-30 | TypeScript runtime cutover, TUI, and daemon work landed; remaining work is selective convergence, not blanket migration. |
 | `Workspace Route Follow-up Plan.md` | Current, refreshed 2026-03-30 | Original draft phases largely landed; remaining work is targeted cleanup and measurement inside the new route boundaries. |

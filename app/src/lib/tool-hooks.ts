@@ -119,6 +119,8 @@ export async function evaluatePreHooks(
  * or null if all hooks passed through.
  *
  * Last resultOverride wins. systemMessages concatenate.
+ * For action-based results (inject/halt), the first action wins —
+ * subsequent hooks cannot override a halt/inject decision.
  */
 export async function evaluatePostHooks(
   registry: ToolHookRegistry,
@@ -134,7 +136,9 @@ export async function evaluatePostHooks(
 
   for (const entry of matching) {
     const hookResult = await entry.hook(toolName, args, result, context);
-    if (!hookResult.systemMessage && !hookResult.resultOverride) continue;
+    const hasLegacyFields = hookResult.systemMessage || hookResult.resultOverride;
+    const hasActionFields = hookResult.action;
+    if (!hasLegacyFields && !hasActionFields) continue;
 
     if (!merged) {
       merged = { ...hookResult };
@@ -144,6 +148,12 @@ export async function evaluatePostHooks(
         merged.systemMessage = merged.systemMessage
           ? `${merged.systemMessage}\n${hookResult.systemMessage}`
           : hookResult.systemMessage;
+      }
+      // First action wins — don't let later hooks override inject/halt
+      if (hookResult.action && !merged.action) {
+        merged.action = hookResult.action;
+        merged.injectMessage = hookResult.injectMessage;
+        merged.haltSummary = hookResult.haltSummary;
       }
     }
   }

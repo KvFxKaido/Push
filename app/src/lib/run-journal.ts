@@ -17,7 +17,7 @@
  */
 
 import { STORE, put, get, withStore } from './app-db';
-import type { RunEvent, VerificationRuntimeState } from '@/types';
+import type { RunEvent, VerificationRuntimeState, DelegationOutcome } from '@/types';
 import type { RunEnginePhase } from './run-engine';
 
 // ---------------------------------------------------------------------------
@@ -62,6 +62,10 @@ export interface RunJournalEntry {
   baseMessageCount: number;
   /** Latest durable verification state for this run/chat. */
   verificationState: VerificationRuntimeState | null;
+
+  // --- Structured delegation outcome ---
+  /** Last delegation outcome from this run (coder or explorer). */
+  delegationOutcome: DelegationOutcome | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +108,7 @@ export function createJournalEntry(params: {
     hadCheckpoint: false,
     baseMessageCount: params.baseMessageCount,
     verificationState: null,
+    delegationOutcome: null,
   };
 }
 
@@ -178,6 +183,16 @@ export function updateJournalVerificationState(
   verificationState: VerificationRuntimeState,
 ): RunJournalEntry {
   return { ...entry, verificationState };
+}
+
+/**
+ * Record a structured delegation outcome on the journal entry.
+ */
+export function recordDelegationOutcome(
+  entry: RunJournalEntry,
+  outcome: DelegationOutcome,
+): RunJournalEntry {
+  return { ...entry, delegationOutcome: outcome };
 }
 
 // ---------------------------------------------------------------------------

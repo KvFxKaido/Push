@@ -18,6 +18,7 @@ import type {
   ExplorerDelegationArgs,
 } from '@/types';
 import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
+import type { ApprovalGateRegistry } from './approval-gates';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
@@ -349,13 +350,14 @@ export async function executeAnyToolCall(
   activeProvider?: ActiveProvider,
   activeModel?: string,
   hooks?: ToolHookRegistry,
+  approvalGates?: ApprovalGateRegistry,
 ): Promise<ToolExecutionResult> {
   const toolName = getHookToolName(toolCall);
   const toolArgs = getHookToolArgs(toolCall);
+  const hookContext: ToolHookContext = { sandboxId, allowedRepo, activeProvider, activeModel };
 
   // --- Pre-hooks evaluation ---
   if (hooks && hooks.pre.length > 0) {
-    const hookContext: ToolHookContext = { sandboxId, allowedRepo, activeProvider, activeModel };
     const preResult = await evaluatePreHooks(hooks, toolName, toolArgs, hookContext);
 
     if (preResult?.decision === 'deny') {
@@ -369,6 +371,36 @@ export async function executeAnyToolCall(
     if (preResult?.modifiedArgs) {
       Object.assign(toolArgs, preResult.modifiedArgs);
       applyHookToolArgs(toolCall, preResult.modifiedArgs);
+    }
+  }
+
+  // --- Approval gate evaluation ---
+  if (approvalGates) {
+    const gateResult = await approvalGates.evaluate(toolName, toolArgs, hookContext);
+    if (gateResult) {
+      if (gateResult.decision === 'blocked') {
+        const err: StructuredToolError = {
+          type: 'APPROVAL_GATE_BLOCKED',
+          retryable: false,
+          message: gateResult.reason,
+          detail: gateResult.recoveryPath,
+        };
+        return {
+          text: `[Tool Blocked — ${toolName}] ${gateResult.reason}\n\nRecovery: ${gateResult.recoveryPath}`,
+          structuredError: err,
+        };
+      }
+      if (gateResult.decision === 'ask_user') {
+        return {
+          text: `[Approval Required — ${toolName}] This action requires explicit user approval.\n\nReason: ${gateResult.reason}\n\nUse ask_user to request permission before proceeding. Explain what you want to do and why.\n\nRecovery: ${gateResult.recoveryPath}`,
+          structuredError: {
+            type: 'APPROVAL_GATE_BLOCKED',
+            retryable: true,
+            message: gateResult.reason,
+            detail: `Use ask_user to get approval. ${gateResult.recoveryPath}`,
+          },
+        };
+      }
     }
   }
 
@@ -440,7 +472,6 @@ export async function executeAnyToolCall(
 
   // --- Post-hooks evaluation ---
   if (hooks && hooks.post.length > 0) {
-    const hookContext: ToolHookContext = { sandboxId, allowedRepo, activeProvider, activeModel };
     const postResult = await evaluatePostHooks(hooks, toolName, toolArgs, result, hookContext);
 
     if (postResult?.resultOverride) {
@@ -449,6 +480,13 @@ export async function executeAnyToolCall(
     // systemMessage is returned to the caller for injection into the conversation
     if (postResult?.systemMessage) {
       result = { ...result, text: `${result.text}\n\n[Hook] ${postResult.systemMessage}` };
+    }
+    // Policy actions: inject/halt flow through ToolExecutionResult to the caller
+    if (postResult?.action === 'inject' && postResult.injectMessage) {
+      result = { ...result, postHookInject: postResult.injectMessage };
+    }
+    if (postResult?.action === 'halt' && postResult.haltSummary) {
+      result = { ...result, postHookHalt: postResult.haltSummary };
     }
   }
 

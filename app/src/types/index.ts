@@ -400,6 +400,7 @@ export type ToolErrorType =
   | 'STALE_FILE'
   | 'EDIT_GUARD_BLOCKED'
   | 'GIT_GUARD_BLOCKED'
+  | 'APPROVAL_GATE_BLOCKED'
   | 'WRITE_FAILED'
   | 'UNKNOWN';
 
@@ -428,6 +429,12 @@ export interface ToolExecutionResult {
   /** When set, the sandbox has switched to this branch (e.g. draft checkout).
    *  The app should sync its active branch state without tearing down the sandbox. */
   branchSwitch?: string;
+  /** Structured delegation outcome — present when this result came from a delegated agent. */
+  delegationOutcome?: DelegationOutcome;
+  /** Post-hook policy action: inject this message after the tool result. */
+  postHookInject?: ChatMessage;
+  /** Post-hook policy action: halt the agent loop with this summary. */
+  postHookHalt?: string;
 }
 
 export interface PRCardData {
@@ -651,6 +658,8 @@ export type RunEventInput =
       executionId: string;
       agent: RunEventSubagent;
       summary: string;
+      /** Structured delegation outcome — present for coder/explorer delegations. */
+      delegationOutcome?: DelegationOutcome;
     }
   | {
       type: 'subagent.failed';
@@ -931,6 +940,79 @@ export interface PostToolUseResult {
   systemMessage?: string;
   /** When set, replaces the tool result text sent to the model. */
   resultOverride?: string;
+  /**
+   * Runtime action requested by a post-tool policy.
+   * - 'inject':  append an advisory message after the tool result
+   * - 'halt':    stop the agent loop (e.g., repeated mutation failures)
+   * When absent, the hook only modifies the result text (legacy behavior).
+   */
+  action?: 'inject' | 'halt';
+  /**
+   * Message to inject into the conversation (when action === 'inject').
+   * Structured as a ChatMessage so it appears in the conversation history.
+   */
+  injectMessage?: ChatMessage;
+  /**
+   * Summary reason for halting (when action === 'halt').
+   * Used for status display and journal recording.
+   */
+  haltSummary?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Approval gates — runtime gate checks for approval-sensitive actions
+// ---------------------------------------------------------------------------
+
+/** Categories of actions that require explicit approval or a safe audited path. */
+export type ApprovalGateCategory = 'destructive_sandbox' | 'git_override' | 'remote_side_effect';
+
+/**
+ * Result of an approval gate check.
+ * - 'allowed':  action may proceed
+ * - 'blocked':  action is blocked; model gets structured explanation + recovery path
+ * - 'ask_user': action requires explicit user approval via ask_user tool
+ */
+export type ApprovalGateDecision = 'allowed' | 'blocked' | 'ask_user';
+
+/**
+ * A registered approval gate rule. Evaluated before tool execution for
+ * actions that should not rely solely on prompt guidance.
+ */
+export interface ApprovalGateRule {
+  /** Unique rule identifier for telemetry and debugging. */
+  id: string;
+  /** Human-readable description of what this gate protects. */
+  label: string;
+  /** Category for grouping and override logic. */
+  category: ApprovalGateCategory;
+  /** Tool name matcher — regex or pipe-delimited string. */
+  matcher: RegExp | string;
+  /**
+   * Evaluate whether the action is allowed.
+   * Receives tool name, args, and current context.
+   */
+  evaluate: (
+    toolName: string,
+    args: Record<string, unknown>,
+    context: ToolHookContext,
+  ) => ApprovalGateDecision | Promise<ApprovalGateDecision>;
+  /** Structured reason shown to the model when blocked. */
+  blockedReason: string;
+  /** Recovery guidance — the safest next action the model should take. */
+  recoveryPath: string;
+}
+
+/**
+ * Result returned when an approval gate blocks an action.
+ * Provides the model with structured information about why the action
+ * was blocked and what to do instead.
+ */
+export interface ApprovalGateBlockedResult {
+  gateId: string;
+  category: ApprovalGateCategory;
+  decision: 'blocked' | 'ask_user';
+  reason: string;
+  recoveryPath: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,6 +1121,77 @@ export interface ExplorerResult {
   summary: string;
   cards: ChatCard[];
   rounds: number;
+}
+
+// ---------------------------------------------------------------------------
+// Structured delegation outcome — machine-readable result contract
+// ---------------------------------------------------------------------------
+
+/**
+ * Status of a delegated run: did the agent finish, leave work undone, or
+ * fail to reach a conclusion?
+ */
+export type DelegationStatus = 'complete' | 'incomplete' | 'inconclusive';
+
+/**
+ * A single piece of evidence produced during a delegated run.
+ * Evidence can come from sandbox diffs, test results, or agent observations.
+ */
+export interface DelegationEvidence {
+  kind: 'diff' | 'test' | 'observation';
+  label: string;
+  detail?: string;
+}
+
+/**
+ * The result of a verification check run during delegation
+ * (e.g., acceptance criteria, typecheck, test suite).
+ */
+export interface DelegationCheck {
+  id: string;
+  passed: boolean;
+  exitCode?: number;
+  output?: string;
+}
+
+/**
+ * A gate verdict captured during delegation (e.g., auditor evaluation).
+ */
+export interface DelegationGateVerdict {
+  gate: string;
+  outcome: 'passed' | 'failed' | 'inconclusive';
+  summary: string;
+}
+
+/**
+ * Structured delegation outcome — the authoritative contract between a
+ * delegated agent and the Orchestrator / runtime.
+ *
+ * Human-readable prose is derived FROM this structure, not the reverse.
+ */
+export interface DelegationOutcome {
+  /** Agent that produced this outcome. */
+  agent: 'coder' | 'explorer';
+  /** Overall status of the delegation. */
+  status: DelegationStatus;
+  /** Human-readable summary (derived from structured fields). */
+  summary: string;
+  /** Evidence collected during the run. */
+  evidence: DelegationEvidence[];
+  /** Acceptance criteria / verification check results. */
+  checks: DelegationCheck[];
+  /** Gate verdicts (auditor, etc.). */
+  gateVerdicts: DelegationGateVerdict[];
+  /** Requirements that were not satisfied. */
+  missingRequirements: string[];
+  /** What the Orchestrator should do next (null = nothing required). */
+  nextRequiredAction: string | null;
+  /** Total agent rounds executed. */
+  rounds: number;
+  /** Checkpoints hit (Coder only). */
+  checkpoints: number;
+  /** Elapsed wall-clock time in ms. */
+  elapsedMs: number;
 }
 
 // ---------------------------------------------------------------------------

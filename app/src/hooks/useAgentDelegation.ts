@@ -36,6 +36,11 @@ import type {
   AgentStatusSource,
   RunEventInput,
   VerificationRuntimeState,
+  DelegationOutcome,
+  DelegationEvidence,
+  DelegationCheck,
+  DelegationGateVerdict,
+  DelegationStatus,
 } from '@/types';
 
 function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
@@ -118,6 +123,7 @@ export function useAgentDelegation({
       });
       const explorerTask = toolCall.call.args.task?.trim();
       const explorerArgs = toolCall.call.args;
+      const explorerStartMs = Date.now();
       if (!explorerTask) {
         toolExecResult = { text: '[Tool Error] delegate_explorer requires a non-empty "task" string.' };
       } else {
@@ -188,8 +194,28 @@ export function useAgentDelegation({
             });
           }
 
+          // --- Build structured DelegationOutcome for explorer ---
+          const explorerOutcome: DelegationOutcome = {
+            agent: 'explorer',
+            status: explorerResult.rounds > 0 && explorerResult.summary.trim()
+              ? 'complete'
+              : 'inconclusive',
+            summary: explorerResult.summary,
+            evidence: explorerResult.summary.trim()
+              ? [{ kind: 'observation', label: 'Investigation findings' }]
+              : [],
+            checks: [],
+            gateVerdicts: [],
+            missingRequirements: [],
+            nextRequiredAction: null,
+            rounds: explorerResult.rounds,
+            checkpoints: 0,
+            elapsedMs: Date.now() - explorerStartMs,
+          };
+
           toolExecResult = {
             text: `[Tool Result — delegate_explorer]\n${explorerResult.summary}\n(${explorerResult.rounds} round${explorerResult.rounds !== 1 ? 's' : ''})`,
+            delegationOutcome: explorerOutcome,
           };
           updateVerificationStateForChat(chatId, (state) =>
             recordVerificationArtifact(
@@ -202,16 +228,34 @@ export function useAgentDelegation({
             executionId,
             agent: 'explorer',
             summary: summarizeToolResultPreview(explorerResult.summary),
+            delegationOutcome: explorerOutcome,
           });
         } catch (err) {
           const isAbort = err instanceof DOMException && err.name === 'AbortError';
           if (isAbort || abortRef.current) {
-            toolExecResult = { text: '[Tool Result — delegate_explorer]\nExplorer cancelled by user.' };
+            const abortOutcome: DelegationOutcome = {
+              agent: 'explorer',
+              status: 'inconclusive',
+              summary: 'Explorer cancelled by user.',
+              evidence: [],
+              checks: [],
+              gateVerdicts: [],
+              missingRequirements: [],
+              nextRequiredAction: null,
+              rounds: 0,
+              checkpoints: 0,
+              elapsedMs: Date.now() - explorerStartMs,
+            };
+            toolExecResult = {
+              text: '[Tool Result — delegate_explorer]\nExplorer cancelled by user.',
+              delegationOutcome: abortOutcome,
+            };
             appendRunEvent(chatId, {
               type: 'subagent.completed',
               executionId,
               agent: 'explorer',
               summary: 'Cancelled by user.',
+              delegationOutcome: abortOutcome,
             });
           } else {
             const msg = err instanceof Error ? err.message : String(err);
@@ -227,6 +271,7 @@ export function useAgentDelegation({
       }
     } else if (toolCall.call.tool === 'delegate_coder') {
       const executionId = createId();
+      const coderStartMs = Date.now();
       // Handle Coder delegation (Phase 3b)
       emitRunEngineEvent({
         type: 'DELEGATION_STARTED',
@@ -279,6 +324,8 @@ export function useAgentDelegation({
             // Collect acceptance criteria results across all tasks for evaluation
             const allCriteriaResults: { id: string; passed: boolean; exitCode: number; output: string }[] = [];
             const verificationCriteria = buildVerificationAcceptanceCriteria(verificationPolicy, 'always');
+            let lastTaskDiff: string | null = null;
+            let coderEvalResult: EvaluationResult | null = null;
 
             // --- Planner Pre-Pass ---
             // When the harness profile requires it (or the task is large enough),
@@ -456,6 +503,7 @@ export function useAgentDelegation({
               } catch {
                 // Verification state can still update from summaries/checks.
               }
+              lastTaskDiff = taskDiff;
               if (taskDiff) {
                 updateVerificationStateForChat(chatId, (state) =>
                   recordVerificationMutation(
@@ -503,7 +551,6 @@ export function useAgentDelegation({
             // After all Coder tasks complete, run the Auditor in evaluation
             // mode to assess whether the work is actually complete.
             if (harnessSettings.evaluateAfterCoder && summaries.length > 0) {
-              let evalResult: EvaluationResult | null = null;
               const auditorExecutionId = createId();
               try {
                 appendRunEvent(chatId, {
@@ -533,7 +580,7 @@ export function useAgentDelegation({
                 // Scale max rounds by task count so multi-task totals don't
                 // falsely trigger the "hit round cap" signal.
                 const evalMaxRounds = harnessSettings.maxCoderRounds * Math.max(taskList.length, 1);
-                evalResult = await withActiveSpan('subagent.auditor', {
+                coderEvalResult = await withActiveSpan('subagent.auditor', {
                   scope: 'push.delegation',
                   kind: SpanKind.INTERNAL,
                   attributes: {
@@ -568,8 +615,8 @@ export function useAgentDelegation({
                   span.setStatus({ code: SpanStatusCode.OK });
                   return result;
                 });
-                if (evalResult) {
-                  const completedEvaluation = evalResult;
+                if (coderEvalResult) {
+                  const completedEvaluation = coderEvalResult;
                   updateVerificationStateForChat(chatId, (state) =>
                     recordVerificationGateResult(
                       state,
@@ -582,7 +629,7 @@ export function useAgentDelegation({
                     type: 'subagent.completed',
                     executionId: auditorExecutionId,
                     agent: 'auditor',
-                    summary: summarizeToolResultPreview(evalResult.summary),
+                    summary: summarizeToolResultPreview(coderEvalResult.summary),
                   });
                 } else {
                   updateVerificationStateForChat(chatId, (state) =>
@@ -619,14 +666,89 @@ export function useAgentDelegation({
               }
 
               // Append evaluation verdict to summaries
-              if (evalResult) {
-                const evalLine = `\n[Evaluation: ${evalResult.verdict.toUpperCase()}] ${evalResult.summary}`;
-                const gapLines = evalResult.gaps.length > 0
-                  ? evalResult.gaps.map(g => `  - ${g}`).join('\n')
+              if (coderEvalResult) {
+                const evalLine = `\n[Evaluation: ${coderEvalResult.verdict.toUpperCase()}] ${coderEvalResult.summary}`;
+                const gapLines = coderEvalResult.gaps.length > 0
+                  ? coderEvalResult.gaps.map(g => `  - ${g}`).join('\n')
                   : '';
                 summaries.push(evalLine + (gapLines ? `\n${gapLines}` : ''));
               }
             }
+
+            // --- Build structured DelegationOutcome for coder ---
+            const coderOutcome: DelegationOutcome = (() => {
+              // Derive status
+              let status: DelegationStatus;
+              if (coderEvalResult) {
+                status = coderEvalResult.verdict === 'complete' ? 'complete' : 'incomplete';
+              } else if (allCriteriaResults.length > 0) {
+                status = allCriteriaResults.every(r => r.passed) ? 'complete' : 'incomplete';
+              } else {
+                status = 'inconclusive';
+              }
+
+              // Build evidence
+              const evidence: DelegationEvidence[] = [];
+              if (lastTaskDiff) {
+                evidence.push({
+                  kind: 'diff',
+                  label: 'Workspace diff',
+                  detail: summarizeToolResultPreview(lastTaskDiff),
+                });
+              }
+              for (const cr of allCriteriaResults) {
+                evidence.push({
+                  kind: 'test',
+                  label: cr.id,
+                  detail: cr.output,
+                });
+              }
+
+              // Build checks
+              const checks: DelegationCheck[] = allCriteriaResults.map(cr => ({
+                id: cr.id,
+                passed: cr.passed,
+                exitCode: cr.exitCode,
+                output: cr.output,
+              }));
+
+              // Build gate verdicts
+              const gateVerdicts: DelegationGateVerdict[] = [];
+              if (coderEvalResult) {
+                gateVerdicts.push({
+                  gate: 'auditor',
+                  outcome: coderEvalResult.verdict === 'complete' ? 'passed' : 'failed',
+                  summary: coderEvalResult.summary,
+                });
+              }
+
+              // Missing requirements
+              const missingRequirements: string[] = coderEvalResult?.gaps ?? allCriteriaResults
+                .filter(cr => !cr.passed)
+                .map(cr => `Check failed: ${cr.id}`);
+
+              // Next required action
+              let nextRequiredAction: string | null = null;
+              if (status === 'incomplete') {
+                nextRequiredAction = coderEvalResult?.gaps.length
+                  ? 'Address gaps identified by auditor'
+                  : 'Fix failing checks';
+              }
+
+              return {
+                agent: 'coder' as const,
+                status,
+                summary: summaries.join('\n'),
+                evidence,
+                checks,
+                gateVerdicts,
+                missingRequirements,
+                nextRequiredAction,
+                rounds: totalRounds,
+                checkpoints: totalCheckpoints,
+                elapsedMs: Date.now() - coderStartMs,
+              };
+            })();
 
             // Attach all Coder cards to the assistant message
             if (allCards.length > 0) {
@@ -643,24 +765,43 @@ export function useAgentDelegation({
               : '';
             toolExecResult = {
               text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})`,
+              delegationOutcome: coderOutcome,
             };
             appendRunEvent(chatId, {
               type: 'subagent.completed',
               executionId,
               agent: 'coder',
               summary: summarizeToolResultPreview(toolExecResult.text),
+              delegationOutcome: coderOutcome,
             });
           }
 
         } catch (err) {
           const isAbort = err instanceof DOMException && err.name === 'AbortError';
           if (isAbort || abortRef.current) {
-            toolExecResult = { text: '[Tool Result — delegate_coder]\nCoder cancelled by user.' };
+            const abortOutcome: DelegationOutcome = {
+              agent: 'coder',
+              status: 'inconclusive',
+              summary: 'Coder cancelled by user.',
+              evidence: [],
+              checks: [],
+              gateVerdicts: [],
+              missingRequirements: [],
+              nextRequiredAction: null,
+              rounds: 0,
+              checkpoints: 0,
+              elapsedMs: Date.now() - coderStartMs,
+            };
+            toolExecResult = {
+              text: '[Tool Result — delegate_coder]\nCoder cancelled by user.',
+              delegationOutcome: abortOutcome,
+            };
             appendRunEvent(chatId, {
               type: 'subagent.completed',
               executionId,
               agent: 'coder',
               summary: 'Cancelled by user.',
+              delegationOutcome: abortOutcome,
             });
           } else {
             const msg = err instanceof Error ? err.message : String(err);

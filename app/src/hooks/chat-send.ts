@@ -162,6 +162,40 @@ function inferVerificationCommandResult(result: ToolExecutionResult): {
   return null;
 }
 
+interface PostToolPolicyEffects {
+  messages: ChatMessage[];
+  halted: boolean;
+  haltDetail?: string;
+}
+
+function collectPostToolPolicyEffects(
+  results: readonly ToolExecutionResult[],
+): PostToolPolicyEffects {
+  const messages: ChatMessage[] = [];
+  let haltDetail: string | undefined;
+
+  for (const result of results) {
+    if (result.postHookInject) {
+      messages.push(result.postHookInject);
+    }
+    if (!haltDetail && result.postHookHalt) {
+      haltDetail = result.postHookHalt;
+      messages.push({
+        id: createId(),
+        role: 'user',
+        content: result.postHookHalt,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  return {
+    messages,
+    halted: Boolean(haltDetail),
+    haltDetail,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Shared run context — stays constant for the duration of one sendMessage call
 // ---------------------------------------------------------------------------
@@ -375,6 +409,47 @@ export async function processAssistantTurn(
     updateVerificationState,
     executeDelegateCall,
   } = ctx;
+
+  const applyPostToolPolicyEffects = (
+    currentApiMessages: ChatMessage[],
+    results: readonly ToolExecutionResult[],
+  ): AssistantTurnResult | null => {
+    const effects = collectPostToolPolicyEffects(results);
+    if (effects.messages.length === 0) return null;
+
+    setConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      const updated = {
+        ...prev,
+        [chatId]: {
+          ...conv,
+          messages: [...conv.messages, ...effects.messages],
+          lastMessageAt: Date.now(),
+        },
+      };
+      dirtyConversationIdsRef.current.add(chatId);
+      return updated;
+    });
+
+    const nextApiMessages = [...currentApiMessages, ...effects.messages];
+    checkpointRefs.apiMessages.current = nextApiMessages;
+    flushCheckpoint();
+
+    if (effects.halted) {
+      updateAgentStatus(
+        { active: true, phase: 'Policy halt', detail: effects.haltDetail },
+        { chatId },
+      );
+    }
+
+    return {
+      nextApiMessages,
+      nextRecoveryState: recoveryState,
+      loopAction: 'continue',
+      loopCompletedNormally: false,
+    };
+  };
 
   // checkpointRefs.apiMessages is the only remaining checkpoint ref;
   // phase/round/accumulated are read from RunEngineState.
@@ -621,6 +696,14 @@ export async function processAssistantTurn(
     checkpointRefs.apiMessages.current = nextApiMessages;
     flushCheckpoint();
 
+    const parallelPolicyAction = applyPostToolPolicyEffects(
+      nextApiMessages,
+      parallelRawResults.map((result) => result.raw),
+    );
+    if (parallelPolicyAction) {
+      return parallelPolicyAction;
+    }
+
     // Execute trailing mutation after the parallel reads
     if (detected.mutating && abortRef.current) {
       return {
@@ -744,6 +827,11 @@ export async function processAssistantTurn(
       nextApiMessages = [...nextApiMessages, mutOutcome.resultMessage];
       checkpointRefs.apiMessages.current = nextApiMessages;
       flushCheckpoint();
+
+      const trailingPolicyAction = applyPostToolPolicyEffects(nextApiMessages, [mutOutcome.raw]);
+      if (trailingPolicyAction) {
+        return trailingPolicyAction;
+      }
     }
 
     return {
@@ -1245,6 +1333,11 @@ export async function processAssistantTurn(
   ];
   checkpointRefs.apiMessages.current = nextApiMessages;
   flushCheckpoint();
+
+  const policyAction = applyPostToolPolicyEffects(nextApiMessages, [toolExecResult]);
+  if (policyAction) {
+    return policyAction;
+  }
 
   return {
     nextApiMessages,

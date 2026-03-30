@@ -1230,6 +1230,30 @@ ${truncatedResult}
         } else if (mutFilePath) {
           mutationFailures.delete(makeMutationKey(mutCall.tool, mutFilePath));
         }
+
+        // --- Policy bridge: afterToolExec evaluation (parallel/trailing-mutation path) ---
+        {
+          const afterToolResult = await policyRegistry.evaluateAfterTool(
+            mutCall.tool,
+            mutCall.args as Record<string, unknown>,
+            mutResult.text,
+            Boolean(mutResult.structuredError),
+            turnCtx,
+          );
+          if (afterToolResult?.action === 'inject') {
+            messages.push(afterToolResult.message);
+          }
+          if (afterToolResult?.action === 'halt') {
+            statusFn('Coder stopped', 'Policy halt — afterToolExec');
+            messages.push({
+              id: `coder-policy-halt-${round}`,
+              role: 'user',
+              content: afterToolResult.summary,
+              timestamp: Date.now(),
+            });
+            // Fall through to continue — model gets one final round to summarize
+          }
+        }
       }
       continue;
     }
@@ -1658,6 +1682,32 @@ ${truncatedResult}
       // Successful execution — clear failure tracking for this tool+file
       const mutKey = makeMutationKey(toolCall.tool, toolFilePath);
       mutationFailures.delete(mutKey);
+    }
+
+    // --- Policy bridge: afterToolExec evaluation (sequential path) ---
+    // Evaluates turn-policy afterToolExec hooks alongside the inline tracking above.
+    // Once the bridge is validated, the inline tracking can be removed in a follow-up.
+    {
+      const afterToolResult = await policyRegistry.evaluateAfterTool(
+        toolCall.tool,
+        toolCall.args as Record<string, unknown>,
+        result.text,
+        Boolean(result.structuredError),
+        turnCtx,
+      );
+      if (afterToolResult?.action === 'inject') {
+        messages.push(afterToolResult.message);
+      }
+      if (afterToolResult?.action === 'halt') {
+        statusFn('Coder stopped', 'Policy halt — afterToolExec');
+        messages.push({
+          id: `coder-policy-halt-${round}`,
+          role: 'user',
+          content: afterToolResult.summary,
+          timestamp: Date.now(),
+        });
+        continue; // one final round for the model to summarize
+      }
     }
 
     // Safety check: if context is getting too large, summarize and trim oldest messages.

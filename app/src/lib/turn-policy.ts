@@ -18,7 +18,7 @@
  * Tool hooks gate individual tool calls; turn policies gate entire turns.
  */
 
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, ToolExecutionResult, PostToolUseResult } from '@/types';
 import type { ToolHookRegistry } from './tool-hooks';
 
 // ---------------------------------------------------------------------------
@@ -268,20 +268,21 @@ export class TurnPolicyRegistry {
   }
 
   /**
-   * Bridge: convert beforeToolExec hooks into a ToolHookRegistry that the
+   * Bridge: convert turn-policy hooks into a ToolHookRegistry that the
    * existing tool-dispatch.ts can consume. This lets roles migrate gradually
    * from raw ToolHookRegistry to TurnPolicy without a big-bang refactor.
    *
    * Uses ctx.role to scope policy lookup — the role is always derived from
    * the TurnContext to avoid mismatches.
    *
-   * Limitation: afterToolExec policies are not bridged here because
-   * PostToolUseResult cannot express 'inject' or 'halt' actions. Those
-   * must be evaluated directly via evaluateAfterTool() in the agent loop.
+   * Both beforeToolExec and afterToolExec policies are bridged:
+   * - beforeToolExec → pre-hooks (deny/passthrough)
+   * - afterToolExec  → post-hooks (inject/halt via expanded PostToolUseResult)
    */
   toToolHookRegistry(ctx: TurnContext): ToolHookRegistry {
     const policies = this.forRole(ctx.role);
     const hasBeforeTool = policies.some((p) => p.beforeToolExec?.length);
+    const hasAfterTool = policies.some((p) => p.afterToolExec?.length);
 
     return {
       pre: hasBeforeTool
@@ -301,7 +302,34 @@ export class TurnPolicyRegistry {
             },
           ]
         : [],
-      post: [],
+      post: hasAfterTool
+        ? [
+            {
+              matcher: /.*/,
+              hook: async (
+                toolName: string,
+                args: Record<string, unknown>,
+                result: ToolExecutionResult,
+              ): Promise<PostToolUseResult> => {
+                const afterResult = await this.evaluateAfterTool(
+                  toolName,
+                  args,
+                  result.text,
+                  Boolean(result.structuredError),
+                  ctx,
+                );
+                if (!afterResult) return {};
+                if (afterResult.action === 'inject') {
+                  return { action: 'inject' as const, injectMessage: afterResult.message };
+                }
+                if (afterResult.action === 'halt') {
+                  return { action: 'halt' as const, haltSummary: afterResult.summary };
+                }
+                return {};
+              },
+            },
+          ]
+        : [],
     };
   }
 }

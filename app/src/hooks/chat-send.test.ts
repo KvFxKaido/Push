@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, Conversation, VerificationRuntimeState } from '@/types';
+import { setApprovalMode } from '@/lib/approval-mode';
 
 const { mockStreamChat } = vi.hoisted(() => ({
   mockStreamChat: vi.fn(),
@@ -99,6 +100,7 @@ function makeLoopContext(
 describe('chat-send', () => {
   beforeEach(() => {
     mockStreamChat.mockReset();
+    setApprovalMode('supervised');
   });
 
   it('streams content/thinking into the latest assistant message and checkpoint refs', async () => {
@@ -262,6 +264,93 @@ describe('chat-send', () => {
     expect(lastMsg?.role).toBe('user');
     expect(lastMsg?.content).toContain('VERIFICATION_BLOCK');
     expect(lastMsg?.content).toContain('npx tsc --noEmit');
+  });
+
+  it('surfaces approval-gated tool calls through the main chat tool path', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    const result = await processAssistantTurn(
+      0,
+      '```json\n{"tool":"sandbox_exec","args":{"command":"rm -rf /workspace/tmp-cache"}}\n```',
+      '',
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Clean up the workspace', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('continue');
+    expect(result.loopCompletedNormally).toBe(false);
+    expect(result.nextApiMessages.at(-1)?.content).toContain('Approval Required');
+    expect(result.nextApiMessages.at(-1)?.content).toContain('ask_user');
+    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content).toContain('Approval Required');
+  });
+
+  it('appends post-tool inject messages to the conversation and next round context', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const injectMessage: ChatMessage = {
+      id: 'inject-1',
+      role: 'user',
+      content: 'Please ground your next step in the structured delegation outcome.',
+      timestamp: 2,
+    };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      executeDelegateCall: vi.fn().mockResolvedValue({
+        text: '[Tool Result — delegate_explorer]\nFound the relevant files.',
+        postHookInject: injectMessage,
+      }),
+    });
+
+    const result = await processAssistantTurn(
+      0,
+      '```json\n{"tool":"delegate_explorer","args":{"task":"trace the auth flow"}}\n```',
+      '',
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Trace auth flow', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('continue');
+    expect(result.loopCompletedNormally).toBe(false);
+    expect(result.nextApiMessages.at(-1)).toEqual(injectMessage);
+    expect(conversationsRef.current['chat-1'].messages.at(-1)).toEqual(injectMessage);
+  });
+
+  it('turns post-tool halts into runtime follow-up messages for the next round', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      executeDelegateCall: vi.fn().mockResolvedValue({
+        text: '[Tool Result — delegate_explorer]\nMade partial progress.',
+        postHookHalt: 'Stop tool use and summarize what remains before continuing.',
+      }),
+    });
+
+    const result = await processAssistantTurn(
+      0,
+      '```json\n{"tool":"delegate_explorer","args":{"task":"trace the auth bug"}}\n```',
+      '',
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Trace auth bug', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('continue');
+    expect(result.loopCompletedNormally).toBe(false);
+    expect(result.nextApiMessages.at(-1)?.content).toContain('Stop tool use and summarize');
+    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content).toContain('Stop tool use and summarize');
+    expect(ctx.updateAgentStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: 'Policy halt' }),
+      { chatId: 'chat-1' },
+    );
   });
 
   it('does NOT inject when completion is grounded by delegation result', async () => {
