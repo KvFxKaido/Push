@@ -3,6 +3,7 @@ import { describe, beforeEach, expect, it, vi } from 'vitest';
 import { renderToReadableStream } from 'react-dom/server';
 import type {
   ActiveRepo,
+  Conversation,
   ConversationIndex,
   GitHubAuthSession,
   GitHubUser,
@@ -88,7 +89,9 @@ const mockState = vi.hoisted(() => {
     activeRepo: defaultActiveRepo,
     repoAppearance: defaultRepoAppearance,
     migrateConversationsToIndexedDB: vi.fn(async () => ({})),
-    replaceAllConversations: vi.fn(async () => {}),
+    replaceAllConversations: vi.fn(async (convs: Record<string, Conversation>) => {
+      void convs;
+    }),
     safeStorageRemove: vi.fn(),
     onboardingProps: null as OnboardingProps | null,
     homeProps: null as HomeProps | null,
@@ -117,7 +120,7 @@ vi.mock('@/hooks/useRepoAppearance', () => ({
 
 vi.mock('@/lib/conversation-store', () => ({
   migrateConversationsToIndexedDB: () => mockState.migrateConversationsToIndexedDB(),
-  replaceAllConversations: (convs: Record<string, unknown>) => mockState.replaceAllConversations(convs),
+  replaceAllConversations: (convs: Record<string, Conversation>) => mockState.replaceAllConversations(convs),
 }));
 
 vi.mock('@/lib/safe-storage', async () => {
@@ -219,7 +222,9 @@ describe('App auth and shell integration', () => {
       clearRepoAppearance: vi.fn(),
     };
     mockState.migrateConversationsToIndexedDB = vi.fn(async () => ({}));
-    mockState.replaceAllConversations = vi.fn(async () => {});
+    mockState.replaceAllConversations = vi.fn(async (convs: Record<string, Conversation>) => {
+      void convs;
+    });
     mockState.safeStorageRemove = vi.fn();
     mockState.onboardingProps = null;
     mockState.homeProps = null;
