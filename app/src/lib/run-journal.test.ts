@@ -68,6 +68,7 @@ describe('run-journal', () => {
     expect(entry.events).toEqual([]);
     expect(entry.hadCheckpoint).toBe(false);
     expect(entry.baseMessageCount).toBe(2);
+    expect(entry.verificationState).toBeNull();
   });
 
   // ─── appendJournalEvent ──────────────────────────────────────────────

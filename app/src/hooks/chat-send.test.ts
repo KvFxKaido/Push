@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage, Conversation } from '@/types';
+import type { ChatMessage, Conversation, VerificationRuntimeState } from '@/types';
 
 const { mockStreamChat } = vi.hoisted(() => ({
   mockStreamChat: vi.fn(),
@@ -38,11 +38,25 @@ function makeConversation(messages: ChatMessage[]): Record<string, Conversation>
   };
 }
 
+function makeVerificationState(overrides: Partial<VerificationRuntimeState> = {}): VerificationRuntimeState {
+  return {
+    policyName: 'Test',
+    backendTouched: false,
+    requirements: [],
+    lastUpdatedAt: 1,
+    ...overrides,
+  };
+}
+
 function makeLoopContext(
   conversationsRef: { current: Record<string, Conversation> },
   dirtyRef: { current: Set<string> },
   overrides: Partial<SendLoopContext> = {},
 ): SendLoopContext {
+  const verificationStateRef = {
+    current: makeVerificationState(),
+  };
+
   return {
     chatId: 'chat-1',
     lockedProvider: 'openrouter',
@@ -72,6 +86,11 @@ function makeLoopContext(
     appendRunEvent: vi.fn(),
     emitRunEngineEvent: vi.fn(),
     flushCheckpoint: vi.fn(),
+    getVerificationState: () => verificationStateRef.current,
+    updateVerificationState: (_chatId, updater) => {
+      verificationStateRef.current = updater(verificationStateRef.current);
+      return verificationStateRef.current;
+    },
     executeDelegateCall: vi.fn(),
     ...overrides,
   };
@@ -205,6 +224,44 @@ describe('chat-send', () => {
 
     // Conversation should be marked dirty
     expect(dirtyRef.current.has('chat-1')).toBe(true);
+  });
+
+  it('blocks completion with a runtime verification message when requirements are unmet', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      getVerificationState: () => makeVerificationState({
+        requirements: [
+          {
+            id: 'typecheck',
+            label: 'Run typecheck before claiming done',
+            scope: 'always',
+            kind: 'command',
+            command: 'npx tsc --noEmit',
+            status: 'pending',
+            updatedAt: 1,
+          },
+        ],
+      }),
+    });
+
+    const result = await processAssistantTurn(
+      0,
+      'Everything is done and completed.',
+      '',
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Fix the auth bug', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('continue');
+    expect(result.loopCompletedNormally).toBe(false);
+    const lastMsg = result.nextApiMessages.at(-1);
+    expect(lastMsg?.role).toBe('user');
+    expect(lastMsg?.content).toContain('VERIFICATION_BLOCK');
+    expect(lastMsg?.content).toContain('npx tsc --noEmit');
   });
 
   it('does NOT inject when completion is grounded by delegation result', async () => {

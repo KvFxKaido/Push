@@ -40,8 +40,18 @@ import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { createId } from '@/hooks/chat-persistence';
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
-import { createOrchestratorPolicy } from '@/lib/turn-policies/orchestrator-policy';
+import {
+  createOrchestratorPolicy,
+  responseClaimsCompletion,
+} from '@/lib/turn-policies/orchestrator-policy';
 import type { RunEngineEvent } from '@/lib/run-engine';
+import {
+  evaluateVerificationState,
+  formatVerificationBlock,
+  recordVerificationArtifact,
+  recordVerificationCommandResult,
+  recordVerificationMutation,
+} from '@/lib/verification-runtime';
 import type {
   ActiveRepo,
   AgentStatus,
@@ -52,6 +62,7 @@ import type {
   CoderWorkingMemory,
   RunEventInput,
   ToolExecutionResult,
+  VerificationRuntimeState,
   WorkspaceContext,
 } from '@/types';
 import type { CheckpointRefs } from './useChatCheckpoint';
@@ -96,6 +107,61 @@ function extractChangedPathFromStatusLine(line: string): string | null {
   return candidate;
 }
 
+function inferVerificationCommandResult(result: ToolExecutionResult): {
+  command: string;
+  exitCode: number;
+  detail: string;
+} | null {
+  const card = result.card;
+  if (!card) return null;
+
+  if (card.type === 'sandbox') {
+    return {
+      command: card.data.command,
+      exitCode: card.data.exitCode,
+      detail: `Command "${card.data.command}" exited with code ${card.data.exitCode}.`,
+    };
+  }
+
+  if (card.type === 'type-check') {
+    const command =
+      card.data.tool === 'tsc'
+        ? 'npx tsc --noEmit'
+        : card.data.tool === 'pyright'
+          ? 'pyright'
+          : card.data.tool === 'mypy'
+            ? 'mypy'
+            : null;
+    if (!command) return null;
+    return {
+      command,
+      exitCode: card.data.exitCode,
+      detail: `${card.data.tool} exited with code ${card.data.exitCode}.`,
+    };
+  }
+
+  if (card.type === 'test-results') {
+    const command =
+      card.data.framework === 'npm'
+        ? 'npm test'
+        : card.data.framework === 'pytest'
+          ? 'pytest -v'
+          : card.data.framework === 'cargo'
+            ? 'cargo test'
+            : card.data.framework === 'go'
+              ? 'go test ./...'
+              : null;
+    if (!command) return null;
+    return {
+      command,
+      exitCode: card.data.exitCode,
+      detail: `${command} exited with code ${card.data.exitCode}.`,
+    };
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Shared run context — stays constant for the duration of one sendMessage call
 // ---------------------------------------------------------------------------
@@ -130,6 +196,11 @@ export interface SendLoopContext {
   appendRunEvent: (chatId: string, event: RunEventInput) => void;
   emitRunEngineEvent: (event: RunEngineEvent) => void;
   flushCheckpoint: () => void;
+  getVerificationState: (chatId: string) => VerificationRuntimeState;
+  updateVerificationState: (
+    chatId: string,
+    updater: (state: VerificationRuntimeState) => VerificationRuntimeState,
+  ) => VerificationRuntimeState;
   executeDelegateCall: (
     chatId: string,
     toolCall: AnyToolCall,
@@ -300,6 +371,8 @@ export async function processAssistantTurn(
     appendRunEvent,
     emitRunEngineEvent,
     flushCheckpoint,
+    getVerificationState,
+    updateVerificationState,
     executeDelegateCall,
   } = ctx;
 
@@ -767,7 +840,40 @@ export async function processAssistantTurn(
     // Only runs when recovery decides this is a genuine natural completion
     // (not a malformed tool call needing retry). This prevents the policy
     // from intercepting responses that should go through the recovery path.
-    if (action.loopAction === 'break') {
+    if (action.loopAction === 'break' && responseClaimsCompletion(accumulated)) {
+      const verificationEvaluation = evaluateVerificationState(
+        getVerificationState(chatId),
+        'completion',
+      );
+      if (!verificationEvaluation.passed) {
+        setConversations((prev) => {
+          const conv = prev[chatId];
+          if (!conv) return prev;
+          const msgs = [...conv.messages];
+          const lastIdx = msgs.length - 1;
+          if (msgs[lastIdx]?.role === 'assistant') {
+            msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, status: 'done' };
+          }
+          dirtyConversationIdsRef.current.add(chatId);
+          return { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
+        });
+
+        return {
+          nextApiMessages: [
+            ...action.apiMessages,
+            {
+              id: createId(),
+              role: 'user',
+              content: formatVerificationBlock(verificationEvaluation, 'completion'),
+              timestamp: Date.now(),
+            },
+          ],
+          nextRecoveryState,
+          loopAction: 'continue',
+          loopCompletedNormally: false,
+        };
+      }
+
       const orchestratorPolicy = new TurnPolicyRegistry();
       orchestratorPolicy.register(createOrchestratorPolicy());
       const turnCtx: TurnContext = {
@@ -844,13 +950,32 @@ export async function processAssistantTurn(
     toolSource: toolCall.source,
   });
 
-  let toolExecResult: ToolExecutionResult;
+  let toolExecResult: ToolExecutionResult | undefined;
+  const isCommitVerificationTool =
+    toolCall.source === 'sandbox'
+    && (toolCall.call.tool === 'sandbox_prepare_commit' || toolCall.call.tool === 'sandbox_push');
+
+  if (isCommitVerificationTool) {
+    const verificationEvaluation = evaluateVerificationState(
+      getVerificationState(chatId),
+      'commit',
+    );
+    if (!verificationEvaluation.passed) {
+      toolExecResult = {
+        text: `[Tool Error] ${formatVerificationBlock(verificationEvaluation, 'commit')}`,
+      };
+      toolExecDurationMs = 0;
+    }
+  }
 
   // Lazy auto-spin: create sandbox on demand for sandbox/coder delegate tools
   if (
+    !toolExecResult
+    && (
     (toolCall.source === 'sandbox' ||
       (toolCall.source === 'delegate' && toolCall.call.tool === 'delegate_coder')) &&
     !sandboxIdRef.current
+    )
   ) {
     if (ensureSandboxRef.current) {
       updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
@@ -861,7 +986,9 @@ export async function processAssistantTurn(
     }
   }
 
-  if (toolCall.source === 'scratchpad') {
+  if (toolExecResult) {
+    // Runtime verification blocked this tool before dispatch.
+  } else if (toolCall.source === 'scratchpad') {
     const sp = scratchpadRef.current;
     if (!sp) {
       toolExecResult = {
@@ -917,6 +1044,10 @@ export async function processAssistantTurn(
     toolExecDurationMs = singleRawResult.durationMs;
   }
 
+  if (!toolExecResult) {
+    throw new Error('Tool execution did not produce a result.');
+  }
+
   if (abortRef.current) {
     return {
       nextApiMessages: apiMessages,
@@ -924,6 +1055,67 @@ export async function processAssistantTurn(
       loopAction: 'break',
       loopCompletedNormally: false,
     };
+  }
+
+  const verificationResult = singleRawResult?.raw ?? toolExecResult;
+  const touchedPaths = verificationResult.postconditions?.touchedFiles.map((file) => file.path) ?? [];
+  if (touchedPaths.length > 0) {
+    updateVerificationState(chatId, (state) =>
+      recordVerificationMutation(
+        state,
+        {
+          source: 'tool',
+          touchedPaths,
+          detail: `${getToolName(toolCall)} mutated the workspace.`,
+        },
+      ),
+    );
+  } else if (
+    toolCall.source === 'sandbox'
+    && toolCall.call.tool === 'sandbox_exec'
+    && !isReadOnlyToolCall(toolCall)
+  ) {
+    updateVerificationState(chatId, (state) =>
+      recordVerificationMutation(
+        state,
+        {
+          source: 'tool',
+          detail: 'sandbox_exec may have mutated the workspace.',
+        },
+      ),
+    );
+  }
+
+  const verificationCommand = inferVerificationCommandResult(verificationResult);
+  if (verificationCommand) {
+    updateVerificationState(chatId, (state) =>
+      recordVerificationCommandResult(
+        state,
+        verificationCommand.command,
+        {
+          exitCode: verificationCommand.exitCode,
+          detail: verificationCommand.detail,
+        },
+      ),
+    );
+    updateVerificationState(chatId, (state) =>
+      recordVerificationArtifact(
+        state,
+        `Verification command produced output: ${verificationCommand.command}`,
+      ),
+    );
+  } else if (
+    toolCall.source === 'sandbox'
+    && (toolCall.call.tool === 'sandbox_diff'
+      || toolCall.call.tool === 'sandbox_prepare_commit'
+      || toolCall.call.tool === 'sandbox_push')
+  ) {
+    updateVerificationState(chatId, (state) =>
+      recordVerificationArtifact(
+        state,
+        `${toolCall.call.tool} produced artifact evidence.`,
+      ),
+    );
   }
 
   // Post-execution side effects

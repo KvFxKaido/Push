@@ -17,7 +17,7 @@
  */
 
 import { STORE, put, get, withStore } from './app-db';
-import type { RunEvent } from '@/types';
+import type { RunEvent, VerificationRuntimeState } from '@/types';
 import type { RunEnginePhase } from './run-engine';
 
 // ---------------------------------------------------------------------------
@@ -60,6 +60,8 @@ export interface RunJournalEntry {
   hadCheckpoint: boolean;
   /** Base message count at run start (for resume context). */
   baseMessageCount: number;
+  /** Latest durable verification state for this run/chat. */
+  verificationState: VerificationRuntimeState | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +103,7 @@ export function createJournalEntry(params: {
     events: [],
     hadCheckpoint: false,
     baseMessageCount: params.baseMessageCount,
+    verificationState: null,
   };
 }
 
@@ -168,6 +171,13 @@ export function markJournalCheckpoint(
   hadCheckpoint: boolean,
 ): RunJournalEntry {
   return { ...entry, hadCheckpoint };
+}
+
+export function updateJournalVerificationState(
+  entry: RunJournalEntry,
+  verificationState: VerificationRuntimeState,
+): RunJournalEntry {
+  return { ...entry, verificationState };
 }
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import type {
   QueuedFollowUpOptions,
   RunEvent,
   RunEventInput,
+  VerificationRuntimeState,
   WorkspaceContext,
 } from '@/types';
 import {
@@ -19,6 +20,7 @@ import {
   buildQueuedFollowUpsByChat,
   setConversationRunEvents,
   setConversationQueuedFollowUps,
+  setConversationVerificationState,
 } from '@/lib/chat-runtime-state';
 import { getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -86,6 +88,7 @@ import {
   pruneJournalEntries,
   saveJournalEntry,
   updateJournalPhase,
+  updateJournalVerificationState,
   markJournalCheckpoint,
   type RunJournalEntry,
 } from '@/lib/run-journal';
@@ -94,6 +97,9 @@ import {
   resolveVerificationPolicy,
   type VerificationPolicy,
 } from '@/lib/verification-policy';
+import {
+  hydrateVerificationRuntimeState,
+} from '@/lib/verification-runtime';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -483,6 +489,20 @@ export function useChat(
     return resolveVerificationPolicy(conversationsRef.current[chatId]?.verificationPolicy);
   }, []);
 
+  const verificationStateByChatRef = useRef<Record<string, VerificationRuntimeState>>({});
+
+  const getVerificationStateForChat = useCallback((chatId: string | null | undefined): VerificationRuntimeState => {
+    const policy = getVerificationPolicyForChat(chatId);
+    const key = chatId || '';
+    const cached = verificationStateByChatRef.current[key];
+    const persisted = chatId
+      ? conversationsRef.current[chatId]?.runState?.verificationState
+      : undefined;
+    const hydrated = hydrateVerificationRuntimeState(policy, cached ?? persisted);
+    verificationStateByChatRef.current[key] = hydrated;
+    return hydrated;
+  }, [getVerificationPolicyForChat]);
+
   const applyWorkspaceContext = useCallback((ctx: WorkspaceContext | null, chatId: string | null | undefined) => {
     if (!ctx) {
       workspaceContextRef.current = null;
@@ -501,6 +521,38 @@ export function useChat(
       void pruneJournalEntries();
     }
   }, []);
+
+  const persistVerificationState = useCallback((chatId: string, verificationState: VerificationRuntimeState) => {
+    verificationStateByChatRef.current[chatId] = verificationState;
+
+    if (runJournalEntryRef.current?.chatId === chatId) {
+      runJournalEntryRef.current = updateJournalVerificationState(
+        runJournalEntryRef.current,
+        verificationState,
+      );
+      persistRunJournal(runJournalEntryRef.current);
+    }
+
+    updateConversations((prev) => {
+      const conversation = prev[chatId];
+      if (!conversation) return prev;
+      dirtyConversationIdsRef.current.add(chatId);
+      return {
+        ...prev,
+        [chatId]: setConversationVerificationState(conversation, verificationState),
+      };
+    });
+  }, [persistRunJournal, updateConversations]);
+
+  const updateVerificationStateForChat = useCallback((
+    chatId: string,
+    updater: (state: VerificationRuntimeState) => VerificationRuntimeState,
+  ): VerificationRuntimeState => {
+    const current = getVerificationStateForChat(chatId);
+    const next = updater(current);
+    persistVerificationState(chatId, next);
+    return next;
+  }, [getVerificationStateForChat, persistVerificationState]);
 
   /**
    * Emit a run engine event — the single mutation path for run state.
@@ -526,6 +578,10 @@ export function useChat(
           baseMessageCount: event.baseMessageCount,
           startedAt: event.timestamp,
         });
+        runJournalEntryRef.current = updateJournalVerificationState(
+          runJournalEntryRef.current,
+          getVerificationStateForChat(event.chatId),
+        );
         persistRunJournal(runJournalEntryRef.current);
         break;
 
@@ -585,7 +641,7 @@ export function useChat(
         }
         break;
     }
-  }, [persistRunJournal]);
+  }, [getVerificationStateForChat, persistRunJournal]);
 
   // --- CI poller ---
   const { ciStatus } = useCIPoller(activeChatId, activeRepoFullName, branchInfo);
@@ -917,6 +973,7 @@ export function useChat(
     appendRunEvent,
     emitRunEngineEvent,
     getVerificationPolicyForChat,
+    updateVerificationStateForChat,
     branchInfoRef,
     isMainProtectedRef,
     agentsMdRef,
@@ -1159,6 +1216,8 @@ export function useChat(
         updateAgentStatus,
         appendRunEvent,
         flushCheckpoint,
+        getVerificationState: getVerificationStateForChat,
+        updateVerificationState: updateVerificationStateForChat,
         executeDelegateCall,
         emitRunEngineEvent,
       };
@@ -1452,7 +1511,9 @@ export function useChat(
       updateConversations,
       appendRunEvent,
       emitRunEngineEvent,
+      getVerificationStateForChat,
       persistRunJournal,
+      updateVerificationStateForChat,
     ],
   );
 

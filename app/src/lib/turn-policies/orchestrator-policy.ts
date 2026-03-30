@@ -19,10 +19,7 @@ import type { TurnPolicy, TurnContext } from '../turn-policy';
  * the recent conversation has no delegation result, diff card, or
  * commit/PR reference, it's likely a false claim.
  */
-function detectUngroundedCompletion(
-  response: string,
-  messages: readonly ChatMessage[],
-): boolean {
+export function responseClaimsCompletion(response: string): boolean {
   const trimmed = response.trim();
 
   // Must contain completion language
@@ -34,6 +31,17 @@ function detectUngroundedCompletion(
   const isConditional =
     /\b(if|would you|shall I|should I|do you want|let me know)\b/i.test(trimmed);
   if (isConditional) return false;
+
+  return true;
+}
+
+function detectUngroundedCompletion(
+  response: string,
+  messages: readonly ChatMessage[],
+): boolean {
+  const trimmed = response.trim();
+
+  if (!responseClaimsCompletion(trimmed)) return false;
 
   // Look for grounding evidence in the response itself
   const hasArtifactInResponse =

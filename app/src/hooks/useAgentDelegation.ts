@@ -10,6 +10,15 @@ import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import {
+  activateVerificationGate,
+  buildVerificationAcceptanceCriteria,
+  extractChangedPathsFromDiff,
+  recordVerificationArtifact,
+  recordVerificationCommandResult,
+  recordVerificationGateResult,
+  recordVerificationMutation,
+} from '@/lib/verification-runtime';
 import { formatElapsedTime } from '@/lib/utils';
 import { createId } from '@/hooks/chat-persistence';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
@@ -22,9 +31,11 @@ import type {
   CoderWorkingMemory,
   CriterionResult,
   Conversation,
+  AcceptanceCriterion,
   AgentStatus,
   AgentStatusSource,
   RunEventInput,
+  VerificationRuntimeState,
 } from '@/types';
 
 function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
@@ -39,6 +50,10 @@ export interface UseAgentDelegationParams {
   appendRunEvent: (chatId: string, event: RunEventInput) => void;
   emitRunEngineEvent: (event: RunEngineEvent) => void;
   getVerificationPolicyForChat: (chatId: string) => VerificationPolicy;
+  updateVerificationStateForChat: (
+    chatId: string,
+    updater: (state: VerificationRuntimeState) => VerificationRuntimeState,
+  ) => void;
   branchInfoRef: React.RefObject<{ currentBranch?: string; defaultBranch?: string } | undefined | null>;
   isMainProtectedRef: React.MutableRefObject<boolean>;
   agentsMdRef: React.MutableRefObject<string | null>;
@@ -56,6 +71,7 @@ export function useAgentDelegation({
   appendRunEvent,
   emitRunEngineEvent,
   getVerificationPolicyForChat,
+  updateVerificationStateForChat,
   branchInfoRef,
   isMainProtectedRef,
   agentsMdRef,
@@ -66,6 +82,23 @@ export function useAgentDelegation({
   abortRef,
   lastCoderStateRef,
 }: UseAgentDelegationParams) {
+  const mergeAcceptanceCriteria = useCallback((
+    explicitCriteria: AcceptanceCriterion[] | undefined,
+    verificationCriteria: AcceptanceCriterion[],
+  ): AcceptanceCriterion[] => {
+    const merged: AcceptanceCriterion[] = [];
+    const seen = new Set<string>();
+
+    for (const criterion of [...(explicitCriteria ?? []), ...verificationCriteria]) {
+      const key = `${criterion.id}::${criterion.check}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(criterion);
+    }
+
+    return merged;
+  }, []);
+
   const executeDelegateCall = useCallback(async (
     chatId: string,
     toolCall: AnyToolCall,
@@ -158,6 +191,12 @@ export function useAgentDelegation({
           toolExecResult = {
             text: `[Tool Result — delegate_explorer]\n${explorerResult.summary}\n(${explorerResult.rounds} round${explorerResult.rounds !== 1 ? 's' : ''})`,
           };
+          updateVerificationStateForChat(chatId, (state) =>
+            recordVerificationArtifact(
+              state,
+              `Explorer produced evidence: ${summarizeToolResultPreview(explorerResult.summary)}`,
+            ),
+          );
           appendRunEvent(chatId, {
             type: 'subagent.completed',
             executionId,
@@ -194,6 +233,13 @@ export function useAgentDelegation({
         timestamp: Date.now(),
         agent: 'coder',
       });
+      updateVerificationStateForChat(chatId, (state) =>
+        activateVerificationGate(
+          state,
+          'auditor',
+          'Coder delegation started; auditor evaluation pending.',
+        ),
+      );
       lastCoderStateRef.current = null; // Will be populated by onWorkingMemoryUpdate callback
       const currentSandboxId = sandboxIdRef.current;
       if (!currentSandboxId) {
@@ -232,6 +278,7 @@ export function useAgentDelegation({
             let totalCheckpoints = 0;
             // Collect acceptance criteria results across all tasks for evaluation
             const allCriteriaResults: { id: string; passed: boolean; exitCode: number; output: string }[] = [];
+            const verificationCriteria = buildVerificationAcceptanceCriteria(verificationPolicy, 'always');
 
             // --- Planner Pre-Pass ---
             // When the harness profile requires it (or the task is large enough),
@@ -334,6 +381,13 @@ export function useAgentDelegation({
               // For sequential single-sandbox mode this also catches regressions
               // introduced by earlier tasks before they compound.
               const seqTaskStart = Date.now();
+              const effectiveAcceptanceCriteria = mergeAcceptanceCriteria(
+                delegateArgs.acceptanceCriteria,
+                verificationCriteria,
+              );
+              const criteriaCommandById = new Map(
+                effectiveAcceptanceCriteria.map((criterion) => [criterion.id, criterion.check]),
+              );
               const seqBi = branchInfoRef.current;
               const coderResult = await withActiveSpan('subagent.coder', {
                 scope: 'push.delegation',
@@ -345,7 +399,7 @@ export function useAgentDelegation({
                   'push.task_count': taskList.length,
                   'push.provider': lockedProviderForChat,
                   'push.model': resolvedModelForChat,
-                  'push.has_acceptance_criteria': Boolean(delegateArgs.acceptanceCriteria?.length),
+                  'push.has_acceptance_criteria': Boolean(effectiveAcceptanceCriteria.length),
                 },
               }, async (span) => {
                 const result = await runCoderAgent(
@@ -362,7 +416,7 @@ export function useAgentDelegation({
                   agentsMdRef.current || undefined,
                   abortControllerRef.current?.signal,
                   handleCheckpoint,
-                  delegateArgs.acceptanceCriteria,
+                  effectiveAcceptanceCriteria,
                   (state) => { lastCoderStateRef.current = state; },
                   lockedProviderForChat,
                   resolvedModelForChat || undefined,
@@ -395,12 +449,51 @@ export function useAgentDelegation({
               const seqStatus = getTaskStatusLabel(coderResult.criteriaResults);
               totalRounds += coderResult.rounds;
               totalCheckpoints += coderResult.checkpoints;
+              let taskDiff: string | null = null;
+              try {
+                const diffResult = await getSandboxDiff(currentSandboxId);
+                taskDiff = diffResult.diff || null;
+              } catch {
+                // Verification state can still update from summaries/checks.
+              }
+              if (taskDiff) {
+                updateVerificationStateForChat(chatId, (state) =>
+                  recordVerificationMutation(
+                    state,
+                    {
+                      source: 'coder',
+                      touchedPaths: extractChangedPathsFromDiff(taskDiff),
+                      detail: 'Coder delegation mutated the workspace.',
+                    },
+                  ),
+                );
+              }
               if (taskList.length > 1) {
                 summaries.push(`Task ${taskIndex + 1} [${seqStatus}, ${seqElapsed}]: ${coderResult.summary}`);
               } else {
                 summaries.push(`${coderResult.summary} (${seqElapsed})`);
               }
+              updateVerificationStateForChat(chatId, (state) =>
+                recordVerificationArtifact(
+                  state,
+                  `Coder produced evidence: ${summarizeToolResultPreview(coderResult.summary)}`,
+                ),
+              );
               if (coderResult.criteriaResults) {
+                for (const result of coderResult.criteriaResults) {
+                  const command = criteriaCommandById.get(result.id);
+                  if (!command) continue;
+                  updateVerificationStateForChat(chatId, (state) =>
+                    recordVerificationCommandResult(
+                      state,
+                      command,
+                      {
+                        exitCode: result.exitCode,
+                        detail: `${result.id} exited with code ${result.exitCode}.`,
+                      },
+                    ),
+                  );
+                }
                 allCriteriaResults.push(...coderResult.criteriaResults);
               }
               allCards.push(...coderResult.cards);
@@ -476,6 +569,15 @@ export function useAgentDelegation({
                   return result;
                 });
                 if (evalResult) {
+                  const completedEvaluation = evalResult;
+                  updateVerificationStateForChat(chatId, (state) =>
+                    recordVerificationGateResult(
+                      state,
+                      'auditor',
+                      completedEvaluation.verdict === 'complete' ? 'passed' : 'failed',
+                      completedEvaluation.summary,
+                    ),
+                  );
                   appendRunEvent(chatId, {
                     type: 'subagent.completed',
                     executionId: auditorExecutionId,
@@ -483,6 +585,14 @@ export function useAgentDelegation({
                     summary: summarizeToolResultPreview(evalResult.summary),
                   });
                 } else {
+                  updateVerificationStateForChat(chatId, (state) =>
+                    recordVerificationGateResult(
+                      state,
+                      'auditor',
+                      'inconclusive',
+                      'Auditor evaluation returned no result.',
+                    ),
+                  );
                   appendRunEvent(chatId, {
                     type: 'subagent.failed',
                     executionId: auditorExecutionId,
@@ -491,6 +601,14 @@ export function useAgentDelegation({
                   });
                 }
               } catch {
+                updateVerificationStateForChat(chatId, (state) =>
+                  recordVerificationGateResult(
+                    state,
+                    'auditor',
+                    'inconclusive',
+                    'Auditor evaluation failed.',
+                  ),
+                );
                 appendRunEvent(chatId, {
                   type: 'subagent.failed',
                   executionId: auditorExecutionId,
@@ -559,7 +677,7 @@ export function useAgentDelegation({
     }
     
     return toolExecResult;
-  }, [setConversations, updateAgentStatus, appendRunEvent, emitRunEngineEvent, getVerificationPolicyForChat, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef, sandboxIdRef, repoRef, abortControllerRef, abortRef, lastCoderStateRef]);
+  }, [abortControllerRef, abortRef, agentsMdRef, appendRunEvent, branchInfoRef, emitRunEngineEvent, getVerificationPolicyForChat, instructionFilenameRef, isMainProtectedRef, lastCoderStateRef, mergeAcceptanceCriteria, repoRef, sandboxIdRef, setConversations, updateAgentStatus, updateVerificationStateForChat]);
 
   return { executeDelegateCall };
 }

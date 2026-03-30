@@ -4,6 +4,7 @@ import type {
   ConversationRunState,
   RunEvent,
   QueuedFollowUp,
+  VerificationRuntimeState,
 } from '@/types';
 import { trimRunEvents } from './chat-run-events';
 
@@ -11,8 +12,9 @@ function normalizeRunState(runState?: ConversationRunState): ConversationRunStat
   const agentEvents = runState?.agentEvents?.length ? runState.agentEvents : undefined;
   const runEvents = runState?.runEvents?.length ? trimRunEvents(runState.runEvents) : undefined;
   const queuedFollowUps = runState?.queuedFollowUps?.length ? runState.queuedFollowUps : undefined;
+  const verificationState = runState?.verificationState;
 
-  if (!agentEvents && !runEvents && !queuedFollowUps) {
+  if (!agentEvents && !runEvents && !queuedFollowUps && !verificationState) {
     return undefined;
   }
 
@@ -20,6 +22,7 @@ function normalizeRunState(runState?: ConversationRunState): ConversationRunStat
     ...(agentEvents ? { agentEvents } : {}),
     ...(runEvents ? { runEvents } : {}),
     ...(queuedFollowUps ? { queuedFollowUps } : {}),
+    ...(verificationState ? { verificationState } : {}),
   };
 }
 
@@ -108,6 +111,16 @@ export function setConversationQueuedFollowUps(
   return withRunState(conversation, {
     ...conversation.runState,
     queuedFollowUps,
+  });
+}
+
+export function setConversationVerificationState(
+  conversation: Conversation,
+  verificationState: VerificationRuntimeState,
+): Conversation {
+  return withRunState(conversation, {
+    ...conversation.runState,
+    verificationState,
   });
 }
 
