@@ -8,6 +8,30 @@ import { getModelCapabilities } from './model-capabilities';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-provider';
 import { ZEN_GO_MODELS as SHARED_ZEN_GO_MODELS } from './zen-go';
+export {
+  BLACKBOX_DEFAULT_MODEL,
+  BLACKBOX_MODELS,
+  KILOCODE_DEFAULT_MODEL,
+  KILOCODE_MODELS,
+  NVIDIA_DEFAULT_MODEL,
+  NVIDIA_MODELS,
+  OLLAMA_DEFAULT_MODEL,
+  OPENADAPTER_DEFAULT_MODEL,
+  OPENADAPTER_MODELS,
+  OPENROUTER_DEFAULT_MODEL,
+  OPENROUTER_MODELS,
+  ZEN_DEFAULT_MODEL,
+  ZEN_MODELS,
+} from '@push/lib/provider-models';
+import {
+  BLACKBOX_DEFAULT_MODEL,
+  KILOCODE_DEFAULT_MODEL,
+  NVIDIA_DEFAULT_MODEL,
+  OLLAMA_DEFAULT_MODEL,
+  OPENADAPTER_DEFAULT_MODEL,
+  OPENROUTER_DEFAULT_MODEL,
+  ZEN_DEFAULT_MODEL,
+} from '@push/lib/provider-models';
 
 // ---------------------------------------------------------------------------
 // Provider URL registry — single source of truth for dev/prod endpoints
@@ -32,118 +56,16 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   openadapter: { chat: providerUrl('/api/openadapter/chat',                         '/api/openadapter/chat'), models: providerUrl('/api/openadapter/models',           '/api/openadapter/models') },
 };
 
-// Valid Ollama model names — these must exist on the Ollama server
-export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
-
-// OpenRouter default model
-export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
-// OpenCode Zen (OpenAI-compatible) default model
-export const ZEN_DEFAULT_MODEL = 'big-pickle';
-// Nvidia NIM (OpenAI-compatible) default model
-export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
-// Blackbox AI (OpenAI-compatible) default model
-export const BLACKBOX_DEFAULT_MODEL = 'blackbox-ai';
 // Experimental direct-deployment defaults — only used as placeholders before the user
 // configures a concrete deployment/model.
 export const AZURE_DEFAULT_MODEL = 'gpt-4.1';
 export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0';
 export const VERTEX_DEFAULT_MODEL = SHARED_VERTEX_DEFAULT_MODEL;
-export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
-// OpenAdapter (OpenAI-compatible gateway) default model
-export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
-
-export const OPENROUTER_MODELS: string[] = [
-  'anthropic/claude-haiku-4.5:nitro',
-  'anthropic/claude-opus-4.6:nitro',
-  'anthropic/claude-sonnet-4.6:nitro',
-  'arcee-ai/virtuoso-large',
-  'cohere/command-a',
-  'deepseek/deepseek-r1',
-  'deepseek/deepseek-v3.2:nitro',
-  'google/gemini-2.5-flash:nitro',
-  'google/gemini-2.5-pro:nitro',
-  'google/gemini-3-flash-preview:nitro',
-  'google/gemini-3.1-flash-lite-preview:nitro',
-  'google/gemini-3.1-pro-preview:nitro',
-  'google/gemini-3.1-pro-preview-customtools:nitro',
-  'meta-llama/llama-4-maverick',
-  'minimax/minimax-m2.5',
-  'mistralai/codestral-2508',
-  'mistralai/devstral-2512',
-  'mistralai/mistral-large-2512',
-  'moonshotai/kimi-k2.5:nitro',
-  'openai/gpt-5-mini',
-  'openai/gpt-5.2-codex',
-  'openai/gpt-5.3-codex',
-  'openai/gpt-5.4',
-  'openai/gpt-5.4-pro',
-  'xiaomi/mimo-v2-omni',
-  'xiaomi/mimo-v2-pro',
-  'perplexity/sonar-pro',
-  'qwen/qwen3-coder-flash',
-  'qwen/qwen3-coder-plus',
-  'qwen/qwen3.5-397b-a17b:nitro',
-  'stepfun/step-3.5-flash',
-  'x-ai/grok-4.1-fast',
-  'x-ai/grok-4.20-beta',
-  'z-ai/glm-4.7:nitro',
-  'z-ai/glm-5:nitro',
-  'z-ai/glm-5-turbo:nitro',
-];
-
-export const ZEN_MODELS: string[] = [
-  'openai/gpt-5.3-codex',
-  'openai/gpt-5.2-codex',
-  'qwen3-coder',
-  'gemini-3-flash',
-  'gemini-3-pro',
-  'kimi-k2.5',
-  'kimi-k2.5-free',
-  'minimax-m2.5-free',
-  'big-pickle',
-];
-
 export const ZEN_GO_MODELS: string[] = [...SHARED_ZEN_GO_MODELS];
 
 export const ZEN_GO_URLS = {
   chat: providerUrl('/opencode/zen/go/v1/chat/completions', '/api/zen/go/chat'),
 };
-
-export const NVIDIA_MODELS: string[] = [
-  'nvidia/llama-3.1-nemotron-70b-instruct',
-  'meta/llama-3.3-70b-instruct',
-  'meta/llama-3.1-405b-instruct',
-  'deepseek-ai/deepseek-r1',
-  'qwen/qwen2.5-coder-32b-instruct',
-  'mistralai/mistral-large-2-instruct',
-];
-
-export const BLACKBOX_MODELS: string[] = [
-  'blackbox-ai',
-  'blackbox-pro',
-  'blackbox-search',
-];
-
-export const KILOCODE_MODELS: string[] = [
-  'google/gemini-3-flash-preview',
-  'anthropic/claude-sonnet-4.6',
-  'openai/gpt-5.2',
-  'moonshotai/kimi-k2.5',
-  'kilo-auto/balanced',
-];
-
-export const OPENADAPTER_MODELS: string[] = [
-  'deepseek/deepseek-r1',
-  'deepseek/deepseek-v3',
-  'qwen/qwen3-coder',
-  'qwen/qwen3.5',
-  'mistralai/mistral-large',
-  'mistralai/devstral',
-  'moonshotai/kimi-k2.5',
-  'minimax/minimax-m2.5',
-  'meta-llama/llama-4-maverick',
-  'z-ai/glm-5',
-];
 
 const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic',

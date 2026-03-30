@@ -1,4 +1,13 @@
 import process from 'node:process';
+import {
+  BLACKBOX_DEFAULT_MODEL,
+  KILOCODE_DEFAULT_MODEL,
+  NVIDIA_DEFAULT_MODEL,
+  OLLAMA_DEFAULT_MODEL,
+  OPENADAPTER_DEFAULT_MODEL,
+  OPENROUTER_DEFAULT_MODEL,
+  ZEN_DEFAULT_MODEL,
+} from '../lib/provider-models.ts';
 
 export const DEFAULT_TIMEOUT_MS: number = 120_000;
 export const MAX_RETRIES: number = 3;
@@ -50,21 +59,21 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   ollama: {
     id: 'ollama',
     url: process.env.PUSH_OLLAMA_URL || process.env.OLLAMA_API_URL || 'https://ollama.com/v1/chat/completions',
-    defaultModel: process.env.PUSH_OLLAMA_MODEL || 'gemini-3-flash-preview',
+    defaultModel: process.env.PUSH_OLLAMA_MODEL || OLLAMA_DEFAULT_MODEL,
     apiKeyEnv: ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'],
     requiresKey: true,
   },
   openrouter: {
     id: 'openrouter',
     url: process.env.PUSH_OPENROUTER_URL || 'https://openrouter.ai/api/v1/chat/completions',
-    defaultModel: process.env.PUSH_OPENROUTER_MODEL || 'anthropic/claude-sonnet-4.6:nitro',
+    defaultModel: process.env.PUSH_OPENROUTER_MODEL || OPENROUTER_DEFAULT_MODEL,
     apiKeyEnv: ['PUSH_OPENROUTER_API_KEY', 'OPENROUTER_API_KEY', 'VITE_OPENROUTER_API_KEY'],
     requiresKey: true,
   },
   zen: {
     id: 'zen',
     url: process.env.PUSH_ZEN_URL || 'https://opencode.ai/zen/v1/chat/completions',
-    defaultModel: process.env.PUSH_ZEN_MODEL || 'big-pickle',
+    defaultModel: process.env.PUSH_ZEN_MODEL || ZEN_DEFAULT_MODEL,
     apiKeyEnv: [
       'PUSH_ZEN_API_KEY',
       'ZEN_API_KEY',
@@ -77,7 +86,7 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   nvidia: {
     id: 'nvidia',
     url: process.env.PUSH_NVIDIA_URL || 'https://integrate.api.nvidia.com/v1/chat/completions',
-    defaultModel: process.env.PUSH_NVIDIA_MODEL || 'nvidia/llama-3.1-nemotron-70b-instruct',
+    defaultModel: process.env.PUSH_NVIDIA_MODEL || NVIDIA_DEFAULT_MODEL,
     apiKeyEnv: [
       'PUSH_NVIDIA_API_KEY',
       'NVIDIA_API_KEY',
@@ -88,21 +97,21 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   kilocode: {
     id: 'kilocode',
     url: process.env.PUSH_KILOCODE_URL || 'https://api.kilo.ai/api/gateway/chat/completions',
-    defaultModel: process.env.PUSH_KILOCODE_MODEL || 'google/gemini-3-flash-preview',
+    defaultModel: process.env.PUSH_KILOCODE_MODEL || KILOCODE_DEFAULT_MODEL,
     apiKeyEnv: ['PUSH_KILOCODE_API_KEY', 'KILOCODE_API_KEY', 'VITE_KILOCODE_API_KEY'],
     requiresKey: true,
   },
   blackbox: {
     id: 'blackbox',
     url: process.env.PUSH_BLACKBOX_URL || 'https://www.blackbox.ai/chat/completions',
-    defaultModel: process.env.PUSH_BLACKBOX_MODEL || 'blackbox-ai',
+    defaultModel: process.env.PUSH_BLACKBOX_MODEL || BLACKBOX_DEFAULT_MODEL,
     apiKeyEnv: ['PUSH_BLACKBOX_API_KEY', 'BLACKBOX_API_KEY', 'VITE_BLACKBOX_API_KEY'],
     requiresKey: true,
   },
   openadapter: {
     id: 'openadapter',
     url: process.env.PUSH_OPENADAPTER_URL || 'https://api.openadapter.in/v1/chat/completions',
-    defaultModel: process.env.PUSH_OPENADAPTER_MODEL || 'deepseek/deepseek-v3',
+    defaultModel: process.env.PUSH_OPENADAPTER_MODEL || OPENADAPTER_DEFAULT_MODEL,
     apiKeyEnv: ['PUSH_OPENADAPTER_API_KEY', 'OPENADAPTER_API_KEY', 'VITE_OPENADAPTER_API_KEY'],
     requiresKey: true,
   },
