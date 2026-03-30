@@ -1,10 +1,10 @@
 # Push CLI Plan (V2)
 
 Date: 2026-02-20  
-Status: In Progress (as of 2026-02-21)  
+Status: In Progress (as of 2026-03-29)  
 Owner: Push
 
-## Implementation Status Snapshot (2026-02-21)
+## Implementation Status Snapshot (2026-03-29)
 
 - Done: Phase 0 (runtime contract + `pushd` skeleton + IPC baseline).
 - Done: Phase 1 (interactive REPL MVP with streaming, tool timeline, approvals, and resume-by-session).
@@ -13,7 +13,7 @@ Owner: Push
 - Done: Phase 4 (headless `push run`, JSON output, exit codes, and acceptance checks).
 - Partial: Phase 5 (`pushd` + `push attach` shipped; full remote app client attach/reconnect UX still pending).
 - Done (post-bootstrap): CLI web search stack shipped (`web_search` + Tavily + Ollama native + DuckDuckGo fallback + configurable backend via `PUSH_WEB_SEARCH_BACKEND` and `push config set --search-backend`).
-- Proposed: Phase 6 optional TUI shell (`push tui`) documented in `documents/cli/plans/Push CLI TUI Phase 1 Plan.md`.
+- Done (experimental): Phase 6 full-screen TUI shell shipped behind `PUSH_TUI_ENABLED`; see `documents/archive/cli/plans/Push CLI TUI Phase 1 Plan.md`.
 
 ## Decision
 

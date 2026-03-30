@@ -1,7 +1,7 @@
 # Push Runtime Protocol (MVP)
 
 Date: 2026-02-19  
-Status: Draft  
+Status: Implemented baseline — the wire protocol is in code/tests, but JSON Schema validation remains optional/future  
 Owner: Push
 
 ## Purpose
@@ -33,8 +33,9 @@ Concrete JSON Schemas for this protocol live in `documents/cli/schemas/`:
 
 Current implementation status:
 - These schema files are maintained as protocol/spec artifacts.
-- They are not currently wired into runtime validation or automated tests.
-- Validation integration remains a future implementation step (see CLI bootstrap plan notes).
+- The runtime and tests already use the protocol version and envelope shape (`session-store.ts`, `pushd.ts`, `daemon-client.ts`, daemon/session-store tests).
+- JSON Schema validation is not currently wired into runtime request/event validation.
+- Schema-validation integration remains a future implementation step (see CLI bootstrap plan notes).
 
 ## Non-Goals (MVP)
 

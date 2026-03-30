@@ -1,8 +1,10 @@
 # Push CLI TUI Phase 1 Plan
 
 Date: 2026-02-21  
-Status: Proposed  
+Status: Implemented experimentally (verified in code 2026-03-29; gated by `PUSH_TUI_ENABLED`)  
 Owner: Push
+
+Historical note: the scope below is preserved as the phase-1 planning baseline for the TUI now present in `cli/tui.ts`.
 
 ## Decision Summary
 

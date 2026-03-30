@@ -241,7 +241,7 @@ Evaluation cadence:
 - Baseline: Full-file reads only; frequent "blind edits" on truncated content.
 - Result: Shipped range reads, 2000-line read cap, Awareness Ledger, Edit Guard, and Scoped Auto-Expand.
 - Decision: `go` (Track B complete)
-- Notes: Track B has significantly reduced payload size and eliminated a major class of edit failures where the model would guess missing code. See `documents/plans/Truncation-Aware Edit Safety Plan.md`.
+- Notes: Track B has significantly reduced payload size and eliminated a major class of edit failures where the model would guess missing code. See `documents/archive/plans/Truncation-Aware Edit Safety Plan.md`.
 
 ### Track C Phase 1 — Garbled tool-call recovery
 

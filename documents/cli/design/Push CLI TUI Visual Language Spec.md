@@ -1,7 +1,7 @@
 # Push CLI TUI Visual Language Spec (Phase 1)
 
 Date: 2026-02-21  
-Status: Proposed  
+Status: Implemented baseline for the experimental TUI (`push tui`)  
 Owner: Push
 
 ## Intent

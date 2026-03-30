@@ -2,6 +2,8 @@
 
 Design document. Current state + two-phase architecture.
 
+Status: Mixed — core runtime/event envelope pieces are in code; richer headless streaming output and a true CLI↔web bridge remain future work.
+
 ---
 
 ## What's Already There

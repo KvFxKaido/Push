@@ -2,8 +2,11 @@
 
 ## Status
 - Created: 2026-03-25
-- State: **In progress**
+- Reviewed against code: 2026-03-29
+- State: **Complete** — the `WorkspaceScreen` extraction and lazy route boundary are now in code
 - Goal: Extract workspace/chat orchestration from App into a lazy-loaded `WorkspaceScreen`, collapsing the 107-prop ChatScreen call site and enabling real code splitting for the workspace entry point
+
+Historical note: the problem statement and phase list below describe the pre-implementation baseline that this plan addressed.
 
 ## Problem
 
