@@ -3,6 +3,7 @@
 Date: 2026-02-27
 Author: Claude (via Claude Code)
 Status: Reference document
+Reviewed against current Push code: 2026-03-30
 
 ---
 
@@ -10,13 +11,20 @@ Status: Reference document
 
 A cross-reference between Push's agent harness patterns and Claude Code's architecture. Push and Claude Code solve the same fundamental problem — making an LLM effective at software engineering — but from different angles: Push is mobile-first, multi-provider, sandbox-based; Claude Code is CLI-native, single-provider, local-filesystem. The convergences and divergences are instructive.
 
+## Current Snapshot
+
+- `ask_user` is now implemented in both the web app and CLI, with structured options, optional multi-select, and automatic "Other..." free-text handling.
+- Typed delegation is broader than this document originally described: Push now has `delegate_coder`, `delegate_explorer`, planner pre-pass support, and auditor evaluation in the delegation loop.
+- User-visible progress is partially implemented through agent status, console/run events, and UI scaffolding for coder-progress cards, but not yet as a first-class shared todo/task artifact.
+- Conditional working-memory injection is now partially implemented. The web Coder only reinjects `[CODER_STATE]` on tool-result paths when it is syncing state for the first time, when state changed, when context pressure is elevated, or on a long-task cadence; the CLI still uses a simpler always-attach metadata model.
+
 ---
 
 ## 1. Structured Elicitation
 
 ### Push's pattern
 
-Push doesn't have a dedicated user-facing elicitation tool yet. The Coder uses `coder_checkpoint(question, context?)` for agent-to-agent clarification (Coder → Orchestrator), capped at 3 per task. User-facing questions are prose in chat.
+Push now has a dedicated user-facing `ask_user` tool in the app and CLI. In the web app it renders as an `AskUserCard` with structured options, optional multi-select, and an automatic "Other..." free-text path. The Coder still uses `coder_checkpoint(question, context?)` for agent-to-agent clarification (Coder → Orchestrator), capped at 3 per task.
 
 ### Claude Code's pattern
 
@@ -34,7 +42,7 @@ Claude Code has exactly what Push is considering: `AskUserQuestion`. It's a dedi
 
 **What's tricky:** The model needs to learn *when* to ask vs. when to just act. Over-asking is worse than under-asking. Claude Code's guidance is: ask when there's genuine ambiguity that affects the approach, not when you could reasonably infer the answer. Plan mode has a separate approval mechanism (`ExitPlanMode`) specifically so the model doesn't use `AskUserQuestion` to ask "is this plan okay?" — that conflation was a real problem.
 
-**Relevance to Push:** The separation of plan-approval from clarification-questions is the key insight. Push's `coder_checkpoint` solves agent-to-agent elicitation; a user-facing `ask_user` tool would complement it without overlap. The "automatic Other" pattern is worth stealing — it prevents the model from boxing users into its own assumptions.
+**Relevance to Push:** This is now mostly implemented. The key remaining Claude-style gaps are batching multiple questions in one invocation and richer preview payloads for visual choices. The separation of plan-approval from clarification questions still matters, and Push's approval-mode guidance already leans that way.
 
 ---
 
@@ -42,16 +50,16 @@ Claude Code has exactly what Push is considering: `AskUserQuestion`. It's a dedi
 
 ### Push's pattern
 
-`CoderWorkingMemory` — `plan`, `openTasks`, `filesTouched`, `assumptions`, `errorsEncountered`, `currentPhase`, `completedPhases`. Updated via `coder_update_state` tool call, injected as `[CODER_STATE]` block on every tool result. Survives context trimming. Max ~2KB.
+`CoderWorkingMemory` now includes the original plan/task fields plus invalidation-aware observations. It is updated via `coder_update_state`, preserved across context trimming, and injected back as `[CODER_STATE]` / diff-style state blocks on tool-result paths whenever the Coder has non-empty state.
 
 ### Claude Code's pattern
 
 Claude Code uses `TodoWrite` — a structured task list with `content`, `activeForm`, and `status` (pending/in_progress/completed). It's user-visible (rendered in the UI), not just an internal state block.
 
 **Key differences:**
-- **Audience**: Push's working memory is agent-internal (not shown to users). Claude Code's todo list is shared — the user sees progress in real time. This changes the incentive structure: the model uses it partly to communicate, not just to remember.
+- **Audience**: Push's working memory is still mostly agent-internal. Users can now see agent status, console events, and there is UI scaffolding for `coder-progress`, but Push still lacks a first-class shared todo artifact on the main Coder path. Claude Code's todo list is explicitly user-visible.
 - **Granularity**: Push tracks plans, assumptions, errors, phases. Claude Code tracks a flat task list. Push's is richer but heavier. Claude Code's is simpler but more legible to users.
-- **Injection**: Push injects on every tool result (compaction-safe). Claude Code's todo state is tracked by the system but not injected into every message — the model maintains awareness through the conversation flow.
+- **Injection**: Push now reinjects state on tool-result paths conditionally instead of unconditionally once working memory is active. Claude Code's todo state is tracked by the system but not injected into every message — the model maintains awareness through the conversation flow.
 
 **On the "does it become limiting?" question:** This is real. The tension isn't binary — it depends on the task shape:
 
@@ -67,7 +75,7 @@ Claude Code uses `TodoWrite` — a structured task list with `content`, `activeF
 
 ### Push's pattern
 
-Two-phase project instructions (GitHub API fetch → sandbox filesystem upgrade). System prompt stacks tool protocols conditionally — sandbox tools only when sandbox is active, GitHub tools only when a repo is connected. Workspace context is always injected.
+Two-phase project instructions (GitHub API fetch → sandbox filesystem upgrade) are still the base pattern, but Push now layers them through a sectioned `SystemPromptBuilder`, a machine-readable session capability block, and conditional injection of GitHub, sandbox, scratchpad, web-search, and `ask_user` protocols. Push also has a dedicated Explorer agent, so some codebase discovery is already on-demand instead of being front-loaded into the Orchestrator.
 
 ### Claude Code's pattern
 
@@ -83,7 +91,7 @@ Claude Code is aggressive about progressive disclosure:
 
 **The divergence:** Push front-loads project instructions because its agents need context from message one (mobile UX — users expect instant responses). Claude Code can afford a "read the codebase as needed" approach because CLI users expect a brief exploration phase. The right strategy depends on latency tolerance.
 
-**Relevance to Push:** The `claude-code-guide` pattern is worth considering. Push's system prompt carries the full `SANDBOX_TOOL_PROTOCOL` (~3-4KB of tool definitions). If models get better at tool use, you could shrink this to a compact reference and let the model look up detailed usage on demand. The risk: mid-tier models may not reliably self-serve from docs. The mitigation: progressive disclosure gated on model capability tier.
+**Relevance to Push:** Push has already adopted a meaningful chunk of this through sectioned prompts and `delegate_explorer`, but it still front-loads full tool protocols rather than making detailed tool docs discoverable on demand. A `claude-code-guide`-style self-knowledge agent still looks optional rather than urgent.
 
 ---
 
@@ -91,10 +99,7 @@ Claude Code is aggressive about progressive disclosure:
 
 ### Push's tool inventory
 
-~30 tools total (19 GitHub + 11 sandbox + delegation + scratchpad + web search), but contextually filtered:
-- Sandbox-only mode: ~11 sandbox tools + scratchpad + web search
-- Repo mode without sandbox: ~19 GitHub tools + scratchpad + web search
-- Full mode: everything
+The centralized tool registry now has 44 canonical tools (18 GitHub, 19 sandbox, 2 delegate, 3 scratchpad, 1 web search, 1 ask-user), but the live tool surface is still heavily filtered by workspace mode, agent role, and read-only policy. Explorer delegation, for example, gets a much smaller read-only allowlist than the Orchestrator.
 
 The `detectAllToolCalls()` / read-mutate split adds structural discipline: max 6 parallel reads, 1 trailing mutation per turn.
 
@@ -107,7 +112,7 @@ The `detectAllToolCalls()` / read-mutate split adds structural discipline: max 6
 - **Edit over Write**: The Edit tool does surgical string replacement. Write does full-file overwrites. The guidance is explicit: prefer Edit for modifications, Write only for new files. This is analogous to Push's `sandbox_edit_file` (hashline ops) vs. `sandbox_write_file`.
 - **Bash as escape hatch**: Anything that doesn't have a dedicated tool falls to Bash, but with strong guidance to prefer dedicated tools. This prevents tool proliferation — you don't need `run_tests`, `install_deps`, `check_types` as separate tools when `Bash("npm test")` works.
 
-**The tradeoff Push faces:** 30 tools is high but contextually filtered to ~15. The question is whether filtering is enough, or whether models perform better with fewer tools and more general-purpose primitives. Claude Code's evidence: fewer tools + subagent delegation works well for strong models. But Push serves multiple providers including mid-tier models — those may need more specialized tools with narrower interfaces.
+**The tradeoff Push faces:** the registry is now even broader than when this note was written, but filtering and typed delegation have improved too. The question is no longer "does Push have subagents?" — it does. The question is whether the Orchestrator still sees too many direct tools compared with what could be delegated to narrower read-only sub-loops.
 
 **A concrete suggestion:** Push's read-only GitHub tools (`fetch_pr`, `list_prs`, `list_commits`, `list_branches`, `list_commit_files`, `fetch_checks`, `get_workflow_runs`, `get_workflow_logs`) could potentially collapse into a smaller set with richer query parameters. `github_query(resource, filters)` instead of 8 separate tools. The model already knows what it wants — the tool boundaries are more about API design than capability boundaries. Worth testing whether mid-tier models handle parameterized queries as well as named tools.
 
@@ -122,9 +127,9 @@ This framing maps cleanly to specific decisions in both systems:
 | Can't see files | `sandbox_read_file` (with line ranges) | `Read` (with offset/limit) | Both learned: line ranges > whole files |
 | Can't search | `sandbox_search` + `search_files` | `Grep` + `Glob` + Explore agent | Push has two (sandbox + GitHub); CC unifies |
 | Can't edit reliably | `sandbox_edit_file` (hashline ops) | `Edit` (string replacement) | Different bet: content-hash vs. exact-match |
-| Can't track progress | `CoderWorkingMemory` | `TodoWrite` | Push: agent-internal. CC: user-visible |
-| Can't ask questions | `coder_checkpoint` (agent-to-agent) | `AskUserQuestion` (agent-to-user) | Different audiences |
-| Can't delegate | `delegate_coder` | `Task` (typed subagents) | Push: single specialist. CC: multiple agent types |
+| Can't track progress | `CoderWorkingMemory` + agent status/console | `TodoWrite` | Push now exposes runtime progress signals, but not a shared todo artifact |
+| Can't ask questions | `ask_user` + `coder_checkpoint` | `AskUserQuestion` | Push now covers both agent→user and agent→agent questions |
+| Can't delegate | `delegate_coder` + `delegate_explorer` | `Task` (typed subagents) | Push also has planner/auditor sub-loops inside delegation, but the Orchestrator still keeps a wider direct tool surface |
 | Can't verify work | `acceptanceCriteria[]` | Bash (run tests) | Push: structured. CC: ad-hoc |
 
 **The hashline vs. string-replacement bet is worth noting.** Push's hashline edits use content hashes (default 7-char, extendable to 12-char for disambiguation) to anchor edits, eliminating line-number drift. Claude Code's Edit uses exact string matching — the edit fails if the old string isn't unique or doesn't match. Both solve the same problem (reliable edits despite stale context) but with different failure modes:
@@ -137,13 +142,13 @@ Neither is strictly better. Hashline is more robust for large files with repetit
 
 ## 6. What Push Could Borrow
 
-1. **Dedicated `ask_user` tool** with structured options + automatic "Other". The `coder_checkpoint` pattern proves agent-initiated questions work; extending it to user-facing questions is natural.
+1. ~~**Dedicated `ask_user` tool** with structured options + automatic "Other".~~ ✅ **Mostly done** — the app and CLI both support structured user questions, optional multi-select, and automatic "Other..." handling. The remaining Claude-style gaps are batching and richer preview payloads.
 
-2. **Subagent delegation for tool count reduction**. Instead of exposing all 19 GitHub tools to the Orchestrator, expose `delegate_github_reader(task_description)` that runs a sub-loop with the read-only GitHub tools. Keeps the Orchestrator's decision space smaller.
+2. **Subagent delegation for tool count reduction**. ✅ **Partly done** — Push now has `delegate_explorer` plus planner/auditor delegation stages, so typed sub-loops are real. The still-open part is whether more of the Orchestrator's direct read-only GitHub surface should collapse behind narrower delegated readers.
 
-3. **User-visible progress tracking**. Push's `CoderWorkingMemory` is powerful but invisible. Making task progress visible (like Claude Code's `TodoWrite` renders in the UI) would improve the mobile UX — users could see what the Coder is doing without reading stream output.
+3. **User-visible progress tracking**. ✅ **Partly done** — users can already see agent status, console/run events, and Push has `coder-progress` card scaffolding. The missing piece is a first-class shared task/progress artifact emitted consistently by the Coder loop.
 
-4. **Conditional working memory**. Don't inject `[CODER_STATE]` on every tool result for short tasks. Gate it on: task has acceptance criteria, or round count > N, or context is approaching budget. Saves tokens and avoids the format-trap for simple tasks.
+4. **Conditional working memory**. ✅ **Partly done** — the web Coder now gates reinjection on first sync, actual state changes, elevated context pressure, or a periodic long-task cadence. The remaining asymmetry is the CLI, which still carries working memory in every tool-result metadata payload.
 
 ## 7. What Claude Code Could Borrow
 
@@ -159,7 +164,7 @@ Neither is strictly better. Hashline is more robust for large files with repetit
 
 ## Summary
 
-The biggest pattern both systems are converging on: **tools should degrade gracefully as models improve**. The ideal tool is one that helps weak models and doesn't constrain strong ones. Push's working memory is a good example — helpful for mid-tier models, potentially limiting for frontier models. The solution isn't removing it but making it adaptive: inject it when the model needs it, skip it when it doesn't.
+The biggest pattern both systems are converging on: **tools should degrade gracefully as models improve**. Push has now already adopted more of the Claude Code playbook than this February snapshot suggested — `ask_user`, typed exploration delegation, richer runtime visibility, sectioned prompts, and now adaptive web-side working-memory reinjection are all real. The remaining Claude-inspired follow-ups are narrower: a shared user-visible task artifact and eventually bringing the CLI working-memory path to the same standard.
 
 The second pattern: **progressive disclosure beats front-loading, but only if the model can self-serve reliably**. Claude Code's subagent architecture makes this work — the model delegates exploration to specialized agents. Push could achieve similar results by making tool protocols discoverable rather than always-injected.
 

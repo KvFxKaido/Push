@@ -7,6 +7,7 @@ import {
   formatCoderStateDiff,
   invalidateObservationDependencies,
   normalizeTrimmedRoleAlternation,
+  shouldInjectCoderStateOnToolResult,
   summarizeCoderStateForHandoff,
 } from './coder-agent';
 
@@ -260,6 +261,59 @@ describe('coder working memory observations', () => {
     const diff = formatCoderStateDiff(current, previous, 3);
 
     expect(diff).toContain('[STALE — app/src/foo.ts was modified at round 3] adapter-pattern: Adapter lives in app/src/foo.ts');
+  });
+});
+
+describe('conditional coder state injection', () => {
+  it('skips tool-result injection when working memory is empty', () => {
+    expect(shouldInjectCoderStateOnToolResult({}, null, 2, 4000, null)).toBe(false);
+  });
+
+  it('injects the first non-empty working-memory snapshot', () => {
+    expect(shouldInjectCoderStateOnToolResult({
+      plan: 'Trace auth refresh',
+      openTasks: ['Patch the retry path'],
+    }, null, 2, 4000, null)).toBe(true);
+  });
+
+  it('skips unchanged state on short low-pressure runs', () => {
+    const state = {
+      plan: 'Trace auth refresh',
+      openTasks: ['Patch the retry path'],
+    };
+
+    expect(shouldInjectCoderStateOnToolResult(state, state, 3, 12_000, 2)).toBe(false);
+  });
+
+  it('reinjects unchanged state once context pressure is elevated', () => {
+    const state = {
+      plan: 'Trace auth refresh',
+      openTasks: ['Patch the retry path'],
+    };
+
+    expect(shouldInjectCoderStateOnToolResult(state, state, 3, 72_000, 2)).toBe(true);
+  });
+
+  it('reinjects unchanged state on a long-task cadence', () => {
+    const state = {
+      plan: 'Trace auth refresh',
+      openTasks: ['Patch the retry path'],
+    };
+
+    expect(shouldInjectCoderStateOnToolResult(state, state, 10, 12_000, 4)).toBe(true);
+  });
+
+  it('reinjects immediately when working memory changes', () => {
+    const previous = {
+      plan: 'Trace auth refresh',
+      openTasks: ['Inspect the retry path'],
+    };
+    const current = {
+      plan: 'Trace auth refresh',
+      openTasks: ['Patch the retry path'],
+    };
+
+    expect(shouldInjectCoderStateOnToolResult(current, previous, 3, 12_000, 2)).toBe(true);
   });
 });
 
