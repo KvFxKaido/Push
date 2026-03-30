@@ -2,6 +2,9 @@
 
 Cross-agent analysis of harness pain points observed during real coding sessions. Each gripe is written from the agent's perspective and mapped to Push's architecture where relevant.
 
+Reviewed against current code: 2026-03-30
+Note: several recommendations below were updated to reflect work that shipped after the original 2026-03-11 session.
+
 ---
 
 ## Source: Claude Code (Opus 4.6)
@@ -48,7 +51,7 @@ Zero tool calls. Ambient awareness. The Orchestrator should get an equivalent si
 
 **Push status:** `sandbox_apply_patchset` provides multi-file transactional edits. Shipped.
 
-**Recommendation:** Already shipped in Push. Ensure the CLI agent (`cli/tools.mjs`) also has a patchset path, not just single-file edits. Consider a lightweight transaction wrapper that snapshots affected files before a multi-edit sequence and rolls back on any failure.
+**Recommendation:** Already shipped in Push. Ensure the CLI agent (`cli/tools.ts`) also has a patchset path, not just single-file edits. Consider a lightweight transaction wrapper that snapshots affected files before a multi-edit sequence and rolls back on any failure.
 
 ---
 
@@ -111,9 +114,9 @@ Consulted 2026-03-11. Gemini's gripes lean toward AST-aware tooling and ambient 
 
 **Problem:** After an edit, the tool result says "Edit applied successfully" — but doesn't report if the edit introduced a syntax error, broke a type contract, or violated a linter rule. Verifying requires a separate explicit turn running `tsc` or `lint`. This turn-cost discourages continuous validation, and errors compound silently until a major test run fails.
 
-**Push status:** No ambient post-mutation diagnostics. Validation requires explicit tool calls.
+**Push status:** Partially addressed. `sandbox_edit_file` now runs a fast per-edit syntax check, and `sandbox_apply_patchset` can append project typecheck diagnostics for changed files. The remaining gap is consistency and structure: diagnostics are still text-first, not universal across every mutating tool, and not exposed as a normalized postcondition object.
 
-**Recommendation:** Attach ambient diagnostics to mutation responses. When `edit_file` or `sandbox_apply_patchset` succeeds, run a quick LSP/compiler check on affected files and append new errors directly: `[Edit applied. Warning: TS2322 Type 'string' is not assignable to type 'number' on line 42]`. Zero-turn validation loop.
+**Recommendation:** Standardize and deepen ambient diagnostics on mutation responses. Keep the existing zero-turn checks, but make them consistent across mutation tools and expose them in a structured shape alongside human-readable text.
 
 ---
 
@@ -205,9 +208,9 @@ Consulted 2026-03-11. Codex's gripes lean toward contracts, provenance, and quer
 
 **Problem:** The desired pattern is: apply edits only if read handles are still valid, run checks, rollback if checks fail. Currently this requires several fragile steps with manual recovery.
 
-**Push status:** Partially addressed. `sandbox_apply_patchset` gives atomic multi-file edits, `acceptanceCriteria[]` gives post-task verification, but they aren't fused into a single guarded operation.
+**Push status:** Mostly addressed for patchsets. `sandbox_apply_patchset` validates edits up front, supports post-write checks, and can roll back on failure. The remaining gap is making that verified-change contract the default path across more mutation workflows instead of concentrating it in one advanced tool.
 
-**Recommendation:** Add a transactional mutation mode: preconditions (hash validity), edits, post-checks (shell commands), and rollback policy — all in one call. The atomic unit becomes "verified change" rather than "edit + separate check."
+**Recommendation:** Push the patchset contract outward: either make `sandbox_apply_patchset` the standard verified-change primitive for multi-file work or expose the same preconditions/checks/rollback guarantees through simpler edit flows.
 
 ---
 
@@ -215,9 +218,9 @@ Consulted 2026-03-11. Codex's gripes lean toward contracts, provenance, and quer
 
 **Problem:** A symbol list shows what exists but not what is coupled. Hunting call sites, importers, implementers, and transitive edges across files costs many turns.
 
-**Push status:** Partially addressed. `sandbox_read_symbols` solves declaration discovery, not reference discovery.
+**Push status:** Partially addressed. `sandbox_read_symbols` now has a companion `sandbox_find_references`, which closes the basic declaration-to-reference gap. What is still missing is deeper coupling data: implementations, call-graph edges, and more structural queries than simple name-based references.
 
-**Recommendation:** Add `find_references`, `find_implementations`, and lightweight import/call-graph queries with file+span anchors. The gap between "what exists" and "what uses it" is where most orientation time is lost.
+**Recommendation:** Add `find_implementations` and lightweight import/call-graph queries with file+span anchors. The remaining gap is no longer "references at all," but "richer structural navigation than declarations plus basic references."
 
 ---
 
@@ -257,8 +260,8 @@ Consulted 2026-03-11. Codex's gripes lean toward contracts, provenance, and quer
 
 | Theme | Claude | Gemini | Codex |
 |---|---|---|---|
-| **Mutation results are too thin** | Edit-then-verify round trip (#1) | Silent breakage — no diagnostics (#2) | Weak postconditions — no spans/hashes (#5) |
-| **Symbol navigation stops at declarations** | (noted as Claude Code advantage) | Paging game — need AST body reads (#1) | References leave agent blind (#7) |
+| **Mutation results are too thin** | Edit-then-verify round trip (#1) | Diagnostics now exist, but are not yet universal/structured (#2) | Weak postconditions — no spans/hashes (#5) |
+| **Symbol navigation still wants richer structure** | (noted as Claude Code advantage) | Paging game — need AST body reads (#1) | Implementations/call graph still missing (#7) |
 | **Working memory needs structure** | Context pressure invisible (#5) | Investigation rabbit hole (#3) | Invalidation-aware memory (#10) |
 | **Exec error signals are too coarse** | (implicit in staleness gripe) | Interactive traps (#4) | Exit codes aren't enough (#8) |
 
@@ -266,10 +269,10 @@ Consulted 2026-03-11. Codex's gripes lean toward contracts, provenance, and quer
 
 | Idea | Source | Push status | Impact estimate |
 |---|---|---|---|
-| **Ambient post-mutation diagnostics** (LSP/compiler check on edit) | Gemini #2 | Not shipped | High — zero-turn validation loop |
+| **Ambient post-mutation diagnostics** (LSP/compiler check on edit) | Gemini #2 | Partially shipped | Medium-High — move from text-only checks to universal structured diagnostics |
 | **Artifact handles** on tool results (referenceable IDs) | Codex #2 | Not shipped | High — eliminates re-tokenization |
 | **Session capability block** (machine-readable environment contract) | Codex #1 | Not shipped | Medium — eliminates impossible-action turns |
-| **Guarded apply-check-rollback** (single atomic verified-change primitive) | Codex #6 | Partially shipped (patchset + criteria are separate) | Medium-High — fuses the two strongest harness features |
+| **Guarded apply-check-rollback** (single atomic verified-change primitive) | Codex #6 | Mostly shipped for patchsets | Medium — extend the verified-change contract across more flows |
 | **Interactive trap detection** (PTY stdin-wait heuristic) | Gemini #4 | Not shipped | Medium — prevents timeout waste |
 | **Dirty state provenance** (`modified_by` / `last_tool` per file) | Codex #4 | Not shipped | Medium — enables cautious editing in dirty trees |
 | **Structured repo index** (auto-generated project map) | Codex #3 | Partially shipped (AGENTS.md + workspace snapshot) | Medium — cuts orientation phase |
@@ -279,12 +282,12 @@ Consulted 2026-03-11. Codex's gripes lean toward contracts, provenance, and quer
 ### Prioritized recommendations for Push
 
 **Tier 1 — Highest leverage, builds on shipped infrastructure:**
-1. **Ambient post-mutation diagnostics** — Attach quick LSP/compiler check results to edit responses. Push already returns diffs; adding diagnostics completes the zero-turn validation loop.
-2. **Guarded apply-check-rollback** — Fuse `sandbox_apply_patchset` + `acceptanceCriteria[]` into one atomic operation with rollback. Both primitives exist; the gap is composition.
+1. **Ambient post-mutation diagnostics** — Standardize the diagnostics that already exist so every mutation tool returns comparable, structured follow-up state.
+2. **Guarded apply-check-rollback** — Promote the verified-change contract beyond advanced patchset flows so it becomes the default safe path instead of a specialized one.
 3. **Invalidation-aware working memory** — Extend `CoderWorkingMemory` to track which files each conclusion depends on and mark entries stale on mutation.
 
 **Tier 2 — High value, moderate implementation cost:**
-4. **`find_references` / `find_implementations`** — Extend `sandbox_read_symbols` into a reference graph. All three agents flagged the declaration-only gap.
+4. **`find_implementations` / call-graph queries** — Extend the new declaration-plus-reference layer into richer structural navigation.
 5. **Session capability block** — Emit environment contract at startup. Eliminates a class of wasted turns.
 6. **Dirty state provenance** — Add `modified_by` to the file-awareness ledger.
 

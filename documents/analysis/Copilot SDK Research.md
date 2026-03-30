@@ -5,6 +5,8 @@ SDK version: Technical Preview (launched Jan 22, 2026)
 Repository: github/copilot-sdk (~8k stars, MIT)
 Packages: `@github/copilot-sdk` (npm), `github-copilot-sdk` (pip), Go, .NET, Java
 
+Reviewed against current Push code: 2026-03-30
+
 ## What It Is
 
 The GitHub Copilot SDK exposes the Copilot CLI's agent runtime as a programmable
@@ -184,6 +186,6 @@ Priority order for Push:
 2. **Steering/queueing** — Mid-turn user injection without aborting agent work.
 3. **Ephemeral vs persisted events** — Reduce IndexedDB writes, simplify resume.
 4. ~~**Per-agent tool scoping**~~ ✅ **Done** — Positive-list allowlists (`EXPLORER_ALLOWED_TOOLS`), `TurnPolicy` framework with `beforeToolExec` hooks, tool-registry `readOnly` filtering. See `app/src/lib/turn-policy.ts`, `app/src/lib/explorer-constants.ts`.
-5. **Lifecycle events** — Structured delegation events for UI and debugging.
+5. ~~**Lifecycle events**~~ ✅ **Mostly done** — run events now cover assistant turns, tool execution, and subagent state. The remaining gap is richer exec/session lifecycle detail plus a cleaner ephemeral-vs-persisted split.
 6. ~~**Pre/post tool hooks**~~ ✅ **Done** — `ToolHookRegistry` with `PreToolUseHook`/`PostToolUseHook`, integrated into `tool-dispatch.ts`, turn policy bridge. See `app/src/lib/tool-hooks.ts`.
 7. **Task agent** — Split test/build from Coder.

@@ -2,8 +2,11 @@
 
 ## Status
 - Last updated: 2026-02-22
-- State: Track A shipped (hashline active), Track B complete, Track C extended (metrics + settings diagnostics shipped), Track E wishlist outcomes shipped, Track D (server-side background jobs) deferred
+- Reviewed against current code: 2026-03-30
+- State: Historical tracking doc — Tracks A/B/C/E are largely shipped, Track D remains deferred
 - Intent: Improve coding task success by upgrading the harness, not just swapping models
+
+Historical note: this document records the rollout and rationale for work that is now mostly shipped or explicitly deferred. Some track sections retain pre-ship planning language on purpose.
 
 ## Implementation Status Snapshot (2026-02-22)
 
@@ -27,7 +30,7 @@ The bigger opportunity is harness reliability across the full coding loop:
 5. mobile/session resilience
 6. operator visibility
 
-Hashline remains a candidate within this larger plan.
+Hashline became the first shipped track within this larger plan.
 
 ## Harness Principles
 
@@ -310,6 +313,8 @@ Key conclusion: **Push's prompt-engineered tool protocol is its biggest reliabil
 
 ## Immediate Next Action
 
-Dogfood the Agent Experience Wishlist features in real coding tasks.
-Measure round count and retry reduction vs pre-sprint baseline.
-Track D (server-side background jobs) remains deferred unless roadmap scope changes.
+Status on 2026-03-30:
+
+- Agent Experience Wishlist work is already shipped and should be treated as historical in this doc.
+- Track D (server-side background jobs) remains deferred unless roadmap scope changes.
+- There is no single live next step owned by this plan; current follow-up work is better represented in `documents/analysis/` and the more current plans in this folder.

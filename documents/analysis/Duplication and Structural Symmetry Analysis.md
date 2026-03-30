@@ -3,6 +3,7 @@
 Current audit of repeated structure across Push. This is observational only. No behavior changes are proposed here.
 
 Last audit: 2026-03-12
+Refreshed against current code: 2026-03-30
 
 ## Snapshot
 
@@ -142,39 +143,37 @@ So this is mirrored structure, but not accidental duplication. Vertex is a sibli
 
 The repo now has several conceptually paired modules across web and CLI. These are the highest-risk symmetry points because they look related but no longer behave identically.
 
-### 4a. `hashline` exists twice and has materially diverged
+### 4a. `hashline` was a drift hotspot, but is now substantially unified
 
 Files:
 
 - `app/src/lib/hashline.ts`
-- `cli/hashline.mjs`
+- `cli/hashline.ts`
+- `lib/hashline.ts`
 
-Both implement hash-anchored editing, but the implementations are no longer equivalent.
+This area changed after the original audit. `app/src/lib/hashline.ts` is now a thin re-export over the shared implementation in `lib/hashline.ts`, and the CLI wrapper in `cli/hashline.ts` explicitly documents that it was unified from a previous standalone variant.
 
-Web version characteristics:
+Current shared characteristics:
 
-- async SHA-256 hashing
+- SHA-256 hashing
 - 7 to 12 character ref support
 - two-phase batch resolution
 - ambiguity diagnostics
-- structured `{ content, applied, failed, errors }` result
+- aligned staleness behavior
 
-CLI version characteristics:
+Remaining surface differences are mostly ergonomic rather than semantic:
 
-- sync SHA-1 hashing
-- refs normalized down to 7 chars
-- inline sequential resolution
-- different ambiguity/staleness behavior
-- structured `{ content, applied }` result with a different shape
+- web uses the shared async implementation directly
+- CLI keeps a sync wrapper and a legacy-shaped `{ content, applied }` result for local tool ergonomics
 
-This is the clearest example of duplicated concept with behavioral drift.
+This is now a good example of a previously drifted concept that was successfully consolidated.
 
 ### 4b. Model catalog logic exists on both surfaces
 
 Files:
 
 - `app/src/lib/model-catalog.ts`
-- `cli/model-catalog.mjs`
+- `cli/model-catalog.ts`
 - `app/src/lib/providers.ts`
 
 Both surfaces maintain curated defaults, model lists, and live `/models` fetching logic, but they do so differently:
@@ -192,7 +191,7 @@ This is not just symmetry. It is split source-of-truth risk.
 Files:
 
 - `app/src/lib/tool-call-metrics.ts`
-- `cli/tool-call-metrics.mjs`
+- `cli/tool-call-metrics.ts`
 
 The web app records rich metrics by provider, model, reason, and tool. The CLI records only a count by reason.
 
@@ -203,7 +202,7 @@ That may be acceptable, but it is another mirrored module where one side has evo
 Files:
 
 - `app/src/lib/workspace-context.ts`
-- `cli/workspace-context.mjs`
+- `cli/workspace-context.ts`
 
 These two files share a name but solve different problems:
 
@@ -218,7 +217,7 @@ Project-instruction loading now exists in multiple layers:
 
 - `app/src/lib/github-tools.ts` fetches `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`
 - `app/src/lib/project-instructions-utils.ts` supports syncing those three files from sandbox paths
-- `cli/workspace-context.mjs` looks for `.push/instructions.md`, then `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`
+- `cli/workspace-context.ts` looks for `.push/instructions.md`, then `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`
 
 Inside the web hook, there is a local asymmetry:
 
@@ -265,10 +264,13 @@ These areas are repetitive in shape, but the repetition has been pushed into con
 
 ### Highest drift risk
 
-- `app/src/lib/hashline.ts` vs `cli/hashline.mjs`
-- `app/src/lib/model-catalog.ts` plus `app/src/lib/providers.ts` vs `cli/model-catalog.mjs`
+- `app/src/lib/model-catalog.ts` plus `app/src/lib/providers.ts` vs `cli/model-catalog.ts`
 - project-instruction loading paths across web, sandbox, and CLI
-- `app/src/lib/tool-call-metrics.ts` vs `cli/tool-call-metrics.mjs`
+- `app/src/lib/tool-call-metrics.ts` vs `cli/tool-call-metrics.ts`
+
+### Recently resolved drift
+
+- `app/src/lib/hashline.ts` / `lib/hashline.ts` / `cli/hashline.ts`
 
 ## Bottom Line
 
@@ -279,5 +281,6 @@ The remaining work is narrower:
 - large prop/state surfaces in Settings
 - route-registration boilerplate
 - web/CLI concept pairs that have drifted into separate implementations
+- keeping analysis docs in sync after major unifications, so resolved hotspots do not keep showing up as active risk
 
 If this area gets revisited later, the highest-value lens is not "remove all repetition." It is "decide which mirrored modules should truly share behavior and which ones should stay intentionally forked."

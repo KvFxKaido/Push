@@ -2,12 +2,15 @@
 
 ## Status
 - Last updated: 2026-02-22
-- State: Partially shipped — Priority 1 complete, Priority 2 architecture simplified (prompt-engineered only), follow-up optimization pending
+- Reviewed against current code: 2026-03-30
+- State: Historical implementation plan — core decisions shipped; remaining optimization work is incremental and this doc is mainly rationale/provenance now
 - Scope: CLI + Web app — both share the same architectural patterns
 
-## Implementation Status Snapshot (2026-02-21)
+Historical note: this document mixes shipped status with pre-ship reasoning. Sections that describe gaps in the present tense should be read as the baseline that existed before those items shipped.
 
-- [x] Priority 1 shipped: CLI context trimming is active (`cli/context-manager.mjs`, integrated in `cli/engine.mjs`).
+## Implementation Status Snapshot (2026-03-30 review)
+
+- [x] Priority 1 shipped: CLI context trimming is active (`cli/context-manager.ts`, integrated in `cli/engine.ts`).
 - [x] Priority 2 shipped (core): all tools are prompt-engineered (native function-calling removed).
 - [x] Priority 2 shipped (visibility): malformed-call diagnostics are tracked by provider/model and surfaced in Settings.
 - [x] Priority 3 decision unchanged: keep hashline edit safety.
@@ -33,8 +36,8 @@ Push is model-agnostic by design. The current tool protocol (prompt-engineered J
 
 **Impact:** This is the only gap that **breaks sessions**. Everything else is overhead; this is a wall.
 
-**Current state:**
-- `engine.mjs` tracks `contextChars` but does nothing with it
+**Historical baseline before ship:**
+- `engine.ts` tracked `contextChars` but did nothing with it
 - The web app already has rolling-window trimming in `orchestrator.ts` (summarize old tool-heavy messages, drop oldest pairs, keep tool call/result pairs together)
 - The CLI has zero equivalent
 
@@ -45,8 +48,8 @@ Push is model-agnostic by design. The current tool protocol (prompt-engineered J
 - Preserve invariants: keep tool call/result pairs together, keep the system prompt + first user message pinned
 - Surface context budget in the `[meta]` envelope (already tracked, just not acted on)
 
-**What changes:**
-- `cli/engine.mjs` — add trimming pass before each `streamCompletion()` call
+**What changed:**
+- `cli/engine.ts` gained a trimming pass before each `streamCompletion()` call
 - No sandbox changes, no provider changes
 
 ---
@@ -58,11 +61,11 @@ Push is model-agnostic by design. The current tool protocol (prompt-engineered J
 **Problem:** Prompt-engineered tools still cost ~15-20% token overhead:
 - ~800 char `TOOL_PROTOCOL` prompt in every system message
 - Model wastes tokens on markdown fencing around every tool call
-- Malformed calls happen (tracked by `tool-call-metrics.mjs` / `tool-call-metrics.ts`)
+- Malformed calls happen (tracked by `tool-call-metrics.ts` in CLI and web)
 - Prompt assembly mistakes (duplicate protocol injection, wrong-role protocol leakage) can create regressions
 
 **Current state:**
-- Both CLI (`tools.mjs`) and web app (`tool-dispatch.ts`) use prompt-engineered JSON tool calls detected from accumulated text
+- Both CLI (`tools.ts`) and web app (`tool-dispatch.ts`) use prompt-engineered JSON tool calls detected from accumulated text
 - Tool results are injected as `role: "user"` messages wrapped in `[TOOL_RESULT]...[/TOOL_RESULT]`
 - The codebase no longer uses provider-native function-calling request schemas or `delta.tool_calls` parsing in the web app
 
@@ -76,8 +79,8 @@ Push is model-agnostic by design. The current tool protocol (prompt-engineered J
 **What changes:**
 - `app/src/lib/orchestrator.ts` — shared prompt assembly guardrails (override prompt pass-through, role-scoped protocol injection)
 - `app/src/lib/tool-dispatch.ts` — continue improving malformed-call recovery, detection accuracy, and multi-tool dispatch efficiency
-- `app/src/hooks/useChat.ts` / `cli/engine.mjs` — reduce round churn via better retry feedback and context trimming
-- `cli/provider.mjs` / web streaming paths — keep SSE parsing focused on `delta.content` and reasoning tokens
+- `app/src/hooks/useChat.ts` / `cli/engine.ts` — reduce round churn via better retry feedback and context trimming
+- `cli/provider.ts` / web streaming paths — keep SSE parsing focused on `delta.content` and reasoning tokens
 - No sandbox changes (`sandbox-client.ts`, `sandbox-tools.ts`, Modal, Worker — all untouched)
 
 **Historical note (superseded):** An earlier dual-mode native function-calling plan existed, but production was simplified to a unified prompt-engineered path on 2026-02-22. Keep that design discussion in git history only.

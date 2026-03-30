@@ -3,24 +3,25 @@
 ## Status
 - Created: 2026-03-15
 - Updated: 2026-03-16
+- Reviewed against current code: 2026-03-30
 - Supersedes: Web-CLI Parity Plan (2026-03-11)
-- State: **In Progress** — shared root modules plus TUI/daemon work are shipped; CLI runtime TypeScript cutover is the next tranche
+- State: **Partially shipped** — TypeScript runtime cutover, TUI improvements, and daemon integration are in place; remaining work is selective convergence on shared modules where drift still matters
 - Intent: Share core logic between web and CLI to eliminate dual implementations, prioritize TUI usability over feature parity
 
 ## What Changed from v1
 
 **v1 assumed:** CLI stays vanilla `.mjs` + JSDoc, feature parity across surfaces, full role separation (Orchestrator/Coder/Reviewer/Auditor) in both environments.
 
-**v2 direction:** CLI converges toward TypeScript and shared root `lib/`, while still running plain Node `.mjs` entrypoints today. The focus stays on TUI ergonomics over role completeness. Most of Track A (safety gates), Track B (agent roles), and Track E (reverse parity) are cut or deferred.
+**v2 direction:** CLI converges toward TypeScript and shared root `lib/`, with the launcher now preferring compiled JS or `tsx` on `cli/cli.ts` and `.mjs` only as fallback. The focus stays on TUI ergonomics over role completeness. Most of Track A (safety gates), Track B (agent roles), and Track E (reverse parity) are cut or deferred.
 
 ## Current Reality Check
 
 Before planning the migration tranche, anchor on what is true today:
 
-- `./push` still shells to `node cli/cli.mjs`; `pushd` is still started as `node cli/pushd.mjs`.
-- `cli/tsconfig.json` and the `@push/lib/*` path mapping exist, but the live CLI source does not yet import those aliases.
-- Shared root `lib/` modules are real and already used by the web app. CLI-side TypeScript validation scripts prove they can be imported, but most CLI runtime modules still consume local `.mjs` implementations.
-- `node:test` files currently import `.mjs` modules directly, so file-by-file migration needs an explicit runtime/test bridge rather than ad hoc renames.
+- `./push` now prefers `cli/dist/cli.js`, then `tsx` on `cli/cli.ts`, with `cli/cli.mjs` only as fallback.
+- The live CLI runtime modules are now TypeScript (`cli.ts`, `pushd.ts`, `daemon-client.ts`, `engine.ts`, `provider.ts`, `tools.ts`, `context-manager.ts`, `hashline.ts`).
+- Shared root `lib/` modules are real and already used by the web app. CLI uses the shared hashline implementation directly, but broader root-`lib/` import cutover is still selective rather than comprehensive.
+- Tests still include many `.mjs` files and direct CLI-local imports, so "full convergence" remains an explicit cleanup choice, not an automatic consequence of the TypeScript cutover.
 
 ## Why Converge on TypeScript
 
@@ -39,7 +40,7 @@ The web app and CLI still duplicate too much runtime logic. Shared root `lib/` m
 
 **The cost:** CLI gains a build step (`tsx` runtime or `tsc` compilation) and loses the "zero dependencies" story.
 
-**Important caveat:** the repo has not already paid that runtime cost. Today the launcher still executes plain `.mjs` through Node, so the migration must choose a bridge (`tsx` for development/tests, compiled `dist/`, or equivalent) before the first `.mjs` → `.ts` rename.
+**Important caveat:** the repo has now paid the runtime-bridge cost. The open question is no longer "how do we rename `.mjs` files?", but "which remaining CLI-local modules should actually move into shared root `lib/`, and which should stay surface-specific?"
 
 **The trade is worth it because:**
 1. CLI isn't being distributed to external users (no install simplicity requirement)
@@ -103,7 +104,7 @@ Push/
 - [x] CLI validation script (`cli/test-hashline.ts`) proves the shared module can be imported from CLI-side TypeScript
 - [x] Both surfaces can import from the same canonical source
 
-**Note:** The live CLI runtime still imports `cli/hashline.mjs`; Track 1 proved the convergence path and tooling, not the runtime cutover.
+**Note:** The live CLI runtime now imports `cli/hashline.ts`, and that wrapper delegates to the canonical shared implementation in `lib/hashline.ts`. Track 1 ended up proving both the convergence path and the runtime cutover for this slice.
 
 ---
 
@@ -168,7 +169,7 @@ Push/
 - [x] CLI: existing `@push/lib/*` path mapping in `cli/tsconfig.json`
 - [x] Test suite: `cli/test-track2.ts` — 125 tests, all passing
 
-**Note:** These modules are now canonical shared implementations, but the live CLI runtime still mostly consumes local `.mjs` modules. Runtime import cutover remains a separate migration step.
+**Note:** These modules are now canonical shared implementations, but the live CLI runtime still mostly consumes CLI-local `.ts` modules outside the shared slices already extracted. Broader root-`lib/` import cutover remains a separate migration step.
 
 ---
 
@@ -191,13 +192,13 @@ Make TUI the preferred surface for terminal-based development.
 
 #### Context meter showing token budget usage
 - [x] Visual bar meter in status bar: `▰▰▰▰▱▱▱▱ 42k/100k` with color coding (green/yellow/red)
-- [x] Uses `getContextBudget()` from `context-manager.mjs` for model-aware budget (Gemini 1M, default 100k)
+- [x] Uses `getContextBudget()` from `context-manager.ts` for model-aware budget (Gemini 1M, default 100k)
 - [x] Uses `estimateContextTokens()` for accurate per-message token estimation
 
 #### File awareness display
 - [x] TUI-local file ledger tracks files from tool_call/tool_result events
 - [x] Status bar shows file count with read/write breakdown: `3 files (1w)`
-- [x] Powered by shared `file-ledger.mjs` (same logic as engine)
+- [x] Powered by shared `file-ledger.ts` (same logic as engine)
 
 #### Interrupt handling
 - [x] Ctrl+C cancels the current run (aborts the engine loop), does not kill the process
@@ -229,7 +230,7 @@ TUI connects to pushd over Unix socket. Background sessions survive TUI close/de
 
 **Shipped:**
 
-#### Daemon enhancements (`pushd.mjs`)
+#### Daemon enhancements (`pushd.ts`)
 - [x] All 8 protocol request types implemented: `hello`, `ping`, `list_sessions`, `start_session`, `send_user_message`, `attach_session`, `submit_approval`, `cancel_run`
 - [x] Multi-client fan-out: `sessionClients` Map tracks attached sockets per session, `broadcastEvent()` delivers to all observers
 - [x] Per-session `AbortController` for run cancellation via `cancel_run`
@@ -239,19 +240,19 @@ TUI connects to pushd over Unix socket. Background sessions survive TUI close/de
 - [x] `RUN_IN_PROGRESS` guard prevents concurrent runs per session
 - [x] Version bumped to 0.2.0 with capabilities `stream_tokens`, `approvals`, `replay_attach`, `multi_client`
 
-#### Daemon client library (`daemon-client.mjs`)
+#### Daemon client library (`daemon-client.ts`)
 - [x] `connect(socketPath)` — NDJSON socket client with request/response correlation
 - [x] `client.request(type, payload, sessionId, timeoutMs)` — Promise-based request with timeout
 - [x] `client.onEvent(callback)` — event listener with unsubscribe function
 - [x] `tryConnect(socketPath, timeoutMs)` — non-blocking connection attempt (returns null on failure)
 - [x] `waitForReady(socketPath, options)` — poll with ping for daemon startup readiness
 
-#### CLI daemon commands (`cli.mjs`)
+#### CLI daemon commands (`cli.ts`)
 - [x] `push daemon start` waits for ready (polls with ping, 3s timeout, 200ms interval)
 - [x] `push daemon status` shows live responsiveness via ping
-- [x] `push attach` refactored to use `daemon-client.mjs` (cleaner error handling, state display)
+- [x] `push attach` refactored to use `daemon-client.ts` (cleaner error handling, state display)
 
-#### TUI daemon mode (`tui.mjs`)
+#### TUI daemon mode (`tui.ts`)
 - [x] On startup, TUI probes for running pushd via `tryConnect`
 - [x] If daemon available: `send_user_message` over socket instead of inline `runAssistantLoop`
 - [x] Daemon events bridged to existing `handleEngineEvent` (same event types)
@@ -272,14 +273,12 @@ TUI connects to pushd over Unix socket. Background sessions survive TUI close/de
 4. Track 3: TUI usability improvements ✅
 5. Track 4: Daemon integration (pushd enhancements, client library, TUI daemon mode) ✅
 
-**Recommended next tranche — CLI runtime migration:**
-6. Choose the runtime/test bridge before any file rename.
-7. Convert `session-store.mjs` → `.ts` and introduce protocol/session types.
-8. Convert `daemon-client.mjs`, then `pushd.mjs`, around shared discriminated request/response/event unions.
-9. Convert `provider.mjs`.
-10. Convert `engine.mjs`.
-11. Revisit `tools.mjs` and `cli.mjs` once the protocol/runtime pieces stabilize.
-12. Extract more submodules from `tui.mjs`, then migrate it last.
+**Recommended next tranche — selective convergence, not blanket migration:**
+6. Decide which remaining CLI-local modules actually deserve root-`lib/` ownership.
+7. Unify the highest-drift sources of truth first, especially provider metadata/model catalog behavior.
+8. Share protocol/session/event unions where daemon, TUI, and web concepts already overlap.
+9. Extract additional shared helpers only when they reduce real maintenance drag, not just because a module is already in TypeScript.
+10. Keep strongly surface-specific runtime pieces local if shared ownership would blur boundaries more than it helps.
 
 Each step should leave the CLI runnable and the affected tests passing before the next rename.
 
@@ -305,9 +304,9 @@ Each step should leave the CLI runnable and the affected tests passing before th
 
 ## Architecture Decisions (Updated)
 
-1. **Runtime bridge:** Not active yet. The current CLI runtime is plain Node ESM (`node cli/cli.mjs`). `tsx` remains the recommended first bridge for development/tests; `tsc` output can follow later if startup time becomes painful.
+1. **Runtime bridge:** Active. The launcher prefers compiled JS, then `tsx` on `cli/cli.ts`, with `.mjs` only as fallback. The bridge decision is no longer the blocker; selective shared-runtime ownership is.
 2. **Shared module ownership:** `lib/` MUST live at the repo root. Root makes the "shared" intent clearer and prevents the CLI from being littered with fragile `../../app/src/lib` imports.
-3. **ESM strictness + tests:** Node natively running ESM is strict about file extensions (e.g., `import { foo } from './bar.js'`), and the CLI tests currently import `.mjs` sources directly. That makes the bridge strategy a prerequisite for incremental renames, not an afterthought.
+3. **ESM strictness + tests:** Node ESM and mixed `.ts`/`.mjs` tests still make convergence work deliberate. The bridge exists now, but the test/runtime split still needs intentional cleanup when shared ownership changes.
 
 ## Migration from v1 Plan
 

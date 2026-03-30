@@ -2,28 +2,43 @@
 
 ## Status
 - Created: 2026-03-25
-- State: **Draft**
+- Reviewed against current code: 2026-03-30
+- State: **Partially shipped** — the original boundary plan largely landed; remaining work is optional cleanup, bundle measurement, and deciding whether `WorkspaceChatRoute` needs further decomposition
 - Scope: Follow-up work after the `useChat` refactor and the `WorkspaceScreen` extraction
 - Goal: Make the workspace route feel like a set of honest boundaries instead of a new place where all complexity collects
 
-## Baseline
+## Implementation Status Snapshot (2026-03-30)
 
-Current shape after the two completed refactors:
+- [x] `WorkspaceChatRoute` exists and owns the secondary chat-route panels/workflows.
+- [x] `WorkspaceScreen` has been reduced to a thin lazy wrapper around `WorkspaceSessionScreen`.
+- [x] `WorkspaceSessionScreen` now hosts the route-level assembly/controller layer.
+- [x] `useWorkspaceComposerState`, `useWorkspaceSandboxController`, and `useWorkspacePreferences` were extracted.
+- [x] `toConversationIndex` is shared through `lib/conversation-index.ts`.
+- [x] `ChatScreen` now accepts grouped domain props instead of one giant flat signature.
+- [x] Secondary panel surfaces in `WorkspaceChatRoute` are lazy-loaded.
+- [ ] The main follow-up question is no longer "should these boundaries exist?" but "does `WorkspaceChatRoute` now need a second decomposition pass, and is there still measurable bundle pain worth chasing?"
 
-- `app/src/App.tsx` is down to 268 lines and now behaves like a routing shell
-- `app/src/hooks/useChat.ts` is down to 769 lines and no longer owns every subsystem directly
-- `app/src/sections/WorkspaceScreen.tsx` is now the main controller hotspot at 968 lines
-- `app/src/sections/ChatScreen.tsx` is still the largest UI/orchestration hotspot at 1490 lines
-- Production build moved the problem to the right place:
-  - entry chunk: ~57.67 kB minified
-  - workspace chunk: ~660.35 kB minified
+## Current Snapshot
+
+Current shape after the shipped boundary work:
+
+- `app/src/App.tsx` is 257 lines and behaves like a routing shell
+- `app/src/sections/WorkspaceScreen.tsx` is 15 lines and acts as a lazy wrapper
+- `app/src/sections/WorkspaceSessionScreen.tsx` is 431 lines and now owns the route-level assembly/controller layer
+- `app/src/sections/WorkspaceChatRoute.tsx` is 591 lines and owns most chat-route orchestration and panel workflows
+- `app/src/sections/ChatScreen.tsx` is 270 lines and reads as a presentational/composition layer with grouped props
+- `app/src/hooks/useChat.ts` is still substantial at 1037 lines, but it is no longer carrying the same route/UI orchestration burden this plan targeted
 
 What that means:
 
 - The root app shell is no longer the bottleneck
-- `useChat` is no longer the immediate refactor target
-- The next boundary needs to be **inside the workspace route**
-- `WorkspaceScreen -> ChatScreen` is still too much of a pipe and not enough of a boundary
+- `WorkspaceScreen -> WorkspaceSessionScreen -> WorkspaceChatRoute -> ChatScreen` is now a real boundary chain, not just a pipe
+- The original draft recommendation was mostly right and is now mostly implemented
+- Any next move should be targeted and justified by current complexity or bundle evidence, not by the original draft assumptions
+
+## Original Baseline (2026-03-25)
+
+The sections below capture the draft diagnosis that motivated the work now largely shipped.
 
 ## What I See
 
@@ -119,7 +134,7 @@ This is a better move than chasing line counts directly because it improves:
 
 ## Phases
 
-### Phase 1 — Boundary Cleanup And Shared Types
+### Phase 1 — Boundary Cleanup And Shared Types ✅ MOSTLY COMPLETE
 
 **Goal:** make the next extraction honest before moving logic around.
 
@@ -137,7 +152,7 @@ This is a better move than chasing line counts directly because it improves:
 - No duplicated conversation-index bridge logic
 - A clear type surface for the next route boundary
 
-### Phase 2 — Introduce `WorkspaceChatRoute`
+### Phase 2 — Introduce `WorkspaceChatRoute` ✅ COMPLETE
 
 **Goal:** split UI orchestration from `ChatScreen` and stop treating `ChatScreen` as the place where every workspace panel flow lives.
 
@@ -177,7 +192,7 @@ This is a better move than chasing line counts directly because it improves:
 - It gives secondary UI flows a single owner
 - It sets up later lazy loading without weird control flow
 
-### Phase 3 — Split `WorkspaceScreen` Controller Hooks
+### Phase 3 — Split `WorkspaceScreen` Controller Hooks ✅ COMPLETE
 
 **Goal:** turn `WorkspaceScreen` into assembly and route wiring instead of a giant hook host.
 
@@ -211,7 +226,7 @@ This is a better move than chasing line counts directly because it improves:
 - `WorkspaceScreen` mostly wires together stable controller hooks and routes
 - The file stops being the default landing zone for every new workspace concern
 
-### Phase 4 — Collapse The `ChatScreen` Prop Surface
+### Phase 4 — Collapse The `ChatScreen` Prop Surface ✅ COMPLETE
 
 **Goal:** make `ChatScreen` readable as an API.
 
@@ -235,7 +250,7 @@ This is a better move than chasing line counts directly because it improves:
 - `ChatScreenProps` becomes understandable at a glance
 - Future extractions can move a domain group without rewriting the whole signature
 
-### Phase 5 — Secondary Lazy Boundaries And Bundle Cleanup
+### Phase 5 — Secondary Lazy Boundaries And Bundle Cleanup ✅ MOSTLY COMPLETE
 
 **Goal:** reduce the workspace chunk now that the route boundaries are honest.
 
@@ -301,14 +316,12 @@ If I were shipping this in small PRs, I would do it in this order:
 
 ## Strongest Recommendation
 
-The next real move is **Phase 2: introduce `WorkspaceChatRoute`**.
+The original strongest recommendation was **Phase 2: introduce `WorkspaceChatRoute`**.
 
-That is the change most likely to:
+That move has landed.
 
-- reduce `ChatScreen` complexity without breaking the new `App` boundary
-- make `WorkspaceScreen` feel like a route shell instead of a second `App`
-- unlock the later hook extractions and lazy-load wins
+The best remaining follow-up is narrower:
 
-If this plan holds, the follow-up target is not “make files shorter.” It is:
-
-**make the workspace route own fewer kinds of complexity at once.**
+- measure whether `WorkspaceChatRoute` is now the right next hotspot
+- only split it further if the ownership boundary is starting to blur again
+- keep bundle cleanup tied to real lazy-boundary wins instead of chasing line counts
