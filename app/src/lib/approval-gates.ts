@@ -96,8 +96,12 @@ export function createDefaultApprovalGates(): ApprovalGateRegistry {
     category: 'destructive_sandbox',
     matcher: 'sandbox_exec',
     evaluate: (
+      toolName: string,
       args: Record<string, unknown>,
+      context: ToolHookContext,
     ): ApprovalGateDecision => {
+      void toolName;
+      void context;
       if (!isDestructiveCommand(args.command)) return 'allowed';
       const mode = getApprovalMode();
       if (mode === 'full-auto' || mode === 'autonomous') return 'allowed';
@@ -117,8 +121,12 @@ export function createDefaultApprovalGates(): ApprovalGateRegistry {
     category: 'git_override',
     matcher: 'sandbox_exec',
     evaluate: (
+      toolName: string,
       args: Record<string, unknown>,
+      context: ToolHookContext,
     ): ApprovalGateDecision => {
+      void toolName;
+      void context;
       if (args.allowDirectGit !== true) return 'allowed';
       const mode = getApprovalMode();
       if (mode === 'full-auto' || mode === 'autonomous') return 'allowed';
@@ -138,7 +146,13 @@ export function createDefaultApprovalGates(): ApprovalGateRegistry {
     category: 'remote_side_effect',
     matcher: 'sandbox_push|pr_create|pr_merge|branch_delete|workflow_run',
     evaluate: (
+      toolName: string,
+      args: Record<string, unknown>,
+      context: ToolHookContext,
     ): ApprovalGateDecision => {
+      void toolName;
+      void args;
+      void context;
       const mode = getApprovalMode();
       if (mode === 'full-auto' || mode === 'autonomous') return 'allowed';
       return 'ask_user';

@@ -271,7 +271,9 @@ describe('chat-send', () => {
       current: makeConversation([makeMessage({ content: 'streaming...' })]),
     };
     const dirtyRef = { current: new Set<string>() };
-    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      sandboxIdRef: { current: 'sb-123' },
+    });
 
     const result = await processAssistantTurn(
       0,
