@@ -32,6 +32,7 @@ import {
   type ToolCallRecoveryResult,
 } from '@/lib/tool-call-recovery';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
+import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -73,31 +74,58 @@ export async function executeTool(
   call: AnyToolCall,
   ctx: ToolExecRunContext,
 ): Promise<ToolExecRawResult> {
-  const start = Date.now();
+  return withActiveSpan('tool.execute', {
+    scope: 'push.tools',
+    kind: SpanKind.INTERNAL,
+    attributes: {
+      'push.tool.name': call.call.tool,
+      'push.tool.source': call.source,
+      'push.provider': ctx.provider,
+      'push.model': ctx.model,
+      'push.has_repo': Boolean(ctx.repoFullName),
+      'push.has_sandbox': Boolean(ctx.sandboxId),
+    },
+  }, async (span) => {
+    const start = Date.now();
 
-  let result: ToolExecutionResult;
-  if (call.source === 'github' && !ctx.repoFullName) {
-    result = { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
-  } else {
-    result = await executeAnyToolCall(
-      call,
-      ctx.repoFullName || '',
-      ctx.sandboxId,
-      ctx.isMainProtected,
-      ctx.defaultBranch,
-      ctx.provider,
-      ctx.model,
-    );
-  }
+    let result: ToolExecutionResult;
+    if (call.source === 'github' && !ctx.repoFullName) {
+      result = { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
+    } else {
+      result = await executeAnyToolCall(
+        call,
+        ctx.repoFullName || '',
+        ctx.sandboxId,
+        ctx.isMainProtected,
+        ctx.defaultBranch,
+        ctx.provider,
+        ctx.model,
+      );
+    }
 
-  const durationMs = Date.now() - start;
+    const durationMs = Date.now() - start;
+    const cards: ChatCard[] = [];
+    if (result.card && result.card.type !== 'sandbox-state') {
+      cards.push(result.card);
+    }
 
-  const cards: ChatCard[] = [];
-  if (result.card && result.card.type !== 'sandbox-state') {
-    cards.push(result.card);
-  }
+    setSpanAttributes(span, {
+      'push.tool.duration_ms': durationMs,
+      'push.tool.card_count': cards.length,
+      'push.tool.error_type': result.structuredError?.type,
+      'push.tool.retryable': result.structuredError?.retryable,
+    });
+    if (result.structuredError) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: result.structuredError.message,
+      });
+    } else {
+      span.setStatus({ code: SpanStatusCode.OK });
+    }
 
-  return { call, raw: result, cards, durationMs };
+    return { call, raw: result, cards, durationMs };
+  });
 }
 
 // ---------------------------------------------------------------------------

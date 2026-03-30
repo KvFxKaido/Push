@@ -17,6 +17,14 @@ import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 import { buildSessionCapabilityBlock } from './workspace-context';
 import { SystemPromptBuilder } from './system-prompt-builder';
 import { SHARED_SAFETY_SECTION } from './system-prompt-sections';
+import {
+  getPushTracer,
+  injectTraceHeaders,
+  recordSpanError,
+  setSpanAttributes,
+  SpanKind,
+  SpanStatusCode,
+} from './tracing';
 // --- Re-exports from orchestrator-streaming (break circular dependency) ---
 export {
   parseProviderError,
@@ -886,6 +894,17 @@ async function streamSSEChatOnce(
     extraHeaders,
   } = config;
 
+  const tracer = getPushTracer('push.model');
+  return tracer.startActiveSpan('model.stream', {
+    kind: SpanKind.CLIENT,
+    attributes: {
+      'push.provider': providerType || 'unknown',
+      'push.model': model,
+      'push.message_count': messages.length,
+      'push.has_sandbox': Boolean(hasSandbox),
+      'push.workspace_mode': workspaceContext?.mode || 'unknown',
+    },
+  }, async (span) => {
   const controller = new AbortController();
   type AbortReason = 'connect' | 'idle' | 'user' | 'stall' | 'total' | null;
   let abortReason: AbortReason = null;
@@ -929,9 +948,32 @@ async function streamSSEChatOnce(
     }, stallTimeoutMs);
   };
 
+  let chunkCount = 0;
+  let contentChars = 0;
+  let thinkingChars = 0;
+  let nativeToolCallCount = 0;
+
+  const finishSuccess = (spanUsage?: StreamUsage) => {
+    setSpanAttributes(span, {
+      'push.abort_reason': abortReason || undefined,
+      'push.stream.chunk_count': chunkCount,
+      'push.stream.content_chars': contentChars,
+      'push.stream.thinking_chars': thinkingChars,
+      'push.stream.native_tool_call_count': nativeToolCallCount,
+      'push.usage.input_tokens': spanUsage?.inputTokens,
+      'push.usage.output_tokens': spanUsage?.outputTokens,
+      'push.usage.total_tokens': spanUsage?.totalTokens,
+    });
+    span.setStatus({ code: SpanStatusCode.OK });
+  };
+
   try {
     const requestUrl = apiUrlOverride || apiUrl;
     const requestId = createRequestId('chat');
+    setSpanAttributes(span, {
+      'push.request_id': requestId,
+      'push.request_url': requestUrl,
+    });
     console.log(`[Push] POST ${requestUrl} (model: ${model}, request: ${requestId})`);
 
     let requestBody: Record<string, unknown> = {
@@ -952,6 +994,7 @@ async function streamSSEChatOnce(
       if (authHeader !== null) {
         requestHeaders.Authorization = authHeader ?? `Bearer ${apiKey}`;
       }
+      injectTraceHeaders(requestHeaders);
 
       const response = await fetch(requestUrl, {
         method: 'POST',
@@ -966,6 +1009,7 @@ async function streamSSEChatOnce(
     if (stallTimeoutMs) resetStallTimer();
 
     if (!response.ok) {
+      span.setAttribute('http.response.status_code', response.status);
       const body = await response.text().catch(() => '');
       let detail = '';
       try {
@@ -982,6 +1026,8 @@ async function streamSSEChatOnce(
       const alreadyPrefixed = detail.toLowerCase().startsWith(name.toLowerCase());
       throw new Error(alreadyPrefixed ? detail : `${name} ${response.status}: ${detail}`);
     }
+
+    span.setAttribute('http.response.status_code', response.status);
 
     const reader = response.body?.getReader();
     if (!reader) {
@@ -1036,6 +1082,7 @@ async function streamSSEChatOnce(
       const { done, value } = await reader.read();
       if (done) break;
 
+      chunkCount++;
       resetIdleTimer();
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
@@ -1049,6 +1096,7 @@ async function streamSSEChatOnce(
           flushNativeToolCalls();
           parser.flush();
           chunker.flush();
+          finishSuccess(usage);
           onDone(usage);
           return;
         }
@@ -1077,6 +1125,7 @@ async function streamSSEChatOnce(
 
           const reasoningToken = choice.delta?.reasoning_content;
           if (reasoningToken) {
+            thinkingChars += reasoningToken.length;
             onThinkingToken?.(reasoningToken);
             if (shouldResetStallOnReasoning) resetStallTimer();
           }
@@ -1086,7 +1135,10 @@ async function streamSSEChatOnce(
             // Strip model chat-template control tokens (e.g. <|start|>, <|im_end|>,
             // <|call|>) that some models leak into the content stream.
             const token = rawToken.replace(/<\|[a-z_]+\|>/gi, '');
-            if (token) parser.push(token);
+            if (token) {
+              contentChars += token.length;
+              parser.push(token);
+            }
             if (stallTimeoutMs) resetStallTimer();
           }
 
@@ -1099,6 +1151,7 @@ async function streamSSEChatOnce(
               if (!fnCall) continue;
               if (!pendingNativeToolCalls.has(idx)) {
                 pendingNativeToolCalls.set(idx, { name: '', args: '' });
+                nativeToolCallCount++;
                 console.log(`[Push] Native tool call delta detected (idx=${idx}, name=${fnCall.name || '(none)'})`);
               }
               const entry = pendingNativeToolCalls.get(idx)!;
@@ -1112,6 +1165,7 @@ async function streamSSEChatOnce(
             flushNativeToolCalls();
             parser.flush();
             chunker.flush();
+            finishSuccess(usage);
             onDone(usage);
             return;
           }
@@ -1124,6 +1178,7 @@ async function streamSSEChatOnce(
     flushNativeToolCalls();
     parser.flush();
     chunker.flush();
+    finishSuccess(usage);
     onDone(usage);
   } catch (err) {
     clearTimeout(connectTimer);
@@ -1133,6 +1188,10 @@ async function streamSSEChatOnce(
 
     if (err instanceof DOMException && err.name === 'AbortError') {
       if (abortReason === 'user') {
+        setSpanAttributes(span, {
+          'push.abort_reason': abortReason,
+          'push.cancelled': true,
+        });
         onDone();
         return;
       }
@@ -1146,12 +1205,26 @@ async function streamSSEChatOnce(
       } else {
         timeoutMsg = errorMessages.idle(Math.round(idleTimeoutMs / 1000));
       }
+      recordSpanError(span, new Error(timeoutMsg), {
+        'push.abort_reason': abortReason || undefined,
+        'push.stream.chunk_count': chunkCount,
+        'push.stream.content_chars': contentChars,
+        'push.stream.thinking_chars': thinkingChars,
+        'push.stream.native_tool_call_count': nativeToolCallCount,
+      });
       console.error(`[Push] ${name} timeout (${abortReason}):`, timeoutMsg);
       onError(new Error(timeoutMsg));
       return;
     }
 
     const msg = err instanceof Error ? err.message : String(err);
+    recordSpanError(span, err, {
+      'push.abort_reason': abortReason || undefined,
+      'push.stream.chunk_count': chunkCount,
+      'push.stream.content_chars': contentChars,
+      'push.stream.thinking_chars': thinkingChars,
+      'push.stream.native_tool_call_count': nativeToolCallCount,
+    });
     console.error(`[Push] ${name} chat error:`, msg);
     if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
       onError(new Error(errorMessages.network));
@@ -1164,7 +1237,9 @@ async function streamSSEChatOnce(
     clearTimeout(stallTimer);
     clearTimeout(totalTimer);
     signal?.removeEventListener('abort', onExternalAbort);
+    span.end();
   }
+  });
 
 
 // ---------------------------------------------------------------------------

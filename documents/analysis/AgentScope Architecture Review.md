@@ -48,11 +48,11 @@ The framework is async-first, uses abstract base classes for extension points, a
 
 | | AgentScope | Push |
 |---|---|---|
-| **Standard** | OpenTelemetry with OTLP HTTP exporter, BatchSpanProcessor | Ad-hoc in-memory metrics + `X-Push-Request-Id` propagation |
+| **Standard** | OpenTelemetry with OTLP HTTP exporter, BatchSpanProcessor | Initial web-side OpenTelemetry spans plus existing `X-Push-Request-Id` propagation |
 | **Scope** | Agent reply spans, tool execution spans, formatter spans | Context compression metrics, tool call failure metrics, edit metrics |
-| **Export** | Jaeger, Datadog, Phoenix, Langfuse, AgentScope Studio | None (in-memory only) |
+| **Export** | Jaeger, Datadog, Phoenix, Langfuse, AgentScope Studio | Configurable OTLP HTTP / console export on the web path; no Worker/server extraction yet |
 
-**Verdict**: This is the clearest gap in Push. AgentScope's OTel integration is real and clean. Push already propagates request IDs through Worker → Provider → Sandbox — that's the hard part. Adding OTel spans on top would give structured observability without inventing bespoke formats.
+**Verdict**: This was the clearest gap, and it is now partially addressed on the web path. Push has initial OTel wiring for model streams, tool execution, sandbox requests, and delegation, but it still lacks Worker/server extraction, richer export plumbing beyond app-side configuration, and full replacement of the older in-memory metric surfaces.
 
 ### Agent Architecture
 
@@ -71,7 +71,7 @@ The framework is async-first, uses abstract base classes for extension points, a
 
 #### 1. OpenTelemetry Tracing (High value, medium effort)
 
-Replace in-memory metrics (`context-metrics.ts`, `tool-call-metrics.ts`, `edit-metrics.ts`) with OTel spans. Push already has the hard prerequisite — request ID propagation across the full stack.
+Partly done. Push now has a web-side tracing layer with configurable OTLP/console export plus spans around model calls, tool execution, sandbox requests, and delegation. The next step is to extend trace propagation/extraction through the Worker and other runtimes, then decide which older in-memory metric surfaces to retire.
 
 **Concrete approach**:
 - Add `@opentelemetry/api` + `@opentelemetry/sdk-trace-web` (or `-node` for CLI)
@@ -118,7 +118,7 @@ AgentScope Runtime's "request → load state → run agent → persist → respo
 
 AgentScope is a well-factored general-purpose Python agent framework. The overlap with Push is smaller than it appears — Push is a product with specific execution semantics, not a framework trying to support arbitrary agent patterns.
 
-**One clear win**: OTel tracing.
+**One clear win**: OTel tracing, now partially landed on the web path.
 **One good hygiene move**: Sandbox interface extraction.
 **One design pattern to file away**: Server-side agent loop for future pushd work.
 **Everything else**: Either already present in Push (often in a more sophisticated form) or doesn't fit the architecture.

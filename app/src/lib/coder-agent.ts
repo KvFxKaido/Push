@@ -31,6 +31,7 @@ import { SystemPromptBuilder } from './system-prompt-builder';
 import { SHARED_SAFETY_SECTION } from './system-prompt-sections';
 import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
 import { createCoderPolicy } from './turn-policies/coder-policy';
+import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
 
 const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — resets on each token)
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
@@ -1012,14 +1013,40 @@ export async function runCoderAgent(
       // Execute read-only calls in parallel
       const parallelResults = await Promise.all(
         parallelCalls.map(async (call) => {
-          const result = await executeSandboxToolCall(
-            call.call as Parameters<typeof executeSandboxToolCall>[0],
-            sandboxId,
-            {
-              auditorProviderOverride: activeProvider,
-              auditorModelOverride: coderModelId,
+          const result = await withActiveSpan('tool.execute', {
+            scope: 'push.coder',
+            kind: SpanKind.INTERNAL,
+            attributes: {
+              'push.agent.role': 'coder',
+              'push.round': round,
+              'push.tool.name': call.call.tool,
+              'push.tool.source': 'sandbox',
+              'push.provider': activeProvider,
+              'push.model': coderModelId,
             },
-          );
+          }, async (span) => {
+            const toolResult = await executeSandboxToolCall(
+              call.call as Parameters<typeof executeSandboxToolCall>[0],
+              sandboxId,
+              {
+                auditorProviderOverride: activeProvider,
+                auditorModelOverride: coderModelId,
+              },
+            );
+            setSpanAttributes(span, {
+              'push.tool.error_type': toolResult.structuredError?.type,
+              'push.tool.retryable': toolResult.structuredError?.retryable,
+            });
+            if (toolResult.structuredError) {
+              span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: toolResult.structuredError.message,
+              });
+            } else {
+              span.setStatus({ code: SpanStatusCode.OK });
+            }
+            return toolResult;
+          });
           if (result.card) allCards.push(result.card);
           return result;
         }),
@@ -1069,9 +1096,35 @@ ${truncatedResult}
           continue;
         }
 
-        const mutResult = await executeSandboxToolCall(mutCall, sandboxId, {
-          auditorProviderOverride: activeProvider,
-          auditorModelOverride: coderModelId,
+        const mutResult = await withActiveSpan('tool.execute', {
+          scope: 'push.coder',
+          kind: SpanKind.INTERNAL,
+          attributes: {
+            'push.agent.role': 'coder',
+            'push.round': round,
+            'push.tool.name': mutCall.tool,
+            'push.tool.source': 'sandbox',
+            'push.provider': activeProvider,
+            'push.model': coderModelId,
+          },
+        }, async (span) => {
+          const toolResult = await executeSandboxToolCall(mutCall, sandboxId, {
+            auditorProviderOverride: activeProvider,
+            auditorModelOverride: coderModelId,
+          });
+          setSpanAttributes(span, {
+            'push.tool.error_type': toolResult.structuredError?.type,
+            'push.tool.retryable': toolResult.structuredError?.retryable,
+          });
+          if (toolResult.structuredError) {
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: toolResult.structuredError.message,
+            });
+          } else {
+            span.setStatus({ code: SpanStatusCode.OK });
+          }
+          return toolResult;
         });
         if (mutResult.card) allCards.push(mutResult.card);
 
@@ -1332,7 +1385,33 @@ ${truncatedResult}
           throw new DOMException('Coder cancelled by user.', 'AbortError');
         }
         statusFn('Coder searching...', webSearch.args.query);
-        const searchResult = await executeWebSearch(webSearch.args.query, activeProvider);
+        const searchResult = await withActiveSpan('tool.execute', {
+          scope: 'push.coder',
+          kind: SpanKind.INTERNAL,
+          attributes: {
+            'push.agent.role': 'coder',
+            'push.round': round,
+            'push.tool.name': 'web_search',
+            'push.tool.source': 'web-search',
+            'push.provider': activeProvider,
+            'push.model': coderModelId,
+          },
+        }, async (span) => {
+          const result = await executeWebSearch(webSearch.args.query, activeProvider);
+          setSpanAttributes(span, {
+            'push.tool.error_type': result.structuredError?.type,
+            'push.tool.retryable': result.structuredError?.retryable,
+          });
+          if (result.structuredError) {
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: result.structuredError.message,
+            });
+          } else {
+            span.setStatus({ code: SpanStatusCode.OK });
+          }
+          return result;
+        });
         if (searchResult.card) allCards.push(searchResult.card);
         const awarenessSummary = fileLedger.getAwarenessSummary();
         const awarenessBlock = awarenessSummary ? `\n[FILE_AWARENESS] ${awarenessSummary} [/FILE_AWARENESS]` : '';
@@ -1427,9 +1506,35 @@ ${truncatedResult}
     }
 
     statusFn('Coder executing...', toolCall.tool);
-    const result = await executeSandboxToolCall(toolCall, sandboxId, {
-      auditorProviderOverride: activeProvider,
-      auditorModelOverride: coderModelId,
+    const result = await withActiveSpan('tool.execute', {
+      scope: 'push.coder',
+      kind: SpanKind.INTERNAL,
+      attributes: {
+        'push.agent.role': 'coder',
+        'push.round': round,
+        'push.tool.name': toolCall.tool,
+        'push.tool.source': 'sandbox',
+        'push.provider': activeProvider,
+        'push.model': coderModelId,
+      },
+    }, async (span) => {
+      const toolResult = await executeSandboxToolCall(toolCall, sandboxId, {
+        auditorProviderOverride: activeProvider,
+        auditorModelOverride: coderModelId,
+      });
+      setSpanAttributes(span, {
+        'push.tool.error_type': toolResult.structuredError?.type,
+        'push.tool.retryable': toolResult.structuredError?.retryable,
+      });
+      if (toolResult.structuredError) {
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: toolResult.structuredError.message,
+        });
+      } else {
+        span.setStatus({ code: SpanStatusCode.OK });
+      }
+      return toolResult;
     });
 
     // Collect cards

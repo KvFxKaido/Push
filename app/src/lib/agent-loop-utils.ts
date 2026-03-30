@@ -13,6 +13,7 @@ import {
 import type { ToolHookRegistry } from './tool-hooks';
 import type { ActiveProvider } from './orchestrator';
 import { formatToolResultEnvelope } from './tool-call-recovery';
+import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
 
 const MAX_TOOL_RESULT_SIZE = 8_000;
 
@@ -44,12 +45,31 @@ export async function executeReadOnlyTool(
   activeModel: string | undefined,
   hooks: ToolHookRegistry,
 ): Promise<{ resultText: string; card?: ChatCard }> {
-  let resultText = '';
-  let card: ChatCard | undefined;
+  return withActiveSpan('tool.execute', {
+    scope: 'push.tools',
+    kind: SpanKind.INTERNAL,
+    attributes: {
+      'push.tool.name': toolCall.call.tool,
+      'push.tool.source': toolCall.source,
+      'push.provider': activeProvider,
+      'push.model': activeModel,
+      'push.agent.role': 'explorer',
+      'push.has_repo': Boolean(allowedRepo),
+      'push.has_sandbox': Boolean(sandboxId),
+    },
+  }, async (span) => {
+    let resultText = '';
+    const card: ChatCard | undefined = undefined;
 
-  if (toolCall.source === 'github' && !allowedRepo) {
-    resultText = '[Tool Error] No active repo selected — GitHub inspection tools are unavailable in this workspace.';
-  } else {
+    if (toolCall.source === 'github' && !allowedRepo) {
+      resultText = '[Tool Error] No active repo selected — GitHub inspection tools are unavailable in this workspace.';
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: 'No active repo selected.',
+      });
+      return { resultText, card };
+    }
+
     const result = await executeAnyToolCall(
       toolCall,
       allowedRepo,
@@ -61,8 +81,22 @@ export async function executeReadOnlyTool(
       hooks,
     );
     resultText = result.text;
-    card = result.card;
-  }
+    const resultCard = result.card;
 
-  return { resultText, card };
+    setSpanAttributes(span, {
+      'push.tool.error_type': result.structuredError?.type,
+      'push.tool.retryable': result.structuredError?.retryable,
+      'push.tool.card_type': resultCard?.type,
+    });
+    if (result.structuredError) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: result.structuredError.message,
+      });
+    } else {
+      span.setStatus({ code: SpanStatusCode.OK });
+    }
+
+    return { resultText, card: resultCard };
+  });
 }

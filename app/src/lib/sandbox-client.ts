@@ -13,6 +13,14 @@ import {
   setSandboxWorkspaceRevision,
 } from './sandbox-file-version-cache';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
+import {
+  getPushTracer,
+  injectTraceHeaders,
+  recordSpanError,
+  setSpanAttributes,
+  SpanKind,
+  SpanStatusCode,
+} from './tracing';
 
 // --- Types ---
 
@@ -591,6 +599,7 @@ async function withRetry<T>(
   endpoint: string,
   onRetries?: (retries: number) => void,
   maxRetries: number = MAX_RETRIES,
+  onRetryAttempt?: (attempt: number, delayMs: number, error: Error) => void,
 ): Promise<T> {
   let lastError: Error | null = null;
 
@@ -624,6 +633,7 @@ async function withRetry<T>(
       // Exponential backoff: 2s, 4s, 8s, 16s
       const delayMs = BASE_DELAY_MS * Math.pow(2, attempt);
       console.log(`[sandbox-client] ${endpoint} attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`);
+      onRetryAttempt?.(attempt + 1, delayMs, lastError);
       await sleep(delayMs);
     }
   }
@@ -639,40 +649,81 @@ async function sandboxFetch<T>(
   onRetries?: (retries: number) => void,
   maxRetries: number = MAX_RETRIES,
 ): Promise<T> {
-  return withRetry(async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const tracer = getPushTracer('push.sandbox');
+  return tracer.startActiveSpan('sandbox.request', {
+    kind: SpanKind.CLIENT,
+    attributes: {
+      'push.sandbox.endpoint': endpoint,
+      'push.timeout_ms': timeoutMs,
+      'push.max_retries': maxRetries,
+    },
+  }, async (span) => {
     const requestId = createRequestId('sandbox');
+    let retryCount = 0;
 
     try {
-      const res = await fetch(`${SANDBOX_BASE}/${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          [REQUEST_ID_HEADER]: requestId,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
+      const result = await withRetry(async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+          const headers = injectTraceHeaders({
+            'Content-Type': 'application/json',
+            [REQUEST_ID_HEADER]: requestId,
+          });
+
+          const res = await fetch(`${SANDBOX_BASE}/${endpoint}`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+          span.setAttribute('http.response.status_code', res.status);
+
+          if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            // Attach status code for retry logic
+            const error = formatSandboxError(res.status, text);
+            (error as Error & { statusCode?: number }).statusCode = res.status;
+            throw error;
+          }
+
+          return res.json();
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') {
+            throw new Error(`Sandbox ${endpoint} timed out after ${Math.round(timeoutMs / 1000)}s — the server may be slow or unreachable.`);
+          }
+          throw err;
+        } finally {
+          clearTimeout(timer);
+        }
+      }, endpoint, (retries) => {
+        retryCount = retries;
+        onRetries?.(retries);
+      }, maxRetries, (attempt, delayMs, error) => {
+        span.addEvent('sandbox.retry', {
+          'push.retry.attempt': attempt,
+          'push.retry.delay_ms': delayMs,
+          'push.retry.message': error.message,
+        });
       });
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        // Attach status code for retry logic
-        const error = formatSandboxError(res.status, text);
-        (error as Error & { statusCode?: number }).statusCode = res.status;
-        throw error;
-      }
-
-      return res.json();
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        throw new Error(`Sandbox ${endpoint} timed out after ${Math.round(timeoutMs / 1000)}s — the server may be slow or unreachable.`);
-      }
-      throw err;
+      setSpanAttributes(span, {
+        'push.request_id': requestId,
+        'push.retry_count': retryCount,
+      });
+      span.setStatus({ code: SpanStatusCode.OK });
+      return result;
+    } catch (error) {
+      recordSpanError(span, error, {
+        'push.request_id': requestId,
+        'push.retry_count': retryCount,
+      });
+      throw error;
     } finally {
-      clearTimeout(timer);
+      span.end();
     }
-  }, endpoint, onRetries, maxRetries);
+  });
 }
 
 // --- Public API ---

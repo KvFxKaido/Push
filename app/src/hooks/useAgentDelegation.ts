@@ -12,6 +12,7 @@ import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { formatElapsedTime } from '@/lib/utils';
 import { createId } from '@/hooks/chat-persistence';
+import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
 import type {
   ToolExecutionResult,
   ChatMessage,
@@ -74,6 +75,7 @@ export function useAgentDelegation({
       const executionId = createId();
       checkpointPhaseRef.current = 'delegating_explorer';
       const explorerTask = toolCall.call.args.task?.trim();
+      const explorerArgs = toolCall.call.args;
       if (!explorerTask) {
         toolExecResult = { text: '[Tool Error] delegate_explorer requires a non-empty "task" string.' };
       } else {
@@ -84,36 +86,56 @@ export function useAgentDelegation({
           detail: explorerTask,
         });
         try {
-          const explorerResult = await runExplorerAgent(
-            {
-              task: explorerTask,
-              files: toolCall.call.args.files || [],
-              intent: toolCall.call.args.intent,
-              deliverable: toolCall.call.args.deliverable,
-              knownContext: toolCall.call.args.knownContext,
-              constraints: toolCall.call.args.constraints,
-              branchContext: branchInfoRef.current?.currentBranch ? {
-                activeBranch: branchInfoRef.current.currentBranch,
-                defaultBranch: branchInfoRef.current.defaultBranch || 'main',
-                protectMain: isMainProtectedRef.current,
-              } : undefined,
-              provider: lockedProviderForChat,
-              model: resolvedModelForChat || undefined,
-              projectInstructions: agentsMdRef.current || undefined,
-              instructionFilename: instructionFilenameRef.current || undefined,
+          const explorerResult = await withActiveSpan('subagent.explorer', {
+            scope: 'push.delegation',
+            kind: SpanKind.INTERNAL,
+            attributes: {
+              'push.agent.role': 'explorer',
+              'push.execution_id': executionId,
+              'push.task_count': 1,
+              'push.provider': lockedProviderForChat,
+              'push.model': resolvedModelForChat,
+              'push.has_sandbox': Boolean(sandboxIdRef.current),
+              'push.has_repo': Boolean(repoRef.current),
             },
-            sandboxIdRef.current,
-            repoRef.current || '',
-            {
-              onStatus: (phase, detail) => {
-                updateAgentStatus(
-                  { active: true, phase, detail },
-                  { chatId, source: 'explorer' },
-                );
+          }, async (span) => {
+            const result = await runExplorerAgent(
+              {
+                task: explorerTask,
+                files: explorerArgs.files || [],
+                intent: explorerArgs.intent,
+                deliverable: explorerArgs.deliverable,
+                knownContext: explorerArgs.knownContext,
+                constraints: explorerArgs.constraints,
+                branchContext: branchInfoRef.current?.currentBranch ? {
+                  activeBranch: branchInfoRef.current.currentBranch,
+                  defaultBranch: branchInfoRef.current.defaultBranch || 'main',
+                  protectMain: isMainProtectedRef.current,
+                } : undefined,
+                provider: lockedProviderForChat,
+                model: resolvedModelForChat || undefined,
+                projectInstructions: agentsMdRef.current || undefined,
+                instructionFilename: instructionFilenameRef.current || undefined,
               },
-              signal: abortControllerRef.current?.signal,
-            },
-          );
+              sandboxIdRef.current,
+              repoRef.current || '',
+              {
+                onStatus: (phase, detail) => {
+                  updateAgentStatus(
+                    { active: true, phase, detail },
+                    { chatId, source: 'explorer' },
+                  );
+                },
+                signal: abortControllerRef.current?.signal,
+              },
+            );
+            setSpanAttributes(span, {
+              'push.round_count': result.rounds,
+              'push.card_count': result.cards.length,
+            });
+            span.setStatus({ code: SpanStatusCode.OK });
+            return result;
+          });
 
           if (explorerResult.cards.length > 0) {
             setConversations((prev) => {
@@ -214,15 +236,31 @@ export function useAgentDelegation({
                 { active: true, phase: 'Planning task...', detail: `Profile: ${harnessSettings.profile}` },
                 { chatId, source: 'coder' },
               );
-              const plan = await runPlanner(
-                taskList[0],
-                delegateArgs.files || [],
-                (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
-                {
-                  providerOverride: lockedProviderForChat,
-                  modelOverride: resolvedModelForChat || undefined,
+              const plan = await withActiveSpan('subagent.planner', {
+                scope: 'push.delegation',
+                kind: SpanKind.INTERNAL,
+                attributes: {
+                  'push.agent.role': 'planner',
+                  'push.execution_id': plannerExecutionId,
+                  'push.provider': lockedProviderForChat,
+                  'push.model': resolvedModelForChat,
                 },
-              );
+              }, async (span) => {
+                const result = await runPlanner(
+                  taskList[0],
+                  delegateArgs.files || [],
+                  (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
+                  {
+                    providerOverride: lockedProviderForChat,
+                    modelOverride: resolvedModelForChat || undefined,
+                  },
+                );
+                setSpanAttributes(span, {
+                  'push.plan.generated': Boolean(result),
+                });
+                span.setStatus({ code: SpanStatusCode.OK });
+                return result;
+              });
               if (plan) {
                 plannerBrief = formatPlannerBrief(plan);
                 appendRunEvent(chatId, {
@@ -284,39 +322,61 @@ export function useAgentDelegation({
               // introduced by earlier tasks before they compound.
               const seqTaskStart = Date.now();
               const seqBi = branchInfoRef.current;
-              const coderResult = await runCoderAgent(
-                task,
-                currentSandboxId,
-                delegateArgs.files || [],
-                (phase, detail) => {
-                  const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
-                  updateAgentStatus(
-                    { active: true, phase: `${prefix}${phase}`, detail },
-                    { chatId, source: 'coder' },
-                  );
+              const coderResult = await withActiveSpan('subagent.coder', {
+                scope: 'push.delegation',
+                kind: SpanKind.INTERNAL,
+                attributes: {
+                  'push.agent.role': 'coder',
+                  'push.execution_id': executionId,
+                  'push.task_index': taskIndex,
+                  'push.task_count': taskList.length,
+                  'push.provider': lockedProviderForChat,
+                  'push.model': resolvedModelForChat,
+                  'push.has_acceptance_criteria': Boolean(delegateArgs.acceptanceCriteria?.length),
                 },
-                agentsMdRef.current || undefined,
-                abortControllerRef.current?.signal,
-                handleCheckpoint,
-                delegateArgs.acceptanceCriteria,
-                (state) => { lastCoderStateRef.current = state; },
-                lockedProviderForChat,
-                resolvedModelForChat || undefined,
-                {
-                  intent: delegateArgs.intent,
-                  deliverable: delegateArgs.deliverable,
-                  knownContext: delegateArgs.knownContext,
-                  constraints: delegateArgs.constraints,
-                  branchContext: seqBi?.currentBranch ? {
-                    activeBranch: seqBi.currentBranch,
-                    defaultBranch: seqBi.defaultBranch || 'main',
-                    protectMain: isMainProtectedRef.current,
-                  } : undefined,
-                  instructionFilename: instructionFilenameRef.current || undefined,
-                  harnessSettings,
-                  plannerBrief,
-                },
-              );
+              }, async (span) => {
+                const result = await runCoderAgent(
+                  task,
+                  currentSandboxId,
+                  delegateArgs.files || [],
+                  (phase, detail) => {
+                    const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
+                    updateAgentStatus(
+                      { active: true, phase: `${prefix}${phase}`, detail },
+                      { chatId, source: 'coder' },
+                    );
+                  },
+                  agentsMdRef.current || undefined,
+                  abortControllerRef.current?.signal,
+                  handleCheckpoint,
+                  delegateArgs.acceptanceCriteria,
+                  (state) => { lastCoderStateRef.current = state; },
+                  lockedProviderForChat,
+                  resolvedModelForChat || undefined,
+                  {
+                    intent: delegateArgs.intent,
+                    deliverable: delegateArgs.deliverable,
+                    knownContext: delegateArgs.knownContext,
+                    constraints: delegateArgs.constraints,
+                    branchContext: seqBi?.currentBranch ? {
+                      activeBranch: seqBi.currentBranch,
+                      defaultBranch: seqBi.defaultBranch || 'main',
+                      protectMain: isMainProtectedRef.current,
+                    } : undefined,
+                    instructionFilename: instructionFilenameRef.current || undefined,
+                    harnessSettings,
+                    plannerBrief,
+                  },
+                );
+                setSpanAttributes(span, {
+                  'push.round_count': result.rounds,
+                  'push.checkpoint_count': result.checkpoints,
+                  'push.card_count': result.cards.length,
+                  'push.criteria_count': result.criteriaResults?.length,
+                });
+                span.setStatus({ code: SpanStatusCode.OK });
+                return result;
+              });
               const seqElapsed = formatElapsedTime(Date.now() - seqTaskStart);
               const seqStatus = getTaskStatusLabel(coderResult.criteriaResults);
               totalRounds += coderResult.rounds;
@@ -366,20 +426,40 @@ export function useAgentDelegation({
                 // Scale max rounds by task count so multi-task totals don't
                 // falsely trigger the "hit round cap" signal.
                 const evalMaxRounds = harnessSettings.maxCoderRounds * Math.max(taskList.length, 1);
-                evalResult = await runAuditorEvaluation(
-                  combinedTask,
-                  combinedSummary,
-                  evalWorkingMemory,
-                  evalDiff,
-                  (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
-                  {
-                    providerOverride: lockedProviderForChat,
-                    modelOverride: resolvedModelForChat || undefined,
-                    coderRounds: totalRounds,
-                    coderMaxRounds: evalMaxRounds,
-                    criteriaResults: allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
+                evalResult = await withActiveSpan('subagent.auditor', {
+                  scope: 'push.delegation',
+                  kind: SpanKind.INTERNAL,
+                  attributes: {
+                    'push.agent.role': 'auditor',
+                    'push.execution_id': auditorExecutionId,
+                    'push.provider': lockedProviderForChat,
+                    'push.model': resolvedModelForChat,
+                    'push.criteria_count': allCriteriaResults.length,
                   },
-                );
+                }, async (span) => {
+                  const result = await runAuditorEvaluation(
+                    combinedTask,
+                    combinedSummary,
+                    evalWorkingMemory,
+                    evalDiff,
+                    (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
+                    {
+                      providerOverride: lockedProviderForChat,
+                      modelOverride: resolvedModelForChat || undefined,
+                      coderRounds: totalRounds,
+                      coderMaxRounds: evalMaxRounds,
+                      criteriaResults: allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
+                    },
+                  );
+                  if (result) {
+                    setSpanAttributes(span, {
+                      'push.auditor.verdict': result.verdict,
+                      'push.auditor.gap_count': result.gaps.length,
+                    });
+                  }
+                  span.setStatus({ code: SpanStatusCode.OK });
+                  return result;
+                });
                 if (evalResult) {
                   appendRunEvent(chatId, {
                     type: 'subagent.completed',
