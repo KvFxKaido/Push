@@ -8,7 +8,7 @@ export interface UserProfile {
   bio: string;
 }
 
-export type WorkspaceMode = 'repo' | 'scratch';
+export type WorkspaceMode = 'repo' | 'scratch' | 'chat';
 
 /**
  * Workspace session identity for the active repo or scratch workspace.
@@ -17,7 +17,8 @@ export type WorkspaceMode = 'repo' | 'scratch';
  */
 export type WorkspaceSession =
   | { id: string; kind: 'scratch'; sandboxId: string | null }
-  | { id: string; kind: 'repo'; repo: ActiveRepo; sandboxId: string | null };
+  | { id: string; kind: 'repo'; repo: ActiveRepo; sandboxId: string | null }
+  | { id: string; kind: 'chat'; sandboxId: null };
 
 /** Structured workspace context passed through the streaming pipeline to toLLMMessages. */
 export interface WorkspaceContext {
@@ -748,6 +749,8 @@ export interface Conversation {
   runState?: ConversationRunState;
   /** Session-level verification policy — durable reliability rules for this conversation. */
   verificationPolicy?: VerificationPolicy;
+  /** Workspace mode the conversation was created in. Undefined = legacy repo/scratch chat. */
+  mode?: WorkspaceMode;
 }
 
 // Onboarding + Active Repo types

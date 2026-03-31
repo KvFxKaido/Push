@@ -143,7 +143,9 @@ export function RepoChatDrawer({
     [repos, chatsByRepo],
   );
 
-  const unscopedChats = chatsByRepo.get('__unscoped__') ?? EMPTY_CHATS;
+  const allUnscopedChats = chatsByRepo.get('__unscoped__') ?? EMPTY_CHATS;
+  const chatModeChats = useMemo(() => allUnscopedChats.filter((c) => c.mode === 'chat'), [allUnscopedChats]);
+  const unscopedChats = useMemo(() => allUnscopedChats.filter((c) => c.mode !== 'chat'), [allUnscopedChats]);
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const isSearching = normalizedQuery.length > 0;
 
@@ -163,6 +165,11 @@ export function RepoChatDrawer({
     if (!isSearching) return unscopedChats;
     return unscopedChats.filter((chat) => chat.title.toLowerCase().includes(normalizedQuery));
   }, [isSearching, normalizedQuery, unscopedChats]);
+
+  const filteredChatModeChats = useMemo(() => {
+    if (!isSearching) return chatModeChats;
+    return chatModeChats.filter((chat) => chat.title.toLowerCase().includes(normalizedQuery));
+  }, [isSearching, normalizedQuery, chatModeChats]);
 
   const toggleRepo = (repoFullName: string, fallbackOpen: boolean) => {
     if (isSearching) return;
@@ -604,6 +611,16 @@ export function RepoChatDrawer({
                   );
                 })}
 
+                {filteredChatModeChats.length > 0 && (
+                  <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                    <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-[#c4b5fd]">
+                      Chats
+                    </div>
+                    <div className="space-y-1 px-0 pb-0">
+                      {filteredChatModeChats.map((chat) => renderChatRow(chat))}
+                    </div>
+                  </div>
+                )}
                 {filteredUnscopedChats.length > 0 && (
                   <div className={DRAWER_SECTION_SURFACE_CLASS}>
                     <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-fg-muted">
@@ -614,7 +631,7 @@ export function RepoChatDrawer({
                     </div>
                   </div>
                 )}
-                {filteredRepoRows.length === 0 && filteredUnscopedChats.length === 0 && (
+                {filteredRepoRows.length === 0 && filteredUnscopedChats.length === 0 && filteredChatModeChats.length === 0 && (
                   <div className="rounded-xl border border-dashed border-push-edge/70 bg-push-surface/15 px-3 py-4 text-center text-push-sm text-push-fg-muted">
                     No repos or chats match your search.
                   </div>

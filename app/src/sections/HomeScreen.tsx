@@ -42,6 +42,7 @@ interface HomeScreenProps {
   onResumeConversation: (chatId: string) => void;
   onDisconnect: () => void;
   onStartWorkspace: () => void;
+  onStartChat: () => void;
   user: GitHubUser | null;
 }
 
@@ -58,6 +59,7 @@ export function HomeScreen({
   onResumeConversation,
   onDisconnect,
   onStartWorkspace,
+  onStartChat,
   user,
 }: HomeScreenProps) {
   const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false);
@@ -150,6 +152,7 @@ export function HomeScreen({
             onSelectRepo={onSelectRepo}
             onResumeConversation={onResumeConversation}
             onStartWorkspace={onStartWorkspace}
+            onStartChat={onStartChat}
           />
         </div>
       </div>

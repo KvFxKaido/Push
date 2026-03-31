@@ -88,6 +88,12 @@ function App() {
     setWorkspaceSession({ id: crypto.randomUUID(), kind: 'scratch', sandboxId: null });
   }, [clearActiveRepo]);
 
+  const handleStartChatMode = useCallback(() => {
+    setPendingResumeChatId(null);
+    clearActiveRepo();
+    setWorkspaceSession({ id: crypto.randomUUID(), kind: 'chat', sandboxId: null });
+  }, [clearActiveRepo]);
+
   const handleEndWorkspace = useCallback(() => {
     setPendingResumeChatId(null);
     setWorkspaceSession(null);
@@ -113,14 +119,24 @@ function App() {
 
   const handleResumeConversationFromHome = useCallback((chatId: string) => {
     const conversation = conversationIndex[chatId];
-    if (!conversation?.repoFullName) return;
+    if (!conversation) return;
+
+    // Chat mode conversations have no repo — resume directly into chat workspace.
+    if (conversation.mode === 'chat') {
+      setPendingResumeChatId(chatId);
+      clearActiveRepo();
+      setWorkspaceSession({ id: crypto.randomUUID(), kind: 'chat', sandboxId: null });
+      return;
+    }
+
+    if (!conversation.repoFullName) return;
 
     const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
     if (!repo) return;
 
     handleSelectRepo(repo, conversation.branch || undefined);
     setPendingResumeChatId(chatId);
-  }, [conversationIndex, repos, handleSelectRepo]);
+  }, [conversationIndex, repos, handleSelectRepo, clearActiveRepo]);
 
   const handleSetCurrentBranch = useCallback((branch: string) => {
     setCurrentBranch(branch);
@@ -155,6 +171,7 @@ function App() {
 
   const screen: AppShellScreen = useMemo(() => {
     if (workspaceSession?.kind === 'scratch') return 'workspace';
+    if (workspaceSession?.kind === 'chat') return 'workspace';
     if (!authToken) return 'onboarding';
     if (workspaceSession?.kind === 'repo') return 'workspace';
     return 'home';
@@ -199,6 +216,7 @@ function App() {
             onResumeConversation={handleResumeConversationFromHome}
             onDisconnect={handleDisconnect}
             onStartWorkspace={handleStartScratchWorkspace}
+            onStartChat={handleStartChatMode}
             user={validatedUser}
           />
         </div>

@@ -14,6 +14,7 @@ import type {
   RunEventInput,
   VerificationRuntimeState,
   WorkspaceContext,
+  WorkspaceMode,
 } from '@/types';
 import {
   buildAgentEventsByChat,
@@ -282,6 +283,7 @@ export function useChat(
   const isMainProtectedRef = useRef(false);
   const autoCreateRef = useRef(false);
   const workspaceContextRef = useRef<WorkspaceContext | null>(null);
+  const workspaceModeRef = useRef<WorkspaceMode | null>(null);
   const ensureSandboxRef = useRef<(() => Promise<string | null>) | null>(null);
 
   // --- Prop mirror refs (always up-to-date in callbacks) ---
@@ -793,6 +795,7 @@ export function useChat(
   // --- Workspace context / sandbox setters ---
   const setWorkspaceContext = useCallback((ctx: WorkspaceContext | null) => {
     baseWorkspaceContextRef.current = ctx;
+    workspaceModeRef.current = ctx?.mode ?? null;
     applyWorkspaceContext(ctx, activeChatIdRef.current);
   }, [applyWorkspaceContext]);
 
@@ -971,6 +974,7 @@ export function useChat(
     isStreaming,
     abortStream,
     clearQueuedFollowUps,
+    workspaceModeRef,
   });
 
   // --- Agent delegation ---

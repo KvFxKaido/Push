@@ -7,7 +7,7 @@
 
 import { useCallback } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import type { AgentStatusEvent, Conversation } from '@/types';
+import type { AgentStatusEvent, Conversation, WorkspaceMode } from '@/types';
 import { createId, saveActiveChatId } from '@/hooks/chat-persistence';
 import { replaceAllConversations as replaceAllConversationsInDB } from '@/lib/conversation-store';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
@@ -30,6 +30,7 @@ export interface ChatManagementParams {
   isStreaming: boolean;
   abortStream: (options?: { clearQueuedFollowUps?: boolean }) => void;
   clearQueuedFollowUps: (chatId: string) => void;
+  workspaceModeRef: MutableRefObject<WorkspaceMode | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -50,11 +51,13 @@ export function useChatManagement({
   isStreaming,
   abortStream,
   clearQueuedFollowUps,
+  workspaceModeRef,
 }: ChatManagementParams) {
   const createNewChat = useCallback((): string => {
     const id = createId();
     const bi = branchInfoRef.current;
     const branch = bi?.currentBranch || bi?.defaultBranch || 'main';
+    const mode = workspaceModeRef.current ?? undefined;
     const newConv: Conversation = {
       id,
       title: 'New Chat',
@@ -64,6 +67,7 @@ export function useChatManagement({
       repoFullName: activeRepoFullName || undefined,
       branch: activeRepoFullName ? branch : undefined,
       verificationPolicy: getDefaultVerificationPolicy(),
+      mode,
     };
     setConversations((prev) => {
       const updated = { ...prev, [id]: newConv };
@@ -73,7 +77,7 @@ export function useChatManagement({
     setActiveChatId(id);
     saveActiveChatId(id);
     return id;
-  }, [activeRepoFullName, branchInfoRef, dirtyConversationIdsRef, setActiveChatId, setConversations]);
+  }, [activeRepoFullName, branchInfoRef, dirtyConversationIdsRef, setActiveChatId, setConversations, workspaceModeRef]);
 
   const switchChat = useCallback(
     (id: string) => {

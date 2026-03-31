@@ -188,6 +188,13 @@ export function useProjectInstructions(
       setWorkspaceContext(null);
       return;
     }
+    if (workspaceSession.kind === 'chat') {
+      // Chat mode — plain conversation, no tools, no sandbox
+      const description = 'You are in chat mode — a plain conversation with no repository context, no sandbox, and no tools.'
+        + ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.';
+      setWorkspaceContext({ description, includeGitHubTools: false, mode: 'chat' });
+      return;
+    }
     if (workspaceSession.kind === 'scratch') {
       // Scratch workspace — provide workspace description, no GitHub tools
       const description = 'You are working in an ephemeral workspace at /workspace with no GitHub repo connected.'

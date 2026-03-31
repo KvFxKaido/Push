@@ -61,11 +61,12 @@ export function WorkspaceSessionScreen({
   const { pendingResumeChatId, onConversationIndexChange } = homeBridge;
 
   const isScratch = workspaceSession.kind === 'scratch';
+  const isChat = workspaceSession.kind === 'chat';
   const workspaceRepo = workspaceSession.kind === 'repo' ? workspaceSession.repo : null;
   const scratchpad = useScratchpad(workspaceRepo?.full_name ?? null);
   const sandbox = useSandbox(
-    isScratch ? '' : (workspaceRepo?.full_name ?? null),
-    isScratch ? 'main' : (workspaceRepo?.current_branch || workspaceRepo?.default_branch || null),
+    isChat ? null : isScratch ? '' : (workspaceRepo?.full_name ?? null),
+    isChat ? null : isScratch ? 'main' : (workspaceRepo?.current_branch || workspaceRepo?.default_branch || null),
   );
   const catalog = useModelCatalog();
 
@@ -296,7 +297,7 @@ export function WorkspaceSessionScreen({
     setRepoAppearance,
     clearRepoAppearance,
     sandbox,
-    handleStartWorkspace: isScratch ? undefined : onStartScratchWorkspace,
+    handleStartWorkspace: (isScratch || isChat) ? undefined : onStartScratchWorkspace,
     handleExitWorkspace,
     handleDisconnect: handleDisconnectFromWorkspace,
     handleCreateNewChat,
