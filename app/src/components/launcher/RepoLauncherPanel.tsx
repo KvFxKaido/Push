@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Lock, Palette, Search, Loader2 } from 'lucide-react';
+import { Lock, MessageSquare, Palette, Search, Loader2 } from 'lucide-react';
 import {
   BranchWaveIcon,
   CommitPulseIcon,
@@ -104,6 +104,7 @@ interface RepoLauncherPanelProps {
   sandboxSession?: LauncherSandboxSession | null;
   onResumeSandbox?: () => void;
   onStartWorkspace?: () => void;
+  onStartChat?: () => void;
 }
 
 export function RepoLauncherPanel({
@@ -120,6 +121,7 @@ export function RepoLauncherPanel({
   sandboxSession,
   onResumeSandbox,
   onStartWorkspace,
+  onStartChat,
 }: RepoLauncherPanelProps) {
   const [showAllRepos, setShowAllRepos] = useState(false);
   const [search, setSearch] = useState('');
@@ -534,7 +536,21 @@ export function RepoLauncherPanel({
           </button>
         )}
 
-        <div className={`grid gap-2 ${onStartWorkspace ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        <div className={`grid gap-2 ${
+          (onStartWorkspace && onStartChat) ? 'grid-cols-3' :
+          (onStartWorkspace || onStartChat) ? 'grid-cols-2' :
+          'grid-cols-1'
+        }`}>
+          {onStartChat && (
+            <button
+              onClick={onStartChat}
+              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-[#c4b5fd]`}
+            >
+              <HubControlGlow />
+              <MessageSquare className="relative z-10 h-4 w-4" />
+              <span className="relative z-10">Chat</span>
+            </button>
+          )}
           {onStartWorkspace && (
             <button
               onClick={onStartWorkspace}
@@ -542,7 +558,7 @@ export function RepoLauncherPanel({
             >
               <HubControlGlow />
               <WorkspaceSparkIcon className="relative z-10 h-4 w-4" />
-              <span className="relative z-10">New Workspace</span>
+              <span className="relative z-10">Workspace</span>
             </button>
           )}
           <button
@@ -551,7 +567,7 @@ export function RepoLauncherPanel({
           >
             <HubControlGlow />
             <Search className="relative z-10 h-4 w-4" />
-            <span className="relative z-10">{showAllRepos ? 'Hide All Repos' : 'Browse All Repos'}</span>
+            <span className="relative z-10">{showAllRepos ? 'Hide' : 'Repos'}</span>
           </button>
         </div>
 

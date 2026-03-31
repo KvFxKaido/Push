@@ -512,6 +512,12 @@ function toLLMMessages(
     // Start from the shared base and layer in runtime-dependent blocks.
     const builder = buildOrchestratorBaseBuilder();
 
+    // Chat mode — strip tool instructions and delegation (plain conversation)
+    if (workspaceContext?.mode === 'chat') {
+      builder.set('tool_instructions', null);
+      builder.set('delegation', null);
+    }
+
     // User identity (name, bio) when configured
     const identityBlock = buildUserIdentityBlock(getUserProfile());
     const approvalBlock = buildApprovalModeBlock(getApprovalMode());
@@ -548,19 +554,22 @@ function toLLMMessages(
 
     // Sandbox tools (when sandbox is active)
     // Scratchpad, web search, ask-user — grouped as custom tool blocks.
+    // Chat mode skips all tool protocols — plain conversation only.
     // Use \n between protocol blocks (matching prior `+='\n'`) and \n\n
     // before scratchpad context (matching prior `+='\n\n'`).
-    const customParts: string[] = [];
-    if (hasSandbox) {
-      customParts.push(getSandboxToolProtocol());
+    if (workspaceContext?.mode !== 'chat') {
+      const customParts: string[] = [];
+      if (hasSandbox) {
+        customParts.push(getSandboxToolProtocol());
+      }
+      customParts.push(SCRATCHPAD_TOOL_PROTOCOL);
+      if (scratchpadContent !== undefined) {
+        customParts.push('\n' + buildScratchpadContext(scratchpadContent));
+      }
+      customParts.push(WEB_SEARCH_TOOL_PROTOCOL);
+      customParts.push(ASK_USER_TOOL_PROTOCOL);
+      builder.set('custom', customParts.join('\n'));
     }
-    customParts.push(SCRATCHPAD_TOOL_PROTOCOL);
-    if (scratchpadContent !== undefined) {
-      customParts.push('\n' + buildScratchpadContext(scratchpadContent));
-    }
-    customParts.push(WEB_SEARCH_TOOL_PROTOCOL);
-    customParts.push(ASK_USER_TOOL_PROTOCOL);
-    builder.set('custom', customParts.join('\n'));
 
     // Intent hint (last so it overrides)
     builder.set('last_instructions', intentHint);
