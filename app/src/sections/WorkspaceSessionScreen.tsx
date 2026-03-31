@@ -250,6 +250,9 @@ export function WorkspaceSessionScreen({
     bioDraft,
     setBioDraft,
     handleBioBlur,
+    chatInstructionsDraft,
+    setChatInstructionsDraft,
+    handleChatInstructionsBlur,
     installIdInput,
     setInstallIdInput,
     showInstallIdInput,
@@ -419,6 +422,9 @@ export function WorkspaceSessionScreen({
     bioDraft,
     setBioDraft,
     handleBioBlur,
+    chatInstructionsDraft,
+    setChatInstructionsDraft,
+    handleChatInstructionsBlur,
   };
 
   return (

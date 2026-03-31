@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Github, Key } from 'lucide-react';
+import { Loader2, Github, Key, MessageSquare } from 'lucide-react';
 import {
   HUB_MATERIAL_BUTTON_CLASS,
   HUB_MATERIAL_INPUT_CLASS,
@@ -15,6 +15,7 @@ interface OnboardingScreenProps {
   onConnect: (pat: string) => Promise<boolean>;
   onConnectOAuth: () => void;
   onStartWorkspace: () => void;
+  onStartChat: () => void;
   onInstallApp: () => void;
   onConnectInstallationId: (installationId: string) => Promise<boolean>;
   loading: boolean;
@@ -27,6 +28,7 @@ export function OnboardingScreen({
   onConnect,
   onConnectOAuth,
   onStartWorkspace,
+  onStartChat,
   onInstallApp,
   onConnectInstallationId,
   loading,
@@ -255,23 +257,33 @@ export function OnboardingScreen({
           )}
           </div>
 
-          {/* Divider + scratch workspace */}
+          {/* Divider + no-account entry */}
           <div className="mt-8">
             <div className="mb-6 flex items-center gap-3">
             <div className="flex-1 h-px bg-push-edge-subtle" />
-            <span className="text-xs text-[#4f596d]">or</span>
+            <span className="text-xs text-[#4f596d]">or try without an account</span>
             <div className="flex-1 h-px bg-push-edge-subtle" />
             </div>
 
-            <button
-              onClick={onStartWorkspace}
-              className={`${onboardingButtonClass} text-emerald-300`}
-            >
-              <HubControlGlow />
-              <span className="relative z-10">Try it now — no account needed</span>
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={onStartChat}
+                className={`${onboardingButtonClass} text-[#c4b5fd]`}
+              >
+                <HubControlGlow />
+                <MessageSquare className="relative z-10 h-4 w-4" />
+                <span className="relative z-10">Chat</span>
+              </button>
+              <button
+                onClick={onStartWorkspace}
+                className={`${onboardingButtonClass} text-emerald-300`}
+              >
+                <HubControlGlow />
+                <span className="relative z-10">Workspace</span>
+              </button>
+            </div>
             <p className="mt-2 text-center text-xs text-push-fg-dim">
-              Ephemeral workspace. Nothing is saved unless you choose.
+              No account needed. Nothing is saved unless you choose.
             </p>
           </div>
         </div>

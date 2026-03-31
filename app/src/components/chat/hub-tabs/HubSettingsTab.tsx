@@ -179,7 +179,7 @@ export function HubSettingsTab({
       lines: [
         `Push knows you as ${profileName}.`,
         `GitHub ${auth.isConnected ? `is connected ${profile.profile.githubLogin || profile.validatedUser?.login ? `as ${profile.profile.githubLogin || profile.validatedUser?.login}.` : 'and ready.'}` : 'is not connected yet.'}`,
-        `${profile.profile.bio.trim() ? 'Personal context is saved for chats.' : 'No personal context saved yet.'}`,
+        `${profile.profile.bio.trim() || profile.profile.chatInstructions?.trim() ? 'Personal context and chat instructions saved.' : 'No personal context saved yet.'}`,
       ],
       onClick: () => setActiveView('you'),
     },

@@ -105,6 +105,7 @@ interface RepoLauncherPanelProps {
   onResumeSandbox?: () => void;
   onStartWorkspace?: () => void;
   onStartChat?: () => void;
+  mode?: 'default' | 'chat';
 }
 
 export function RepoLauncherPanel({
@@ -122,6 +123,7 @@ export function RepoLauncherPanel({
   onResumeSandbox,
   onStartWorkspace,
   onStartChat,
+  mode = 'default',
 }: RepoLauncherPanelProps) {
   const [showAllRepos, setShowAllRepos] = useState(false);
   const [search, setSearch] = useState('');
@@ -214,6 +216,14 @@ export function RepoLauncherPanel({
       })
       .slice(0, 6);
   }, [repos, repoChatMeta]);
+
+  const recentChatConversations = useMemo(() => {
+    if (mode !== 'chat') return [];
+    return Object.values(conversations)
+      .filter((conv) => conv.mode === 'chat')
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt)
+      .slice(0, 5);
+  }, [conversations, mode]);
 
   const filteredRepos = useMemo(() => {
     if (!search.trim()) return repos;
@@ -494,7 +504,37 @@ export function RepoLauncherPanel({
           </div>
         )}
 
-        {sandboxResumeMeta && onResumeSandbox && (
+        {/* ---- Chat-mode launcher: recent chats first ---- */}
+        {mode === 'chat' && recentChatConversations.length > 0 && (
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-[#cfd8e8]">Recent chats</h2>
+              <span className="text-xs text-[#657289]">{recentChatConversations.length}</span>
+            </div>
+            <div className="space-y-1.5 stagger-in">
+              {recentChatConversations.map((conv) => (
+                <button
+                  key={conv.id}
+                  onClick={() => onResumeConversation(conv.id)}
+                  className={`${LAUNCHER_CARD_CLASS} flex w-full items-start gap-3 text-left`}
+                >
+                  <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-[#c4b5fd]" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-push-fg">
+                      {conv.title}
+                    </p>
+                    <p className="mt-0.5 text-push-xs text-push-fg-dim">
+                      {timeAgoWithAgo(conv.lastMessageAt)}
+                    </p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ---- Default-mode: sandbox + latest repo conversation ---- */}
+        {mode !== 'chat' && sandboxResumeMeta && onResumeSandbox && (
           <button
             onClick={onResumeSandbox}
             className={`${HUB_PANEL_SURFACE_CLASS} flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-push-edge-hover`}
@@ -509,7 +549,7 @@ export function RepoLauncherPanel({
           </button>
         )}
 
-        {latestRepoConversation && latestRepoConversationRepo && (
+        {mode !== 'chat' && latestRepoConversation && latestRepoConversationRepo && (
           <button
             onClick={() => onResumeConversation(latestRepoConversation.id)}
             className={`${HUB_PANEL_SURFACE_CLASS} flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-push-edge-hover`}
@@ -536,12 +576,15 @@ export function RepoLauncherPanel({
           </button>
         )}
 
+        {/* ---- Action buttons ---- */}
         <div className={`grid gap-2 ${
-          (onStartWorkspace && onStartChat) ? 'grid-cols-3' :
-          (onStartWorkspace || onStartChat) ? 'grid-cols-2' :
-          'grid-cols-1'
+          mode === 'chat'
+            ? (onStartWorkspace ? 'grid-cols-2' : 'grid-cols-1')
+            : (onStartWorkspace && onStartChat) ? 'grid-cols-3'
+            : (onStartWorkspace || onStartChat) ? 'grid-cols-2'
+            : 'grid-cols-1'
         }`}>
-          {onStartChat && (
+          {mode !== 'chat' && onStartChat && (
             <button
               onClick={onStartChat}
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-[#c4b5fd]`}

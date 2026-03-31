@@ -184,6 +184,9 @@ export interface ChatRouteProfileProps {
   bioDraft: string;
   setBioDraft: (value: string) => void;
   handleBioBlur: () => void;
+  chatInstructionsDraft: string;
+  setChatInstructionsDraft: (value: string) => void;
+  handleChatInstructionsBlur: () => void;
 }
 
 export type ChatRouteProps =

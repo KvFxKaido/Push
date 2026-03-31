@@ -37,6 +37,14 @@ export function buildQuickPromptMessage(prompt: QuickPrompt): QuickPromptMessage
   };
 }
 
+export function getChatQuickPrompts(): QuickPrompt[] {
+  return [
+    { label: 'Think through a technical decision with me' },
+    { label: 'Explain a concept I keep getting wrong' },
+    { label: 'Help me plan before I start building' },
+  ];
+}
+
 export function getEmptyStateQuickPrompts(
   activeRepo?: ActiveRepo | null,
   hasWorkspace?: boolean,

@@ -440,7 +440,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       activeRepo,
       hasSandbox: Boolean(!isChat && (isScratch || activeRepo)),
       isChat,
-      onSuggestion: isChat ? undefined : handleQuickPrompt,
+      onSuggestion: handleQuickPrompt,
       onCardAction: handleCardActionWithSnapshotHeartbeat,
       onPin: pinnedArtifacts.pin,
       interruptedCheckpoint,

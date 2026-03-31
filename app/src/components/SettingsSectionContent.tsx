@@ -449,6 +449,27 @@ export function SettingsSectionContent({
               </p>
             </div>
 
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-push-fg-secondary">
+                Chat instructions
+              </label>
+              <p className="text-push-2xs text-push-fg-dim">
+                Guidance for plain chat mode. Workspace and repo conversations use project instructions instead.
+              </p>
+              <textarea
+                value={profile.chatInstructionsDraft}
+                onChange={(e) => profile.setChatInstructionsDraft(e.target.value.slice(0, 4000))}
+                onBlur={profile.onChatInstructionsBlur}
+                rows={5}
+                maxLength={4000}
+                placeholder="How should Push behave in chat? Preferences, tone, focus areas..."
+                className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 resize-none"
+              />
+              <p className="text-push-2xs text-push-fg-dim">
+                {profile.chatInstructionsDraft.length}/4000
+              </p>
+            </div>
+
             {profile.profile.displayName.trim().length > 0 && (
               <Button
                 variant="ghost"
@@ -457,6 +478,7 @@ export function SettingsSectionContent({
                   profile.clearProfile();
                   profile.setDisplayNameDraft('');
                   profile.setBioDraft('');
+                  profile.setChatInstructionsDraft('');
                 }}
                 className="text-push-fg-secondary hover:text-red-400 w-full justify-start"
               >

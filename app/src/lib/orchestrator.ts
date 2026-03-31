@@ -464,6 +464,19 @@ function isNonEmptyContent(content: string | LLMMessageContent[]): boolean {
 }
 
 /**
+ * Build a chat instructions block for the system prompt.
+ * Only used in chat mode — workspace mode uses project instructions (AGENTS.md) instead.
+ */
+export function buildChatInstructionsBlock(profile?: UserProfile): string {
+  const instructions = profile?.chatInstructions?.trim();
+  if (!instructions) return '';
+  const escaped = instructions
+    .replace(/\[CHAT INSTRUCTIONS\]/gi, '[CHAT INSTRUCTIONS\u200B]')
+    .replace(/\[\/CHAT INSTRUCTIONS\]/gi, '[/CHAT INSTRUCTIONS\u200B]');
+  return `## Chat Instructions\n${escaped}`;
+}
+
+/**
  * Build a compact identity block for the system prompt.
  * Returns empty string when no identity fields are set.
  */
@@ -519,9 +532,13 @@ function toLLMMessages(
     }
 
     // User identity (name, bio) when configured
-    const identityBlock = buildUserIdentityBlock(getUserProfile());
+    const profile = getUserProfile();
+    const identityBlock = buildUserIdentityBlock(profile);
     const approvalBlock = buildApprovalModeBlock(getApprovalMode());
-    builder.set('user_context', [identityBlock, approvalBlock].filter(Boolean).join('\n\n'));
+    const chatInstructionsBlock = workspaceContext?.mode === 'chat'
+      ? buildChatInstructionsBlock(profile)
+      : '';
+    builder.set('user_context', [identityBlock, chatInstructionsBlock, approvalBlock].filter(Boolean).join('\n\n'));
 
     // Model capability awareness
     if (providerType && providerModel) {

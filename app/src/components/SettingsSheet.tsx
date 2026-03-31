@@ -76,7 +76,10 @@ export interface SettingsProfileProps {
   bioDraft: string;
   setBioDraft: (v: string) => void;
   onBioBlur: () => void;
-  profile: { displayName: string; bio: string; githubLogin?: string };
+  chatInstructionsDraft: string;
+  setChatInstructionsDraft: (v: string) => void;
+  onChatInstructionsBlur: () => void;
+  profile: { displayName: string; bio: string; chatInstructions?: string; githubLogin?: string };
   clearProfile: () => void;
   validatedUser: { login: string } | null;
 }

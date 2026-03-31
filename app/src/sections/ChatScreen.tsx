@@ -206,15 +206,15 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
           )}
 
           <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
-            {!isChat && (activeRepo || isScratch) && (
+            {(activeRepo || isScratch || isChat) && (
               <button
                 onClick={onOpenWorkspaceHub}
                 className={HEADER_ROUND_BUTTON_CLASS}
-                aria-label="Open workspace hub"
-                title="Workspace"
+                aria-label={isChat ? 'Open chat panel' : 'Open workspace hub'}
+                title={isChat ? 'Chat panel' : 'Workspace'}
               >
                 <WorkspaceDockIcon className="relative z-10 h-3.5 w-3.5" />
-                {hasWorkspaceActivityIndicator && (
+                {!isChat && hasWorkspaceActivityIndicator && (
                   <span
                     className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-push-sky ${
                       chatContainerProps.agentStatus.active ? 'animate-pulse shadow-[0_0_6px_rgba(56,189,248,0.5)]' : ''

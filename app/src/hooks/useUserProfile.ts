@@ -5,6 +5,7 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-st
 
 const STORAGE_KEY = 'push_user_profile';
 const MAX_BIO_LENGTH = 300;
+const MAX_CHAT_INSTRUCTIONS_LENGTH = 4000;
 
 /**
  * Standalone getter — callable from orchestrator.ts without React.
@@ -35,6 +36,10 @@ export function useUserProfile() {
       // Cap bio length
       if (merged.bio.length > MAX_BIO_LENGTH) {
         merged.bio = merged.bio.slice(0, MAX_BIO_LENGTH);
+      }
+      // Cap chat instructions length
+      if (merged.chatInstructions && merged.chatInstructions.length > MAX_CHAT_INSTRUCTIONS_LENGTH) {
+        merged.chatInstructions = merged.chatInstructions.slice(0, MAX_CHAT_INSTRUCTIONS_LENGTH);
       }
       safeStorageSet(STORAGE_KEY, JSON.stringify(merged));
       return merged;

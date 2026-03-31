@@ -4,7 +4,7 @@ import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, L
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
-import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
+import { getChatQuickPrompts, getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -123,7 +123,7 @@ function EmptyState({
   };
 
   const suggestions = useMemo(
-    () => (isChat ? [] : getEmptyStateQuickPrompts(activeRepo, hasSandbox)),
+    () => (isChat ? getChatQuickPrompts() : getEmptyStateQuickPrompts(activeRepo, hasSandbox)),
     [activeRepo, hasSandbox, isChat],
   );
 
@@ -157,7 +157,7 @@ function EmptyState({
         )}
         <p className="text-sm leading-relaxed text-push-fg-secondary">
           {isChat
-            ? 'Plain chat mode with no repository context, sandbox, or tools.'
+            ? 'Think through ideas, ask questions, or plan your next move.'
             : activeRepo
             ? `Focused on ${activeRepo.full_name}. Ask about PRs, recent changes, or the codebase.`
             : hasSandbox

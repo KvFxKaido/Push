@@ -167,6 +167,7 @@ export function LauncherHomeContent({
           onStartChat={onStartChat}
           sandboxSession={sandboxSession}
           onResumeSandbox={onResumeSandbox}
+          mode={mode}
         />
       </div>
 

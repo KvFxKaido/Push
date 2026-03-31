@@ -6,6 +6,8 @@ export interface UserProfile {
   displayName: string;
   githubLogin?: string;
   bio: string;
+  /** Longer-form instructions for plain chat mode (not the short bio). */
+  chatInstructions?: string;
 }
 
 export type WorkspaceMode = 'repo' | 'scratch' | 'chat';

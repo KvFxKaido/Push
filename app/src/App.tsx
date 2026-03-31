@@ -276,6 +276,7 @@ function App() {
             onConnect={handleConnect}
             onConnectOAuth={connectApp}
             onStartWorkspace={handleStartScratchWorkspace}
+            onStartChat={handleStartChatMode}
             onInstallApp={installApp}
             onConnectInstallationId={setInstallationIdManually}
             loading={authLoading}

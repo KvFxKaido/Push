@@ -11,6 +11,7 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
   const { profile, updateProfile, clearProfile } = useUserProfile();
   const [displayNameDraftState, setDisplayNameDraftState] = useState<string | null>(null);
   const [bioDraftState, setBioDraftState] = useState<string | null>(null);
+  const [chatInstructionsDraftState, setChatInstructionsDraftState] = useState<string | null>(null);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
   const [showToolActivity, setShowToolActivityState] = useState<boolean>(() => {
@@ -28,6 +29,7 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
 
   const displayNameDraft = displayNameDraftState ?? profile.displayName;
   const bioDraft = bioDraftState ?? profile.bio;
+  const chatInstructionsDraft = chatInstructionsDraftState ?? (profile.chatInstructions || '');
 
   const setDisplayNameDraft = useCallback((value: string) => {
     setDisplayNameDraftState(value);
@@ -35,6 +37,10 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
 
   const setBioDraft = useCallback((value: string) => {
     setBioDraftState(value);
+  }, []);
+
+  const setChatInstructionsDraft = useCallback((value: string) => {
+    setChatInstructionsDraftState(value);
   }, []);
 
   const copyAllowlistCommand = useCallback(async () => {
@@ -93,10 +99,19 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     setBioDraftState(null);
   }, [bioDraft, profile.bio, updateProfile]);
 
+  const handleChatInstructionsBlur = useCallback(() => {
+    const nextInstructions = chatInstructionsDraft.slice(0, 4000);
+    if (nextInstructions !== (profile.chatInstructions || '')) {
+      updateProfile({ chatInstructions: nextInstructions });
+    }
+    setChatInstructionsDraftState(null);
+  }, [chatInstructionsDraft, profile.chatInstructions, updateProfile]);
+
   const handleClearProfile = useCallback(() => {
     clearProfile();
     setDisplayNameDraftState(null);
     setBioDraftState(null);
+    setChatInstructionsDraftState(null);
   }, [clearProfile]);
 
   return {
@@ -109,6 +124,9 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     bioDraft,
     setBioDraft,
     handleBioBlur,
+    chatInstructionsDraft,
+    setChatInstructionsDraft,
+    handleChatInstructionsBlur,
     installIdInput,
     setInstallIdInput,
     showInstallIdInput,

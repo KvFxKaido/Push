@@ -201,14 +201,23 @@ export function useWorkspaceChatPanelsController({
 
   const handleResumeConversationFromLauncher = useCallback((chatId: string) => {
     const conversation = conversations[chatId];
-    if (!conversation?.repoFullName) return;
+    if (!conversation) return;
+
+    // Chat/scratch conversations have no repo — just switch to them directly.
+    if (!conversation.repoFullName) {
+      closePanels();
+      switchChat(chatId);
+      return;
+    }
+
+    // Repo conversations — select the repo first, then switch.
     const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
     if (!repo) return;
     handleSelectRepoFromDrawer(repo, conversation.branch);
     requestAnimationFrame(() => {
       switchChat(chatId);
     });
-  }, [conversations, handleSelectRepoFromDrawer, repos, switchChat]);
+  }, [closePanels, conversations, handleSelectRepoFromDrawer, repos, switchChat]);
 
   const handleStartWorkspaceRequest = useCallback(() => {
     closePanels();
