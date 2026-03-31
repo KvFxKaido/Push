@@ -36,6 +36,7 @@ type HomeProps = {
   onResumeConversation: (chatId: string) => void;
   onDisconnect: () => void;
   onStartWorkspace: () => void;
+  onStartChat: () => void;
   user: GitHubUser | null;
 };
 
@@ -92,7 +93,22 @@ const mockState = vi.hoisted(() => {
     replaceAllConversations: vi.fn(async (convs: Record<string, Conversation>) => {
       void convs;
     }),
-    safeStorageRemove: vi.fn(),
+    safeStorageGet: vi.fn<(key: string, area?: 'local' | 'session') => string | null>((key: string, area?: 'local' | 'session') => {
+      void key;
+      void area;
+      return null;
+    }),
+    safeStorageSet: vi.fn<(key: string, value: string, area?: 'local' | 'session') => boolean>((key: string, value: string, area?: 'local' | 'session') => {
+      void key;
+      void value;
+      void area;
+      return true;
+    }),
+    safeStorageRemove: vi.fn<(key: string, area?: 'local' | 'session') => boolean>((key: string, area?: 'local' | 'session') => {
+      void key;
+      void area;
+      return true;
+    }),
     onboardingProps: null as OnboardingProps | null,
     homeProps: null as HomeProps | null,
     workspaceProps: null as WorkspaceScreenProps | null,
@@ -127,6 +143,8 @@ vi.mock('@/lib/safe-storage', async () => {
   const actual = await vi.importActual<typeof import('@/lib/safe-storage')>('@/lib/safe-storage');
   return {
     ...actual,
+    safeStorageGet: (key: string, area?: 'local' | 'session') => mockState.safeStorageGet(key, area),
+    safeStorageSet: (key: string, value: string, area?: 'local' | 'session') => mockState.safeStorageSet(key, value, area),
     safeStorageRemove: (key: string, area?: 'local' | 'session') => mockState.safeStorageRemove(key, area),
   };
 });
@@ -225,7 +243,22 @@ describe('App auth and shell integration', () => {
     mockState.replaceAllConversations = vi.fn(async (convs: Record<string, Conversation>) => {
       void convs;
     });
-    mockState.safeStorageRemove = vi.fn();
+    mockState.safeStorageGet = vi.fn<(key: string, area?: 'local' | 'session') => string | null>((key: string, area?: 'local' | 'session') => {
+      void key;
+      void area;
+      return null;
+    });
+    mockState.safeStorageSet = vi.fn<(key: string, value: string, area?: 'local' | 'session') => boolean>((key: string, value: string, area?: 'local' | 'session') => {
+      void key;
+      void value;
+      void area;
+      return true;
+    });
+    mockState.safeStorageRemove = vi.fn<(key: string, area?: 'local' | 'session') => boolean>((key: string, area?: 'local' | 'session') => {
+      void key;
+      void area;
+      return true;
+    });
     mockState.onboardingProps = null;
     mockState.homeProps = null;
     mockState.workspaceProps = null;
@@ -340,6 +373,31 @@ describe('App auth and shell integration', () => {
     });
     expect(mockState.workspaceProps?.navigation.onSelectRepo).toBeTypeOf('function');
     expect(mockState.workspaceProps?.homeBridge.pendingResumeChatId).toBeNull();
+  });
+
+  it('restores a persisted scratch workspace session on refresh', async () => {
+    const user = { login: 'ishaw', avatar_url: 'https://example.com/avatar.png' };
+    mockState.auth = {
+      ...mockState.defaultAuth(),
+      status: 'pat',
+      token: 'ghp_test',
+      patToken: 'ghp_test',
+      validatedUser: user,
+    };
+    mockState.safeStorageGet = vi.fn((key: string) => (
+      key === 'workspace_session'
+        ? JSON.stringify({ id: 'workspace-scratch-1', kind: 'scratch', sandboxId: null })
+        : null
+    ));
+
+    const html = await renderApp();
+
+    expect(html).toContain('data-screen="workspace"');
+    expect(mockState.workspaceProps?.workspace.workspaceSession).toEqual({
+      id: 'workspace-scratch-1',
+      kind: 'scratch',
+      sandboxId: null,
+    });
   });
 
   it('connects PAT auth through the merged auth session and syncs repos on success', async () => {

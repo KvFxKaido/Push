@@ -5,15 +5,92 @@ import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useRepoAppearance } from '@/hooks/useRepoAppearance';
 import { replaceAllConversations, migrateConversationsToIndexedDB } from '@/lib/conversation-store';
 import { toConversationIndex } from '@/lib/conversation-index';
-import { safeStorageRemove } from '@/lib/safe-storage';
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import type {
+  ActiveRepo,
   AppShellScreen,
   ConversationIndex,
   RepoWithActivity,
   WorkspaceSession,
 } from '@/types';
 import './App.css';
+
+const WORKSPACE_SESSION_STORAGE_KEY = 'workspace_session';
+
+function isStoredRepo(value: unknown): value is ActiveRepo {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.id === 'number' &&
+    typeof candidate.name === 'string' &&
+    typeof candidate.full_name === 'string' &&
+    typeof candidate.owner === 'string' &&
+    typeof candidate.default_branch === 'string' &&
+    typeof candidate.current_branch === 'string' &&
+    typeof candidate.private === 'boolean'
+  );
+}
+
+function normalizeWorkspaceSession(
+  value: unknown,
+  activeRepo: ActiveRepo | null,
+): WorkspaceSession | null {
+  if (!value || typeof value !== 'object') return activeRepo
+    ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
+    : null;
+
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.id !== 'string' || typeof candidate.kind !== 'string') {
+    return activeRepo
+      ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
+      : null;
+  }
+
+  if (candidate.kind === 'chat') {
+    return { id: candidate.id, kind: 'chat', sandboxId: null };
+  }
+
+  if (candidate.kind === 'scratch') {
+    return {
+      id: candidate.id,
+      kind: 'scratch',
+      sandboxId: typeof candidate.sandboxId === 'string' ? candidate.sandboxId : null,
+    };
+  }
+
+  if (candidate.kind === 'repo') {
+    const repo = activeRepo ?? (isStoredRepo(candidate.repo) ? candidate.repo : null);
+    if (!repo) return null;
+    return {
+      id: candidate.id,
+      kind: 'repo',
+      repo,
+      sandboxId: typeof candidate.sandboxId === 'string' ? candidate.sandboxId : null,
+    };
+  }
+
+  return activeRepo
+    ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
+    : null;
+}
+
+function loadWorkspaceSession(activeRepo: ActiveRepo | null): WorkspaceSession | null {
+  const raw = safeStorageGet(WORKSPACE_SESSION_STORAGE_KEY);
+  if (!raw) {
+    return activeRepo
+      ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
+      : null;
+  }
+
+  try {
+    return normalizeWorkspaceSession(JSON.parse(raw), activeRepo);
+  } catch {
+    return activeRepo
+      ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
+      : null;
+  }
+}
 
 const OnboardingScreen = lazyWithRecovery(
   toDefaultExport(() => import('@/sections/OnboardingScreen'), (module) => module.OnboardingScreen),
@@ -27,11 +104,7 @@ const WorkspaceScreen = lazyWithRecovery(
 
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
-  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => (
-    activeRepo
-      ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
-      : null
-  ));
+  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => loadWorkspaceSession(activeRepo));
   const [conversationIndex, setConversationIndex] = useState<ConversationIndex>({});
   const [pendingResumeChatId, setPendingResumeChatId] = useState<string | null>(null);
 
@@ -176,6 +249,14 @@ function App() {
   useEffect(() => {
     if (authToken) syncRepos();
   }, [authToken, syncRepos]);
+
+  useEffect(() => {
+    if (!workspaceSession) {
+      safeStorageRemove(WORKSPACE_SESSION_STORAGE_KEY);
+      return;
+    }
+    safeStorageSet(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify(workspaceSession));
+  }, [workspaceSession]);
 
   const screen: AppShellScreen = useMemo(() => {
     if (workspaceSession?.kind === 'scratch') return 'workspace';
