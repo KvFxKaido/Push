@@ -4,7 +4,7 @@ import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, L
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
-import { getChatQuickPrompts, getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
+import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -123,7 +123,7 @@ function EmptyState({
   };
 
   const suggestions = useMemo(
-    () => (isChat ? getChatQuickPrompts() : getEmptyStateQuickPrompts(activeRepo, hasSandbox)),
+    () => (isChat ? [] : getEmptyStateQuickPrompts(activeRepo, hasSandbox)),
     [activeRepo, hasSandbox, isChat],
   );
 

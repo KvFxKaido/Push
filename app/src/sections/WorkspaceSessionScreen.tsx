@@ -1,7 +1,8 @@
-import { lazy, Suspense, useCallback, useRef } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
+import { conversationBelongsToWorkspace } from '@/hooks/chat-management';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
@@ -153,6 +154,41 @@ export function WorkspaceSessionScreen({
   // Synchronously set workspace mode so createNewChat tags conversations correctly
   // during workspace transitions (before the async useProjectInstructions effect fires).
   setWorkspaceMode(workspaceSession.kind === 'chat' ? 'chat' : workspaceSession.kind === 'scratch' ? 'scratch' : 'repo');
+
+  useEffect(() => {
+    if (pendingResumeChatId) return;
+
+    const activeConversation = conversations[activeChatId];
+    const workspaceMode = workspaceSession.kind === 'chat'
+      ? 'chat'
+      : workspaceSession.kind === 'scratch'
+      ? 'scratch'
+      : 'repo';
+    const repoFullName = workspaceRepo?.full_name ?? null;
+
+    if (activeConversation && conversationBelongsToWorkspace(activeConversation, repoFullName, workspaceMode)) {
+      return;
+    }
+
+    const matchingConversations = Object.values(conversations)
+      .filter((conversation) => conversationBelongsToWorkspace(conversation, repoFullName, workspaceMode))
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+
+    if (matchingConversations.length > 0) {
+      switchChat(matchingConversations[0].id);
+      return;
+    }
+
+    createNewChat();
+  }, [
+    activeChatId,
+    conversations,
+    createNewChat,
+    pendingResumeChatId,
+    switchChat,
+    workspaceRepo?.full_name,
+    workspaceSession.kind,
+  ]);
 
   const { protectMain } = useWorkspaceSessionBridge({
     conversations,
