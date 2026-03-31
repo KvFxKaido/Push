@@ -188,6 +188,7 @@ export function useWorkspaceSandboxController({
 
   useEffect(() => {
     setSandboxId(sandboxId);
+    if (workspaceSession.kind === 'chat') return;
     if (workspaceSession.sandboxId === sandboxId) return;
     onWorkspaceSessionChange({ ...workspaceSession, sandboxId });
   }, [onWorkspaceSessionChange, sandboxId, setSandboxId, workspaceSession]);

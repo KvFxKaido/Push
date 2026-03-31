@@ -33,6 +33,54 @@ export interface ChatManagementParams {
   workspaceModeRef: MutableRefObject<WorkspaceMode | null>;
 }
 
+function getWorkspaceScopedMode(
+  repoFullName: string | null,
+  workspaceMode: WorkspaceMode | null,
+): WorkspaceMode | undefined {
+  if (repoFullName) return workspaceMode ?? 'repo';
+  return workspaceMode ?? undefined;
+}
+
+export function conversationBelongsToWorkspace(
+  conversation: Conversation,
+  repoFullName: string | null,
+  workspaceMode: WorkspaceMode | null,
+): boolean {
+  if (repoFullName) {
+    return conversation.repoFullName === repoFullName;
+  }
+
+  if (workspaceMode === 'chat') {
+    return !conversation.repoFullName && conversation.mode === 'chat';
+  }
+
+  if (workspaceMode === 'scratch') {
+    return !conversation.repoFullName && conversation.mode !== 'chat';
+  }
+
+  return !conversation.repoFullName;
+}
+
+function buildEmptyConversation(
+  id: string,
+  repoFullName: string | null,
+  branch: string | undefined,
+  workspaceMode: WorkspaceMode | null,
+): Conversation {
+  const now = Date.now();
+  return {
+    id,
+    title: 'New Chat',
+    messages: [],
+    createdAt: now,
+    lastMessageAt: now,
+    repoFullName: repoFullName || undefined,
+    branch: repoFullName ? branch : undefined,
+    verificationPolicy: getDefaultVerificationPolicy(),
+    mode: getWorkspaceScopedMode(repoFullName, workspaceMode),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -57,18 +105,7 @@ export function useChatManagement({
     const id = createId();
     const bi = branchInfoRef.current;
     const branch = bi?.currentBranch || bi?.defaultBranch || 'main';
-    const mode = workspaceModeRef.current ?? undefined;
-    const newConv: Conversation = {
-      id,
-      title: 'New Chat',
-      messages: [],
-      createdAt: Date.now(),
-      lastMessageAt: Date.now(),
-      repoFullName: activeRepoFullName || undefined,
-      branch: activeRepoFullName ? branch : undefined,
-      verificationPolicy: getDefaultVerificationPolicy(),
-      mode,
-    };
+    const newConv = buildEmptyConversation(id, activeRepoFullName, branch, workspaceModeRef.current);
     setConversations((prev) => {
       const updated = { ...prev, [id]: newConv };
       dirtyConversationIdsRef.current.add(id);
@@ -123,10 +160,10 @@ export function useChatManagement({
 
         if (id === activeChatId) {
           const currentRepo = repoRef.current;
-          const remaining = Object.values(updated).filter((c) => {
-            if (!currentRepo) return !c.repoFullName;
-            return c.repoFullName === currentRepo;
-          });
+          const currentWorkspaceMode = workspaceModeRef.current;
+          const remaining = Object.values(updated).filter((c) =>
+            conversationBelongsToWorkspace(c, currentRepo, currentWorkspaceMode),
+          );
 
           if (remaining.length > 0) {
             const mostRecent = remaining.sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0];
@@ -134,20 +171,12 @@ export function useChatManagement({
             saveActiveChatId(mostRecent.id);
           } else {
             const newId = createId();
-            updated[newId] = {
-              id: newId,
-              title: 'New Chat',
-              messages: [],
-              createdAt: Date.now(),
-              lastMessageAt: Date.now(),
-              repoFullName: currentRepo || undefined,
-              branch: currentRepo
-                ? branchInfoRef.current?.currentBranch ||
-                  branchInfoRef.current?.defaultBranch ||
-                  'main'
-                : undefined,
-              verificationPolicy: getDefaultVerificationPolicy(),
-            };
+            const branch = currentRepo
+              ? branchInfoRef.current?.currentBranch ||
+                branchInfoRef.current?.defaultBranch ||
+                'main'
+              : undefined;
+            updated[newId] = buildEmptyConversation(newId, currentRepo, branch, currentWorkspaceMode);
             setActiveChatId(newId);
             saveActiveChatId(newId);
           }
@@ -168,20 +197,18 @@ export function useChatManagement({
       setActiveChatId,
       setAgentEventsByChat,
       setConversations,
+      workspaceModeRef,
     ],
   );
 
   const deleteAllChats = useCallback(() => {
     const currentRepo = repoRef.current;
+    const currentWorkspaceMode = workspaceModeRef.current;
     const chatBranch = currentRepo
       ? branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || 'main'
       : undefined;
     const removedIds = Object.entries(conversations)
-      .filter(([, conv]) => (
-        currentRepo
-          ? conv.repoFullName === currentRepo
-          : !conv.repoFullName
-      ))
+      .filter(([, conv]) => conversationBelongsToWorkspace(conv, currentRepo, currentWorkspaceMode))
       .map(([cid]) => cid);
 
     removedIds.forEach((removedId) => {
@@ -191,25 +218,13 @@ export function useChatManagement({
     setConversations((prev) => {
       const kept: Record<string, Conversation> = {};
       for (const [cid, conv] of Object.entries(prev)) {
-        const belongsToCurrentRepo = currentRepo
-          ? conv.repoFullName === currentRepo
-          : !conv.repoFullName;
-        if (!belongsToCurrentRepo) {
+        if (!conversationBelongsToWorkspace(conv, currentRepo, currentWorkspaceMode)) {
           kept[cid] = conv;
         }
       }
 
       const id = createId();
-      kept[id] = {
-        id,
-        title: 'New Chat',
-        messages: [],
-        createdAt: Date.now(),
-        lastMessageAt: Date.now(),
-        repoFullName: currentRepo || undefined,
-        branch: chatBranch,
-        verificationPolicy: getDefaultVerificationPolicy(),
-      };
+      kept[id] = buildEmptyConversation(id, currentRepo, chatBranch, currentWorkspaceMode);
 
       setActiveChatId(id);
       saveActiveChatId(id);
@@ -231,7 +246,7 @@ export function useChatManagement({
       }
       return kept;
     });
-  }, [branchInfoRef, clearQueuedFollowUps, conversations, repoRef, setActiveChatId, setAgentEventsByChat, setConversations]);
+  }, [branchInfoRef, clearQueuedFollowUps, conversations, repoRef, setActiveChatId, setAgentEventsByChat, setConversations, workspaceModeRef]);
 
   return { createNewChat, switchChat, renameChat, deleteChat, deleteAllChats };
 }
