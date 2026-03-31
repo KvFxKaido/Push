@@ -76,6 +76,7 @@ interface ChatInputProps {
   queuedFollowUpCount?: number;
   pendingSteerCount?: number;
   repoName?: string;
+  placeholder?: string;
   contextUsage?: { used: number; max: number; percent: number };
   draftKey?: string | null;
   prefillRequest?: {
@@ -234,6 +235,7 @@ export function ChatInput({
   queuedFollowUpCount = 0,
   pendingSteerCount = 0,
   repoName,
+  placeholder,
   contextUsage,
   draftKey,
   prefillRequest,
@@ -682,7 +684,7 @@ export function ChatInput({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={repoName ? `Ask about ${repoName}...` : 'Ask about code...'}
+            placeholder={placeholder ?? (repoName ? `Ask about ${repoName}...` : 'Ask about code...')}
             rows={1}
             className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-push-lg leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none"
           />

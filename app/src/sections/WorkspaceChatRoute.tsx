@@ -409,6 +409,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleStartChat,
     handleDisconnect: handleDisconnectRequest,
     validatedUser: props.validatedUser,
+    mode: isChat ? 'chat' : 'default',
   });
   const chatScreenWorkspace = {
     activeRepo,
@@ -424,7 +425,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     snapshotIsStale,
   };
   const chatScreenShell = {
-    launcherLabel: isChat ? 'Chat' : isScratch ? 'Workspace' : currentBranch,
+    launcherLabel: isChat ? 'Launcher' : isScratch ? 'Workspace' : currentBranch,
     hasWorkspaceActivityIndicator: scratchpad.hasContent || agentStatus.active,
     chatShellTransform,
     chatShellShadow,
@@ -438,7 +439,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       agentStatus,
       activeRepo,
       hasSandbox: Boolean(!isChat && (isScratch || activeRepo)),
-      onSuggestion: handleQuickPrompt,
+      isChat,
+      onSuggestion: isChat ? undefined : handleQuickPrompt,
       onCardAction: handleCardActionWithSnapshotHeartbeat,
       onPin: pinnedArtifacts.pin,
       interruptedCheckpoint,
@@ -456,6 +458,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       queuedFollowUpCount,
       pendingSteerCount,
       repoName: activeRepo?.name,
+      placeholder: isChat ? 'Message' : undefined,
       contextUsage,
       draftKey: activeChatId,
       prefillRequest: composerPrefillRequest,

@@ -23,6 +23,7 @@ interface RepoLauncherSheetProps {
   onStartChat?: () => void;
   onDisconnect: () => void;
   user: GitHubUser | null;
+  mode?: 'default' | 'chat';
 }
 
 export function RepoLauncherSheet({
@@ -44,6 +45,7 @@ export function RepoLauncherSheet({
   onStartChat,
   onDisconnect,
   user,
+  mode = 'default',
 }: RepoLauncherSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -102,6 +104,7 @@ export function RepoLauncherSheet({
                   }
                 : undefined}
               user={user}
+              mode={mode}
             />
           </div>
         </div>

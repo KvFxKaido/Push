@@ -439,6 +439,7 @@ export function buildRepoLauncherSheetProps(args: {
   handleStartChat?: () => void;
   handleDisconnect: () => void;
   validatedUser: ChatRouteProps['validatedUser'];
+  mode?: 'default' | 'chat';
 }): RepoLauncherSheetProps {
   return {
     open: args.open,
@@ -458,5 +459,6 @@ export function buildRepoLauncherSheetProps(args: {
     onStartChat: args.handleStartChat,
     onDisconnect: args.handleDisconnect,
     user: args.validatedUser,
+    mode: args.mode,
   };
 }

@@ -46,6 +46,7 @@ interface LauncherHomeContentProps {
   sandboxSession?: LauncherSandboxSession | null;
   onResumeSandbox?: () => void;
   user: GitHubUser | null;
+  mode?: 'default' | 'chat';
 }
 
 export function LauncherHomeContent({
@@ -65,20 +66,30 @@ export function LauncherHomeContent({
   sandboxSession,
   onResumeSandbox,
   user,
+  mode = 'default',
 }: LauncherHomeContentProps) {
   const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false);
+  const isChatMode = mode === 'chat';
 
   return (
     <>
       <div className="space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2.5">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center text-push-accent">
-              <PushMarkIcon className="h-4 w-4 text-push-accent" />
-            </div>
+            {!isChatMode && (
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center text-push-accent">
+                <PushMarkIcon className="h-4 w-4 text-push-accent" />
+              </div>
+            )}
             <div>
-              <h1 className="text-lg font-semibold tracking-tight text-push-fg">Push</h1>
-              <p className="text-push-sm text-[#788396]">Resume work or jump into a repo.</p>
+              <h1 className="text-lg font-semibold tracking-tight text-push-fg">
+                {isChatMode ? 'Switch context' : 'Push'}
+              </h1>
+              <p className="text-push-sm text-[#788396]">
+                {isChatMode
+                  ? 'Open a repo, workspace, or another chat.'
+                  : 'Resume work or jump into a repo.'}
+              </p>
             </div>
           </div>
 
