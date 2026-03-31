@@ -1357,6 +1357,7 @@ export interface WorkspaceScreenNavigationProps {
   onDisconnect: () => void;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onStartScratchWorkspace: () => void;
+  onStartChat: () => void;
   onEndWorkspace: () => void;
 }
 

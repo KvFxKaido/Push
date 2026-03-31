@@ -74,6 +74,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     protectMain,
     showToolActivity,
     handleStartWorkspace,
+    handleStartChat,
     handleExitWorkspace,
     handleCreateNewChat,
     inspectNewChatWorkspace,
@@ -405,6 +406,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     sandboxStatus: sandbox.status,
     sandboxCreatedAt: sandbox.createdAt,
     handleStartWorkspace: handleStartWorkspace ? handleStartWorkspaceRequest : undefined,
+    handleStartChat,
   });
   const chatScreenWorkspace = {
     activeRepo,

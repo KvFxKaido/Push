@@ -269,6 +269,7 @@ function App() {
           onDisconnect: handleDisconnect,
           onSelectRepo: handleSelectRepo,
           onStartScratchWorkspace: handleStartScratchWorkspace,
+          onStartChat: handleStartChatMode,
           onEndWorkspace: handleEndWorkspace,
         }}
         homeBridge={{

@@ -56,6 +56,7 @@ export function WorkspaceSessionScreen({
     onDisconnect,
     onSelectRepo,
     onStartScratchWorkspace,
+    onStartChat,
     onEndWorkspace,
   } = navigation;
   const { pendingResumeChatId, onConversationIndexChange } = homeBridge;
@@ -303,6 +304,7 @@ export function WorkspaceSessionScreen({
     clearRepoAppearance,
     sandbox,
     handleStartWorkspace: (isScratch || isChat) ? undefined : onStartScratchWorkspace,
+    handleStartChat: isChat ? undefined : onStartChat,
     handleExitWorkspace,
     handleDisconnect: handleDisconnectFromWorkspace,
     handleCreateNewChat,

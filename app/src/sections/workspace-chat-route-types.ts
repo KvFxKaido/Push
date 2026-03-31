@@ -48,6 +48,7 @@ export interface ChatRouteWorkspaceProps {
     markUnreachable: (reason: string) => void;
   };
   handleStartWorkspace: (() => void) | undefined;
+  handleStartChat: (() => void) | undefined;
   handleExitWorkspace: () => void;
   handleDisconnect: () => void;
   handleCreateNewChat: () => void;

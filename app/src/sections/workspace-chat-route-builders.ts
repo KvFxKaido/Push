@@ -436,6 +436,7 @@ export function buildRepoLauncherSheetProps(args: {
   sandboxStatus: ChatRouteProps['sandbox']['status'];
   sandboxCreatedAt: ChatRouteProps['sandbox']['createdAt'];
   handleStartWorkspace?: () => void;
+  handleStartChat?: () => void;
 }): RepoLauncherSheetProps {
   return {
     open: args.open,
@@ -452,5 +453,6 @@ export function buildRepoLauncherSheetProps(args: {
     onResumeConversation: args.handleResumeConversationFromLauncher,
     sandboxSession: args.isScratch ? { status: args.sandboxStatus, createdAt: args.sandboxCreatedAt } : null,
     onStartWorkspace: args.handleStartWorkspace,
+    onStartChat: args.handleStartChat,
   };
 }
