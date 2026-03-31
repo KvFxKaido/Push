@@ -17,7 +17,7 @@ import { buildModelCapabilityAwarenessBlock } from './model-capabilities';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 import { buildSessionCapabilityBlock } from './workspace-context';
 import { SystemPromptBuilder } from './system-prompt-builder';
-import { SHARED_SAFETY_SECTION } from './system-prompt-sections';
+import { SHARED_SAFETY_SECTION, SHARED_OPERATIONAL_CONSTRAINTS, ORCHESTRATOR_SIGNAL_EFFICIENCY } from './system-prompt-sections';
 import {
   getPushTracer,
   injectTraceHeaders,
@@ -414,6 +414,8 @@ function buildOrchestratorBaseBuilder(): SystemPromptBuilder {
     .set('voice', ORCHESTRATOR_VOICE)
     .set('safety', SHARED_SAFETY_SECTION)
     .set('guidelines', buildOrchestratorGuidelines())
+    .append('guidelines', SHARED_OPERATIONAL_CONSTRAINTS)
+    .append('guidelines', ORCHESTRATOR_SIGNAL_EFFICIENCY)
     .set('tool_instructions', buildOrchestratorToolInstructions())
     .set('delegation', buildOrchestratorDelegation());
 }

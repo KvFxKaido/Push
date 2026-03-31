@@ -28,7 +28,7 @@ import { getToolPublicName } from './tool-registry';
 import { buildCoderDelegationBrief } from './role-context';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 import { SystemPromptBuilder } from './system-prompt-builder';
-import { SHARED_SAFETY_SECTION } from './system-prompt-sections';
+import { SHARED_SAFETY_SECTION, SHARED_OPERATIONAL_CONSTRAINTS, FAITHFUL_REPORTING_CONSTRAINT } from './system-prompt-sections';
 import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
 import { createCoderPolicy } from './turn-policies/coder-policy';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
@@ -795,6 +795,8 @@ export async function runCoderAgent(
     .set('safety', SHARED_SAFETY_SECTION)
     .set('user_context', buildApprovalModeBlock(getApprovalMode()))
     .set('guidelines', buildCoderGuidelines())
+    .append('guidelines', SHARED_OPERATIONAL_CONSTRAINTS)
+    .append('guidelines', FAITHFUL_REPORTING_CONSTRAINT)
     .set('tool_instructions', getSandboxToolProtocol());
 
   // User identity (name, bio)
