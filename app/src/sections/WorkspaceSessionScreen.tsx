@@ -19,6 +19,7 @@ import type {
 } from '@/types';
 
 const FileBrowser = lazy(() => import('./FileBrowser').then((module) => ({ default: module.FileBrowser })));
+const ChatSurfaceRoute = lazy(() => import('./ChatSurfaceRoute').then((module) => ({ default: module.ChatSurfaceRoute })));
 const WorkspaceChatRoute = lazy(() => import('./WorkspaceChatRoute').then((module) => ({ default: module.WorkspaceChatRoute })));
 
 const workspaceRouteFallback = <div className="h-dvh bg-[#000]" />;
@@ -463,19 +464,30 @@ export function WorkspaceSessionScreen({
     handleChatInstructionsBlur,
   };
 
+  const routeProps = {
+    ...workspaceDomain,
+    ...conversationDomain,
+    ...repositoryDomain,
+    ...catalogDomain,
+    ...workspaceDataDomain,
+    ...authDomain,
+    ...uiStateDomain,
+    ...profileDomain,
+  };
+
   return (
     <Suspense fallback={workspaceRouteFallback}>
-      <WorkspaceChatRoute
-        key={workspaceSession.id}
-        {...workspaceDomain}
-        {...conversationDomain}
-        {...repositoryDomain}
-        {...catalogDomain}
-        {...workspaceDataDomain}
-        {...authDomain}
-        {...uiStateDomain}
-        {...profileDomain}
-      />
+      {workspaceSession.kind === 'chat' ? (
+        <ChatSurfaceRoute
+          key={workspaceSession.id}
+          {...routeProps}
+        />
+      ) : (
+        <WorkspaceChatRoute
+          key={workspaceSession.id}
+          {...routeProps}
+        />
+      )}
     </Suspense>
   );
 }

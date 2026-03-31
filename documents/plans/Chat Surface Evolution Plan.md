@@ -330,12 +330,13 @@ Define which surface owns which kind of instructions/settings so chat mode can s
    - Fixed: handleResumeConversationFromLauncher now handles chat/scratch conversations
    - Audited boot/reload paths — chat session persistence and restoration confirmed correct
 
-5. **Track A (dedicated chat surface)**
-   - do this after the product behavior is clearer
-   - otherwise we risk building the wrong shell boundary first
+5. **Track A (dedicated chat surface)** — shipped 2026-03-31
+   - Chat sessions now route through a dedicated `ChatSurfaceRoute` / `ChatSurfaceScreen`
+   - `WorkspaceChatRoute` is back to scratch/repo execution concerns instead of owning chat presentation too
+   - The route split stays on one shared runtime/storage/auth platform; this is a surface boundary, not an app fork
 
 6. **Track C (explicit context escalation)**
-   - depends on knowing the dedicated chat surface and launcher story
+   - now unblocked by the dedicated chat surface and chat-first launcher work
    - should ship once the plain-chat baseline feels settled
 
 ## Risks

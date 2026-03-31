@@ -102,8 +102,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   } = props;
 
   const isScratch = workspaceSession?.kind === 'scratch';
-  const isChat = workspaceSession?.kind === 'chat';
-  const activeRepoAppearance = activeRepo && !isScratch && !isChat
+  const activeRepoAppearance = activeRepo && !isScratch
     ? resolveRepoAppearance(activeRepo.full_name)
     : null;
   const activeRepoAccentHex = activeRepoAppearance
@@ -164,7 +163,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const sandboxStart = sandbox.start;
   const sandboxStop = sandbox.stop;
   const startCurrentSandbox = useCallback(() => {
-    if (isChat) return; // Chat mode has no sandbox
     if (isScratch) {
       void sandboxStart('', 'main');
       return;
@@ -172,10 +170,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     if (activeRepo) {
       void sandboxStart(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
     }
-  }, [activeRepo, isChat, isScratch, sandboxStart]);
+  }, [activeRepo, isScratch, sandboxStart]);
 
   const restartCurrentSandbox = useCallback(() => {
-    if (isChat) return; // Chat mode has no sandbox
     if (isScratch) {
       void sandboxStop().then(() => sandboxStart('', 'main'));
       return;
@@ -183,7 +180,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     if (activeRepo) {
       void sandboxStop().then(() => sandboxStart(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
     }
-  }, [activeRepo, isChat, isScratch, sandboxStart, sandboxStop]);
+  }, [activeRepo, isScratch, sandboxStart, sandboxStop]);
 
   const {
     composerPrefillRequest,
@@ -344,7 +341,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const settingsAI = buildSettingsAI(props);
   const settingsWorkspace = buildSettingsWorkspace(props);
   const settingsData = buildSettingsData(props);
-  const workspaceHubCapabilities = buildWorkspaceHubCapabilities(isScratch || isChat, activeRepo);
+  const workspaceHubCapabilities = buildWorkspaceHubCapabilities(isScratch, activeRepo);
   const workspaceHubScratchActions = buildWorkspaceHubScratchActions({
     isScratch,
     snapshots,
@@ -409,12 +406,11 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleStartChat,
     handleDisconnect: handleDisconnectRequest,
     validatedUser: props.validatedUser,
-    mode: isChat ? 'chat' : 'default',
+    mode: 'default',
   });
   const chatScreenWorkspace = {
     activeRepo,
     isScratch,
-    isChat,
     activeRepoAppearance,
     sandboxStatus: sandbox.status,
     sandboxDownloading,
@@ -425,7 +421,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     snapshotIsStale,
   };
   const chatScreenShell = {
-    launcherLabel: isChat ? 'Launcher' : isScratch ? 'Workspace' : currentBranch,
+    launcherLabel: isScratch ? 'Workspace' : currentBranch,
     hasWorkspaceActivityIndicator: scratchpad.hasContent || agentStatus.active,
     chatShellTransform,
     chatShellShadow,
@@ -438,9 +434,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       messages,
       agentStatus,
       activeRepo,
-      hasSandbox: Boolean(!isChat && (isScratch || activeRepo)),
-      isChat,
-      onSuggestion: isChat ? undefined : handleQuickPrompt,
+      hasSandbox: Boolean(isScratch || activeRepo),
+      isChat: false,
+      onSuggestion: handleQuickPrompt,
       onCardAction: handleCardActionWithSnapshotHeartbeat,
       onPin: pinnedArtifacts.pin,
       interruptedCheckpoint,
@@ -458,7 +454,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       queuedFollowUpCount,
       pendingSteerCount,
       repoName: activeRepo?.name,
-      placeholder: isChat ? 'Message' : undefined,
       contextUsage,
       draftKey: activeChatId,
       prefillRequest: composerPrefillRequest,
@@ -473,7 +468,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       hasMessages: messages.length > 0,
       isStreaming,
       sandboxId: sandbox.sandboxId,
-      isInScratchWorkspace: Boolean(isScratch) && !isChat,
+      isInScratchWorkspace: Boolean(isScratch),
       onStart: startCurrentSandbox,
       onRetry: () => { void sandbox.refresh(); },
       onNewSandbox: restartCurrentSandbox,
@@ -518,10 +513,10 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             reviewModelOptions={reviewModelOptions}
             lockedProvider={lockedProvider}
             lockedModel={lockedModel}
-            workspaceMode={isChat ? 'chat' : isScratch ? 'scratch' : 'repo'}
+            workspaceMode={isScratch ? 'scratch' : 'repo'}
             capabilities={workspaceHubCapabilities}
             scratchActions={workspaceHubScratchActions}
-            repoName={activeRepo?.name || (isChat ? 'Chat' : isScratch ? 'Workspace' : undefined)}
+            repoName={activeRepo?.name || (isScratch ? 'Workspace' : undefined)}
             repoFullName={activeRepo?.full_name}
             projectInstructions={instructions.agentsMdContent}
             protectMainEnabled={protectMain.isProtected}

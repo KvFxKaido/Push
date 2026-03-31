@@ -26,7 +26,6 @@ type SandboxExpiryBannerProps = ComponentProps<typeof SandboxExpiryBanner>;
 interface ChatScreenWorkspaceProps {
   activeRepo: ActiveRepo | null;
   isScratch: boolean;
-  isChat: boolean;
   activeRepoAppearance: RepoAppearance | null;
   sandboxStatus: SandboxStatusBannerProps['status'];
   sandboxDownloading: boolean;
@@ -75,7 +74,6 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
   const {
     activeRepo,
     isScratch,
-    isChat,
     activeRepoAppearance,
     sandboxStatus,
     sandboxDownloading,
@@ -116,9 +114,7 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
               )}
               <div className={`${activeRepoAppearance ? '-ml-1.5' : '-ml-2.5'} flex min-w-0 items-center self-stretch`}>
                 <p className="truncate text-sm font-medium leading-tight text-[#f5f7ff]">
-                  {isChat ? (
-                    <span className="hidden sm:inline">Chat</span>
-                  ) : isScratch ? (
+                  {isScratch ? (
                     <span className="hidden sm:inline">Workspace</span>
                   ) : (
                     activeRepo?.name || 'Push'
@@ -126,7 +122,7 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
                 </p>
               </div>
             </div>
-            {isScratch && !isChat && (
+            {isScratch && (
               <>
                 <span className="text-push-2xs text-push-fg-dim">ephemeral</span>
                 {snapshots.latestSnapshot && (
@@ -189,7 +185,7 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
             )}
           </div>
 
-          {(activeRepo || isScratch || isChat) && (
+          {(activeRepo || isScratch) && (
             <div className="flex min-w-0 justify-center">
               <button
                 onClick={onOpenLauncher}
@@ -206,15 +202,15 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
           )}
 
           <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
-            {(activeRepo || isScratch || isChat) && (
+            {(activeRepo || isScratch) && (
               <button
                 onClick={onOpenWorkspaceHub}
                 className={HEADER_ROUND_BUTTON_CLASS}
-                aria-label={isChat ? 'Open chat panel' : 'Open workspace hub'}
-                title={isChat ? 'Chat panel' : 'Workspace'}
+                aria-label="Open workspace hub"
+                title="Workspace"
               >
                 <WorkspaceDockIcon className="relative z-10 h-3.5 w-3.5" />
-                {!isChat && hasWorkspaceActivityIndicator && (
+                {hasWorkspaceActivityIndicator && (
                   <span
                     className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-push-sky ${
                       chatContainerProps.agentStatus.active ? 'animate-pulse shadow-[0_0_6px_rgba(56,189,248,0.5)]' : ''
@@ -227,13 +223,13 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
           <div className="pointer-events-none absolute inset-x-0 top-full h-8 bg-gradient-to-b from-black to-transparent" />
         </header>
 
-        {!isChat && <SandboxStatusBanner {...sandboxStatusBannerProps} />}
+        <SandboxStatusBanner {...sandboxStatusBannerProps} />
 
-        {!isChat && sandboxExpiryBannerProps && (
+        {sandboxExpiryBannerProps && (
           <SandboxExpiryBanner {...sandboxExpiryBannerProps} />
         )}
 
-        {!isChat && !isScratch && activeRepo && instructions.projectInstructionsChecked && !instructions.projectInstructionsCheckFailed && !instructions.agentsMdContent && (
+        {!isScratch && activeRepo && instructions.projectInstructionsChecked && !instructions.projectInstructionsCheckFailed && !instructions.agentsMdContent && (
           <div className={`mx-4 mt-5 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-push-edge/70`}>
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
