@@ -6,6 +6,7 @@
 - State: **Partially shipped** — the original boundary plan largely landed; remaining work is optional cleanup, bundle measurement, and deciding whether `WorkspaceChatRoute` needs further decomposition
 - Scope: Follow-up work after the `useChat` refactor and the `WorkspaceScreen` extraction
 - Goal: Make the workspace route feel like a set of honest boundaries instead of a new place where all complexity collects
+- Follow-on note: chat-mode product/shell evolution is now tracked separately in `documents/plans/Chat Surface Evolution Plan.md`
 
 ## Implementation Status Snapshot (2026-03-30)
 

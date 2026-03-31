@@ -1,6 +1,6 @@
 # Plans Folder
 
-Status reviewed: 2026-03-30
+Status reviewed: 2026-03-31
 
 This folder mixes active plans, partially completed roadmaps, deferred designs, and historical implementation records. It should not be treated as a flat backlog.
 
@@ -16,6 +16,7 @@ This folder mixes active plans, partially completed roadmaps, deferred designs, 
 | Document | Status | Notes |
 |---|---|---|
 | `Background Coder Tasks Plan.md` | Deferred reference | Intentionally deferred while Push remains a PWA; keep for native-app or daemon-first revisits. |
+| `Chat Surface Evolution Plan.md` | Current, created 2026-03-31 | Defines the next product/UI trajectory for chat mode: separate surface, shared platform. |
 | `Efficiency Plan.md` | Historical, partially shipped | Core decisions landed; doc still contains pre-ship reasoning and is useful mainly as rationale. |
 | `Harness Reliability Plan.md` | Historical tracking | Tracks A/B/C/E largely shipped; Track D deferred. Best used as implementation history and rationale. |
 | `Harness Runtime Evolution Plan.md` | Historical, completed 2026-03-30 | All five harness-runtime tracks shipped; use as implementation history and follow-up rationale, not as the live roadmap. |
@@ -28,6 +29,7 @@ This folder mixes active plans, partially completed roadmaps, deferred designs, 
 
 If we are choosing implementation work from this folder, the live clusters are:
 
-1. Selective web/CLI convergence where duplication still creates drift.
-2. Optional workspace-route cleanup after the major boundary work already shipped.
-3. Deferred/background execution work only if product scope changes.
+1. Chat-surface evolution: make chat feel like a first-class app surface without splitting the platform.
+2. Selective web/CLI convergence where duplication still creates drift.
+3. Optional workspace-route cleanup after the major boundary work already shipped.
+4. Deferred/background execution work only if product scope changes.
