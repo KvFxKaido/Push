@@ -129,6 +129,14 @@ function App() {
       return;
     }
 
+    // Scratch workspace conversations — resume into scratch workspace.
+    if (conversation.mode === 'scratch' || (!conversation.repoFullName && !conversation.mode)) {
+      setPendingResumeChatId(chatId);
+      clearActiveRepo();
+      setWorkspaceSession({ id: crypto.randomUUID(), kind: 'scratch', sandboxId: null });
+      return;
+    }
+
     if (!conversation.repoFullName) return;
 
     const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);

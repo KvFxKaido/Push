@@ -799,6 +799,11 @@ export function useChat(
     applyWorkspaceContext(ctx, activeChatIdRef.current);
   }, [applyWorkspaceContext]);
 
+  /** Synchronous mode setter — call during render to avoid stale ref between workspace transitions. */
+  const setWorkspaceMode = useCallback((mode: WorkspaceMode | null) => {
+    workspaceModeRef.current = mode;
+  }, []);
+
   useEffect(() => {
     applyWorkspaceContext(baseWorkspaceContextRef.current, activeChatId);
   }, [activeChatId, activeConversation?.verificationPolicy, applyWorkspaceContext]);
@@ -1592,6 +1597,7 @@ export function useChat(
 
     // Workspace context
     setWorkspaceContext,
+    setWorkspaceMode,
 
     // Sandbox
     setSandboxId,

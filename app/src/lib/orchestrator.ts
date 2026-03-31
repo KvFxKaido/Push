@@ -512,6 +512,12 @@ function toLLMMessages(
     // Start from the shared base and layer in runtime-dependent blocks.
     const builder = buildOrchestratorBaseBuilder();
 
+    // Chat mode — strip tool instructions and delegation (plain conversation)
+    if (workspaceContext?.mode === 'chat') {
+      builder.set('tool_instructions', null);
+      builder.set('delegation', null);
+    }
+
     // User identity (name, bio) when configured
     const identityBlock = buildUserIdentityBlock(getUserProfile());
     const approvalBlock = buildApprovalModeBlock(getApprovalMode());

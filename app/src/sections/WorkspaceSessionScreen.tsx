@@ -99,6 +99,7 @@ export function WorkspaceSessionScreen({
     regenerateLastResponse,
     editMessageAndResend,
     setWorkspaceContext,
+    setWorkspaceMode,
     setSandboxId,
     setWorkspaceSessionId,
     setEnsureSandbox,
@@ -147,6 +148,10 @@ export function WorkspaceSessionScreen({
       defaultBranch: workspaceRepo?.default_branch,
     },
   );
+
+  // Synchronously set workspace mode so createNewChat tags conversations correctly
+  // during workspace transitions (before the async useProjectInstructions effect fires).
+  setWorkspaceMode(workspaceSession.kind === 'chat' ? 'chat' : workspaceSession.kind === 'scratch' ? 'scratch' : 'repo');
 
   const { protectMain } = useWorkspaceSessionBridge({
     conversations,

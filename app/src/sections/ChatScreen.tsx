@@ -117,7 +117,7 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
               <div className={`${activeRepoAppearance ? '-ml-1.5' : '-ml-2.5'} flex min-w-0 items-center self-stretch`}>
                 <p className="truncate text-sm font-medium leading-tight text-[#f5f7ff]">
                   {isChat ? (
-                    <span>Chat</span>
+                    <span className="hidden sm:inline">Chat</span>
                   ) : isScratch ? (
                     <span className="hidden sm:inline">Workspace</span>
                   ) : (

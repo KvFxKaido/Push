@@ -536,7 +536,11 @@ export function RepoLauncherPanel({
           </button>
         )}
 
-        <div className={`grid gap-2 ${onStartWorkspace || onStartChat ? 'grid-cols-3' : 'grid-cols-1'}`}>
+        <div className={`grid gap-2 ${
+          (onStartWorkspace && onStartChat) ? 'grid-cols-3' :
+          (onStartWorkspace || onStartChat) ? 'grid-cols-2' :
+          'grid-cols-1'
+        }`}>
           {onStartChat && (
             <button
               onClick={onStartChat}
