@@ -1,7 +1,8 @@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { RepoLauncherPanel, type LauncherSandboxSession } from './RepoLauncherPanel';
+import { LauncherHomeContent } from './LauncherHomeContent';
+import type { LauncherSandboxSession } from './RepoLauncherPanel';
 import type { RepoAppearance } from '@/lib/repo-appearance';
-import type { ActiveRepo, ConversationIndex, RepoWithActivity } from '@/types';
+import type { ActiveRepo, ConversationIndex, GitHubUser, RepoWithActivity } from '@/types';
 
 interface RepoLauncherSheetProps {
   open: boolean;
@@ -20,6 +21,8 @@ interface RepoLauncherSheetProps {
   onResumeSandbox?: () => void;
   onStartWorkspace?: () => void;
   onStartChat?: () => void;
+  onDisconnect: () => void;
+  user: GitHubUser | null;
 }
 
 export function RepoLauncherSheet({
@@ -39,58 +42,68 @@ export function RepoLauncherSheet({
   onResumeSandbox,
   onStartWorkspace,
   onStartChat,
+  onDisconnect,
+  user,
 }: RepoLauncherSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="h-[92dvh] border-t border-push-edge bg-push-grad-panel px-0 pb-0 pt-0 text-push-fg"
+        className="h-[92dvh] border-t border-push-edge bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] px-0 pb-0 pt-0 text-push-fg"
       >
-        <SheetHeader className="border-b border-push-edge/70 bg-[linear-gradient(180deg,rgba(10,13,20,0.84)_0%,rgba(6,8,13,0.92)_100%)] px-4 py-4 text-left backdrop-blur-xl">
+        <SheetHeader className="sr-only">
           <SheetTitle className="text-sm font-semibold text-push-fg">Launcher</SheetTitle>
           <SheetDescription className="text-xs text-push-fg-dim">
             Resume repo work, reopen your sandbox, or switch context without leaving chat.
           </SheetDescription>
         </SheetHeader>
 
-        <div className="h-[calc(92dvh-72px)] overflow-y-auto overscroll-contain px-4 pb-6 pt-4">
-          <RepoLauncherPanel
-            repos={repos}
-            loading={loading}
-            error={error}
-            conversations={conversations}
-            activeRepo={activeRepo}
-            resolveRepoAppearance={resolveRepoAppearance}
-            setRepoAppearance={setRepoAppearance}
-            clearRepoAppearance={clearRepoAppearance}
-            onSelectRepo={(repo, branch) => {
-              onSelectRepo(repo, branch);
-              onOpenChange(false);
-            }}
-            onResumeConversation={(chatId) => {
-              onResumeConversation(chatId);
-              onOpenChange(false);
-            }}
-            sandboxSession={sandboxSession}
-            onResumeSandbox={sandboxSession
-              ? () => {
-                  onResumeSandbox?.();
-                  onOpenChange(false);
-                }
-              : undefined}
-            onStartWorkspace={onStartWorkspace
-              ? () => {
-                  onStartWorkspace();
-                  onOpenChange(false);
-                }
-              : undefined}
-            onStartChat={onStartChat
-              ? () => {
-                  onStartChat();
-                  onOpenChange(false);
-                }
-              : undefined}
-          />
+        <div className="relative flex h-full flex-col">
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-white/[0.03] to-transparent" />
+          <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-6 pt-4">
+            <LauncherHomeContent
+              repos={repos}
+              loading={loading}
+              error={error}
+              conversations={conversations}
+              activeRepo={activeRepo}
+              resolveRepoAppearance={resolveRepoAppearance}
+              setRepoAppearance={setRepoAppearance}
+              clearRepoAppearance={clearRepoAppearance}
+              onSelectRepo={(repo, branch) => {
+                onSelectRepo(repo, branch);
+                onOpenChange(false);
+              }}
+              onResumeConversation={(chatId) => {
+                onResumeConversation(chatId);
+                onOpenChange(false);
+              }}
+              onDisconnect={() => {
+                onDisconnect();
+                onOpenChange(false);
+              }}
+              onStartWorkspace={onStartWorkspace
+                ? () => {
+                    onStartWorkspace();
+                    onOpenChange(false);
+                  }
+                : undefined}
+              onStartChat={onStartChat
+                ? () => {
+                    onStartChat();
+                    onOpenChange(false);
+                  }
+                : undefined}
+              sandboxSession={sandboxSession}
+              onResumeSandbox={sandboxSession
+                ? () => {
+                    onResumeSandbox?.();
+                    onOpenChange(false);
+                  }
+                : undefined}
+              user={user}
+            />
+          </div>
         </div>
       </SheetContent>
     </Sheet>

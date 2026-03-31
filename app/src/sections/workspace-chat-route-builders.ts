@@ -437,6 +437,8 @@ export function buildRepoLauncherSheetProps(args: {
   sandboxCreatedAt: ChatRouteProps['sandbox']['createdAt'];
   handleStartWorkspace?: () => void;
   handleStartChat?: () => void;
+  handleDisconnect: () => void;
+  validatedUser: ChatRouteProps['validatedUser'];
 }): RepoLauncherSheetProps {
   return {
     open: args.open,
@@ -454,5 +456,7 @@ export function buildRepoLauncherSheetProps(args: {
     sandboxSession: args.isScratch ? { status: args.sandboxStatus, createdAt: args.sandboxCreatedAt } : null,
     onStartWorkspace: args.handleStartWorkspace,
     onStartChat: args.handleStartChat,
+    onDisconnect: args.handleDisconnect,
+    user: args.validatedUser,
   };
 }

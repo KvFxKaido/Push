@@ -407,6 +407,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     sandboxCreatedAt: sandbox.createdAt,
     handleStartWorkspace: handleStartWorkspace ? handleStartWorkspaceRequest : undefined,
     handleStartChat,
+    handleDisconnect: handleDisconnectRequest,
+    validatedUser: props.validatedUser,
   });
   const chatScreenWorkspace = {
     activeRepo,
