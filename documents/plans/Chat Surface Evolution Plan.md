@@ -311,21 +311,24 @@ Define which surface owns which kind of instructions/settings so chat mode can s
 
 ## Rollout order
 
-1. **Track E (small polish + onboarding clarity)**
-   - cheap wins
-   - removes obvious friction
-   - helps product feel immediately better while deeper refactors are still pending
+1. **Track E (small polish + onboarding clarity)** — shipped 2026-03-31
+   - Onboarding now offers Chat + Workspace as separate no-account entry points
+   - Chat empty state reframed positively and kept intentionally prompt-free
+   - Hub panel visible in chat mode with filtered tabs (notes + settings)
 
-2. **Track F (settings/instructions ownership)**
-   - prevents us from painting chat and workspace surfaces into the wrong settings model
-   - gives chat mode an honest place for richer instructions before we overbuild projects
+2. **Track F (settings/instructions ownership)** — shipped 2026-03-31
+   - Chat instructions field (4000 chars) separate from the 300-char bio
+   - Injected into system prompt only in chat mode; workspace uses project instructions
+   - Settings ownership clarified: global profile (bio), chat instructions, workspace settings
 
-3. **Track B (chat-first launcher)**
-   - highest UX leverage after the initial polish
-   - likely to expose the remaining mode leaks quickly
+3. **Track B (chat-first launcher)** — shipped 2026-03-31
+   - Launcher shows recent chat conversations first when opened from chat mode
+   - Sandbox/repo resume cards hidden in chat mode; Chat action button suppressed
+   - Mode prop flows through LauncherHomeContent → RepoLauncherPanel
 
-4. **Track D (mode-specific boot/persistence cleanup)**
-   - stabilizes the chat surface so routing/launcher work stops fighting bootstrap assumptions
+4. **Track D (mode-specific boot/persistence cleanup)** — shipped 2026-03-31
+   - Fixed: handleResumeConversationFromLauncher now handles chat/scratch conversations
+   - Audited boot/reload paths — chat session persistence and restoration confirmed correct
 
 5. **Track A (dedicated chat surface)**
    - do this after the product behavior is clearer
