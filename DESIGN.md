@@ -8,6 +8,8 @@ Built on Tailwind CSS + shadcn/ui (New York style) with Radix primitives.
 
 ## Colors
 
+Tokens below are Tailwind theme extensions. Use them with the appropriate utility prefix: `text-push-fg`, `bg-push-surface`, `border-push-edge`, `shadow-push-card`, etc.
+
 ### Text Hierarchy (bright to dim)
 
 | Token              | Hex       | Use                          |
@@ -94,8 +96,8 @@ Base `--radius` is `0.625rem` (10px).
 
 | Token | Value | Use                      |
 | ----- | ----- | ------------------------ |
-| `xl`  | 14px  | Large containers         |
-| `lg`  | 10px  | Cards, dialogs           |
+| `xl`  | 14px  | Cards, dialogs           |
+| `lg`  | 10px  | Large containers         |
 | `md`  | 8px   | Buttons, inputs          |
 | `sm`  | 6px   | Small elements           |
 | `xs`  | 4px   | Tight corners, badges    |
@@ -107,14 +109,16 @@ Standard Tailwind gap classes: `gap-2`, `gap-4`, `gap-6`.
 
 ## Shadows
 
-| Token             | Value                                                               |
-| ----------------- | ------------------------------------------------------------------- |
-| `push-sm`         | `0 2px 8px rgba(0,0,0,0.25)`                                       |
-| `push-md`         | `0 8px 24px rgba(0,0,0,0.35)`                                      |
-| `push-lg`         | `0 14px 36px rgba(0,0,0,0.45)`                                     |
-| `push-xl`         | `0 20px 48px rgba(0,0,0,0.55)`                                     |
-| `push-card`       | `0 4px 16px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.15)`          |
-| `push-card-hover` | `0 8px 28px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.2)`           |
+Shadows are used for overlays and floating elements (dialogs, popovers, dropdowns) — not for distinguishing surface layers. Surface hierarchy uses border and background contrast instead.
+
+| Token             | Value                                                               | Use                  |
+| ----------------- | ------------------------------------------------------------------- | -------------------- |
+| `push-sm`         | `0 2px 8px rgba(0,0,0,0.25)`                                       | Tooltips, small pops |
+| `push-md`         | `0 8px 24px rgba(0,0,0,0.35)`                                      | Dropdowns, menus     |
+| `push-lg`         | `0 14px 36px rgba(0,0,0,0.45)`                                     | Dialogs, modals      |
+| `push-xl`         | `0 20px 48px rgba(0,0,0,0.55)`                                     | Full-screen overlays |
+| `push-card`       | `0 4px 16px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.15)`          | Floating cards       |
+| `push-card-hover` | `0 8px 28px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.2)`           | Card hover lift      |
 
 ## Motion
 
@@ -149,7 +153,7 @@ Standard Tailwind gap classes: `gap-2`, `gap-4`, `gap-6`.
 - Border radius: `rounded-md` (8px)
 - Default height: `h-9`, padding `px-4 py-2`
 - Small: `h-8 px-3`, Large: `h-10 px-6`
-- Icon: `size-9`, Icon-sm: `size-8`, Icon-lg: `size-10`
+- Icon-only: `size-9`, Icon-only-sm: `size-8`, Icon-only-lg: `size-10`
 - Primary fills with `push-accent` blue; use sparingly
 - Focus: 3px ring with `ring-ring/50`
 
@@ -206,6 +210,6 @@ Common sizes: `size-3` (12px), `size-3.5` (14px), `size-4` (16px), `size-8` (32p
 - Do use the gradient backgrounds (`bg-push-grad-card`, `bg-push-grad-panel`) for layered surfaces instead of flat colors
 - Do respect `prefers-reduced-motion`
 - Don't mix rounded and sharp corners in the same view
-- Don't use shadows for elevation hierarchy — use border and background contrast
+- Don't use shadows to distinguish surface layers — use border and background contrast. Shadows are reserved for floating elements (dialogs, popovers, dropdowns)
 - Don't introduce light-mode colors; the app is dark-only
-- Don't hardcode colors — use the token classes (`push-fg`, `push-surface`, etc.)
+- Don't hardcode colors — use the token classes with Tailwind prefixes: `text-push-fg`, `bg-push-surface`, `border-push-edge`, etc.
