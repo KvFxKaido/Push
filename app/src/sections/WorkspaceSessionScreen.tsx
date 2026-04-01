@@ -12,6 +12,7 @@ import { useProjectInstructions } from '@/hooks/useProjectInstructions';
 import { useWorkspaceComposerState } from '@/hooks/useWorkspaceComposerState';
 import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import { useWorkspaceSandboxController } from '@/hooks/useWorkspaceSandboxController';
+import { perfMark } from '@/lib/perf-marks';
 import { useWorkspaceSessionBridge } from './useWorkspaceSessionBridge';
 import type {
   RepoWithActivity,
@@ -155,6 +156,10 @@ export function WorkspaceSessionScreen({
   // Synchronously set workspace mode so createNewChat tags conversations correctly
   // during workspace transitions (before the async useProjectInstructions effect fires).
   setWorkspaceMode(workspaceSession.kind === 'chat' ? 'chat' : workspaceSession.kind === 'scratch' ? 'scratch' : 'repo');
+
+  useEffect(() => {
+    perfMark(workspaceSession.kind === 'chat' ? 'surface:chat' : 'surface:workspace');
+  }, [workspaceSession.id, workspaceSession.kind]);
 
   useEffect(() => {
     if (pendingResumeChatId) return;

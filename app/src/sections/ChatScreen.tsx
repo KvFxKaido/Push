@@ -72,7 +72,7 @@ const HEADER_PILL_BUTTON_CLASS =
   `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
 
 export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps) {
-  usePerfMark('workspace-chat:painted', 'screen:workspace');
+  usePerfMark('workspace-chat:painted', 'surface:workspace');
   const {
     activeRepo,
     isScratch,

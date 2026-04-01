@@ -217,9 +217,9 @@ describe('SystemPromptBuilder', () => {
     const snap2 = builder.snapshot();
 
     // Stable section unchanged
-    expect(snap2.identity.hash).toBe(snap1.identity.hash);
+    expect(snap2.identity!.hash).toBe(snap1.identity!.hash);
     // Volatile section changed
-    expect(snap2.memory.hash).not.toBe(snap1.memory.hash);
+    expect(snap2.memory!.hash).not.toBe(snap1.memory!.hash);
   });
 
   // --- New section ordering ---

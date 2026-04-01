@@ -35,7 +35,7 @@ export function ChatSurfaceScreen({
   containerProps,
   inputProps,
 }: ChatSurfaceScreenProps) {
-  usePerfMark('chat-surface:painted', 'screen:workspace');
+  usePerfMark('chat-surface:painted', 'surface:chat');
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-[#000] safe-area-top safe-area-bottom">
       <div

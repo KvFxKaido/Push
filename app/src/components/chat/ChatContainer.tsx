@@ -135,6 +135,21 @@ const SettledMessageList = memo(function SettledMessageList({
       ))}
     </>
   );
+}, (prevProps, nextProps) => {
+  if (prevProps.messages.length !== nextProps.messages.length) return false;
+  if (prevProps.onCardAction !== nextProps.onCardAction) return false;
+  if (prevProps.onPin !== nextProps.onPin) return false;
+  if (prevProps.onEditUserMessage !== nextProps.onEditUserMessage) return false;
+  if (prevProps.regeneratableAssistantMessageId !== nextProps.regeneratableAssistantMessageId) return false;
+  if (prevProps.onRegenerateLastResponse !== nextProps.onRegenerateLastResponse) return false;
+
+  for (let index = 0; index < prevProps.messages.length; index++) {
+    if (prevProps.messages[index] !== nextProps.messages[index]) {
+      return false;
+    }
+  }
+
+  return true;
 });
 
 const AUTO_SCROLL_THRESHOLD_PX = 150;
@@ -300,21 +315,15 @@ export function ChatContainer({
     setIsAtBottom(true);
   };
 
-  // Split messages into settled (stable reference for memo) and active (last, possibly streaming).
-  // During streaming, only the active message changes each tick, so the settled list
-  // stays referentially equal and SettledMessageList skips re-render entirely.
-  //
-  // Key insight: during streaming the settled portion is identified by (count, last-settled-id).
-  // These values don't change between streaming ticks, so the useMemo dependency array
-  // stays stable and the slice is only recomputed when a new message is actually added.
+  // Split messages into settled (all but the active streaming tail) and active.
+  // SettledMessageList is memoized with a custom comparator, so streaming chunks
+  // can create a fresh settled array without forcing re-renders when the
+  // underlying settled message objects are unchanged.
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
   const isLastStreaming = lastMsg?.status === 'streaming';
-  const settledCount = isLastStreaming ? messages.length - 1 : messages.length;
-  const settledLastId = settledCount > 0 ? messages[settledCount - 1]?.id : undefined;
   const settledMessages = useMemo(
     () => (isLastStreaming ? messages.slice(0, -1) : messages),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on settled identity, not messages ref
-    [settledCount, settledLastId, isLastStreaming],
+    [isLastStreaming, messages],
   );
   const activeMessage = isLastStreaming ? lastMsg : null;
 

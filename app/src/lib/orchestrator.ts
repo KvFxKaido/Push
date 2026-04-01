@@ -439,13 +439,23 @@ function buildOrchestratorBasePrompt(): string {
 export const ORCHESTRATOR_SYSTEM_PROMPT = buildOrchestratorBasePrompt();
 
 /**
- * Dev-only: previous prompt snapshot for diffing between turns.
- * Module-scoped because toLLMMessages is a standalone function.
- * Reset to null when systemPromptOverride is used so stale snapshots
- * from a different code path don't produce misleading diffs.
+ * Dev-only: previous prompt snapshots for diffing between turns.
+ * Keyed by a conversation-ish snapshot key so multi-chat sessions do not
+ * compare unrelated prompts against each other in the console.
  * Only read/written inside `import.meta.env.DEV` guards.
  */
-let _lastPromptSnapshot: PromptSnapshot | null = null;
+const _lastPromptSnapshots = new Map<string, PromptSnapshot>();
+
+function getPromptSnapshotKey(messages: ChatMessage[], workspaceContext?: WorkspaceContext): string {
+  const firstUserMessage = messages.find((message) => message.role === 'user' && !message.isToolResult);
+  if (firstUserMessage) {
+    return `user:${firstUserMessage.id}`;
+  }
+  if (workspaceContext) {
+    return `workspace:${workspaceContext.mode}:${workspaceContext.description}`;
+  }
+  return 'global';
+}
 
 // Multimodal content types (OpenAI-compatible)
 interface LLMMessageContentText {
@@ -528,12 +538,11 @@ function toLLMMessages(
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
   let systemContent: string;
+  const promptSnapshotKey = getPromptSnapshotKey(messages, workspaceContext);
 
   if (systemPromptOverride) {
     systemContent = systemPromptOverride;
-    // Reset snapshot so the next builder-path diff doesn't compare against
-    // a stale snapshot from before the override.
-    _lastPromptSnapshot = null;
+    _lastPromptSnapshots.delete(promptSnapshotKey);
   } else {
     // Build the full orchestrator prompt using the sectioned builder.
     // Start from the shared base and layer in runtime-dependent blocks.
@@ -619,12 +628,13 @@ function toLLMMessages(
       console.log(`[Context Budget] System prompt: ${fmt(systemContent.length)} chars (${parts})`);
 
       const currentSnap = builder.snapshot();
-      if (_lastPromptSnapshot) {
-        const diff = diffSnapshots(_lastPromptSnapshot, currentSnap);
+      const previousSnap = _lastPromptSnapshots.get(promptSnapshotKey);
+      if (previousSnap) {
+        const diff = diffSnapshots(previousSnap, currentSnap);
         const diffStr = formatSnapshotDiff(diff);
         if (diffStr) console.log(diffStr);
       }
-      _lastPromptSnapshot = currentSnap;
+      _lastPromptSnapshots.set(promptSnapshotKey, currentSnap);
     }
   }
 
