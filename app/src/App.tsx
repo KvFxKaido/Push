@@ -104,10 +104,6 @@ const WorkspaceScreen = lazyWithRecovery(
 );
 
 function App() {
-  // Measure time from boot to App component first render.
-  perfMark('app:first-render');
-  perfMeasure('app:boot', 'app:first-render');
-
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
   const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => loadWorkspaceSession(activeRepo));
   const [conversationIndex, setConversationIndex] = useState<ConversationIndex>({});
@@ -118,6 +114,11 @@ function App() {
     setRepoAppearance,
     clearRepoAppearance,
   } = useRepoAppearance();
+
+  useEffect(() => {
+    perfMark('app:first-render');
+    perfMeasure('app:boot', 'app:first-render');
+  }, []);
 
   useEffect(() => {
     perfMark('conversations:migrate-start');
@@ -278,7 +279,9 @@ function App() {
 
   // Instrument screen transitions — mark which screen is about to render.
   // The corresponding "painted" mark lives inside each screen component.
-  perfMark(`screen:${screen}`);
+  useEffect(() => {
+    perfMark(`screen:${screen}`);
+  }, [screen]);
 
   if (screen === 'onboarding') {
     return (

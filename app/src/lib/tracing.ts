@@ -107,7 +107,10 @@ export function initPushTracing(): PushTracingConfig {
 
   const config = resolveTracingConfigFromInputs();
   cachedConfig = config;
-  if (!config.enabled) return config;
+
+  // Skip SDK load entirely when tracing is disabled or no exporters are configured.
+  const hasExporters = Boolean(config.endpoint || config.consoleExporter);
+  if (!config.enabled || !hasExporters) return config;
 
   // Defer the heavy SDK bootstrap so it never blocks first paint.
   const bootstrap = () => {
@@ -122,7 +125,7 @@ export function initPushTracing(): PushTracingConfig {
   };
 
   if (typeof requestIdleCallback === 'function') {
-    requestIdleCallback(bootstrap);
+    requestIdleCallback(bootstrap, { timeout: 5000 });
   } else {
     setTimeout(bootstrap, 0);
   }

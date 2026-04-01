@@ -303,11 +303,18 @@ export function ChatContainer({
   // Split messages into settled (stable reference for memo) and active (last, possibly streaming).
   // During streaming, only the active message changes each tick, so the settled list
   // stays referentially equal and SettledMessageList skips re-render entirely.
+  //
+  // Key insight: during streaming the settled portion is identified by (count, last-settled-id).
+  // These values don't change between streaming ticks, so the useMemo dependency array
+  // stays stable and the slice is only recomputed when a new message is actually added.
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
   const isLastStreaming = lastMsg?.status === 'streaming';
+  const settledCount = isLastStreaming ? messages.length - 1 : messages.length;
+  const settledLastId = settledCount > 0 ? messages[settledCount - 1]?.id : undefined;
   const settledMessages = useMemo(
-    () => isLastStreaming ? messages.slice(0, -1) : messages,
-    [isLastStreaming, messages],
+    () => (isLastStreaming ? messages.slice(0, -1) : messages),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on settled identity, not messages ref
+    [settledCount, settledLastId, isLastStreaming],
   );
   const activeMessage = isLastStreaming ? lastMsg : null;
 
