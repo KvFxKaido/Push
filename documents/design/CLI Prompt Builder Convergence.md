@@ -154,7 +154,11 @@ The sentinel stays in the string output, not in the builder sections.
 
 Wire `sizes()` and `snapshot()`/`diffSnapshots()` into the CLI's
 `runAssistantLoop()` behind a `PUSH_DEBUG` env var:
-
+if (process.env.PUSH_DEBUG) {
+  const sizes = builder.sizes();
+  const metrics = Object.entries(sizes).map(([k,v]) => `${k}=${v}`).join(' ');
+  console.error(fmt.dim(`[Prompt] ${metrics}`));
+}
 ```typescript
 if (process.env.PUSH_DEBUG) {
   const sizes = builder.sizes();
