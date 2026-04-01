@@ -289,6 +289,7 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
         providerOverride: 'vertex',
         modelOverride: 'google/gemini-2.5-pro',
       }),
+      expect.any(Array),
     );
   });
 
@@ -359,6 +360,7 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
         output: 'formatted files',
       }),
       expect.any(Object),
+      expect.any(Array),
     );
     expect(result.card?.type).toBe('commit-review');
     if (result.card?.type === 'commit-review') {

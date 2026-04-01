@@ -33,6 +33,12 @@ const GITHUB_TIMEOUT_MS = 15_000;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 
+export function decodeGitHubBase64Utf8(content: string): string {
+  const binary = atob(content.replace(/\n/g, ''));
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 function isRetryableError(_error: unknown, status?: number): boolean {
   if (status !== undefined) {
     if (status === 429) return true;
@@ -115,7 +121,7 @@ function createLocalGitHubToolRuntime(): GitHubToolCoreRuntime {
       return headers;
     },
     buildApiUrl: (path) => `https://api.github.com${path.startsWith('/') ? path : `/${path}`}`,
-    decodeBase64: (content) => atob(content),
+    decodeBase64: decodeGitHubBase64Utf8,
     isSensitivePath,
     redactSensitiveText,
     formatSensitivePathToolError,

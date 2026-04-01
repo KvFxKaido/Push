@@ -150,6 +150,7 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
         providerOverride: 'openrouter',
         modelOverride: 'anthropic/claude-sonnet-4.6:nitro',
       }),
+      expect.any(Array),
     );
   });
 

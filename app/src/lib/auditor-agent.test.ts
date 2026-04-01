@@ -140,6 +140,31 @@ describe('runAuditor', () => {
     expect(mockStreamFn).toHaveBeenCalledTimes(2);
   });
 
+  it('does not coalesce concurrent audits with different file context', async () => {
+    mockStreamFn.mockImplementation(async (
+      _messages: unknown,
+      onToken: (token: string) => void,
+      onDone: () => void,
+    ) => {
+      await new Promise((r) => setTimeout(r, 10));
+      onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+      onDone();
+    });
+
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+
+    await Promise.all([
+      runAuditor(diff, () => {}, undefined, undefined, undefined, [
+        { path: 'src/app.ts', content: 'const x = 1;', truncated: false, classification: 'production' },
+      ]),
+      runAuditor(diff, () => {}, undefined, undefined, undefined, [
+        { path: 'src/app.ts', content: 'const x = 2;', truncated: false, classification: 'production' },
+      ]),
+    ]);
+
+    expect(mockStreamFn).toHaveBeenCalledTimes(2);
+  });
+
   it('replays the latest status to a late-joining coalesced auditor subscriber', async () => {
     const releaseStream: { current: null | (() => void) } = { current: null };
     mockStreamFn.mockImplementation(async (

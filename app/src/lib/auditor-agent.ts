@@ -24,10 +24,11 @@ import { formatCoderState } from './coder-agent';
 
 import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
+import type { AuditorFileContext } from './auditor-file-context';
 import { SystemPromptBuilder } from './system-prompt-builder';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 
-const AUDITOR_TIMEOUT_MS = 60_000; // 60s max for auditor review
+const AUDITOR_TIMEOUT_MS = 90_000; // 90s — allows for richer file-context processing
 
 export interface HookResult {
   exitCode: number;
@@ -53,6 +54,7 @@ function auditCoalesceKey(
   modelId: string | undefined,
   runtimeContext: string,
   hookResult?: HookResult | null,
+  fileContexts?: AuditorFileContext[],
 ): string {
   return JSON.stringify({
     provider,
@@ -64,6 +66,12 @@ function auditCoalesceKey(
         output: hookResult.output,
       }
       : null,
+    fileContexts: (fileContexts ?? []).map((ctx) => ({
+      path: ctx.path,
+      classification: ctx.classification,
+      truncated: ctx.truncated,
+      content: ctx.content,
+    })),
     diff,
   });
 }
@@ -104,11 +112,29 @@ Review criteria:
 - Dead code or debug artifacts (console.log) → SAFE but note as low risk
 - Normal code changes with no security implications → SAFE
 
-Context limitation: You only see the diff plus any runtime context block appended below, not the full codebase. Where your assessment depends on broader context you cannot see, note the uncertainty explicitly in the risk description rather than defaulting to UNSAFE.
+Context: You see the diff, and when available, the full contents of changed files in [FILE CONTEXT] blocks. Use file context to:
+- Trace data flows through functions surrounding the changed lines.
+- Check whether new external calls use existing validated patterns.
+- Identify if security controls (auth checks, input validation) exist in the broader file that cover the changed code.
+- Spot if a change removes protection that the surrounding code depends on.
 
-Use [FILE HINTS] to calibrate risk — hardcoded values in test/fixture files are lower risk than in production files.
+When file context is not provided, or for files without context blocks, note the uncertainty explicitly in the risk description rather than defaulting to UNSAFE.
+
+Use [FILE HINTS] to calibrate risk — hardcoded values in test/fixture files are lower risk than in production files. Use [FILE CONTEXT] blocks (when present) for deeper analysis — trace data flows, check surrounding security controls, and validate that changes are consistent with the file's existing patterns.
 
 Be strict. When in doubt, lean toward UNSAFE. False positives are acceptable; false negatives are not.`;
+
+// Re-export for caller convenience
+export type { AuditorFileContext } from './auditor-file-context';
+
+function formatFileContextBlock(contexts: AuditorFileContext[]): string {
+  if (contexts.length === 0) return '';
+  const blocks = contexts.map((ctx) => {
+    const truncNote = ctx.truncated ? ' [truncated]' : '';
+    return `[FILE CONTEXT: ${ctx.path}]${truncNote}\n${ctx.content}\n[/FILE CONTEXT: ${ctx.path}]`;
+  });
+  return blocks.join('\n\n') + '\n\n';
+}
 
 export async function runAuditor(
   diff: string,
@@ -116,11 +142,12 @@ export async function runAuditor(
   context?: AuditorPromptContext,
   hookResult?: HookResult | null,
   options?: AuditorRunOptions,
+  fileContexts?: AuditorFileContext[],
 ): Promise<AuditResult> {
   const provider = (options?.providerOverride || getActiveProvider()) as string;
   const modelId = options?.modelOverride?.trim() || getModelForRole(provider as ActiveProvider, 'auditor')?.id;
   const runtimeContext = buildAuditorContextBlock(context);
-  const key = auditCoalesceKey(diff, provider, modelId, runtimeContext, hookResult);
+  const key = auditCoalesceKey(diff, provider, modelId, runtimeContext, hookResult, fileContexts);
 
   const inflight = pendingAudits.get(key);
   if (inflight) {
@@ -137,7 +164,7 @@ export async function runAuditor(
     ...options,
     providerOverride: provider as ActiveProvider,
     modelOverride: modelId,
-  }, runtimeContext);
+  }, runtimeContext, fileContexts);
   pendingAudits.set(key, run);
   run.finally(() => {
     pendingAudits.delete(key);
@@ -154,6 +181,7 @@ async function runAuditorCore(
   hookResult?: HookResult | null,
   options?: AuditorRunOptions,
   runtimeContext?: string,
+  fileContexts?: AuditorFileContext[],
 ): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
   const filesReviewed = parseDiffStats(diff).filesChanged;
 
@@ -192,11 +220,13 @@ async function runAuditorCore(
     ? `[FILE HINTS]\n${fileHintPaths.map((p) => `- ${p}: ${classifyFilePath(p)}`).join('\n')}\n[/FILE HINTS]\n\n`
     : '';
 
+  const fileContextBlock = formatFileContextBlock(fileContexts ?? []);
+
   const messages: ChatMessage[] = [
     {
       id: 'audit-request',
       role: 'user',
-      content: `Review this diff for security issues:\n\n${fileHintsBlock}\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\`${hookResult ? `\n\n[PRE-COMMIT HOOK RESULT]\nExit Code: ${hookResult.exitCode}\nOutput:\n${hookResult.output}\n\nIf non-zero, you MUST return UNSAFE...\n[/PRE-COMMIT HOOK RESULT]` : ''}`,
+      content: `Review this diff for security issues:\n\n${fileHintsBlock}${fileContextBlock}\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\`${hookResult ? `\n\n[PRE-COMMIT HOOK RESULT]\nExit Code: ${hookResult.exitCode}\nOutput:\n${hookResult.output}\n\nIf non-zero, you MUST return UNSAFE...\n[/PRE-COMMIT HOOK RESULT]` : ''}`,
       timestamp: Date.now(),
     },
   ];

@@ -40,6 +40,7 @@ import {
   type BatchWriteResultEntry,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
+import { fetchAuditorFileContexts, type AuditorFileContext } from './auditor-file-context';
 import { parseDiffStats } from './diff-utils';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger, extractSignatures, extractSignaturesWithLines, type SymbolRead, type SymbolKind } from './file-awareness-ledger';
@@ -1806,7 +1807,23 @@ export async function executeSandboxToolCall(
           return { text: lines.join('\n') };
         }
 
-        // Step 3: Run Auditor on the post-hook diff.
+        // Step 3: Fetch file context for richer Auditor review.
+        let fileContexts: AuditorFileContext[] = [];
+        try {
+          const filePaths = parseDiffStats(postHookDiffResult.diff).fileNames;
+          fileContexts = await fetchAuditorFileContexts(
+            filePaths,
+            async (path) => {
+              const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+              if (result.error) return null;
+              return { content: result.content, truncated: result.truncated };
+            },
+          );
+        } catch {
+          // Degrade gracefully — proceed with diff-only
+        }
+
+        // Step 4: Run Auditor on the post-hook diff.
         const auditResult = await runAuditor(
           postHookDiffResult.diff,
           (phase) => console.log(`[Push] Auditor: ${phase}`),
@@ -1822,6 +1839,7 @@ export async function executeSandboxToolCall(
             providerOverride: options?.auditorProviderOverride,
             modelOverride: options?.auditorModelOverride,
           },
+          fileContexts,
         );
 
         if (auditResult.verdict === 'unsafe') {
@@ -1832,7 +1850,7 @@ export async function executeSandboxToolCall(
           };
         }
 
-        // Step 4: SAFE — return a review card for user approval (do NOT commit)
+        // Step 5: SAFE — return a review card for user approval (do NOT commit)
         const stats = parseDiffStats(postHookDiffResult.diff);
         const reviewData: CommitReviewCardData = {
           diff: {

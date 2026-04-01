@@ -16,7 +16,8 @@ import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { runAuditor } from '@/lib/auditor-agent';
-import { execInSandbox, getSandboxDiff, writeToSandbox } from '@/lib/sandbox-client';
+import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
+import { execInSandbox, getSandboxDiff, readFromSandbox, writeToSandbox } from '@/lib/sandbox-client';
 import { deriveBranchNameFromCommitMessage, getBranchSuggestionPrefix, normalizeSuggestedBranchName, sanitizeBranchName } from '@/lib/branch-names';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { getActiveProvider, getProviderStreamFn } from '@/lib/orchestrator';
@@ -556,6 +557,20 @@ export function WorkspaceHubSheet({
 
       // Phase: Auditing
       setCommitPhase('auditing');
+      let fileContexts: AuditorFileContext[] = [];
+      try {
+        const filePaths = parseDiffStats(diffResult.diff).fileNames;
+        fileContexts = await fetchAuditorFileContexts(
+          filePaths,
+          async (path) => {
+            const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+            if (result.error) return null;
+            return { content: result.content, truncated: result.truncated };
+          },
+        );
+      } catch {
+        // Degrade gracefully — proceed with diff-only
+      }
       const auditResult = await runAuditor(diffResult.diff, () => {}, {
         repoFullName,
         activeBranch: targetBranchName,
@@ -568,7 +583,7 @@ export function WorkspaceHubSheet({
       }, undefined, {
         providerOverride: lockedProvider || undefined,
         modelOverride: lockedModel || undefined,
-      });
+      }, fileContexts);
       if (auditResult.verdict === 'unsafe') {
         setCommitPhase('error');
         setCommitError(`Commit blocked by Auditor: ${auditResult.card.summary}`);

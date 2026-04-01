@@ -34,11 +34,14 @@ import {
   executeCheckPRMergeable,
   executeMergePR,
   executeDeleteBranch,
+  decodeGitHubBase64Utf8,
   githubFetch,
   getGitHubHeaders,
 } from '@/lib/github-tools';
-import { getSandboxDiff } from '@/lib/sandbox-client';
+import { getSandboxDiff, readFromSandbox } from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
+import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
+import { parseDiffStats } from '@/lib/diff-utils';
 import type { AIProviderType, ActiveRepo, AuditVerdictCardData } from '@/types';
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -428,6 +431,40 @@ function MergeFlowSheet({
           return;
         }
 
+        // Fetch file context for richer Auditor review
+        let fileContexts: AuditorFileContext[] = [];
+        try {
+          const filePaths = parseDiffStats(diff).fileNames;
+          const fetcher = sandboxId
+            ? async (path: string) => {
+                const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+                if (result.error) return null;
+                return { content: result.content, truncated: result.truncated };
+              }
+            : async (path: string) => {
+                const ghHeaders = getGitHubHeaders();
+                const ref = currentBranch ? `?ref=${encodeURIComponent(currentBranch)}` : '';
+                const res = await githubFetch(
+                  `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}${ref}`,
+                  { headers: ghHeaders },
+                );
+                if (!res.ok) return null;
+                const data = await res.json();
+                if (data.type !== 'file' || !data.content) return null;
+                return { content: decodeGitHubBase64Utf8(data.content), truncated: false };
+              };
+
+          if (!cancelled && !abortRef.current) {
+            setStatusText('Fetching file context...');
+            fileContexts = await fetchAuditorFileContexts(filePaths, fetcher, (phase) => {
+              if (!cancelled && !abortRef.current) setStatusText(phase);
+            });
+          }
+        } catch {
+          // Degrade gracefully — proceed with diff-only
+        }
+        if (cancelled || abortRef.current) return;
+
         // Run the Auditor
         setStatusText('Auditor reviewing...');
         const result = await runAuditor(diff, (phase) => {
@@ -443,7 +480,7 @@ function MergeFlowSheet({
         }, undefined, {
           providerOverride: lockedProvider || undefined,
           modelOverride: lockedModel || undefined,
-        });
+        }, fileContexts);
         if (cancelled || abortRef.current) return;
 
         setAuditVerdict(result.verdict);
@@ -467,7 +504,7 @@ function MergeFlowSheet({
 
     runAudit();
     return () => { cancelled = true; };
-  }, [open, step, prInfo, repo, currentBranch, defaultBranch, projectInstructions, lockedProvider, lockedModel]);
+  }, [open, step, prInfo, repo, sandboxId, currentBranch, defaultBranch, projectInstructions, lockedProvider, lockedModel]);
 
   // ── Step 4: Check mergeability ─────────────────────────────────────
 

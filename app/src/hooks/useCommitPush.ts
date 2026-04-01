@@ -8,8 +8,9 @@
  */
 
 import { useState, useCallback } from 'react';
-import { getSandboxDiff, execInSandbox } from '@/lib/sandbox-client';
+import { getSandboxDiff, execInSandbox, readFromSandbox } from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
+import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { parseDiffStats } from '@/lib/diff-utils';
 import type { DiffPreviewCardData, AuditVerdictCardData } from '@/types';
@@ -117,13 +118,29 @@ export function useCommitPush(
         return;
       }
 
+      // Fetch file context for richer Auditor review (graceful — failures degrade to diff-only)
+      let fileContexts: AuditorFileContext[] = [];
+      try {
+        const filePaths = parseDiffStats(diffText).fileNames;
+        fileContexts = await fetchAuditorFileContexts(
+          filePaths,
+          async (path) => {
+            const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+            if (result.error) return null;
+            return { content: result.content, truncated: result.truncated };
+          },
+        );
+      } catch {
+        // Degrade gracefully — proceed with diff-only
+      }
+
       const auditResult = await runAuditor(diffText, () => {}, {
         source: 'working-tree-commit',
         sourceLabel: 'Working tree diff before commit/push',
       }, undefined, {
         providerOverride: effectiveAuditorProvider,
         modelOverride: effectiveAuditorModel,
-      });
+      }, fileContexts);
 
       setState((s) => ({ ...s, auditVerdict: auditResult.card }));
 

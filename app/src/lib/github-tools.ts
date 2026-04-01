@@ -14,7 +14,7 @@ import type {
   ToolExecutionResult,
 } from '@/types';
 import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
-import { githubFetch, executeGitHubToolWithFallback } from './github-tool-executor';
+import { githubFetch, executeGitHubToolWithFallback, decodeGitHubBase64Utf8 } from './github-tool-executor';
 
 // --- Re-exports for backward compatibility ---
 export type { ToolCall } from './github-tool-protocol';
@@ -23,6 +23,7 @@ export {
   githubFetch,
   fetchRepoBranches,
   executeToolCall,
+  decodeGitHubBase64Utf8,
 } from './github-tool-executor';
 export { getGitHubHeaders };
 
@@ -841,7 +842,7 @@ export async function fetchProjectInstructions(
     const data = await res.json();
     if (data.type !== 'file' || !data.content) continue;
 
-    let content = atob(data.content.replace(/\n/g, ''));
+    let content = decodeGitHubBase64Utf8(data.content);
     if (content.length > 5_000) {
       content = content.slice(0, 5_000) + '\n\n[...truncated at 5K chars]';
     }
