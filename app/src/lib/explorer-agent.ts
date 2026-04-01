@@ -36,7 +36,8 @@ import {
 } from './tool-call-recovery';
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
 import { buildExplorerDelegationBrief } from './role-context';
-import { SHARED_SAFETY_SECTION, SHARED_OPERATIONAL_CONSTRAINTS, FAITHFUL_REPORTING_CONSTRAINT } from './system-prompt-sections';
+import { SHARED_OPERATIONAL_CONSTRAINTS, FAITHFUL_REPORTING_CONSTRAINT } from './system-prompt-sections';
+import { symbolLedger } from './symbol-persistence-ledger';
 import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
 import { createExplorerPolicy } from './turn-policies/explorer-policy';
 
