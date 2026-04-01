@@ -101,7 +101,7 @@ class SystemPromptBuilder {
   /** Dev-only: return section sizes for telemetry. */
   sizes(): Record<string, number>;
 
-  /** Return snapshot of all sections (hash + size + volatile) for diffing. */
+  /** Return snapshot of all set sections (hash + size + volatile) for diffing; unset sections are omitted. */
   snapshot(): Record<string, { hash: number; size: number; volatile: boolean }>;
 }
 ```
@@ -147,7 +147,7 @@ function buildOrchestratorPrompt(ctx: OrchestratorPromptContext): string {
     .set('delegation', ORCHESTRATOR_DELEGATION)           // stable
     .set('guidelines', ORCHESTRATOR_GUIDELINES)           // stable
     .set('project_context', ctx.projectInstructions)      // volatile
-    .set('memory', buildScratchpadContext(ctx))           // volatile — scratchpad content
+    .set('memory', buildScratchpadContext(ctx.scratchpad)) // volatile — scratchpad content
     .set('last_instructions', ctx.intentHint)             // volatile
     .build();
 }

@@ -48,42 +48,21 @@ export type PromptSectionId = (typeof PROMPT_SECTION_IDS)[number];
 // Default priorities — determines section ordering in the final prompt
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PRIORITY: Record<PromptSectionId, number> = {
-  identity: 0,
-  voice: 10,
-  safety: 15,
-  user_context: 20,
-  capabilities: 25,
-  environment: 30,
-  tool_instructions: 40,
-  delegation: 50,
-  guidelines: 60,
-  project_context: 70,
-  memory: 75,
-  state: 78,
-  custom: 80,
-  last_instructions: 99,
-};
-
-// ---------------------------------------------------------------------------
-// Default volatility — stable sections don't change between turns
-// ---------------------------------------------------------------------------
-
-const DEFAULT_VOLATILE: Record<PromptSectionId, boolean> = {
-  identity: false,
-  voice: false,
-  safety: false,
-  user_context: true,
-  capabilities: true,
-  environment: true,
-  tool_instructions: false,
-  delegation: false,
-  guidelines: false,
-  project_context: true,
-  memory: true,
-  state: true,
-  custom: true,
-  last_instructions: true,
+const SECTION_CONFIG: Record<PromptSectionId, { priority: number; volatile: boolean }> = {
+  identity:          { priority: 0,  volatile: false },
+  voice:             { priority: 10, volatile: false },
+  safety:            { priority: 15, volatile: false },
+  user_context:      { priority: 20, volatile: true },
+  capabilities:      { priority: 25, volatile: true },
+  environment:       { priority: 30, volatile: true },
+  tool_instructions: { priority: 40, volatile: false },
+  delegation:        { priority: 50, volatile: false },
+  guidelines:        { priority: 60, volatile: false },
+  project_context:   { priority: 70, volatile: true },
+  memory:            { priority: 75, volatile: true },
+  state:             { priority: 78, volatile: true },
+  custom:            { priority: 80, volatile: true },
+  last_instructions: { priority: 99, volatile: true },
 };
 
 // ---------------------------------------------------------------------------
@@ -113,8 +92,8 @@ export class SystemPromptBuilder {
     this.sections.set(id, {
       id,
       content: content.trim(),
-      priority: priority ?? DEFAULT_PRIORITY[id],
-      volatile: DEFAULT_VOLATILE[id],
+      priority: priority ?? SECTION_CONFIG[id].priority,
+      volatile: SECTION_CONFIG[id].volatile,
     });
     return this;
   }
@@ -161,7 +140,7 @@ export class SystemPromptBuilder {
 
   /** Check if a section is volatile (changes between turns). */
   isVolatile(id: PromptSectionId): boolean {
-    return this.sections.get(id)?.volatile ?? DEFAULT_VOLATILE[id];
+    return this.sections.get(id)?.volatile ?? SECTION_CONFIG[id].volatile;
   }
 
   /** Compile all sections into a final prompt string, sorted by priority. */
@@ -180,12 +159,13 @@ export class SystemPromptBuilder {
   }
 
   /**
-   * Return a snapshot of all sections for diffing between turns.
-   * Each entry contains the section's content length and a simple hash.
+   * Return a snapshot of all set sections for diffing between turns;
+   * unset sections are omitted. Each entry contains the section's content
+   * length, a simple hash, and its volatility flag.
    * Compare snapshots to see exactly which sections changed.
    */
-  snapshot(): Record<string, { hash: number; size: number; volatile: boolean }> {
-    const result: Record<string, { hash: number; size: number; volatile: boolean }> = {};
+  snapshot(): Partial<Record<PromptSectionId, { hash: number; size: number; volatile: boolean }>> {
+    const result: Partial<Record<PromptSectionId, { hash: number; size: number; volatile: boolean }>> = {};
     for (const [id, section] of this.sections) {
       result[id] = {
         hash: simpleHash(section.content),

@@ -573,7 +573,10 @@ function toLLMMessages(
 
     // Tool protocols — session-stable instructions about how to use tools.
     // Chat mode skips all tool protocols — plain conversation only.
+    // Use set() to replace the base tool_instructions with the full set,
+    // avoiding duplication if this code path runs more than once.
     if (workspaceContext?.mode !== 'chat') {
+      const baseToolInstructions = builder.get('tool_instructions') ?? '';
       const toolProtocols: string[] = [];
       if (hasSandbox) {
         toolProtocols.push(getSandboxToolProtocol());
@@ -581,7 +584,7 @@ function toLLMMessages(
       toolProtocols.push(SCRATCHPAD_TOOL_PROTOCOL);
       toolProtocols.push(WEB_SEARCH_TOOL_PROTOCOL);
       toolProtocols.push(ASK_USER_TOOL_PROTOCOL);
-      builder.append('tool_instructions', toolProtocols.join('\n'));
+      builder.set('tool_instructions', baseToolInstructions + '\n' + toolProtocols.join('\n'));
 
       // Scratchpad content — volatile memory that changes between turns.
       if (scratchpadContent !== undefined) {
