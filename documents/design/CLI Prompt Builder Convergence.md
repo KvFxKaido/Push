@@ -162,7 +162,7 @@ if (process.env.PUSH_DEBUG) {
 ```typescript
 if (process.env.PUSH_DEBUG) {
   const sizes = builder.sizes();
-  console.error(`[Prompt] ${Object.entries(sizes).map(([k,v]) => `${k}=${v}`).join(' ')}`);
+  console.error(`[Prompt] ${Object.entries(sizes).map(([k, v]) => k + '=' + v).join(' ')}`);
 }
 ```
 
