@@ -59,21 +59,25 @@ preserving its two-phase enrichment pattern and CLI-specific content.
 The builder is a pure TypeScript class with no web dependencies. It lives
 at `app/src/lib/system-prompt-builder.ts`.
 
-**Option A: Move to shared package**
-Create `packages/prompt-builder/` with the builder, section types, and
-diff utilities. Both `app/` and `cli/` import from it.
+**Option A: Move to shared `lib/`**
+Move the builder into the root `lib/` directory (e.g. `lib/system-prompt-builder.ts`).
+The CLI already maps `@push/lib/*` to `../lib/*` via `cli/tsconfig.json`,
+so this slots into the existing shared-code architecture. Both `app/` and
+`cli/` import from it.
 
 **Option B: Copy to CLI**
-Duplicate `system-prompt-builder.ts` into `cli/`. Simpler, no monorepo
-plumbing, but creates drift risk.
+Duplicate `system-prompt-builder.ts` into `cli/`. Simpler, no path alias
+changes for the app side, but creates drift risk.
 
 **Option C: Re-export from app**
 CLI imports directly from `app/src/lib/system-prompt-builder.ts` via
 path alias. Works if the build tooling supports it.
 
 **Recommendation: Option A.** The builder is stable, well-tested, and has
-no framework dependencies. A shared package is the clean solution and
-prevents drift. If monorepo setup is too heavy, start with Option B and
+no framework dependencies. The root `lib/` directory already exists for
+shared TypeScript modules and the CLI's tsconfig already maps to it.
+If the app side needs a path alias added, that's a one-line tsconfig
+change. If the `lib/` approach hits friction, start with Option B and
 converge later.
 
 ### Phase 2: Map CLI prompt content to sections
@@ -204,7 +208,10 @@ duplication for now.
 
 ## Success criteria
 
-- CLI prompt output is byte-identical before and after migration
+- CLI prompt output is byte-identical before and after migration.
+  Verify with a snapshot test that compares `builder.build()` output
+  against the previous string-concatenation result for a fixed set of
+  inputs (workspace root, project instructions, memory, git state).
 - `buildSystemPromptBase` and `buildSystemPrompt` use `SystemPromptBuilder`
 - CLI has `sizes()` output available behind debug flag
 - No new runtime dependencies introduced
