@@ -7,6 +7,7 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
+import { usePerfMark } from '@/hooks/usePerfMark';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_TOP_BANNER_STRIP_CLASS,
@@ -71,6 +72,7 @@ const HEADER_PILL_BUTTON_CLASS =
   `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
 
 export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps) {
+  usePerfMark('workspace-chat:painted', 'screen:workspace');
   const {
     activeRepo,
     isScratch,

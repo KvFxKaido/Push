@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { initPushTracing } from './lib/tracing.ts'
+import { perfMark } from './lib/perf-marks.ts'
+
+perfMark('app:boot');
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -16,3 +19,5 @@ createRoot(rootElement).render(
     <App />
   </StrictMode>,
 )
+
+perfMark('app:render-scheduled');
