@@ -16,7 +16,7 @@ import { getToolPublicName, getToolPublicNames } from './tool-registry';
 import { buildModelCapabilityAwarenessBlock } from './model-capabilities';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 import { buildSessionCapabilityBlock } from './workspace-context';
-import { SystemPromptBuilder } from './system-prompt-builder';
+import { SystemPromptBuilder, diffSnapshots, formatSnapshotDiff, type PromptSnapshot } from './system-prompt-builder';
 import { SHARED_SAFETY_SECTION, SHARED_OPERATIONAL_CONSTRAINTS, ORCHESTRATOR_SIGNAL_EFFICIENCY } from './system-prompt-sections';
 import {
   getPushTracer,
@@ -438,6 +438,9 @@ function buildOrchestratorBasePrompt(): string {
  */
 export const ORCHESTRATOR_SYSTEM_PROMPT = buildOrchestratorBasePrompt();
 
+/** Dev-only: previous prompt snapshot for diffing between turns. */
+let _lastPromptSnapshot: PromptSnapshot | null = null;
+
 // Multimodal content types (OpenAI-compatible)
 interface LLMMessageContentText {
   type: 'text';
@@ -597,7 +600,7 @@ function toLLMMessages(
 
     systemContent = builder.build();
 
-    // --- Log prompt-size breakdown (dev only) ---
+    // --- Log prompt-size breakdown and section diffs (dev only) ---
     if (import.meta.env.DEV) {
       const fmt = (n: number) => n.toLocaleString();
       const sizes = builder.sizes();
@@ -605,6 +608,14 @@ function toLLMMessages(
         .map(([k, v]) => `${k}=${fmt(v)}`)
         .join(' ');
       console.log(`[Context Budget] System prompt: ${fmt(systemContent.length)} chars (${parts})`);
+
+      const currentSnap = builder.snapshot();
+      if (_lastPromptSnapshot) {
+        const diff = diffSnapshots(_lastPromptSnapshot, currentSnap);
+        const diffStr = formatSnapshotDiff(diff);
+        if (diffStr) console.log(diffStr);
+      }
+      _lastPromptSnapshot = currentSnap;
     }
   }
 

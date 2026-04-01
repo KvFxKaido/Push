@@ -37,6 +37,7 @@ import {
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
 import { buildExplorerDelegationBrief } from './role-context';
 import { SHARED_OPERATIONAL_CONSTRAINTS } from './system-prompt-sections';
+import { SystemPromptBuilder } from './system-prompt-builder';
 import { symbolLedger } from './symbol-persistence-ledger';
 import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
 import { createExplorerPolicy } from './turn-policies/explorer-policy';
@@ -71,7 +72,7 @@ export const EXPLORER_ALLOWED_TOOLS = new Set([
   'web_search',
 ]);
 
-const EXPLORER_SYSTEM_PROMPT = `You are the Explorer agent for Push, a mobile AI coding assistant.
+const EXPLORER_IDENTITY = `You are the Explorer agent for Push, a mobile AI coding assistant.
 
 Your job is to investigate the codebase and return a crisp, read-only report.
 
@@ -87,9 +88,9 @@ Never:
 - delegate to another agent
 - claim that you changed code
 
-Allowed tools: read-only GitHub, sandbox, and web search tools. See the Explorer Tool Protocol section below for the full list and usage format.
+Allowed tools: read-only GitHub, sandbox, and web search tools. See the Explorer Tool Protocol section below for the full list and usage format.`;
 
-Rules:
+const EXPLORER_GUIDELINES = `Rules:
 - CRITICAL: Output ONLY a fenced JSON block when requesting a tool. You MUST use the exact format: {"tool": "tool_name", "args": {"param": "value"}}
 - You may emit multiple read-only tool calls in one message.
 - Prefer search/symbol reads before large file reads.
@@ -119,8 +120,7 @@ Recommended next step:
 Keep the report concise, evidence-based, and focused on helping the Orchestrator decide what to do next. Lead with the highest-signal findings, rank the most relevant files first, and include file/symbol/line evidence whenever available.
 In "Recommended next step", name the next actor (answer directly, coder, ask_user, or more investigation) and the concrete next move in one sentence.
 
-If the request is clearly discovery-shaped (for example: where is X, how does Y work, trace the flow of Z, what depends on A, why does B happen), prefer a broad but bounded investigation before concluding. Inspect enough files to cover the main path, but stop once the next actor can proceed without rediscovery.
-`;
+If the request is clearly discovery-shaped (for example: where is X, how does Y work, trace the flow of Z, what depends on A, why does B happen), prefer a broad but bounded investigation before concluding. Inspect enough files to cover the main path, but stop once the next actor can proceed without rediscovery.`;
 
 
 const EXPLORER_TOOL_PROTOCOL = `
@@ -145,12 +145,19 @@ Rules:
 - If no sandbox is available, skip sandbox tools and investigate via GitHub tools instead.
 `.trim();
 
+/**
+ * Build the base Explorer system prompt builder.
+ * Exported for reuse in `runExplorerAgent()` where runtime context is layered on.
+ */
+export function buildExplorerBaseBuilder(): SystemPromptBuilder {
+  return new SystemPromptBuilder()
+    .set('identity', EXPLORER_IDENTITY)
+    .set('guidelines', EXPLORER_GUIDELINES)
+    .set('tool_instructions', EXPLORER_TOOL_PROTOCOL + '\n\n' + WEB_SEARCH_TOOL_PROTOCOL);
+}
+
 export function buildExplorerSystemPrompt(): string {
-  return [
-    EXPLORER_SYSTEM_PROMPT,
-    EXPLORER_TOOL_PROTOCOL,
-    WEB_SEARCH_TOOL_PROTOCOL,
-  ].join('\n\n');
+  return buildExplorerBaseBuilder().build();
 }
 
 // Delegate to shared agent-loop-utils
@@ -211,33 +218,48 @@ export async function runExplorerAgent(
   const roleModel = getModelForRole(activeProvider, 'explorer');
   const explorerModelId = envelope.model || roleModel?.id;
 
-  let systemPrompt = buildExplorerSystemPrompt();
+  const builder = buildExplorerBaseBuilder();
+
+  // User identity
   const identityBlock = buildUserIdentityBlock(getUserProfile());
   if (identityBlock) {
-    systemPrompt += `\n\n${identityBlock}`;
+    builder.set('user_context', identityBlock);
   }
+
+  // Project instructions
   if (envelope.projectInstructions) {
     const truncatedInstructions = truncateContent(
       envelope.projectInstructions,
       MAX_PROJECT_INSTRUCTIONS_SIZE,
       'project instructions',
     );
-    systemPrompt += `\n\nPROJECT INSTRUCTIONS — Repository instructions and built-in app context:\n${truncatedInstructions}`;
+    let projectContent = `PROJECT INSTRUCTIONS — Repository instructions and built-in app context:\n${truncatedInstructions}`;
     if (envelope.projectInstructions.length > MAX_PROJECT_INSTRUCTIONS_SIZE) {
-      systemPrompt += `\n\nFull file available at /workspace/${envelope.instructionFilename || 'AGENTS.md'} if you need more detail.`;
+      projectContent += `\n\nFull file available at /workspace/${envelope.instructionFilename || 'AGENTS.md'} if you need more detail.`;
     }
+    builder.set('project_context', projectContent);
   }
+
+  // Workspace environment (repo + branch context)
+  const envParts: string[] = [];
   if (allowedRepo) {
-    systemPrompt += `\n\n[REPO CONTEXT]\nActive repo: ${allowedRepo}`;
+    envParts.push(`[REPO CONTEXT]\nActive repo: ${allowedRepo}`);
   }
   if (envelope.branchContext) {
     const branch = envelope.branchContext;
-    systemPrompt += `\n\n[WORKSPACE CONTEXT]\nActive branch: ${branch.activeBranch}\nDefault branch: ${branch.defaultBranch}\nProtect main: ${branch.protectMain ? 'on' : 'off'}`;
+    envParts.push(`[WORKSPACE CONTEXT]\nActive branch: ${branch.activeBranch}\nDefault branch: ${branch.defaultBranch}\nProtect main: ${branch.protectMain ? 'on' : 'off'}`);
   }
+  if (envParts.length) {
+    builder.set('environment', envParts.join('\n\n'));
+  }
+
+  // Symbol cache
   const symbolSummary = symbolLedger.getSummary();
   if (symbolSummary) {
-    systemPrompt += `\n\n[SYMBOL_CACHE]\n${symbolSummary}\nUse sandbox_read_symbols on cached files to get instant results (no sandbox round-trip).\n[/SYMBOL_CACHE]`;
+    builder.set('memory', `[SYMBOL_CACHE]\n${symbolSummary}\nUse sandbox_read_symbols on cached files to get instant results (no sandbox round-trip).\n[/SYMBOL_CACHE]`);
   }
+
+  const systemPrompt = builder.build();
 
   const messages: ChatMessage[] = [
     {
