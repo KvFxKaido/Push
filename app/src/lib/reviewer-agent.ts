@@ -121,7 +121,7 @@ function broadcastReviewStatus(key: string, phase: string): void {
   reviewListeners.get(key)?.forEach((listener) => listener(phase));
 }
 
-const REVIEWER_SYSTEM_PROMPT = `You are the Reviewer agent for Push, a mobile AI coding assistant. Your role is to provide advisory code review feedback on diffs.
+const REVIEWER_IDENTITY = `You are the Reviewer agent for Push, a mobile AI coding assistant. Your role is to provide advisory code review feedback on diffs.
 
 You MUST respond with ONLY a valid JSON object. No other text, no markdown fences.
 
@@ -138,9 +138,9 @@ Schema:
   ]
 }
 
-Added lines in the diff are annotated with [Lxxx] indicating their line number in the new file. When your comment targets a specific added line, include "line": <that number>. Omit "line" for file-level or general comments that span multiple lines or the whole file.
+Added lines in the diff are annotated with [Lxxx] indicating their line number in the new file. When your comment targets a specific added line, include "line": <that number>. Omit "line" for file-level or general comments that span multiple lines or the whole file.`;
 
-${REVIEWER_CRITERIA_BLOCK}
+const REVIEWER_GUIDELINES = `${REVIEWER_CRITERIA_BLOCK}
 
 Keep comments specific and actionable. Prefer 0-5 high-signal comments total. Use "note" sparingly, and skip low-value style nits unless they materially affect maintainability or correctness. If the diff does not give you enough context to assess something, skip it rather than guessing. One precise comment is worth more than three vague ones.`;
 
@@ -274,7 +274,8 @@ async function runReviewerCore(
   }
 
   const systemPrompt = new SystemPromptBuilder()
-    .set('identity', REVIEWER_SYSTEM_PROMPT)
+    .set('identity', REVIEWER_IDENTITY)
+    .set('guidelines', REVIEWER_GUIDELINES)
     .set('environment', runtimeContext)
     .set('custom', fileStructureBlock ? REVIEWER_FILE_STRUCTURE_NOTE : null)
     .build();

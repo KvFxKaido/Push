@@ -177,6 +177,69 @@ export class SystemPromptBuilder {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot diffing
+// ---------------------------------------------------------------------------
+
+export interface SnapshotEntry { hash: number; size: number; volatile: boolean }
+export type PromptSnapshot = Partial<Record<PromptSectionId, SnapshotEntry>>;
+
+export interface SnapshotDiff {
+  added: PromptSectionId[];
+  removed: PromptSectionId[];
+  changed: PromptSectionId[];
+  unchanged: PromptSectionId[];
+}
+
+/**
+ * Compare two snapshots and return which sections were added, removed,
+ * changed, or unchanged. Useful for debugging prompt drift between turns.
+ */
+export function diffSnapshots(prev: PromptSnapshot, next: PromptSnapshot): SnapshotDiff {
+  const added: PromptSectionId[] = [];
+  const removed: PromptSectionId[] = [];
+  const changed: PromptSectionId[] = [];
+  const unchanged: PromptSectionId[] = [];
+
+  // Iterate in canonical section order for deterministic output.
+  const allIdSet = new Set([
+    ...Object.keys(prev) as PromptSectionId[],
+    ...Object.keys(next) as PromptSectionId[],
+  ]);
+  const sectionOrder = new Map(PROMPT_SECTION_IDS.map((id, i) => [id, i]));
+  const allIds = Array.from(allIdSet).sort((a, b) =>
+    (sectionOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (sectionOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
+  );
+
+  for (const id of allIds) {
+    const p = prev[id];
+    const n = next[id];
+    if (!p && n) added.push(id);
+    else if (p && !n) removed.push(id);
+    else if (p && n && (p.hash !== n.hash || p.size !== n.size)) changed.push(id);
+    else unchanged.push(id);
+  }
+
+  return { added, removed, changed, unchanged };
+}
+
+/**
+ * Format a snapshot diff as a compact single-line log string for dev console.
+ * Returns null if nothing changed.
+ */
+export function formatSnapshotDiff(diff: SnapshotDiff): string | null {
+  const parts: string[] = [];
+  if (diff.added.length) parts.push(`+[${diff.added.join(',')}]`);
+  if (diff.removed.length) parts.push(`-[${diff.removed.join(',')}]`);
+  if (diff.changed.length) parts.push(`Δ[${diff.changed.join(',')}]`);
+  if (parts.length === 0) return null;
+  return `[Prompt Diff] ${parts.join(' ')} (${diff.unchanged.length} unchanged)`;
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
 /**
  * Fast non-cryptographic hash for snapshot diffing.
  * DJB2 variant — deterministic, collision-resistant enough for prompt debugging.

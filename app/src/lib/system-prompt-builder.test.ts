@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SystemPromptBuilder, PROMPT_SECTION_IDS } from './system-prompt-builder';
+import { SystemPromptBuilder, PROMPT_SECTION_IDS, diffSnapshots, formatSnapshotDiff } from './system-prompt-builder';
 
 describe('SystemPromptBuilder', () => {
   it('builds empty string when no sections are set', () => {
@@ -233,5 +233,60 @@ describe('SystemPromptBuilder', () => {
       .build();
     const order = ['Project.', 'Memory.', 'State.', 'Custom.'];
     expect(result).toBe(order.join('\n\n'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// diffSnapshots / formatSnapshotDiff
+// ---------------------------------------------------------------------------
+
+describe('diffSnapshots', () => {
+  it('detects added sections', () => {
+    const prev = new SystemPromptBuilder().set('identity', 'A').snapshot();
+    const next = new SystemPromptBuilder().set('identity', 'A').set('memory', 'B').snapshot();
+    const diff = diffSnapshots(prev, next);
+    expect(diff.added).toEqual(['memory']);
+    expect(diff.unchanged).toContain('identity');
+  });
+
+  it('detects removed sections', () => {
+    const prev = new SystemPromptBuilder().set('identity', 'A').set('memory', 'B').snapshot();
+    const next = new SystemPromptBuilder().set('identity', 'A').snapshot();
+    const diff = diffSnapshots(prev, next);
+    expect(diff.removed).toEqual(['memory']);
+  });
+
+  it('detects changed sections', () => {
+    const prev = new SystemPromptBuilder().set('identity', 'A').set('memory', 'Turn 1').snapshot();
+    const next = new SystemPromptBuilder().set('identity', 'A').set('memory', 'Turn 2').snapshot();
+    const diff = diffSnapshots(prev, next);
+    expect(diff.changed).toEqual(['memory']);
+    expect(diff.unchanged).toContain('identity');
+  });
+
+  it('returns all unchanged when nothing differs', () => {
+    const builder = new SystemPromptBuilder().set('identity', 'A').set('voice', 'B');
+    const snap = builder.snapshot();
+    const diff = diffSnapshots(snap, snap);
+    expect(diff.added).toEqual([]);
+    expect(diff.removed).toEqual([]);
+    expect(diff.changed).toEqual([]);
+    expect(diff.unchanged).toHaveLength(2);
+  });
+});
+
+describe('formatSnapshotDiff', () => {
+  it('returns null when nothing changed', () => {
+    expect(formatSnapshotDiff({ added: [], removed: [], changed: [], unchanged: ['identity'] })).toBeNull();
+  });
+
+  it('formats added/changed/removed compactly', () => {
+    const result = formatSnapshotDiff({
+      added: ['memory'],
+      removed: ['custom'],
+      changed: ['environment'],
+      unchanged: ['identity', 'voice'],
+    });
+    expect(result).toBe('[Prompt Diff] +[memory] -[custom] Δ[environment] (2 unchanged)');
   });
 });
