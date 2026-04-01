@@ -151,8 +151,87 @@ describe('SystemPromptBuilder', () => {
     expect(PROMPT_SECTION_IDS).toContain('delegation');
     expect(PROMPT_SECTION_IDS).toContain('guidelines');
     expect(PROMPT_SECTION_IDS).toContain('project_context');
+    expect(PROMPT_SECTION_IDS).toContain('memory');
+    expect(PROMPT_SECTION_IDS).toContain('state');
     expect(PROMPT_SECTION_IDS).toContain('custom');
     expect(PROMPT_SECTION_IDS).toContain('last_instructions');
-    expect(PROMPT_SECTION_IDS).toHaveLength(12);
+    expect(PROMPT_SECTION_IDS).toHaveLength(14);
+  });
+
+  // --- Volatility classification ---
+
+  it('marks identity sections as stable', () => {
+    const builder = new SystemPromptBuilder()
+      .set('identity', 'Role identity')
+      .set('voice', 'Tone')
+      .set('safety', 'Safety rules')
+      .set('tool_instructions', 'Tool protocol')
+      .set('delegation', 'Delegation rules')
+      .set('guidelines', 'Workflow');
+    expect(builder.isVolatile('identity')).toBe(false);
+    expect(builder.isVolatile('voice')).toBe(false);
+    expect(builder.isVolatile('safety')).toBe(false);
+    expect(builder.isVolatile('tool_instructions')).toBe(false);
+    expect(builder.isVolatile('delegation')).toBe(false);
+    expect(builder.isVolatile('guidelines')).toBe(false);
+  });
+
+  it('marks runtime sections as volatile', () => {
+    const builder = new SystemPromptBuilder()
+      .set('environment', 'Workspace context')
+      .set('memory', 'Scratchpad content')
+      .set('state', 'Working memory')
+      .set('last_instructions', 'Intent hint');
+    expect(builder.isVolatile('environment')).toBe(true);
+    expect(builder.isVolatile('memory')).toBe(true);
+    expect(builder.isVolatile('state')).toBe(true);
+    expect(builder.isVolatile('last_instructions')).toBe(true);
+  });
+
+  // --- Snapshot ---
+
+  it('snapshot returns hash, size, and volatile flag per section', () => {
+    const snap = new SystemPromptBuilder()
+      .set('identity', 'Hello')
+      .set('memory', 'Scratchpad data')
+      .snapshot();
+    expect(snap.identity).toEqual({
+      hash: expect.any(Number),
+      size: 5,
+      volatile: false,
+    });
+    expect(snap.memory).toEqual({
+      hash: expect.any(Number),
+      size: 15,
+      volatile: true,
+    });
+  });
+
+  it('snapshot detects changes between turns', () => {
+    const builder = new SystemPromptBuilder()
+      .set('identity', 'Stable role')
+      .set('memory', 'Turn 1 scratchpad');
+    const snap1 = builder.snapshot();
+
+    builder.set('memory', 'Turn 2 scratchpad');
+    const snap2 = builder.snapshot();
+
+    // Stable section unchanged
+    expect(snap2.identity.hash).toBe(snap1.identity.hash);
+    // Volatile section changed
+    expect(snap2.memory.hash).not.toBe(snap1.memory.hash);
+  });
+
+  // --- New section ordering ---
+
+  it('orders memory and state between project_context and custom', () => {
+    const result = new SystemPromptBuilder()
+      .set('custom', 'Custom.')
+      .set('memory', 'Memory.')
+      .set('state', 'State.')
+      .set('project_context', 'Project.')
+      .build();
+    const order = ['Project.', 'Memory.', 'State.', 'Custom.'];
+    expect(result).toBe(order.join('\n\n'));
   });
 });

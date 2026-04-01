@@ -26,29 +26,47 @@ orchestrator and coder prompts).
 
 ### Section Registry
 
-A `PromptSection` is a named block with optional metadata:
+A `PromptSection` is a named block with priority and volatility metadata:
 
 ```typescript
 interface PromptSection {
   id: PromptSectionId;
   content: string;
   priority: number;     // Lower = earlier in final prompt (0-99)
+  volatile: boolean;    // true = changes between turns, false = session-stable
 }
 
 type PromptSectionId =
-  | 'identity'           // Role identity and personality
-  | 'voice'              // Tone, formatting, mobile constraints
-  | 'safety'             // Infrastructure markers, output bans
-  | 'environment'        // Workspace, branch, repo context
-  | 'capabilities'       // Model-specific awareness (vision, etc.)
-  | 'tool_instructions'  // Tool protocol, routing, error handling
-  | 'delegation'         // When/how to delegate to sub-agents
-  | 'guidelines'         // Workflow rules, execution loop
-  | 'project_context'    // Project instructions (AGENTS.md etc.)
-  | 'user_context'       // User identity, approval mode
-  | 'custom'             // Agent-specific extras (scratchpad, etc.)
-  | 'last_instructions'; // Final overrides, intent hints
+  | 'identity'           // Role identity and personality          [stable]
+  | 'voice'              // Tone, formatting, mobile constraints   [stable]
+  | 'safety'             // Infrastructure markers, output bans    [stable]
+  | 'user_context'       // User identity, approval mode           [volatile]
+  | 'capabilities'       // Model-specific awareness (vision)      [volatile]
+  | 'environment'        // Workspace, branch, repo context        [volatile]
+  | 'tool_instructions'  // Tool protocol, routing, error handling [stable]
+  | 'delegation'         // When/how to delegate to sub-agents     [stable]
+  | 'guidelines'         // Workflow rules, execution loop         [stable]
+  | 'project_context'    // Project instructions (AGENTS.md etc.)  [volatile]
+  | 'memory'             // Scratchpad content, symbol cache       [volatile]
+  | 'state'              // Working memory, coder state            [volatile]
+  | 'custom'             // Agent-specific extras                  [volatile]
+  | 'last_instructions'; // Final overrides, intent hints          [volatile]
 ```
+
+### Volatility Classification
+
+Sections are classified as **stable** or **volatile**:
+
+- **Stable** sections (`identity`, `voice`, `safety`, `tool_instructions`,
+  `delegation`, `guidelines`) define the agent's identity and operational rules.
+  They remain constant for the lifetime of a session.
+- **Volatile** sections (`user_context`, `capabilities`, `environment`,
+  `project_context`, `memory`, `state`, `custom`, `last_instructions`) carry
+  runtime context that changes between turns.
+
+The `snapshot()` method returns content hashes per section, enabling callers to
+diff prompts between turns and see exactly which sections changed — useful for
+debugging behavioral drift.
 
 ### Builder API
 
@@ -77,8 +95,14 @@ class SystemPromptBuilder {
   /** Compile all sections into a final prompt string. */
   build(): string;
 
+  /** Check if a section is volatile (changes between turns). */
+  isVolatile(id: PromptSectionId): boolean;
+
   /** Dev-only: return section sizes for telemetry. */
   sizes(): Record<string, number>;
+
+  /** Return snapshot of all set sections (hash + size + volatile) for diffing; unset sections are omitted. */
+  snapshot(): Record<string, { hash: number; size: number; volatile: boolean }>;
 }
 ```
 
@@ -86,20 +110,22 @@ class SystemPromptBuilder {
 
 ### Default Priority Map
 
-| Priority | Section ID          | Notes                              |
-|----------|--------------------|------------------------------------|
-| 0        | identity           | Who you are                        |
-| 10       | voice              | How you communicate                |
-| 15       | safety             | Infrastructure marker bans         |
-| 20       | user_context       | User identity, approval mode       |
-| 25       | capabilities       | Model awareness                    |
-| 30       | environment        | Workspace, branch context          |
-| 40       | tool_instructions  | Tool protocol, routing, errors     |
-| 50       | delegation         | Sub-agent dispatch rules           |
-| 60       | guidelines         | Execution loop, workflow           |
-| 70       | project_context    | AGENTS.md / repo instructions      |
-| 80       | custom             | Role-specific (scratchpad, etc.)   |
-| 99       | last_instructions  | Intent hints, final overrides      |
+| Priority | Section ID          | Volatile | Notes                              |
+|----------|--------------------|---------|------------------------------------|
+| 0        | identity           | no      | Who you are                        |
+| 10       | voice              | no      | How you communicate                |
+| 15       | safety             | no      | Infrastructure marker bans         |
+| 20       | user_context       | yes     | User identity, approval mode       |
+| 25       | capabilities       | yes     | Model awareness                    |
+| 30       | environment        | yes     | Workspace, branch context          |
+| 40       | tool_instructions  | no      | Tool protocol, routing, errors     |
+| 50       | delegation         | no      | Sub-agent dispatch rules           |
+| 60       | guidelines         | no      | Execution loop, workflow           |
+| 70       | project_context    | yes     | AGENTS.md / repo instructions      |
+| 75       | memory             | yes     | Scratchpad content, symbol cache   |
+| 78       | state              | yes     | Working memory, coder state        |
+| 80       | custom             | yes     | Role-specific extras               |
+| 99       | last_instructions  | yes     | Intent hints, final overrides      |
 
 ### Role-Specific Builders
 
@@ -111,30 +137,30 @@ const SHARED_SAFETY_SECTION = `## Output Safety — Infrastructure Markers ...`;
 
 function buildOrchestratorPrompt(ctx: OrchestratorPromptContext): string {
   return new SystemPromptBuilder()
-    .set('identity', ORCHESTRATOR_IDENTITY)
-    .set('voice', ORCHESTRATOR_VOICE)
-    .set('safety', SHARED_SAFETY_SECTION)
-    .set('user_context', buildUserContextBlock(ctx))
-    .set('capabilities', buildCapabilityBlock(ctx))
-    .set('environment', ctx.workspaceDescription)
-    .set('tool_instructions', buildToolInstructions(ctx))
-    .set('delegation', ORCHESTRATOR_DELEGATION)
-    .set('guidelines', ORCHESTRATOR_GUIDELINES)
-    .set('project_context', ctx.projectInstructions)
-    .set('custom', buildCustomBlocks(ctx))  // scratchpad, web search, ask-user
-    .set('last_instructions', ctx.intentHint)
+    .set('identity', ORCHESTRATOR_IDENTITY)              // stable
+    .set('voice', ORCHESTRATOR_VOICE)                    // stable
+    .set('safety', SHARED_SAFETY_SECTION)                // stable
+    .set('user_context', buildUserContextBlock(ctx))      // volatile
+    .set('capabilities', buildCapabilityBlock(ctx))       // volatile
+    .set('environment', ctx.workspaceDescription)         // volatile
+    .set('tool_instructions', buildToolInstructions(ctx)) // stable
+    .set('delegation', ORCHESTRATOR_DELEGATION)           // stable
+    .set('guidelines', ORCHESTRATOR_GUIDELINES)           // stable
+    .set('project_context', ctx.projectInstructions)      // volatile
+    .set('memory', buildScratchpadContext(ctx.scratchpad)) // volatile — scratchpad content
+    .set('last_instructions', ctx.intentHint)             // volatile
     .build();
 }
 
 function buildCoderPrompt(ctx: CoderPromptContext): string {
   return new SystemPromptBuilder()
-    .set('identity', CODER_IDENTITY)
-    .set('safety', SHARED_SAFETY_SECTION)
-    .set('user_context', buildUserContextBlock(ctx))
-    .set('guidelines', CODER_EXECUTION_LOOP)
-    .set('tool_instructions', ctx.sandboxProtocol)
-    .set('project_context', ctx.projectInstructions)
-    .set('custom', ctx.symbolCache)
+    .set('identity', CODER_IDENTITY)                     // stable
+    .set('safety', SHARED_SAFETY_SECTION)                // stable
+    .set('user_context', buildUserContextBlock(ctx))      // volatile
+    .set('guidelines', CODER_EXECUTION_LOOP)              // stable
+    .set('tool_instructions', ctx.sandboxProtocol)        // stable
+    .set('project_context', ctx.projectInstructions)      // volatile
+    .set('memory', ctx.symbolCache)                       // volatile — symbol cache
     .build();
 }
 ```
