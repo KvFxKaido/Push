@@ -201,17 +201,22 @@ export function diffSnapshots(prev: PromptSnapshot, next: PromptSnapshot): Snaps
   const changed: PromptSectionId[] = [];
   const unchanged: PromptSectionId[] = [];
 
-  const allIds = new Set([
+  // Iterate in canonical section order for deterministic output.
+  const allIdSet = new Set([
     ...Object.keys(prev) as PromptSectionId[],
     ...Object.keys(next) as PromptSectionId[],
   ]);
+  const sectionOrder = new Map(PROMPT_SECTION_IDS.map((id, i) => [id, i]));
+  const allIds = Array.from(allIdSet).sort((a, b) =>
+    (sectionOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (sectionOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
+  );
 
   for (const id of allIds) {
     const p = prev[id];
     const n = next[id];
     if (!p && n) added.push(id);
     else if (p && !n) removed.push(id);
-    else if (p && n && p.hash !== n.hash) changed.push(id);
+    else if (p && n && (p.hash !== n.hash || p.size !== n.size)) changed.push(id);
     else unchanged.push(id);
   }
 

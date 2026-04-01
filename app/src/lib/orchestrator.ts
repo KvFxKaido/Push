@@ -438,7 +438,13 @@ function buildOrchestratorBasePrompt(): string {
  */
 export const ORCHESTRATOR_SYSTEM_PROMPT = buildOrchestratorBasePrompt();
 
-/** Dev-only: previous prompt snapshot for diffing between turns. */
+/**
+ * Dev-only: previous prompt snapshot for diffing between turns.
+ * Module-scoped because toLLMMessages is a standalone function.
+ * Reset to null when systemPromptOverride is used so stale snapshots
+ * from a different code path don't produce misleading diffs.
+ * Only read/written inside `import.meta.env.DEV` guards.
+ */
 let _lastPromptSnapshot: PromptSnapshot | null = null;
 
 // Multimodal content types (OpenAI-compatible)
@@ -525,6 +531,9 @@ function toLLMMessages(
 
   if (systemPromptOverride) {
     systemContent = systemPromptOverride;
+    // Reset snapshot so the next builder-path diff doesn't compare against
+    // a stale snapshot from before the override.
+    _lastPromptSnapshot = null;
   } else {
     // Build the full orchestrator prompt using the sectioned builder.
     // Start from the shared base and layer in runtime-dependent blocks.
