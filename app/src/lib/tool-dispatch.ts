@@ -351,10 +351,11 @@ export async function executeAnyToolCall(
   activeModel?: string,
   hooks?: ToolHookRegistry,
   approvalGates?: ApprovalGateRegistry,
+  capabilityLedger?: import('./capabilities').CapabilityLedger,
 ): Promise<ToolExecutionResult> {
   const toolName = getHookToolName(toolCall);
   const toolArgs = getHookToolArgs(toolCall);
-  const hookContext: ToolHookContext = { sandboxId, allowedRepo, activeProvider, activeModel };
+  const hookContext: ToolHookContext = { sandboxId, allowedRepo, activeProvider, activeModel, capabilityLedger };
 
   // --- Pre-hooks evaluation ---
   if (hooks && hooks.pre.length > 0) {
@@ -468,6 +469,11 @@ export async function executeAnyToolCall(
 
     default:
       result = { text: '[Tool Error] Unknown tool source.' };
+  }
+
+  // --- Record capability usage ---
+  if (capabilityLedger) {
+    capabilityLedger.recordToolUse(toolName);
   }
 
   // --- Post-hooks evaluation ---

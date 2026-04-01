@@ -554,3 +554,10 @@ export function getRecognizedToolNames(options?: {
 export function escapeToolNameForRegex(name: string): string {
   return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+/**
+ * Get the capabilities required by a tool (by canonical name).
+ * Bridge to capabilities.ts for convenience. Does NOT resolve aliases
+ * or public names — callers must pass the canonical tool name.
+ */
+export { getToolCapabilities as getToolRequiredCapabilities } from './capabilities';

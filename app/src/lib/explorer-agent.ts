@@ -41,6 +41,7 @@ import { SystemPromptBuilder } from './system-prompt-builder';
 import { symbolLedger } from './symbol-persistence-ledger';
 import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
 import { createExplorerPolicy } from './turn-policies/explorer-policy';
+import { CapabilityLedger, ROLE_CAPABILITIES } from './capabilities';
 
 const MAX_EXPLORER_ROUNDS = 14;
 const EXPLORER_ROUND_TIMEOUT_MS = 60_000;
@@ -271,6 +272,14 @@ export async function runExplorerAgent(
   ];
 
   const cards: ChatCard[] = [];
+
+  // --- Capability ledger ---
+  const capabilityLedger = new CapabilityLedger(ROLE_CAPABILITIES.explorer);
+  const withCapabilities = (result: ExplorerResult): ExplorerResult => ({
+    ...result,
+    capabilitySnapshot: capabilityLedger.snapshot(),
+  });
+
   // Explorer-only registry — avoids pulling Coder/Orchestrator policies.
   const policyRegistry = new TurnPolicyRegistry();
   policyRegistry.register(createExplorerPolicy());
@@ -365,6 +374,7 @@ export async function runExplorerAgent(
         )),
       );
 
+      for (const call of detected.readOnly) capabilityLedger.recordToolUse(call.call.tool);
       for (const entry of readResults) {
         if (entry.card) cards.push(entry.card);
         messages.push({
@@ -385,6 +395,7 @@ export async function runExplorerAgent(
           explorerModelId,
           hooks,
         );
+        capabilityLedger.recordToolUse(detected.mutating.call.tool);
         if (trailing.card) cards.push(trailing.card);
         messages.push({
           id: `explorer-trailing-result-${round}`,
@@ -409,6 +420,7 @@ export async function runExplorerAgent(
         explorerModelId,
         hooks,
       );
+      capabilityLedger.recordToolUse(toolCall.call.tool);
       if (entry.card) cards.push(entry.card);
       messages.push({
         id: `explorer-tool-result-${round}`,
@@ -463,7 +475,7 @@ export async function runExplorerAgent(
     const policyResult = await policyRegistry.evaluateAfterModel(accumulated, messages, turnCtx);
     if (policyResult) {
       if (policyResult.action === 'halt') {
-        return { summary: policyResult.summary, cards, rounds };
+        return withCapabilities({ summary: policyResult.summary, cards, rounds });
       }
       if (policyResult.action === 'inject') {
         messages.push(policyResult.message);
@@ -471,16 +483,16 @@ export async function runExplorerAgent(
       }
     }
 
-    return {
+    return withCapabilities({
       summary: accumulated,
       cards,
       rounds,
-    };
+    });
   }
 
-  return {
+  return withCapabilities({
     summary: `[Explorer stopped after ${MAX_EXPLORER_ROUNDS} rounds — investigation may be incomplete. Return the strongest current findings with file/line evidence and recommend the next move.]`,
     cards,
     rounds: MAX_EXPLORER_ROUNDS,
-  };
+  });
 }

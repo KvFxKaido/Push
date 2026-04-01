@@ -11,13 +11,14 @@
  * endlessly on errors or ambiguity.
  */
 
-import type { ChatMessage, ChatCard, AcceptanceCriterion, CriterionResult, CoderObservation, CoderWorkingMemory, DelegationEnvelope, CoderCallbacks, CoderResult, HarnessProfileSettings } from '@/types';
+import type { ChatMessage, ChatCard, AcceptanceCriterion, CriterionResult, CoderObservation, CoderWorkingMemory, DelegationEnvelope, CoderCallbacks, CoderResult, HarnessProfileSettings, ToolExecutionResult } from '@/types';
 import { parseDiffStats } from './diff-utils';
 import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
 import { detectSandboxToolCall, executeSandboxToolCall, getSandboxToolProtocol } from './sandbox-tools';
 import { detectWebSearchToolCall, executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { CapabilityLedger, ROLE_CAPABILITIES } from './capabilities';
 import { detectAllToolCalls } from './tool-dispatch';
 import { fileLedger } from './file-awareness-ledger';
 import { symbolLedger } from './symbol-persistence-ledger';
@@ -849,6 +850,36 @@ export async function runCoderAgent(
     console.log(`[Context Budget] Coder prompt: ${fmt(systemPrompt.length)} chars (${parts})`);
   }
 
+  // --- Capability ledger ---
+  // Use declared capabilities from envelope if present, otherwise default to role grants.
+  const declaredCaps = typeof taskOrEnvelope === 'object' && taskOrEnvelope.declaredCapabilities
+    ? taskOrEnvelope.declaredCapabilities
+    : Array.from(ROLE_CAPABILITIES.coder);
+  const capabilityLedger = new CapabilityLedger(declaredCaps);
+
+  /** Attach the capability snapshot to any CoderResult before returning. */
+  const withCapabilities = (result: CoderResult): CoderResult => ({
+    ...result,
+    capabilitySnapshot: capabilityLedger.snapshot(),
+  });
+
+  /**
+   * Pre-execution capability check. Returns a blocked ToolExecutionResult
+   * if the tool exceeds the declared capability budget, or null if allowed.
+   */
+  const checkCapability = (toolName: string): ToolExecutionResult | null => {
+    if (capabilityLedger.isToolAllowed(toolName)) return null;
+    const missing = capabilityLedger.getMissingCapabilities(toolName);
+    return {
+      text: `[Tool Blocked — ${toolName}] This tool requires capabilities not declared for this run: ${missing.join(', ')}. The delegation must include these capabilities to use this tool.`,
+      structuredError: {
+        type: 'APPROVAL_GATE_BLOCKED',
+        retryable: false,
+        message: `Capability violation: ${missing.join(', ')} not declared`,
+      },
+    };
+  };
+
   const allCards: ChatCard[] = [];
   let rounds = 0;
   let checkpointCount = 0;
@@ -919,12 +950,12 @@ export async function runCoderAgent(
       statusFn('Coder stopped', `Hit ${maxRounds} round limit`);
       // Auto-fetch sandbox state for Orchestrator context
       const sandboxState = await fetchSandboxStateSummary(sandboxId);
-      return {
+      return withCapabilities({
         summary: `[Coder stopped after ${maxRounds} rounds — task may be incomplete. Review sandbox state with sandbox_diff.]${sandboxState}`,
         cards: allCards,
         rounds: round,
         checkpoints: checkpointCount,
-      };
+      });
     }
 
     rounds = round + 1;
@@ -990,12 +1021,12 @@ export async function runCoderAgent(
       if (policyResult.action === 'halt') {
         statusFn('Coder stopped', 'Cognitive drift — halted');
         const sandboxState = await fetchSandboxStateSummary(sandboxId);
-        return {
+        return withCapabilities({
           summary: policyResult.summary + sandboxState,
           cards: allCards,
           rounds,
           checkpoints: checkpointCount,
-        };
+        });
       }
       if (policyResult.action === 'inject') {
         const content = policyResult.message.content ?? '';
@@ -1036,6 +1067,10 @@ export async function runCoderAgent(
               'push.model': coderModelId,
             },
           }, async (span) => {
+            // --- Capability enforcement ---
+            const capBlock = checkCapability(call.call.tool);
+            if (capBlock) return capBlock;
+
             const toolResult = await executeSandboxToolCall(
               call.call as Parameters<typeof executeSandboxToolCall>[0],
               sandboxId,
@@ -1044,6 +1079,7 @@ export async function runCoderAgent(
                 auditorModelOverride: coderModelId,
               },
             );
+            capabilityLedger.recordToolUse(call.call.tool);
             setSpanAttributes(span, {
               'push.tool.error_type': toolResult.structuredError?.type,
               'push.tool.retryable': toolResult.structuredError?.retryable,
@@ -1119,10 +1155,15 @@ ${truncatedResult}
             'push.model': coderModelId,
           },
         }, async (span) => {
+          // --- Capability enforcement ---
+          const capBlock = checkCapability(mutCall.tool);
+          if (capBlock) return capBlock;
+
           const toolResult = await executeSandboxToolCall(mutCall, sandboxId, {
             auditorProviderOverride: activeProvider,
             auditorModelOverride: coderModelId,
           });
+          capabilityLedger.recordToolUse(mutCall.tool);
           setSpanAttributes(span, {
             'push.tool.error_type': toolResult.structuredError?.type,
             'push.tool.retryable': toolResult.structuredError?.retryable,
@@ -1209,12 +1250,12 @@ ${truncatedResult}
               });
             } catch {
               statusFn('Coder stopped', 'Sandbox unreachable');
-              return {
+              return withCapabilities({
                 summary: `[Coder stopped — sandbox is unreachable. Container may have expired or terminated. Task is incomplete.]`,
                 cards: allCards,
                 rounds,
                 checkpoints: checkpointCount,
-              };
+              });
             }
           }
 
@@ -1432,7 +1473,12 @@ ${truncatedResult}
             'push.model': coderModelId,
           },
         }, async (span) => {
+          // --- Capability enforcement ---
+          const capBlock = checkCapability('web_search');
+          if (capBlock) return capBlock;
+
           const result = await executeWebSearch(webSearch.args.query, activeProvider);
+          capabilityLedger.recordToolUse('web_search');
           setSpanAttributes(span, {
             'push.tool.error_type': result.structuredError?.type,
             'push.tool.retryable': result.structuredError?.retryable,
@@ -1509,13 +1555,13 @@ ${truncatedResult}
         }
       }
 
-      return {
+      return withCapabilities({
         summary: accumulated + criteriaBlock + sandboxState,
         cards: allCards,
         rounds,
         checkpoints: checkpointCount,
         criteriaResults,
-      };
+      });
     }
 
     // Execute sandbox tool
@@ -1553,10 +1599,15 @@ ${truncatedResult}
         'push.model': coderModelId,
       },
     }, async (span) => {
+      // --- Capability enforcement ---
+      const capBlock = checkCapability(toolCall.tool);
+      if (capBlock) return capBlock;
+
       const toolResult = await executeSandboxToolCall(toolCall, sandboxId, {
         auditorProviderOverride: activeProvider,
         auditorModelOverride: coderModelId,
       });
+      capabilityLedger.recordToolUse(toolCall.tool);
       setSpanAttributes(span, {
         'push.tool.error_type': toolResult.structuredError?.type,
         'push.tool.retryable': toolResult.structuredError?.retryable,
@@ -1659,12 +1710,12 @@ ${truncatedResult}
         } catch {
           // Health check itself failed — sandbox is truly unreachable
           statusFn('Coder stopped', 'Sandbox unreachable');
-          return {
+          return withCapabilities({
             summary: `[Coder stopped — sandbox is unreachable. Container may have expired or terminated. Task is incomplete.]`,
             cards: allCards,
             rounds,
             checkpoints: checkpointCount,
-          };
+          });
         }
       }
 
