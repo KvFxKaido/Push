@@ -117,6 +117,9 @@ export default defineConfig({
           if (id.includes('node_modules/zod') || id.includes('node_modules/react-hook-form') || id.includes('@hookform')) {
             return 'vendor-forms';
           }
+          if (id.includes('@opentelemetry')) {
+            return 'vendor-otel';
+          }
         },
       },
     },

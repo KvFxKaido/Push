@@ -8,17 +8,18 @@ import {
   type Context,
   type Span,
 } from '@opentelemetry/api';
-import { W3CTraceContextPropagator } from '@opentelemetry/core';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { resourceFromAttributes } from '@opentelemetry/resources';
-import {
-  BatchSpanProcessor,
-  ConsoleSpanExporter,
-  SimpleSpanProcessor,
-  StackContextManager,
-  WebTracerProvider,
-} from '@opentelemetry/sdk-trace-web';
 import { safeStorageGet } from './safe-storage';
+
+// Heavy OTel SDK imports are deferred to avoid blocking first paint.
+// They are only loaded when tracing is actually enabled.
+type OTelSdkModules = typeof import('./tracing-sdk');
+let sdkModulesPromise: Promise<OTelSdkModules> | null = null;
+function loadTracingSdk(): Promise<OTelSdkModules> {
+  if (!sdkModulesPromise) {
+    sdkModulesPromise = import('./tracing-sdk');
+  }
+  return sdkModulesPromise;
+}
 
 const DEFAULT_SERVICE_NAME = 'push-web';
 const STORAGE_KEYS = {
@@ -94,6 +95,10 @@ export function resolveTracingConfigFromInputs(
   };
 }
 
+/**
+ * Resolve config synchronously (cheap) and kick off async SDK setup if enabled.
+ * Returns the config immediately so callers are never blocked.
+ */
 export function initPushTracing(): PushTracingConfig {
   if (initialized) {
     return cachedConfig || resolveTracingConfigFromInputs();
@@ -104,34 +109,22 @@ export function initPushTracing(): PushTracingConfig {
   cachedConfig = config;
   if (!config.enabled) return config;
 
-  const spanProcessors = [];
-  if (config.endpoint) {
-    spanProcessors.push(
-      new BatchSpanProcessor(new OTLPTraceExporter({ url: config.endpoint })),
-    );
-  }
-  if (config.consoleExporter) {
-    spanProcessors.push(new SimpleSpanProcessor(new ConsoleSpanExporter()));
-  }
-  if (spanProcessors.length === 0) return config;
+  // Defer the heavy SDK bootstrap so it never blocks first paint.
+  const bootstrap = () => {
+    loadTracingSdk()
+      .then((sdk) => sdk.bootstrapTracing(config))
+      .catch((error) => {
+        console.warn(
+          '[tracing] Failed to initialize OpenTelemetry tracing:',
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+  };
 
-  try {
-    const provider = new WebTracerProvider({
-      resource: resourceFromAttributes({
-        'service.name': config.serviceName,
-        'deployment.environment.name': config.environment,
-      }),
-      spanProcessors,
-    });
-    provider.register({
-      contextManager: new StackContextManager(),
-      propagator: new W3CTraceContextPropagator(),
-    });
-  } catch (error) {
-    console.warn(
-      '[tracing] Failed to initialize OpenTelemetry tracing:',
-      error instanceof Error ? error.message : String(error),
-    );
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(bootstrap);
+  } else {
+    setTimeout(bootstrap, 0);
   }
 
   return config;

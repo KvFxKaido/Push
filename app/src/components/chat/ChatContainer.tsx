@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
+import { useRef, useEffect, useMemo, useState, useCallback, memo } from 'react';
 import { ArrowDown, RotateCcw, X } from 'lucide-react';
 import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, LoopPhase, CIStatus, QuickPrompt } from '@/types';
 import { MessageBubble } from './MessageBubble';
@@ -99,6 +99,43 @@ interface ChatContainerProps {
   onEditUserMessage?: (messageId: string) => void;
   onRegenerateLastResponse?: () => void;
 }
+
+/**
+ * Memoized list of "settled" messages (all messages except the last one when
+ * it is actively streaming). This avoids re-running the map/callback
+ * computation for every streaming chunk when only the final message changes.
+ */
+const SettledMessageList = memo(function SettledMessageList({
+  messages,
+  onCardAction,
+  onPin,
+  onEditUserMessage,
+  regeneratableAssistantMessageId,
+  onRegenerateLastResponse,
+}: {
+  messages: ChatMessage[];
+  onCardAction?: (action: CardAction) => void;
+  onPin?: (content: string, messageId: string) => void;
+  onEditUserMessage?: (messageId: string) => void;
+  regeneratableAssistantMessageId: string | null;
+  onRegenerateLastResponse?: () => void;
+}) {
+  return (
+    <>
+      {messages.map((msg) => (
+        <MessageBubble
+          key={msg.id}
+          message={msg}
+          onCardAction={onCardAction}
+          onPin={onPin}
+          onEdit={msg.role === 'user' && !msg.isToolResult ? onEditUserMessage : undefined}
+          canRegenerate={msg.id === regeneratableAssistantMessageId}
+          onRegenerate={msg.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined}
+        />
+      ))}
+    </>
+  );
+});
 
 const AUTO_SCROLL_THRESHOLD_PX = 150;
 const AT_BOTTOM_THRESHOLD_PX = 48;
@@ -263,6 +300,17 @@ export function ChatContainer({
     setIsAtBottom(true);
   };
 
+  // Split messages into settled (stable reference for memo) and active (last, possibly streaming).
+  // During streaming, only the active message changes each tick, so the settled list
+  // stays referentially equal and SettledMessageList skips re-render entirely.
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+  const isLastStreaming = lastMsg?.status === 'streaming';
+  const settledMessages = useMemo(
+    () => isLastStreaming ? messages.slice(0, -1) : messages,
+    [isLastStreaming, messages],
+  );
+  const activeMessage = isLastStreaming ? lastMsg : null;
+
   const showScrollButton = !isAtBottom;
   const regeneratableAssistantMessageId = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index--) {
@@ -305,17 +353,27 @@ export function ChatContainer({
       >
         <div className="flex-1" />
         <div className="py-4 space-y-1.5">
-          {messages.map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
+          {settledMessages.length > 0 && (
+            <SettledMessageList
+              messages={settledMessages}
               onCardAction={onCardAction}
               onPin={onPin}
-              onEdit={msg.role === 'user' && !msg.isToolResult ? onEditUserMessage : undefined}
-              canRegenerate={msg.id === regeneratableAssistantMessageId}
-              onRegenerate={msg.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined}
+              onEditUserMessage={onEditUserMessage}
+              regeneratableAssistantMessageId={regeneratableAssistantMessageId}
+              onRegenerateLastResponse={onRegenerateLastResponse}
             />
-          ))}
+          )}
+          {activeMessage && (
+            <MessageBubble
+              key={activeMessage.id}
+              message={activeMessage}
+              onCardAction={onCardAction}
+              onPin={onPin}
+              onEdit={activeMessage.role === 'user' && !activeMessage.isToolResult ? onEditUserMessage : undefined}
+              canRegenerate={activeMessage.id === regeneratableAssistantMessageId}
+              onRegenerate={activeMessage.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined}
+            />
+          )}
           <AgentStatusBar status={agentStatus} />
         </div>
         <div ref={bottomRef} />

@@ -3,6 +3,7 @@ import { LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-cus
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
+import { usePerfMark } from '@/hooks/usePerfMark';
 
 type RepoChatDrawerProps = ComponentProps<typeof RepoChatDrawer>;
 type ChatContainerProps = ComponentProps<typeof ChatContainer>;
@@ -34,6 +35,7 @@ export function ChatSurfaceScreen({
   containerProps,
   inputProps,
 }: ChatSurfaceScreenProps) {
+  usePerfMark('chat-surface:painted', 'screen:workspace');
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-[#000] safe-area-top safe-area-bottom">
       <div

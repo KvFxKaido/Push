@@ -7,6 +7,7 @@ import { replaceAllConversations, migrateConversationsToIndexedDB } from '@/lib/
 import { toConversationIndex } from '@/lib/conversation-index';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
+import { perfMark, perfMeasure } from '@/lib/perf-marks';
 import type {
   ActiveRepo,
   AppShellScreen,
@@ -103,6 +104,10 @@ const WorkspaceScreen = lazyWithRecovery(
 );
 
 function App() {
+  // Measure time from boot to App component first render.
+  perfMark('app:first-render');
+  perfMeasure('app:boot', 'app:first-render');
+
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
   const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => loadWorkspaceSession(activeRepo));
   const [conversationIndex, setConversationIndex] = useState<ConversationIndex>({});
@@ -115,10 +120,13 @@ function App() {
   } = useRepoAppearance();
 
   useEffect(() => {
+    perfMark('conversations:migrate-start');
     let cancelled = false;
     migrateConversationsToIndexedDB().then((conversations) => {
       if (cancelled) return;
       setConversationIndex(toConversationIndex(conversations));
+      perfMark('conversations:migrate-end');
+      perfMeasure('conversations:migrate-start', 'conversations:migrate-end');
     }).catch(() => {
       // Best effort bootstrap for HomeScreen history.
     });
@@ -267,6 +275,10 @@ function App() {
   }, [authToken, workspaceSession]);
 
   const suspenseFallback = <div className="h-dvh bg-[#000]" />;
+
+  // Instrument screen transitions — mark which screen is about to render.
+  // The corresponding "painted" mark lives inside each screen component.
+  perfMark(`screen:${screen}`);
 
   if (screen === 'onboarding') {
     return (
