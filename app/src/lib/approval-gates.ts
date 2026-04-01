@@ -16,6 +16,7 @@ import type {
   ApprovalGateDecision,
 } from '@/types';
 import { getApprovalMode } from './approval-mode';
+import { getToolCapabilities, CAPABILITY_LABELS, type Capability } from './capabilities';
 
 // ---------------------------------------------------------------------------
 // Destructive command detection
@@ -163,5 +164,65 @@ export function createDefaultApprovalGates(): ApprovalGateRegistry {
       'Use ask_user to describe the remote action and its consequences, then re-run with approval.',
   });
 
+  // --- capability-violation ---
+  // When a CapabilityLedger is present in the context, blocks tools whose
+  // required capabilities exceed the declared set for this run.
+  registry.register({
+    id: 'capability-violation',
+    label: 'Capability violation',
+    category: 'capability_violation',
+    matcher: /.*/,
+    evaluate: (
+      toolName: string,
+      _args: Record<string, unknown>,
+      context: ToolHookContext,
+    ): ApprovalGateDecision => {
+      const ledger = context.capabilityLedger;
+      if (!ledger) return 'allowed'; // No ledger — no enforcement
+      if (ledger.isToolAllowed(toolName)) return 'allowed';
+      return 'blocked';
+    },
+    blockedReason:
+      'This tool requires capabilities not declared for this run.',
+    recoveryPath:
+      'The agent should use only tools within its declared capability set, or the delegation should be re-issued with broader capabilities.',
+  });
+
   return registry;
+}
+
+// ---------------------------------------------------------------------------
+// Human-readable capability descriptions for approval prompts
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a human-readable description of what capabilities a tool requires.
+ * Used by approval UI to show "This action requires: edit files, execute commands"
+ * rather than raw tool names.
+ */
+export function describeToolCapabilities(canonicalToolName: string): string {
+  const caps = getToolCapabilities(canonicalToolName);
+  if (caps.length === 0) return canonicalToolName;
+  return caps.map((cap) => CAPABILITY_LABELS[cap as Capability] ?? cap).join(', ');
+}
+
+/**
+ * Build a rich approval prompt for a set of tool names.
+ * Example: "Allow this run to read code, edit files, execute commands, and create commits?"
+ */
+export function buildCapabilityApprovalPrompt(canonicalToolNames: string[]): string {
+  const allCaps = new Set<Capability>();
+  for (const name of canonicalToolNames) {
+    for (const cap of getToolCapabilities(name)) {
+      allCaps.add(cap);
+    }
+  }
+  if (allCaps.size === 0) return 'Allow this action?';
+  const labels = Array.from(allCaps)
+    .map((cap) => CAPABILITY_LABELS[cap] ?? cap)
+    .filter(Boolean);
+  if (labels.length === 0) return 'Allow this action?';
+  if (labels.length === 1) return `Allow this run to ${labels[0]}?`;
+  if (labels.length === 2) return `Allow this run to ${labels[0]} and ${labels[1]}?`;
+  return `Allow this run to ${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}?`;
 }

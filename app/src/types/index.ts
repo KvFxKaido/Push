@@ -926,6 +926,8 @@ export interface ToolHookContext {
   allowedRepo: string;
   activeProvider?: string;
   activeModel?: string;
+  /** When present, the capability ledger for the current run. */
+  capabilityLedger?: import('./lib/capabilities').CapabilityLedger;
 }
 
 /** Result from a PreToolUse hook. */
@@ -969,7 +971,7 @@ export interface PostToolUseResult {
 // ---------------------------------------------------------------------------
 
 /** Categories of actions that require explicit approval or a safe audited path. */
-export type ApprovalGateCategory = 'destructive_sandbox' | 'git_override' | 'remote_side_effect';
+export type ApprovalGateCategory = 'destructive_sandbox' | 'git_override' | 'remote_side_effect' | 'capability_violation';
 
 /**
  * Result of an approval gate check.
@@ -1084,6 +1086,12 @@ export interface DelegationEnvelope extends DelegationBriefFields {
   plannerBrief?: string;
   /** Session-level verification policy passed through from the conversation. */
   verificationPolicy?: VerificationPolicy;
+  /**
+   * Capabilities declared for this delegation run.
+   * When present, the capability ledger enforces that only declared
+   * capabilities are used. Logged for post-run audit.
+   */
+  declaredCapabilities?: string[];
 }
 
 /** Runtime callbacks for the Coder agent loop. */
@@ -1101,6 +1109,8 @@ export interface CoderResult {
   rounds: number;
   checkpoints: number;
   criteriaResults?: CriterionResult[];
+  /** Post-run capability audit: declared vs actually-used capabilities. */
+  capabilitySnapshot?: import('./lib/capabilities').CapabilityLedgerSnapshot;
 }
 
 export interface ExplorerDelegationEnvelope extends DelegationBriefFields {
@@ -1126,6 +1136,8 @@ export interface ExplorerResult {
   summary: string;
   cards: ChatCard[];
   rounds: number;
+  /** Post-run capability audit: declared vs actually-used capabilities. */
+  capabilitySnapshot?: import('./lib/capabilities').CapabilityLedgerSnapshot;
 }
 
 // ---------------------------------------------------------------------------
