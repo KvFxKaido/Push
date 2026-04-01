@@ -158,7 +158,7 @@ describe('runAuditor', () => {
         { path: 'src/app.ts', content: 'const x = 1;', truncated: false, classification: 'production' },
       ]),
       runAuditor(diff, () => {}, undefined, undefined, undefined, [
-        { path: 'src/app.ts', content: 'const x = 2;', truncated: false, classification: 'production' },
+        { path: 'src/app.ts', content: 'const x = 1;\nexport default x;', truncated: false, classification: 'production' },
       ]),
     ]);
 

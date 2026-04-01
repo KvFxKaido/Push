@@ -66,12 +66,11 @@ function auditCoalesceKey(
         output: hookResult.output,
       }
       : null,
-    fileContexts: (fileContexts ?? []).map((ctx) => ({
-      path: ctx.path,
-      classification: ctx.classification,
-      truncated: ctx.truncated,
-      content: ctx.content,
-    })),
+    // Compact fingerprint — discriminates by path, size, and truncation without
+    // serializing up to 60KB of file content into the Map key.
+    fileContextFingerprint: (fileContexts ?? []).map(
+      (ctx) => `${ctx.path}:${ctx.content.length}:${ctx.truncated ? 1 : 0}`,
+    ),
     diff,
   });
 }
