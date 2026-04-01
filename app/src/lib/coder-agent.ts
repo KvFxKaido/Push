@@ -822,14 +822,14 @@ export async function runCoderAgent(
     promptBuilder.set('environment', `[WORKSPACE CONTEXT]\nActive branch: ${bc.activeBranch}\nDefault branch: ${bc.defaultBranch}\nProtect main: ${bc.protectMain ? 'on' : 'off'}`);
   }
 
-  // Symbol cache + web search as custom blocks
-  const customParts: string[] = [];
+  // Web search protocol — stable tool instructions
+  promptBuilder.append('tool_instructions', WEB_SEARCH_TOOL_PROTOCOL);
+
+  // Symbol cache — volatile memory derived from workspace
   const symbolSummary = symbolLedger.getSummary();
   if (symbolSummary) {
-    customParts.push(`[SYMBOL_CACHE]\n${symbolSummary}\nUse sandbox_read_symbols on cached files to get instant results (no sandbox round-trip).\n[/SYMBOL_CACHE]`);
+    promptBuilder.set('memory', `[SYMBOL_CACHE]\n${symbolSummary}\nUse sandbox_read_symbols on cached files to get instant results (no sandbox round-trip).\n[/SYMBOL_CACHE]`);
   }
-  customParts.push(WEB_SEARCH_TOOL_PROTOCOL);
-  promptBuilder.set('custom', customParts.join('\n'));
 
   // Session-level verification policy
   const policyBlock = formatVerificationPolicyBlock(effectiveDelegationContext?.verificationPolicy);

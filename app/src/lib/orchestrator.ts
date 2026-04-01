@@ -571,23 +571,22 @@ function toLLMMessages(
       builder.append('guidelines', verificationPolicyBlock);
     }
 
-    // Sandbox tools (when sandbox is active)
-    // Scratchpad, web search, ask-user — grouped as custom tool blocks.
+    // Tool protocols — session-stable instructions about how to use tools.
     // Chat mode skips all tool protocols — plain conversation only.
-    // Use \n between protocol blocks (matching prior `+='\n'`) and \n\n
-    // before scratchpad context (matching prior `+='\n\n'`).
     if (workspaceContext?.mode !== 'chat') {
-      const customParts: string[] = [];
+      const toolProtocols: string[] = [];
       if (hasSandbox) {
-        customParts.push(getSandboxToolProtocol());
+        toolProtocols.push(getSandboxToolProtocol());
       }
-      customParts.push(SCRATCHPAD_TOOL_PROTOCOL);
+      toolProtocols.push(SCRATCHPAD_TOOL_PROTOCOL);
+      toolProtocols.push(WEB_SEARCH_TOOL_PROTOCOL);
+      toolProtocols.push(ASK_USER_TOOL_PROTOCOL);
+      builder.append('tool_instructions', toolProtocols.join('\n'));
+
+      // Scratchpad content — volatile memory that changes between turns.
       if (scratchpadContent !== undefined) {
-        customParts.push('\n' + buildScratchpadContext(scratchpadContent));
+        builder.set('memory', buildScratchpadContext(scratchpadContent));
       }
-      customParts.push(WEB_SEARCH_TOOL_PROTOCOL);
-      customParts.push(ASK_USER_TOOL_PROTOCOL);
-      builder.set('custom', customParts.join('\n'));
     }
 
     // Intent hint (last so it overrides)
