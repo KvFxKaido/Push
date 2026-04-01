@@ -927,7 +927,7 @@ export interface ToolHookContext {
   activeProvider?: string;
   activeModel?: string;
   /** When present, the capability ledger for the current run. */
-  capabilityLedger?: import('./lib/capabilities').CapabilityLedger;
+  capabilityLedger?: import('../lib/capabilities').CapabilityLedger;
 }
 
 /** Result from a PreToolUse hook. */
@@ -1091,7 +1091,7 @@ export interface DelegationEnvelope extends DelegationBriefFields {
    * When present, the capability ledger enforces that only declared
    * capabilities are used. Logged for post-run audit.
    */
-  declaredCapabilities?: string[];
+  declaredCapabilities?: import('../lib/capabilities').Capability[];
 }
 
 /** Runtime callbacks for the Coder agent loop. */
@@ -1110,7 +1110,7 @@ export interface CoderResult {
   checkpoints: number;
   criteriaResults?: CriterionResult[];
   /** Post-run capability audit: declared vs actually-used capabilities. */
-  capabilitySnapshot?: import('./lib/capabilities').CapabilityLedgerSnapshot;
+  capabilitySnapshot?: import('../lib/capabilities').CapabilityLedgerSnapshot;
 }
 
 export interface ExplorerDelegationEnvelope extends DelegationBriefFields {
@@ -1137,7 +1137,7 @@ export interface ExplorerResult {
   cards: ChatCard[];
   rounds: number;
   /** Post-run capability audit: declared vs actually-used capabilities. */
-  capabilitySnapshot?: import('./lib/capabilities').CapabilityLedgerSnapshot;
+  capabilitySnapshot?: import('../lib/capabilities').CapabilityLedgerSnapshot;
 }
 
 // ---------------------------------------------------------------------------

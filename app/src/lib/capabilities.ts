@@ -68,8 +68,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
 
 /**
  * Maps each canonical tool name to the capabilities it requires.
- * A tool may require multiple capabilities (e.g. sandbox_push requires
- * both git:push and repo:read for branch detection).
+ * A tool may require multiple capabilities when it spans domains.
  */
 export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> = {
   // GitHub read-only tools

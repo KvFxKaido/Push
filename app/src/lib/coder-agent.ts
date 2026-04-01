@@ -11,7 +11,7 @@
  * endlessly on errors or ambiguity.
  */
 
-import type { ChatMessage, ChatCard, AcceptanceCriterion, CriterionResult, CoderObservation, CoderWorkingMemory, DelegationEnvelope, CoderCallbacks, CoderResult, HarnessProfileSettings } from '@/types';
+import type { ChatMessage, ChatCard, AcceptanceCriterion, CriterionResult, CoderObservation, CoderWorkingMemory, DelegationEnvelope, CoderCallbacks, CoderResult, HarnessProfileSettings, ToolExecutionResult } from '@/types';
 import { parseDiffStats } from './diff-utils';
 import { getActiveProvider, getProviderStreamFn, buildUserIdentityBlock, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
@@ -855,13 +855,30 @@ export async function runCoderAgent(
   const declaredCaps = typeof taskOrEnvelope === 'object' && taskOrEnvelope.declaredCapabilities
     ? taskOrEnvelope.declaredCapabilities
     : Array.from(ROLE_CAPABILITIES.coder);
-  const capabilityLedger = new CapabilityLedger(declaredCaps as import('./capabilities').Capability[]);
+  const capabilityLedger = new CapabilityLedger(declaredCaps);
 
   /** Attach the capability snapshot to any CoderResult before returning. */
   const withCapabilities = (result: CoderResult): CoderResult => ({
     ...result,
     capabilitySnapshot: capabilityLedger.snapshot(),
   });
+
+  /**
+   * Pre-execution capability check. Returns a blocked ToolExecutionResult
+   * if the tool exceeds the declared capability budget, or null if allowed.
+   */
+  const checkCapability = (toolName: string): ToolExecutionResult | null => {
+    if (capabilityLedger.isToolAllowed(toolName)) return null;
+    const missing = capabilityLedger.getMissingCapabilities(toolName);
+    return {
+      text: `[Tool Blocked — ${toolName}] This tool requires capabilities not declared for this run: ${missing.join(', ')}. The delegation must include these capabilities to use this tool.`,
+      structuredError: {
+        type: 'APPROVAL_GATE_BLOCKED',
+        retryable: false,
+        message: `Capability violation: ${missing.join(', ')} not declared`,
+      },
+    };
+  };
 
   const allCards: ChatCard[] = [];
   let rounds = 0;
@@ -1050,6 +1067,10 @@ export async function runCoderAgent(
               'push.model': coderModelId,
             },
           }, async (span) => {
+            // --- Capability enforcement ---
+            const capBlock = checkCapability(call.call.tool);
+            if (capBlock) return capBlock;
+
             const toolResult = await executeSandboxToolCall(
               call.call as Parameters<typeof executeSandboxToolCall>[0],
               sandboxId,
@@ -1134,6 +1155,10 @@ ${truncatedResult}
             'push.model': coderModelId,
           },
         }, async (span) => {
+          // --- Capability enforcement ---
+          const capBlock = checkCapability(mutCall.tool);
+          if (capBlock) return capBlock;
+
           const toolResult = await executeSandboxToolCall(mutCall, sandboxId, {
             auditorProviderOverride: activeProvider,
             auditorModelOverride: coderModelId,
@@ -1448,6 +1473,10 @@ ${truncatedResult}
             'push.model': coderModelId,
           },
         }, async (span) => {
+          // --- Capability enforcement ---
+          const capBlock = checkCapability('web_search');
+          if (capBlock) return capBlock;
+
           const result = await executeWebSearch(webSearch.args.query, activeProvider);
           capabilityLedger.recordToolUse('web_search');
           setSpanAttributes(span, {
@@ -1570,6 +1599,10 @@ ${truncatedResult}
         'push.model': coderModelId,
       },
     }, async (span) => {
+      // --- Capability enforcement ---
+      const capBlock = checkCapability(toolCall.tool);
+      if (capBlock) return capBlock;
+
       const toolResult = await executeSandboxToolCall(toolCall, sandboxId, {
         auditorProviderOverride: activeProvider,
         auditorModelOverride: coderModelId,

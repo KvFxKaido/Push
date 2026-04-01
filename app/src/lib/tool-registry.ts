@@ -556,7 +556,8 @@ export function escapeToolNameForRegex(name: string): string {
 }
 
 /**
- * Get the capabilities required by a tool (resolves aliases/public names first).
- * Bridge to capabilities.ts for callers that work with tool names rather than canonical names.
+ * Get the capabilities required by a tool (by canonical name).
+ * Bridge to capabilities.ts for convenience. Does NOT resolve aliases
+ * or public names — callers must pass the canonical tool name.
  */
 export { getToolCapabilities as getToolRequiredCapabilities } from './capabilities';
