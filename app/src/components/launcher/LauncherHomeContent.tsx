@@ -25,6 +25,7 @@ import {
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
+import { AprilFoolsBanner } from '@/components/chat/AprilFoolsBanner';
 import { RepoLauncherPanel, type LauncherSandboxSession } from './RepoLauncherPanel';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { ActiveRepo, ConversationIndex, GitHubUser, RepoWithActivity } from '@/types';
@@ -74,6 +75,7 @@ export function LauncherHomeContent({
   return (
     <>
       <div className="space-y-4">
+        {!isChatMode && <AprilFoolsBanner />}
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2.5">
             {!isChatMode && (
