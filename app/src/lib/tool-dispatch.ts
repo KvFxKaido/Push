@@ -655,12 +655,12 @@ function diagnoseMissingExplorerCall(text: string): ToolCallDiagnosis | null {
   return {
       reason: 'natural_language_intent',
       toolName: 'delegate_explorer',
-      errorMessage: `Your response describes an investigation or discovery process but you didn't output the \`explorer\` tool call. `
-        + `To explore the codebase, output ONLY a fenced JSON block like this:\n\n`
+      errorMessage: `Your response describes an investigation or discovery process but you didn't include the \`explorer\` tool call. `
+        + `To explore the codebase, include a fenced JSON block like this:\n\n`
         + '```json\n'
         + '{"tool": "explorer", "args": {"task": "Trace the auth flow and summarize where session refresh happens", "files": ["src/auth.ts"]}}\n'
         + '```\n\n'
-        + `Do not describe the investigation in prose — start the explorer with a clear objective.`,
+        + `A brief sentence before or after the block is fine, but the JSON block must be present.`,
     };
 }
 
@@ -1235,12 +1235,12 @@ function detectNaturalLanguageToolIntent(text: string): ToolCallDiagnosis | null
     return {
       reason: 'natural_language_intent',
       toolName,
-      errorMessage: `You described wanting to use "${getToolPublicName(toolName)}" but didn't output the required JSON tool block. `
-        + `To call a tool, output ONLY a fenced JSON block like this:\n\n`
+      errorMessage: `You described wanting to use "${getToolPublicName(toolName)}" but didn't include the required JSON tool block. `
+        + `To call a tool, include a fenced JSON block like this:\n\n`
         + '```json\n'
         + `${exampleJson}\n`
         + '```\n\n'
-        + `Do not describe the tool call in prose — output the JSON block directly.`,
+        + `A brief sentence before or after the block is fine, but the JSON block must be present.`,
     };
   }
 

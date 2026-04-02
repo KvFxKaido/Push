@@ -333,7 +333,7 @@ Commit message guidelines for ${PREPARE_COMMIT_TOOL}:
 - Describe what changed and why, not how
 
 Sandbox rules:
-- CRITICAL: To use a sandbox tool, you MUST output the fenced JSON block. Do NOT describe or narrate tool usage in prose. The system can ONLY detect and execute tool calls from JSON blocks.
+- CRITICAL: To use a sandbox tool, you MUST include the fenced JSON block in your response. A brief sentence before or after the block is fine, but the JSON block MUST be present — the system can ONLY detect and execute tool calls from JSON blocks.
 - The repo is cloned to /workspace — use that as the working directory
 - You can install packages, run tests, build, lint — anything you'd do in a terminal
 - For multi-step tasks (edit + test), use multiple tool calls in sequence
