@@ -85,6 +85,39 @@ const MAX_CONSECUTIVE_MUTATION_FAILURES = 3;
 const MAX_CONSECUTIVE_DRIFT_ROUNDS = 2;
 
 /**
+ * Mechanical backpressure: after this many successful file mutations without
+ * a verification command (typecheck, test, lint), inject a policy nudge
+ * requiring the Coder to validate its work before continuing.
+ *
+ * Inspired by the Ralph Loop pattern (ghuntley.com/ralph) and OpenAI's
+ * harness engineering practice of using automated rejection signals.
+ */
+export const BACKPRESSURE_MUTATION_THRESHOLD = 4;
+
+/**
+ * Patterns that indicate a sandbox_exec command is a verification command.
+ * When detected, the mutation-without-verification counter resets.
+ *
+ * NOTE: This is a fallback for freeform sandbox_exec commands. The canonical
+ * verification tools (sandbox_run_tests, sandbox_check_types) are handled
+ * separately via SANDBOX_VERIFICATION_TOOLS. Session-level verification
+ * policy commands (from extractCommandRules()) map to these same patterns
+ * in practice; if custom commands diverge, pass the verification policy
+ * into createCoderPolicy() in a future iteration.
+ */
+export const VERIFICATION_COMMAND_PATTERN =
+  /\b(tsc|typecheck|type-check|npx tsc|pyright|mypy|eslint|biome|prettier.*--check|ruff check|npm test|npx vitest|pytest|cargo test|go test|npm run lint|npm run test|npm run typecheck|npm run build)\b/i;
+
+/**
+ * Built-in sandbox tools that perform verification.
+ * These reset the backpressure mutation counter when invoked.
+ */
+const SANDBOX_VERIFICATION_TOOLS = new Set([
+  'sandbox_run_tests',
+  'sandbox_check_types',
+]);
+
+/**
  * Sandbox tools that mutate files. During verification phases, these are
  * blocked to enforce a read-only + run-tests discipline.
  * sandbox_exec is intentionally excluded — tests/typecheck need to run.
@@ -104,6 +137,7 @@ export function createCoderPolicy(): TurnPolicy {
   // --- Per-instance mutable state ---
   let consecutiveDriftRounds = 0;
   const mutationFailures = new Map<string, MutationFailureEntry>();
+  let mutationsSinceVerification = 0;
 
   return {
     name: 'coder-core',
@@ -220,7 +254,11 @@ export function createCoderPolicy(): TurnPolicy {
     ],
 
     // -----------------------------------------------------------------
-    // afterToolExec: mutation failure tracking
+    // afterToolExec: unified mutation tracking + mechanical backpressure
+    //
+    // Single hook so failure-state cleanup always runs even when
+    // backpressure injects. evaluateAfterTool() short-circuits on the
+    // first non-null return, so separate hooks would skip cleanup.
     // -----------------------------------------------------------------
     afterToolExec: [
       (
@@ -230,46 +268,85 @@ export function createCoderPolicy(): TurnPolicy {
         hasError: boolean,
         ctx: TurnContext,
       ) => {
+        // --- Backpressure: reset counter on verification tools ---
+        // Built-in verification tools
+        if (SANDBOX_VERIFICATION_TOOLS.has(toolName)) {
+          mutationsSinceVerification = 0;
+        }
+        // sandbox_exec with a verification command
+        if (toolName === 'sandbox_exec' && typeof args.command === 'string') {
+          if (VERIFICATION_COMMAND_PATTERN.test(args.command)) {
+            mutationsSinceVerification = 0;
+          }
+        }
+
+        // --- Mutation failure tracking (always runs) ---
         const filePath =
           (typeof args.path === 'string' ? args.path : '') ||
           (typeof args.file === 'string' ? args.file : '');
         const mutKey = `${toolName}::${filePath}`;
 
-        if (!hasError) {
-          // Success — clear failure tracking for this tool+file
-          mutationFailures.delete(mutKey);
-          return null;
+        if (SANDBOX_MUTATION_TOOLS.has(toolName) || hasError) {
+          if (!hasError) {
+            // Success — clear failure tracking for this tool+file
+            mutationFailures.delete(mutKey);
+          } else {
+            // Track failure
+            const existing = mutationFailures.get(mutKey);
+            if (existing) {
+              existing.count++;
+            } else {
+              mutationFailures.set(mutKey, {
+                tool: toolName,
+                file: filePath,
+                errorType: 'structured_error',
+                count: 1,
+              });
+            }
+
+            const entry = mutationFailures.get(mutKey)!;
+            if (entry.count >= MAX_CONSECUTIVE_MUTATION_FAILURES) {
+              return {
+                action: 'inject' as const,
+                message: {
+                  id: `policy-mutation-hard-failure-${ctx.round}`,
+                  role: 'user' as const,
+                  content: [
+                    '[POLICY: MUTATION_HARD_FAILURE]',
+                    `${entry.tool} has failed ${entry.count} consecutive times on ${entry.file || 'the same target'}.`,
+                    'Container may be unstable. Stop mutation attempts. Summarize what you accomplished and what remains.',
+                    '[/POLICY]',
+                  ].join('\n'),
+                  timestamp: Date.now(),
+                },
+              };
+            }
+          }
         }
 
-        // Track failure
-        const existing = mutationFailures.get(mutKey);
-        if (existing) {
-          existing.count++;
-        } else {
-          mutationFailures.set(mutKey, {
-            tool: toolName,
-            file: filePath,
-            errorType: 'structured_error',
-            count: 1,
-          });
-        }
+        // --- Backpressure: count mutations and nudge ---
+        if (SANDBOX_MUTATION_TOOLS.has(toolName) && !hasError) {
+          mutationsSinceVerification++;
 
-        const entry = mutationFailures.get(mutKey)!;
-        if (entry.count >= MAX_CONSECUTIVE_MUTATION_FAILURES) {
-          return {
-            action: 'inject' as const,
-            message: {
-              id: `policy-mutation-hard-failure-${ctx.round}`,
-              role: 'user' as const,
-              content: [
-                '[POLICY: MUTATION_HARD_FAILURE]',
-                `${entry.tool} has failed ${entry.count} consecutive times on ${entry.file || 'the same target'}.`,
-                'Container may be unstable. Stop mutation attempts. Summarize what you accomplished and what remains.',
-                '[/POLICY]',
-              ].join('\n'),
-              timestamp: Date.now(),
-            },
-          };
+          if (mutationsSinceVerification >= BACKPRESSURE_MUTATION_THRESHOLD) {
+            const count = mutationsSinceVerification;
+            return {
+              action: 'inject' as const,
+              message: {
+                id: `policy-backpressure-${ctx.round}`,
+                role: 'user' as const,
+                content: [
+                  '[POLICY: VERIFY_BEFORE_CONTINUING]',
+                  `You have made ${count} file mutations without running verification.`,
+                  'Before writing more code, run at least one of: typecheck (e.g. npx tsc --noEmit), lint (e.g. npx eslint), or tests (e.g. npm test).',
+                  'This catches errors early and prevents compounding mistakes across files.',
+                  'Use sandbox_exec, sandbox_run_tests, or sandbox_check_types to verify.',
+                  '[/POLICY]',
+                ].join('\n'),
+                timestamp: Date.now(),
+              },
+            };
+          }
         }
 
         return null;
