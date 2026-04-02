@@ -164,9 +164,9 @@ You can switch provider/model mid-session with `/provider` and `/model`. Switchi
 
 ### Provider policies
 
-- Ollama: `documents/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
-- OpenRouter: `documents/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
-- OpenCode Zen: `documents/security/PROVIDER_USAGE_POLICY_ZEN.md`
+- Ollama: `docs/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
+- OpenRouter: `docs/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
+- OpenCode Zen: `docs/security/PROVIDER_USAGE_POLICY_ZEN.md`
 
 ## Tools
 
