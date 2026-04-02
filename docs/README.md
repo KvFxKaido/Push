@@ -1,7 +1,7 @@
 # Docs Index
 
 Use this file to navigate active design/planning docs versus historical references.
-
+`docs/` is the canonical documentation home for this repo.
 `docs/` is the canonical documentation home for this repo.
 
 ## Structure
