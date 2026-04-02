@@ -1,7 +1,5 @@
 # Push — Mobile AI Coding Agent
 
-CLAUDE.md is the canonical detailed source for Push. Keep architecture, workflow, and operational details here; the root README.md, AGENTS.md, and GEMINI.md should stay as short compatibility/overview shims that point back to this file. `ROADMAP.md` carries the current product priorities.
-
 ## Quick Start
 
 ### Web app
@@ -26,40 +24,14 @@ npm install
 ./push
 ```
 
-## Tech Stack
+## Pointers
 
-- React 19 + TypeScript 6 + Vite 7
-- Tailwind CSS 3 + shadcn/ui (Radix primitives)
-- GitHub REST API for repo operations
-- Multi-backend AI with built-ins plus opt-in private connectors
-- Modal for sandbox code execution
-- Cloudflare Workers for streaming proxy and sandbox proxy
-- PWA with service worker and offline support
-
-## Architecture
-
-Role-based agent system. Models are replaceable. Roles are locked. Backend/model routing is currently hybrid: Settings stores defaults and the active backend preference, chat/review selection happens separately, and the role split stays fixed underneath.
-
-- **Orchestrator** — Conversational lead, interprets intent, and delegates to Explorer or Coder as needed.
-- **Explorer** — Autonomous read-only investigation for code tracing, architecture discovery, and evidence gathering.
-- **Coder** — Autonomous code implementation and execution in the sandbox.
-- **Reviewer** — On-demand advisory diff review in the Workspace Hub.
-- **Auditor** — Pre-commit safety gate with a binary SAFE/UNSAFE verdict.
-
-## Key Systems
-
-- Tool protocol, multi-tool dispatch, and structured error reporting
-- Sandbox execution, scratch workspaces, and web search tools
-- Coder delegation and Explorer delegation
-- Reviewer sources: Branch diff, Last commit, Working tree
-- Harness reliability, hashline edits, resumable sessions, and active branch handling
-- GitHub PR merge flow and branch-scoped chats
-- Project instruction loading order: `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`
-
-## Push CLI
-
-Local coding agent for the terminal. Same role-based agent architecture as the web app. The current terminal direction is transcript-first CLI ergonomics and TUI-lite improvements; the existing TUI surface is experimental, not a ground-up rewrite target.
+- [`docs/architecture.md`](docs/architecture.md) — tech stack, agent roles, key systems, and repo map
+- [`docs/design-system.md`](docs/design-system.md) — visual tokens, colors, typography, and components
+- [`AGENTS.md`](AGENTS.md) — startup contract for AI agents (provider routing, workflow rules)
+- [`ROADMAP.md`](ROADMAP.md) — current product priorities
+- [`docs/`](docs/) — decisions, runbooks, security policies, and archived references
 
 ## Notes
 
-Keep this file as the single detailed source of truth. If another root doc needs a new operational detail, add it here and leave the others as shims.
+Keep `docs/architecture.md` as the detailed source of truth. This file is a quick-start entry point. `AGENTS.md` carries the agent startup contract. `ROADMAP.md` carries priorities. If a new operational detail is needed, add it to `docs/` and point to it from here.

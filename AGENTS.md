@@ -2,7 +2,7 @@
 
 This is the **required entry doc** for Push. The loader currently reads `AGENTS.md` first, so this file must be self-sufficient.
 
-`CLAUDE.md` is the deeper canonical reference for architecture and implementation details, but this file carries the minimum contract Push agents need at startup.
+[`docs/architecture.md`](docs/architecture.md) is the deeper canonical reference for architecture and implementation details, but this file carries the minimum contract Push agents need at startup.
 
 ## Core model
 
@@ -48,5 +48,6 @@ This is the **required entry doc** for Push. The loader currently reads `AGENTS.
 
 ## Pointer
 
-For full architecture, tool protocol, and implementation detail, see [`CLAUDE.md`](CLAUDE.md).
-If this file conflicts with `CLAUDE.md`, prefer `CLAUDE.md` for detailed behavior and this file for startup contract.
+For full architecture, tool protocol, and implementation detail, see [`docs/architecture.md`](docs/architecture.md).
+For quick start and entry points, see [`CLAUDE.md`](CLAUDE.md).
+If this file conflicts with `docs/architecture.md`, prefer `docs/architecture.md` for detailed behavior and this file for startup contract.

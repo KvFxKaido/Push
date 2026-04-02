@@ -2,11 +2,11 @@
 
 Use this file to navigate active design/planning docs versus historical references.
 `docs/` is the canonical documentation home for this repo.
-`docs/` is the canonical documentation home for this repo.
 
 ## Structure
 
-- `architecture.md` — design system, visual tokens, and component specs (moved from root `DESIGN.md`)
+- `architecture.md` — tech stack, agent roles, key systems, and repo map
+- `design-system.md` — visual tokens, colors, typography, spacing, and component specs
 - `decisions/` — architecture decisions, research, analysis, and shipped design references
 - `runbooks/` — active, draft, or deferred product plans
 - `security/` — security reviews, audits, and provider usage policies
@@ -20,6 +20,8 @@ Use this file to navigate active design/planning docs versus historical referenc
 ## Architecture
 
 - `architecture.md`
+  - Status: Canonical architecture reference (tech stack, agent roles, key systems, repo map).
+- `design-system.md`
   - Status: Canonical design system reference (colors, typography, spacing, components, motion).
 
 ## Decisions
@@ -128,7 +130,7 @@ Use this file to navigate active design/planning docs versus historical referenc
 - `archive/runbooks/Architecture Follow-up Plan.md`
   - Status: Completed architecture cleanup plan retained as reference.
 - `archive/runbooks/Harness Ergonomics Plan.md`
-- If a draft in `docs/` becomes an implementation commitment, promote a concise version into `../ROADMAP.md` first.
+  - Status: Shipped ergonomics sprint plan retained as reference.
 - `archive/runbooks/Truncation-Aware Edit Safety Plan.md`
   - Status: Implemented track-specific rollout history retained as reference.
 - `archive/runbooks/Unified Workspace Plan.md`
