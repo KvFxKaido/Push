@@ -230,6 +230,69 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
     );
     expect(result).toBeNull();
   });
+
+  // Action-phrase patterns — natural descriptions of tool actions
+  it('detects "I\'ll fetch the recent commits" as list_commits intent', () => {
+    const result = diagnoseToolCallFailure(
+      "To get the actual latest activity, I'll fetch the recent commits from the repo."
+    );
+    expect(result?.reason).toBe('natural_language_intent');
+    expect(result?.toolName).toBe('list_commits');
+  });
+
+  it('detects "Let me grab the latest commits" as list_commits intent', () => {
+    const result = diagnoseToolCallFailure(
+      'Let me grab the latest commits to see what changed.'
+    );
+    expect(result?.reason).toBe('natural_language_intent');
+    expect(result?.toolName).toBe('list_commits');
+  });
+
+  it('detects "I\'ll read the file" as read_file intent', () => {
+    const result = diagnoseToolCallFailure(
+      "I'll read the file to understand the implementation."
+    );
+    expect(result?.reason).toBe('natural_language_intent');
+    expect(result?.toolName).toBe('read_file');
+  });
+
+  it('detects "Let me search the codebase" as search_files intent', () => {
+    const result = diagnoseToolCallFailure(
+      'Let me search the codebase for that function definition.'
+    );
+    expect(result?.reason).toBe('natural_language_intent');
+    expect(result?.toolName).toBe('search_files');
+  });
+
+  it('detects "I\'ll check the open PRs" as list_prs intent', () => {
+    const result = diagnoseToolCallFailure(
+      "I'll check the open PRs to see what's pending."
+    );
+    expect(result?.reason).toBe('natural_language_intent');
+    expect(result?.toolName).toBe('list_prs');
+  });
+
+  it('detects "Let me get the branches" as list_branches intent', () => {
+    const result = diagnoseToolCallFailure(
+      'Let me get the branches to see what exists.'
+    );
+    expect(result?.reason).toBe('natural_language_intent');
+    expect(result?.toolName).toBe('list_branches');
+  });
+
+  it('does not flag conversational text that happens to mention commits', () => {
+    const result = diagnoseToolCallFailure(
+      'The recent commits show that the team has been busy with refactoring.'
+    );
+    expect(result).toBeNull();
+  });
+
+  it('does not flag questions about actions', () => {
+    const result = diagnoseToolCallFailure(
+      'Would you like me to fetch the recent commits?'
+    );
+    expect(result).toBeNull();
+  });
 });
 
 describe('detectAllToolCalls', () => {
