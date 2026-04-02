@@ -1186,6 +1186,39 @@ const NL_INTENT_PATTERNS: NLIntentPattern[] = [
     toolName: 'delegate_explorer',
     exampleJson: getToolArgHint('delegate_explorer') ?? '{"tool": "explorer", "args": {"task": "describe what to investigate"}}',
   },
+  // Action-phrase patterns — catch natural descriptions of tool actions
+  // (e.g. "I'll fetch the recent commits") without requiring exact tool names.
+  // Each requires INTENT_VERBS prefix to avoid matching conversational text.
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:fetch|get|pull|check|grab|look\\s+at|retrieve|show)\\s+(?:the\\s+)?(?:recent\\s+|latest\\s+)?commits`, 'i'),
+    toolName: 'list_commits',
+    exampleJson: getToolArgHint('list_commits') ?? '{"tool": "commits", "args": {"repo": "owner/repo"}}',
+  },
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:read|open|look\\s+at|check|view|inspect|pull\\s+up|examine)\\s+(?:the\\s+|that\\s+)?file`, 'i'),
+    toolName: 'read_file',
+    exampleJson: getToolArgHint('read_file') ?? '{"tool": "repo_read", "args": {"repo": "owner/repo", "path": "src/app.ts"}}',
+  },
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:search|find|look\\s+for|grep|scan)\\s+(?:the\\s+|for\\s+)?(?:code|repo|codebase|files)`, 'i'),
+    toolName: 'search_files',
+    exampleJson: getToolArgHint('search_files') ?? '{"tool": "repo_search", "args": {"repo": "owner/repo", "query": "searchTerm"}}',
+  },
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:fetch|get|check|pull|grab|look\\s+at|retrieve|show)\\s+(?:the\\s+)?(?:open\\s+|recent\\s+|latest\\s+)?(?:PRs?|pull\\s+requests?)`, 'i'),
+    toolName: 'list_pull_requests',
+    exampleJson: getToolArgHint('list_pull_requests') ?? '{"tool": "prs", "args": {"repo": "owner/repo"}}',
+  },
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:fetch|get|check|list|pull|grab|look\\s+at|retrieve|show)\\s+(?:the\\s+)?branches`, 'i'),
+    toolName: 'list_branches',
+    exampleJson: getToolArgHint('list_branches') ?? '{"tool": "branches", "args": {"repo": "owner/repo"}}',
+  },
+  {
+    regex: new RegExp(`${INTENT_VERBS}\\s+(?:run|execute|fire|kick\\s+off|trigger)\\s+(?:the\\s+)?(?:tests?|test\\s+suite)`, 'i'),
+    toolName: 'sandbox_exec',
+    exampleJson: getToolArgHint('sandbox_exec') ?? '{"tool": "exec", "args": {"command": "npm test"}}',
+  },
   // Generic: model mentions a known tool name by its exact name without JSON
   // e.g. "I'll use sandbox_exec to run the tests"
   // This is safe because it requires the actual tool identifier in the text.
