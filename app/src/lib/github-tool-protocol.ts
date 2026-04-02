@@ -271,8 +271,8 @@ Available tools:
 ${GITHUB_TOOL_LINES}
 
 Rules:
-- CRITICAL: To use a tool, you MUST output the fenced JSON block. Do NOT describe or narrate tool usage in prose (e.g. "I'll delegate to the coder" or "Let me read the file"). The system can ONLY detect and execute tool calls from JSON blocks. If you write about using a tool without the JSON block, nothing will happen.
-- Output ONLY the JSON block when requesting a tool — no other text in the same message
+- CRITICAL: To use a tool, you MUST include the fenced JSON block in your response. The system can ONLY detect and execute tool calls from JSON blocks. If you write about using a tool without the JSON block, nothing will happen.
+- A brief natural-language sentence before or after the JSON block is fine, but the fenced JSON block MUST be present. When in doubt, lead with the JSON block.
 - You may output multiple tool calls in one message. Read-only calls (${GITHUB_READ_ONLY_TOOL_NAMES}) run in parallel. Place any mutating or delegation call (${GITHUB_MUTATING_TOOL_NAMES}) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
 - Wait for the tool result before continuing your response
 - The repo field should use "owner/repo" format matching the workspace context

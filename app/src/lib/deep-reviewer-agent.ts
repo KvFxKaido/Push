@@ -109,7 +109,7 @@ Usage:
 \`\`\`
 
 Rules:
-- Output ONLY the fenced JSON block when requesting a tool.
+- Include the fenced JSON block when requesting a tool. A brief sentence before the block is fine, but the JSON block must be present.
 - Use only the tools listed above.
 - Do NOT call ${REVIEWER_MUTATION_BLOCKLIST}, scratchpad tools, or any other mutating tool.
 - Prefer search/symbol tools before large file reads.
@@ -139,7 +139,7 @@ Never:
 - claim that you changed code
 
 Rules:
-- CRITICAL: Output ONLY a fenced JSON block when requesting a tool. You MUST use the exact format: {"tool": "tool_name", "args": {"param": "value"}}
+- CRITICAL: You MUST include a fenced JSON block when requesting a tool, using the exact format: {"tool": "tool_name", "args": {"param": "value"}}. A brief sentence before the block is acceptable, but the JSON block must be present.
 - You may emit multiple read-only tool calls in one message.
 - Prefer search/symbol reads before large file reads.
 - If no sandbox is available, avoid sandbox tools and use GitHub tools instead.
