@@ -128,7 +128,7 @@ Use this file to navigate active design/planning docs versus historical referenc
 - `archive/runbooks/Architecture Follow-up Plan.md`
   - Status: Completed architecture cleanup plan retained as reference.
 - `archive/runbooks/Harness Ergonomics Plan.md`
-  - Status: Shipped ergonomics sprint plan retained as reference.
+- If a draft in `docs/` becomes an implementation commitment, promote a concise version into `../ROADMAP.md` first.
 - `archive/runbooks/Truncation-Aware Edit Safety Plan.md`
   - Status: Implemented track-specific rollout history retained as reference.
 - `archive/runbooks/Unified Workspace Plan.md`
