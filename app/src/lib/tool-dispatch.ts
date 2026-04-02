@@ -660,7 +660,7 @@ function diagnoseMissingExplorerCall(text: string): ToolCallDiagnosis | null {
         + '```json\n'
         + '{"tool": "explorer", "args": {"task": "Trace the auth flow and summarize where session refresh happens", "files": ["src/auth.ts"]}}\n'
         + '```\n\n'
-        + `A brief sentence before the block is fine, but the JSON block must be present.`,
+        + `A brief sentence before or after the block is fine, but the JSON block must be present.`,
     };
 }
 
@@ -1240,7 +1240,7 @@ function detectNaturalLanguageToolIntent(text: string): ToolCallDiagnosis | null
         + '```json\n'
         + `${exampleJson}\n`
         + '```\n\n'
-        + `A brief sentence before the block is fine, but the JSON block must be present.`,
+        + `A brief sentence before or after the block is fine, but the JSON block must be present.`,
     };
   }
 

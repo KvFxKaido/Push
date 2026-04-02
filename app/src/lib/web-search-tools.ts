@@ -55,7 +55,7 @@ Prefer the short name \`${getToolPublicName('web_search')}\`. The long name stil
 - Tasks that don't need current information
 
 **Rules:**
-- Include the JSON block when searching. A brief sentence before the block is fine, but the JSON block must be present
+- Include the JSON block when searching. A brief sentence before or after the block is fine, but the JSON block must be present.
 - Wait for the search result before continuing your response
 - Cite sources (title + URL) when using search results
 - Keep queries concise and specific (2-6 words is ideal)
