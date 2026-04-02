@@ -481,6 +481,7 @@ export function useAgentDelegation({
                     harnessSettings,
                     plannerBrief,
                     verificationPolicy,
+                    declaredCapabilities: delegateArgs.declaredCapabilities,
                   },
                 );
                 setSpanAttributes(span, {

@@ -1057,6 +1057,8 @@ export interface CoderDelegationArgs extends DelegationBriefFields {
   task?: string;
   tasks?: string[];
   acceptanceCriteria?: AcceptanceCriterion[];
+  /** Optional capability budget — narrows the Coder's permissions for this delegation. */
+  declaredCapabilities?: import('../lib/capabilities').Capability[];
 }
 
 export interface ExplorerDelegationArgs extends DelegationBriefFields {

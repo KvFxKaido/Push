@@ -46,6 +46,7 @@ export async function executeReadOnlyTool(
   activeProvider: ActiveProvider,
   activeModel: string | undefined,
   hooks: ToolHookRegistry,
+  capabilityLedger?: import('./capabilities').CapabilityLedger,
 ): Promise<{ resultText: string; card?: ChatCard }> {
   return withActiveSpan('tool.execute', {
     scope: 'push.tools',
@@ -82,6 +83,7 @@ export async function executeReadOnlyTool(
       activeModel,
       hooks,
       DEFAULT_APPROVAL_GATES,
+      capabilityLedger,
     );
     resultText = result.text;
     const resultCard = result.card;

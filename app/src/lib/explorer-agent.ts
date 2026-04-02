@@ -371,6 +371,7 @@ export async function runExplorerAgent(
           activeProvider,
           explorerModelId,
           hooks,
+          capabilityLedger,
         )),
       );
 
@@ -394,6 +395,7 @@ export async function runExplorerAgent(
           activeProvider,
           explorerModelId,
           hooks,
+          capabilityLedger,
         );
         capabilityLedger.recordToolUse(detected.mutating.call.tool);
         if (trailing.card) cards.push(trailing.card);
@@ -419,6 +421,7 @@ export async function runExplorerAgent(
         activeProvider,
         explorerModelId,
         hooks,
+        capabilityLedger,
       );
       capabilityLedger.recordToolUse(toolCall.call.tool);
       if (entry.card) cards.push(entry.card);

@@ -205,9 +205,9 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     source: 'delegate',
     readOnly: false,
     statusLabel: 'Delegating to Coder...',
-    protocolSignature: 'coder(task?, tasks?, files?, acceptanceCriteria?, intent?, deliverable?, knownContext?, constraints?)',
+    protocolSignature: 'coder(task?, tasks?, files?, acceptanceCriteria?, declaredCapabilities?, intent?, deliverable?, knownContext?, constraints?)',
     protocolDescription: 'Delegate coding work to the Coder agent',
-    exampleJson: '{"tool": "coder", "args": {"task": "Implement the requested change", "files": ["src/app.ts"], "deliverable": "Ship the fix with passing tests", "knownContext": ["Explorer found the bug in src/app.ts:84"]}}',
+    exampleJson: '{"tool": "coder", "args": {"task": "Implement the requested change", "files": ["src/app.ts"], "declaredCapabilities": ["repo:read", "repo:write", "sandbox:test"], "deliverable": "Ship the fix with passing tests", "knownContext": ["Explorer found the bug in src/app.ts:84"]}}',
   },
   {
     canonicalName: 'delegate_explorer',

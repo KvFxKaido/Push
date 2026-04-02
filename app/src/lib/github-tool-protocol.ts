@@ -10,6 +10,7 @@ import type {
   CoderDelegationArgs,
   ExplorerDelegationArgs,
 } from '@/types';
+import { ALL_CAPABILITIES, type Capability } from './capabilities';
 import { asRecord, detectToolFromText } from './utils';
 import {
   getToolProtocolEntries,
@@ -63,6 +64,8 @@ function asTrimmedStringArray(value: unknown): string[] | undefined {
     .filter((entry) => entry.length > 0);
   return normalized.length > 0 ? normalized : undefined;
 }
+
+const KNOWN_CAPABILITIES = new Set<Capability>(ALL_CAPABILITIES);
 
 /** Parse a positive integer arg (1-based line numbers). Returns undefined if absent, null if invalid. */
 function asPositiveInt(value: unknown): number | undefined | null {
@@ -119,6 +122,10 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     const deliverable = asTrimmedString(args.deliverable);
     const knownContext = asTrimmedStringArray(args.knownContext);
     const constraints = asTrimmedStringArray(args.constraints);
+    const declaredCapabilities = Array.isArray(args.declaredCapabilities)
+      ? (args.declaredCapabilities as unknown[])
+        .filter((entry): entry is Capability => typeof entry === 'string' && KNOWN_CAPABILITIES.has(entry as Capability))
+      : undefined;
     let acceptanceCriteria: AcceptanceCriterion[] | undefined;
     if (Array.isArray(args.acceptanceCriteria)) {
       acceptanceCriteria = (args.acceptanceCriteria as unknown[]).filter((c): c is AcceptanceCriterion => {
@@ -144,6 +151,7 @@ function validateToolCall(parsed: unknown): ToolCall | null {
           deliverable,
           knownContext: knownContext && knownContext.length > 0 ? knownContext : undefined,
           constraints: constraints && constraints.length > 0 ? constraints : undefined,
+          declaredCapabilities: declaredCapabilities && declaredCapabilities.length > 0 ? declaredCapabilities : undefined,
         },
       };
     }

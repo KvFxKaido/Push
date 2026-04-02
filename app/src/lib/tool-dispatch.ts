@@ -26,6 +26,7 @@ import { detectWebSearchToolCall, executeWebSearch, type WebSearchToolCall } fro
 import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { execInSandbox } from './sandbox-client';
+import { ALL_CAPABILITIES, type Capability } from './capabilities';
 import { asRecord, detectToolFromText, extractBareToolJsonObjects, repairToolJson, detectTruncatedToolCall, diagnoseJsonSyntaxError } from './utils';
 import {
   escapeToolNameForRegex,
@@ -56,6 +57,7 @@ export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set(
 );
 
 export const MAX_PARALLEL_TOOL_CALLS = 6;
+const KNOWN_CAPABILITIES = new Set<Capability>(ALL_CAPABILITIES);
 
 function asTrimmedString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -1082,6 +1084,10 @@ function detectDelegationTool(text: string): AnyToolCall | null {
     const deliverable = asTrimmedString(args?.deliverable);
     const knownContext = asTrimmedStringArray(args?.knownContext);
     const constraints = asTrimmedStringArray(args?.constraints);
+    const declaredCapabilities = Array.isArray(args?.declaredCapabilities)
+      ? (args.declaredCapabilities as unknown[])
+        .filter((entry): entry is Capability => typeof entry === 'string' && KNOWN_CAPABILITIES.has(entry as Capability))
+      : undefined;
     // Parse acceptance criteria if provided
     let acceptanceCriteria: AcceptanceCriterion[] | undefined;
     if (Array.isArray(args?.acceptanceCriteria)) {
@@ -1115,6 +1121,7 @@ function detectDelegationTool(text: string): AnyToolCall | null {
             deliverable,
             knownContext: knownContext && knownContext.length > 0 ? knownContext : undefined,
             constraints: constraints && constraints.length > 0 ? constraints : undefined,
+            declaredCapabilities: declaredCapabilities && declaredCapabilities.length > 0 ? declaredCapabilities : undefined,
           },
         },
       };

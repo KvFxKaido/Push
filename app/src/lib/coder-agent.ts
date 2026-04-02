@@ -720,6 +720,7 @@ export async function runCoderAgent(
     harnessSettings?: HarnessProfileSettings;
     plannerBrief?: string;
     verificationPolicy?: VerificationPolicy;
+    declaredCapabilities?: import('./capabilities').Capability[];
   },
 ): Promise<CoderResult> {
   // Normalise: envelope-based call → unified locals
@@ -854,7 +855,9 @@ export async function runCoderAgent(
   // Use declared capabilities from envelope if present, otherwise default to role grants.
   const declaredCaps = typeof taskOrEnvelope === 'object' && taskOrEnvelope.declaredCapabilities
     ? taskOrEnvelope.declaredCapabilities
-    : Array.from(ROLE_CAPABILITIES.coder);
+    : effectiveDelegationContext?.declaredCapabilities
+      ? effectiveDelegationContext.declaredCapabilities
+      : Array.from(ROLE_CAPABILITIES.coder);
   const capabilityLedger = new CapabilityLedger(declaredCaps);
 
   /** Attach the capability snapshot to any CoderResult before returning. */

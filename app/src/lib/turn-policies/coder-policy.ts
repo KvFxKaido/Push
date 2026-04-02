@@ -127,6 +127,7 @@ const SANDBOX_MUTATION_TOOLS = new Set([
   'sandbox_edit_file',
   'sandbox_edit_range',
   'sandbox_apply_patchset',
+  'sandbox_search_replace',
 ]);
 
 /**
@@ -268,15 +269,19 @@ export function createCoderPolicy(): TurnPolicy {
         hasError: boolean,
         ctx: TurnContext,
       ) => {
-        // --- Backpressure: reset counter on verification tools ---
-        // Built-in verification tools
-        if (SANDBOX_VERIFICATION_TOOLS.has(toolName)) {
-          mutationsSinceVerification = 0;
-        }
-        // sandbox_exec with a verification command
-        if (toolName === 'sandbox_exec' && typeof args.command === 'string') {
-          if (VERIFICATION_COMMAND_PATTERN.test(args.command)) {
+        // --- Backpressure: reset counter on *successful* verification tools ---
+        // Only reset when the verification actually passed; a broken `npm test`
+        // or typoed `npx tsc` should not grant a clean mutation slate.
+        if (!hasError) {
+          // Built-in verification tools
+          if (SANDBOX_VERIFICATION_TOOLS.has(toolName)) {
             mutationsSinceVerification = 0;
+          }
+          // sandbox_exec with a verification command
+          if (toolName === 'sandbox_exec' && typeof args.command === 'string') {
+            if (VERIFICATION_COMMAND_PATTERN.test(args.command)) {
+              mutationsSinceVerification = 0;
+            }
           }
         }
 

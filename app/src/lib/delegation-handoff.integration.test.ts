@@ -143,7 +143,7 @@ describe('delegation handoff integration', () => {
 
   it('carries parsed coder handoff fields and symbol cache into the delegated Coder run', async () => {
     const parsed = detectToolCall(
-      '```json\n{"tool":"coder","args":{"task":"  Implement the auth refresh fix  ","files":[" src/auth.ts "," src/auth.test.ts "],"deliverable":" Ship the fix with updated auth coverage ","knownContext":[" Explorer traced the refresh trigger to src/auth.ts:42 "," "],"constraints":[" Keep the public auth API stable "," "],"acceptanceCriteria":[{"id":"auth-tests","check":"npm test -- auth","description":" Auth tests pass "} ]}}\n```',
+      '```json\n{"tool":"coder","args":{"task":"  Implement the auth refresh fix  ","files":[" src/auth.ts "," src/auth.test.ts "],"deliverable":" Ship the fix with updated auth coverage ","knownContext":[" Explorer traced the refresh trigger to src/auth.ts:42 "," "],"constraints":[" Keep the public auth API stable "," "],"declaredCapabilities":["repo:read","repo:write","sandbox:test","not:a-real-capability"],"acceptanceCriteria":[{"id":"auth-tests","check":"npm test -- auth","description":" Auth tests pass "} ]}}\n```',
     );
 
     expect(parsed).toEqual({
@@ -154,6 +154,7 @@ describe('delegation handoff integration', () => {
         deliverable: 'Ship the fix with updated auth coverage',
         knownContext: ['Explorer traced the refresh trigger to src/auth.ts:42'],
         constraints: ['Keep the public auth API stable'],
+        declaredCapabilities: ['repo:read', 'repo:write', 'sandbox:test'],
         acceptanceCriteria: [
           {
             id: 'auth-tests',
@@ -187,6 +188,7 @@ describe('delegation handoff integration', () => {
         deliverable: parsed.args.deliverable,
         knownContext: parsed.args.knownContext,
         constraints: parsed.args.constraints,
+        declaredCapabilities: parsed.args.declaredCapabilities,
         provider: 'openrouter',
         model: 'coder-test-model',
         branchContext: {
