@@ -8,7 +8,7 @@ Status: **Shipped** (all 10 items implemented, 2026-02-20)
 
 ## What this is
 
-Improvements to the Push CLI harness from the perspective of the AI agent running inside it. These are things that would reduce wasted rounds, prevent blind spots, and make the agent more effective at completing tasks. Companion to the web app's `documents/analysis/Agent Experience Wishlist.md` (shipped).
+Improvements to the Push CLI harness from the perspective of the AI agent running inside it. These are things that would reduce wasted rounds, prevent blind spots, and make the agent more effective at completing tasks. Companion to the web app's `docs/decisions/Agent Experience Wishlist.md` (shipped).
 
 The CLI already has several things the web app needed to build from scratch — multi-tool dispatch, hashline edits, structured error taxonomy, working memory, and file awareness ledger. This list covers what was still missing or underperforming.
 

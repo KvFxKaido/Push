@@ -4,14 +4,14 @@ Last updated: 2026-02-22
 
 This is the single source of truth for active product and engineering direction.
 
-`documents/` is a draft lab for spikes, explorations, and non-final plans.
+`docs/` is a draft lab for spikes, explorations, and non-final plans.
 Only decisions promoted into this file should be treated as implementation commitments.
 
 Current cycle emphasis: terminal UX improvements (CLI-first, transcript-first, no full-screen TUI rewrite).
 
 ## How We Use This
 
-1. Draft ideas in `documents/` (untracked is fine).
+1. Draft ideas in `docs/` (untracked is fine).
 2. Promote approved work here as concise, actionable items.
 3. Keep this file current during execution.
 4. Archive completed/abandoned items out of this file to keep it focused.
@@ -33,7 +33,7 @@ Current cycle emphasis: terminal UX improvements (CLI-first, transcript-first, n
 | CLI Protocol/Schema Hardening | planned | Harden protocol envelopes and optional schema validation for daemon/client interoperability | Schema validation mode exists for core events; protocol regressions fail tests before release |
 | Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
-| Roadmap Hygiene Automation | planned | Lightweight template/checklist for promoting `documents/` ideas into this file | New roadmap items consistently include scope + acceptance criteria |
+| Roadmap Hygiene Automation | planned | Lightweight template/checklist for promoting `docs/` ideas into this file | New roadmap items consistently include scope + acceptance criteria |
 
 ## Recently Completed
 
@@ -64,20 +64,20 @@ Current cycle emphasis: terminal UX improvements (CLI-first, transcript-first, n
 | 2026-02-19 | Resumable Sessions Phase 1 shipped: local checkpoint persistence and interrupted-run detection baseline | PR #105 (`d311af6`) |
 | 2026-02-19 | Agent Experience Wishlist (Track C) fully implemented | Commit 0336f11 + follow-ups |
 | 2026-02-19 | OpenRouter catalog updated: Sonnet 4.6, Gemini 3.1 Pro Preview added; Codex 5.3 removed | Commits f323e1b, 4b97df9 |
-| 2026-02-09 | Root `ROADMAP.md` is canonical; `documents/` is draft space | Team decision in chat |
-| 2026-02-09 | Scratch workspace vision (then called Sandbox Mode): real ephemeral workspace + explicit promotion paths | `documents/archive/Sandbox mode.md` |
-| 2026-02-08 | Scratch workspace v1 descoped: no in-app repo creation (latency/sync concerns); zip download is the only export path; onboarding entry point is v1 priority | `documents/archive/Sandbox mode.md` revision |
+| 2026-02-09 | Root `ROADMAP.md` is canonical; `docs/` is draft space | Team decision in chat |
+| 2026-02-09 | Scratch workspace vision (then called Sandbox Mode): real ephemeral workspace + explicit promotion paths | `docs/archive/Sandbox mode.md` |
+| 2026-02-08 | Scratch workspace v1 descoped: no in-app repo creation (latency/sync concerns); zip download is the only export path; onboarding entry point is v1 priority | `docs/archive/Sandbox mode.md` revision |
 | 2026-02-09 | Scratch workspace v1 implemented: two entry points, scratch-workspace system prompt, `sandbox_download` tool + card, expiry warning banner, persistent download button in header; export format is tar.gz (not zip) | Implementation session |
-| 2026-02-12 | Workspace shell consolidated into one mobile hub trigger with `Files`, `Diff`, `Console`, and `Scratchpad` tabs | `documents/archive/Workspace Hub Sprint Plan.md` + implementation session |
+| 2026-02-12 | Workspace shell consolidated into one mobile hub trigger with `Files`, `Diff`, `Console`, and `Scratchpad` tabs | `docs/archive/Workspace Hub Sprint Plan.md` + implementation session |
 | 2026-02-12 | Branch selection now surfaces existing branches across Home/workspace, with in-context delete from the workspace selector | Implementation session |
 | 2026-02-12 | Home header simplified to compact account menu with Settings + guarded Disconnect and GitHub avatar | Implementation session |
-| 2026-02-13 | Harness-first reliability promoted as canonical planning focus; browser tooling treated as one capability within harness work, not a standalone roadmap pillar | `documents/plans/Harness Reliability Plan.md` |
-| 2026-02-14 | Track B phase 1 shipped: `sandbox_read_file` supports line ranges with numbered tool output and out-of-bounds empty-range warnings | `documents/plans/Harness Reliability Plan.md` + implementation session |
+| 2026-02-13 | Harness-first reliability promoted as canonical planning focus; browser tooling treated as one capability within harness work, not a standalone roadmap pillar | `docs/runbooks/Harness Reliability Plan.md` |
+| 2026-02-14 | Track B phase 1 shipped: `sandbox_read_file` supports line ranges with numbered tool output and out-of-bounds empty-range warnings | `docs/runbooks/Harness Reliability Plan.md` + implementation session |
 | 2026-02-17 | Activated Hashline protocol (`sandbox_edit_file`) in the harness to replace full-file rewrites with surgical edits | Implementation session |
 
 ## Promotion Checklist (Draft -> Canonical)
 
-An item should be promoted from `documents/` to this roadmap only if all are true:
+An item should be promoted from `docs/` to this roadmap only if all are true:
 
 - problem statement is clear
 - v1 scope is bounded
@@ -88,5 +88,5 @@ An item should be promoted from `documents/` to this roadmap only if all are tru
 ## Notes for AI Collaborators
 
 - Always read `ROADMAP.md` first for current priorities.
-- Treat `documents/` as exploratory unless explicitly referenced by a roadmap item.
+- Treat `docs/` as exploratory unless explicitly referenced by a roadmap item.
 - If implementation diverges from a draft, update this roadmap with the new decision.

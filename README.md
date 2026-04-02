@@ -42,7 +42,7 @@ It gives you a chat-first workflow anchored to a real repo, real branch state, r
 - `cli/` — local terminal agent, sessions, daemon, and terminal interface
 - `sandbox/` — Modal sandbox backend
 - `lib/` — shared logic used across app and CLI
-- `documents/` — plans, design notes, and archived references
+- `docs/` — plans, design notes, and archived references
 
 ## Getting started
 

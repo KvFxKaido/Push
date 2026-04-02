@@ -20,7 +20,7 @@ This is the **required entry doc** for Push. The loader currently reads `AGENTS.
 - `cli/` — local terminal agent
 - `sandbox/` — Modal sandbox backend
 - `lib/` — shared logic used by app/cli
-- `documents/` — plans, design notes, and archived references
+- `docs/` — plans, design notes, and archived references
 
 ## Provider behavior
 
