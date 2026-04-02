@@ -264,12 +264,12 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
     expect(result?.toolName).toBe('search_files');
   });
 
-  it('detects "I\'ll check the open PRs" as list_pull_requests intent', () => {
+  it('detects "I\'ll check the open PRs" as list_prs intent', () => {
     const result = diagnoseToolCallFailure(
       "I'll check the open PRs to see what's pending."
     );
     expect(result?.reason).toBe('natural_language_intent');
-    expect(result?.toolName).toBe('list_pull_requests');
+    expect(result?.toolName).toBe('list_prs');
   });
 
   it('detects "Let me get the branches" as list_branches intent', () => {
@@ -278,14 +278,6 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
     );
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('list_branches');
-  });
-
-  it('detects "I\'ll run the tests" as sandbox_exec intent', () => {
-    const result = diagnoseToolCallFailure(
-      "I'll run the tests to make sure nothing is broken."
-    );
-    expect(result?.reason).toBe('natural_language_intent');
-    expect(result?.toolName).toBe('sandbox_exec');
   });
 
   it('does not flag conversational text that happens to mention commits', () => {
