@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createCoderPolicy, detectCognitiveDrift } from './coder-policy';
+import { createCoderPolicy, detectCognitiveDrift, BACKPRESSURE_MUTATION_THRESHOLD, VERIFICATION_COMMAND_PATTERN } from './coder-policy';
 import { isVerificationPhase } from '../turn-policy';
 import type { TurnContext } from '../turn-policy';
 
@@ -145,7 +145,7 @@ describe('Coder Policy — no-fake-completion', () => {
 describe('Coder Policy — mutation failure tracking', () => {
   it('clears failure tracking on success', async () => {
     const policy = createCoderPolicy();
-    const failureHook = policy.afterToolExec![0];
+    const failureHook = policy.afterToolExec![1];
     const ctx = makeCtx();
 
     // Fail once
@@ -157,7 +157,7 @@ describe('Coder Policy — mutation failure tracking', () => {
 
   it('injects warning after 3 consecutive failures on same tool+file', async () => {
     const policy = createCoderPolicy();
-    const failureHook = policy.afterToolExec![0];
+    const failureHook = policy.afterToolExec![1];
     const ctx = makeCtx();
     const args = { path: '/workspace/broken.ts' };
 
@@ -176,7 +176,7 @@ describe('Coder Policy — mutation failure tracking', () => {
 
   it('tracks failures per tool+file independently', async () => {
     const policy = createCoderPolicy();
-    const failureHook = policy.afterToolExec![0];
+    const failureHook = policy.afterToolExec![1];
     const ctx = makeCtx();
 
     // 2 failures on file A
@@ -190,6 +190,158 @@ describe('Coder Policy — mutation failure tracking', () => {
     // 3rd failure on file A — should trigger
     const resultA = await failureHook('sandbox_write_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
     expect(resultA).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coder policy — mechanical backpressure
+// ---------------------------------------------------------------------------
+
+describe('Coder Policy — mechanical backpressure', () => {
+  it('does not trigger below the mutation threshold', async () => {
+    const policy = createCoderPolicy();
+    const backpressureHook = policy.afterToolExec![0];
+    const ctx = makeCtx();
+
+    // Mutate (threshold - 1) times — should all pass through
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
+      const result = await backpressureHook(
+        'sandbox_write_file',
+        { path: `/workspace/file${i}.ts` },
+        'ok',
+        false,
+        ctx,
+      );
+      expect(result).toBeNull();
+    }
+  });
+
+  it('injects verification nudge at the mutation threshold', async () => {
+    const policy = createCoderPolicy();
+    const backpressureHook = policy.afterToolExec![0];
+    const ctx = makeCtx();
+
+    // Mutate exactly threshold times
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
+      await backpressureHook('sandbox_edit_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
+    }
+
+    const result = await backpressureHook(
+      'sandbox_edit_file',
+      { path: '/workspace/last.ts' },
+      'ok',
+      false,
+      ctx,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.action).toBe('inject');
+    if (result!.action === 'inject') {
+      expect(result!.message.content).toContain('VERIFY_BEFORE_CONTINUING');
+      expect(result!.message.content).toContain(`${BACKPRESSURE_MUTATION_THRESHOLD} file mutations`);
+    }
+  });
+
+  it('resets counter when a verification command runs', async () => {
+    const policy = createCoderPolicy();
+    const backpressureHook = policy.afterToolExec![0];
+    const ctx = makeCtx();
+
+    // Mutate up to threshold - 1
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
+      await backpressureHook('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
+    }
+
+    // Run typecheck → resets counter
+    await backpressureHook('sandbox_exec', { command: 'npx tsc --noEmit' }, 'ok', false, ctx);
+
+    // Now another (threshold - 1) mutations should be fine
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
+      const result = await backpressureHook(
+        'sandbox_write_file',
+        { path: `/workspace/new${i}.ts` },
+        'ok',
+        false,
+        ctx,
+      );
+      expect(result).toBeNull();
+    }
+  });
+
+  it('does not count failed mutations', async () => {
+    const policy = createCoderPolicy();
+    const backpressureHook = policy.afterToolExec![0];
+    const ctx = makeCtx();
+
+    // Failed mutations should not increment the counter
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD + 2; i++) {
+      const result = await backpressureHook('sandbox_write_file', { path: '/workspace/fail.ts' }, 'err', true, ctx);
+      expect(result).toBeNull();
+    }
+  });
+
+  it('does not count non-mutation tools', async () => {
+    const policy = createCoderPolicy();
+    const backpressureHook = policy.afterToolExec![0];
+    const ctx = makeCtx();
+
+    // Read tools should not affect the counter
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD + 2; i++) {
+      const result = await backpressureHook('sandbox_read_file', { path: '/workspace/a.ts' }, 'ok', false, ctx);
+      expect(result).toBeNull();
+    }
+  });
+
+  it('repeats nudge if Coder ignores it', async () => {
+    const policy = createCoderPolicy();
+    const backpressureHook = policy.afterToolExec![0];
+    const ctx = makeCtx();
+
+    // Mutate past threshold
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD; i++) {
+      await backpressureHook('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
+    }
+
+    // Next mutation still triggers (counter not reset because no verification ran)
+    const result = await backpressureHook('sandbox_edit_file', { path: '/workspace/extra.ts' }, 'ok', false, ctx);
+    expect(result).not.toBeNull();
+    expect(result!.action).toBe('inject');
+  });
+
+  it('recognizes various verification commands', async () => {
+    const verificationCommands = [
+      'npx tsc --noEmit',
+      'npm test',
+      'npx vitest',
+      'npm run lint',
+      'npm run test',
+      'npm run typecheck',
+      'npm run build',
+      'eslint src/',
+      'pytest tests/',
+      'cargo test',
+      'go test ./...',
+      'ruff check .',
+      'pyright',
+      'mypy src/',
+    ];
+
+    for (const cmd of verificationCommands) {
+      expect(VERIFICATION_COMMAND_PATTERN.test(cmd)).toBe(true);
+    }
+  });
+
+  it('does not treat arbitrary sandbox_exec as verification', async () => {
+    const nonVerificationCommands = [
+      'cat /workspace/src/index.ts',
+      'ls -la',
+      'git status',
+      'echo "hello"',
+      'mkdir -p src/lib',
+    ];
+
+    for (const cmd of nonVerificationCommands) {
+      expect(VERIFICATION_COMMAND_PATTERN.test(cmd)).toBe(false);
+    }
   });
 });
 

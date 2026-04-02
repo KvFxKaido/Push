@@ -85,6 +85,23 @@ const MAX_CONSECUTIVE_MUTATION_FAILURES = 3;
 const MAX_CONSECUTIVE_DRIFT_ROUNDS = 2;
 
 /**
+ * Mechanical backpressure: after this many successful file mutations without
+ * a verification command (typecheck, test, lint), inject a policy nudge
+ * requiring the Coder to validate its work before continuing.
+ *
+ * Inspired by the Ralph Loop pattern (ghuntley.com/ralph) and OpenAI's
+ * harness engineering practice of using automated rejection signals.
+ */
+export const BACKPRESSURE_MUTATION_THRESHOLD = 4;
+
+/**
+ * Patterns that indicate a sandbox_exec command is a verification command.
+ * When detected, the mutation-without-verification counter resets.
+ */
+export const VERIFICATION_COMMAND_PATTERN =
+  /\b(tsc|typecheck|type-check|npx tsc|pyright|mypy|eslint|biome|prettier.*--check|ruff check|npm test|npx vitest|pytest|cargo test|go test|npm run lint|npm run test|npm run typecheck|npm run build)\b/i;
+
+/**
  * Sandbox tools that mutate files. During verification phases, these are
  * blocked to enforce a read-only + run-tests discipline.
  * sandbox_exec is intentionally excluded — tests/typecheck need to run.
@@ -104,13 +121,14 @@ export function createCoderPolicy(): TurnPolicy {
   // --- Per-instance mutable state ---
   let consecutiveDriftRounds = 0;
   const mutationFailures = new Map<string, MutationFailureEntry>();
+  let mutationsSinceVerification = 0;
 
   return {
     name: 'coder-core',
     role: 'coder',
 
     // -----------------------------------------------------------------
-    // beforeToolExec: phase-aware mutation gating
+    // beforeToolExec: phase-aware mutation gating + verification reset
     // -----------------------------------------------------------------
     beforeToolExec: [
       (toolName: string, _args: Record<string, unknown>, ctx: TurnContext) => {
@@ -220,9 +238,56 @@ export function createCoderPolicy(): TurnPolicy {
     ],
 
     // -----------------------------------------------------------------
-    // afterToolExec: mutation failure tracking
+    // afterToolExec: mutation failure tracking + mechanical backpressure
     // -----------------------------------------------------------------
     afterToolExec: [
+      // --- Backpressure: track mutations and nudge verification ---
+      (
+        toolName: string,
+        args: Record<string, unknown>,
+        _resultText: string,
+        hasError: boolean,
+        ctx: TurnContext,
+      ) => {
+        // Reset counter when Coder runs a verification command
+        if (toolName === 'sandbox_exec' && typeof args.command === 'string') {
+          if (VERIFICATION_COMMAND_PATTERN.test(args.command)) {
+            mutationsSinceVerification = 0;
+            return null;
+          }
+        }
+
+        // Count successful file mutations
+        if (SANDBOX_MUTATION_TOOLS.has(toolName) && !hasError) {
+          mutationsSinceVerification++;
+
+          if (mutationsSinceVerification >= BACKPRESSURE_MUTATION_THRESHOLD) {
+            const count = mutationsSinceVerification;
+            // Don't reset here — let the verification command reset it.
+            // This way the nudge repeats if the Coder ignores it.
+            return {
+              action: 'inject' as const,
+              message: {
+                id: `policy-backpressure-${ctx.round}`,
+                role: 'user' as const,
+                content: [
+                  '[POLICY: VERIFY_BEFORE_CONTINUING]',
+                  `You have made ${count} file mutations without running verification.`,
+                  'Before writing more code, run at least one of: typecheck (e.g. npx tsc --noEmit), lint (e.g. npx eslint), or tests (e.g. npm test).',
+                  'This catches errors early and prevents compounding mistakes across files.',
+                  'Use sandbox_exec to run the appropriate verification command for this project.',
+                  '[/POLICY]',
+                ].join('\n'),
+                timestamp: Date.now(),
+              },
+            };
+          }
+        }
+
+        return null;
+      },
+
+      // --- Mutation failure tracking ---
       (
         toolName: string,
         args: Record<string, unknown>,
