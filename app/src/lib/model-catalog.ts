@@ -6,7 +6,7 @@ import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
-import { compareProviderModelIds, OPENROUTER_MODELS, PROVIDER_URLS } from './providers';
+import { compareProviderModelIds, NVIDIA_MODELS, OPENROUTER_MODELS, PROVIDER_URLS } from './providers';
 import { asRecord } from './utils';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
@@ -25,14 +25,7 @@ const BLACKBOX_MIN_PARAMETER_BILLIONS = 16;
 // Use the shared curated list as the single source of truth for priority ordering.
 // To add a new OpenRouter model, update OPENROUTER_MODELS in lib/provider-models.ts.
 const OPENROUTER_PRIORITY_MODELS: readonly string[] = OPENROUTER_MODELS;
-const NVIDIA_PRIORITY_MODELS = [
-  'nvidia/llama-3.1-nemotron-70b-instruct',
-  'meta/llama-3.3-70b-instruct',
-  'meta/llama-3.1-405b-instruct',
-  'deepseek-ai/deepseek-r1',
-  'qwen/qwen2.5-coder-32b-instruct',
-  'mistralai/mistral-large-2-instruct',
-] as const;
+const NVIDIA_PRIORITY_MODELS: readonly string[] = NVIDIA_MODELS;
 const OLLAMA_PRIORITY_MODELS = [
   'gemini-3-flash-preview',
   'glm-5',
