@@ -42,6 +42,7 @@ export const OPENROUTER_MODELS: string[] = [
   'google/gemini-3.1-flash-lite-preview:nitro',
   'google/gemini-3.1-pro-preview:nitro',
   'google/gemini-3.1-pro-preview-customtools:nitro',
+  'google/gemma-4-31b-it:nitro',
   'meta-llama/llama-4-maverick',
   'minimax/minimax-m2.5',
   'mistralai/codestral-2508',
@@ -66,7 +67,7 @@ export const OPENROUTER_MODELS: string[] = [
   'x-ai/grok-4.20-beta',
   'z-ai/glm-4.7:nitro',
   'z-ai/glm-5:nitro',
-  'z-ai/glm-5-turbo:nitro',
+  'z-ai/glm-5-turbo',
 ];
 
 export const ZEN_MODELS: string[] = [
