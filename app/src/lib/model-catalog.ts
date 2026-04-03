@@ -69,7 +69,7 @@ const OPENROUTER_PRIORITY_MODELS = [
   'x-ai/grok-4.20-beta',
   'z-ai/glm-4.7:nitro',
   'z-ai/glm-5:nitro',
-  'z-ai/glm-5-turbo:nitro',
+  'z-ai/glm-5-turbo',
 ] as const;
 const NVIDIA_PRIORITY_MODELS = [
   'nvidia/llama-3.1-nemotron-70b-instruct',
