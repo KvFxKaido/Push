@@ -67,7 +67,6 @@ export const OPENROUTER_MODELS: string[] = [
   'x-ai/grok-4.20-beta',
   'z-ai/glm-4.7:nitro',
   'z-ai/glm-5:nitro',
-  'z-ai/glm-5-turbo',
   'z-ai/glm-5-turbo:nitro',
 ];
 
