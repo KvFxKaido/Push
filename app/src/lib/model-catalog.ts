@@ -39,6 +39,7 @@ const OPENROUTER_PRIORITY_MODELS = [
   'google/gemini-3.1-flash-lite-preview:nitro',
   'google/gemini-3.1-pro-preview:nitro',
   'google/gemini-3.1-pro-preview-customtools:nitro',
+  'google/gemma-4-31b-it:nitro',
   'meta-llama/llama-4-maverick',
   'minimax/minimax-m2.5',
   'minimax/minimax-m2.7:nitro',
