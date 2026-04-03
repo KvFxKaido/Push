@@ -359,6 +359,7 @@ export async function executeAnyToolCall(
   const toolArgs = getHookToolArgs(toolCall);
   const hookContext: ToolHookContext = { sandboxId, allowedRepo, activeProvider, activeModel, capabilityLedger };
 
+  try {
   // --- Pre-hooks evaluation ---
   if (hooks && hooks.pre.length > 0) {
     const preResult = await evaluatePreHooks(hooks, toolName, toolArgs, hookContext);
@@ -499,6 +500,15 @@ export async function executeAnyToolCall(
   }
 
   return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const structuredError: StructuredToolError = {
+      type: 'UNKNOWN',
+      retryable: true,
+      message: `Unexpected error executing ${toolName}: ${message}`,
+    };
+    return { text: `[Tool Error] ${structuredError.message}`, structuredError };
+  }
 }
 
 /**

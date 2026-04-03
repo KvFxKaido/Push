@@ -63,6 +63,7 @@ export {
 export {
   type ActiveProvider,
   getActiveProvider,
+  isProviderAvailable,
   getProviderStreamFn,
   streamChat,
   streamOllamaChat,
@@ -895,33 +896,47 @@ export async function streamSSEChat(
   const backoffMs = autoRetry?.backoffMs ?? 1000;
   
   let lastError: Error | undefined;
-  
+  let tokensEmitted = false;
+
+  // Wrap onToken to track whether any content reached the UI
+  const trackedOnToken: typeof onToken = (token, meta) => {
+    tokensEmitted = true;
+    onToken(token, meta);
+  };
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    tokensEmitted = false;
     try {
       return await streamSSEChatOnce(
-        config, messages, onToken, onDone, onError, onThinkingToken,
+        config, messages, trackedOnToken, onDone, onError, onThinkingToken,
         workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal, onPreCompact,
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      
+
       // Don't retry on auth errors or user aborts
-      if (lastError.message.includes('key') || lastError.message.includes('auth') || 
+      if (lastError.message.includes('key') || lastError.message.includes('auth') ||
           lastError.message.includes('Unauthorized') || signal?.aborted) {
         throw lastError;
       }
-      
+
+      // Don't retry if tokens already reached the UI — retrying would
+      // produce duplicate or interleaved content in the response.
+      if (tokensEmitted) {
+        throw lastError;
+      }
+
       // Check if this is a timeout error worth retrying
-      const isTimeout = lastError.message.includes('timeout') || 
+      const isTimeout = lastError.message.includes('timeout') ||
                         lastError.message.includes('stall') ||
                         lastError.message.includes('no data');
-      
+
       if (attempt < maxAttempts && isTimeout) {
         console.log(`[Push] Retry attempt ${attempt}/${maxAttempts} after ${backoffMs}ms...`);
         await new Promise(r => setTimeout(r, backoffMs * attempt));
         continue;
       }
-      
+
       throw lastError;
     }
   }
@@ -1252,6 +1267,7 @@ async function streamSSEChatOnce(
     clearTimeout(idleTimer);
     clearTimeout(stallTimer);
     clearTimeout(totalTimer);
+    signal?.removeEventListener('abort', onExternalAbort);
 
     if (err instanceof DOMException && err.name === 'AbortError') {
       if (abortReason === 'user') {

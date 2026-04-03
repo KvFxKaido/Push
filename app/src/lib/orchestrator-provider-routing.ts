@@ -422,6 +422,16 @@ const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
 ];
 
 /**
+ * Check whether a provider is fully configured (has credentials / required fields).
+ * Returns false for 'demo' since it's not a real provider.
+ */
+export function isProviderAvailable(provider: ActiveProvider): boolean {
+  if (provider === 'demo') return false;
+  const check = PROVIDER_READY_CHECKS[provider as PreferredProvider];
+  return check ? check() : false;
+}
+
+/**
  * Determine which provider is active.
  *
  * 1. If the user set a preference AND that provider has a key → use it.

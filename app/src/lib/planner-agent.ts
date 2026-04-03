@@ -14,7 +14,8 @@
  */
 
 import type { ChatMessage } from '@/types';
-import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
+import { getActiveProvider, isProviderAvailable, getProviderStreamFn, type ActiveProvider } from './orchestrator';
+import { resolveProviderSpecificModel } from './provider-selection';
 import { getModelForRole } from './providers';
 import { asRecord, streamWithTimeout } from './utils';
 
@@ -96,12 +97,19 @@ export async function runPlanner(
   onStatus: (phase: string) => void,
   options?: PlannerOptions,
 ): Promise<PlannerFeatureList | null> {
-  const activeProvider = options?.providerOverride || getActiveProvider();
+  const requestedProvider = options?.providerOverride && isProviderAvailable(options.providerOverride)
+    ? options.providerOverride
+    : null;
+  const activeProvider = requestedProvider || getActiveProvider();
   if (activeProvider === 'demo') return null;
 
   const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'coder'); // Planner uses the same model slot as Coder
-  const modelId = options?.modelOverride?.trim() || roleModel?.id;
+  const modelId = resolveProviderSpecificModel(
+    activeProvider,
+    options?.modelOverride,
+    options?.providerOverride,
+  ) || roleModel?.id;
 
   onStatus('Planning task...');
 

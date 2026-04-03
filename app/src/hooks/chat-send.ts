@@ -280,6 +280,7 @@ export async function streamAssistantRound(
     emitRunEngineEvent,
   } = ctx;
 
+  processedContentRef.current.clear();
   let accumulated = '';
   let thinkingAccumulated = '';
   const hasSandboxThisRound = Boolean(sandboxIdRef.current);

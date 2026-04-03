@@ -16,9 +16,11 @@ import {
 } from './tool-dispatch';
 import { createToolHookRegistry, type ToolHookRegistry } from './tool-hooks';
 import { getModelForRole } from './providers';
+import { resolveProviderSpecificModel } from './provider-selection';
 import {
   buildUserIdentityBlock,
   getActiveProvider,
+  isProviderAvailable,
   getProviderStreamFn,
   type ActiveProvider,
 } from './orchestrator';
@@ -207,9 +209,10 @@ export async function runExplorerAgent(
   allowedRepo: string,
   callbacks: ExplorerCallbacks,
 ): Promise<ExplorerResult> {
-  const activeProvider = envelope.provider === 'demo'
-    ? getActiveProvider()
-    : envelope.provider as ActiveProvider;
+  const requestedProvider = envelope.provider !== 'demo' && isProviderAvailable(envelope.provider as ActiveProvider)
+    ? envelope.provider as ActiveProvider
+    : null;
+  const activeProvider = requestedProvider || getActiveProvider();
 
   if (activeProvider === 'demo') {
     throw new Error('No AI provider configured. Add an API key in Settings.');
@@ -217,7 +220,11 @@ export async function runExplorerAgent(
 
   const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'explorer');
-  const explorerModelId = envelope.model || roleModel?.id;
+  const explorerModelId = resolveProviderSpecificModel(
+    activeProvider,
+    envelope.model,
+    envelope.provider,
+  ) || roleModel?.id;
 
   const builder = buildExplorerBaseBuilder();
 

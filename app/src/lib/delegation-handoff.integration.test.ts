@@ -6,12 +6,14 @@ const {
   mockGetModelForRole,
   mockGetUserProfile,
   mockGetSandboxDiff,
+  mockIsProviderAvailable,
 } = vi.hoisted(() => ({
   mockStreamFn: vi.fn(),
   mockGetProviderStreamFn: vi.fn(),
   mockGetModelForRole: vi.fn(),
   mockGetUserProfile: vi.fn(),
   mockGetSandboxDiff: vi.fn(),
+  mockIsProviderAvailable: vi.fn(),
 }));
 
 vi.mock('@/hooks/useUserProfile', () => ({
@@ -21,6 +23,7 @@ vi.mock('@/hooks/useUserProfile', () => ({
 vi.mock('./orchestrator', () => ({
   buildUserIdentityBlock: vi.fn(() => ''),
   getActiveProvider: vi.fn(() => 'openrouter'),
+  isProviderAvailable: (...args: unknown[]) => mockIsProviderAvailable(...args),
   getProviderStreamFn: (...args: unknown[]) => mockGetProviderStreamFn(...args),
 }));
 
@@ -52,6 +55,7 @@ describe('delegation handoff integration', () => {
     mockGetModelForRole.mockReset();
     mockGetUserProfile.mockReset();
     mockGetSandboxDiff.mockReset();
+    mockIsProviderAvailable.mockReset();
 
     symbolLedger.reset();
     symbolLedger.setRepo('KvFxKaido/Push:feature/auth-flow');
@@ -68,6 +72,7 @@ describe('delegation handoff integration', () => {
       providerType: provider,
       streamFn: mockStreamFn,
     }));
+    mockIsProviderAvailable.mockReturnValue(true);
     mockGetModelForRole.mockImplementation((_provider: string, role: string) => ({
       id: `${role}-default-model`,
     }));
@@ -218,5 +223,33 @@ describe('delegation handoff integration', () => {
     expect(taskBrief).toContain('auth-tests: Auth tests pass');
     expect(systemPrompt).toContain('[SYMBOL_CACHE]');
     expect(systemPrompt).toContain('src/auth.ts: 1 symbols (120 lines)');
+  });
+
+  it('falls back to the active provider model when the delegated explorer provider is unavailable', async () => {
+    mockIsProviderAvailable.mockImplementation((provider: string) => provider === 'openrouter');
+    mockStreamFn.mockImplementation((
+      _messages: unknown,
+      onToken: (token: string) => void,
+      onDone: () => void,
+    ) => {
+      onToken('Summary:\nFallback used.\nFindings:\n- none\nRelevant files:\n- none\nOpen questions:\n- none\nRecommended next step:\nanswer directly with the result.');
+      onDone();
+      return Promise.resolve();
+    });
+
+    await runExplorerAgent(
+      {
+        task: 'Trace auth fallback behavior',
+        files: [],
+        provider: 'vertex',
+        model: 'google/gemini-2.5-pro',
+      },
+      null,
+      'KvFxKaido/Push',
+      { onStatus: () => {} },
+    );
+
+    expect(mockGetProviderStreamFn).toHaveBeenCalledWith('openrouter');
+    expect(mockStreamFn.mock.calls[0]?.[7]).toBe('explorer-default-model');
   });
 });

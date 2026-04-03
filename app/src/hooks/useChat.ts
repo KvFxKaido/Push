@@ -23,8 +23,9 @@ import {
   setConversationQueuedFollowUps,
   setConversationVerificationState,
 } from '@/lib/chat-runtime-state';
-import { getActiveProvider, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
+import { getActiveProvider, isProviderAvailable, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
 import { fileLedger } from '@/lib/file-awareness-ledger';
+import { resolveChatProviderSelection } from '@/lib/provider-selection';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import {
   getModelNameForProvider,
@@ -1084,25 +1085,19 @@ export function useChat(
 
       const existingConversation = conversationsRef.current[chatId];
       const requestedProvider = options?.provider || null;
-      const requestedModel = normalizeConversationModel(requestedProvider, options?.model || null);
-      const lockedProviderForChat = (
-        existingConversation?.provider ||
-        requestedProvider ||
-        getActiveProvider()
-      ) as ActiveProvider;
-      const existingLockedModel = normalizeConversationModel(
-        existingConversation?.provider || null,
-        existingConversation?.model || null,
-      );
-      const resolvedModelForChat =
-        existingLockedModel ||
-        requestedModel ||
-        getModelNameForProvider(lockedProviderForChat);
-
-      const shouldPersistProvider = isFirstMessage && !existingConversation?.provider;
-      const shouldPersistModel =
-        (isFirstMessage || (!!existingConversation?.provider && !existingConversation?.model)) &&
-        !!resolvedModelForChat;
+      const {
+        provider: lockedProviderForChat,
+        model: resolvedModelForChat,
+        shouldPersistProvider,
+        shouldPersistModel,
+      } = resolveChatProviderSelection({
+        existingProvider: existingConversation?.provider || null,
+        existingModel: existingConversation?.model || null,
+        requestedProvider,
+        requestedModel: options?.model || null,
+        fallbackProvider: getActiveProvider(),
+        isProviderAvailable,
+      });
 
       const firstAssistant: ChatMessage = {
         id: createId(),
