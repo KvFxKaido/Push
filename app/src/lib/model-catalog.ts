@@ -6,7 +6,7 @@ import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
-import { compareProviderModelIds, PROVIDER_URLS } from './providers';
+import { compareProviderModelIds, NVIDIA_MODELS, OPENROUTER_MODELS, PROVIDER_URLS } from './providers';
 import { asRecord } from './utils';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
@@ -22,63 +22,10 @@ const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
 export const MIN_CONTEXT_TOKENS = 64000;
 const BLACKBOX_MIN_PARAMETER_BILLIONS = 16;
-const OPENROUTER_PRIORITY_MODELS = [
-  'anthropic/claude-haiku-4.5:nitro',
-  'anthropic/claude-opus-4.6:nitro',
-  'anthropic/claude-sonnet-4.6:nitro',
-  'arcee-ai/virtuoso-large',
-  'inception/mercury-2',
-  'inception/mercury-coder',
-
-  'cohere/command-a',
-  'deepseek/deepseek-r1',
-  'deepseek/deepseek-v3.2:nitro',
-  'google/gemini-2.5-flash:nitro',
-  'google/gemini-2.5-pro:nitro',
-  'google/gemini-3-flash-preview:nitro',
-  'google/gemini-3.1-flash-lite-preview:nitro',
-  'google/gemini-3.1-pro-preview:nitro',
-  'google/gemini-3.1-pro-preview-customtools:nitro',
-  'meta-llama/llama-4-maverick',
-  'minimax/minimax-m2.5',
-  'minimax/minimax-m2.7:nitro',
-  'mistralai/codestral-2508',
-  'mistralai/devstral-2512',
-  'mistralai/mistral-large-2512',
-  'mistralai/mistral-small-2603',
-
-  'moonshotai/kimi-k2.5:nitro',
-  'openai/gpt-5-mini',
-  'openai/gpt-5.2-codex',
-  'openai/gpt-5.3-codex',
-  'openai/gpt-5.4',
-  'openai/gpt-5.4-pro',
-  'openai/gpt-5.4-mini',
-  'openai/gpt-5.4-nano',
-  'xiaomi/mimo-v2-omni',
-  'xiaomi/mimo-v2-pro',
-
-  'perplexity/sonar-pro',
-  'qwen/qwen3-coder-flash',
-  'qwen/qwen3-coder-plus',
-  'qwen/qwen3.5-397b-a17b:nitro',
-  'qwen/qwen3.6-plus-preview:free',
-  'stepfun/step-3.5-flash',
-  'x-ai/grok-4.1-fast',
-  'x-ai/grok-4.20',
-  'x-ai/grok-4.20-beta',
-  'z-ai/glm-4.7:nitro',
-  'z-ai/glm-5:nitro',
-  'z-ai/glm-5-turbo',
-] as const;
-const NVIDIA_PRIORITY_MODELS = [
-  'nvidia/llama-3.1-nemotron-70b-instruct',
-  'meta/llama-3.3-70b-instruct',
-  'meta/llama-3.1-405b-instruct',
-  'deepseek-ai/deepseek-r1',
-  'qwen/qwen2.5-coder-32b-instruct',
-  'mistralai/mistral-large-2-instruct',
-] as const;
+// Use the shared curated list as the single source of truth for priority ordering.
+// To add a new OpenRouter model, update OPENROUTER_MODELS in lib/provider-models.ts.
+const OPENROUTER_PRIORITY_MODELS: readonly string[] = OPENROUTER_MODELS;
+const NVIDIA_PRIORITY_MODELS: readonly string[] = NVIDIA_MODELS;
 const OLLAMA_PRIORITY_MODELS = [
   'gemini-3-flash-preview',
   'glm-5',

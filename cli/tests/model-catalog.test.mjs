@@ -19,7 +19,14 @@ function extractExportedStringArray(source, exportName) {
     new RegExp(`export const ${exportName}(?::\\s*string\\[\\])?\\s*=\\s*\\[([\\s\\S]*?)\\r?\\n\\];`),
   );
   assert.ok(match, `Expected to find exported array ${exportName}`);
-  return [...match[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
+  // Match string literals and constant references (e.g. ZEN_DEFAULT_MODEL)
+  return [...match[1].matchAll(/'([^']+)'|([A-Z_][A-Z0-9_]+)/g)].map(([, literal, constRef]) => {
+    if (literal) return literal;
+    // Resolve the constant reference from the same source file
+    const constMatch = source.match(new RegExp(`export const ${constRef}\\s*=\\s*'([^']+)';`));
+    assert.ok(constMatch, `Expected to resolve constant ${constRef} referenced in ${exportName}`);
+    return constMatch[1];
+  });
 }
 
 function extractExportedStringConstant(source, exportName) {
@@ -67,26 +74,27 @@ describe('getCuratedModels', () => {
 });
 
 describe('catalog parity', () => {
-  const providersSource = readFileSync(new URL('../../app/src/lib/providers.ts', import.meta.url), 'utf8');
+  // Read from the shared source of truth where the arrays are actually defined
+  const providerModelsSource = readFileSync(new URL('../../lib/provider-models.ts', import.meta.url), 'utf8');
 
   it('keeps the shared curated model lists in sync with the web catalog', () => {
-    assert.deepEqual(OPENROUTER_MODELS, extractExportedStringArray(providersSource, 'OPENROUTER_MODELS'));
-    assert.deepEqual(ZEN_MODELS, extractExportedStringArray(providersSource, 'ZEN_MODELS'));
-    assert.deepEqual(NVIDIA_MODELS, extractExportedStringArray(providersSource, 'NVIDIA_MODELS'));
-    assert.deepEqual(KILOCODE_MODELS, extractExportedStringArray(providersSource, 'KILOCODE_MODELS'));
-    assert.deepEqual(BLACKBOX_MODELS, extractExportedStringArray(providersSource, 'BLACKBOX_MODELS'));
-    assert.deepEqual(OPENADAPTER_MODELS, extractExportedStringArray(providersSource, 'OPENADAPTER_MODELS'));
+    assert.deepEqual(OPENROUTER_MODELS, extractExportedStringArray(providerModelsSource, 'OPENROUTER_MODELS'));
+    assert.deepEqual(ZEN_MODELS, extractExportedStringArray(providerModelsSource, 'ZEN_MODELS'));
+    assert.deepEqual(NVIDIA_MODELS, extractExportedStringArray(providerModelsSource, 'NVIDIA_MODELS'));
+    assert.deepEqual(KILOCODE_MODELS, extractExportedStringArray(providerModelsSource, 'KILOCODE_MODELS'));
+    assert.deepEqual(BLACKBOX_MODELS, extractExportedStringArray(providerModelsSource, 'BLACKBOX_MODELS'));
+    assert.deepEqual(OPENADAPTER_MODELS, extractExportedStringArray(providerModelsSource, 'OPENADAPTER_MODELS'));
   });
 
   it('keeps the CLI provider defaults in sync with the web catalog', () => {
     assert.deepEqual(DEFAULT_MODELS, {
-      ollama: extractExportedStringConstant(providersSource, 'OLLAMA_DEFAULT_MODEL'),
-      openrouter: extractExportedStringConstant(providersSource, 'OPENROUTER_DEFAULT_MODEL'),
-      zen: extractExportedStringConstant(providersSource, 'ZEN_DEFAULT_MODEL'),
-      nvidia: extractExportedStringConstant(providersSource, 'NVIDIA_DEFAULT_MODEL'),
-      kilocode: extractExportedStringConstant(providersSource, 'KILOCODE_DEFAULT_MODEL'),
-      blackbox: extractExportedStringConstant(providersSource, 'BLACKBOX_DEFAULT_MODEL'),
-      openadapter: extractExportedStringConstant(providersSource, 'OPENADAPTER_DEFAULT_MODEL'),
+      ollama: extractExportedStringConstant(providerModelsSource, 'OLLAMA_DEFAULT_MODEL'),
+      openrouter: extractExportedStringConstant(providerModelsSource, 'OPENROUTER_DEFAULT_MODEL'),
+      zen: extractExportedStringConstant(providerModelsSource, 'ZEN_DEFAULT_MODEL'),
+      nvidia: extractExportedStringConstant(providerModelsSource, 'NVIDIA_DEFAULT_MODEL'),
+      kilocode: extractExportedStringConstant(providerModelsSource, 'KILOCODE_DEFAULT_MODEL'),
+      blackbox: extractExportedStringConstant(providerModelsSource, 'BLACKBOX_DEFAULT_MODEL'),
+      openadapter: extractExportedStringConstant(providerModelsSource, 'OPENADAPTER_DEFAULT_MODEL'),
     });
   });
 });
