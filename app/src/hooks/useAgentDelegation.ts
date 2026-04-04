@@ -884,7 +884,7 @@ export function useAgentDelegation({
                     currentSandboxId,
                     repoRef.current || '',
                     {
-                      onStatus: (phase, detail) => {
+                      onStatus: (phase) => {
                         activeTasks.set(node.id, phase);
                         const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
                         updateAgentStatus(
@@ -935,7 +935,7 @@ export function useAgentDelegation({
                     node.task,
                     currentSandboxId,
                     node.files ?? [],
-                    (phase, detail) => {
+                    (phase) => {
                       activeTasks.set(node.id, phase);
                       const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
                       updateAgentStatus(

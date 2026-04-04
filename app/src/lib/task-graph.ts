@@ -82,7 +82,6 @@ export function validateTaskGraph(nodes: TaskGraphNode[]): TaskGraphValidationEr
 
 function detectCycle(nodes: TaskGraphNode[]): TaskGraphValidationError | null {
   const WHITE = 0;
-  const GRAY = 1;
   const color = new Map<string, number>();
   for (const n of nodes) color.set(n.id, WHITE);
 
@@ -108,12 +107,11 @@ function dfs(
   adj: Map<string, string[]>,
   path: string[],
 ): string[] | null {
-  const GRAY = 1;
-  color.set(nodeId, GRAY);
+  color.set(nodeId, 1 /* GRAY */);
   path.push(nodeId);
 
   for (const dep of adj.get(nodeId) ?? []) {
-    if (color.get(dep) === GRAY) {
+    if (color.get(dep) === 1 /* GRAY */) {
       // Found a back-edge — extract the cycle
       const cycleStart = path.indexOf(dep);
       return [...path.slice(cycleStart), dep];
