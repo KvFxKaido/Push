@@ -8,6 +8,7 @@ import { type AnyToolCall } from '@/lib/tool-dispatch';
 import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
 import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult, type TaskExecutor } from '@/lib/task-graph';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
@@ -816,8 +817,287 @@ export function useAgentDelegation({
           }
         }
       }
+    } else if (toolCall.call.tool === 'plan_tasks') {
+      // --- Task Graph Execution ---
+      const executionId = createId();
+      const graphArgs = toolCall.call.args;
+
+      emitRunEngineEvent({
+        type: 'DELEGATION_STARTED',
+        timestamp: Date.now(),
+        agent: 'task_graph',
+      });
+
+      try {
+        // Validate the graph
+        const validationErrors = validateTaskGraph(graphArgs.tasks);
+        if (validationErrors.length > 0) {
+          const errorMessages = validationErrors.map((e) => `- ${e.message}`).join('\n');
+          toolExecResult = {
+            text: `[Tool Error] Invalid task graph:\n${errorMessages}`,
+          };
+        } else {
+          const currentSandboxId = sandboxIdRef.current;
+          if (!currentSandboxId) {
+            toolExecResult = { text: '[Tool Error] No sandbox available for task graph execution.' };
+          } else {
+            appendRunEvent(chatId, {
+              type: 'subagent.started',
+              executionId,
+              agent: 'task_graph',
+              detail: `Task graph: ${graphArgs.tasks.length} tasks`,
+            });
+
+            // Track which tasks are active for aggregated status
+            const activeTasks = new Map<string, string>();
+
+            // Build the task executor that bridges to existing agent runners
+            const taskExecutor: TaskExecutor = async (node, enrichedContext, taskSignal) => {
+              if (node.agent === 'explorer') {
+                const explorerResult = await withActiveSpan('taskgraph.explorer', {
+                  scope: 'push.delegation',
+                  kind: SpanKind.INTERNAL,
+                  attributes: {
+                    'push.agent.role': 'explorer',
+                    'push.taskgraph.node_id': node.id,
+                    'push.provider': lockedProviderForChat,
+                    'push.model': resolvedModelForChat,
+                  },
+                }, async (span) => {
+                  const result = await runExplorerAgent(
+                    {
+                      task: node.task,
+                      files: node.files ?? [],
+                      deliverable: node.deliverable,
+                      knownContext: enrichedContext,
+                      constraints: node.constraints,
+                      branchContext: branchInfoRef.current?.currentBranch ? {
+                        activeBranch: branchInfoRef.current.currentBranch,
+                        defaultBranch: branchInfoRef.current.defaultBranch || 'main',
+                        protectMain: isMainProtectedRef.current,
+                      } : undefined,
+                      provider: lockedProviderForChat,
+                      model: resolvedModelForChat || undefined,
+                      projectInstructions: agentsMdRef.current || undefined,
+                      instructionFilename: instructionFilenameRef.current || undefined,
+                    },
+                    currentSandboxId,
+                    repoRef.current || '',
+                    {
+                      onStatus: (phase) => {
+                        activeTasks.set(node.id, phase);
+                        const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
+                        updateAgentStatus(
+                          { active: true, phase: `Task graph`, detail: taskLabels },
+                          { chatId, source: 'explorer' },
+                        );
+                      },
+                      signal: taskSignal,
+                    },
+                  );
+                  activeTasks.delete(node.id);
+                  setSpanAttributes(span, { 'push.round_count': result.rounds });
+                  span.setStatus({ code: SpanStatusCode.OK });
+                  return result;
+                });
+
+                if (explorerResult.cards.length > 0) {
+                  setConversations((prev) => {
+                    const conv = prev[chatId];
+                    if (!conv) return prev;
+                    const msgs = appendCardsToLatestToolCall(conv.messages, explorerResult.cards);
+                    return { ...prev, [chatId]: { ...conv, messages: msgs } };
+                  });
+                }
+
+                return {
+                  summary: explorerResult.summary,
+                  rounds: explorerResult.rounds,
+                };
+              } else {
+                // Coder agent
+                const harnessProvider = lockedProviderForChat || getActiveProvider();
+                const harnessModelId = resolvedModelForChat || undefined;
+                const harnessSettings = resolveHarnessSettings(harnessProvider, harnessModelId);
+                const verificationPolicy = getVerificationPolicyForChat(chatId);
+
+                const coderResult = await withActiveSpan('taskgraph.coder', {
+                  scope: 'push.delegation',
+                  kind: SpanKind.INTERNAL,
+                  attributes: {
+                    'push.agent.role': 'coder',
+                    'push.taskgraph.node_id': node.id,
+                    'push.provider': lockedProviderForChat,
+                    'push.model': resolvedModelForChat,
+                  },
+                }, async (span) => {
+                  const result = await runCoderAgent(
+                    node.task,
+                    currentSandboxId,
+                    node.files ?? [],
+                    (phase) => {
+                      activeTasks.set(node.id, phase);
+                      const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
+                      updateAgentStatus(
+                        { active: true, phase: `Task graph`, detail: taskLabels },
+                        { chatId, source: 'coder' },
+                      );
+                    },
+                    agentsMdRef.current || undefined,
+                    taskSignal,
+                    undefined, // no checkpoint handler for graph tasks
+                    node.acceptanceCriteria,
+                    (state) => { lastCoderStateRef.current = state; },
+                    lockedProviderForChat,
+                    resolvedModelForChat || undefined,
+                    {
+                      deliverable: node.deliverable,
+                      knownContext: enrichedContext,
+                      constraints: node.constraints,
+                      branchContext: branchInfoRef.current?.currentBranch ? {
+                        activeBranch: branchInfoRef.current.currentBranch,
+                        defaultBranch: branchInfoRef.current.defaultBranch || 'main',
+                        protectMain: isMainProtectedRef.current,
+                      } : undefined,
+                      instructionFilename: instructionFilenameRef.current || undefined,
+                      harnessSettings,
+                      verificationPolicy,
+                    },
+                  );
+                  activeTasks.delete(node.id);
+                  setSpanAttributes(span, {
+                    'push.round_count': result.rounds,
+                    'push.card_count': result.cards.length,
+                  });
+                  span.setStatus({ code: SpanStatusCode.OK });
+                  return result;
+                });
+
+                if (coderResult.cards.length > 0) {
+                  setConversations((prev) => {
+                    const conv = prev[chatId];
+                    if (!conv) return prev;
+                    const msgs = appendCardsToLatestToolCall(conv.messages, coderResult.cards);
+                    return { ...prev, [chatId]: { ...conv, messages: msgs } };
+                  });
+                }
+
+                return {
+                  summary: coderResult.summary,
+                  rounds: coderResult.rounds,
+                };
+              }
+            };
+
+            // Execute the task graph
+            const graphResult = await withActiveSpan('taskgraph.execute', {
+              scope: 'push.delegation',
+              kind: SpanKind.INTERNAL,
+              attributes: {
+                'push.taskgraph.node_count': graphArgs.tasks.length,
+                'push.provider': lockedProviderForChat,
+                'push.model': resolvedModelForChat,
+              },
+            }, async (span) => {
+              const result = await executeTaskGraph(
+                graphArgs.tasks,
+                taskExecutor,
+                {
+                  maxParallelExplorers: 3,
+                  signal: abortControllerRef.current?.signal,
+                  onProgress: (event) => {
+                    if (event.type === 'task_started') {
+                      updateAgentStatus(
+                        { active: true, phase: `Task graph: starting ${event.taskId}`, detail: event.detail },
+                        { chatId, source: 'coder' },
+                      );
+                    }
+                  },
+                },
+              );
+              setSpanAttributes(span, {
+                'push.taskgraph.success': result.success,
+                'push.taskgraph.total_rounds': result.totalRounds,
+                'push.taskgraph.wall_time_ms': result.wallTimeMs,
+              });
+              span.setStatus({ code: SpanStatusCode.OK });
+              return result;
+            });
+
+            // Aggregate per-node delegation outcomes into a graph-level outcome
+            const graphOutcome: DelegationOutcome = (() => {
+              const nodeOutcomes = [...graphResult.nodeStates.values()]
+                .filter((s) => s.delegationOutcome)
+                .map((s) => s.delegationOutcome!);
+
+              const allComplete = graphResult.success;
+              const evidence: DelegationEvidence[] = nodeOutcomes.flatMap((o) => o.evidence);
+              const checks: DelegationCheck[] = nodeOutcomes.flatMap((o) => o.checks);
+              const gateVerdicts: DelegationGateVerdict[] = nodeOutcomes.flatMap((o) => o.gateVerdicts);
+              const missingRequirements = graphResult.success
+                ? []
+                : [...graphResult.nodeStates.values()]
+                    .filter((s) => s.status === 'failed' || s.status === 'cancelled')
+                    .map((s) => `[${s.node.id}] ${s.error ?? 'failed'}`);
+
+              // Tag the outcome agent based on what actually ran, not a static default
+              const ranCoder = [...graphResult.nodeStates.values()].some(
+                (s) => s.node.agent === 'coder' && (s.status === 'completed' || s.status === 'failed'),
+              );
+
+              return {
+                agent: ranCoder ? 'coder' as const : 'explorer' as const,
+                status: allComplete ? 'complete' : 'incomplete',
+                summary: graphResult.summary,
+                evidence,
+                checks,
+                gateVerdicts,
+                missingRequirements,
+                nextRequiredAction: allComplete ? null : 'Address failed tasks in the graph',
+                rounds: graphResult.totalRounds,
+                checkpoints: 0,
+                elapsedMs: graphResult.wallTimeMs,
+              };
+            })();
+
+            toolExecResult = {
+              text: formatTaskGraphResult(graphResult),
+              delegationOutcome: graphOutcome,
+            };
+            appendRunEvent(chatId, {
+              type: 'subagent.completed',
+              executionId,
+              agent: 'task_graph',
+              summary: summarizeToolResultPreview(toolExecResult.text),
+              delegationOutcome: graphOutcome,
+            });
+          }
+        }
+      } catch (err) {
+        const isAbort = err instanceof DOMException && err.name === 'AbortError';
+        if (isAbort || abortRef.current) {
+          toolExecResult = {
+            text: '[Tool Result — plan_tasks]\nTask graph execution cancelled by user.',
+          };
+        } else {
+          const msg = err instanceof Error ? err.message : String(err);
+          toolExecResult = { text: `[Tool Error] Task graph execution failed: ${msg}` };
+          appendRunEvent(chatId, {
+            type: 'subagent.failed',
+            executionId,
+            agent: 'task_graph',
+            error: summarizeToolResultPreview(msg),
+          });
+        }
+      } finally {
+        emitRunEngineEvent({
+          type: 'DELEGATION_COMPLETED',
+          timestamp: Date.now(),
+          agent: 'task_graph',
+        });
+      }
     }
-    
+
     return toolExecResult;
   }, [abortControllerRef, abortRef, agentsMdRef, appendRunEvent, branchInfoRef, emitRunEngineEvent, getVerificationPolicyForChat, instructionFilenameRef, isMainProtectedRef, lastCoderStateRef, mergeAcceptanceCriteria, repoRef, sandboxIdRef, setConversations, updateAgentStatus, updateVerificationStateForChat]);
 

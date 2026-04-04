@@ -21,6 +21,7 @@ function phaseLabel(phase: LoopPhase): string {
     case 'executing_tools': return 'mid-tool-execution';
     case 'delegating_coder': return 'during Coder delegation';
     case 'delegating_explorer': return 'during Explorer delegation';
+    case 'executing_task_graph': return 'during task graph execution';
   }
 }
 

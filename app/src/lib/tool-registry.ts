@@ -220,6 +220,16 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     exampleJson: '{"tool": "explorer", "args": {"task": "Trace the auth flow", "files": ["src/auth.ts"], "deliverable": "Return the refresh trigger with file and line references"}}',
   },
   {
+    canonicalName: 'plan_tasks',
+    publicName: 'plan_tasks',
+    source: 'delegate',
+    readOnly: false,
+    statusLabel: 'Executing task graph...',
+    protocolSignature: 'plan_tasks(tasks)',
+    protocolDescription: 'Execute a dependency-aware task graph with parallel Explorer and sequential Coder dispatch',
+    exampleJson: '{"tool": "plan_tasks", "args": {"tasks": [{"id": "explore-auth", "agent": "explorer", "task": "Trace auth flow", "files": ["src/auth.ts"], "dependsOn": []}, {"id": "fix-auth", "agent": "coder", "task": "Fix the auth bug", "dependsOn": ["explore-auth"], "deliverable": "Auth tests pass"}]}}',
+  },
+  {
     canonicalName: 'sandbox_exec',
     publicName: 'exec',
     source: 'sandbox',

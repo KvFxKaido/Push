@@ -16,6 +16,7 @@ import type {
   ToolHookContext,
   CoderDelegationArgs,
   ExplorerDelegationArgs,
+  TaskGraphArgs,
 } from '@/types';
 import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
 import type { ApprovalGateRegistry } from './approval-gates';
@@ -236,7 +237,7 @@ function normalizeJsonValue(value: unknown): unknown {
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
-  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: CoderDelegationArgs } | { tool: 'delegate_explorer'; args: ExplorerDelegationArgs } }
+  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: CoderDelegationArgs } | { tool: 'delegate_explorer'; args: ExplorerDelegationArgs } | { tool: 'plan_tasks'; args: TaskGraphArgs } }
   | { source: 'scratchpad'; call: ScratchpadToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall };
@@ -1152,6 +1153,54 @@ function detectDelegationTool(text: string): AnyToolCall | null {
           },
         },
       };
+    }
+    // plan_tasks — dependency-aware multi-agent task graph
+    if (toolName === 'plan_tasks' && Array.isArray(args?.tasks)) {
+      const rawTasks = args.tasks as unknown[];
+      const parsedTasks: import('@/types').TaskGraphNode[] = [];
+      for (const raw of rawTasks) {
+        const t = asRecord(raw);
+        if (!t) continue;
+        const id = asTrimmedString(t.id);
+        const agent = asTrimmedString(t.agent);
+        const nodeTask = asTrimmedString(t.task);
+        if (!id || !agent || !nodeTask) continue;
+        if (agent !== 'explorer' && agent !== 'coder') continue;
+        // Parse per-node acceptance criteria (coder tasks)
+        let nodeAcceptanceCriteria: AcceptanceCriterion[] | undefined;
+        if (Array.isArray(t.acceptanceCriteria)) {
+          nodeAcceptanceCriteria = (t.acceptanceCriteria as unknown[]).filter((c): c is AcceptanceCriterion => {
+            const cr = asRecord(c);
+            return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
+          }).map(c => ({
+            id: c.id,
+            check: c.check,
+            exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
+            description: typeof c.description === 'string' ? c.description : undefined,
+          }));
+          if (nodeAcceptanceCriteria.length === 0) nodeAcceptanceCriteria = undefined;
+        }
+        parsedTasks.push({
+          id,
+          agent: agent as 'explorer' | 'coder',
+          task: nodeTask,
+          files: asTrimmedStringArray(t.files),
+          dependsOn: asTrimmedStringArray(t.dependsOn),
+          deliverable: asTrimmedString(t.deliverable),
+          acceptanceCriteria: nodeAcceptanceCriteria,
+          knownContext: asTrimmedStringArray(t.knownContext),
+          constraints: asTrimmedStringArray(t.constraints),
+        });
+      }
+      if (parsedTasks.length >= 1) {
+        return {
+          source: 'delegate',
+          call: {
+            tool: 'plan_tasks',
+            args: { tasks: parsedTasks },
+          },
+        };
+      }
     }
     return null;
   });

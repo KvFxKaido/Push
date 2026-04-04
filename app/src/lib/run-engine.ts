@@ -36,7 +36,7 @@ import type { LoopPhase, QueuedFollowUp } from '@/types';
 export type RunEnginePhase =
   | 'idle'             // no run active
   | 'starting'         // loop entered, sandbox prewarm and tab lock in progress
-  | LoopPhase          // streaming_llm | executing_tools | delegating_coder | delegating_explorer
+  | LoopPhase          // streaming_llm | executing_tools | delegating_coder | delegating_explorer | executing_task_graph
   | 'completed'        // loop exited normally (loopCompletedNormally = true)
   | 'aborted'          // loop cancelled by user
   | 'failed';          // error or tab lock denied
@@ -175,12 +175,12 @@ export type RunEngineEvent =
       type: 'DELEGATION_STARTED';
       timestamp: number;
       /** planner and auditor map to 'delegating_coder' phase alongside coder itself. */
-      agent: 'explorer' | 'coder' | 'planner' | 'auditor';
+      agent: 'explorer' | 'coder' | 'planner' | 'auditor' | 'task_graph';
     }
   | {
       type: 'DELEGATION_COMPLETED';
       timestamp: number;
-      agent: 'explorer' | 'coder' | 'planner' | 'auditor';
+      agent: 'explorer' | 'coder' | 'planner' | 'auditor' | 'task_graph';
     }
   | { type: 'TURN_STEERED';   timestamp: number }
   | { type: 'TURN_CONTINUED'; timestamp: number }
@@ -294,14 +294,16 @@ export function runEngineReducer(
 
     case 'DELEGATION_STARTED': {
       const delegationPhase: RunEnginePhase =
-        event.agent === 'explorer' ? 'delegating_explorer' : 'delegating_coder';
+        event.agent === 'task_graph' ? 'executing_task_graph'
+          : event.agent === 'explorer' ? 'delegating_explorer'
+          : 'delegating_coder';
       return { ...state, phase: delegationPhase, lastUpdatedAt: now };
     }
 
     case 'DELEGATION_COMPLETED':
       // Planner/auditor are nested inside the delegate_coder flow, so their
-      // completion keeps the coarse phase at delegating_coder. Top-level coder
-      // and explorer completions return to tool execution.
+      // completion keeps the coarse phase at delegating_coder. Top-level coder,
+      // explorer, and task_graph completions return to tool execution.
       return {
         ...state,
         phase:
@@ -436,7 +438,8 @@ export function collectRunEngineParityIssues(
     phase === 'streaming_llm'
     || phase === 'executing_tools'
     || phase === 'delegating_coder'
-    || phase === 'delegating_explorer';
+    || phase === 'delegating_explorer'
+    || phase === 'executing_task_graph';
   const terminalPhase =
     phase === 'idle'
     || phase === 'completed'
