@@ -1040,8 +1040,13 @@ export function useAgentDelegation({
                     .filter((s) => s.status === 'failed' || s.status === 'cancelled')
                     .map((s) => `[${s.node.id}] ${s.error ?? 'failed'}`);
 
+              // Tag the outcome agent based on what actually ran, not a static default
+              const ranCoder = [...graphResult.nodeStates.values()].some(
+                (s) => s.node.agent === 'coder' && (s.status === 'completed' || s.status === 'failed'),
+              );
+
               return {
-                agent: 'coder' as const,
+                agent: ranCoder ? 'coder' as const : 'explorer' as const,
                 status: allComplete ? 'complete' : 'incomplete',
                 summary: graphResult.summary,
                 evidence,

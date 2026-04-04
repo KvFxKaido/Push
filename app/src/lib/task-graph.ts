@@ -347,8 +347,20 @@ export async function executeTaskGraph(
       // else: stays in 'ready' state, will be dispatched when capacity frees up
     }
 
-    // If nothing in-flight and nothing dispatched, we're done
-    if (inFlight.size === 0) break;
+    // If nothing in-flight, check if there's any remaining work.
+    // Don't break yet — a failure cascade may have left independent branches
+    // in 'pending' that getReadyTasks() can still promote on the next iteration.
+    if (inFlight.size === 0) {
+      const hasPending = [...states.values()].some((s) => s.status === 'pending');
+      if (!hasPending) break;
+      // There are pending tasks but none were dispatched or ready — they must
+      // be blocked on failed/cancelled deps. Nothing more we can do.
+      const hasReady = [...states.values()].some((s) => s.status === 'ready');
+      if (!hasReady) break;
+      // There are ready tasks we couldn't dispatch (shouldn't happen with
+      // current capacity rules, but guard against it).
+      continue;
+    }
 
     // Wait for any single task to complete, then re-check for new ready tasks
     const completedId = await Promise.race(inFlight.values());
