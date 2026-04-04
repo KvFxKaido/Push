@@ -44,6 +44,8 @@ function getSubagentLabel(agent: RunEventSubagent): string {
       return 'Explorer';
     case 'auditor':
       return 'Auditor';
+    case 'task_graph':
+      return 'Task Graph';
     default:
       return 'Planner';
   }

@@ -367,7 +367,7 @@ export async function executeTaskGraph(
     inFlight.delete(completedId);
   }
 
-  // Build summary
+  // Build summary — any task not in 'completed' means the graph didn't fully succeed
   const summaryParts: string[] = [];
   let allSuccess = true;
   for (const [id, state] of states) {
@@ -378,6 +378,10 @@ export async function executeTaskGraph(
       allSuccess = false;
     } else if (state.status === 'cancelled') {
       summaryParts.push(`[${id}] CANCELLED: ${state.error}`);
+      allSuccess = false;
+    } else {
+      // Tasks still in pending/ready were blocked by upstream failures
+      summaryParts.push(`[${id}] SKIPPED: blocked by failed dependency`);
       allSuccess = false;
     }
   }
