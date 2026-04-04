@@ -326,11 +326,18 @@ export async function executeTaskGraph(
       break;
     }
 
-    // Find newly ready tasks and dispatch what capacity allows
-    const readyIds = getReadyTasks(states);
-    emitReadyEvents(readyIds, states, onProgress);
+    // Find newly ready tasks and also collect previously-ready tasks that
+    // couldn't be dispatched due to capacity constraints.
+    const newlyReady = getReadyTasks(states);
+    emitReadyEvents(newlyReady, states, onProgress);
 
-    for (const id of readyIds) {
+    // Collect all dispatchable tasks (newly ready + previously ready but undispatched)
+    const dispatchable: string[] = [];
+    for (const [id, state] of states) {
+      if (state.status === 'ready') dispatchable.push(id);
+    }
+
+    for (const id of dispatchable) {
       const node = states.get(id)!.node;
       if (node.agent === 'explorer' && countRunning('explorer') < maxParallelExplorers) {
         dispatchTask(id);

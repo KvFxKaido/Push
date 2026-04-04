@@ -1024,14 +1024,47 @@ export function useAgentDelegation({
               return result;
             });
 
+            // Aggregate per-node delegation outcomes into a graph-level outcome
+            const graphOutcome: DelegationOutcome = (() => {
+              const nodeOutcomes = [...graphResult.nodeStates.values()]
+                .filter((s) => s.delegationOutcome)
+                .map((s) => s.delegationOutcome!);
+
+              const allComplete = graphResult.success;
+              const evidence: DelegationEvidence[] = nodeOutcomes.flatMap((o) => o.evidence);
+              const checks: DelegationCheck[] = nodeOutcomes.flatMap((o) => o.checks);
+              const gateVerdicts: DelegationGateVerdict[] = nodeOutcomes.flatMap((o) => o.gateVerdicts);
+              const missingRequirements = graphResult.success
+                ? []
+                : [...graphResult.nodeStates.values()]
+                    .filter((s) => s.status === 'failed' || s.status === 'cancelled')
+                    .map((s) => `[${s.node.id}] ${s.error ?? 'failed'}`);
+
+              return {
+                agent: 'coder' as const,
+                status: allComplete ? 'complete' : 'incomplete',
+                summary: graphResult.summary,
+                evidence,
+                checks,
+                gateVerdicts,
+                missingRequirements,
+                nextRequiredAction: allComplete ? null : 'Address failed tasks in the graph',
+                rounds: graphResult.totalRounds,
+                checkpoints: 0,
+                elapsedMs: graphResult.wallTimeMs,
+              };
+            })();
+
             toolExecResult = {
               text: formatTaskGraphResult(graphResult),
+              delegationOutcome: graphOutcome,
             };
             appendRunEvent(chatId, {
               type: 'subagent.completed',
               executionId,
               agent: 'task_graph',
               summary: summarizeToolResultPreview(toolExecResult.text),
+              delegationOutcome: graphOutcome,
             });
           }
         }
