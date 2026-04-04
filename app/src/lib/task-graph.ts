@@ -18,7 +18,6 @@
 import type {
   TaskGraphNode,
   TaskGraphNodeState,
-  TaskGraphNodeStatus,
   TaskGraphResult,
   TaskGraphProgressEvent,
   DelegationOutcome,
@@ -82,7 +81,8 @@ export function validateTaskGraph(nodes: TaskGraphNode[]): TaskGraphValidationEr
 }
 
 function detectCycle(nodes: TaskGraphNode[]): TaskGraphValidationError | null {
-  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const WHITE = 0;
+  const GRAY = 1;
   const color = new Map<string, number>();
   for (const n of nodes) color.set(n.id, WHITE);
 
@@ -108,7 +108,7 @@ function dfs(
   adj: Map<string, string[]>,
   path: string[],
 ): string[] | null {
-  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const GRAY = 1;
   color.set(nodeId, GRAY);
   path.push(nodeId);
 
@@ -118,14 +118,14 @@ function dfs(
       const cycleStart = path.indexOf(dep);
       return [...path.slice(cycleStart), dep];
     }
-    if (color.get(dep) === WHITE) {
+    if (color.get(dep) === 0 /* WHITE */) {
       const result = dfs(dep, color, adj, path);
       if (result) return result;
     }
   }
 
   path.pop();
-  color.set(nodeId, BLACK);
+  color.set(nodeId, 2 /* BLACK */);
   return null;
 }
 

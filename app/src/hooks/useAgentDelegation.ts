@@ -820,7 +820,6 @@ export function useAgentDelegation({
     } else if (toolCall.call.tool === 'plan_tasks') {
       // --- Task Graph Execution ---
       const executionId = createId();
-      const graphStartMs = Date.now();
       const graphArgs = toolCall.call.args;
 
       emitRunEngineEvent({
@@ -851,14 +850,6 @@ export function useAgentDelegation({
           } else {
             // Build the task executor that bridges to existing agent runners
             const taskExecutor: TaskExecutor = async (node, enrichedContext, taskSignal) => {
-              const nodeEnvelope = {
-                files: node.files ?? [],
-                intent: undefined,
-                deliverable: node.deliverable,
-                knownContext: enrichedContext,
-                constraints: node.constraints,
-              };
-
               if (node.agent === 'explorer') {
                 const explorerResult = await withActiveSpan('taskgraph.explorer', {
                   scope: 'push.delegation',
