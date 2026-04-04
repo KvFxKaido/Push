@@ -119,6 +119,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   // Delegation tools
   delegate_coder:    ['delegate:coder'],
   delegate_explorer: ['delegate:explorer'],
+  plan_tasks:        ['delegate:coder', 'delegate:explorer'],
 
   // Scratchpad tools
   set_scratchpad:    ['scratchpad'],
