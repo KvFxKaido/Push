@@ -828,26 +828,29 @@ export function useAgentDelegation({
         agent: 'task_graph',
       });
 
-      // Validate the graph
-      const validationErrors = validateTaskGraph(graphArgs.tasks);
-      if (validationErrors.length > 0) {
-        const errorMessages = validationErrors.map((e) => `- ${e.message}`).join('\n');
-        toolExecResult = {
-          text: `[Tool Error] Invalid task graph:\n${errorMessages}`,
-        };
-      } else {
-        appendRunEvent(chatId, {
-          type: 'subagent.started',
-          executionId,
-          agent: 'coder',
-          detail: `Task graph: ${graphArgs.tasks.length} tasks`,
-        });
-
-        try {
+      try {
+        // Validate the graph
+        const validationErrors = validateTaskGraph(graphArgs.tasks);
+        if (validationErrors.length > 0) {
+          const errorMessages = validationErrors.map((e) => `- ${e.message}`).join('\n');
+          toolExecResult = {
+            text: `[Tool Error] Invalid task graph:\n${errorMessages}`,
+          };
+        } else {
           const currentSandboxId = sandboxIdRef.current;
           if (!currentSandboxId) {
             toolExecResult = { text: '[Tool Error] No sandbox available for task graph execution.' };
           } else {
+            appendRunEvent(chatId, {
+              type: 'subagent.started',
+              executionId,
+              agent: 'task_graph',
+              detail: `Task graph: ${graphArgs.tasks.length} tasks`,
+            });
+
+            // Track which tasks are active for aggregated status
+            const activeTasks = new Map<string, string>();
+
             // Build the task executor that bridges to existing agent runners
             const taskExecutor: TaskExecutor = async (node, enrichedContext, taskSignal) => {
               if (node.agent === 'explorer') {
@@ -882,14 +885,17 @@ export function useAgentDelegation({
                     repoRef.current || '',
                     {
                       onStatus: (phase, detail) => {
+                        activeTasks.set(node.id, phase);
+                        const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
                         updateAgentStatus(
-                          { active: true, phase: `[${node.id}] ${phase}`, detail },
+                          { active: true, phase: `Task graph`, detail: taskLabels },
                           { chatId, source: 'explorer' },
                         );
                       },
                       signal: taskSignal,
                     },
                   );
+                  activeTasks.delete(node.id);
                   setSpanAttributes(span, { 'push.round_count': result.rounds });
                   span.setStatus({ code: SpanStatusCode.OK });
                   return result;
@@ -930,8 +936,10 @@ export function useAgentDelegation({
                     currentSandboxId,
                     node.files ?? [],
                     (phase, detail) => {
+                      activeTasks.set(node.id, phase);
+                      const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
                       updateAgentStatus(
-                        { active: true, phase: `[${node.id}] ${phase}`, detail },
+                        { active: true, phase: `Task graph`, detail: taskLabels },
                         { chatId, source: 'coder' },
                       );
                     },
@@ -956,6 +964,7 @@ export function useAgentDelegation({
                       verificationPolicy,
                     },
                   );
+                  activeTasks.delete(node.id);
                   setSpanAttributes(span, {
                     'push.round_count': result.rounds,
                     'push.card_count': result.cards.length,
@@ -999,7 +1008,7 @@ export function useAgentDelegation({
                   onProgress: (event) => {
                     if (event.type === 'task_started') {
                       updateAgentStatus(
-                        { active: true, phase: `Task graph: ${event.taskId}`, detail: event.detail },
+                        { active: true, phase: `Task graph: starting ${event.taskId}`, detail: event.detail },
                         { chatId, source: 'coder' },
                       );
                     }
@@ -1021,27 +1030,33 @@ export function useAgentDelegation({
             appendRunEvent(chatId, {
               type: 'subagent.completed',
               executionId,
-              agent: 'coder',
+              agent: 'task_graph',
               summary: summarizeToolResultPreview(toolExecResult.text),
             });
           }
-        } catch (err) {
-          const isAbort = err instanceof DOMException && err.name === 'AbortError';
-          if (isAbort || abortRef.current) {
-            toolExecResult = {
-              text: '[Tool Result — plan_tasks]\nTask graph execution cancelled by user.',
-            };
-          } else {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolExecResult = { text: `[Tool Error] Task graph execution failed: ${msg}` };
-            appendRunEvent(chatId, {
-              type: 'subagent.failed',
-              executionId,
-              agent: 'coder',
-              error: summarizeToolResultPreview(msg),
-            });
-          }
         }
+      } catch (err) {
+        const isAbort = err instanceof DOMException && err.name === 'AbortError';
+        if (isAbort || abortRef.current) {
+          toolExecResult = {
+            text: '[Tool Result — plan_tasks]\nTask graph execution cancelled by user.',
+          };
+        } else {
+          const msg = err instanceof Error ? err.message : String(err);
+          toolExecResult = { text: `[Tool Error] Task graph execution failed: ${msg}` };
+          appendRunEvent(chatId, {
+            type: 'subagent.failed',
+            executionId,
+            agent: 'task_graph',
+            error: summarizeToolResultPreview(msg),
+          });
+        }
+      } finally {
+        emitRunEngineEvent({
+          type: 'DELEGATION_COMPLETED',
+          timestamp: Date.now(),
+          agent: 'task_graph',
+        });
       }
     }
 

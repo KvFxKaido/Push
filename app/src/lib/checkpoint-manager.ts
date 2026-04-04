@@ -84,6 +84,8 @@ export function buildRunCheckpoint(snapshot: RunCheckpointSnapshot): RunCheckpoi
     })),
     accumulated: snapshot.accumulated,
     thinkingAccumulated: snapshot.thinkingAccumulated,
+    // Note: for task graphs this may be true even for explorer-only graphs.
+    // Renaming the field would break checkpoint compatibility, so we accept the approximation.
     coderDelegationActive: snapshot.phase === 'delegating_coder' || snapshot.phase === 'executing_task_graph',
     lastCoderState:
       (snapshot.phase === 'delegating_coder' || snapshot.phase === 'executing_task_graph') && snapshot.lastCoderState

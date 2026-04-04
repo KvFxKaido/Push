@@ -1166,6 +1166,20 @@ function detectDelegationTool(text: string): AnyToolCall | null {
         const nodeTask = asTrimmedString(t.task);
         if (!id || !agent || !nodeTask) continue;
         if (agent !== 'explorer' && agent !== 'coder') continue;
+        // Parse per-node acceptance criteria (coder tasks)
+        let nodeAcceptanceCriteria: AcceptanceCriterion[] | undefined;
+        if (Array.isArray(t.acceptanceCriteria)) {
+          nodeAcceptanceCriteria = (t.acceptanceCriteria as unknown[]).filter((c): c is AcceptanceCriterion => {
+            const cr = asRecord(c);
+            return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
+          }).map(c => ({
+            id: c.id,
+            check: c.check,
+            exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
+            description: typeof c.description === 'string' ? c.description : undefined,
+          }));
+          if (nodeAcceptanceCriteria.length === 0) nodeAcceptanceCriteria = undefined;
+        }
         parsedTasks.push({
           id,
           agent: agent as 'explorer' | 'coder',
@@ -1173,11 +1187,12 @@ function detectDelegationTool(text: string): AnyToolCall | null {
           files: asTrimmedStringArray(t.files),
           dependsOn: asTrimmedStringArray(t.dependsOn),
           deliverable: asTrimmedString(t.deliverable),
+          acceptanceCriteria: nodeAcceptanceCriteria,
           knownContext: asTrimmedStringArray(t.knownContext),
           constraints: asTrimmedStringArray(t.constraints),
         });
       }
-      if (parsedTasks.length >= 2) {
+      if (parsedTasks.length >= 1) {
         return {
           source: 'delegate',
           call: {

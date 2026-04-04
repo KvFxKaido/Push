@@ -614,7 +614,7 @@ export interface AgentStatusEvent {
   detail?: string;
 }
 
-export type RunEventSubagent = 'planner' | 'coder' | 'explorer' | 'auditor';
+export type RunEventSubagent = 'planner' | 'coder' | 'explorer' | 'auditor' | 'task_graph';
 
 export type RunEventInput =
   | {

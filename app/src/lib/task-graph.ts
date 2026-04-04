@@ -135,7 +135,7 @@ function dfs(
 
 /**
  * Return the set of task IDs that are ready to run: all dependencies are
- * in the `completed` state.
+ * in the `completed` state. Transitions matching tasks from `pending` to `ready`.
  */
 export function getReadyTasks(states: Map<string, TaskGraphNodeState>): string[] {
   const ready: string[] = [];
@@ -144,10 +144,27 @@ export function getReadyTasks(states: Map<string, TaskGraphNodeState>): string[]
     const deps = state.node.dependsOn ?? [];
     const allDepsComplete = deps.every((dep) => states.get(dep)?.status === 'completed');
     if (allDepsComplete) {
+      state.status = 'ready';
       ready.push(id);
     }
   }
   return ready;
+}
+
+/**
+ * Emit task_ready events for newly ready tasks. Call after getReadyTasks().
+ */
+function emitReadyEvents(
+  readyIds: string[],
+  states: Map<string, TaskGraphNodeState>,
+  onProgress?: (event: TaskGraphProgressEvent) => void,
+): void {
+  for (const id of readyIds) {
+    const state = states.get(id);
+    if (state) {
+      onProgress?.({ type: 'task_ready', taskId: id, detail: state.node.task });
+    }
+  }
 }
 
 /**
@@ -231,6 +248,8 @@ export interface TaskGraphExecutorOptions {
  * - Explorer tasks with satisfied deps → run in parallel (up to maxParallelExplorers).
  * - Coder tasks with satisfied deps → run one at a time (sequential).
  * - Explorer and Coder tasks can overlap (reads don't conflict with writes).
+ * - Uses Promise.race to react to task completion immediately, dispatching
+ *   newly-ready tasks without waiting for the entire batch.
  *
  * The loop continues until all tasks are terminal (completed, failed, or cancelled).
  */
@@ -249,58 +268,19 @@ export async function executeTaskGraph(
     states.set(node.id, { node, status: 'pending' });
   }
 
-  // Main dispatch loop
-  while (true) {
-    if (signal?.aborted) {
-      // Mark all non-terminal tasks as cancelled
-      for (const [, state] of states) {
-        if (state.status === 'pending' || state.status === 'ready' || state.status === 'running') {
-          state.status = 'cancelled';
-          state.error = 'Graph execution aborted.';
-        }
-      }
-      break;
-    }
+  // Track in-flight promises by task id
+  const inFlight = new Map<string, Promise<string>>();
 
-    const readyIds = getReadyTasks(states);
-    if (readyIds.length === 0) {
-      // No more tasks to dispatch — check if we're truly done
-      const hasRunning = [...states.values()].some((s) => s.status === 'running');
-      if (!hasRunning) break;
-      // If tasks are still running, wait for them (handled by the promises below)
-      // This branch shouldn't normally be reached because we await below.
-      break;
-    }
+  /** Dispatch a single task — returns a promise that resolves with the task id. */
+  function dispatchTask(id: string): void {
+    const state = states.get(id)!;
+    state.status = 'running';
+    onProgress?.({ type: 'task_started', taskId: id, detail: state.node.task });
 
-    // Separate ready tasks by agent type
-    const readyExplorers = readyIds.filter((id) => states.get(id)!.node.agent === 'explorer');
-    const readyCoders = readyIds.filter((id) => states.get(id)!.node.agent === 'coder');
+    const enrichedContext = buildEnrichedContext(state.node, states);
+    const taskStartMs = Date.now();
 
-    // Build dispatch batch: up to maxParallelExplorers explorers + at most 1 coder
-    const batch: string[] = [];
-    const explorerBatch = readyExplorers.slice(0, maxParallelExplorers);
-    batch.push(...explorerBatch);
-
-    // Only dispatch one coder at a time
-    if (readyCoders.length > 0) {
-      batch.push(readyCoders[0]);
-    }
-
-    if (batch.length === 0) break;
-
-    // Mark batch as running
-    for (const id of batch) {
-      const state = states.get(id)!;
-      state.status = 'running';
-      onProgress?.({ type: 'task_started', taskId: id, detail: state.node.task });
-    }
-
-    // Execute batch in parallel
-    const promises = batch.map(async (id) => {
-      const state = states.get(id)!;
-      const enrichedContext = buildEnrichedContext(state.node, states);
-      const taskStartMs = Date.now();
-
+    const promise = (async () => {
       try {
         const result = await executor(state.node, enrichedContext, signal);
         state.status = 'completed';
@@ -321,9 +301,53 @@ export async function executeTaskGraph(
           onProgress?.({ type: 'task_cancelled', taskId: cancelledId, detail: `Dependency "${id}" failed.` });
         }
       }
-    });
+      return id;
+    })();
 
-    await Promise.all(promises);
+    inFlight.set(id, promise);
+  }
+
+  /** Count in-flight tasks by agent type. */
+  function countRunning(agent: 'explorer' | 'coder'): number {
+    let count = 0;
+    for (const [id] of inFlight) {
+      if (states.get(id)?.node.agent === agent) count++;
+    }
+    return count;
+  }
+
+  // Main dispatch loop — dispatch what we can, then wait for any completion
+  while (true) {
+    if (signal?.aborted) {
+      for (const [, state] of states) {
+        if (state.status === 'pending' || state.status === 'ready' || state.status === 'running') {
+          state.status = 'cancelled';
+          state.error = 'Graph execution aborted.';
+        }
+      }
+      break;
+    }
+
+    // Find newly ready tasks and dispatch what capacity allows
+    const readyIds = getReadyTasks(states);
+    emitReadyEvents(readyIds, states, onProgress);
+
+    for (const id of readyIds) {
+      const node = states.get(id)!.node;
+      if (node.agent === 'explorer' && countRunning('explorer') < maxParallelExplorers) {
+        dispatchTask(id);
+      } else if (node.agent === 'coder' && countRunning('coder') < 1) {
+        dispatchTask(id);
+      }
+      // else: stays in 'ready' state, will be dispatched when capacity frees up
+    }
+
+    // If nothing in-flight and nothing dispatched, we're done
+    if (inFlight.size === 0) break;
+
+    // Wait for any single task to complete, then re-check for new ready tasks
+    const completedId = await Promise.race(inFlight.values());
+    inFlight.delete(completedId);
   }
 
   // Build summary
