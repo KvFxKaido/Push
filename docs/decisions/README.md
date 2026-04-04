@@ -21,6 +21,7 @@ This folder contains architecture decisions, research, analysis, and shipped des
 | `Copilot SDK Research.md` | Current, partially superseded | Prompt sections, tool scoping, steering/queueing, and the live-vs-persisted event split are now in place; the main still-open carry-over is a dedicated task agent plus richer session/permission telemetry. |
 | `Duplication and Structural Symmetry Analysis.md` | Current, refreshed 2026-03-30 | `hashline` drift and shared provider-model catalog drift are now resolved; remaining cleanup is more about Settings state surfaces and other mirrored modules. |
 | `Harness Friction — Agent Self-Report.md` | Current, refreshed 2026-03-30 | Ambient runtime state, capability discovery, and structured mutation postconditions are now shipped on the main web path; working-memory evolution and richer structural navigation remain open. |
+| `Multi-Agent Orchestration Research — open-multi-agent.md` | Current, added 2026-04-04 | Research on open-multi-agent framework: goal→DAG decomposition, coordinator pattern, shared memory, fan-out/aggregate. Feeds into task graph orchestration plan. |
 
 ## Quick Triage
 

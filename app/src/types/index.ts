@@ -914,7 +914,7 @@ export interface AskUserCardData {
 
 // --- Resumable Sessions ---
 
-export type LoopPhase = 'streaming_llm' | 'executing_tools' | 'delegating_coder' | 'delegating_explorer';
+export type LoopPhase = 'streaming_llm' | 'executing_tools' | 'delegating_coder' | 'delegating_explorer' | 'executing_task_graph';
 
 // ---------------------------------------------------------------------------
 // Tool hooks — pre/post execution interception
@@ -1211,6 +1211,79 @@ export interface DelegationOutcome {
   checkpoints: number;
   /** Elapsed wall-clock time in ms. */
   elapsedMs: number;
+}
+
+// ---------------------------------------------------------------------------
+// Task graph — dependency-aware multi-agent orchestration
+// ---------------------------------------------------------------------------
+
+/**
+ * A single node in the task graph emitted by the Orchestrator via `plan_tasks`.
+ * Each node is assigned to an agent (explorer or coder) and may depend on
+ * other nodes by id.
+ */
+export interface TaskGraphNode {
+  /** Unique identifier within the graph (e.g. "explore-auth", "impl-tests"). */
+  id: string;
+  /** Which agent executes this task. */
+  agent: 'explorer' | 'coder';
+  /** The task description passed to the agent. */
+  task: string;
+  /** File hints for the agent. */
+  files?: string[];
+  /** IDs of tasks that must complete before this one starts. */
+  dependsOn?: string[];
+  /** Expected deliverable description. */
+  deliverable?: string;
+  /** Acceptance criteria (coder tasks only). */
+  acceptanceCriteria?: AcceptanceCriterion[];
+  /** Extra context strings for the agent. */
+  knownContext?: string[];
+  /** Constraints for the agent. */
+  constraints?: string[];
+}
+
+/** Status of a single task within the graph. */
+export type TaskGraphNodeStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+/** Runtime state for a single node during execution. */
+export interface TaskGraphNodeState {
+  node: TaskGraphNode;
+  status: TaskGraphNodeStatus;
+  /** Result summary from the agent (set on completion). */
+  result?: string;
+  /** Error message (set on failure). */
+  error?: string;
+  /** Delegation outcome from the agent run. */
+  delegationOutcome?: DelegationOutcome;
+  /** Wall-clock duration in ms. */
+  elapsedMs?: number;
+}
+
+/** The Orchestrator's plan_tasks tool arguments. */
+export interface TaskGraphArgs {
+  tasks: TaskGraphNode[];
+}
+
+/** Progress event emitted during task graph execution. */
+export interface TaskGraphProgressEvent {
+  type: 'task_ready' | 'task_started' | 'task_completed' | 'task_failed' | 'task_cancelled' | 'graph_complete';
+  taskId?: string;
+  detail?: string;
+}
+
+/** Final result of a task graph execution. */
+export interface TaskGraphResult {
+  /** Whether all tasks completed successfully. */
+  success: boolean;
+  /** Per-node results keyed by task id. */
+  nodeStates: Map<string, TaskGraphNodeState>;
+  /** Combined summary of all completed tasks. */
+  summary: string;
+  /** Total wall-clock time. */
+  wallTimeMs: number;
+  /** Total agent rounds across all tasks. */
+  totalRounds: number;
 }
 
 // ---------------------------------------------------------------------------

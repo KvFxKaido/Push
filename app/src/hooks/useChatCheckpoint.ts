@@ -64,6 +64,7 @@ function toLoopPhase(phase: RunEnginePhase): LoopPhase {
     case 'executing_tools':
     case 'delegating_coder':
     case 'delegating_explorer':
+    case 'executing_task_graph':
       return phase;
     default:
       return 'streaming_llm';

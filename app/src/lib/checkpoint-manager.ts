@@ -84,9 +84,9 @@ export function buildRunCheckpoint(snapshot: RunCheckpointSnapshot): RunCheckpoi
     })),
     accumulated: snapshot.accumulated,
     thinkingAccumulated: snapshot.thinkingAccumulated,
-    coderDelegationActive: snapshot.phase === 'delegating_coder',
+    coderDelegationActive: snapshot.phase === 'delegating_coder' || snapshot.phase === 'executing_task_graph',
     lastCoderState:
-      snapshot.phase === 'delegating_coder' && snapshot.lastCoderState
+      (snapshot.phase === 'delegating_coder' || snapshot.phase === 'executing_task_graph') && snapshot.lastCoderState
         ? JSON.stringify(snapshot.lastCoderState)
         : null,
     savedAt: snapshot.savedAt ?? Date.now(),
@@ -224,6 +224,12 @@ export function buildCheckpointReconciliationMessage(
       `\nInterruption: connection dropped during Explorer delegation (round ${checkpoint.round}).\n`;
     header +=
       'The Explorer may have gathered partial findings already. Check the sandbox state above and the recent conversation before re-running the investigation.\n';
+  } else if (checkpoint.phase === 'executing_task_graph') {
+    header +=
+      `\nInterruption: connection dropped during task graph execution (round ${checkpoint.round}).\n`;
+    header +=
+      'Some tasks in the graph may have completed while others were in-flight. Check the sandbox state above.\n' +
+      'Decide whether to re-run the full graph or proceed with targeted follow-up delegations.\n';
   }
 
   header += '\nDo not repeat work that is already reflected in the sandbox.';
