@@ -1,5 +1,30 @@
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { VerificationPolicy } from '@/lib/verification-policy';
+import type { AcceptanceCriterion, DelegationOutcome } from '@push/lib/runtime-contract';
+export type {
+  AcceptanceCriterion,
+  DelegationCheck,
+  DelegationEvidence,
+  DelegationGateVerdict,
+  DelegationOutcome,
+  DelegationStatus,
+  MemoryFreshness,
+  MemoryQuery,
+  MemoryRecord,
+  MemoryRecordKind,
+  MemoryRetrievalResult,
+  MemoryScope,
+  MemoryScoreBreakdown,
+  MemorySource,
+  ScoredMemoryRecord,
+  TaskGraphArgs,
+  TaskGraphMemoryEntry,
+  TaskGraphNode,
+  TaskGraphNodeState,
+  TaskGraphNodeStatus,
+  TaskGraphProgressEvent,
+  TaskGraphResult,
+} from '@push/lib/runtime-contract';
 
 // User profile — persisted in localStorage, injected into system prompt
 export interface UserProfile {
@@ -309,17 +334,6 @@ export interface CoderWorkingMemory {
 }
 
 // --- Acceptance criteria for Coder delegation ---
-
-/** A single machine-checkable criterion the Coder must pass after task completion. */
-export interface AcceptanceCriterion {
-  id: string;
-  /** Shell command to run in the sandbox. */
-  check: string;
-  /** Expected exit code (default: 0 = success). */
-  exitCode?: number;
-  /** Human-readable description of what's being checked. */
-  description?: string;
-}
 
 /** Result of running one acceptance criterion. */
 export interface CriterionResult {
@@ -1193,278 +1207,6 @@ export interface ExplorerResult {
 // ---------------------------------------------------------------------------
 // Structured delegation outcome — machine-readable result contract
 // ---------------------------------------------------------------------------
-
-/**
- * Status of a delegated run: did the agent finish, leave work undone, or
- * fail to reach a conclusion?
- */
-export type DelegationStatus = 'complete' | 'incomplete' | 'inconclusive';
-
-/**
- * A single piece of evidence produced during a delegated run.
- * Evidence can come from sandbox diffs, test results, or agent observations.
- */
-export interface DelegationEvidence {
-  kind: 'diff' | 'test' | 'observation';
-  label: string;
-  detail?: string;
-}
-
-/**
- * The result of a verification check run during delegation
- * (e.g., acceptance criteria, typecheck, test suite).
- */
-export interface DelegationCheck {
-  id: string;
-  passed: boolean;
-  exitCode?: number;
-  output?: string;
-}
-
-/**
- * A gate verdict captured during delegation (e.g., auditor evaluation).
- */
-export interface DelegationGateVerdict {
-  gate: string;
-  outcome: 'passed' | 'failed' | 'inconclusive';
-  summary: string;
-}
-
-/**
- * Structured delegation outcome — the authoritative contract between a
- * delegated agent and the Orchestrator / runtime.
- *
- * Human-readable prose is derived FROM this structure, not the reverse.
- */
-export interface DelegationOutcome {
-  /** Agent that produced this outcome. */
-  agent: 'coder' | 'explorer';
-  /** Overall status of the delegation. */
-  status: DelegationStatus;
-  /** Human-readable summary (derived from structured fields). */
-  summary: string;
-  /** Evidence collected during the run. */
-  evidence: DelegationEvidence[];
-  /** Acceptance criteria / verification check results. */
-  checks: DelegationCheck[];
-  /** Gate verdicts (auditor, etc.). */
-  gateVerdicts: DelegationGateVerdict[];
-  /** Requirements that were not satisfied. */
-  missingRequirements: string[];
-  /** What the Orchestrator should do next (null = nothing required). */
-  nextRequiredAction: string | null;
-  /** Total agent rounds executed. */
-  rounds: number;
-  /** Checkpoints hit (Coder only). */
-  checkpoints: number;
-  /** Elapsed wall-clock time in ms. */
-  elapsedMs: number;
-}
-
-// ---------------------------------------------------------------------------
-// Task graph — dependency-aware multi-agent orchestration
-// ---------------------------------------------------------------------------
-
-/**
- * A single node in the task graph emitted by the Orchestrator via `plan_tasks`.
- * Each node is assigned to an agent (explorer or coder) and may depend on
- * other nodes by id.
- */
-export interface TaskGraphNode {
-  /** Unique identifier within the graph (e.g. "explore-auth", "impl-tests"). */
-  id: string;
-  /** Which agent executes this task. */
-  agent: 'explorer' | 'coder';
-  /** The task description passed to the agent. */
-  task: string;
-  /** File hints for the agent. */
-  files?: string[];
-  /** IDs of tasks that must complete before this one starts. */
-  dependsOn?: string[];
-  /** Expected deliverable description. */
-  deliverable?: string;
-  /** Acceptance criteria (coder tasks only). */
-  acceptanceCriteria?: AcceptanceCriterion[];
-  /** Extra context strings for the agent. */
-  knownContext?: string[];
-  /** Constraints for the agent. */
-  constraints?: string[];
-}
-
-/** Graph-scoped memory written by a completed task and injected into later tasks. */
-export interface TaskGraphMemoryEntry {
-  /** Namespace for this memory entry. Currently the task id. */
-  namespace: string;
-  /** Which agent produced the entry. */
-  agent: 'explorer' | 'coder';
-  /** Completion status captured in memory. */
-  status: DelegationStatus;
-  /** Compact summary of the task result. */
-  summary: string;
-  /** Compact verification signals derived from the delegation outcome. */
-  checks?: Array<{ id: string; passed: boolean }>;
-  /** Human-readable evidence labels produced by the task. */
-  evidenceLabels?: string[];
-  /** Follow-up action, if the task left one behind. */
-  nextRequiredAction?: string | null;
-}
-
-/** Status of a single task within the graph. */
-export type TaskGraphNodeStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'cancelled';
-
-/** Runtime state for a single node during execution. */
-export interface TaskGraphNodeState {
-  node: TaskGraphNode;
-  status: TaskGraphNodeStatus;
-  /** Result summary from the agent (set on completion). */
-  result?: string;
-  /** Error message (set on failure). */
-  error?: string;
-  /** Delegation outcome from the agent run. */
-  delegationOutcome?: DelegationOutcome;
-  /** Shared graph memory captured from a completed task. */
-  memoryEntry?: TaskGraphMemoryEntry;
-  /** Wall-clock duration in ms. */
-  elapsedMs?: number;
-}
-
-/** The Orchestrator's plan_tasks tool arguments. */
-export interface TaskGraphArgs {
-  tasks: TaskGraphNode[];
-}
-
-/** Progress event emitted during task graph execution. */
-export interface TaskGraphProgressEvent {
-  type: 'task_ready' | 'task_started' | 'task_completed' | 'task_failed' | 'task_cancelled' | 'graph_complete';
-  taskId?: string;
-  detail?: string;
-  elapsedMs?: number;
-}
-
-/** Final result of a task graph execution. */
-export interface TaskGraphResult {
-  /** Whether all tasks completed successfully. */
-  success: boolean;
-  /** Whether execution was cancelled by user abort. */
-  aborted: boolean;
-  /** Shared graph memory entries keyed by namespace/task id. */
-  memoryEntries: Map<string, TaskGraphMemoryEntry>;
-  /** Per-node results keyed by task id. */
-  nodeStates: Map<string, TaskGraphNodeState>;
-  /** Combined summary of all completed tasks. */
-  summary: string;
-  /** Total wall-clock time. */
-  wallTimeMs: number;
-  /** Total agent rounds across all tasks. */
-  totalRounds: number;
-}
-
-// ---------------------------------------------------------------------------
-// Context memory — typed, scoped, retrievable artifact records
-// ---------------------------------------------------------------------------
-
-/**
- * Kinds of durable artifact records produced by Explorer/Coder/task-graph runs.
- * These are NOT chat transcript fragments — they're structured evidence that
- * can later be retrieved deterministically.
- */
-export type MemoryRecordKind =
-  | 'fact'
-  | 'finding'
-  | 'decision'
-  | 'task_outcome'
-  | 'verification_result'
-  | 'file_change'
-  | 'symbol_trace'
-  | 'dependency_trace';
-
-/** Freshness signal for a record. `expired` is never injected. */
-export type MemoryFreshness = 'fresh' | 'stale' | 'expired';
-
-/** Scope fields. `repoFullName` is required; everything else is additive. */
-export interface MemoryScope {
-  repoFullName: string;
-  branch?: string;
-  chatId?: string;
-  role?: 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'auditor' | 'planner';
-  taskGraphId?: string;
-  taskId?: string;
-  runId?: string;
-}
-
-/** Where the record came from. */
-export interface MemorySource {
-  kind: 'explorer' | 'coder' | 'task_graph' | 'review' | 'audit' | 'orchestrator';
-  label: string;
-  createdAt: number;
-}
-
-/**
- * A typed, scoped, attributable artifact memory record.
- * Phase 1 keeps this intentionally small: the important guarantees are
- * typed / scoped / attributable / invalidatable-ready.
- */
-export interface MemoryRecord {
-  id: string;
-  kind: MemoryRecordKind;
-  summary: string;
-  detail?: string;
-  scope: MemoryScope;
-  source: MemorySource;
-  relatedFiles?: string[];
-  relatedSymbols?: string[];
-  tags?: string[];
-  freshness: MemoryFreshness;
-  derivedFrom?: string[];
-  invalidatedAt?: number;
-  invalidationReason?: string;
-}
-
-/** A retrieval query: who is asking, about what, in what scope? */
-export interface MemoryQuery {
-  repoFullName: string;
-  branch?: string;
-  chatId?: string;
-  role: 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'auditor';
-  taskText: string;
-  fileHints?: string[];
-  symbolHints?: string[];
-  taskGraphId?: string;
-  taskId?: string;
-  /** Soft cap on records returned. */
-  maxRecords: number;
-  /** Include `stale` records (demoted). Defaults to false. */
-  includeStale?: boolean;
-}
-
-/** Per-component scoring breakdown for a retrieval match (deterministic only). */
-export interface MemoryScoreBreakdown {
-  branch: number;
-  taskLineage: number;
-  taskText: number;
-  fileOverlap: number;
-  symbolOverlap: number;
-  roleFamily: number;
-  recency: number;
-  freshness: number;
-  total: number;
-}
-
-export interface ScoredMemoryRecord {
-  record: MemoryRecord;
-  score: number;
-  breakdown: MemoryScoreBreakdown;
-}
-
-export interface MemoryRetrievalResult {
-  records: ScoredMemoryRecord[];
-  /** How many candidate records existed in-scope before ranking. */
-  candidateCount: number;
-  /** Records excluded because they were `expired`. */
-  expiredExcluded: number;
-  /** Records demoted/skipped because they were `stale`. */
-  staleDropped: number;
-}
 
 // ---------------------------------------------------------------------------
 // Parallel delegation — multi-task Coder fan-out with merge

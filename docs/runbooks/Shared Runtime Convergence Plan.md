@@ -37,6 +37,22 @@ This runbook turns that rule into a practical implementation sequence.
 
 Reduce web/CLI cognitive drift by moving agent-runtime semantics into shared root `lib/` modules where that improves consistency, while preserving shell-specific UX and platform plumbing.
 
+## Implementation status snapshot (2026-04-05)
+
+- [x] Phase 0 started: created a shared `lib/runtime-contract.ts` seam for:
+  - acceptance-criteria types
+  - delegation outcome types
+  - task-graph types
+  - typed context-memory types
+- [x] App runtime modules now consume that shared type seam:
+  - `app/src/lib/task-graph.ts`
+  - `app/src/lib/context-memory*.ts`
+- [x] `app/src/types/index.ts` now re-exports the same runtime-contract slice so existing app imports continue to work.
+- [x] Phase 1 complete: the canonical task-graph executor now lives in `lib/task-graph.ts`, with `app/src/lib/task-graph.ts` kept as a compatibility wrapper.
+- [x] Phase 2 complete: the canonical typed-memory runtime now lives in shared `lib/context-memory*.ts`, with the corresponding `app/src/lib/context-memory*.ts` modules kept as compatibility wrappers.
+- [ ] `role-context.ts` remains app-local for now because its envelope types still depend on broader app types (`DelegationEnvelope`, `ExplorerDelegationEnvelope`, provider/model fields, branch context).
+- [ ] run-engine event/phase extraction remains open.
+
 ## Non-goals
 
 - Full feature parity between web and CLI
@@ -77,6 +93,13 @@ The repo already has a real shared-runtime base in root `lib/`:
 - `lib/reasoning-tokens.ts`
 - `lib/diff-utils.ts`
 - `lib/working-memory.ts`
+- `lib/runtime-contract.ts`
+- `lib/task-graph.ts`
+- `lib/context-memory.ts`
+- `lib/context-memory-store.ts`
+- `lib/context-memory-retrieval.ts`
+- `lib/context-memory-invalidation.ts`
+- `lib/context-memory-packing.ts`
 
 This is the right pattern: shared semantics in `lib/`, shell-specific coordination in `app/` and `cli/`.
 
