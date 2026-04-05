@@ -12,6 +12,12 @@ import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult, type TaskEx
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
+  buildRetrievedMemoryKnownContext,
+  writeCoderMemory,
+  writeExplorerMemory,
+  writeTaskGraphNodeMemory,
+} from '@/lib/context-memory';
+import {
   activateVerificationGate,
   buildVerificationAcceptanceCriteria,
   extractChangedPathsFromDiff,
@@ -42,12 +48,71 @@ import type {
   DelegationCheck,
   DelegationGateVerdict,
   DelegationStatus,
+  MemoryQuery,
+  MemoryScope,
 } from '@/types';
 
 function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
   if (!criteriaResults || criteriaResults.length === 0) return 'OK';
   const allPassed = criteriaResults.every(r => r.passed);
   return allPassed ? 'OK' : 'CHECKS_FAILED';
+}
+
+/**
+ * Build a memory scope for the active delegation. Returns null in scratch
+ * mode (no repo) — memory records require a repo for scoping and retrieval.
+ */
+function buildMemoryScope(
+  chatId: string,
+  repoFullName: string | null,
+  branch: string | null | undefined,
+  extras: Partial<MemoryScope> = {},
+): MemoryScope | null {
+  if (!repoFullName) return null;
+  return {
+    repoFullName,
+    chatId,
+    ...(branch ? { branch } : {}),
+    ...extras,
+  };
+}
+
+const MAX_RETRIEVED_MEMORY_RECORDS = 6;
+
+/**
+ * Retrieve typed memory and return a compact knownContext line or null.
+ * Callers splice the returned string into the delegation's `knownContext`.
+ */
+function retrieveMemoryKnownContextLine(
+  scope: MemoryScope | null,
+  role: MemoryQuery['role'],
+  taskText: string,
+  fileHints?: string[],
+  extras: Partial<MemoryQuery> = {},
+): string | null {
+  if (!scope) return null;
+  const query: MemoryQuery = {
+    repoFullName: scope.repoFullName,
+    branch: scope.branch,
+    chatId: scope.chatId,
+    role,
+    taskText,
+    fileHints,
+    maxRecords: MAX_RETRIEVED_MEMORY_RECORDS,
+    ...extras,
+  };
+  const { line } = buildRetrievedMemoryKnownContext(query);
+  return line;
+}
+
+/** Merge a retrieved-memory line into an existing knownContext array. */
+function withMemoryContext(
+  base: string[] | undefined,
+  line: string | null,
+): string[] | undefined {
+  if (!line) return base;
+  if (!base || base.length === 0) return [line];
+  return [...base, line];
 }
 
 export interface UseAgentDelegationParams {
@@ -134,6 +199,17 @@ export function useAgentDelegation({
           agent: 'explorer',
           detail: explorerTask,
         });
+        const explorerMemoryScope = buildMemoryScope(
+          chatId,
+          repoRef.current,
+          branchInfoRef.current?.currentBranch,
+        );
+        const explorerMemoryLine = retrieveMemoryKnownContextLine(
+          explorerMemoryScope,
+          'explorer',
+          explorerTask,
+          explorerArgs.files,
+        );
         try {
           const explorerResult = await withActiveSpan('subagent.explorer', {
             scope: 'push.delegation',
@@ -154,7 +230,7 @@ export function useAgentDelegation({
                 files: explorerArgs.files || [],
                 intent: explorerArgs.intent,
                 deliverable: explorerArgs.deliverable,
-                knownContext: explorerArgs.knownContext,
+                knownContext: withMemoryContext(explorerArgs.knownContext, explorerMemoryLine),
                 constraints: explorerArgs.constraints,
                 branchContext: branchInfoRef.current?.currentBranch ? {
                   activeBranch: branchInfoRef.current.currentBranch,
@@ -218,6 +294,14 @@ export function useAgentDelegation({
             text: `[Tool Result — delegate_explorer]\n${explorerResult.summary}\n(${explorerResult.rounds} round${explorerResult.rounds !== 1 ? 's' : ''})`,
             delegationOutcome: explorerOutcome,
           };
+          if (explorerMemoryScope && explorerOutcome.status === 'complete') {
+            writeExplorerMemory({
+              scope: explorerMemoryScope,
+              summary: explorerResult.summary,
+              relatedFiles: explorerArgs.files,
+              rounds: explorerResult.rounds,
+            });
+          }
           updateVerificationStateForChat(chatId, (state) =>
             recordVerificationArtifact(
               state,
@@ -318,6 +402,17 @@ export function useAgentDelegation({
               agent: 'coder',
               detail: taskList.length === 1 ? taskList[0] : `${taskList.length} tasks`,
             });
+            const coderMemoryScope = buildMemoryScope(
+              chatId,
+              repoRef.current,
+              branchInfoRef.current?.currentBranch,
+            );
+            const coderMemoryLine = retrieveMemoryKnownContextLine(
+              coderMemoryScope,
+              'coder',
+              taskList.join('\n\n'),
+              delegateArgs.files,
+            );
             const allCards: ChatCard[] = [];
             const summaries: string[] = [];
             let totalRounds = 0;
@@ -471,7 +566,7 @@ export function useAgentDelegation({
                   {
                     intent: delegateArgs.intent,
                     deliverable: delegateArgs.deliverable,
-                    knownContext: delegateArgs.knownContext,
+                    knownContext: withMemoryContext(delegateArgs.knownContext, coderMemoryLine),
                     constraints: delegateArgs.constraints,
                     branchContext: seqBi?.currentBranch ? {
                       activeBranch: seqBi.currentBranch,
@@ -762,6 +857,16 @@ export function useAgentDelegation({
               });
             }
 
+            if (coderMemoryScope && coderOutcome.status !== 'inconclusive') {
+              writeCoderMemory({
+                scope: coderMemoryScope,
+                outcome: coderOutcome,
+                diffPaths: lastTaskDiff
+                  ? extractChangedPathsFromDiff(lastTaskDiff)
+                  : undefined,
+              });
+            }
+
             const checkpointNote = totalCheckpoints > 0
               ? `, ${totalCheckpoints} checkpoint${totalCheckpoints !== 1 ? 's' : ''}`
               : '';
@@ -873,8 +978,25 @@ export function useAgentDelegation({
             // Track which tasks are active for aggregated status
             const activeTasks = new Map<string, string>();
 
+            // Shared memory scope for this graph run. Records from earlier
+            // nodes can be retrieved by later nodes via `taskGraphId` match.
+            const graphMemoryScope = buildMemoryScope(
+              chatId,
+              repoRef.current,
+              branchInfoRef.current?.currentBranch,
+              { taskGraphId: executionId },
+            );
+
             // Build the task executor that bridges to existing agent runners
             const taskExecutor: TaskExecutor = async (node, enrichedContext, taskSignal) => {
+              const nodeMemoryLine = retrieveMemoryKnownContextLine(
+                graphMemoryScope,
+                node.agent,
+                node.task,
+                node.files,
+                { taskGraphId: executionId, taskId: node.id },
+              );
+              const memoryEnrichedContext = withMemoryContext(enrichedContext, nodeMemoryLine) ?? enrichedContext;
               if (node.agent === 'explorer') {
                 const explorerStartMs = Date.now();
                 let explorerResult;
@@ -894,7 +1016,7 @@ export function useAgentDelegation({
                         task: node.task,
                         files: node.files ?? [],
                         deliverable: node.deliverable,
-                        knownContext: enrichedContext,
+                        knownContext: memoryEnrichedContext,
                         constraints: node.constraints,
                         branchContext: branchInfoRef.current?.currentBranch ? {
                           activeBranch: branchInfoRef.current.currentBranch,
@@ -1009,7 +1131,7 @@ export function useAgentDelegation({
                       resolvedModelForChat || undefined,
                       {
                         deliverable: node.deliverable,
-                        knownContext: enrichedContext,
+                        knownContext: memoryEnrichedContext,
                         constraints: node.constraints,
                         branchContext: branchInfoRef.current?.currentBranch ? {
                           activeBranch: branchInfoRef.current.currentBranch,
@@ -1243,6 +1365,17 @@ export function useAgentDelegation({
               totalRounds: graphResult.totalRounds,
               wallTimeMs: graphResult.wallTimeMs,
             });
+
+            // Persist typed memory records for every completed node so
+            // later (out-of-graph) delegations can retrieve them.
+            if (graphMemoryScope) {
+              for (const nodeState of graphResult.nodeStates.values()) {
+                writeTaskGraphNodeMemory({
+                  scope: graphMemoryScope,
+                  nodeState,
+                });
+              }
+            }
 
             let graphAuditResult: EvaluationResult | null = null;
             if (hasCoderTasks) {

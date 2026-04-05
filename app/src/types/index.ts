@@ -1360,6 +1360,113 @@ export interface TaskGraphResult {
 }
 
 // ---------------------------------------------------------------------------
+// Context memory — typed, scoped, retrievable artifact records
+// ---------------------------------------------------------------------------
+
+/**
+ * Kinds of durable artifact records produced by Explorer/Coder/task-graph runs.
+ * These are NOT chat transcript fragments — they're structured evidence that
+ * can later be retrieved deterministically.
+ */
+export type MemoryRecordKind =
+  | 'fact'
+  | 'finding'
+  | 'decision'
+  | 'task_outcome'
+  | 'verification_result'
+  | 'file_change'
+  | 'symbol_trace'
+  | 'dependency_trace';
+
+/** Freshness signal for a record. `expired` is never injected. */
+export type MemoryFreshness = 'fresh' | 'stale' | 'expired';
+
+/** Scope fields. `repoFullName` is required; everything else is additive. */
+export interface MemoryScope {
+  repoFullName: string;
+  branch?: string;
+  chatId?: string;
+  role?: 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'auditor' | 'planner';
+  taskGraphId?: string;
+  taskId?: string;
+  runId?: string;
+}
+
+/** Where the record came from. */
+export interface MemorySource {
+  kind: 'explorer' | 'coder' | 'task_graph' | 'review' | 'audit' | 'orchestrator';
+  label: string;
+  createdAt: number;
+}
+
+/**
+ * A typed, scoped, attributable artifact memory record.
+ * Phase 1 keeps this intentionally small: the important guarantees are
+ * typed / scoped / attributable / invalidatable-ready.
+ */
+export interface MemoryRecord {
+  id: string;
+  kind: MemoryRecordKind;
+  summary: string;
+  detail?: string;
+  scope: MemoryScope;
+  source: MemorySource;
+  relatedFiles?: string[];
+  relatedSymbols?: string[];
+  tags?: string[];
+  freshness: MemoryFreshness;
+  derivedFrom?: string[];
+  invalidatedAt?: number;
+  invalidationReason?: string;
+}
+
+/** A retrieval query: who is asking, about what, in what scope? */
+export interface MemoryQuery {
+  repoFullName: string;
+  branch?: string;
+  chatId?: string;
+  role: 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'auditor';
+  taskText: string;
+  fileHints?: string[];
+  symbolHints?: string[];
+  taskGraphId?: string;
+  taskId?: string;
+  /** Soft cap on records returned. */
+  maxRecords: number;
+  /** Include `stale` records (demoted). Defaults to false. */
+  includeStale?: boolean;
+}
+
+/** Per-component scoring breakdown for a retrieval match (deterministic only). */
+export interface MemoryScoreBreakdown {
+  branch: number;
+  taskLineage: number;
+  taskText: number;
+  fileOverlap: number;
+  symbolOverlap: number;
+  roleFamily: number;
+  recency: number;
+  freshness: number;
+  total: number;
+}
+
+export interface ScoredMemoryRecord {
+  record: MemoryRecord;
+  score: number;
+  breakdown: MemoryScoreBreakdown;
+}
+
+export interface MemoryRetrievalResult {
+  records: ScoredMemoryRecord[];
+  /** How many candidate records existed in-scope before ranking. */
+  candidateCount: number;
+  /** Records excluded because they were `expired`. */
+  expiredExcluded: number;
+  /** Records demoted/skipped because they were `stale`. */
+  staleDropped: number;
+}
+
+// ---------------------------------------------------------------------------
 // Parallel delegation — multi-task Coder fan-out with merge
 // ---------------------------------------------------------------------------
 

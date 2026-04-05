@@ -82,7 +82,7 @@ Ranked by impact and feasibility:
 ### Medium Priority
 
 2. **Semaphore-based concurrency for agent pool + tool execution** — Cleaner parallel control than current sequential delegation.
-3. **Shared memory with namespace + summary injection** — Structured inter-agent context passing. Push currently passes context via delegation args and tool result envelopes. A shared KV store with markdown summaries could reduce prompt bloat.
+3. **Shared memory with namespace + summary injection** — Structured inter-agent context passing. Push currently passes context via delegation args and tool result envelopes. A shared KV store with markdown summaries could reduce prompt bloat. Follow-up design: [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md).
 4. **Structured trace events** — Push has OTel spans for boundaries; adding typed trace events for task-level observability would complement this.
 
 ### Lower Priority
