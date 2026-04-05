@@ -1,13 +1,13 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-02-22
+Last updated: 2026-04-05
 
 This is the single source of truth for active product and engineering direction.
 
 `docs/` is a draft lab for spikes, explorations, and non-final plans.
 Only decisions promoted into this file should be treated as implementation commitments.
 
-Current cycle emphasis: terminal UX improvements (CLI-first, transcript-first, no full-screen TUI rewrite).
+Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption of the shared runtime foundation, and chat/workspace product follow-through.
 
 ## How We Use This
 
@@ -28,17 +28,22 @@ Current cycle emphasis: terminal UX improvements (CLI-first, transcript-first, n
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
 | Push CLI Muscle-Memory UX | in_progress | Continue aligning `push` with Claude Code/Codex-style terminal muscle memory using a transcript-first REPL (no full-screen TUI) | Session flow feels transcript-first (prompting, interrupts, outputs, tool visibility), common tasks require fewer commands/flags, and day-to-day usage no longer depends on roadmap-specific operator knowledge |
+| Selective CLI Adoption of Shared Runtime | in_progress | Bring more of the now-shared runtime substrate into CLI only where it improves the terminal product (task framing, events, memory, later task-graph/runtime features) | Adopted CLI flows use the same runtime semantics as web without introducing new CLI-only semantic drift; any remaining differences are shell-specific by design |
 | `pushd` Attach + Event Stream UX | planned | Ship explicit CLI client flows for daemon attach/resume and event streaming over the existing NDJSON socket protocol | User can attach to a live session, watch events in a readable transcript, and recover after disconnect without manual state inspection |
 | CLI/TUI-lite Ergonomics | planned | Add terminal UX improvements that stop short of a full-screen TUI (session picker, transcript navigation, command shortcuts, compact status surfaces) | Interactive users can navigate session history and active runs faster without leaving the transcript-first model |
 | CLI Protocol/Schema Hardening | planned | Harden protocol envelopes and optional schema validation for daemon/client interoperability | Schema validation mode exists for core events; protocol regressions fail tests before release |
+| Chat Surface Evolution | planned | Make chat a first-class surface with cleaner chat-first launcher framing, explicit context escalation, and mode-specific restore behavior | Chat can be described as its own surface instead of a workspace flag, while runtime/storage/auth remain shared |
+| Workspace Publish Follow-through | planned | Polish the post-publish repo-backed handoff and decide the optional empty-repo path after the first publish flow shipped | Publishing a workspace to GitHub feels explicit and understandable end-to-end, and the next empty-repo path is either shipped or clearly scoped |
 | Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
-| Roadmap Hygiene Automation | planned | Lightweight template/checklist for promoting `docs/` ideas into this file | New roadmap items consistently include scope + acceptance criteria |
 
 ## Recently Completed
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
+| Shared Runtime Convergence Tranche | done | Shipped the main semantic web/CLI convergence pass: shared runtime contract, task graph executor, typed context-memory stack, delegation brief formatter, run-event vocabulary, role-context helpers, and first CLI adoption of shared task framing/events | Core runtime semantics live in shared `lib/`; web uses the canonical modules; CLI has started consuming the same contracts without forcing blanket feature parity |
+| Task Graph Orchestration + Typed Context Memory Foundation | done | Shipped dependency-aware `plan_tasks`, task-level graph events, graph memory, typed memory retrieval, invalidation, and sectioned prompt packing | Orchestrator can execute mixed Explorer/Coder task graphs with dependency context; typed memory retrieval and freshness-aware packing are live in the main runtime |
+| Workspace Publish to GitHub Phase 1 | done | Added first-class in-app publish UI for scratch workspaces plus launcher entry points and workspace transition plumbing | User can publish a scratch workspace to a private/public GitHub repo from the app without relying on a chat-only tool flow |
 | Harness Reliability Program (Tracks A-C + E) | done | Shipped the harness-first reliability push: hashline edits, range reads + truncation-aware safety, garbled tool-call recovery, structured error taxonomy, multi-tool dispatch, meta envelopes, acceptance criteria, working memory, symbol reads, and patchsets | Core checklist shipped; harness reliability remains an ongoing product priority, with future work handled as incremental maintenance rather than a roadmap checklist |
 | Push CLI Foundation + Harness Transition (No Checkpoint Resume) | done | Built modular `push`/`pushd` foundation and added advanced harness semantics to CLI runtime: multi-tool turns (parallel reads + single mutation), hashline `edit_file`, working memory updates, malformed tool-call diagnostics, file-ledger/meta envelopes, and headless acceptance checks | `push` supports config init/show/set and persisted defaults; `run --json`/`sessions --json` stable; protocol envelope persisted in session events; advanced harness features shipped in `9ec31c5` with passing `scripts/push/tests/*.test.mjs` |
 | Resumable Sessions (Phases 1-4) | done | Added interruption-safe run checkpointing + resume flow across orchestrator and coder delegation, including reconciliation and lock safety | Interrupted runs surface a `ResumeBanner`; resume revalidates sandbox/branch/repo, injects `[SESSION_RESUMED]` with sandbox HEAD/dirty/diff context, preserves coder state, and records resume telemetry |
@@ -55,6 +60,9 @@ Current cycle emphasis: terminal UX improvements (CLI-first, transcript-first, n
 
 | Date | Decision | Source |
 |---|---|---|
+| 2026-04-05 | Shared runtime convergence tranche shipped: task-graph runtime, typed memory, delegation briefs, run-event vocabulary, and role-context semantics now live in shared `lib/`; further CLI work should be selective product adoption, not blanket parity extraction | Implementation session + `docs/runbooks/Shared Runtime Convergence Plan.md` |
+| 2026-04-05 | Task graph orchestration, graph memory, typed context-memory retrieval/invalidation/packing, and task-level trace events shipped as the new orchestration baseline | Implementation session + `docs/runbooks/Task Graph Orchestration Plan.md` + `docs/decisions/Context Memory and Retrieval Architecture.md` |
+| 2026-04-05 | In-app repo creation should be treated as "publish workspace to GitHub" first; Phase 1 publish UI/workspace handoff shipped | Implementation session + `docs/runbooks/Workspace Publish to GitHub Plan.md` |
 | 2026-02-22 | Roadmap focus shifted to CLI/TUI terminal UX improvements; harness reliability program moved from active checklist to completed baseline priority | Documentation/roadmap update |
 | 2026-02-20 | Push CLI foundation and harness transition shipped in staged commits (`53b3c29`, `9b10856`, `aa80d7f`, `9ec31c5`) with checkpoint resume intentionally deferred for CLI | Implementation session |
 | 2026-02-20 | Track D server-side background jobs deferred; resumable sessions remain the active interruption-recovery strategy | Product scope decision |

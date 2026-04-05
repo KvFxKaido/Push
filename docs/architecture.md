@@ -34,11 +34,30 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 
 - **Tool protocol** — multi-tool dispatch and structured error reporting
 - **Sandbox execution** — scratch workspaces and web search tools via Modal
-- **Delegation** — Coder delegation and Explorer delegation from Orchestrator
+- **Delegation and orchestration** — direct Explorer/Coder delegation plus dependency-aware task graphs via `plan_tasks`
+- **Context and memory** — staged compaction, Coder working memory, graph-scoped task memory, typed retrieval/invalidation, and sectioned prompt packing
+- **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, and run-event semantics live in root `lib/` and are consumed by both web and CLI
 - **Review sources** — Branch diff, Last commit, Working tree
 - **Harness reliability** — hashline edits, resumable sessions, active branch handling
-- **GitHub flow** — PR merge flow, branch-scoped chats, commit/push
+- **GitHub flow** — PR merge flow, branch-scoped chats, commit/push, and workspace publish-to-GitHub
 - **Project instructions** — loading order: `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`
+
+## Workspace Modes
+
+- **Repo-backed mode** — repo-locked context, branch-scoped chats, GitHub-backed review/commit/push flows
+- **Scratch workspace mode** — sandbox-only workspace for quick experiments without repo auth
+- **Workspace publish flow** — scratch work can be promoted into a user-owned GitHub repo from inside the app, with explicit `Private`/`Public` visibility
+
+## Shared Runtime Shape
+
+Root `lib/` is now the canonical home for cross-surface runtime semantics, including:
+
+- task-graph execution
+- typed context-memory storage/retrieval/invalidation/packing
+- delegation brief formatting and role-context helpers
+- run phases and event vocabulary
+
+The web app and CLI still keep shell-specific coordinators local. The target is the same agent/runtime contract across surfaces, not identical UI or transport.
 
 ## Repo Map
 
@@ -55,7 +74,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 
 ## CLI
 
-Local coding agent for the terminal. Same role-based agent architecture as the web app. Current direction is transcript-first CLI ergonomics and TUI-lite improvements; the existing TUI surface is experimental, not a ground-up rewrite target.
+Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current direction is transcript-first CLI ergonomics, selective adoption of the shared runtime substrate, and TUI-lite improvements; the existing TUI surface is experimental, not a ground-up rewrite target.
 
 ## Design System
 
