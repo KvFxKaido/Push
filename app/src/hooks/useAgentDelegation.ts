@@ -13,6 +13,7 @@ import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
   buildRetrievedMemoryKnownContext,
+  invalidateMemoryForChangedFiles,
   writeCoderMemory,
   writeExplorerMemory,
   writeTaskGraphNodeMemory,
@@ -420,7 +421,9 @@ export function useAgentDelegation({
             // Collect acceptance criteria results across all tasks for evaluation
             const allCriteriaResults: { id: string; passed: boolean; exitCode: number; output: string }[] = [];
             const verificationCriteria = buildVerificationAcceptanceCriteria(verificationPolicy, 'always');
+            const verificationCommandsById = new Map<string, string>();
             let lastTaskDiff: string | null = null;
+            let latestDiffPaths: string[] | undefined;
             let coderEvalResult: EvaluationResult | null = null;
 
             // --- Planner Pre-Pass ---
@@ -531,6 +534,9 @@ export function useAgentDelegation({
               const criteriaCommandById = new Map(
                 effectiveAcceptanceCriteria.map((criterion) => [criterion.id, criterion.check]),
               );
+              for (const [criterionId, command] of criteriaCommandById.entries()) {
+                verificationCommandsById.set(criterionId, command);
+              }
               const seqBi = branchInfoRef.current;
               const coderResult = await withActiveSpan('subagent.coder', {
                 scope: 'push.delegation',
@@ -602,12 +608,14 @@ export function useAgentDelegation({
               }
               lastTaskDiff = taskDiff;
               if (taskDiff) {
+                const touchedPaths = extractChangedPathsFromDiff(taskDiff);
+                latestDiffPaths = touchedPaths;
                 updateVerificationStateForChat(chatId, (state) =>
                   recordVerificationMutation(
                     state,
                     {
                       source: 'coder',
-                      touchedPaths: extractChangedPathsFromDiff(taskDiff),
+                      touchedPaths,
                       detail: 'Coder delegation mutated the workspace.',
                     },
                   ),
@@ -857,12 +865,25 @@ export function useAgentDelegation({
               });
             }
 
+            if (coderMemoryScope && latestDiffPaths && latestDiffPaths.length > 0) {
+              invalidateMemoryForChangedFiles({
+                scope: {
+                  repoFullName: coderMemoryScope.repoFullName,
+                  branch: coderMemoryScope.branch,
+                  chatId: coderMemoryScope.chatId,
+                },
+                changedPaths: latestDiffPaths,
+                reason: 'Coder delegation updated file-backed context.',
+              });
+            }
+
             if (coderMemoryScope && coderOutcome.status !== 'inconclusive') {
               writeCoderMemory({
                 scope: coderMemoryScope,
                 outcome: coderOutcome,
-                diffPaths: lastTaskDiff
-                  ? extractChangedPathsFromDiff(lastTaskDiff)
+                diffPaths: latestDiffPaths,
+                verificationCommandsById: verificationCommandsById.size > 0
+                  ? Object.fromEntries(verificationCommandsById)
                   : undefined,
               });
             }
@@ -974,6 +995,7 @@ export function useAgentDelegation({
               ? buildVerificationAcceptanceCriteria(verificationPolicy, 'always')
               : [];
             const graphNodeById = new Map(graphArgs.tasks.map((task) => [task.id, task] as const));
+            let latestGraphDiffPaths: string[] | undefined;
 
             // Track which tasks are active for aggregated status
             const activeTasks = new Map<string, string>();
@@ -1173,12 +1195,14 @@ export function useAgentDelegation({
                   // Verification state can still update from summaries/checks.
                 }
                 if (taskDiff) {
+                  const touchedPaths = extractChangedPathsFromDiff(taskDiff);
+                  latestGraphDiffPaths = touchedPaths;
                   updateVerificationStateForChat(chatId, (state) =>
                     recordVerificationMutation(
                       state,
                       {
                         source: 'coder',
-                        touchedPaths: extractChangedPathsFromDiff(taskDiff),
+                        touchedPaths,
                         detail: `Task graph node "${node.id}" mutated the workspace.`,
                       },
                     ),
@@ -1365,6 +1389,18 @@ export function useAgentDelegation({
               totalRounds: graphResult.totalRounds,
               wallTimeMs: graphResult.wallTimeMs,
             });
+
+            if (graphMemoryScope && latestGraphDiffPaths && latestGraphDiffPaths.length > 0) {
+              invalidateMemoryForChangedFiles({
+                scope: {
+                  repoFullName: graphMemoryScope.repoFullName,
+                  branch: graphMemoryScope.branch,
+                  chatId: graphMemoryScope.chatId,
+                },
+                changedPaths: latestGraphDiffPaths,
+                reason: 'Task graph coder nodes updated file-backed context.',
+              });
+            }
 
             // Persist typed memory records for every completed node so
             // later (out-of-graph) delegations can retrieve them.

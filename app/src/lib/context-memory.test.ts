@@ -155,6 +155,33 @@ describe('writeCoderMemory', () => {
     expect(allRecords.some((r) => r.kind === 'file_change')).toBe(false);
     expect(allRecords.some((r) => r.kind === 'task_outcome')).toBe(true);
   });
+
+  it('supersedes older verification records and tags new ones with check and command metadata', () => {
+    const store = createInMemoryStore();
+    const oldVerification = createMemoryRecord({
+      kind: 'verification_result',
+      summary: 'typecheck: passed',
+      scope: makeScope({ role: 'coder' }),
+      source: { kind: 'coder', label: 'Verification: typecheck' },
+      tags: ['pass', 'check:typecheck', 'command:npm run typecheck'],
+    });
+    store.write(oldVerification);
+
+    const records = writeCoderMemory({
+      store,
+      scope: makeScope(),
+      outcome: makeCoderOutcome({ checks: [{ id: 'typecheck', passed: false, exitCode: 1, output: 'boom' }] }),
+      verificationCommandsById: { typecheck: 'npm   run   typecheck' },
+    });
+
+    const staleVerification = store.get(oldVerification.id);
+    expect(staleVerification?.freshness).toBe('stale');
+    expect(staleVerification?.invalidationReason).toContain('typecheck');
+
+    const newVerification = records.find((record) => record.kind === 'verification_result');
+    expect(newVerification?.tags).toContain('check:typecheck');
+    expect(newVerification?.tags).toContain('command:npm run typecheck');
+  });
 });
 
 describe('writeTaskGraphNodeMemory', () => {

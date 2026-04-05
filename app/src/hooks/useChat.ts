@@ -75,6 +75,7 @@ import {
   shouldPersistRunEvent,
   trimRunEvents,
 } from '@/lib/chat-run-events';
+import { expireBranchScopedMemory } from '@/lib/context-memory';
 import {
   IDLE_RUN_STATE,
   isRunActive,
@@ -298,6 +299,10 @@ export function useChat(
   runtimeHandlersRef.current = runtimeHandlers;
   const branchInfoRef = useRef(branchInfo);
   branchInfoRef.current = branchInfo;
+  const previousMemoryBranchScopeRef = useRef<{
+    repoFullName: string;
+    branch: string;
+  } | null>(null);
 
   // --- Instruction refs ---
   const agentsMdRef = useRef<string | null>(null);
@@ -313,6 +318,31 @@ export function useChat(
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
   }, [activeChatId]);
+
+  useEffect(() => {
+    const resolvedBranch = branchInfo?.currentBranch || branchInfo?.defaultBranch;
+    const currentMemoryScope = activeRepoFullName
+      && resolvedBranch
+      ? {
+          repoFullName: activeRepoFullName,
+          branch: resolvedBranch,
+        }
+      : null;
+    const previousMemoryScope = previousMemoryBranchScopeRef.current;
+
+    if (
+      previousMemoryScope
+      && (
+        !currentMemoryScope
+        || previousMemoryScope.repoFullName !== currentMemoryScope.repoFullName
+        || previousMemoryScope.branch !== currentMemoryScope.branch
+      )
+    ) {
+      expireBranchScopedMemory(previousMemoryScope);
+    }
+
+    previousMemoryBranchScopeRef.current = currentMemoryScope;
+  }, [activeRepoFullName, branchInfo?.currentBranch, branchInfo?.defaultBranch]);
 
   const updateConversations = useCallback(
     (updater: Record<string, Conversation> | ((prev: Record<string, Conversation>) => Record<string, Conversation>)) => {

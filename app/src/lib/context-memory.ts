@@ -31,6 +31,7 @@ import type {
 import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store';
 import { retrieveRecords } from './context-memory-retrieval';
 import { packRetrievedMemory, type MemoryPackOptions, type MemoryPackResult } from './context-memory-packing';
+import { supersedeVerificationMemory } from './context-memory-invalidation';
 
 // ---------------------------------------------------------------------------
 // Record construction
@@ -131,6 +132,7 @@ export interface WriteCoderMemoryInput {
   scope: MemoryScope;
   outcome: DelegationOutcome;
   diffPaths?: string[];
+  verificationCommandsById?: Record<string, string>;
   store?: ContextMemoryStore;
 }
 
@@ -184,6 +186,12 @@ export function writeCoderMemory(input: WriteCoderMemoryInput): MemoryRecord[] {
   }
 
   for (const check of outcome.checks) {
+    supersedeVerificationMemory({
+      scope: coderScope,
+      checkId: check.id,
+      command: input.verificationCommandsById?.[check.id],
+      store,
+    });
     const verification = createMemoryRecord({
       kind: 'verification_result',
       summary: `${check.id}: ${check.passed ? 'passed' : 'failed'}${check.exitCode !== undefined ? ` (exit ${check.exitCode})` : ''}`,
@@ -193,7 +201,13 @@ export function writeCoderMemory(input: WriteCoderMemoryInput): MemoryRecord[] {
         kind: 'coder',
         label: `Verification: ${check.id}`,
       },
-      tags: [check.passed ? 'pass' : 'fail'],
+      tags: [
+        check.passed ? 'pass' : 'fail',
+        `check:${check.id}`,
+        ...(input.verificationCommandsById?.[check.id]
+          ? [`command:${input.verificationCommandsById[check.id].trim().replace(/\s+/g, ' ')}`]
+          : []),
+      ],
       derivedFrom: [outcomeRecord.id],
     });
     store.write(verification);
@@ -295,5 +309,6 @@ export {
   packRetrievedMemory,
   DEFAULT_MEMORY_PACK_BUDGET_CHARS,
 } from './context-memory-packing';
+export { expireBranchScopedMemory, invalidateMemoryForChangedFiles, supersedeVerificationMemory } from './context-memory-invalidation';
 export type { ContextMemoryStore } from './context-memory-store';
 export type { MemoryPackOptions, MemoryPackResult } from './context-memory-packing';
