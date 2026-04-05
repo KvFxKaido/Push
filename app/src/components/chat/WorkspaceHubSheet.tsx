@@ -41,10 +41,12 @@ import {
   MergeShieldIcon,
   NotebookPadIcon,
   PRThreadIcon,
+  PushOrbitIcon,
   ReviewLensIcon,
   SandboxCubeIcon,
   SettingsCellsIcon,
 } from '@/components/icons/push-custom-icons';
+import { PublishToGitHubSheet } from '@/components/repo/PublishToGitHubSheet';
 import { HubNotesTab, HubConsoleTab, HubFilesTab, HubDiffTab } from './hub-tabs';
 const HubPRsTab = lazy(() => import('./hub-tabs/HubPRsTab').then((m) => ({ default: m.HubPRsTab })));
 const HubReviewTab = lazy(() => import('./hub-tabs/HubReviewTab').then((m) => ({ default: m.HubReviewTab })));
@@ -130,6 +132,11 @@ interface WorkspaceHubSheetProps {
   workspaceMode: WorkspaceMode;
   capabilities: WorkspaceCapabilities;
   scratchActions?: WorkspaceScratchActions | null;
+  onPublishToGitHub?: (args: {
+    repoName: string;
+    description?: string;
+    isPrivate: boolean;
+  }) => Promise<void>;
   repoName?: string;
   /** owner/name format — passed to Review tab for PR detection */
   repoFullName?: string;
@@ -303,6 +310,7 @@ export function WorkspaceHubSheet({
   workspaceMode,
   capabilities,
   scratchActions,
+  onPublishToGitHub,
   repoName,
   repoFullName,
   projectInstructions,
@@ -345,6 +353,7 @@ export function WorkspaceHubSheet({
   const [commitMessage, setCommitMessage] = useState('');
   const [suggestingCommitMessage, setSuggestingCommitMessage] = useState(false);
   const [commitTargetSheetOpen, setCommitTargetSheetOpen] = useState(false);
+  const [publishSheetOpen, setPublishSheetOpen] = useState(false);
   const [commitTargetMode, setCommitTargetMode] = useState<CommitTargetMode>('current');
   const [newBranchName, setNewBranchName] = useState('');
   const [commitTargetError, setCommitTargetError] = useState<string | null>(null);
@@ -1364,6 +1373,17 @@ export function WorkspaceHubSheet({
                     )}
                     <span className={HUB_CONTROL_TEXT_CLASS}>Download</span>
                   </button>
+                  {onPublishToGitHub && (
+                    <button
+                      onClick={() => setPublishSheetOpen(true)}
+                      className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-secondary`}
+                      title="Create a GitHub repository from this workspace"
+                    >
+                      <HubControlGlow />
+                      <PushOrbitIcon className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 text-push-fg-dim`} />
+                      <span className={HUB_CONTROL_TEXT_CLASS}>Publish</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1636,6 +1656,13 @@ export function WorkspaceHubSheet({
               </div>
             </SheetContent>
           </Sheet>
+          {onPublishToGitHub && (
+            <PublishToGitHubSheet
+              open={publishSheetOpen}
+              onOpenChange={setPublishSheetOpen}
+              onSubmit={onPublishToGitHub}
+            />
+          )}
         </div>
       </SheetContent>
     </Sheet>

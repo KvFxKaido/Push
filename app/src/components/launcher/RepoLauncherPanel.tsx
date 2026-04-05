@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Lock, MessageSquare, Palette, Search, Loader2 } from 'lucide-react';
+import { Lock, MessageSquare, Palette, Plus, Search, Loader2 } from 'lucide-react';
 import {
   BranchWaveIcon,
   CommitPulseIcon,
@@ -29,6 +29,7 @@ import {
 } from '@/components/chat/hub-styles';
 import { fetchRepoBranches } from '@/lib/github-tools';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
+import { PublishToGitHubSheet } from '@/components/repo/PublishToGitHubSheet';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import { timeAgo, timeAgoCompact } from '@/lib/utils';
@@ -101,6 +102,11 @@ interface RepoLauncherPanelProps {
   clearRepoAppearance: (repoFullName: string) => void;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
+  onPublishToGitHub?: (args: {
+    repoName: string;
+    description?: string;
+    isPrivate: boolean;
+  }) => Promise<void>;
   sandboxSession?: LauncherSandboxSession | null;
   onResumeSandbox?: () => void;
   onStartWorkspace?: () => void;
@@ -119,6 +125,7 @@ export function RepoLauncherPanel({
   clearRepoAppearance,
   onSelectRepo,
   onResumeConversation,
+  onPublishToGitHub,
   sandboxSession,
   onResumeSandbox,
   onStartWorkspace,
@@ -134,6 +141,7 @@ export function RepoLauncherPanel({
   const [branchCreateRepo, setBranchCreateRepo] = useState<RepoWithActivity | null>(null);
   const [sandboxRemainingMs, setSandboxRemainingMs] = useState<number | null>(null);
   const [appearanceRepo, setAppearanceRepoState] = useState<RepoWithActivity | null>(null);
+  const [publishSheetOpen, setPublishSheetOpen] = useState(false);
 
   useEffect(() => {
     if (!sandboxSession?.createdAt || sandboxSession.status !== 'ready') {
@@ -624,8 +632,19 @@ export function RepoLauncherPanel({
               <Loader2 className="h-5 w-5 animate-spin text-[#52525b]" />
             </div>
           ) : recentRepos.length === 0 ? (
-            <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-dashed px-3 py-4 text-center text-xs text-[#788396]`}>
-              No repositories yet.
+            <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} space-y-3 border-dashed px-3 py-4 text-center text-xs text-[#788396]`}>
+              <p>No repositories yet.</p>
+              {onPublishToGitHub && (
+                <button
+                  type="button"
+                  onClick={() => setPublishSheetOpen(true)}
+                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mx-auto h-9 gap-2 px-3 text-sm font-medium text-push-fg-secondary`}
+                >
+                  <HubControlGlow />
+                  <Plus className="relative z-10 h-4 w-4" />
+                  <span className="relative z-10">Create repository</span>
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-1.5 stagger-in">
@@ -683,6 +702,14 @@ export function RepoLauncherPanel({
           appearance={resolveRepoAppearance(appearanceRepo.full_name)}
           onSave={(appearance) => setRepoAppearance(appearanceRepo.full_name, appearance)}
           onReset={() => clearRepoAppearance(appearanceRepo.full_name)}
+        />
+      )}
+
+      {onPublishToGitHub && (
+        <PublishToGitHubSheet
+          open={publishSheetOpen}
+          onOpenChange={setPublishSheetOpen}
+          onSubmit={onPublishToGitHub}
         />
       )}
     </>

@@ -15,6 +15,7 @@ import { useWorkspaceSandboxController } from '@/hooks/useWorkspaceSandboxContro
 import { perfMark } from '@/lib/perf-marks';
 import { useWorkspaceSessionBridge } from './useWorkspaceSessionBridge';
 import type {
+  ActiveRepo,
   RepoWithActivity,
   WorkspaceScreenProps,
 } from '@/types';
@@ -74,6 +75,21 @@ export function WorkspaceSessionScreen({
   );
   const catalog = useModelCatalog();
 
+  const handleWorkspacePromotion = useCallback((repo: ActiveRepo, branch?: string, sandboxIdOverride?: string | null) => {
+    const promotedRepo = branch && branch !== repo.default_branch
+      ? { ...repo, current_branch: branch }
+      : repo;
+
+    sandbox.rebindSessionRepo(repo.full_name, branch ?? repo.default_branch);
+    setActiveRepo(promotedRepo);
+    onWorkspaceSessionChange({
+      id: workspaceSession.id,
+      kind: 'repo',
+      repo: promotedRepo,
+      sandboxId: sandboxIdOverride ?? sandbox.sandboxId,
+    });
+  }, [onWorkspaceSessionChange, sandbox, setActiveRepo, workspaceSession.id]);
+
   const skipBranchTeardownRef = useRef(false);
   const handleSandboxBranchSwitch = useCallback((branch: string) => {
     skipBranchTeardownRef.current = true;
@@ -132,14 +148,7 @@ export function WorkspaceSessionScreen({
         sandbox.rebindSessionRepo(repoFullName, branch);
       },
       onSandboxPromoted: (repo) => {
-        sandbox.rebindSessionRepo(repo.full_name, repo.default_branch);
-        setActiveRepo(repo);
-        onWorkspaceSessionChange({
-          id: workspaceSession.id,
-          kind: 'repo',
-          repo,
-          sandboxId: sandbox.sandboxId,
-        });
+        handleWorkspacePromotion(repo, repo.default_branch);
         toast.success(`Promoted to GitHub: ${repo.full_name}`);
       },
       onBranchSwitch: handleSandboxBranchSwitch,
@@ -347,6 +356,7 @@ export function WorkspaceSessionScreen({
     resolveRepoAppearance,
     setRepoAppearance,
     clearRepoAppearance,
+    handleWorkspacePromotion,
     sandbox,
     handleStartWorkspace: onStartScratchWorkspace,
     handleStartChat: onStartChat,

@@ -41,6 +41,11 @@ interface LauncherHomeContentProps {
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
   onDisconnect: () => void;
+  onPublishToGitHub?: (args: {
+    repoName: string;
+    description?: string;
+    isPrivate: boolean;
+  }) => Promise<void>;
   onStartWorkspace?: () => void;
   onStartChat?: () => void;
   sandboxSession?: LauncherSandboxSession | null;
@@ -61,6 +66,7 @@ export function LauncherHomeContent({
   onSelectRepo,
   onResumeConversation,
   onDisconnect,
+  onPublishToGitHub,
   onStartWorkspace,
   onStartChat,
   sandboxSession,
@@ -163,6 +169,7 @@ export function LauncherHomeContent({
           clearRepoAppearance={clearRepoAppearance}
           onSelectRepo={onSelectRepo}
           onResumeConversation={onResumeConversation}
+          onPublishToGitHub={onPublishToGitHub}
           onStartWorkspace={onStartWorkspace}
           onStartChat={onStartChat}
           sandboxSession={sandboxSession}

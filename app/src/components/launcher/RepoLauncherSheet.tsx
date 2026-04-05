@@ -17,6 +17,11 @@ interface RepoLauncherSheetProps {
   clearRepoAppearance: (repoFullName: string) => void;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onResumeConversation: (chatId: string) => void;
+  onPublishToGitHub?: (args: {
+    repoName: string;
+    description?: string;
+    isPrivate: boolean;
+  }) => Promise<void>;
   sandboxSession?: LauncherSandboxSession | null;
   onResumeSandbox?: () => void;
   onStartWorkspace?: () => void;
@@ -39,6 +44,7 @@ export function RepoLauncherSheet({
   clearRepoAppearance,
   onSelectRepo,
   onResumeConversation,
+  onPublishToGitHub,
   sandboxSession,
   onResumeSandbox,
   onStartWorkspace,
@@ -80,6 +86,12 @@ export function RepoLauncherSheet({
                 onResumeConversation(chatId);
                 onOpenChange(false);
               }}
+              onPublishToGitHub={onPublishToGitHub
+                ? async (args) => {
+                    await onPublishToGitHub(args);
+                    onOpenChange(false);
+                  }
+                : undefined}
               onDisconnect={() => {
                 onDisconnect();
                 onOpenChange(false);

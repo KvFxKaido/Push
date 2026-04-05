@@ -1,10 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { formatSnapshotAge, isSnapshotStale } from '@/hooks/useSnapshotManager';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
 import { useWorkspaceChatPanelsController } from '@/hooks/useWorkspaceChatPanelsController';
 import { getRepoAppearanceColorHex, hexToRgba } from '@/lib/repo-appearance';
+import { executeSandboxToolCall } from '@/lib/sandbox-tools';
+import { cleanWorkspacePublishMessage } from '@/lib/workspace-publish';
 import { ChatScreen } from './ChatScreen';
 import {
   buildRepoChatDrawerProps,
@@ -34,6 +37,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     resolveRepoAppearance,
     setRepoAppearance,
     clearRepoAppearance,
+    handleWorkspacePromotion,
     sandbox,
     messages,
     sendMessage,
@@ -318,6 +322,59 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     setShowMergeFlow(open);
   }, [setShowMergeFlow]);
 
+  const handlePublishToGitHub = useCallback(async (args: {
+    repoName: string;
+    description?: string;
+    isPrivate: boolean;
+  }) => {
+    if (!isScratch) {
+      throw new Error('Workspace publishing is only available from scratch workspaces right now.');
+    }
+    if (!props.validatedUser) {
+      throw new Error('Connect GitHub in Settings before publishing this workspace.');
+    }
+    if (isStreaming) {
+      throw new Error('Wait for the current response to finish before publishing.');
+    }
+
+    const sandboxId = sandbox.sandboxId ?? await ensureSandbox();
+    if (!sandboxId) {
+      throw new Error('Sandbox is not ready yet. Try again in a moment.');
+    }
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'promote_to_github',
+        args: {
+          repo_name: args.repoName,
+          description: args.description,
+          private: args.isPrivate,
+        },
+      },
+      sandboxId,
+    );
+
+    if (!result.promotion?.repo) {
+      throw new Error(cleanWorkspacePublishMessage(result.text) || 'Failed to publish workspace to GitHub.');
+    }
+
+    const promotedRepo = result.promotion.repo;
+    handleWorkspacePromotion(promotedRepo, promotedRepo.default_branch, sandboxId);
+
+    if (result.promotion.warning) {
+      toast.warning(`${promotedRepo.full_name} created. ${result.promotion.warning}`);
+    } else {
+      toast.success(`Published to GitHub: ${promotedRepo.full_name}`);
+    }
+  }, [
+    ensureSandbox,
+    handleWorkspacePromotion,
+    isScratch,
+    isStreaming,
+    props.validatedUser,
+    sandbox.sandboxId,
+  ]);
+
   const chatsDrawerOffset = 'min(86vw, 24rem)';
   const workspaceHubOffset = '94vw';
   const chatShellTransform = isChatsDrawerOpen
@@ -516,6 +573,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             workspaceMode={isScratch ? 'scratch' : 'repo'}
             capabilities={workspaceHubCapabilities}
             scratchActions={workspaceHubScratchActions}
+            onPublishToGitHub={isScratch && props.validatedUser ? handlePublishToGitHub : undefined}
             repoName={activeRepo?.name || (isScratch ? 'Workspace' : undefined)}
             repoFullName={activeRepo?.full_name}
             projectInstructions={instructions.agentsMdContent}
@@ -563,6 +621,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
         <Suspense fallback={null}>
           <RepoLauncherSheet
             {...repoLauncherProps}
+            onPublishToGitHub={isScratch && props.validatedUser ? handlePublishToGitHub : undefined}
           />
         </Suspense>
       )}

@@ -37,6 +37,7 @@ export interface ChatRouteWorkspaceProps {
   resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
   setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
   clearRepoAppearance: (repoFullName: string) => void;
+  handleWorkspacePromotion: (repo: ActiveRepo, branch?: string, sandboxIdOverride?: string | null) => void;
   sandbox: {
     sandboxId: string | null;
     status: SandboxStatus;
