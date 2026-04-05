@@ -1,6 +1,6 @@
 # Decisions Folder
 
-Status reviewed: 2026-03-30
+Status reviewed: 2026-04-05
 
 This folder contains architecture decisions, research, analysis, and shipped design references. It merges the former `analysis/` and `design/` folders.
 
@@ -23,6 +23,7 @@ This folder contains architecture decisions, research, analysis, and shipped des
 | `Duplication and Structural Symmetry Analysis.md` | Current, refreshed 2026-03-30 | `hashline` drift and shared provider-model catalog drift are now resolved; remaining cleanup is more about Settings state surfaces and other mirrored modules. |
 | `Harness Friction — Agent Self-Report.md` | Current, refreshed 2026-03-30 | Ambient runtime state, capability discovery, and structured mutation postconditions are now shipped on the main web path; working-memory evolution and richer structural navigation remain open. |
 | `Multi-Agent Orchestration Research — open-multi-agent.md` | Current, added 2026-04-04 | Research on open-multi-agent framework: goal→DAG decomposition, coordinator pattern, shared memory, fan-out/aggregate. Feeds into task graph orchestration plan. |
+| `Web and CLI Runtime Contract.md` | Current, added 2026-04-05 | Defines the architecture rule for Push shells: share agent-runtime semantics across web and CLI, allow divergence in transport and UX shell. |
 
 ## Quick Triage
 
@@ -31,3 +32,4 @@ If we are choosing implementation work from this folder, the best live clusters 
 1. End-to-end tracing follow-through (Worker/server propagation, exporter rollout, metric retirement).
 2. Working-memory evolution and invalidation-aware investigation state, now with a concrete follow-up in `Context Memory and Retrieval Architecture.md`.
 3. Richer structural navigation (`read_symbol_body`, implementations, call-graph queries).
+4. Shared-runtime convergence between web and CLI, especially for task graphs, typed memory, and delegation semantics.
