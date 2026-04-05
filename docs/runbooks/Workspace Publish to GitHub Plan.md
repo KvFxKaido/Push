@@ -1,6 +1,6 @@
 # Workspace Publish to GitHub Plan
 
-Status: Current, added 2026-04-05
+Status: Current, Phase 1 shipped 2026-04-05
 Origin: follow-up from the unified workspace model and current sandbox promotion plumbing
 
 ## Goal
@@ -41,13 +41,25 @@ So the real missing work is not raw capability. It is productizing the transitio
   - if no commits exist yet, it still succeeds as a repo-creation/configure-remote action and returns a warning instead of hard failing
 - `app/src/lib/tool-registry.ts`
   - the sandbox tool is already registered as `promote(repo_name, description?, private?)`
+- `app/src/components/repo/PublishToGitHubSheet.tsx`
+  - first-class publish UI now exists for scratch workspaces and launcher entry points
+- `app/src/lib/workspace-publish.ts`
+  - shared publish-result helper for the workspace transition path
+- `app/src/sections/WorkspaceSessionScreen.tsx`
+  - direct UI publish now preserves the scratch chat instead of rebinding it and lets normal workspace selection create the repo-scoped chat/session follow-through
+
+### What is now landed
+
+- scratch workspaces can open a dedicated `Publish to GitHub` flow
+- the launcher connected empty state no longer dead-ends at "No repositories yet."
+- users can explicitly choose `Private` or `Public`
+- direct UI publish uses the existing promotion plumbing without forcing the chat-tool flow
 
 ### What is still missing
 
-- there is no first-class UI flow for users to invoke this intentionally
-- the launcher repo empty state currently dead-ends at "No repositories yet."
-- the scratch-to-repo transition is still not designed as a product flow
-- chat/workspace rebinding after publish is not yet explicit in the app
+- follow-through polish for the post-publish repo workspace state and provenance messaging
+- a lighter empty-repo creation path outside the scratch-workspace story
+- any repo-list refresh / success affordance cleanup that user testing shows is still rough
 
 ## Product Positioning
 
@@ -191,6 +203,8 @@ Recommended v1 behavior:
 
 ### Phase 1: First-class publish UI
 
+Status: shipped
+
 Add a real user-facing flow on top of the existing promotion tool.
 
 Changes:
@@ -200,7 +214,9 @@ Changes:
 - wire launcher empty state to show `Create repository`
 - keep visibility and naming explicit in the UI
 
-### Phase 2: Workspace transition contract
+### Phase 2: Workspace transition polish
+
+Status: partially shipped; follow-through still open
 
 Make the app handle promotion as a workspace transition, not just a tool result.
 
@@ -210,8 +226,11 @@ Changes:
 - update active repo / branch state explicitly
 - start a new repo-scoped chat on publish
 - preserve the previous scratch chat as historical context
+- tighten provenance/success messaging around the new repo-scoped chat and workspace handoff
 
 ### Phase 3: Empty-repo creation path
+
+Status: not started
 
 Once the publish flow is solid, add a lighter launcher path for users who just want a new blank repo.
 
@@ -235,12 +254,15 @@ This is intentionally second. It is easier technically, but less central to Push
   - existing promote tool definition
 - `app/src/components/launcher/RepoLauncherPanel.tsx`
   - repo empty state and launcher affordances
+- `app/src/components/repo/PublishToGitHubSheet.tsx`
+  - publish sheet and visibility/name form
+- `app/src/lib/workspace-publish.ts`
+  - publish result interpretation for UI-driven transitions
 
 ### Likely new UI/state surfaces
 
-- new sheet/component for repo creation / publish confirmation
-- workspace-route handling for promotion results
-- explicit "new repo-scoped chat from published workspace" transition helper
+- success/provenance messaging around the new repo-backed session
+- optional empty-repo creation surface separate from scratch publish
 
 ## Non-Goals
 

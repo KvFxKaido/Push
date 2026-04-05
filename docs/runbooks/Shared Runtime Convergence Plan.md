@@ -1,7 +1,7 @@
 # Shared Runtime Convergence Plan
 
 Date: 2026-04-05
-Status: **Current**
+Status: **Historical, major convergence tranche shipped 2026-04-05**
 Owner: Push
 Origin:
 - [Web and CLI Runtime Contract](../decisions/Web%20and%20CLI%20Runtime%20Contract.md)
@@ -19,7 +19,7 @@ Push now has increasingly sophisticated runtime behavior:
 - sectioned prompt packing
 - structured run phases and task-level events
 
-Those are good system features, but they currently live mostly on the web path.
+Those were good system features, and they initially lived mostly on the web path.
 
 That creates a growing tax when moving between web and CLI:
 
@@ -31,13 +31,13 @@ The decision note already sets the rule:
 
 **web and CLI should be two shells over one runtime contract**
 
-This runbook turns that rule into a practical implementation sequence.
+This runbook captured the implementation sequence for the first major convergence tranche. That tranche is now shipped; the remaining work is selective CLI follow-through rather than more broad semantic extraction.
 
 ## Goal
 
 Reduce web/CLI cognitive drift by moving agent-runtime semantics into shared root `lib/` modules where that improves consistency, while preserving shell-specific UX and platform plumbing.
 
-## Implementation status snapshot (2026-04-05)
+## Completion snapshot (2026-04-05)
 
 - [x] Phase 0 started: created a shared `lib/runtime-contract.ts` seam for:
   - acceptance-criteria types
@@ -111,10 +111,12 @@ The repo already has a real shared-runtime base in root `lib/`:
 
 This is the right pattern: shared semantics in `lib/`, shell-specific coordination in `app/` and `cli/`.
 
-### Still app-local but strong shared-runtime candidates
+### Still app-local after the tranche
 
 - `app/src/lib/role-context.ts` envelope-local delegation wrappers
 - `app/src/lib/run-engine.ts` reducer/state model and app-local queue integration
+
+These are no longer evidence that the semantic layer is missing. They are mostly shell-local boundaries and should stay local unless a later product need proves otherwise.
 
 ### Likely to remain shell-local
 
@@ -145,6 +147,14 @@ Only pull shared runtime pieces into CLI when they clearly improve the CLI's own
 - stronger semantic consistency with web
 
 This keeps the plan useful even if CLI remains intentionally narrower than web.
+
+## Remaining follow-through after completion
+
+The main extraction tranche is done. The live follow-up is now:
+
+1. selective CLI adoption of typed memory/runtime features where it clearly improves the terminal product
+2. deciding whether task graphs should become an active CLI feature, especially if local-model support becomes a first-class CLI direction
+3. leaving shell-local reducers, hooks, and UI coordination local unless drift shows up again
 
 ## Workstreams
 
@@ -257,7 +267,7 @@ This order is not identical to the extraction order on the web path.
 Extraction should follow "what is most purely semantic."
 CLI adoption should follow "what most improves the CLI north star."
 
-## Recommended sequence
+## Implemented sequence
 
 If this work becomes active, the best order is:
 

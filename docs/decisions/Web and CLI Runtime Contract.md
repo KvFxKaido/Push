@@ -1,6 +1,6 @@
 # Web and CLI Runtime Contract
 
-Status: Current, added 2026-04-05
+Status: Current, refreshed 2026-04-05 after the first shared-runtime convergence tranche shipped
 Origin: [Web–CLI Parity Plan](../runbooks/Web-CLI%20Parity%20Plan.md), [Architecture](../architecture.md), [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md)
 
 ## Why This Exists
@@ -161,32 +161,36 @@ These are examples of the right direction:
 - `lib/reasoning-tokens.ts`
 - `lib/diff-utils.ts`
 - `lib/working-memory.ts`
+- `lib/runtime-contract.ts`
+- `lib/task-graph.ts`
+- `lib/context-memory.ts`
+- `lib/context-memory-store.ts`
+- `lib/context-memory-retrieval.ts`
+- `lib/context-memory-invalidation.ts`
+- `lib/context-memory-packing.ts`
+- `lib/delegation-brief.ts`
+- `lib/run-events.ts`
+- `lib/run-engine-contract.ts`
+- `lib/role-context.ts`
+- `lib/intent-classifier.ts`
+- `lib/project-instructions.ts`
 
 These are brain-level modules that already serve both shells well.
 
-### Still app-local but strong candidates for shared runtime extraction
+### Still shell-local by design
 
-If CLI remains a first-class shell, these should likely move into root `lib/` or equivalent shared-runtime homes:
-
-- `app/src/lib/task-graph.ts`
-- `app/src/lib/context-memory.ts`
-- `app/src/lib/context-memory-store.ts`
-- `app/src/lib/context-memory-retrieval.ts`
-- `app/src/lib/context-memory-invalidation.ts`
-- `app/src/lib/context-memory-packing.ts`
-- `app/src/lib/role-context.ts`
-- the pure event/phase vocabulary around `app/src/lib/run-engine.ts`
-
-These modules mostly define agent behavior, not app UI behavior.
-
-### Likely to remain shell-local
+These are the kinds of modules that should remain local unless a later product need proves otherwise:
 
 - `app/src/hooks/useChat.ts`
 - `app/src/hooks/useAgentDelegation.ts`
 - `app/src/hooks/chat-send.ts`
+- `app/src/lib/run-engine.ts` reducer/state and queue integration
+- `app/src/lib/role-context.ts` app-facing envelope adapters
 - `cli/engine.ts`
 - `cli/pushd.ts`
 - terminal UI modules under `cli/`
+
+The semantic extraction line is now much cleaner: shared runtime in `lib/`, shell coordination in `app/` and `cli/`.
 
 These coordinate a shell around the runtime contract. They should consume shared semantics, not become shared themselves.
 
@@ -228,14 +232,14 @@ That means:
 - attach/resume via daemon
 - local repo work that feels faster and more direct than web on desktop
 
-### 2. Next convergence tranche
+### 2. Next follow-through after the extraction tranche
 
-If reducing web/CLI context-switch cost becomes a priority, the highest-leverage shared-runtime extraction is:
+The main extraction work is no longer the bottleneck. The live question is how much of the shared substrate the CLI should actively consume next.
 
-1. task graph executor
-2. typed context-memory stack
-3. role/delegation context packing
-4. shared run-event vocabulary and phase helpers
+1. whether CLI should expose shared task-graph execution as a product feature
+2. typed context-memory retrieval and packing in CLI
+3. local-model-friendly CLI workflows on top of the shared runtime contract
+4. any additional shell-local cleanup only if drift shows up in practice
 
 ### 3. Avoid parity theater
 
