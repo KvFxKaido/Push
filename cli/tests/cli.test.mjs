@@ -9,27 +9,49 @@ import path from 'node:path';
 const execFileAsync = promisify(execFile);
 const CLI_PATH = path.resolve(import.meta.dirname, '..', 'cli.ts');
 
+function shQuote(arg) {
+  return `'${String(arg).replace(/'/g, `'\\''`)}'`;
+}
+
+function buildCliCommand(args) {
+  return [process.execPath, '--import', 'tsx', CLI_PATH, ...args].map(shQuote).join(' ');
+}
+
 async function runCli(args, options = {}) {
-  const { env: extraEnv, ...execOpts } = options;
+  const { env: extraEnv, input: _input, ...execOpts } = options;
   const env = {
     ...process.env,
     PUSH_SESSION_DIR: '/tmp/push-test-cli-' + Date.now(),
     PUSH_CONFIG_PATH: '/tmp/push-test-cli-config-' + Date.now(),
     ...extraEnv,
   };
+  const captureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-cli-test-'));
+  const stdoutPath = path.join(captureDir, 'stdout.txt');
+  const stderrPath = path.join(captureDir, 'stderr.txt');
   try {
-    const result = await execFileAsync('node', ['--import', 'tsx', CLI_PATH, ...args], {
-      timeout: 5000,
-      env,
-      ...execOpts,
-    });
-    return { code: 0, stdout: result.stdout, stderr: result.stderr };
-  } catch (err) {
-    return {
-      code: typeof err.code === 'number' ? err.code : 1,
-      stdout: err.stdout || '',
-      stderr: err.stderr || '',
-    };
+    let code = 0;
+    try {
+      await execFileAsync(
+        '/bin/bash',
+        ['-lc', `${buildCliCommand(args)} >${shQuote(stdoutPath)} 2>${shQuote(stderrPath)}`],
+        {
+          timeout: 5000,
+          env,
+          ...execOpts,
+        },
+      );
+    } catch (err) {
+      code = typeof err.code === 'number' ? err.code : 1;
+    }
+
+    const [stdout, stderr] = await Promise.all([
+      fs.readFile(stdoutPath, 'utf8').catch(() => ''),
+      fs.readFile(stderrPath, 'utf8').catch(() => ''),
+    ]);
+
+    return { code, stdout, stderr };
+  } finally {
+    await fs.rm(captureDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -37,10 +59,6 @@ function stripAnsi(text) {
   return String(text || '')
     .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/\r/g, '');
-}
-
-function shQuote(arg) {
-  return `'${String(arg).replace(/'/g, `'\\''`)}'`;
 }
 
 async function runCliPty(args, options = {}) {
@@ -51,7 +69,7 @@ async function runCliPty(args, options = {}) {
     PUSH_CONFIG_PATH: '/tmp/push-test-cli-config-' + Date.now(),
     ...extraEnv,
   };
-  const cmd = [process.execPath, '--import', 'tsx', CLI_PATH, ...args].map(shQuote).join(' ');
+  const cmd = buildCliCommand(args);
   const lines = String(input || '')
     .split('\n')
     .filter((line, idx, arr) => !(idx === arr.length - 1 && line === ''))

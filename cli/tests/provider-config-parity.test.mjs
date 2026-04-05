@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const cliProviderSource = readFileSync(new URL('../provider.ts', import.meta.url), 'utf8');
 const webProviderSource = readFileSync(new URL('../../app/src/lib/providers.ts', import.meta.url), 'utf8');
+const sharedProviderModelSource = readFileSync(new URL('../../lib/provider-models.ts', import.meta.url), 'utf8');
 
 function extractExportedStringConstant(source, exportName) {
   const match = source.match(new RegExp(`export const ${exportName}\\s*=\\s*'([^']+)';`));
@@ -36,16 +37,14 @@ function extractCliProviderEntry(source, providerId) {
 
   const entry = match[1];
   const idMatch = entry.match(/id:\s*'([^']+)'/);
-  const defaultModelMatch = entry.match(/defaultModel:\s*process\.env\.[A-Z0-9_]+\s*\|\|\s*'([^']+)'/);
   const apiKeyEnvMatch = entry.match(/apiKeyEnv:\s*\[([\s\S]*?)\]/);
 
   assert.ok(idMatch, `Expected CLI provider ${providerId} to define id`);
-  assert.ok(defaultModelMatch, `Expected CLI provider ${providerId} to define defaultModel`);
   assert.ok(apiKeyEnvMatch, `Expected CLI provider ${providerId} to define apiKeyEnv`);
 
   return {
     id: idMatch[1],
-    defaultModel: defaultModelMatch[1],
+    entry,
     apiKeyEnv: [...apiKeyEnvMatch[1].matchAll(/'([^']+)'/g)].map(([, value]) => value),
   };
 }
@@ -81,10 +80,14 @@ describe('provider config parity', () => {
     for (const providerId of providerIds) {
       const entry = extractCliProviderEntry(cliProviderSource, providerId);
       assert.equal(entry.id, providerId);
-      assert.equal(
-        entry.defaultModel,
-        extractExportedStringConstant(webProviderSource, defaultConstByProvider[providerId]),
-        `Expected ${providerId} default model to match web providers.ts`,
+      assert.match(
+        entry.entry,
+        new RegExp(`defaultModel:\\s*process\\.env\\.[A-Z0-9_]+\\s*\\|\\|\\s*${defaultConstByProvider[providerId]}`),
+        `Expected ${providerId} default model to reference ${defaultConstByProvider[providerId]}`,
+      );
+      assert.ok(
+        extractExportedStringConstant(sharedProviderModelSource, defaultConstByProvider[providerId]).length > 0,
+        `Expected shared model constant ${defaultConstByProvider[providerId]} to resolve to a non-empty value`,
       );
     }
   });

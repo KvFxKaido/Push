@@ -22,6 +22,34 @@ function makeRequest(type, payload = {}, sessionId = null) {
   };
 }
 
+async function canListenOnUnixSocket(socketPath) {
+  const server = net.createServer();
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+    return { ok: true };
+  } catch (err) {
+    const code = err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+    if (code === 'EPERM' || code === 'EACCES') {
+      return { ok: false, reason: `unix sockets unavailable in this environment (${code})` };
+    }
+    throw err;
+  } finally {
+    try {
+      server.close();
+    } catch {
+      // ignore
+    }
+    try {
+      await fs.unlink(socketPath);
+    } catch {
+      // ignore
+    }
+  }
+}
+
 /**
  * Connect to a socket and send/receive NDJSON messages.
  */
@@ -204,8 +232,10 @@ describe('daemon-client module', () => {
     assert.equal(result, null);
   });
 
-  it('connect + request + onEvent works with echo server', async () => {
+  it('connect + request + onEvent works with echo server', async (t) => {
     const sockPath = path.join(os.tmpdir(), `dc-test-${randomBytes(4).toString('hex')}.sock`);
+    const availability = await canListenOnUnixSocket(sockPath);
+    if (!availability.ok) return t.skip(availability.reason);
 
     // Create a minimal echo server
     const server = net.createServer((socket) => {
@@ -274,8 +304,10 @@ describe('daemon-client module', () => {
     }
   });
 
-  it('onEvent returns unsubscribe function', async () => {
+  it('onEvent returns unsubscribe function', async (t) => {
     const sockPath = path.join(os.tmpdir(), `dc-unsub-${randomBytes(4).toString('hex')}.sock`);
+    const availability = await canListenOnUnixSocket(sockPath);
+    if (!availability.ok) return t.skip(availability.reason);
 
     const server = net.createServer((socket) => {
       let buf = '';

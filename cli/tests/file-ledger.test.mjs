@@ -10,7 +10,15 @@ describe('getLedgerSummary', () => {
   it('returns empty files array for fresh ledger', () => {
     const ledger = createFileLedger();
     const summary = getLedgerSummary(ledger);
-    assert.deepEqual(summary, { total: 0, files: [] });
+    assert.deepEqual(summary, {
+      total: 0,
+      readBudget: {
+        charsReadThisTurn: 0,
+        turnBudgetChars: 80_000,
+        filesReadThisTurn: 0,
+      },
+      files: [],
+    });
   });
 
   it('includes file paths with status, reads, and writes', () => {
