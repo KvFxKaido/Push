@@ -8,7 +8,7 @@
  * during Track 2 convergence.
  */
 
-import { detectToolFromText, asRecord } from './tool-protocol';
+import { detectToolFromText, asRecord } from './tool-protocol.js';
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -80,6 +80,15 @@ function uniqueStrings(values: unknown[]): string[] {
     }
   }
   return result;
+}
+
+function arraysChanged(
+  current: string[] | undefined,
+  previous: string[] | undefined,
+): boolean {
+  if (!current?.length && !previous?.length) return false;
+  if (current?.length !== previous?.length) return true;
+  return current!.some((value, index) => value !== previous![index]);
 }
 
 /**
@@ -216,6 +225,58 @@ function formatObservationLine(observation: CoderObservation): string {
   return `${observation.id}: ${observation.text}`;
 }
 
+function observationsChanged(
+  current: CoderObservation[] | undefined,
+  previous: CoderObservation[] | undefined,
+): boolean {
+  if (!current?.length && !previous?.length) return false;
+  if (current?.length !== previous?.length) return true;
+  return current!.some((observation, index) => JSON.stringify(observation) !== JSON.stringify(previous![index]));
+}
+
+function collectCoderStateDeltaLines(
+  current: CoderWorkingMemory,
+  previous: CoderWorkingMemory,
+  currentRound: number,
+): string[] {
+  const diffs: string[] = [];
+
+  if (current.plan && current.plan !== previous.plan) {
+    diffs.push(`Plan: ${current.plan}`);
+  }
+  if (current.currentPhase && current.currentPhase !== previous.currentPhase) {
+    diffs.push(`Phase: ${current.currentPhase}`);
+  }
+
+  if (arraysChanged(current.openTasks, previous.openTasks)) {
+    diffs.push(`Open tasks: ${current.openTasks?.join('; ') || '(none)'}`);
+  }
+  if (arraysChanged(current.filesTouched, previous.filesTouched)) {
+    diffs.push(`Files touched: ${current.filesTouched?.join(', ') || '(none)'}`);
+  }
+  if (arraysChanged(current.assumptions, previous.assumptions)) {
+    diffs.push(`Assumptions: ${current.assumptions?.join('; ') || '(none)'}`);
+  }
+  if (arraysChanged(current.errorsEncountered, previous.errorsEncountered)) {
+    diffs.push(`Errors: ${current.errorsEncountered?.join('; ') || '(none)'}`);
+  }
+  if (arraysChanged(current.completedPhases, previous.completedPhases)) {
+    diffs.push(`Completed: ${current.completedPhases?.join(', ') || '(none)'}`);
+  }
+
+  const currentObservations = getVisibleObservations(current.observations, currentRound);
+  const previousObservations = getVisibleObservations(previous.observations, currentRound);
+  if (observationsChanged(currentObservations, previousObservations)) {
+    if (currentObservations.length) {
+      diffs.push(...currentObservations.map(formatObservationLine));
+    } else {
+      diffs.push('Observations: (none)');
+    }
+  }
+
+  return diffs;
+}
+
 /** Check whether working memory has any non-empty fields. */
 export function hasCoderState(mem: CoderWorkingMemory, currentRound: number): boolean {
   return Boolean(
@@ -250,6 +311,56 @@ export function formatCoderState(mem: CoderWorkingMemory, currentRound = 0): str
   return lines.join('\n');
 }
 
+/**
+ * Format only the changed fields since the last state injection.
+ * Falls back to a full state dump on the first injection.
+ */
+export function formatCoderStateDiff(
+  current: CoderWorkingMemory,
+  previous: CoderWorkingMemory | null,
+  currentRound = 0,
+): string {
+  if (!previous) {
+    return formatCoderState(current, currentRound);
+  }
+
+  const diffs = collectCoderStateDeltaLines(current, previous, currentRound);
+  if (diffs.length === 0) {
+    return `[CODER_STATE] (unchanged — phase: ${current.currentPhase || 'n/a'})[/CODER_STATE]`;
+  }
+
+  return ['[CODER_STATE delta]', ...diffs, '[/CODER_STATE]'].join('\n');
+}
+
+/**
+ * Decide whether coder state should be reinjected into the model after a tool result.
+ *
+ * Reinjection happens on first sync, whenever the state changed, under elevated
+ * context pressure, or on a long-task cadence to keep the model grounded.
+ */
+export function shouldInjectCoderStateOnToolResult(
+  current: CoderWorkingMemory,
+  previous: CoderWorkingMemory | null,
+  currentRound: number,
+  contextChars: number,
+  maxContextChars: number,
+  lastInjectionRound: number | null,
+  pressurePctThreshold = 60,
+  cadenceRounds = 6,
+): boolean {
+  if (!hasCoderState(current, currentRound)) return false;
+  if (!previous) return true;
+  if (collectCoderStateDeltaLines(current, previous, currentRound).length > 0) return true;
+
+  const pressurePct = maxContextChars > 0
+    ? Math.max(0, Math.round((contextChars / maxContextChars) * 100))
+    : 0;
+  if (pressurePct >= pressurePctThreshold) return true;
+  if (lastInjectionRound === null) return true;
+
+  return currentRound - lastInjectionRound >= cadenceRounds;
+}
+
 // ---------------------------------------------------------------------------
 // Detection — parse coder_update_state from model output
 // ---------------------------------------------------------------------------
@@ -259,7 +370,7 @@ export function formatCoderState(mem: CoderWorkingMemory, currentRound = 0): str
  * Returns the parsed update or null if no valid call is found.
  */
 export function detectUpdateStateCall(text: string): CoderWorkingMemoryUpdate | null {
-  return detectToolFromText<CoderWorkingMemoryUpdate>(text, (parsed) => {
+  return detectToolFromText<CoderWorkingMemoryUpdate>(text, (parsed: unknown) => {
     const obj = asRecord(parsed);
     if (obj?.tool === 'coder_update_state') {
       const args = asRecord(obj.args) || obj;

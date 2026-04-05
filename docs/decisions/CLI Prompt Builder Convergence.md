@@ -1,5 +1,7 @@
 # CLI Prompt Builder Convergence
 
+Status: implemented 2026-04-05 for the core CLI prompt path; shared `SystemPromptBuilder` now lives in `lib/`, the CLI prompt uses it with the existing lazy-enrichment sentinel, and prompt section metrics/diffs are available behind `PUSH_DEBUG`.
+
 Design plan for migrating the CLI's system prompt pipeline from string
 concatenation to `SystemPromptBuilder`, converging with the web app's
 architecture.

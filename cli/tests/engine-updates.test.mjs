@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSystemPrompt, buildToolResultMessage } from '../engine.ts';
+import { buildSystemPrompt, buildSystemPromptBase, buildToolResultMessage } from '../engine.ts';
 
 // ─── buildToolResultMessage: working memory deduplication ────────
 
@@ -52,10 +52,17 @@ describe('buildToolResultMessage', () => {
 // ─── buildSystemPrompt: async, contains TOOL_PROTOCOL ───────────
 
 describe('buildSystemPrompt', () => {
+  it('preserves the workspace-pending sentinel in the base prompt', () => {
+    const prompt = buildSystemPromptBase('/tmp/test-workspace');
+    assert.ok(prompt.includes('[WORKSPACE_PENDING]'));
+    assert.ok(prompt.includes('TOOL PROTOCOL'));
+  });
+
   it('returns a string containing TOOL PROTOCOL', async () => {
     const prompt = await buildSystemPrompt('/tmp/test-workspace');
     assert.equal(typeof prompt, 'string');
     assert.ok(prompt.includes('TOOL PROTOCOL'), 'should contain TOOL PROTOCOL header');
+    assert.ok(!prompt.includes('[WORKSPACE_PENDING]'));
   });
 
   it('includes workspace root in prompt', async () => {

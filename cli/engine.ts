@@ -8,6 +8,18 @@ import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './w
 import { trimContext, distillContext, estimateContextTokens, getContextBudget } from './context-manager.js';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { summarizeToolResultPreview } from '../lib/run-events.ts';
+import {
+  SystemPromptBuilder,
+  diffSnapshots,
+  formatSnapshotDiff,
+  type PromptSnapshot,
+} from '../lib/system-prompt-builder.ts';
+import {
+  createWorkingMemory,
+  applyWorkingMemoryUpdate,
+  shouldInjectCoderStateOnToolResult,
+  type CoderWorkingMemory,
+} from '../lib/working-memory.ts';
 import type { TurnContext } from './turn-policy.js';
 
 import type { SessionState } from './session-store.js';
@@ -16,16 +28,6 @@ import type { Message, TrimResult } from './context-manager.js';
 import type { FileLedger } from './file-ledger.js';
 
 // ─── Interfaces ──────────────────────────────────────────────────
-
-export interface WorkingMemory {
-  plan: string;
-  openTasks: string[];
-  filesTouched: string[];
-  assumptions: string[];
-  errorsEncountered: string[];
-  currentPhase: string;
-  completedPhases: string[];
-}
 
 export interface EngineEvent {
   type: string;
@@ -89,6 +91,8 @@ interface ProjectInstructions {
   content: string;
 }
 
+type WorkingMemory = CoderWorkingMemory;
+
 // ─── Constants ───────────────────────────────────────────────────
 
 export const DEFAULT_MAX_ROUNDS: number = 8;
@@ -97,32 +101,7 @@ export const DEFAULT_MAX_ROUNDS: number = 8;
 // (git status, project instructions, memory) still needs to be loaded.
 const NEEDS_ENRICHMENT: string = '[WORKSPACE_PENDING]';
 
-// ─── Working Memory ──────────────────────────────────────────────
-
-function createWorkingMemory(): WorkingMemory {
-  return {
-    plan: '',
-    openTasks: [],
-    filesTouched: [],
-    assumptions: [],
-    errorsEncountered: [],
-    currentPhase: '',
-    completedPhases: [],
-  };
-}
-
-function uniqueStrings(values: unknown[] | undefined): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values || []) {
-    if (typeof value !== 'string') continue;
-    const trimmed: string = value.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    out.push(trimmed);
-  }
-  return out;
-}
+const DEBUG_PROMPTS: boolean = process.env.PUSH_DEBUG === '1' || process.env.PUSH_DEBUG === 'true';
 
 // ─── Context Distillation ─────────────────────────────────────────
 
@@ -143,56 +122,59 @@ function shouldDistillMidSession(
   return estimateContextTokens(messages) > budget.targetTokens / 2;
 }
 
-
-function applyWorkingMemoryUpdate(state: SessionState, args: Partial<WorkingMemory>): WorkingMemory {
+function applyWorkingMemoryUpdateToState(
+  state: SessionState,
+  args: Partial<WorkingMemory>,
+  round: number,
+): WorkingMemory {
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
   }
 
   const mem = state.workingMemory as WorkingMemory;
-  if (typeof args.plan === 'string') mem.plan = args.plan;
-  if (Array.isArray(args.openTasks)) mem.openTasks = uniqueStrings(args.openTasks);
-  if (Array.isArray(args.filesTouched)) mem.filesTouched = uniqueStrings(args.filesTouched);
-  if (Array.isArray(args.assumptions)) mem.assumptions = uniqueStrings(args.assumptions);
-  if (Array.isArray(args.errorsEncountered)) mem.errorsEncountered = uniqueStrings(args.errorsEncountered);
-  if (typeof args.currentPhase === 'string') mem.currentPhase = args.currentPhase;
-  if (Array.isArray(args.completedPhases)) mem.completedPhases = uniqueStrings(args.completedPhases);
-
+  applyWorkingMemoryUpdate(mem, args, round);
   return mem;
 }
 
-// ─── System Prompt ───────────────────────────────────────────────
-
-/**
- * Instant (sync, no I/O) base system prompt — enough to create a session
- * and render the UI without blocking on git or filesystem.
- */
-export function buildSystemPromptBase(workspaceRoot: string): string {
-  const explainBlock: string = process.env.PUSH_EXPLAIN_MODE === 'true'
-    ? `\nExplain mode is active. After each significant action, add a brief [explain] note (2–3 lines) describing the pattern or architectural convention at play — not what you just did, but why this approach fits the codebase. Focus on patterns the user can recognize next time (e.g. "this follows the hook factory pattern used across all provider configs" or "edit expressed as hashline ops to avoid line-number drift"). Keep it concise and skip it for trivial changes.\n`
-    : '';
-
-  return `You are a coding assistant running in a local workspace.
-Workspace root: ${workspaceRoot}
-
-You can read files, run commands, and write files using tools.
-Use tools for facts; do not invent file contents or command outputs.
-If the user's message does not require reading files or running commands, respond directly without tool calls.
-Each tool-loop round is expensive — plan before acting, batch related reads, and avoid exploratory browsing unless the user asks for it.
-Use coder_update_state to keep a concise working plan; it is persisted and reinjected.
-Use save_memory to persist learnings across sessions (build commands, project patterns, conventions).
-${explainBlock}
-${TOOL_PROTOCOL}
-${NEEDS_ENRICHMENT}`;
+function cloneWorkingMemory(mem: WorkingMemory): WorkingMemory {
+  return JSON.parse(JSON.stringify(mem)) as WorkingMemory;
 }
 
-/**
- * Full system prompt with workspace context (git status, project instructions,
- * memory). Async — requires I/O. Used for enrichment and the legacy sync path.
- */
-export async function buildSystemPrompt(workspaceRoot: string): Promise<string> {
-  let prompt: string = buildSystemPromptBase(workspaceRoot).replace(NEEDS_ENRICHMENT, '');
 
+// ─── System Prompt ───────────────────────────────────────────────
+
+function buildCliIdentity(workspaceRoot: string): string {
+  return `You are a coding assistant running in a local workspace.
+Workspace root: ${workspaceRoot}`;
+}
+
+function buildCliGuidelines(): string {
+  const explainBlock: string = process.env.PUSH_EXPLAIN_MODE === 'true'
+    ? `Explain mode is active. After each significant action, add a brief [explain] note (2–3 lines) describing the pattern or architectural convention at play — not what you just did, but why this approach fits the codebase. Focus on patterns the user can recognize next time (e.g. "this follows the hook factory pattern used across all provider configs" or "edit expressed as hashline ops to avoid line-number drift"). Keep it concise and skip it for trivial changes.`
+    : '';
+
+  return [
+    'You can read files, run commands, and write files using tools.',
+    'Use tools for facts; do not invent file contents or command outputs.',
+    "If the user's message does not require reading files or running commands, respond directly without tool calls.",
+    'Each tool-loop round is expensive — plan before acting, batch related reads, and avoid exploratory browsing unless the user asks for it.',
+    'Use coder_update_state to keep a concise working plan; it is persisted and reinjected.',
+    'Use save_memory to persist learnings across sessions (build commands, project patterns, conventions).',
+    explainBlock,
+  ].filter(Boolean).join('\n');
+}
+
+function buildCliBaseBuilder(workspaceRoot: string): SystemPromptBuilder {
+  return new SystemPromptBuilder()
+    .set('identity', buildCliIdentity(workspaceRoot))
+    .set('guidelines', buildCliGuidelines())
+    .set('tool_instructions', TOOL_PROTOCOL);
+}
+
+async function enrichCliBuilder(
+  builder: SystemPromptBuilder,
+  workspaceRoot: string,
+): Promise<void> {
   const [snapshot, instructions, memory] = await Promise.all([
     buildWorkspaceSnapshot(workspaceRoot).catch((): string => ''),
     loadProjectInstructions(workspaceRoot).catch((): null => null),
@@ -200,17 +182,63 @@ export async function buildSystemPrompt(workspaceRoot: string): Promise<string> 
   ]);
 
   if (snapshot) {
-    prompt += `\n\n${snapshot}`;
+    builder.set('environment', snapshot);
   }
-
   if (instructions) {
-    prompt += `\n\n[PROJECT_INSTRUCTIONS source="${instructions.file}"]\n${instructions.content}\n[/PROJECT_INSTRUCTIONS]`;
+    builder.set('project_context', `[PROJECT_INSTRUCTIONS source="${instructions.file}"]\n${instructions.content}\n[/PROJECT_INSTRUCTIONS]`);
   }
-
   if (memory) {
-    prompt += `\n\n[MEMORY]\n${memory}\n[/MEMORY]`;
+    builder.set('memory', `[MEMORY]\n${memory}\n[/MEMORY]`);
   }
+}
 
+function logPromptBuilderDebug(
+  workspaceRoot: string,
+  builder: SystemPromptBuilder,
+  previousSnapshot?: PromptSnapshot | null,
+): void {
+  if (!DEBUG_PROMPTS) return;
+
+  const sizes = builder.sizes();
+  const metrics = Object.entries(sizes)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(' ');
+  console.error(`[Prompt:${workspaceRoot}] ${metrics}`);
+
+  if (!previousSnapshot) return;
+  const diff = formatSnapshotDiff(diffSnapshots(previousSnapshot, builder.snapshot()));
+  if (diff) {
+    console.error(diff);
+  }
+}
+
+async function buildEnrichedCliPrompt(
+  workspaceRoot: string,
+): Promise<{ prompt: string; snapshot: PromptSnapshot }> {
+  const builder = buildCliBaseBuilder(workspaceRoot);
+  const baseSnapshot = builder.snapshot();
+  await enrichCliBuilder(builder, workspaceRoot);
+  logPromptBuilderDebug(workspaceRoot, builder, baseSnapshot);
+  return {
+    prompt: builder.build(),
+    snapshot: builder.snapshot(),
+  };
+}
+
+/**
+ * Instant (sync, no I/O) base system prompt — enough to create a session
+ * and render the UI without blocking on git or filesystem.
+ */
+export function buildSystemPromptBase(workspaceRoot: string): string {
+  return `${buildCliBaseBuilder(workspaceRoot).build()}\n${NEEDS_ENRICHMENT}`;
+}
+
+/**
+ * Full system prompt with workspace context (git status, project instructions,
+ * memory). Async — requires I/O. Used for enrichment and the legacy sync path.
+ */
+export async function buildSystemPrompt(workspaceRoot: string): Promise<string> {
+  const { prompt } = await buildEnrichedCliPrompt(workspaceRoot);
   return prompt;
 }
 
@@ -226,8 +254,8 @@ export function ensureSystemPromptReady(state: SessionState): Promise<void> {
     return Promise.resolve();
   }
   if (_enrichmentMap.has(state)) return _enrichmentMap.get(state)!;
-  const promise: Promise<void> = buildSystemPrompt(state.cwd).then((enriched: string): void => {
-    sysMsg.content = enriched;
+  const promise: Promise<void> = buildEnrichedCliPrompt(state.cwd).then(({ prompt }: { prompt: string; snapshot: PromptSnapshot }): void => {
+    sysMsg.content = prompt;
     _enrichmentMap.delete(state);
   });
   _enrichmentMap.set(state, promise);
@@ -300,6 +328,9 @@ export async function runAssistantLoop(
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
   }
+  let lastInjectedWorkingMemory: WorkingMemory | null = null;
+  let lastWorkingMemoryInjectionRound: number | null = null;
+  let workingMemoryInjectedThisRound: boolean = false;
 
   // --- Turn policy layer ---
   const policyRegistry = new TurnPolicyRegistry();
@@ -325,6 +356,26 @@ export async function runAssistantLoop(
   function nextToolExecutionId(round: number): string {
     toolExecutionCounter += 1;
     return `${runId}_r${Math.max(0, round - 1)}_${toolExecutionCounter.toString(36)}`;
+  }
+
+  function takeWorkingMemoryForInjection(round: number): WorkingMemory | null {
+    if (workingMemoryInjectedThisRound) return null;
+    const current = state.workingMemory as WorkingMemory;
+    const budget = getContextBudget(providerConfig.id, state.model);
+    const maxContextChars = Math.max(1, Math.round(budget.targetTokens * 3.5));
+    const shouldInject = shouldInjectCoderStateOnToolResult(
+      current,
+      lastInjectedWorkingMemory,
+      round,
+      contextChars,
+      maxContextChars,
+      lastWorkingMemoryInjectionRound,
+    );
+    if (!shouldInject) return null;
+    workingMemoryInjectedThisRound = true;
+    lastInjectedWorkingMemory = cloneWorkingMemory(current);
+    lastWorkingMemoryInjectionRound = round;
+    return current;
   }
 
   async function executeOneToolCall(call: ToolCall, round: number, includeMemory: boolean = true): Promise<ToolResult> {
@@ -389,6 +440,7 @@ export async function runAssistantLoop(
       structuredError: result.structuredError || null,
     });
 
+    const injectedWorkingMemory = includeMemory ? takeWorkingMemoryForInjection(round) : null;
     const metaEnvelope: MetaEnvelope = {
       runId,
       round,
@@ -396,7 +448,7 @@ export async function runAssistantLoop(
       trimmed: lastTrimResult?.trimmed || false,
       estimatedTokens: lastTrimResult?.afterTokens || 0,
       ledger: getLedgerSummary(fileLedger),
-      ...(includeMemory ? { workingMemory: state.workingMemory } : {}),
+      ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
     };
 
     (state.messages as Message[]).push({ role: 'user', content: buildToolResultMessage(call, result, metaEnvelope) });
@@ -410,6 +462,7 @@ export async function runAssistantLoop(
   for (let round = 1; round <= maxRounds; round++) {
     const turnIndex = Math.max(0, round - 1);
     resetTurnBudget(fileLedger);
+    workingMemoryInjectedThisRound = false;
     contextChars = (state.messages as Message[]).reduce(
       (sum: number, m: Message) => sum + (typeof m.content === 'string' ? m.content.length : 0),
       0,
@@ -566,7 +619,7 @@ export async function runAssistantLoop(
 
     const memoryCalls: ToolCall[] = detected.calls.filter((call: ToolCall) => call.tool === 'coder_update_state');
     for (const call of memoryCalls) {
-      const updated: WorkingMemory = applyWorkingMemoryUpdate(state, (call.args || {}) as Partial<WorkingMemory>);
+      const updated: WorkingMemory = applyWorkingMemoryUpdateToState(state, (call.args || {}) as Partial<WorkingMemory>, round);
       // Sync phase into turn context for policy gating
       if ('currentPhase' in (call.args || {})) {
         turnCtx.phase = updated.currentPhase || undefined;
@@ -574,6 +627,7 @@ export async function runAssistantLoop(
       await appendSessionEvent(state, 'working_memory_updated', {
         keys: Object.keys(updated),
       }, runId);
+      const injectedWorkingMemory = takeWorkingMemoryForInjection(round);
       (state.messages as Message[]).push({
         role: 'user',
         content: buildToolResultMessage(
@@ -583,7 +637,15 @@ export async function runAssistantLoop(
             text: 'Working memory updated.',
             meta: { workingMemory: updated },
           },
-          { runId, round, contextChars, trimmed: false, estimatedTokens: 0, ledger: getLedgerSummary(fileLedger), workingMemory: updated },
+          {
+            runId,
+            round,
+            contextChars,
+            trimmed: false,
+            estimatedTokens: 0,
+            ledger: getLedgerSummary(fileLedger),
+            ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
+          },
         ),
       });
       dispatchEvent('tool_result', {
@@ -692,12 +754,21 @@ export async function runAssistantLoop(
           structuredError: deniedResult.structuredError,
         }, runId);
 
+        const injectedWorkingMemory = takeWorkingMemoryForInjection(round);
         (state.messages as Message[]).push({
           role: 'user',
           content: buildToolResultMessage(
             deniedCall,
             deniedResult,
-            { runId, round, contextChars, trimmed: false, estimatedTokens: 0, ledger: getLedgerSummary(fileLedger), workingMemory: state.workingMemory },
+            {
+              runId,
+              round,
+              contextChars,
+              trimmed: false,
+              estimatedTokens: 0,
+              ledger: getLedgerSummary(fileLedger),
+              ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
+            },
           ),
         });
         toolsUsed.add(deniedCall.tool);
@@ -762,12 +833,21 @@ export async function runAssistantLoop(
           structuredError: result.structuredError,
         }, runId);
 
+        const injectedWorkingMemory = takeWorkingMemoryForInjection(round);
         (state.messages as Message[]).push({
           role: 'user',
           content: buildToolResultMessage(
             call,
             result,
-            { runId, round, contextChars, trimmed: false, estimatedTokens: 0, ledger: getLedgerSummary(fileLedger), workingMemory: state.workingMemory },
+            {
+              runId,
+              round,
+              contextChars,
+              trimmed: false,
+              estimatedTokens: 0,
+              ledger: getLedgerSummary(fileLedger),
+              ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
+            },
           ),
         });
         toolsUsed.add(call.tool);

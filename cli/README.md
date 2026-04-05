@@ -231,7 +231,7 @@ If no `PUSH_SESSION_DIR` is set, the CLI also reads legacy workspace-local sessi
 
 ## Working memory
 
-The agent maintains structured working memory across rounds — plan, open tasks, files touched, assumptions, and errors encountered. Working memory is injected once per round (on the last tool result) via a `[meta]` envelope, so it survives context trimming without being duplicated across parallel reads.
+The agent maintains structured working memory across rounds — plan, open tasks, files touched, assumptions, and errors encountered. Working memory is reinjected through the `[meta]` envelope only when it first appears, when it changes, under elevated context pressure, or on a long-task cadence, and never more than once per round.
 
 The `[meta]` envelope also includes `contextChars` — a rough character count of the full message history — so the agent can gauge context budget consumption.
 
