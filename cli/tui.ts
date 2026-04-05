@@ -1923,7 +1923,8 @@ export async function runTUI(options = {}) {
         scheduler.schedule();
         break;
 
-      case 'tool_call': {
+      case 'tool_call':
+      case 'tool.execution_start': {
         const argsQueue = pendingToolArgs.get(event.payload.toolName) || [];
         argsQueue.push(event.payload.args);
         pendingToolArgs.set(event.payload.toolName, argsQueue);
@@ -1943,9 +1944,10 @@ export async function runTUI(options = {}) {
         break;
       }
 
-      case 'tool_result': {
+      case 'tool_result':
+      case 'tool.execution_complete': {
         const isError = event.payload.isError;
-        const text = event.payload.text || '';
+        const text = event.payload.text || event.payload.preview || '';
         addToolFeedEntry(tuiState, {
           type: 'result',
           name: event.payload.toolName,
@@ -1988,6 +1990,11 @@ export async function runTUI(options = {}) {
 
       case 'status':
         addTranscriptEntry(tuiState, 'status', event.payload.detail || event.payload.phase);
+        scheduler.schedule();
+        break;
+
+      case 'tool.call_malformed':
+        addTranscriptEntry(tuiState, 'warning', `Malformed tool call: ${event.payload.reason}`);
         scheduler.schedule();
         break;
 

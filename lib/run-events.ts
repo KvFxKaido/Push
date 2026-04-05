@@ -1,4 +1,4 @@
-import type { RunEvent, RunEventInput } from './runtime-contract';
+import type { RunEvent, RunEventInput } from './runtime-contract.js';
 
 export const MAX_RUN_EVENTS_PER_CHAT = 400;
 

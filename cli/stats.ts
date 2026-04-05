@@ -106,19 +106,22 @@ export async function aggregateStats(filter: StatsFilter = {}): Promise<Aggregat
           }
           break;
         }
-        case 'tool_call': {
+        case 'tool_call':
+        case 'tool.execution_start': {
           p.toolCalls++;
           totals.toolCalls++;
           break;
         }
-        case 'tool_result': {
+        case 'tool_result':
+        case 'tool.execution_complete': {
           if (event.payload?.isError) {
             p.toolErrors++;
             totals.toolErrors++;
           }
           break;
         }
-        case 'malformed_tool_call': {
+        case 'malformed_tool_call':
+        case 'tool.call_malformed': {
           p.malformedCalls++;
           totals.malformedCalls++;
           const reason = event.payload?.reason || 'unknown';

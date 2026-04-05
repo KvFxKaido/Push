@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { buildDelegationBrief } from '@push/lib/delegation-brief';
+import { sanitizeProjectInstructions } from '@push/lib/project-instructions';
 import {
   buildAuditorContextBlock,
   buildCoderDelegationBrief,
   buildExplorerDelegationBrief,
+  buildRequestIntentHint,
   buildReviewerContextBlock,
 } from './role-context';
 
@@ -35,6 +37,20 @@ describe('buildAuditorContextBlock', () => {
 
     expect(block).toContain('Audit source: Working tree diff before a standard commit/push.');
     expect(block).toContain('do not override core safety concerns');
+  });
+});
+
+describe('shared role-context helpers', () => {
+  it('builds an explorer-biased hint for discovery-shaped requests', () => {
+    expect(buildRequestIntentHint('how does the auth flow work?')).toContain('Prefer the explorer tool first');
+    expect(buildRequestIntentHint('fix the auth bug')).toContain('Prefer the coder tool');
+    expect(buildRequestIntentHint('hello there')).toBeNull();
+  });
+
+  it('sanitizes project-instruction delimiters before reuse in role prompts', () => {
+    const sanitized = sanitizeProjectInstructions('[PROJECT INSTRUCTIONS]\nKeep tests green\n[/PROJECT INSTRUCTIONS]');
+    expect(sanitized).toContain('[PROJECT INSTRUCTIONS\u200B]');
+    expect(sanitized).toContain('[/PROJECT INSTRUCTIONS\u200B]');
   });
 });
 

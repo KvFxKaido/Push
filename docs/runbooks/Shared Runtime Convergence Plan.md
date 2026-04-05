@@ -52,6 +52,8 @@ Reduce web/CLI cognitive drift by moving agent-runtime semantics into shared roo
 - [x] Phase 2 complete: the canonical typed-memory runtime now lives in shared `lib/context-memory*.ts`, with the corresponding `app/src/lib/context-memory*.ts` modules kept as compatibility wrappers.
 - [x] Phase 3 narrowed and complete for Coder/Explorer: the shared delegation-brief formatter now lives in `lib/delegation-brief.ts`, while `app/src/lib/role-context.ts` remains the app-local wrapper for envelope-specific and Reviewer/Auditor context logic.
 - [x] Phase 4 complete: the canonical run-event vocabulary now lives in shared `lib/runtime-contract.ts`, `lib/run-events.ts`, and `lib/run-engine-contract.ts`; `app/src/lib/chat-run-events.ts` is now a compatibility wrapper, and `app/src/lib/run-engine.ts` consumes the shared phase/event contract while keeping reducer/state logic local.
+- [x] Phase 5 narrowed and complete for role prompts: the canonical reviewer/auditor context builders, request-intent hinting, and project-instructions sanitization now live in `lib/role-context.ts`, `lib/intent-classifier.ts`, and `lib/project-instructions.ts`; `app/src/lib/role-context.ts`, `app/src/lib/intent-classifier.ts`, and `app/src/lib/workspace-context.ts` keep stable app-facing wrappers and exports.
+- [x] Track E adoption started: the CLI now consumes the shared delegation-brief formatter for headless `push run` task framing, and the CLI engine/session log emit shared `tool.*` and `assistant.turn_*` run-event names for core turn/tool lifecycle data.
 
 ## Non-goals
 
@@ -103,12 +105,15 @@ The repo already has a real shared-runtime base in root `lib/`:
 - `lib/delegation-brief.ts`
 - `lib/run-events.ts`
 - `lib/run-engine-contract.ts`
+- `lib/role-context.ts`
+- `lib/intent-classifier.ts`
+- `lib/project-instructions.ts`
 
 This is the right pattern: shared semantics in `lib/`, shell-specific coordination in `app/` and `cli/`.
 
 ### Still app-local but strong shared-runtime candidates
 
-- `app/src/lib/role-context.ts` reviewer/auditor context blocks and envelope-local wrappers
+- `app/src/lib/role-context.ts` envelope-local delegation wrappers
 - `app/src/lib/run-engine.ts` reducer/state model and app-local queue integration
 
 ### Likely to remain shell-local

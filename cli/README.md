@@ -75,6 +75,8 @@ Runs a single task and exits. No interaction. High-risk commands are blocked (no
 
 `--accept <cmd>` runs shell commands after the agent finishes as acceptance checks. Exit code 0 = pass. The process exits 0 only if the agent succeeds *and* all checks pass.
 
+When `--accept` is present, Push also frames the task using the shared delegation-brief format so acceptance checks are visible to the model during the run, not only after it finishes.
+
 `--json` outputs structured results:
 
 ```json
@@ -215,7 +217,7 @@ The `a3b8c1f` is a 7-char SHA-1 hash of the line content. Edits reference lines 
 Sessions persist to `~/.push/sessions/<session-id>/` by default. Each session has:
 
 - `state.json` — full conversation state (messages, working memory, provider info)
-- `events.jsonl` — append-only event log (tool calls, results, errors, run outcomes)
+- `events.jsonl` — append-only event log (including shared `tool.execution_*`, `tool.call_malformed`, and `assistant.turn_*` entries alongside CLI-specific status/error/run markers)
 
 If no `PUSH_SESSION_DIR` is set, the CLI also reads legacy workspace-local sessions from `.push/sessions/` in the current directory when listing or resuming by id.
 

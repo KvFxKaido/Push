@@ -1,6 +1,8 @@
 import type { RepoWithActivity, ActiveRepo, WorkspaceContext } from '@/types';
 import { getSandboxEnvironment } from './sandbox-client';
 
+export { sanitizeProjectInstructions } from '@push/lib/project-instructions';
+
 /**
  * Builds a compact workspace summary for injection into the system prompt.
  * Gives the LLM awareness of the user's GitHub repos without consuming
@@ -9,37 +11,6 @@ import { getSandboxEnvironment } from './sandbox-client';
  * When activeRepo is set, it gets detailed treatment while others
  * are listed as compact one-liners.
  */
-
-// --- Project instructions sanitization ---
-// AGENTS.md / CLAUDE.md / GEMINI.md content is user-controlled (repo owner writes it).
-// We apply the same defense-in-depth as scratchpad and user bio:
-//   1. Size cap — prevents context bloat / 413 errors
-//   2. Delimiter escaping — zero-width space breaks block boundaries
-const MAX_PROJECT_INSTRUCTIONS_SIZE = 8000;
-
-/**
- * Sanitize project instructions before injection into the
- * Orchestrator's system prompt.  Truncates to MAX_PROJECT_INSTRUCTIONS_SIZE
- * and escapes delimiter sequences so the content cannot break out of its
- * labeled block.
- */
-export function sanitizeProjectInstructions(raw: string): string {
-  let content = raw;
-
-  // Truncate with marker
-  if (content.length > MAX_PROJECT_INSTRUCTIONS_SIZE) {
-    content = content.slice(0, MAX_PROJECT_INSTRUCTIONS_SIZE)
-      + `\n\n[Project instructions truncated — ${raw.length - MAX_PROJECT_INSTRUCTIONS_SIZE} chars omitted]`;
-  }
-
-  // Escape delimiter sequences with zero-width space (\u200B)
-  // Matches the pattern used in scratchpad-tools.ts and orchestrator.ts (user bio)
-  content = content
-    .replace(/\[PROJECT INSTRUCTIONS\]/gi, '[PROJECT INSTRUCTIONS\u200B]')
-    .replace(/\[\/PROJECT INSTRUCTIONS\]/gi, '[/PROJECT INSTRUCTIONS\u200B]');
-
-  return content;
-}
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();

@@ -7,6 +7,7 @@ import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.js';
 import { trimContext, distillContext, estimateContextTokens, getContextBudget } from './context-manager.js';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
+import { summarizeToolResultPreview } from '../lib/run-events.ts';
 import type { TurnContext } from './turn-policy.js';
 
 import type { SessionState } from './session-store.js';
@@ -278,6 +279,7 @@ export async function runAssistantLoop(
   const repeatedCalls: Map<string, number> = new Map();
   const toolsUsed: Set<string> = new Set();
   const fileLedger: FileLedger = createFileLedger();
+  let toolExecutionCounter = 0;
 
   // Lazily enrich system prompt with workspace context (git status,
   // project instructions, memory) if it hasn't been loaded yet.
@@ -320,17 +322,30 @@ export async function runAssistantLoop(
     }
   }
 
+  function nextToolExecutionId(round: number): string {
+    toolExecutionCounter += 1;
+    return `${runId}_r${Math.max(0, round - 1)}_${toolExecutionCounter.toString(36)}`;
+  }
+
   async function executeOneToolCall(call: ToolCall, round: number, includeMemory: boolean = true): Promise<ToolResult> {
     const toolStart: number = Date.now();
-    await appendSessionEvent(state, 'tool_call', {
-      source: 'sandbox',
+    const executionId = nextToolExecutionId(round);
+    const toolSource = call.source || 'sandbox';
+    const turnIndex = Math.max(0, round - 1);
+
+    await appendSessionEvent(state, 'tool.execution_start', {
+      round: turnIndex,
+      executionId,
       toolName: call.tool,
+      toolSource,
       args: call.args,
     }, runId);
 
-    dispatchEvent('tool_call', {
-      source: 'sandbox',
+    dispatchEvent('tool.execution_start', {
+      round: turnIndex,
+      executionId,
       toolName: call.tool,
+      toolSource,
       args: call.args,
     });
 
@@ -346,23 +361,30 @@ export async function runAssistantLoop(
     });
     const result: ToolResult = rawResult ?? { ok: false, text: 'Tool returned no result' };
     const durationMs: number = Date.now() - toolStart;
+    const preview = summarizeToolResultPreview(result.text);
 
-    await appendSessionEvent(state, 'tool_result', {
-      source: 'sandbox',
+    await appendSessionEvent(state, 'tool.execution_complete', {
+      round: turnIndex,
+      executionId,
       toolName: call.tool,
+      toolSource,
       durationMs,
       isError: !result.ok,
+      preview,
       text: result.text.slice(0, 500),
       structuredError: result.structuredError || null,
     }, runId);
 
     updateFileLedger(fileLedger, call, result);
 
-    dispatchEvent('tool_result', {
-      source: 'sandbox',
+    dispatchEvent('tool.execution_complete', {
+      round: turnIndex,
+      executionId,
       toolName: call.tool,
+      toolSource,
       durationMs,
       isError: !result.ok,
+      preview,
       text: result.text,
       structuredError: result.structuredError || null,
     });
@@ -386,6 +408,7 @@ export async function runAssistantLoop(
   let lastTrimResult: TrimResult | null = null;
 
   for (let round = 1; round <= maxRounds; round++) {
+    const turnIndex = Math.max(0, round - 1);
     resetTurnBudget(fileLedger);
     contextChars = (state.messages as Message[]).reduce(
       (sum: number, m: Message) => sum + (typeof m.content === 'string' ? m.content.length : 0),
@@ -393,10 +416,15 @@ export async function runAssistantLoop(
     );
     if (signal?.aborted) {
       await saveSessionState(state);
+      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'aborted' }, runId);
       await appendSessionEvent(state, 'run_complete', { runId, outcome: 'aborted', summary: 'Aborted by user.' }, runId);
+      dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'aborted' });
       dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
       return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
     }
+
+    await appendSessionEvent(state, 'assistant.turn_start', { round: turnIndex }, runId);
+    dispatchEvent('assistant.turn_start', { round: turnIndex });
 
     // Trim context to fit provider budget (state.messages is never mutated)
     if (shouldDistillMidSession(state.messages as Message[], state.workingMemory as WorkingMemory, round, providerConfig.id, state.model)) {
@@ -449,7 +477,9 @@ export async function runAssistantLoop(
       const isAbort: boolean = (err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false);
       if (isAbort) {
         await saveSessionState(state);
+        await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'aborted' }, runId);
         await appendSessionEvent(state, 'run_complete', { runId, outcome: 'aborted', summary: 'Aborted by user.' }, runId);
+        dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'aborted' });
         dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
         return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
       }
@@ -462,11 +492,13 @@ export async function runAssistantLoop(
       }, runId);
       dispatchEvent('error', { code: 'PROVIDER_ERROR', message });
 
+      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'error' }, runId);
       await appendSessionEvent(state, 'run_complete', {
         runId,
         outcome: 'failed',
         summary: message.slice(0, 500),
       }, runId);
+      dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'error' });
       dispatchEvent('run_complete', { outcome: 'failed', summary: message.slice(0, 500) });
       return { outcome: 'error', finalAssistantText: message, rounds: round - 1, runId };
     }
@@ -479,12 +511,14 @@ export async function runAssistantLoop(
     // --- Turn policy: afterModelCall evaluation ---
     const policyResult = policyRegistry.evaluateAfterModel(finalAssistantText, turnCtx);
     if (policyResult?.action === 'halt') {
+      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'error' }, runId);
       await appendSessionEvent(state, 'run_complete', {
         runId,
         outcome: 'failed',
         summary: policyResult.summary,
       }, runId);
       await saveSessionState(state);
+      dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'error' });
       dispatchEvent('run_complete', { outcome: 'failed', summary: policyResult.summary });
       return { outcome: 'error', finalAssistantText: policyResult.summary, rounds: round, runId };
     }
@@ -506,6 +540,16 @@ export async function runAssistantLoop(
     if (detected.malformed.length > 0) {
       for (const malformed of detected.malformed) {
         recordMalformedToolCall(malformed.reason);
+        await appendSessionEvent(state, 'tool.call_malformed', {
+          round: turnIndex,
+          reason: malformed.reason,
+          preview: malformed.sample.slice(0, 500),
+        }, runId);
+        dispatchEvent('tool.call_malformed', {
+          round: turnIndex,
+          reason: malformed.reason,
+          preview: malformed.sample,
+        });
       }
       await appendSessionEvent(state, 'warning', {
         code: 'MALFORMED_TOOL_CALL',
@@ -555,14 +599,18 @@ export async function runAssistantLoop(
 
     if (toolCalls.length === 0) {
       if (memoryCalls.length > 0 || detected.malformed.length > 0) {
+        await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'continued' }, runId);
+        dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'continued' });
         await saveSessionState(state);
         continue;
       }
+      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'completed' }, runId);
       await appendSessionEvent(state, 'run_complete', {
         runId,
         outcome: 'success',
         summary: finalAssistantText.slice(0, 500),
       }, runId);
+      dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'completed' });
       dispatchEvent('run_complete', { outcome: 'success', summary: finalAssistantText });
       return { outcome: 'success', finalAssistantText, rounds: round, runId };
     }
@@ -579,6 +627,8 @@ export async function runAssistantLoop(
         retryable: false,
       }, runId);
       dispatchEvent('error', { code: 'TOOL_LOOP_DETECTED', message: loopText });
+      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'error' }, runId);
+      dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'error' });
       return { outcome: 'error', finalAssistantText: loopText, rounds: round, runId };
     }
 
@@ -611,11 +661,33 @@ export async function runAssistantLoop(
           },
         };
 
-        await appendSessionEvent(state, 'tool_result', {
-          source: deniedCall.source || 'sandbox',
+        const executionId = nextToolExecutionId(round);
+        const deniedSource = deniedCall.source || 'sandbox';
+        const preview = summarizeToolResultPreview(deniedResult.text);
+
+        await appendSessionEvent(state, 'tool.execution_start', {
+          round: turnIndex,
+          executionId,
           toolName: deniedCall.tool,
+          toolSource: deniedSource,
+          args: deniedCall.args,
+        }, runId);
+        dispatchEvent('tool.execution_start', {
+          round: turnIndex,
+          executionId,
+          toolName: deniedCall.tool,
+          toolSource: deniedSource,
+          args: deniedCall.args,
+        });
+
+        await appendSessionEvent(state, 'tool.execution_complete', {
+          round: turnIndex,
+          executionId,
+          toolName: deniedCall.tool,
+          toolSource: deniedSource,
           durationMs: 0,
           isError: true,
+          preview,
           text: deniedResult.text,
           structuredError: deniedResult.structuredError,
         }, runId);
@@ -629,13 +701,19 @@ export async function runAssistantLoop(
           ),
         });
         toolsUsed.add(deniedCall.tool);
-        dispatchEvent('tool_result', {
-          source: deniedCall.source || 'sandbox',
+        dispatchEvent('tool.execution_complete', {
+          round: turnIndex,
+          executionId,
           toolName: deniedCall.tool,
+          toolSource: deniedSource,
+          durationMs: 0,
           isError: true,
+          preview,
           text: deniedResult.text,
         });
         await saveSessionState(state);
+        await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'continued' }, runId);
+        dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'continued' });
         continue;
       }
 
@@ -653,11 +731,33 @@ export async function runAssistantLoop(
           },
         };
 
-        await appendSessionEvent(state, 'tool_result', {
-          source: call.source || 'sandbox',
+        const executionId = nextToolExecutionId(round);
+        const skippedSource = call.source || 'sandbox';
+        const preview = summarizeToolResultPreview(result.text);
+
+        await appendSessionEvent(state, 'tool.execution_start', {
+          round: turnIndex,
+          executionId,
           toolName: call.tool,
+          toolSource: skippedSource,
+          args: call.args,
+        }, runId);
+        dispatchEvent('tool.execution_start', {
+          round: turnIndex,
+          executionId,
+          toolName: call.tool,
+          toolSource: skippedSource,
+          args: call.args,
+        });
+
+        await appendSessionEvent(state, 'tool.execution_complete', {
+          round: turnIndex,
+          executionId,
+          toolName: call.tool,
+          toolSource: skippedSource,
           durationMs: 0,
           isError: true,
+          preview,
           text: result.text,
           structuredError: result.structuredError,
         }, runId);
@@ -671,16 +771,21 @@ export async function runAssistantLoop(
           ),
         });
         toolsUsed.add(call.tool);
-        dispatchEvent('tool_call', { source: call.source || 'sandbox', toolName: call.tool, args: call.args });
-        dispatchEvent('tool_result', {
-          source: call.source || 'sandbox',
+        dispatchEvent('tool.execution_complete', {
+          round: turnIndex,
+          executionId,
           toolName: call.tool,
+          toolSource: skippedSource,
+          durationMs: 0,
           isError: true,
+          preview,
           text: result.text,
         });
       }
     }
 
+    await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'continued' }, runId);
+    dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'continued' });
     await saveSessionState(state);
   }
 

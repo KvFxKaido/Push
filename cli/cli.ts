@@ -21,6 +21,7 @@ import { createCompleter } from './completer.js';
 import { fmt, Spinner } from './format.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { compactContext } from './context-manager.js';
+import { buildHeadlessTaskBrief } from './task-brief.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -137,6 +138,7 @@ function makeCLIEventHandler() {
   return (event) => {
     switch (event.type) {
       case 'tool_call':
+      case 'tool.execution_start':
         if (isReasoningStreaming || isAssistantStreaming) {
           process.stdout.write('\n');
           isReasoningStreaming = false;
@@ -146,10 +148,11 @@ function makeCLIEventHandler() {
         process.stdout.write(`${fmt.dim('[tool]')} ${event.payload.toolName}\n`);
         spinner.start(event.payload.toolName);
         break;
-      case 'tool_result': {
+      case 'tool_result':
+      case 'tool.execution_complete': {
         spinner.stop();
         const ok = !event.payload.isError;
-        const text = truncateText(event.payload.text, 420);
+        const text = truncateText(event.payload.text || event.payload.preview || '', 420);
         if (ok) {
           process.stdout.write(`${fmt.green('[tool:ok]')} ${fmt.dim(text)}\n`);
         } else {
@@ -204,6 +207,10 @@ function makeCLIEventHandler() {
         spinner.stop();
         process.stdout.write(`\n${fmt.warn('[warning]')} ${event.payload.message || event.payload.code}\n`);
         break;
+      case 'tool.call_malformed':
+        spinner.stop();
+        process.stdout.write(`\n${fmt.warn('[warning]')} malformed tool call: ${event.payload.reason}\n`);
+        break;
       case 'error':
         spinner.stop();
         process.stdout.write(`\n${fmt.error('[error]')} ${event.payload.message}\n`);
@@ -221,7 +228,8 @@ function makeCLIEventHandler() {
 }
 
 async function runHeadless(state, providerConfig, apiKey, task, maxRounds, jsonOutput, acceptanceChecks, { allowExec = false, safeExecPatterns = [], execMode = 'auto' } = {}) {
-  await appendUserMessageWithFileReferences(state, task, state.cwd);
+  const taskPrompt = buildHeadlessTaskBrief(task, acceptanceChecks);
+  await appendUserMessageWithFileReferences(state, taskPrompt, state.cwd, { referenceSourceText: task });
   await appendSessionEvent(state, 'user_message', { chars: task.length, preview: task.slice(0, 280) });
 
   const ac = new AbortController();

@@ -5,7 +5,7 @@
  * work to a sub-agent. Reviewer/Auditor context blocks remain shell-local.
  */
 
-import type { AcceptanceCriterion } from './runtime-contract';
+import type { AcceptanceCriterion } from './runtime-contract.js';
 
 export interface DelegationBriefInput {
   task: string;

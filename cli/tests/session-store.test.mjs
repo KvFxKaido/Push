@@ -100,7 +100,7 @@ describe('event serialization', () => {
   it('writes JSONL events with protocol-aligned envelope', async () => {
     const runId = makeRunId();
     await appendSessionEvent(state, 'session_started', { sessionId, state: 'idle', mode: 'interactive', provider: 'ollama', sandboxProvider: 'local' });
-    await appendSessionEvent(state, 'tool_call', { source: 'sandbox', toolName: 'exec', args: { command: 'ls' } }, runId);
+    await appendSessionEvent(state, 'tool.execution_start', { round: 0, executionId: 'exec-1', toolSource: 'sandbox', toolName: 'exec', args: { command: 'ls' } }, runId);
     await appendSessionEvent(state, 'run_complete', { runId, outcome: 'success', summary: 'done' }, runId);
 
     const eventsPath = path.join(getSessionDir(sessionId), 'events.jsonl');
@@ -126,17 +126,17 @@ describe('event serialization', () => {
     assert.equal(events[1].seq, 2);
     assert.equal(events[2].seq, 3);
     assert.equal(events[0].type, 'session_started');
-    assert.equal(events[1].type, 'tool_call');
+    assert.equal(events[1].type, 'tool.execution_start');
     assert.equal(events[2].type, 'run_complete');
 
     // Run-scoped events have runId
     assert.equal(events[0].runId, undefined, 'session_started has no runId');
-    assert.ok(events[1].runId.startsWith('run_'), 'tool_call has runId');
+    assert.ok(events[1].runId.startsWith('run_'), 'tool.execution_start has runId');
     assert.ok(events[2].runId.startsWith('run_'), 'run_complete has runId');
 
     // Normalized payload keys
     assert.equal(events[1].payload.toolName, 'exec');
-    assert.equal(events[1].payload.source, 'sandbox');
+    assert.equal(events[1].payload.toolSource, 'sandbox');
   });
 });
 
