@@ -131,4 +131,5 @@ New module `app/src/lib/task-graph.ts`:
 
 - `plan_tasks` is implemented and wired into tool parsing, Orchestrator guidance, execution, run-engine phase tracking, and checkpoint handling.
 - The task graph executor now propagates dependency context, preserves per-node delegation outcomes, treats aborts as cancellation, and runs graph-level auditor evaluation for coder work.
+- Completed tasks now write compact graph-scoped memory entries that are summarized into dependent tasks' `knownContext`, giving later tasks limited awareness of prior graph work without dumping full raw outputs.
 - Coverage includes task graph parsing, execution semantics, cancellation, and run-engine phase handling.

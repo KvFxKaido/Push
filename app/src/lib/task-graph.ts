@@ -11,17 +11,24 @@
  *   - Explorer tasks are fully parallelizable (read-only).
  *   - Coder tasks run sequentially (mutations may conflict in sandbox).
  *   - Explorer tasks can run concurrently with a Coder task.
- *   - Completed task summaries propagate into dependent tasks' knownContext.
+ *   - Completed tasks write graph-scoped memory entries that are summarized
+ *     into later tasks' knownContext.
  *   - Failed tasks cascade failure to all transitive dependents.
  */
 
 import type {
   TaskGraphNode,
+  TaskGraphMemoryEntry,
   TaskGraphNodeState,
   TaskGraphResult,
   TaskGraphProgressEvent,
   DelegationOutcome,
 } from '@/types';
+
+const MAX_MEMORY_SUMMARY_CHARS = 220;
+const MAX_MEMORY_CHECKS = 5;
+const MAX_MEMORY_EVIDENCE_LABELS = 5;
+const MAX_SUPPLEMENTAL_MEMORY_ENTRIES = 2;
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -199,20 +206,99 @@ export function cascadeFailure(
 
 /**
  * Build enriched knownContext for a task by appending summaries from
- * completed dependency tasks.
+ * completed dependency tasks plus a compact shared-memory summary from
+ * other completed graph work.
  */
 export function buildEnrichedContext(
   node: TaskGraphNode,
   states: Map<string, TaskGraphNodeState>,
 ): string[] {
   const base = [...(node.knownContext ?? [])];
-  for (const depId of node.dependsOn ?? []) {
-    const depState = states.get(depId);
-    if (depState?.status === 'completed' && depState.result) {
-      base.push(`[From ${depId}] ${depState.result}`);
-    }
+  const memorySummary = formatSharedMemorySummary(node, states);
+  if (memorySummary) {
+    base.push(memorySummary);
   }
   return base;
+}
+
+function truncateMemoryText(text: string, maxLength = MAX_MEMORY_SUMMARY_CHARS): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+export function buildTaskGraphMemoryEntry(state: TaskGraphNodeState): TaskGraphMemoryEntry | null {
+  if (state.status !== 'completed') return null;
+  const summary = state.delegationOutcome?.summary || state.result;
+  if (!summary?.trim()) return null;
+
+  return {
+    namespace: state.node.id,
+    agent: state.node.agent,
+    status: state.delegationOutcome?.status ?? 'complete',
+    summary: truncateMemoryText(summary),
+    checks: state.delegationOutcome?.checks?.slice(0, MAX_MEMORY_CHECKS).map((check) => ({
+      id: check.id,
+      passed: check.passed,
+    })),
+    evidenceLabels: state.delegationOutcome?.evidence
+      ?.slice(0, MAX_MEMORY_EVIDENCE_LABELS)
+      .map((evidence) => evidence.label),
+    nextRequiredAction: state.delegationOutcome?.nextRequiredAction ?? null,
+  };
+}
+
+function formatMemoryEntry(entry: TaskGraphMemoryEntry): string {
+  const lines = [
+    `- [${entry.namespace} | ${entry.agent} | ${entry.status}] ${entry.summary}`,
+  ];
+  if (entry.checks && entry.checks.length > 0) {
+    lines.push(`  Checks: ${entry.checks.map((check) => `${check.passed ? 'PASS' : 'FAIL'} ${check.id}`).join(', ')}`);
+  }
+  if (entry.evidenceLabels && entry.evidenceLabels.length > 0) {
+    lines.push(`  Evidence: ${entry.evidenceLabels.join(', ')}`);
+  }
+  if (entry.nextRequiredAction) {
+    lines.push(`  Next: ${entry.nextRequiredAction}`);
+  }
+  return lines.join('\n');
+}
+
+function formatSharedMemorySummary(
+  node: TaskGraphNode,
+  states: Map<string, TaskGraphNodeState>,
+): string | null {
+  const dependencyEntries: TaskGraphMemoryEntry[] = [];
+  for (const depId of node.dependsOn ?? []) {
+    const entry = states.get(depId)?.memoryEntry;
+    if (entry) dependencyEntries.push(entry);
+  }
+
+  const supplementalEntries: TaskGraphMemoryEntry[] = [];
+  if (dependencyEntries.length > 0) {
+    for (const [id, state] of states) {
+      if (id === node.id || (node.dependsOn ?? []).includes(id)) continue;
+      if (state.status !== 'completed' || !state.memoryEntry) continue;
+      supplementalEntries.push(state.memoryEntry);
+      if (supplementalEntries.length >= MAX_SUPPLEMENTAL_MEMORY_ENTRIES) break;
+    }
+  }
+
+  if (dependencyEntries.length === 0 && supplementalEntries.length === 0) {
+    return null;
+  }
+
+  const sections: string[] = ['[TASK_GRAPH_MEMORY]'];
+  if (dependencyEntries.length > 0) {
+    sections.push('Dependency memory:');
+    sections.push(...dependencyEntries.map(formatMemoryEntry));
+  }
+  if (supplementalEntries.length > 0) {
+    sections.push('Shared graph memory:');
+    sections.push(...supplementalEntries.map(formatMemoryEntry));
+  }
+  sections.push('[/TASK_GRAPH_MEMORY]');
+  return sections.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +382,7 @@ export async function executeTaskGraph(
         state.status = 'completed';
         state.result = result.summary;
         state.delegationOutcome = result.delegationOutcome;
+        state.memoryEntry = buildTaskGraphMemoryEntry(state) ?? undefined;
         state.elapsedMs = Date.now() - taskStartMs;
         totalRounds += result.rounds;
         onProgress?.({ type: 'task_completed', taskId: id, detail: result.summary });
@@ -423,6 +510,10 @@ export async function executeTaskGraph(
   return {
     success: allSuccess,
     aborted,
+    memoryEntries: new Map(
+      [...states.entries()]
+        .flatMap(([id, state]) => (state.memoryEntry ? [[id, state.memoryEntry] as const] : [])),
+    ),
     nodeStates: states,
     summary: summaryParts.join('\n'),
     wallTimeMs: Date.now() - startMs,

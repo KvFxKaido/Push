@@ -1243,6 +1243,24 @@ export interface TaskGraphNode {
   constraints?: string[];
 }
 
+/** Graph-scoped memory written by a completed task and injected into later tasks. */
+export interface TaskGraphMemoryEntry {
+  /** Namespace for this memory entry. Currently the task id. */
+  namespace: string;
+  /** Which agent produced the entry. */
+  agent: 'explorer' | 'coder';
+  /** Completion status captured in memory. */
+  status: DelegationStatus;
+  /** Compact summary of the task result. */
+  summary: string;
+  /** Compact verification signals derived from the delegation outcome. */
+  checks?: Array<{ id: string; passed: boolean }>;
+  /** Human-readable evidence labels produced by the task. */
+  evidenceLabels?: string[];
+  /** Follow-up action, if the task left one behind. */
+  nextRequiredAction?: string | null;
+}
+
 /** Status of a single task within the graph. */
 export type TaskGraphNodeStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -1256,6 +1274,8 @@ export interface TaskGraphNodeState {
   error?: string;
   /** Delegation outcome from the agent run. */
   delegationOutcome?: DelegationOutcome;
+  /** Shared graph memory captured from a completed task. */
+  memoryEntry?: TaskGraphMemoryEntry;
   /** Wall-clock duration in ms. */
   elapsedMs?: number;
 }
@@ -1278,6 +1298,8 @@ export interface TaskGraphResult {
   success: boolean;
   /** Whether execution was cancelled by user abort. */
   aborted: boolean;
+  /** Shared graph memory entries keyed by namespace/task id. */
+  memoryEntries: Map<string, TaskGraphMemoryEntry>;
   /** Per-node results keyed by task id. */
   nodeStates: Map<string, TaskGraphNodeState>;
   /** Combined summary of all completed tasks. */

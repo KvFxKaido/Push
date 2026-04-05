@@ -22,7 +22,7 @@ function makeDelegationOutcome(
 }
 
 describe('task-graph', () => {
-  it('propagates dependency summaries into dependent task context and preserves delegation outcomes', async () => {
+  it('injects dependency memory into dependent task context and preserves graph memory entries', async () => {
     const contexts = new Map<string, string[]>();
     const nodes: TaskGraphNode[] = [
       {
@@ -53,12 +53,49 @@ describe('task-graph', () => {
     expect(result.success).toBe(true);
     expect(result.aborted).toBe(false);
     expect(contexts.get('fix-auth')).toContain(
-      '[From explore-auth] Found refresh trigger in middleware.',
+      '[TASK_GRAPH_MEMORY]\nDependency memory:\n- [explore-auth | explorer | complete] Found refresh trigger in middleware.\n[/TASK_GRAPH_MEMORY]',
     );
+    expect(result.memoryEntries.get('explore-auth')?.summary).toBe('Found refresh trigger in middleware.');
     expect(result.nodeStates.get('explore-auth')?.delegationOutcome?.summary).toBe(
       'Found refresh trigger in middleware.',
     );
     expect(result.nodeStates.get('fix-auth')?.delegationOutcome?.agent).toBe('coder');
+  });
+
+  it('includes supplemental graph memory from other completed tasks with truncated summaries', async () => {
+    const contexts = new Map<string, string[]>();
+    const longSummary = 'B'.repeat(260);
+    const nodes: TaskGraphNode[] = [
+      { id: 'explore-auth', agent: 'explorer', task: 'Trace auth flow' },
+      { id: 'explore-tests', agent: 'explorer', task: 'Trace test patterns' },
+      { id: 'fix-auth', agent: 'coder', task: 'Fix auth flow', dependsOn: ['explore-auth'] },
+    ];
+
+    const result = await executeTaskGraph(nodes, async (node, enrichedContext) => {
+      contexts.set(node.id, enrichedContext);
+      const summary = node.id === 'explore-tests'
+        ? longSummary
+        : `${node.id} complete`;
+      return {
+        summary,
+        rounds: 1,
+        delegationOutcome: {
+          ...makeDelegationOutcome(node.agent, summary),
+          checks: node.id === 'explore-tests' ? [{ id: 'coverage', passed: true, output: '' }] : [],
+          evidence: node.id === 'explore-tests' ? [{ kind: 'observation', label: 'Test patterns' }] : [],
+        },
+      };
+    });
+
+    expect(result.success).toBe(true);
+    const fixAuthContext = contexts.get('fix-auth')?.join('\n') ?? '';
+    expect(fixAuthContext).toContain('Dependency memory:');
+    expect(fixAuthContext).toContain('- [explore-auth | explorer | complete] explore-auth complete');
+    expect(fixAuthContext).toContain('Shared graph memory:');
+    expect(fixAuthContext).toContain('- [explore-tests | explorer | complete]');
+    expect(fixAuthContext).toContain('Evidence: Test patterns');
+    expect(fixAuthContext).toContain('Checks: PASS coverage');
+    expect(result.memoryEntries.get('explore-tests')?.summary.endsWith('…')).toBe(true);
   });
 
   it('cascades a failed task to its dependents while allowing independent work to finish', async () => {
