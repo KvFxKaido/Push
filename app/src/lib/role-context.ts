@@ -60,7 +60,10 @@ function buildDelegationBrief(
   }
   if (fields.knownContext && fields.knownContext.length > 0) {
     lines.push('', 'Known context:');
-    lines.push(...fields.knownContext.map((item) => `- ${item}`));
+    lines.push(...fields.knownContext.map((item) => {
+      if (item.includes('\n')) return item;
+      return `- ${item}`;
+    }));
   }
   if (fields.constraints && fields.constraints.length > 0) {
     lines.push('', 'Constraints:');

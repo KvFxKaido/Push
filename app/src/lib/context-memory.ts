@@ -283,17 +283,20 @@ export function retrieveMemoryForDelegation(
 }
 
 /**
- * Convenience: retrieve + pack in one call, returning a single compact
- * `[RETRIEVED_MEMORY]` block ready to push into `knownContext` for a
- * delegation brief. Returns null when nothing matched (caller should skip
- * appending an empty block).
+ * Convenience: retrieve + pack in one call, returning compact retrieved-memory
+ * section blocks ready to push into `knownContext` for a delegation brief.
+ * Stale records are opted in by default so they can be surfaced only in the
+ * bounded `[STALE_CONTEXT]` section. Returns null when nothing matched.
  */
 export function buildRetrievedMemoryKnownContext(
   query: MemoryQuery,
   options: MemoryPackOptions & { store?: ContextMemoryStore } = {},
 ): { line: string | null; result: MemoryRetrievalResult; packResult: MemoryPackResult } {
   const { store, ...packOptions } = options;
-  const result = retrieveMemoryForDelegation({ query, store });
+  const result = retrieveMemoryForDelegation({
+    query: query.includeStale === undefined ? { ...query, includeStale: true } : query,
+    store,
+  });
   const packResult = packRetrievedMemory(result.records, packOptions);
   return {
     line: packResult.block || null,
@@ -308,6 +311,9 @@ export { scoreRecord, retrieveRecords } from './context-memory-retrieval';
 export {
   packRetrievedMemory,
   DEFAULT_MEMORY_PACK_BUDGET_CHARS,
+  DEFAULT_MEMORY_PACK_SECTION_BUDGETS,
+  classifyRetrievedMemorySection,
+  MEMORY_PACK_SECTION_ORDER,
 } from './context-memory-packing';
 export { expireBranchScopedMemory, invalidateMemoryForChangedFiles, supersedeVerificationMemory } from './context-memory-invalidation';
 export type { ContextMemoryStore } from './context-memory-store';

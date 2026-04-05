@@ -244,7 +244,7 @@ describe('writeTaskGraphNodeMemory', () => {
 });
 
 describe('buildRetrievedMemoryKnownContext', () => {
-  it('returns a packed [RETRIEVED_MEMORY] block after writes', () => {
+  it('returns sectioned retrieved-memory blocks after writes', () => {
     const store = createInMemoryStore();
     setDefaultMemoryStore(store);
     try {
@@ -266,19 +266,57 @@ describe('buildRetrievedMemoryKnownContext', () => {
         branch: 'feature/auth',
         chatId: 'chat-1',
         role: 'coder',
-        taskText: 'harden session guard',
+        taskText: 'harden session guard and rerun typecheck',
         fileHints: ['app/src/middleware.ts'],
         maxRecords: 5,
       };
-      const { line, result } = buildRetrievedMemoryKnownContext(query);
+      const { line, result, packResult } = buildRetrievedMemoryKnownContext(query);
 
       expect(line).not.toBeNull();
-      expect(line!).toContain('[RETRIEVED_MEMORY]');
+      expect(line!).toContain('[RETRIEVED_FACTS]');
+      expect(line!).toContain('[RETRIEVED_TASK_MEMORY]');
+      expect(line!).toContain('[RETRIEVED_VERIFICATION]');
       expect(result.records.length).toBeGreaterThan(0);
       expect(result.records.every((r) => r.score > 0)).toBe(true);
+      expect(packResult.sections.facts.recordCount).toBeGreaterThan(0);
+      expect(packResult.sections.taskMemory.recordCount).toBeGreaterThan(0);
+      expect(packResult.sections.verification.recordCount).toBeGreaterThan(0);
+      expect(packResult.charsUsed).toBe(line!.length);
     } finally {
       setDefaultMemoryStore(null);
     }
+  });
+
+  it('includes stale records in the bounded stale section by default', () => {
+    const store = createInMemoryStore();
+    const staleRecord = createMemoryRecord({
+      kind: 'finding',
+      summary: 'Old auth middleware note',
+      scope: makeScope({ role: 'explorer' }),
+      source: { kind: 'explorer', label: 'stale note' },
+      freshness: 'stale',
+      relatedFiles: ['app/src/middleware.ts'],
+    });
+    store.write(staleRecord);
+
+    const { line, result, packResult } = buildRetrievedMemoryKnownContext(
+      {
+        repoFullName: 'owner/repo',
+        branch: 'feature/auth',
+        chatId: 'chat-1',
+        role: 'coder',
+        taskText: 'inspect middleware guard',
+        fileHints: ['app/src/middleware.ts'],
+        maxRecords: 5,
+      },
+      { store },
+    );
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0].record.freshness).toBe('stale');
+    expect(line).toContain('[STALE_CONTEXT]');
+    expect(packResult.sections.stale.recordCount).toBe(1);
+    expect(packResult.sections.facts.recordCount).toBe(0);
   });
 
   it('returns null line when nothing matches', () => {

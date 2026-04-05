@@ -73,4 +73,20 @@ describe('delegation brief builders', () => {
 
     expect(block).toBe('Task: Trace the auth flow');
   });
+
+  it('preserves multiline retrieved-memory blocks in known context', () => {
+    const block = buildCoderDelegationBrief({
+      task: 'Implement the retry flow',
+      files: [],
+      provider: 'openrouter',
+      knownContext: [
+        '[RETRIEVED_FACTS]\n- [finding | explorer] Auth refresh is guarded in auth.ts\n[/RETRIEVED_FACTS]',
+      ],
+    });
+
+    expect(block).toContain('Known context:');
+    expect(block).toContain('[RETRIEVED_FACTS]');
+    expect(block).toContain('[/RETRIEVED_FACTS]');
+    expect(block).not.toContain('- [RETRIEVED_FACTS]');
+  });
 });
