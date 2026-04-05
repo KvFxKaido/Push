@@ -838,7 +838,8 @@ export function useAgentDelegation({
           };
         } else {
           const currentSandboxId = sandboxIdRef.current;
-          if (!currentSandboxId) {
+          const hasCoderTasks = graphArgs.tasks.some((task) => task.agent === 'coder');
+          if (hasCoderTasks && !currentSandboxId) {
             toolExecResult = { text: '[Tool Error] No sandbox available for task graph execution.' };
           } else {
             appendRunEvent(chatId, {
@@ -848,58 +849,83 @@ export function useAgentDelegation({
               detail: `Task graph: ${graphArgs.tasks.length} tasks`,
             });
 
+            if (hasCoderTasks) {
+              updateVerificationStateForChat(chatId, (state) =>
+                activateVerificationGate(
+                  state,
+                  'auditor',
+                  'Task graph started; auditor evaluation pending.',
+                ),
+              );
+              lastCoderStateRef.current = null;
+            }
+
+            const harnessProvider = lockedProviderForChat || getActiveProvider();
+            const harnessModelId = resolvedModelForChat || undefined;
+            const harnessSettings = hasCoderTasks
+              ? resolveHarnessSettings(harnessProvider, harnessModelId)
+              : null;
+            const verificationCriteria = hasCoderTasks
+              ? buildVerificationAcceptanceCriteria(verificationPolicy, 'always')
+              : [];
+
             // Track which tasks are active for aggregated status
             const activeTasks = new Map<string, string>();
 
             // Build the task executor that bridges to existing agent runners
             const taskExecutor: TaskExecutor = async (node, enrichedContext, taskSignal) => {
               if (node.agent === 'explorer') {
-                const explorerResult = await withActiveSpan('taskgraph.explorer', {
-                  scope: 'push.delegation',
-                  kind: SpanKind.INTERNAL,
-                  attributes: {
-                    'push.agent.role': 'explorer',
-                    'push.taskgraph.node_id': node.id,
-                    'push.provider': lockedProviderForChat,
-                    'push.model': resolvedModelForChat,
-                  },
-                }, async (span) => {
-                  const result = await runExplorerAgent(
-                    {
-                      task: node.task,
-                      files: node.files ?? [],
-                      deliverable: node.deliverable,
-                      knownContext: enrichedContext,
-                      constraints: node.constraints,
-                      branchContext: branchInfoRef.current?.currentBranch ? {
-                        activeBranch: branchInfoRef.current.currentBranch,
-                        defaultBranch: branchInfoRef.current.defaultBranch || 'main',
-                        protectMain: isMainProtectedRef.current,
-                      } : undefined,
-                      provider: lockedProviderForChat,
-                      model: resolvedModelForChat || undefined,
-                      projectInstructions: agentsMdRef.current || undefined,
-                      instructionFilename: instructionFilenameRef.current || undefined,
+                const explorerStartMs = Date.now();
+                let explorerResult;
+                try {
+                  explorerResult = await withActiveSpan('taskgraph.explorer', {
+                    scope: 'push.delegation',
+                    kind: SpanKind.INTERNAL,
+                    attributes: {
+                      'push.agent.role': 'explorer',
+                      'push.taskgraph.node_id': node.id,
+                      'push.provider': lockedProviderForChat,
+                      'push.model': resolvedModelForChat,
                     },
-                    currentSandboxId,
-                    repoRef.current || '',
-                    {
-                      onStatus: (phase) => {
-                        activeTasks.set(node.id, phase);
-                        const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
-                        updateAgentStatus(
-                          { active: true, phase: `Task graph`, detail: taskLabels },
-                          { chatId, source: 'explorer' },
-                        );
+                  }, async (span) => {
+                    const result = await runExplorerAgent(
+                      {
+                        task: node.task,
+                        files: node.files ?? [],
+                        deliverable: node.deliverable,
+                        knownContext: enrichedContext,
+                        constraints: node.constraints,
+                        branchContext: branchInfoRef.current?.currentBranch ? {
+                          activeBranch: branchInfoRef.current.currentBranch,
+                          defaultBranch: branchInfoRef.current.defaultBranch || 'main',
+                          protectMain: isMainProtectedRef.current,
+                        } : undefined,
+                        provider: lockedProviderForChat,
+                        model: resolvedModelForChat || undefined,
+                        projectInstructions: agentsMdRef.current || undefined,
+                        instructionFilename: instructionFilenameRef.current || undefined,
                       },
-                      signal: taskSignal,
-                    },
-                  );
+                      currentSandboxId,
+                      repoRef.current || '',
+                      {
+                        onStatus: (phase) => {
+                          activeTasks.set(node.id, phase);
+                          const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
+                          updateAgentStatus(
+                            { active: true, phase: 'Task graph', detail: taskLabels },
+                            { chatId, source: 'explorer' },
+                          );
+                        },
+                        signal: taskSignal,
+                      },
+                    );
+                    setSpanAttributes(span, { 'push.round_count': result.rounds });
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return result;
+                  });
+                } finally {
                   activeTasks.delete(node.id);
-                  setSpanAttributes(span, { 'push.round_count': result.rounds });
-                  span.setStatus({ code: SpanStatusCode.OK });
-                  return result;
-                });
+                }
 
                 if (explorerResult.cards.length > 0) {
                   setConversations((prev) => {
@@ -910,68 +936,102 @@ export function useAgentDelegation({
                   });
                 }
 
+                const explorerOutcome: DelegationOutcome = {
+                  agent: 'explorer',
+                  status: explorerResult.rounds > 0 && explorerResult.summary.trim()
+                    ? 'complete'
+                    : 'inconclusive',
+                  summary: explorerResult.summary,
+                  evidence: explorerResult.summary.trim()
+                    ? [{ kind: 'observation', label: 'Investigation findings' }]
+                    : [],
+                  checks: [],
+                  gateVerdicts: [],
+                  missingRequirements: [],
+                  nextRequiredAction: null,
+                  rounds: explorerResult.rounds,
+                  checkpoints: 0,
+                  elapsedMs: Date.now() - explorerStartMs,
+                };
+                updateVerificationStateForChat(chatId, (state) =>
+                  recordVerificationArtifact(
+                    state,
+                    `Explorer produced evidence: ${summarizeToolResultPreview(explorerResult.summary)}`,
+                  ),
+                );
+
                 return {
                   summary: explorerResult.summary,
+                  delegationOutcome: explorerOutcome,
                   rounds: explorerResult.rounds,
                 };
               } else {
                 // Coder agent
-                const harnessProvider = lockedProviderForChat || getActiveProvider();
-                const harnessModelId = resolvedModelForChat || undefined;
-                const harnessSettings = resolveHarnessSettings(harnessProvider, harnessModelId);
-                const verificationPolicy = getVerificationPolicyForChat(chatId);
-
-                const coderResult = await withActiveSpan('taskgraph.coder', {
-                  scope: 'push.delegation',
-                  kind: SpanKind.INTERNAL,
-                  attributes: {
-                    'push.agent.role': 'coder',
-                    'push.taskgraph.node_id': node.id,
-                    'push.provider': lockedProviderForChat,
-                    'push.model': resolvedModelForChat,
-                  },
-                }, async (span) => {
-                  const result = await runCoderAgent(
-                    node.task,
-                    currentSandboxId,
-                    node.files ?? [],
-                    (phase) => {
-                      activeTasks.set(node.id, phase);
-                      const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
-                      updateAgentStatus(
-                        { active: true, phase: `Task graph`, detail: taskLabels },
-                        { chatId, source: 'coder' },
-                      );
+                const nodeStartMs = Date.now();
+                const effectiveAcceptanceCriteria = mergeAcceptanceCriteria(
+                  node.acceptanceCriteria,
+                  verificationCriteria,
+                );
+                const criteriaCommandById = new Map(
+                  effectiveAcceptanceCriteria.map((criterion) => [criterion.id, criterion.check]),
+                );
+                let coderResult;
+                try {
+                  coderResult = await withActiveSpan('taskgraph.coder', {
+                    scope: 'push.delegation',
+                    kind: SpanKind.INTERNAL,
+                    attributes: {
+                      'push.agent.role': 'coder',
+                      'push.taskgraph.node_id': node.id,
+                      'push.provider': lockedProviderForChat,
+                      'push.model': resolvedModelForChat,
                     },
-                    agentsMdRef.current || undefined,
-                    taskSignal,
-                    undefined, // no checkpoint handler for graph tasks
-                    node.acceptanceCriteria,
-                    (state) => { lastCoderStateRef.current = state; },
-                    lockedProviderForChat,
-                    resolvedModelForChat || undefined,
-                    {
-                      deliverable: node.deliverable,
-                      knownContext: enrichedContext,
-                      constraints: node.constraints,
-                      branchContext: branchInfoRef.current?.currentBranch ? {
-                        activeBranch: branchInfoRef.current.currentBranch,
-                        defaultBranch: branchInfoRef.current.defaultBranch || 'main',
-                        protectMain: isMainProtectedRef.current,
-                      } : undefined,
-                      instructionFilename: instructionFilenameRef.current || undefined,
-                      harnessSettings,
-                      verificationPolicy,
-                    },
-                  );
-                  activeTasks.delete(node.id);
-                  setSpanAttributes(span, {
-                    'push.round_count': result.rounds,
-                    'push.card_count': result.cards.length,
+                  }, async (span) => {
+                    const result = await runCoderAgent(
+                      node.task,
+                      currentSandboxId!,
+                      node.files ?? [],
+                      (phase) => {
+                        activeTasks.set(node.id, phase);
+                        const taskLabels = [...activeTasks.entries()].map(([id, p]) => `${id}: ${p}`).join(' | ');
+                        updateAgentStatus(
+                          { active: true, phase: 'Task graph', detail: taskLabels },
+                          { chatId, source: 'coder' },
+                        );
+                      },
+                      agentsMdRef.current || undefined,
+                      taskSignal,
+                      undefined,
+                      effectiveAcceptanceCriteria,
+                      (state) => { lastCoderStateRef.current = state; },
+                      lockedProviderForChat,
+                      resolvedModelForChat || undefined,
+                      {
+                        deliverable: node.deliverable,
+                        knownContext: enrichedContext,
+                        constraints: node.constraints,
+                        branchContext: branchInfoRef.current?.currentBranch ? {
+                          activeBranch: branchInfoRef.current.currentBranch,
+                          defaultBranch: branchInfoRef.current.defaultBranch || 'main',
+                          protectMain: isMainProtectedRef.current,
+                        } : undefined,
+                        instructionFilename: instructionFilenameRef.current || undefined,
+                        harnessSettings: harnessSettings || undefined,
+                        verificationPolicy,
+                      },
+                    );
+                    setSpanAttributes(span, {
+                      'push.round_count': result.rounds,
+                      'push.card_count': result.cards.length,
+                      'push.checkpoint_count': result.checkpoints,
+                      'push.criteria_count': result.criteriaResults?.length,
+                    });
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return result;
                   });
-                  span.setStatus({ code: SpanStatusCode.OK });
-                  return result;
-                });
+                } finally {
+                  activeTasks.delete(node.id);
+                }
 
                 if (coderResult.cards.length > 0) {
                   setConversations((prev) => {
@@ -982,8 +1042,92 @@ export function useAgentDelegation({
                   });
                 }
 
+                let taskDiff: string | null = null;
+                try {
+                  const diffResult = await getSandboxDiff(currentSandboxId!);
+                  taskDiff = diffResult.diff || null;
+                } catch {
+                  // Verification state can still update from summaries/checks.
+                }
+                if (taskDiff) {
+                  updateVerificationStateForChat(chatId, (state) =>
+                    recordVerificationMutation(
+                      state,
+                      {
+                        source: 'coder',
+                        touchedPaths: extractChangedPathsFromDiff(taskDiff),
+                        detail: `Task graph node "${node.id}" mutated the workspace.`,
+                      },
+                    ),
+                  );
+                }
+                updateVerificationStateForChat(chatId, (state) =>
+                  recordVerificationArtifact(
+                    state,
+                    `Coder produced evidence: ${summarizeToolResultPreview(coderResult.summary)}`,
+                  ),
+                );
+                for (const result of coderResult.criteriaResults ?? []) {
+                  const command = criteriaCommandById.get(result.id);
+                  if (!command) continue;
+                  updateVerificationStateForChat(chatId, (state) =>
+                    recordVerificationCommandResult(
+                      state,
+                      command,
+                      {
+                        exitCode: result.exitCode,
+                        detail: `${result.id} exited with code ${result.exitCode}.`,
+                      },
+                    ),
+                  );
+                }
+
+                const status: DelegationStatus = !coderResult.criteriaResults?.length
+                  ? 'inconclusive'
+                  : coderResult.criteriaResults.every((result) => result.passed)
+                    ? 'complete'
+                    : 'incomplete';
+                const checks: DelegationCheck[] = (coderResult.criteriaResults ?? []).map((result) => ({
+                  id: result.id,
+                  passed: result.passed,
+                  exitCode: result.exitCode,
+                  output: result.output,
+                }));
+                const evidence: DelegationEvidence[] = [];
+                if (taskDiff) {
+                  evidence.push({
+                    kind: 'diff',
+                    label: 'Workspace diff',
+                    detail: summarizeToolResultPreview(taskDiff),
+                  });
+                }
+                for (const check of checks) {
+                  evidence.push({
+                    kind: 'test',
+                    label: check.id,
+                    detail: check.output,
+                  });
+                }
+                const missingRequirements = checks
+                  .filter((check) => !check.passed)
+                  .map((check) => `Check failed: ${check.id}`);
+                const coderOutcome: DelegationOutcome = {
+                  agent: 'coder',
+                  status,
+                  summary: coderResult.summary,
+                  evidence,
+                  checks,
+                  gateVerdicts: [],
+                  missingRequirements,
+                  nextRequiredAction: status === 'incomplete' ? 'Fix failing checks' : null,
+                  rounds: coderResult.rounds,
+                  checkpoints: coderResult.checkpoints,
+                  elapsedMs: Date.now() - nodeStartMs,
+                };
+
                 return {
                   summary: coderResult.summary,
+                  delegationOutcome: coderOutcome,
                   rounds: coderResult.rounds,
                 };
               }
@@ -1024,21 +1168,162 @@ export function useAgentDelegation({
               return result;
             });
 
+            let graphAuditResult: EvaluationResult | null = null;
+            if (hasCoderTasks) {
+              const coderNodeStates = [...graphResult.nodeStates.entries()].filter(
+                ([, state]) => state.node.agent === 'coder',
+              );
+
+              if (graphResult.aborted || abortRef.current) {
+                updateVerificationStateForChat(chatId, (state) =>
+                  recordVerificationGateResult(
+                    state,
+                    'auditor',
+                    'inconclusive',
+                    'Task graph cancelled by user.',
+                  ),
+                );
+              } else if (coderNodeStates.length > 0) {
+                const auditorExecutionId = createId();
+                try {
+                  appendRunEvent(chatId, {
+                    type: 'subagent.started',
+                    executionId: auditorExecutionId,
+                    agent: 'auditor',
+                    detail: 'Evaluating task graph output',
+                  });
+                  updateAgentStatus(
+                    { active: true, phase: 'Evaluating task graph output...' },
+                    { chatId, source: 'coder' },
+                  );
+
+                  let evalDiff: string | null = null;
+                  try {
+                    const diffResult = await getSandboxDiff(currentSandboxId!);
+                    evalDiff = diffResult.diff || null;
+                  } catch {
+                    // Evaluation can still proceed without a diff snapshot.
+                  }
+
+                  const combinedTask = coderNodeStates
+                    .map(([id, state]) => `[${id}] ${state.node.task}`)
+                    .join('\n\n');
+                  const combinedSummary = coderNodeStates
+                    .map(([id, state]) => `[${id}] ${state.result ?? state.error ?? ''}`)
+                    .join('\n');
+                  const aggregatedChecks = coderNodeStates.flatMap(([id, state]) =>
+                    (state.delegationOutcome?.checks ?? []).map((check) => ({
+                      id: `${id}:${check.id}`,
+                      passed: check.passed,
+                      output: check.output ?? '',
+                    })),
+                  );
+                  const totalCoderRounds = coderNodeStates.reduce(
+                    (sum, [, state]) => sum + (state.delegationOutcome?.rounds ?? 0),
+                    0,
+                  );
+                  const evalWorkingMemory = coderNodeStates.length <= 1
+                    ? lastCoderStateRef.current
+                    : null;
+                  graphAuditResult = await withActiveSpan('subagent.auditor', {
+                    scope: 'push.delegation',
+                    kind: SpanKind.INTERNAL,
+                    attributes: {
+                      'push.agent.role': 'auditor',
+                      'push.execution_id': auditorExecutionId,
+                      'push.provider': lockedProviderForChat,
+                      'push.model': resolvedModelForChat,
+                      'push.criteria_count': aggregatedChecks.length,
+                    },
+                  }, async (span) => {
+                    const result = await runAuditorEvaluation(
+                      combinedTask,
+                      combinedSummary,
+                      evalWorkingMemory,
+                      evalDiff,
+                      (phase) => updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
+                      {
+                        providerOverride: lockedProviderForChat,
+                        modelOverride: resolvedModelForChat || undefined,
+                        coderRounds: totalCoderRounds,
+                        coderMaxRounds: (harnessSettings?.maxCoderRounds ?? 0) * Math.max(coderNodeStates.length, 1),
+                        criteriaResults: aggregatedChecks.length > 0 ? aggregatedChecks : undefined,
+                        verificationPolicy,
+                      },
+                    );
+                    setSpanAttributes(span, {
+                      'push.auditor.verdict': result.verdict,
+                      'push.auditor.gap_count': result.gaps.length,
+                    });
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return result;
+                  });
+
+                  updateVerificationStateForChat(chatId, (state) =>
+                    recordVerificationGateResult(
+                      state,
+                      'auditor',
+                      graphAuditResult?.verdict === 'complete' ? 'passed' : 'failed',
+                      graphAuditResult?.summary ?? 'Auditor evaluation returned no result.',
+                    ),
+                  );
+                  appendRunEvent(chatId, {
+                    type: 'subagent.completed',
+                    executionId: auditorExecutionId,
+                    agent: 'auditor',
+                    summary: summarizeToolResultPreview(graphAuditResult.summary),
+                  });
+                } catch {
+                  updateVerificationStateForChat(chatId, (state) =>
+                    recordVerificationGateResult(
+                      state,
+                      'auditor',
+                      'inconclusive',
+                      'Auditor evaluation failed.',
+                    ),
+                  );
+                  appendRunEvent(chatId, {
+                    type: 'subagent.failed',
+                    executionId: auditorExecutionId,
+                    agent: 'auditor',
+                    error: 'Evaluation failed.',
+                  });
+                }
+              }
+            }
+
             // Aggregate per-node delegation outcomes into a graph-level outcome
             const graphOutcome: DelegationOutcome = (() => {
               const nodeOutcomes = [...graphResult.nodeStates.values()]
                 .filter((s) => s.delegationOutcome)
                 .map((s) => s.delegationOutcome!);
-
-              const allComplete = graphResult.success;
               const evidence: DelegationEvidence[] = nodeOutcomes.flatMap((o) => o.evidence);
               const checks: DelegationCheck[] = nodeOutcomes.flatMap((o) => o.checks);
               const gateVerdicts: DelegationGateVerdict[] = nodeOutcomes.flatMap((o) => o.gateVerdicts);
-              const missingRequirements = graphResult.success
+              if (graphAuditResult) {
+                gateVerdicts.push({
+                  gate: 'auditor',
+                  outcome: graphAuditResult.verdict === 'complete' ? 'passed' : 'failed',
+                  summary: graphAuditResult.summary,
+                });
+              }
+              const status: DelegationStatus = graphResult.aborted
+                ? 'inconclusive'
+                : graphAuditResult
+                  ? graphAuditResult.verdict === 'complete' ? 'complete' : 'incomplete'
+                  : graphResult.success
+                    ? 'complete'
+                    : 'incomplete';
+              const missingRequirements = graphResult.aborted
                 ? []
-                : [...graphResult.nodeStates.values()]
-                    .filter((s) => s.status === 'failed' || s.status === 'cancelled')
-                    .map((s) => `[${s.node.id}] ${s.error ?? 'failed'}`);
+                : graphAuditResult?.gaps?.length
+                  ? graphAuditResult.gaps
+                  : [...graphResult.nodeStates.values()]
+                      .filter((s) => s.status === 'failed' || s.status === 'cancelled')
+                      .map((s) => `[${s.node.id}] ${s.error ?? 'failed'}`);
+              const evaluationSummary = graphAuditResult
+                ? `\n[Evaluation: ${graphAuditResult.verdict.toUpperCase()}] ${graphAuditResult.summary}`
+                : '';
 
               // Tag the outcome agent based on what actually ran, not a static default
               const ranCoder = [...graphResult.nodeStates.values()].some(
@@ -1047,21 +1332,30 @@ export function useAgentDelegation({
 
               return {
                 agent: ranCoder ? 'coder' as const : 'explorer' as const,
-                status: allComplete ? 'complete' : 'incomplete',
-                summary: graphResult.summary,
+                status,
+                summary: `${graphResult.summary}${evaluationSummary}`,
                 evidence,
                 checks,
                 gateVerdicts,
                 missingRequirements,
-                nextRequiredAction: allComplete ? null : 'Address failed tasks in the graph',
+                nextRequiredAction: graphResult.aborted
+                  ? null
+                  : status === 'incomplete'
+                    ? graphAuditResult?.gaps?.length
+                      ? 'Address gaps identified by auditor'
+                      : 'Address failed tasks in the graph'
+                    : null,
                 rounds: graphResult.totalRounds,
                 checkpoints: 0,
                 elapsedMs: graphResult.wallTimeMs,
               };
             })();
 
+            const evaluationBlock = graphAuditResult
+              ? `\n\n[Evaluation: ${graphAuditResult.verdict.toUpperCase()}] ${graphAuditResult.summary}${graphAuditResult.gaps.length > 0 ? `\n${graphAuditResult.gaps.map((gap) => `- ${gap}`).join('\n')}` : ''}`
+              : '';
             toolExecResult = {
-              text: formatTaskGraphResult(graphResult),
+              text: `${formatTaskGraphResult(graphResult)}${evaluationBlock}`,
               delegationOutcome: graphOutcome,
             };
             appendRunEvent(chatId, {
@@ -1089,12 +1383,6 @@ export function useAgentDelegation({
             error: summarizeToolResultPreview(msg),
           });
         }
-      } finally {
-        emitRunEngineEvent({
-          type: 'DELEGATION_COMPLETED',
-          timestamp: Date.now(),
-          agent: 'task_graph',
-        });
       }
     }
 

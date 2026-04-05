@@ -239,6 +239,13 @@ export interface TaskGraphExecutorOptions {
   onProgress?: (event: TaskGraphProgressEvent) => void;
 }
 
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === 'AbortError')
+    || (typeof err === 'object' && err !== null && 'name' in err && err.name === 'AbortError')
+  );
+}
+
 /**
  * Execute a validated task graph.
  *
@@ -259,6 +266,7 @@ export async function executeTaskGraph(
   const { maxParallelExplorers = 3, signal, onProgress } = options;
   const startMs = Date.now();
   let totalRounds = 0;
+  let aborted = Boolean(signal?.aborted);
 
   // Initialize state map
   const states = new Map<string, TaskGraphNodeState>();
@@ -281,6 +289,10 @@ export async function executeTaskGraph(
     const promise = (async () => {
       try {
         const result = await executor(state.node, enrichedContext, signal);
+        if (state.status === 'cancelled' || signal?.aborted) {
+          state.elapsedMs ??= Date.now() - taskStartMs;
+          return id;
+        }
         state.status = 'completed';
         state.result = result.summary;
         state.delegationOutcome = result.delegationOutcome;
@@ -288,6 +300,18 @@ export async function executeTaskGraph(
         totalRounds += result.rounds;
         onProgress?.({ type: 'task_completed', taskId: id, detail: result.summary });
       } catch (err) {
+        if (state.status === 'cancelled') {
+          state.elapsedMs ??= Date.now() - taskStartMs;
+          return id;
+        }
+        if (signal?.aborted || isAbortError(err)) {
+          aborted = true;
+          state.status = 'cancelled';
+          state.error = 'Cancelled by user.';
+          state.elapsedMs = Date.now() - taskStartMs;
+          onProgress?.({ type: 'task_cancelled', taskId: id, detail: state.error });
+          return id;
+        }
         state.status = 'failed';
         state.error = err instanceof Error ? err.message : String(err);
         state.elapsedMs = Date.now() - taskStartMs;
@@ -317,10 +341,11 @@ export async function executeTaskGraph(
   // Main dispatch loop — dispatch what we can, then wait for any completion
   while (true) {
     if (signal?.aborted) {
+      aborted = true;
       for (const [, state] of states) {
         if (state.status === 'pending' || state.status === 'ready' || state.status === 'running') {
           state.status = 'cancelled';
-          state.error = 'Graph execution aborted.';
+          state.error = 'Cancelled by user.';
         }
       }
       break;
@@ -386,10 +411,18 @@ export async function executeTaskGraph(
     }
   }
 
-  onProgress?.({ type: 'graph_complete', detail: allSuccess ? 'All tasks completed.' : 'Some tasks failed.' });
+  onProgress?.({
+    type: 'graph_complete',
+    detail: aborted
+      ? 'Task graph cancelled by user.'
+      : allSuccess
+        ? 'All tasks completed.'
+        : 'Some tasks failed.',
+  });
 
   return {
     success: allSuccess,
+    aborted,
     nodeStates: states,
     summary: summaryParts.join('\n'),
     wallTimeMs: Date.now() - startMs,
@@ -406,7 +439,11 @@ export async function executeTaskGraph(
  */
 export function formatTaskGraphResult(result: TaskGraphResult): string {
   const lines: string[] = ['[Tool Result — plan_tasks]'];
-  const statusLine = result.success ? 'All tasks completed successfully.' : 'Some tasks failed or were cancelled.';
+  const statusLine = result.aborted
+    ? 'Task graph execution cancelled by user.'
+    : result.success
+      ? 'All tasks completed successfully.'
+      : 'Some tasks failed or were cancelled.';
   lines.push(statusLine);
   lines.push('');
 

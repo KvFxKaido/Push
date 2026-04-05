@@ -301,10 +301,43 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAnyToolCall(text);
     expect(detected?.source).toBe('delegate');
-    if (detected?.source === 'delegate') {
+    if (detected?.source === 'delegate' && detected.call.tool === 'delegate_explorer') {
       expect(detected.call.tool).toBe('delegate_explorer');
       expect(detected.call.args.task).toBe('trace auth flow');
       expect(detected.call.args.files).toEqual(['src/auth.ts']);
+    }
+  });
+
+  it('detects plan_tasks JSON blocks as task graph delegation tool calls', () => {
+    const text = '```json\n{"tool":"plan_tasks","args":{"tasks":[{"id":"explore-auth","agent":"explorer","task":" trace auth flow ","files":[" src/auth.ts "],"dependsOn":[" "]},{"id":"fix-auth","agent":"coder","task":" fix auth ","dependsOn":["explore-auth"],"deliverable":" restore passing auth tests "}]}}\n```';
+
+    const detected = detectAnyToolCall(text);
+    expect(detected?.source).toBe('delegate');
+    if (detected?.source === 'delegate' && detected.call.tool === 'plan_tasks') {
+      expect(detected.call.args.tasks).toEqual([
+        {
+          id: 'explore-auth',
+          agent: 'explorer',
+          task: 'trace auth flow',
+          files: ['src/auth.ts'],
+          dependsOn: undefined,
+          deliverable: undefined,
+          acceptanceCriteria: undefined,
+          knownContext: undefined,
+          constraints: undefined,
+        },
+        {
+          id: 'fix-auth',
+          agent: 'coder',
+          task: 'fix auth',
+          files: undefined,
+          dependsOn: ['explore-auth'],
+          deliverable: 'restore passing auth tests',
+          acceptanceCriteria: undefined,
+          knownContext: undefined,
+          constraints: undefined,
+        },
+      ]);
     }
   });
 

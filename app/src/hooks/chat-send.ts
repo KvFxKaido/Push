@@ -96,6 +96,20 @@ function shouldEmitPeriodicPulse(round: number): boolean {
   return (round + 1) % TOOL_RESULT_PULSE_INTERVAL === 0;
 }
 
+function delegateCallNeedsSandbox(call: AnyToolCall): boolean {
+  if (call.source !== 'delegate') return false;
+  if (call.call.tool === 'delegate_coder') return true;
+  if (call.call.tool !== 'plan_tasks') return false;
+  return call.call.args.tasks.some((task) => task.agent === 'coder');
+}
+
+function getDelegateCompletionAgent(call: AnyToolCall): 'explorer' | 'coder' | 'task_graph' {
+  if (call.source !== 'delegate') return 'coder';
+  if (call.call.tool === 'delegate_explorer') return 'explorer';
+  if (call.call.tool === 'plan_tasks') return 'task_graph';
+  return 'coder';
+}
+
 function extractChangedPathFromStatusLine(line: string): string | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
@@ -730,7 +744,7 @@ export async function processAssistantTurn(
 
       if (
         (mutCall.source === 'sandbox' ||
-          (mutCall.source === 'delegate' && mutCall.call.tool === 'delegate_coder')) &&
+          delegateCallNeedsSandbox(mutCall)) &&
         !sandboxIdRef.current &&
         ensureSandboxRef.current
       ) {
@@ -754,7 +768,7 @@ export async function processAssistantTurn(
         emitRunEngineEvent({
           type: 'DELEGATION_COMPLETED',
           timestamp: Date.now(),
-          agent: mutCall.call.tool === 'delegate_explorer' ? 'explorer' : 'coder',
+          agent: getDelegateCompletionAgent(mutCall),
         });
 
         const mutCards =
@@ -1057,12 +1071,12 @@ export async function processAssistantTurn(
     }
   }
 
-  // Lazy auto-spin: create sandbox on demand for sandbox/coder delegate tools
+  // Lazy auto-spin: create sandbox on demand for sandbox calls and any
+  // delegation that can execute Coder work (direct or via task graph).
   if (
     !toolExecResult
     && (
-    (toolCall.source === 'sandbox' ||
-      (toolCall.source === 'delegate' && toolCall.call.tool === 'delegate_coder')) &&
+    (toolCall.source === 'sandbox' || delegateCallNeedsSandbox(toolCall)) &&
     !sandboxIdRef.current
     )
   ) {
@@ -1117,7 +1131,7 @@ export async function processAssistantTurn(
     emitRunEngineEvent({
       type: 'DELEGATION_COMPLETED',
       timestamp: Date.now(),
-      agent: toolCall.call.tool === 'delegate_explorer' ? 'explorer' : 'coder',
+      agent: getDelegateCompletionAgent(toolCall),
     });
   } else {
     const singleCtx: ToolExecRunContext = {

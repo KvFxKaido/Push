@@ -1276,6 +1276,8 @@ export interface TaskGraphProgressEvent {
 export interface TaskGraphResult {
   /** Whether all tasks completed successfully. */
   success: boolean;
+  /** Whether execution was cancelled by user abort. */
+  aborted: boolean;
   /** Per-node results keyed by task id. */
   nodeStates: Map<string, TaskGraphNodeState>;
   /** Combined summary of all completed tasks. */

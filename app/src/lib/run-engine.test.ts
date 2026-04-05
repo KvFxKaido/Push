@@ -459,6 +459,19 @@ describe('run-engine', () => {
     expect(state.phase).toBe('executing_tools');
   });
 
+  it('task graph delegation maps to executing_task_graph and back to executing_tools', () => {
+    const state = run([
+      makeRunStarted(),
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
+      { type: 'TOOLS_STARTED', timestamp: t() },
+      { type: 'DELEGATION_STARTED', timestamp: t(), agent: 'task_graph' },
+      { type: 'DELEGATION_COMPLETED', timestamp: t(), agent: 'task_graph' },
+    ]);
+
+    expect(state.phase).toBe('executing_tools');
+  });
+
   it.each([
     ['planner'],
     ['auditor'],
@@ -505,6 +518,7 @@ describe('run-engine', () => {
       'executing_tools',
       'delegating_coder',
       'delegating_explorer',
+      'executing_task_graph',
     ];
 
     for (const phase of inactive) {
