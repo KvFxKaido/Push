@@ -1,6 +1,6 @@
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { VerificationPolicy } from '@/lib/verification-policy';
-import type { AcceptanceCriterion, DelegationOutcome } from '@push/lib/runtime-contract';
+import type { AcceptanceCriterion, DelegationOutcome, LoopPhase, RunEvent } from '@push/lib/runtime-contract';
 export type {
   AcceptanceCriterion,
   DelegationCheck,
@@ -8,6 +8,7 @@ export type {
   DelegationGateVerdict,
   DelegationOutcome,
   DelegationStatus,
+  LoopPhase,
   MemoryFreshness,
   MemoryQuery,
   MemoryRecord,
@@ -16,6 +17,9 @@ export type {
   MemoryScope,
   MemoryScoreBreakdown,
   MemorySource,
+  RunEvent,
+  RunEventInput,
+  RunEventSubagent,
   ScoredMemoryRecord,
   TaskGraphArgs,
   TaskGraphMemoryEntry,
@@ -628,128 +632,6 @@ export interface AgentStatusEvent {
   detail?: string;
 }
 
-export type RunEventSubagent = 'planner' | 'coder' | 'explorer' | 'auditor' | 'task_graph';
-
-export type RunEventInput =
-  | {
-      type: 'assistant.turn_start';
-      round: number;
-    }
-  | {
-      type: 'assistant.turn_end';
-      round: number;
-      outcome: 'completed' | 'continued' | 'error' | 'aborted' | 'steered';
-    }
-  | {
-      type: 'tool.execution_start';
-      round: number;
-      executionId: string;
-      toolName: string;
-      toolSource: string;
-    }
-  | {
-      type: 'tool.execution_complete';
-      round: number;
-      executionId: string;
-      toolName: string;
-      toolSource: string;
-      durationMs: number;
-      isError: boolean;
-      preview: string;
-    }
-  | {
-      type: 'tool.call_malformed';
-      round: number;
-      reason: string;
-      toolName?: string;
-      preview: string;
-    }
-  | {
-      type: 'subagent.started';
-      executionId: string;
-      agent: RunEventSubagent;
-      detail?: string;
-    }
-  | {
-      type: 'subagent.completed';
-      executionId: string;
-      agent: RunEventSubagent;
-      summary: string;
-      /** Structured delegation outcome — present for coder/explorer delegations. */
-      delegationOutcome?: DelegationOutcome;
-    }
-  | {
-      type: 'subagent.failed';
-      executionId: string;
-      agent: RunEventSubagent;
-      error: string;
-    }
-  | {
-      type: 'task_graph.task_ready';
-      executionId: string;
-      taskId: string;
-      agent: 'explorer' | 'coder';
-      detail?: string;
-    }
-  | {
-      type: 'task_graph.task_started';
-      executionId: string;
-      taskId: string;
-      agent: 'explorer' | 'coder';
-      detail?: string;
-    }
-  | {
-      type: 'task_graph.task_completed';
-      executionId: string;
-      taskId: string;
-      agent: 'explorer' | 'coder';
-      summary: string;
-      elapsedMs?: number;
-    }
-  | {
-      type: 'task_graph.task_failed';
-      executionId: string;
-      taskId: string;
-      agent: 'explorer' | 'coder';
-      error: string;
-      elapsedMs?: number;
-    }
-  | {
-      type: 'task_graph.task_cancelled';
-      executionId: string;
-      taskId: string;
-      agent: 'explorer' | 'coder';
-      reason: string;
-      elapsedMs?: number;
-    }
-  | {
-      type: 'task_graph.graph_completed';
-      executionId: string;
-      summary: string;
-      success: boolean;
-      aborted: boolean;
-      nodeCount: number;
-      totalRounds: number;
-      wallTimeMs: number;
-    }
-  | {
-      type: 'user.follow_up_queued';
-      round: number;
-      position: number;
-      preview: string;
-    }
-  | {
-      type: 'user.follow_up_steered';
-      round: number;
-      preview: string;
-      replacedPending: boolean;
-    };
-
-export type RunEvent = RunEventInput & {
-  id: string;
-  timestamp: number;
-};
-
 export interface QueuedFollowUpOptions {
   provider?: AIProviderType | null;
   model?: string | null;
@@ -975,8 +857,6 @@ export interface AskUserCardData {
 }
 
 // --- Resumable Sessions ---
-
-export type LoopPhase = 'streaming_llm' | 'executing_tools' | 'delegating_coder' | 'delegating_explorer' | 'executing_task_graph';
 
 // ---------------------------------------------------------------------------
 // Tool hooks — pre/post execution interception

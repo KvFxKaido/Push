@@ -20,26 +20,17 @@
  * sandbox calls, delegation execution) stay in thin adapters in hooks/.
  */
 
-import type { LoopPhase, QueuedFollowUp } from '@/types';
+import type { QueuedFollowUp } from '@/types';
+import {
+  isLoopPhase,
+  isTerminalRunEnginePhase,
+  phaseForDelegationAgent,
+  type RunEngineEvent as SharedRunEngineEvent,
+  type RunEnginePhase,
+} from '@push/lib/run-engine-contract';
 
-// ---------------------------------------------------------------------------
-// Phase
-// ---------------------------------------------------------------------------
-
-/**
- * All phases a run can be in, including lifecycle bookends not present in
- * LoopPhase (which only covers the active streaming phases).
- *
- * Using LoopPhase inline keeps the active phases in sync automatically when
- * new streaming phases are added to the harness.
- */
-export type RunEnginePhase =
-  | 'idle'             // no run active
-  | 'starting'         // loop entered, sandbox prewarm and tab lock in progress
-  | LoopPhase          // streaming_llm | executing_tools | delegating_coder | delegating_explorer | executing_task_graph
-  | 'completed'        // loop exited normally (loopCompletedNormally = true)
-  | 'aborted'          // loop cancelled by user
-  | 'failed';          // error or tab lock denied
+export type RunEngineEvent = SharedRunEngineEvent<QueuedFollowUp>;
+export type { RunEnginePhase } from '@push/lib/run-engine-contract';
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled RunEngineEvent: ${JSON.stringify(value)}`);
@@ -138,71 +129,6 @@ export const IDLE_RUN_STATE: RunEngineState = {
 };
 
 // ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
-
-/**
- * Every state transition the sendMessage loop can take, expressed as a
- * discriminated union of typed event objects.
- *
- * Design rules:
- *   - Every event carries `timestamp: number` for replay determinism.
- *   - Events describe what just happened (past tense), not what should happen.
- *   - Each event is atomic: one logical transition per event object.
- *   - The agent union in DELEGATION_* mirrors RunEventSubagent in @/types;
- *     it is kept local here to avoid an import cycle with chat-run-events.ts.
- */
-export type RunEngineEvent =
-  // --- Startup ---
-  | {
-      type: 'RUN_STARTED';
-      timestamp: number;
-      runId: string;
-      chatId: string;
-      provider: string;
-      model: string;
-      baseMessageCount: number;
-    }
-  | { type: 'TAB_LOCK_ACQUIRED'; timestamp: number; tabLockId: string }
-  | { type: 'TAB_LOCK_DENIED';   timestamp: number }
-
-  // --- Per-round lifecycle ---
-  | { type: 'ROUND_STARTED';       timestamp: number; round: number }
-  | { type: 'STREAMING_COMPLETED'; timestamp: number; accumulated: string; thinking: string }
-  | { type: 'STEER_CONSUMED';      timestamp: number }
-  | { type: 'TOOLS_STARTED';       timestamp: number }
-  | {
-      type: 'DELEGATION_STARTED';
-      timestamp: number;
-      /** planner and auditor map to 'delegating_coder' phase alongside coder itself. */
-      agent: 'explorer' | 'coder' | 'planner' | 'auditor' | 'task_graph';
-    }
-  | {
-      type: 'DELEGATION_COMPLETED';
-      timestamp: number;
-      agent: 'explorer' | 'coder' | 'planner' | 'auditor' | 'task_graph';
-    }
-  | { type: 'TURN_STEERED';   timestamp: number }
-  | { type: 'TURN_CONTINUED'; timestamp: number }
-
-  // --- Loop exit (terminal) ---
-  | { type: 'LOOP_COMPLETED'; timestamp: number }
-  | { type: 'LOOP_ABORTED';   timestamp: number }
-  | { type: 'LOOP_FAILED';    timestamp: number; reason: string }
-
-  // --- Queue mutations ---
-  | { type: 'FOLLOW_UP_ENQUEUED';      timestamp: number; followUp: QueuedFollowUp }
-  | { type: 'FOLLOW_UP_DEQUEUED';      timestamp: number }
-  | { type: 'FOLLOW_UP_QUEUE_CLEARED'; timestamp: number }
-
-  // --- Steer mutations ---
-  | { type: 'STEER_SET';     timestamp: number; preview: string }
-  | { type: 'STEER_CLEARED'; timestamp: number }
-
-  // --- Checkpoint content (for run-journal sync in Track B) ---
-  | { type: 'ACCUMULATED_UPDATED'; timestamp: number; text: string; thinking: string };
-
-// ---------------------------------------------------------------------------
 // Reducer
 // ---------------------------------------------------------------------------
 
@@ -293,10 +219,7 @@ export function runEngineReducer(
       return { ...state, phase: 'executing_tools', lastUpdatedAt: now };
 
     case 'DELEGATION_STARTED': {
-      const delegationPhase: RunEnginePhase =
-        event.agent === 'task_graph' ? 'executing_task_graph'
-          : event.agent === 'explorer' ? 'delegating_explorer'
-          : 'delegating_coder';
+      const delegationPhase = phaseForDelegationAgent(event.agent);
       return { ...state, phase: delegationPhase, lastUpdatedAt: now };
     }
 
@@ -434,17 +357,8 @@ export function collectRunEngineParityIssues(
 ): string[] {
   const issues: string[] = [];
   const phase = state.phase;
-  const activeLoopPhase =
-    phase === 'streaming_llm'
-    || phase === 'executing_tools'
-    || phase === 'delegating_coder'
-    || phase === 'delegating_explorer'
-    || phase === 'executing_task_graph';
-  const terminalPhase =
-    phase === 'idle'
-    || phase === 'completed'
-    || phase === 'aborted'
-    || phase === 'failed';
+  const activeLoopPhase = isLoopPhase(phase);
+  const terminalPhase = isTerminalRunEnginePhase(phase);
 
   if (phase === 'starting' || activeLoopPhase) {
     if (!observed.loopActive) {

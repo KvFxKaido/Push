@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildDelegationBrief } from '@push/lib/delegation-brief';
 import {
   buildAuditorContextBlock,
   buildCoderDelegationBrief,
@@ -38,6 +39,31 @@ describe('buildAuditorContextBlock', () => {
 });
 
 describe('delegation brief builders', () => {
+  it('builds the shared delegation brief contract with acceptance checks', () => {
+    const block = buildDelegationBrief({
+      task: 'Implement the retry flow',
+      files: ['app/src/auth.ts'],
+      intent: 'Fix the login recovery bug',
+      deliverable: 'A passing retry flow with updated tests',
+      knownContext: ['Explorer found the refresh trigger in app/src/auth.ts:84'],
+      constraints: ['Keep the existing public API unchanged'],
+      acceptanceCriteria: [
+        {
+          id: 'tests',
+          check: 'npm test -- auth',
+          description: 'Auth tests pass',
+        },
+      ],
+    });
+
+    expect(block).toContain('Task: Implement the retry flow');
+    expect(block).toContain('Deliverable: A passing retry flow with updated tests');
+    expect(block).toContain('Known context:');
+    expect(block).toContain('Explorer found the refresh trigger');
+    expect(block).toContain('Acceptance checks:');
+    expect(block).toContain('tests: Auth tests pass');
+  });
+
   it('builds a coder brief with deliverable, known context, and acceptance checks', () => {
     const block = buildCoderDelegationBrief({
       task: 'Implement the retry flow',

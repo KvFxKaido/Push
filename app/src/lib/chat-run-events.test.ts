@@ -5,7 +5,7 @@ import {
   shouldPersistRunEvent,
   trimRunEvents,
   MAX_RUN_EVENTS_PER_CHAT,
-} from './chat-run-events';
+} from '@push/lib/run-events';
 
 function makeRunEvent(
   overrides: Partial<Extract<RunEvent, { type: 'tool.execution_complete' }>> = {},

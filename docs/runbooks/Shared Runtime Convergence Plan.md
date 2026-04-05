@@ -50,8 +50,8 @@ Reduce web/CLI cognitive drift by moving agent-runtime semantics into shared roo
 - [x] `app/src/types/index.ts` now re-exports the same runtime-contract slice so existing app imports continue to work.
 - [x] Phase 1 complete: the canonical task-graph executor now lives in `lib/task-graph.ts`, with `app/src/lib/task-graph.ts` kept as a compatibility wrapper.
 - [x] Phase 2 complete: the canonical typed-memory runtime now lives in shared `lib/context-memory*.ts`, with the corresponding `app/src/lib/context-memory*.ts` modules kept as compatibility wrappers.
-- [ ] `role-context.ts` remains app-local for now because its envelope types still depend on broader app types (`DelegationEnvelope`, `ExplorerDelegationEnvelope`, provider/model fields, branch context).
-- [ ] run-engine event/phase extraction remains open.
+- [x] Phase 3 narrowed and complete for Coder/Explorer: the shared delegation-brief formatter now lives in `lib/delegation-brief.ts`, while `app/src/lib/role-context.ts` remains the app-local wrapper for envelope-specific and Reviewer/Auditor context logic.
+- [x] Phase 4 complete: the canonical run-event vocabulary now lives in shared `lib/runtime-contract.ts`, `lib/run-events.ts`, and `lib/run-engine-contract.ts`; `app/src/lib/chat-run-events.ts` is now a compatibility wrapper, and `app/src/lib/run-engine.ts` consumes the shared phase/event contract while keeping reducer/state logic local.
 
 ## Non-goals
 
@@ -100,19 +100,16 @@ The repo already has a real shared-runtime base in root `lib/`:
 - `lib/context-memory-retrieval.ts`
 - `lib/context-memory-invalidation.ts`
 - `lib/context-memory-packing.ts`
+- `lib/delegation-brief.ts`
+- `lib/run-events.ts`
+- `lib/run-engine-contract.ts`
 
 This is the right pattern: shared semantics in `lib/`, shell-specific coordination in `app/` and `cli/`.
 
 ### Still app-local but strong shared-runtime candidates
 
-- `app/src/lib/task-graph.ts`
-- `app/src/lib/context-memory.ts`
-- `app/src/lib/context-memory-store.ts`
-- `app/src/lib/context-memory-retrieval.ts`
-- `app/src/lib/context-memory-invalidation.ts`
-- `app/src/lib/context-memory-packing.ts`
-- `app/src/lib/role-context.ts`
-- selected pure pieces of `app/src/lib/run-engine.ts`
+- `app/src/lib/role-context.ts` reviewer/auditor context blocks and envelope-local wrappers
+- `app/src/lib/run-engine.ts` reducer/state model and app-local queue integration
 
 ### Likely to remain shell-local
 
