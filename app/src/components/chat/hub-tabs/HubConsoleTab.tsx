@@ -51,6 +51,10 @@ function getSubagentLabel(agent: RunEventSubagent): string {
   }
 }
 
+function getTaskGraphTaskLabel(agent: 'explorer' | 'coder', taskId: string): string {
+  return `Task Graph · ${agent === 'explorer' ? 'Explorer' : 'Coder'} · ${taskId}`;
+}
+
 export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTabProps) {
   const [copied, setCopied] = useState(false);
 
@@ -145,6 +149,54 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
             type: 'malformed',
             content: `${getSubagentLabel(event.agent)} failed`,
             detail: event.error,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'task_graph.task_ready':
+          items.push({
+            type: 'lifecycle',
+            content: `${getTaskGraphTaskLabel(event.agent, event.taskId)} ready`,
+            detail: event.detail,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'task_graph.task_started':
+          items.push({
+            type: 'lifecycle',
+            content: `${getTaskGraphTaskLabel(event.agent, event.taskId)} started`,
+            detail: event.detail,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'task_graph.task_completed':
+          items.push({
+            type: 'lifecycle',
+            content: `${getTaskGraphTaskLabel(event.agent, event.taskId)} completed`,
+            detail: `${event.summary}${event.elapsedMs !== undefined ? ` (${event.elapsedMs}ms)` : ''}`,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'task_graph.task_failed':
+          items.push({
+            type: 'malformed',
+            content: `${getTaskGraphTaskLabel(event.agent, event.taskId)} failed`,
+            detail: `${event.error}${event.elapsedMs !== undefined ? ` (${event.elapsedMs}ms)` : ''}`,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'task_graph.task_cancelled':
+          items.push({
+            type: 'lifecycle',
+            content: `${getTaskGraphTaskLabel(event.agent, event.taskId)} cancelled`,
+            detail: `${event.reason}${event.elapsedMs !== undefined ? ` (${event.elapsedMs}ms)` : ''}`,
+            timestamp: event.timestamp,
+          });
+          break;
+        case 'task_graph.graph_completed':
+          items.push({
+            type: 'lifecycle',
+            content: `Task Graph ${event.aborted ? 'cancelled' : event.success ? 'completed' : 'finished with issues'}`,
+            detail: `${event.summary} (${event.nodeCount} tasks, ${event.totalRounds} rounds, ${event.wallTimeMs}ms)`,
             timestamp: event.timestamp,
           });
           break;

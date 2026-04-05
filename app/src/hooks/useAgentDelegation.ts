@@ -868,6 +868,7 @@ export function useAgentDelegation({
             const verificationCriteria = hasCoderTasks
               ? buildVerificationAcceptanceCriteria(verificationPolicy, 'always')
               : [];
+            const graphNodeById = new Map(graphArgs.tasks.map((task) => [task.id, task] as const));
 
             // Track which tasks are active for aggregated status
             const activeTasks = new Map<string, string>();
@@ -1150,11 +1151,72 @@ export function useAgentDelegation({
                   maxParallelExplorers: 3,
                   signal: abortControllerRef.current?.signal,
                   onProgress: (event) => {
-                    if (event.type === 'task_started') {
-                      updateAgentStatus(
-                        { active: true, phase: `Task graph: starting ${event.taskId}`, detail: event.detail },
-                        { chatId, source: 'coder' },
-                      );
+                    const node = event.taskId ? graphNodeById.get(event.taskId) : undefined;
+                    switch (event.type) {
+                      case 'task_ready':
+                        if (event.taskId && node) {
+                          appendRunEvent(chatId, {
+                            type: 'task_graph.task_ready',
+                            executionId,
+                            taskId: event.taskId,
+                            agent: node.agent,
+                            detail: event.detail,
+                          });
+                        }
+                        break;
+                      case 'task_started':
+                        updateAgentStatus(
+                          { active: true, phase: `Task graph: starting ${event.taskId}`, detail: event.detail },
+                          { chatId, source: 'coder' },
+                        );
+                        if (event.taskId && node) {
+                          appendRunEvent(chatId, {
+                            type: 'task_graph.task_started',
+                            executionId,
+                            taskId: event.taskId,
+                            agent: node.agent,
+                            detail: event.detail,
+                          });
+                        }
+                        break;
+                      case 'task_completed':
+                        if (event.taskId && node) {
+                          appendRunEvent(chatId, {
+                            type: 'task_graph.task_completed',
+                            executionId,
+                            taskId: event.taskId,
+                            agent: node.agent,
+                            summary: summarizeToolResultPreview(event.detail ?? ''),
+                            elapsedMs: event.elapsedMs,
+                          });
+                        }
+                        break;
+                      case 'task_failed':
+                        if (event.taskId && node) {
+                          appendRunEvent(chatId, {
+                            type: 'task_graph.task_failed',
+                            executionId,
+                            taskId: event.taskId,
+                            agent: node.agent,
+                            error: summarizeToolResultPreview(event.detail ?? 'Task failed.'),
+                            elapsedMs: event.elapsedMs,
+                          });
+                        }
+                        break;
+                      case 'task_cancelled':
+                        if (event.taskId && node) {
+                          appendRunEvent(chatId, {
+                            type: 'task_graph.task_cancelled',
+                            executionId,
+                            taskId: event.taskId,
+                            agent: node.agent,
+                            reason: summarizeToolResultPreview(event.detail ?? 'Task cancelled.'),
+                            elapsedMs: event.elapsedMs,
+                          });
+                        }
+                        break;
+                      case 'graph_complete':
+                        break;
                     }
                   },
                 },
@@ -1166,6 +1228,20 @@ export function useAgentDelegation({
               });
               span.setStatus({ code: SpanStatusCode.OK });
               return result;
+            });
+            appendRunEvent(chatId, {
+              type: 'task_graph.graph_completed',
+              executionId,
+              summary: graphResult.aborted
+                ? 'Task graph cancelled by user.'
+                : graphResult.success
+                  ? 'All tasks completed successfully.'
+                  : summarizeToolResultPreview(graphResult.summary),
+              success: graphResult.success,
+              aborted: graphResult.aborted,
+              nodeCount: graphResult.nodeStates.size,
+              totalRounds: graphResult.totalRounds,
+              wallTimeMs: graphResult.wallTimeMs,
             });
 
             let graphAuditResult: EvaluationResult | null = null;

@@ -385,7 +385,7 @@ export async function executeTaskGraph(
         state.memoryEntry = buildTaskGraphMemoryEntry(state) ?? undefined;
         state.elapsedMs = Date.now() - taskStartMs;
         totalRounds += result.rounds;
-        onProgress?.({ type: 'task_completed', taskId: id, detail: result.summary });
+        onProgress?.({ type: 'task_completed', taskId: id, detail: result.summary, elapsedMs: state.elapsedMs });
       } catch (err) {
         if (state.status === 'cancelled') {
           state.elapsedMs ??= Date.now() - taskStartMs;
@@ -396,13 +396,13 @@ export async function executeTaskGraph(
           state.status = 'cancelled';
           state.error = 'Cancelled by user.';
           state.elapsedMs = Date.now() - taskStartMs;
-          onProgress?.({ type: 'task_cancelled', taskId: id, detail: state.error });
+          onProgress?.({ type: 'task_cancelled', taskId: id, detail: state.error, elapsedMs: state.elapsedMs });
           return id;
         }
         state.status = 'failed';
         state.error = err instanceof Error ? err.message : String(err);
         state.elapsedMs = Date.now() - taskStartMs;
-        onProgress?.({ type: 'task_failed', taskId: id, detail: state.error });
+        onProgress?.({ type: 'task_failed', taskId: id, detail: state.error, elapsedMs: state.elapsedMs });
 
         // Cascade failure to dependents
         const cancelled = cascadeFailure(id, states);

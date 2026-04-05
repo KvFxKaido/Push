@@ -671,6 +671,54 @@ export type RunEventInput =
       error: string;
     }
   | {
+      type: 'task_graph.task_ready';
+      executionId: string;
+      taskId: string;
+      agent: 'explorer' | 'coder';
+      detail?: string;
+    }
+  | {
+      type: 'task_graph.task_started';
+      executionId: string;
+      taskId: string;
+      agent: 'explorer' | 'coder';
+      detail?: string;
+    }
+  | {
+      type: 'task_graph.task_completed';
+      executionId: string;
+      taskId: string;
+      agent: 'explorer' | 'coder';
+      summary: string;
+      elapsedMs?: number;
+    }
+  | {
+      type: 'task_graph.task_failed';
+      executionId: string;
+      taskId: string;
+      agent: 'explorer' | 'coder';
+      error: string;
+      elapsedMs?: number;
+    }
+  | {
+      type: 'task_graph.task_cancelled';
+      executionId: string;
+      taskId: string;
+      agent: 'explorer' | 'coder';
+      reason: string;
+      elapsedMs?: number;
+    }
+  | {
+      type: 'task_graph.graph_completed';
+      executionId: string;
+      summary: string;
+      success: boolean;
+      aborted: boolean;
+      nodeCount: number;
+      totalRounds: number;
+      wallTimeMs: number;
+    }
+  | {
       type: 'user.follow_up_queued';
       round: number;
       position: number;
@@ -1290,6 +1338,7 @@ export interface TaskGraphProgressEvent {
   type: 'task_ready' | 'task_started' | 'task_completed' | 'task_failed' | 'task_cancelled' | 'graph_complete';
   taskId?: string;
   detail?: string;
+  elapsedMs?: number;
 }
 
 /** Final result of a task graph execution. */

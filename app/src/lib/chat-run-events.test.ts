@@ -53,6 +53,20 @@ describe('chat-run-events', () => {
         executionId: 'sub-1',
         agent: 'coder',
       },
+      {
+        type: 'task_graph.task_ready',
+        executionId: 'graph-1',
+        taskId: 'explore-auth',
+        agent: 'explorer',
+        detail: 'Trace auth flow',
+      },
+      {
+        type: 'task_graph.task_started',
+        executionId: 'graph-1',
+        taskId: 'fix-auth',
+        agent: 'coder',
+        detail: 'Fix auth flow',
+      },
     ];
 
     liveOnlyEvents.forEach((event) => {
@@ -63,6 +77,13 @@ describe('chat-run-events', () => {
       type: 'assistant.turn_end',
       round: 0,
       outcome: 'completed',
+    })).toBe(true);
+    expect(shouldPersistRunEvent({
+      type: 'task_graph.task_completed',
+      executionId: 'graph-1',
+      taskId: 'fix-auth',
+      agent: 'coder',
+      summary: 'Patched auth flow.',
     })).toBe(true);
   });
 

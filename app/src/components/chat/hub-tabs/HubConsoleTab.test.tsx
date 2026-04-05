@@ -54,14 +54,36 @@ describe('HubConsoleTab', () => {
           {
             id: 'event-5',
             timestamp: 6,
+            type: 'task_graph.task_completed',
+            executionId: 'graph-1',
+            taskId: 'fix-auth',
+            agent: 'coder',
+            summary: 'Applied auth fix.',
+            elapsedMs: 18,
+          },
+          {
+            id: 'event-6',
+            timestamp: 7,
+            type: 'task_graph.graph_completed',
+            executionId: 'graph-1',
+            summary: 'All tasks completed successfully.',
+            success: true,
+            aborted: false,
+            nodeCount: 2,
+            totalRounds: 3,
+            wallTimeMs: 42,
+          },
+          {
+            id: 'event-7',
+            timestamp: 8,
             type: 'user.follow_up_steered',
             round: 0,
             preview: 'Skip that and inspect the failing test instead.',
             replacedPending: false,
           },
           {
-            id: 'event-6',
-            timestamp: 7,
+            id: 'event-8',
+            timestamp: 9,
             type: 'assistant.turn_end',
             round: 0,
             outcome: 'steered',
@@ -74,6 +96,10 @@ describe('HubConsoleTab', () => {
     expect(html).toContain('&gt; Read file');
     expect(html).toContain('Loaded app.ts (12ms)');
     expect(html).toContain('Coder completed');
+    expect(html).toContain('Task Graph · Coder · fix-auth completed');
+    expect(html).toContain('Applied auth fix. (18ms)');
+    expect(html).toContain('Task Graph completed');
+    expect(html).toContain('All tasks completed successfully. (2 tasks, 3 rounds, 42ms)');
     expect(html).toContain('Steering request captured');
     expect(html).toContain('Turn 1 steered');
     expect(html).toContain('Thinking...');
