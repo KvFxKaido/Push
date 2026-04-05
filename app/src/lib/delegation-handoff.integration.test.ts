@@ -211,7 +211,7 @@ describe('delegation handoff integration', () => {
     const taskBrief = messages[0]?.content ?? '';
 
     expect(result.summary).toContain('**Done:** Implemented the auth refresh fix.');
-    expect(result.summary).toContain('[Sandbox State] No uncommitted changes.');
+    expect(result.summary).not.toContain('[Sandbox State]');
     expect(taskBrief).toContain('Task: Implement the auth refresh fix');
     expect(taskBrief).toContain('Deliverable: Ship the fix with updated auth coverage');
     expect(taskBrief).toContain('Known context:');

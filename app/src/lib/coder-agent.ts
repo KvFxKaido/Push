@@ -649,8 +649,8 @@ function buildCoderGuidelines(): string {
 - Do NOT call ${getToolPublicName('delegate_coder')}, ${getToolPublicName('delegate_explorer')}, ${getToolPublicName('create_pr')}, ${getToolPublicName('merge_pr')}, or other GitHub tools. You are the Coder; your job is to implement, not delegate or manage PRs.
 - End with a completion summary in this exact format:
   **Done:** [one sentence]
-  **Changed:** [list of files modified, or "none"]
-  **Verified:** [tests/types run and result, or "not run"]
+  **Changed:** [brief scope summary, not a full file-by-file transcript]
+  **Verified:** [brief tests/types/build result, or "not run"]
   **Open:** [anything incomplete or requiring user attention, or "nothing"]
 
 Execution loop:
@@ -1544,9 +1544,6 @@ ${truncatedResult}
         }
       }
 
-      // Auto-fetch sandbox state for Orchestrator context (Shared Sandbox State)
-      const sandboxState = await fetchSandboxStateSummary(sandboxId);
-
       // Append criteria results to summary
       let criteriaBlock = '';
       if (criteriaResults && criteriaResults.length > 0) {
@@ -1559,7 +1556,7 @@ ${truncatedResult}
       }
 
       return withCapabilities({
-        summary: accumulated + criteriaBlock + sandboxState,
+        summary: accumulated + criteriaBlock,
         cards: allCards,
         rounds,
         checkpoints: checkpointCount,

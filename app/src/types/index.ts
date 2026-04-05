@@ -1,6 +1,13 @@
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { VerificationPolicy } from '@/lib/verification-policy';
-import type { AcceptanceCriterion, DelegationOutcome, LoopPhase, RunEvent } from '@push/lib/runtime-contract';
+import type {
+  AcceptanceCriterion,
+  DelegationGateVerdict,
+  DelegationOutcome,
+  DelegationStatus,
+  LoopPhase,
+  RunEvent,
+} from '@push/lib/runtime-contract';
 export type {
   AcceptanceCriterion,
   DelegationCheck,
@@ -301,6 +308,7 @@ export type ChatCard =
   | { type: 'workflow-runs'; data: WorkflowRunsCardData }
   | { type: 'workflow-logs'; data: WorkflowLogsCardData }
   | { type: 'web-search'; data: WebSearchCardData }
+  | { type: 'delegation-result'; data: DelegationResultCardData }
   | { type: 'ask-user'; data: AskUserCardData }
   | { type: 'coder-progress'; data: CoderWorkingMemory };
 
@@ -840,6 +848,24 @@ export interface WebSearchResult {
 export interface WebSearchCardData {
   query: string;
   results: WebSearchResult[];
+}
+
+export interface DelegationResultCardData {
+  agent: 'explorer' | 'coder' | 'task_graph';
+  status: DelegationStatus;
+  summary: string;
+  verifiedText?: string;
+  openText?: string;
+  checksPassed?: number;
+  checksTotal?: number;
+  fileCount?: number;
+  taskCount?: number;
+  rounds: number;
+  checkpoints: number;
+  elapsedMs: number;
+  gateVerdicts: DelegationGateVerdict[];
+  missingRequirements: string[];
+  nextRequiredAction?: string | null;
 }
 
 export interface AskUserOption {

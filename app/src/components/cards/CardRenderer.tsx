@@ -24,6 +24,7 @@ const SandboxDownloadCard = lazyWithRecovery(toDefaultExport(() => import('./San
 const WorkflowRunsCard = lazyWithRecovery(toDefaultExport(() => import('./WorkflowRunsCard'), (module) => module.WorkflowRunsCard));
 const WorkflowLogsCard = lazyWithRecovery(toDefaultExport(() => import('./WorkflowLogsCard'), (module) => module.WorkflowLogsCard));
 const WebSearchCard = lazyWithRecovery(toDefaultExport(() => import('./WebSearchCard'), (module) => module.WebSearchCard));
+const DelegationResultCard = lazyWithRecovery(toDefaultExport(() => import('./DelegationResultCard'), (module) => module.DelegationResultCard));
 const CoderProgressCard = lazyWithRecovery(toDefaultExport(() => import('./CoderProgressCard'), (module) => module.CoderProgressCard));
 const AskUserCard = lazyWithRecovery(toDefaultExport(() => import('./AskUserCard'), (module) => module.AskUserCard));
 
@@ -95,6 +96,7 @@ const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
   'workflow-runs':       WorkflowRunsCard,
   'workflow-logs':       WorkflowLogsCard,
   'web-search':          WebSearchCard,
+  'delegation-result':   DelegationResultCard,
   'coder-progress':      CoderProgressCard,
 };
 

@@ -8,9 +8,14 @@ import { type AnyToolCall } from '@/lib/tool-dispatch';
 import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
 import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
-import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult, type TaskExecutor } from '@/lib/task-graph';
+import { validateTaskGraph, executeTaskGraph, type TaskExecutor } from '@/lib/task-graph';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import {
+  buildDelegationResultCard,
+  filterDelegationCardsForInlineDisplay,
+  formatCompactDelegationToolResult,
+} from '@/lib/delegation-result';
 import {
   buildRetrievedMemoryKnownContext,
   invalidateMemoryForChangedFiles,
@@ -114,6 +119,21 @@ function withMemoryContext(
   if (!line) return base;
   if (!base || base.length === 0) return [line];
   return [...base, line];
+}
+
+function appendInlineDelegationCards(
+  setConversations: React.Dispatch<React.SetStateAction<Record<string, Conversation>>>,
+  chatId: string,
+  cards: readonly ChatCard[],
+): void {
+  const inlineCards = filterDelegationCardsForInlineDisplay(cards);
+  if (inlineCards.length === 0) return;
+  setConversations((prev) => {
+    const conv = prev[chatId];
+    if (!conv) return prev;
+    const msgs = appendCardsToLatestToolCall(conv.messages, inlineCards);
+    return { ...prev, [chatId]: { ...conv, messages: msgs } };
+  });
 }
 
 export interface UseAgentDelegationParams {
@@ -263,14 +283,7 @@ export function useAgentDelegation({
             return result;
           });
 
-          if (explorerResult.cards.length > 0) {
-            setConversations((prev) => {
-              const conv = prev[chatId];
-              if (!conv) return prev;
-              const msgs = appendCardsToLatestToolCall(conv.messages, explorerResult.cards);
-              return { ...prev, [chatId]: { ...conv, messages: msgs } };
-            });
-          }
+          appendInlineDelegationCards(setConversations, chatId, explorerResult.cards);
 
           // --- Build structured DelegationOutcome for explorer ---
           const explorerOutcome: DelegationOutcome = {
@@ -292,7 +305,14 @@ export function useAgentDelegation({
           };
 
           toolExecResult = {
-            text: `[Tool Result — delegate_explorer]\n${explorerResult.summary}\n(${explorerResult.rounds} round${explorerResult.rounds !== 1 ? 's' : ''})`,
+            text: formatCompactDelegationToolResult({
+              agent: 'explorer',
+              outcome: explorerOutcome,
+            }),
+            card: buildDelegationResultCard({
+              agent: 'explorer',
+              outcome: explorerOutcome,
+            }),
             delegationOutcome: explorerOutcome,
           };
           if (explorerMemoryScope && explorerOutcome.status === 'complete') {
@@ -333,7 +353,14 @@ export function useAgentDelegation({
               elapsedMs: Date.now() - explorerStartMs,
             };
             toolExecResult = {
-              text: '[Tool Result — delegate_explorer]\nExplorer cancelled by user.',
+              text: formatCompactDelegationToolResult({
+                agent: 'explorer',
+                outcome: abortOutcome,
+              }),
+              card: buildDelegationResultCard({
+                agent: 'explorer',
+                outcome: abortOutcome,
+              }),
               delegationOutcome: abortOutcome,
             };
             appendRunEvent(chatId, {
@@ -855,15 +882,7 @@ export function useAgentDelegation({
               };
             })();
 
-            // Attach all Coder cards to the assistant message
-            if (allCards.length > 0) {
-              setConversations((prev) => {
-                const conv = prev[chatId];
-                if (!conv) return prev;
-                const msgs = appendCardsToLatestToolCall(conv.messages, allCards);
-                return { ...prev, [chatId]: { ...conv, messages: msgs } };
-              });
-            }
+            appendInlineDelegationCards(setConversations, chatId, allCards);
 
             if (coderMemoryScope && latestDiffPaths && latestDiffPaths.length > 0) {
               invalidateMemoryForChangedFiles({
@@ -888,11 +907,17 @@ export function useAgentDelegation({
               });
             }
 
-            const checkpointNote = totalCheckpoints > 0
-              ? `, ${totalCheckpoints} checkpoint${totalCheckpoints !== 1 ? 's' : ''}`
-              : '';
             toolExecResult = {
-              text: `[Tool Result — delegate_coder]\n${summaries.join('\n')}\n(${totalRounds} round${totalRounds !== 1 ? 's' : ''}${checkpointNote})`,
+              text: formatCompactDelegationToolResult({
+                agent: 'coder',
+                outcome: coderOutcome,
+                fileCount: latestDiffPaths?.length,
+              }),
+              card: buildDelegationResultCard({
+                agent: 'coder',
+                outcome: coderOutcome,
+                fileCount: latestDiffPaths?.length,
+              }),
               delegationOutcome: coderOutcome,
             };
             appendRunEvent(chatId, {
@@ -921,7 +946,14 @@ export function useAgentDelegation({
               elapsedMs: Date.now() - coderStartMs,
             };
             toolExecResult = {
-              text: '[Tool Result — delegate_coder]\nCoder cancelled by user.',
+              text: formatCompactDelegationToolResult({
+                agent: 'coder',
+                outcome: abortOutcome,
+              }),
+              card: buildDelegationResultCard({
+                agent: 'coder',
+                outcome: abortOutcome,
+              }),
               delegationOutcome: abortOutcome,
             };
             appendRunEvent(chatId, {
@@ -1072,14 +1104,7 @@ export function useAgentDelegation({
                   activeTasks.delete(node.id);
                 }
 
-                if (explorerResult.cards.length > 0) {
-                  setConversations((prev) => {
-                    const conv = prev[chatId];
-                    if (!conv) return prev;
-                    const msgs = appendCardsToLatestToolCall(conv.messages, explorerResult.cards);
-                    return { ...prev, [chatId]: { ...conv, messages: msgs } };
-                  });
-                }
+                appendInlineDelegationCards(setConversations, chatId, explorerResult.cards);
 
                 const explorerOutcome: DelegationOutcome = {
                   agent: 'explorer',
@@ -1178,14 +1203,7 @@ export function useAgentDelegation({
                   activeTasks.delete(node.id);
                 }
 
-                if (coderResult.cards.length > 0) {
-                  setConversations((prev) => {
-                    const conv = prev[chatId];
-                    if (!conv) return prev;
-                    const msgs = appendCardsToLatestToolCall(conv.messages, coderResult.cards);
-                    return { ...prev, [chatId]: { ...conv, messages: msgs } };
-                  });
-                }
+                appendInlineDelegationCards(setConversations, chatId, coderResult.cards);
 
                 let taskDiff: string | null = null;
                 try {
@@ -1596,11 +1614,17 @@ export function useAgentDelegation({
               };
             })();
 
-            const evaluationBlock = graphAuditResult
-              ? `\n\n[Evaluation: ${graphAuditResult.verdict.toUpperCase()}] ${graphAuditResult.summary}${graphAuditResult.gaps.length > 0 ? `\n${graphAuditResult.gaps.map((gap) => `- ${gap}`).join('\n')}` : ''}`
-              : '';
             toolExecResult = {
-              text: `${formatTaskGraphResult(graphResult)}${evaluationBlock}`,
+              text: formatCompactDelegationToolResult({
+                agent: 'task_graph',
+                outcome: graphOutcome,
+                taskCount: graphResult.nodeStates.size,
+              }),
+              card: buildDelegationResultCard({
+                agent: 'task_graph',
+                outcome: graphOutcome,
+                taskCount: graphResult.nodeStates.size,
+              }),
               delegationOutcome: graphOutcome,
             };
             appendRunEvent(chatId, {
