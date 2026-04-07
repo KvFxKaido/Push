@@ -86,6 +86,26 @@ function buildMemoryScope(
 
 const MAX_RETRIEVED_MEMORY_RECORDS = 6;
 
+function formatMemoryError(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
+function logContextMemoryWarning(action: string, error: unknown): void {
+  console.warn(`[context-memory] ${action} failed; continuing without persisted memory.`, formatMemoryError(error));
+}
+
+async function runContextMemoryBestEffort(
+  action: string,
+  operation: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    logContextMemoryWarning(action, error);
+  }
+}
+
 /**
  * Retrieve typed memory and return a compact knownContext line or null.
  * Callers splice the returned string into the delegation's `knownContext`.
@@ -98,18 +118,23 @@ async function retrieveMemoryKnownContextLine(
   extras: Partial<MemoryQuery> = {},
 ): Promise<string | null> {
   if (!scope) return null;
-  const query: MemoryQuery = {
-    repoFullName: scope.repoFullName,
-    branch: scope.branch,
-    chatId: scope.chatId,
-    role,
-    taskText,
-    fileHints,
-    maxRecords: MAX_RETRIEVED_MEMORY_RECORDS,
-    ...extras,
-  };
-  const { line } = await buildRetrievedMemoryKnownContext(query);
-  return line;
+  try {
+    const query: MemoryQuery = {
+      repoFullName: scope.repoFullName,
+      branch: scope.branch,
+      chatId: scope.chatId,
+      role,
+      taskText,
+      fileHints,
+      maxRecords: MAX_RETRIEVED_MEMORY_RECORDS,
+      ...extras,
+    };
+    const { line } = await buildRetrievedMemoryKnownContext(query);
+    return line;
+  } catch (error) {
+    logContextMemoryWarning(`retrieving ${role} context`, error);
+    return null;
+  }
 }
 
 /** Merge a retrieved-memory line into an existing knownContext array. */
@@ -318,12 +343,14 @@ export function useAgentDelegation({
           };
 
           if (explorerMemoryScope && explorerOutcome.status === 'complete') {
-            await writeExplorerMemory({
-              scope: explorerMemoryScope,
-              summary: explorerResult.summary,
-              relatedFiles: explorerArgs.files,
-              rounds: explorerResult.rounds,
-            });
+            await runContextMemoryBestEffort('persisting explorer memory', () =>
+              writeExplorerMemory({
+                scope: explorerMemoryScope,
+                summary: explorerResult.summary,
+                relatedFiles: explorerArgs.files,
+                rounds: explorerResult.rounds,
+              }),
+            );
           }
 
           updateVerificationStateForChat(chatId, (state) =>
@@ -547,11 +574,13 @@ export function useAgentDelegation({
                 );
 
                 if (coderMemoryScope) {
-                  await writeDecisionMemory({
-                    scope: coderMemoryScope,
-                    question,
-                    answer,
-                  });
+                  await runContextMemoryBestEffort('persisting checkpoint decision memory', () =>
+                    writeDecisionMemory({
+                      scope: coderMemoryScope,
+                      question,
+                      answer,
+                    }),
+                  );
                 }
 
                 updateAgentStatus(
@@ -896,26 +925,30 @@ export function useAgentDelegation({
             appendInlineDelegationCards(setConversations, chatId, allCards);
 
             if (coderMemoryScope && latestDiffPaths && latestDiffPaths.length > 0) {
-              await invalidateMemoryForChangedFiles({
-                scope: {
-                  repoFullName: coderMemoryScope.repoFullName,
-                  branch: coderMemoryScope.branch,
-                  chatId: coderMemoryScope.chatId,
-                },
-                changedPaths: latestDiffPaths,
-                reason: 'Coder delegation updated file-backed context.',
-              });
+              await runContextMemoryBestEffort('invalidating coder memory after file changes', () =>
+                invalidateMemoryForChangedFiles({
+                  scope: {
+                    repoFullName: coderMemoryScope.repoFullName,
+                    branch: coderMemoryScope.branch,
+                    chatId: coderMemoryScope.chatId,
+                  },
+                  changedPaths: latestDiffPaths,
+                  reason: 'Coder delegation updated file-backed context.',
+                }),
+              );
             }
 
             if (coderMemoryScope && coderOutcome.status !== 'inconclusive') {
-              await writeCoderMemory({
-                scope: coderMemoryScope,
-                outcome: coderOutcome,
-                diffPaths: latestDiffPaths,
-                verificationCommandsById: verificationCommandsById.size > 0
-                  ? Object.fromEntries(verificationCommandsById)
-                  : undefined,
-              });
+              await runContextMemoryBestEffort('persisting coder memory', () =>
+                writeCoderMemory({
+                  scope: coderMemoryScope,
+                  outcome: coderOutcome,
+                  diffPaths: latestDiffPaths,
+                  verificationCommandsById: verificationCommandsById.size > 0
+                    ? Object.fromEntries(verificationCommandsById)
+                    : undefined,
+                }),
+              );
             }
 
             toolExecResult = {
@@ -1420,25 +1453,29 @@ export function useAgentDelegation({
             });
 
             if (graphMemoryScope && latestGraphDiffPaths && latestGraphDiffPaths.length > 0) {
-              await invalidateMemoryForChangedFiles({
-                scope: {
-                  repoFullName: graphMemoryScope.repoFullName,
-                  branch: graphMemoryScope.branch,
-                  chatId: graphMemoryScope.chatId,
-                },
-                changedPaths: latestGraphDiffPaths,
-                reason: 'Task graph coder nodes updated file-backed context.',
-              });
+              await runContextMemoryBestEffort('invalidating task-graph memory after file changes', () =>
+                invalidateMemoryForChangedFiles({
+                  scope: {
+                    repoFullName: graphMemoryScope.repoFullName,
+                    branch: graphMemoryScope.branch,
+                    chatId: graphMemoryScope.chatId,
+                  },
+                  changedPaths: latestGraphDiffPaths!,
+                  reason: 'Task graph coder nodes updated file-backed context.',
+                }),
+              );
             }
 
             // Persist typed memory records for every completed node so
             // later (out-of-graph) delegations can retrieve them.
             if (graphMemoryScope) {
               for (const nodeState of graphResult.nodeStates.values()) {
-                await writeTaskGraphNodeMemory({
-                  scope: graphMemoryScope,
-                  nodeState,
-                });
+                await runContextMemoryBestEffort(`persisting task-graph memory for ${nodeState.node.id}`, () =>
+                  writeTaskGraphNodeMemory({
+                    scope: graphMemoryScope,
+                    nodeState,
+                  }),
+                );
               }
             }
 

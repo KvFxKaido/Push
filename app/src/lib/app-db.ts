@@ -7,7 +7,7 @@
  */
 
 const DB_NAME = 'push-app-db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 export const STORE = {
   conversations: 'conversations',
@@ -19,6 +19,32 @@ export const STORE = {
 } as const;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+
+function normalizeKeyPath(keyPath: string | string[] | null): string {
+  if (Array.isArray(keyPath)) return keyPath.join('\u0000');
+  return keyPath ?? '';
+}
+
+function ensureIndex(
+  store: IDBObjectStore,
+  name: string,
+  keyPath: string | string[],
+  options: IDBIndexParameters = {},
+): void {
+  const desiredKeyPath = normalizeKeyPath(keyPath);
+  const desiredUnique = Boolean(options.unique);
+
+  if (store.indexNames.contains(name)) {
+    const existing = store.index(name);
+    const existingKeyPath = normalizeKeyPath(existing.keyPath);
+    if (existingKeyPath === desiredKeyPath && existing.unique === desiredUnique) {
+      return;
+    }
+    store.deleteIndex(name);
+  }
+
+  store.createIndex(name, keyPath, options);
+}
 
 function openDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
@@ -33,6 +59,10 @@ function openDb(): Promise<IDBDatabase> {
 
     req.onupgradeneeded = () => {
       const db = req.result;
+      const upgradeTx = req.transaction;
+      if (!upgradeTx) {
+        throw new Error('IndexedDB upgrade transaction unavailable');
+      }
 
       // Conversations — one record per conversation
       if (!db.objectStoreNames.contains(STORE.conversations)) {
@@ -66,14 +96,14 @@ function openDb(): Promise<IDBDatabase> {
         journalStore.createIndex('startedAt', 'startedAt', { unique: false });
       }
 
-      // Memory records — typed artifact memory (Phase 1)
-      if (!db.objectStoreNames.contains(STORE.memoryRecords)) {
-        const memStore = db.createObjectStore(STORE.memoryRecords, { keyPath: 'id' });
-        memStore.createIndex('repoFullName', 'repoFullName', { unique: false });
-        memStore.createIndex('chatId', 'chatId', { unique: false });
-        memStore.createIndex('branch', 'branch', { unique: false });
-        memStore.createIndex('kind', 'kind', { unique: false });
-      }
+      // Memory records — typed artifact memory
+      const memStore = db.objectStoreNames.contains(STORE.memoryRecords)
+        ? upgradeTx.objectStore(STORE.memoryRecords)
+        : db.createObjectStore(STORE.memoryRecords, { keyPath: 'id' });
+      ensureIndex(memStore, 'repoFullName', 'scope.repoFullName', { unique: false });
+      ensureIndex(memStore, 'chatId', 'scope.chatId', { unique: false });
+      ensureIndex(memStore, 'branch', 'scope.branch', { unique: false });
+      ensureIndex(memStore, 'kind', 'kind', { unique: false });
     };
 
     req.onsuccess = () => resolve(req.result);

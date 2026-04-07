@@ -338,7 +338,10 @@ export function useChat(
         || previousMemoryScope.branch !== currentMemoryScope.branch
       )
     ) {
-      void expireBranchScopedMemory(previousMemoryScope);
+      void expireBranchScopedMemory(previousMemoryScope).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[context-memory] expiring branch-scoped memory failed; continuing without cleanup. ${message}`);
+      });
     }
 
     previousMemoryBranchScopeRef.current = currentMemoryScope;
