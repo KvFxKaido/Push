@@ -650,6 +650,9 @@ describe('executeSandboxToolCall -- edit guard', () => {
 
     expect(result.text).toContain('Wrote /workspace/src/foo.ts');
     expect(result.text).toContain('[POSTCONDITIONS]');
+    expect(result.text).toContain('touched files: 1');
+    expect(result.text).toContain('- write /workspace/src/foo.ts');
+    expect(result.text).not.toContain('"touchedFiles"');
     expect(result.text).not.toContain('Edit guard');
     expect(result.postconditions?.touchedFiles).toEqual([
       expect.objectContaining({
@@ -1961,6 +1964,8 @@ describe('sandbox_apply_patchset symbolic guard', () => {
 
     expect(result.text).toContain('[Tool Result — sandbox_apply_patchset]');
     expect(result.text).toContain('[POSTCONDITIONS]');
+    expect(result.text).toContain('diagnostics: 1');
+    expect(result.text).not.toContain('"diagnostics"');
     expect(result.text).not.toContain('Guard warnings:');
     expect(result.text).toContain(path);
     expect(vi.mocked(sandboxClient.batchWriteToSandbox)).toHaveBeenCalled();

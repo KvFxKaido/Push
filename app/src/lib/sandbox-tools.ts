@@ -282,28 +282,100 @@ function truncatePostconditionOutput(output?: string): string | undefined {
   return `${trimmed.slice(0, POSTCONDITION_OUTPUT_LIMIT)}\n[truncated]`;
 }
 
+function formatVersionTransition(before?: string | null, after?: string | null): string | null {
+  if (!before && !after) return null;
+  return `${before ?? 'unknown'}→${after ?? 'unknown'}`;
+}
+
+function summarizeChangedSpans(spans?: readonly ToolMutationSpan[]): string | null {
+  if (!spans || spans.length === 0) return null;
+  const lineNumbers = new Set<number>();
+  for (const span of spans) {
+    if (typeof span.startLine === 'number' && typeof span.endLine === 'number') {
+      for (let line = span.startLine; line <= span.endLine; line += 1) lineNumbers.add(line);
+      continue;
+    }
+    for (const line of span.lineNumbers ?? []) lineNumbers.add(line);
+  }
+  if (lineNumbers.size === 0) return `${spans.length} span${spans.length === 1 ? '' : 's'}`;
+  const ordered = [...lineNumbers].sort((a, b) => a - b);
+  const ranges = buildLineRanges(ordered).map(({ startLine, endLine }) =>
+    startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`,
+  );
+  return `lines ${ranges.join(', ')}`;
+}
+
 function appendMutationPostconditions(
   lines: string[],
   postconditions?: ToolMutationPostconditions,
 ): void {
   if (!postconditions || postconditions.touchedFiles.length === 0) return;
 
-  const payload = {
-    touchedFiles: postconditions.touchedFiles,
-    diagnostics: postconditions.diagnostics?.map((diagnostic) => ({
-      ...diagnostic,
-      output: truncatePostconditionOutput(diagnostic.output),
-    })),
-    checks: postconditions.checks?.map((check) => ({
-      ...check,
-      output: truncatePostconditionOutput(check.output),
-    })),
-    guardWarnings: postconditions.guardWarnings?.slice(0, 8),
-    writeVerified: postconditions.writeVerified,
-    rollbackApplied: postconditions.rollbackApplied,
-  };
+  lines.push('', '[POSTCONDITIONS]');
 
-  lines.push('', '[POSTCONDITIONS]', JSON.stringify(payload, null, 2), '[/POSTCONDITIONS]');
+  const touchedFiles = postconditions.touchedFiles.slice(0, 6);
+  lines.push(`touched files: ${postconditions.touchedFiles.length}`);
+  for (const touched of touchedFiles) {
+    const details = [
+      summarizeChangedSpans(touched.changedSpans),
+      touched.bytesWritten !== undefined ? `${touched.bytesWritten}B` : null,
+      formatVersionTransition(touched.versionBefore, touched.versionAfter),
+    ].filter(Boolean);
+    lines.push(`- ${touched.mutation} ${touched.path}${details.length > 0 ? ` (${details.join(' · ')})` : ''}`);
+  }
+  if (postconditions.touchedFiles.length > touchedFiles.length) {
+    lines.push(`- …and ${postconditions.touchedFiles.length - touchedFiles.length} more touched file(s)`);
+  }
+
+  if (postconditions.diagnostics?.length) {
+    lines.push(`diagnostics: ${postconditions.diagnostics.length}`);
+    for (const diagnostic of postconditions.diagnostics.slice(0, 4)) {
+      const target = diagnostic.path ? ` ${diagnostic.path}` : '';
+      lines.push(`- ${diagnostic.label}: ${diagnostic.status}${target}`);
+      const output = diagnostic.status === 'issues'
+        ? truncatePostconditionOutput(diagnostic.output)
+        : undefined;
+      if (output) {
+        lines.push(output);
+      }
+    }
+    if (postconditions.diagnostics.length > 4) {
+      lines.push(`- …and ${postconditions.diagnostics.length - 4} more diagnostic result(s)`);
+    }
+  }
+
+  if (postconditions.checks?.length) {
+    lines.push(`checks: ${postconditions.checks.length}`);
+    for (const check of postconditions.checks.slice(0, 4)) {
+      lines.push(`- ${check.passed ? 'passed' : 'failed'} exit=${check.exitCode}: ${check.command}`);
+      const output = check.passed ? undefined : truncatePostconditionOutput(check.output);
+      if (output) {
+        lines.push(output);
+      }
+    }
+    if (postconditions.checks.length > 4) {
+      lines.push(`- …and ${postconditions.checks.length - 4} more check result(s)`);
+    }
+  }
+
+  if (postconditions.guardWarnings?.length) {
+    lines.push(`guard warnings: ${postconditions.guardWarnings.length}`);
+    for (const warning of postconditions.guardWarnings.slice(0, 3)) {
+      lines.push(`- ${warning}`);
+    }
+    if (postconditions.guardWarnings.length > 3) {
+      lines.push(`- …and ${postconditions.guardWarnings.length - 3} more guard warning(s)`);
+    }
+  }
+
+  if (typeof postconditions.writeVerified === 'boolean') {
+    lines.push(`write verified: ${postconditions.writeVerified ? 'yes' : 'no'}`);
+  }
+  if (postconditions.rollbackApplied) {
+    lines.push('rollback applied: yes');
+  }
+
+  lines.push('[/POSTCONDITIONS]');
 }
 
 function buildPatchsetTouchedFiles(
