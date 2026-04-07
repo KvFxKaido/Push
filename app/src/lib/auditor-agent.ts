@@ -16,10 +16,14 @@
  * the verdict defaults to UNSAFE / INCOMPLETE.
  */
 
-import type { ChatMessage, AuditVerdictCardData, CoderWorkingMemory } from '@/types';
+import type { ChatMessage, AuditVerdictCardData, CoderWorkingMemory, MemoryScope } from '@/types';
 import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
-import { buildAuditorContextBlock, type AuditorPromptContext } from './role-context';
+import type { AuditorPromptContext } from './role-context';
+import {
+  buildAuditorEvaluationMemoryBlock,
+  buildAuditorRuntimeContext,
+} from './role-memory-context';
 import { formatCoderState } from './coder-agent';
 
 import { asRecord, streamWithTimeout } from './utils';
@@ -145,8 +149,14 @@ export async function runAuditor(
 ): Promise<AuditResult> {
   const provider = (options?.providerOverride || getActiveProvider()) as string;
   const modelId = options?.modelOverride?.trim() || getModelForRole(provider as ActiveProvider, 'auditor')?.id;
-  const runtimeContext = buildAuditorContextBlock(context);
-  const key = auditCoalesceKey(diff, provider, modelId, runtimeContext, hookResult, fileContexts);
+  const key = auditCoalesceKey(
+    diff,
+    provider,
+    modelId,
+    JSON.stringify(context ?? null),
+    hookResult,
+    fileContexts,
+  );
 
   const inflight = pendingAudits.get(key);
   if (inflight) {
@@ -157,13 +167,16 @@ export async function runAuditor(
   const listeners = new Set([onStatus]);
   auditListeners.set(key, listeners);
 
-  const run = runAuditorCore(diff, (phase) => {
-    broadcastAuditStatus(key, phase);
-  }, context, hookResult, {
-    ...options,
-    providerOverride: provider as ActiveProvider,
-    modelOverride: modelId,
-  }, runtimeContext, fileContexts);
+  const run = (async () => {
+    const runtimeContext = await buildAuditorRuntimeContext(diff, context);
+    return runAuditorCore(diff, (phase) => {
+      broadcastAuditStatus(key, phase);
+    }, hookResult, {
+      ...options,
+      providerOverride: provider as ActiveProvider,
+      modelOverride: modelId,
+    }, runtimeContext, fileContexts);
+  })();
   pendingAudits.set(key, run);
   run.finally(() => {
     pendingAudits.delete(key);
@@ -176,7 +189,6 @@ export async function runAuditor(
 async function runAuditorCore(
   diff: string,
   onStatus: (phase: string) => void,
-  context?: AuditorPromptContext,
   hookResult?: HookResult | null,
   options?: AuditorRunOptions,
   runtimeContext?: string,
@@ -200,7 +212,7 @@ async function runAuditorCore(
 
   const { streamFn } = getProviderStreamFn(activeProvider);
   const auditorModelId = options?.modelOverride?.trim() || getModelForRole(activeProvider, 'auditor')?.id; // undefined falls back to provider default
-  const contextBlock = runtimeContext ?? buildAuditorContextBlock(context);
+  const contextBlock = runtimeContext ?? '';
   const systemPrompt = new SystemPromptBuilder()
     .set('identity', AUDITOR_SYSTEM_PROMPT)
     .set('environment', contextBlock)
@@ -370,6 +382,7 @@ export async function runAuditorEvaluation(
     coderMaxRounds?: number;
     criteriaResults?: { id: string; passed: boolean; output: string }[];
     verificationPolicy?: VerificationPolicy;
+    memoryScope?: Pick<MemoryScope, 'repoFullName' | 'branch' | 'chatId' | 'taskGraphId' | 'taskId'> | null;
   },
 ): Promise<EvaluationResult> {
   // Fail-safe default
@@ -399,6 +412,15 @@ export async function runAuditorEvaluation(
     `[ORIGINAL TASK]\n${task}\n[/ORIGINAL TASK]`,
     `[CODER SUMMARY]\n${coderSummary}\n[/CODER SUMMARY]`,
   ];
+
+  const retrievedMemoryBlock = await buildAuditorEvaluationMemoryBlock(
+    task,
+    diff,
+    options?.memoryScope,
+  );
+  if (retrievedMemoryBlock) {
+    sections.push(retrievedMemoryBlock);
+  }
 
   if (workingMemory) {
     // Reuse the canonical formatCoderState to ensure all fields (including

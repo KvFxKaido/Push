@@ -23,7 +23,7 @@ import { createExplorerToolHooks } from './explorer-agent';
 import { annotateDiffWithLineNumbers, REVIEWER_CRITERIA_BLOCK } from './reviewer-agent';
 import type { ReviewerOptions } from './reviewer-agent';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
-import { buildReviewerContextBlock } from './role-context';
+import { buildReviewerRuntimeContext } from './role-memory-context';
 import {
   truncateAgentContent,
   formatAgentToolResult,
@@ -322,7 +322,7 @@ export async function runDeepReviewer(
     systemPrompt += '\n\n[SANDBOX STATUS]\nNo sandbox available — use GitHub tools instead of sandbox tools.';
   }
 
-  const runtimeContext = buildReviewerContextBlock(context);
+  const runtimeContext = await buildReviewerRuntimeContext(diff, context);
   if (runtimeContext) {
     systemPrompt += `\n\n${runtimeContext}`;
   }

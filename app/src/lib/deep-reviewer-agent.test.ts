@@ -4,7 +4,7 @@ const {
   mockStreamFn,
   mockGetProviderStreamFn,
   mockGetModelForRole,
-  mockBuildReviewerContextBlock,
+  mockBuildReviewerRuntimeContext,
   mockGetUserProfile,
   mockExecuteAnyToolCall,
   mockCreateExplorerToolHooks,
@@ -12,7 +12,7 @@ const {
   mockStreamFn: vi.fn(),
   mockGetProviderStreamFn: vi.fn(),
   mockGetModelForRole: vi.fn(),
-  mockBuildReviewerContextBlock: vi.fn(),
+  mockBuildReviewerRuntimeContext: vi.fn(),
   mockGetUserProfile: vi.fn(),
   mockExecuteAnyToolCall: vi.fn(),
   mockCreateExplorerToolHooks: vi.fn(),
@@ -36,8 +36,8 @@ vi.mock('./providers', async () => {
   };
 });
 
-vi.mock('./role-context', () => ({
-  buildReviewerContextBlock: (...args: unknown[]) => mockBuildReviewerContextBlock(...args),
+vi.mock('./role-memory-context', () => ({
+  buildReviewerRuntimeContext: (...args: unknown[]) => mockBuildReviewerRuntimeContext(...args),
 }));
 
 vi.mock('./explorer-agent', () => ({
@@ -78,7 +78,7 @@ describe('runDeepReviewer', () => {
     mockStreamFn.mockReset();
     mockGetProviderStreamFn.mockReset();
     mockGetModelForRole.mockReset();
-    mockBuildReviewerContextBlock.mockReset();
+    mockBuildReviewerRuntimeContext.mockReset();
     mockGetUserProfile.mockReset();
     mockExecuteAnyToolCall.mockReset();
     mockCreateExplorerToolHooks.mockReset();
@@ -88,7 +88,7 @@ describe('runDeepReviewer', () => {
       streamFn: mockStreamFn,
     }));
     mockGetModelForRole.mockReturnValue({ id: 'default-reviewer-model' });
-    mockBuildReviewerContextBlock.mockReturnValue('');
+    mockBuildReviewerRuntimeContext.mockResolvedValue('');
     mockGetUserProfile.mockReturnValue({ displayName: '', bio: '', githubLogin: undefined });
     mockCreateExplorerToolHooks.mockReturnValue({});
     mockExecuteAnyToolCall.mockResolvedValue({ text: '[Tool Result] ok' });

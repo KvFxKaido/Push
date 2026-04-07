@@ -4,13 +4,13 @@ const {
   mockStreamFn,
   mockGetProviderStreamFn,
   mockGetModelForRole,
-  mockBuildReviewerContextBlock,
+  mockBuildReviewerRuntimeContext,
   mockReadSymbolsFromSandbox,
 } = vi.hoisted(() => ({
   mockStreamFn: vi.fn(),
   mockGetProviderStreamFn: vi.fn(),
   mockGetModelForRole: vi.fn(),
-  mockBuildReviewerContextBlock: vi.fn(),
+  mockBuildReviewerRuntimeContext: vi.fn(),
   mockReadSymbolsFromSandbox: vi.fn(),
 }));
 
@@ -22,8 +22,8 @@ vi.mock('./providers', () => ({
   getModelForRole: (...args: unknown[]) => mockGetModelForRole(...args),
 }));
 
-vi.mock('./role-context', () => ({
-  buildReviewerContextBlock: (...args: unknown[]) => mockBuildReviewerContextBlock(...args),
+vi.mock('./role-memory-context', () => ({
+  buildReviewerRuntimeContext: (...args: unknown[]) => mockBuildReviewerRuntimeContext(...args),
 }));
 
 vi.mock('./sandbox-client', () => ({
@@ -48,7 +48,7 @@ describe('runReviewer', () => {
     mockStreamFn.mockReset();
     mockGetProviderStreamFn.mockReset();
     mockGetModelForRole.mockReset();
-    mockBuildReviewerContextBlock.mockReset();
+    mockBuildReviewerRuntimeContext.mockReset();
     mockReadSymbolsFromSandbox.mockReset();
 
     mockGetProviderStreamFn.mockImplementation((provider: string) => ({
@@ -56,7 +56,7 @@ describe('runReviewer', () => {
       streamFn: mockStreamFn,
     }));
     mockGetModelForRole.mockReturnValue({ id: 'default-reviewer-model' });
-    mockBuildReviewerContextBlock.mockReturnValue('');
+    mockBuildReviewerRuntimeContext.mockResolvedValue('');
     mockStreamFn.mockImplementation((
       _messages: unknown,
       onToken: (token: string) => void,
@@ -138,7 +138,7 @@ describe('runReviewer', () => {
   });
 
   it('does not coalesce concurrent reviews with different runtime context', async () => {
-    mockBuildReviewerContextBlock.mockImplementation((context?: { sourceLabel?: string }) => context?.sourceLabel ?? '');
+    mockBuildReviewerRuntimeContext.mockImplementation(async (_diff: string, context?: { sourceLabel?: string }) => context?.sourceLabel ?? '');
     mockStreamFn.mockImplementation(async (
       _messages: unknown,
       onToken: (token: string) => void,
@@ -211,5 +211,19 @@ describe('runReviewer', () => {
 
     expect(systemPrompt).not.toContain('File structure is auto-fetched');
     expect(prompt).not.toContain('[FILE STRUCTURE — auto-fetched from changed files]');
+  });
+
+  it('passes retrieved reviewer memory through the runtime context block', async () => {
+    mockBuildReviewerRuntimeContext.mockResolvedValue('## Review Run Context\n\n[RETRIEVED_TASK_MEMORY]\n- [decision | orchestrator] Prior review note\n[/RETRIEVED_TASK_MEMORY]');
+
+    await runReviewer(
+      makeAddedFileDiff('src/auth.ts', 'const auth = true;'),
+      { provider: 'openrouter' },
+      () => {},
+    );
+
+    const systemPrompt = mockStreamFn.mock.calls[0]?.[8] as string;
+    expect(systemPrompt).toContain('[RETRIEVED_TASK_MEMORY]');
+    expect(systemPrompt).toContain('Prior review note');
   });
 });

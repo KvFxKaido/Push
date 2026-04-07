@@ -5,13 +5,15 @@ const {
   mockGetActiveProvider,
   mockGetProviderStreamFn,
   mockGetModelForRole,
-  mockBuildAuditorContextBlock,
+  mockBuildAuditorRuntimeContext,
+  mockBuildAuditorEvaluationMemoryBlock,
 } = vi.hoisted(() => ({
   mockStreamFn: vi.fn(),
   mockGetActiveProvider: vi.fn(),
   mockGetProviderStreamFn: vi.fn(),
   mockGetModelForRole: vi.fn(),
-  mockBuildAuditorContextBlock: vi.fn(),
+  mockBuildAuditorRuntimeContext: vi.fn(),
+  mockBuildAuditorEvaluationMemoryBlock: vi.fn(),
 }));
 
 vi.mock('./orchestrator', () => ({
@@ -27,11 +29,12 @@ vi.mock(import('./providers'), async (importOriginal) => {
   };
 });
 
-vi.mock('./role-context', () => ({
-  buildAuditorContextBlock: (...args: unknown[]) => mockBuildAuditorContextBlock(...args),
+vi.mock('./role-memory-context', () => ({
+  buildAuditorRuntimeContext: (...args: unknown[]) => mockBuildAuditorRuntimeContext(...args),
+  buildAuditorEvaluationMemoryBlock: (...args: unknown[]) => mockBuildAuditorEvaluationMemoryBlock(...args),
 }));
 
-import { runAuditor } from './auditor-agent';
+import { runAuditor, runAuditorEvaluation } from './auditor-agent';
 
 function makeAddedFileDiff(path: string, addedContent: string): string {
   return [
@@ -50,7 +53,8 @@ describe('runAuditor', () => {
     mockGetActiveProvider.mockReset();
     mockGetProviderStreamFn.mockReset();
     mockGetModelForRole.mockReset();
-    mockBuildAuditorContextBlock.mockReset();
+    mockBuildAuditorRuntimeContext.mockReset();
+    mockBuildAuditorEvaluationMemoryBlock.mockReset();
 
     mockGetActiveProvider.mockReturnValue('openrouter');
     mockGetProviderStreamFn.mockImplementation((provider: string) => ({
@@ -58,7 +62,8 @@ describe('runAuditor', () => {
       streamFn: mockStreamFn,
     }));
     mockGetModelForRole.mockReturnValue({ id: 'default-auditor-model' });
-    mockBuildAuditorContextBlock.mockReturnValue('');
+    mockBuildAuditorRuntimeContext.mockResolvedValue('');
+    mockBuildAuditorEvaluationMemoryBlock.mockResolvedValue(null);
     mockStreamFn.mockImplementation((
       _messages: unknown,
       onToken: (token: string) => void,
@@ -212,5 +217,43 @@ describe('runAuditor', () => {
     expect(fileHints).toContain('- src/huge.ts: production');
     expect(fileHints).not.toContain('src/ignored.test.ts');
     expect(prompt).toContain('[1 file(s) omitted due to size limit: src/ignored.test.ts]');
+  });
+
+  it('passes retrieved auditor memory through the runtime context block', async () => {
+    mockBuildAuditorRuntimeContext.mockResolvedValue('## Audit Run Context\n\n[RETRIEVED_VERIFICATION]\n- [verification_result | coder] npm test: passed\n[/RETRIEVED_VERIFICATION]');
+
+    await runAuditor(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      () => {},
+      { repoFullName: 'owner/repo', activeBranch: 'feature/audit' },
+    );
+
+    const systemPrompt = mockStreamFn.mock.calls[0]?.[8] as string;
+    expect(systemPrompt).toContain('[RETRIEVED_VERIFICATION]');
+    expect(systemPrompt).toContain('npm test: passed');
+  });
+
+  it('injects retrieved memory into auditor evaluation requests', async () => {
+    mockBuildAuditorEvaluationMemoryBlock.mockResolvedValue('[RETRIEVED_TASK_MEMORY]\n- [decision | orchestrator] Previous checkpoint answer\n[/RETRIEVED_TASK_MEMORY]');
+
+    await runAuditorEvaluation(
+      'finish the auth fix',
+      'Updated the auth guard and reran tests.',
+      null,
+      makeAddedFileDiff('src/auth.ts', 'const auth = true;'),
+      () => {},
+      {
+        memoryScope: {
+          repoFullName: 'owner/repo',
+          branch: 'feature/auth',
+          chatId: 'chat-1',
+        },
+      },
+    );
+
+    const messages = mockStreamFn.mock.calls[0]?.[0] as Array<{ content: string }>;
+    const prompt = messages[0]?.content ?? '';
+    expect(prompt).toContain('[RETRIEVED_TASK_MEMORY]');
+    expect(prompt).toContain('Previous checkpoint answer');
   });
 });

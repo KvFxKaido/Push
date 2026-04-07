@@ -11,7 +11,8 @@ import type { ChatMessage, ReviewComment, ReviewResult } from '@/types';
 import type { AIProviderType } from '@/types';
 import { getProviderStreamFn } from './orchestrator';
 import { getModelForRole } from './providers';
-import { buildReviewerContextBlock, type ReviewerPromptContext } from './role-context';
+import type { ReviewerPromptContext } from './role-context';
+import { buildReviewerRuntimeContext } from './role-memory-context';
 import { readSymbolsFromSandbox, type SandboxSymbol } from './sandbox-client';
 import { SystemPromptBuilder } from './system-prompt-builder';
 import { asRecord, streamWithTimeout } from './utils';
@@ -224,8 +225,13 @@ export async function runReviewer(
 ): Promise<ReviewResult> {
   const roleModel = getModelForRole(options.provider, 'reviewer');
   const modelId = options.model?.trim() || roleModel?.id;
-  const runtimeContext = buildReviewerContextBlock(options.context);
-  const key = reviewCoalesceKey(diff, options.provider, modelId, runtimeContext, options.sandboxId);
+  const key = reviewCoalesceKey(
+    diff,
+    options.provider,
+    modelId,
+    JSON.stringify(options.context ?? null),
+    options.sandboxId,
+  );
 
   const inflight = pendingReviews.get(key);
   if (inflight) {
@@ -236,12 +242,15 @@ export async function runReviewer(
   const listeners = new Set([onStatus]);
   reviewListeners.set(key, listeners);
 
-  const run = runReviewerCore(diff, {
-    ...options,
-    model: modelId,
-  }, runtimeContext, (phase) => {
-    broadcastReviewStatus(key, phase);
-  });
+  const run = (async () => {
+    const runtimeContext = await buildReviewerRuntimeContext(diff, options.context);
+    return runReviewerCore(diff, {
+      ...options,
+      model: modelId,
+    }, runtimeContext, (phase) => {
+      broadcastReviewStatus(key, phase);
+    });
+  })();
   pendingReviews.set(key, run);
   run.finally(() => {
     pendingReviews.delete(key);

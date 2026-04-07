@@ -776,6 +776,7 @@ export function useAgentDelegation({
                       coderMaxRounds: evalMaxRounds,
                       criteriaResults: allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
                       verificationPolicy,
+                      memoryScope: buildMemoryScope(chatId, repoRef.current, branchInfoRef.current?.currentBranch),
                     },
                   );
                   if (result) {
@@ -1560,6 +1561,12 @@ export function useAgentDelegation({
                         coderMaxRounds: (harnessSettings?.maxCoderRounds ?? 0) * Math.max(coderNodeStates.length, 1),
                         criteriaResults: aggregatedChecks.length > 0 ? aggregatedChecks : undefined,
                         verificationPolicy,
+                        memoryScope: buildMemoryScope(
+                          chatId,
+                          repoRef.current,
+                          branchInfoRef.current?.currentBranch,
+                          { taskGraphId: graphMemoryScope?.taskGraphId ?? executionId },
+                        ),
                       },
                     );
                     setSpanAttributes(span, {

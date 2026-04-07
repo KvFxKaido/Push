@@ -15,8 +15,8 @@ Origin: [Multi-Agent Orchestration Research](Multi-Agent%20Orchestration%20Resea
 - Phase 4: Shipped
   - Retrieved memory is packed into bounded sectioned prompt blocks.
 - Phase 5: Partial
-  - Retrieval is active for delegation and checkpoint decisions.
-  - Broader Orchestrator / Reviewer / Auditor consumers remain follow-through work.
+  - Retrieval is active for delegation, checkpoint decisions, and targeted Reviewer/Auditor prompts.
+  - Broad Orchestrator retrieval remains follow-through work.
 
 Persistence note:
 
