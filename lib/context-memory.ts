@@ -71,6 +71,29 @@ export function createMemoryRecord(input: CreateMemoryRecordInput): MemoryRecord
   };
 }
 
+export interface WriteDecisionMemoryInput {
+  scope: MemoryScope;
+  question: string;
+  answer: string;
+  store?: ContextMemoryStore;
+}
+
+export async function writeDecisionMemory(input: WriteDecisionMemoryInput): Promise<MemoryRecord> {
+  const store = input.store ?? getDefaultMemoryStore();
+  const record = createMemoryRecord({
+    kind: 'decision',
+    summary: input.answer,
+    detail: `Question: ${input.question}`,
+    scope: { ...input.scope, role: 'orchestrator' },
+    source: {
+      kind: 'orchestrator',
+      label: 'Interactive Checkpoint Decision',
+    },
+  });
+  await store.write(record);
+  return record;
+}
+
 export interface WriteExplorerMemoryInput {
   scope: MemoryScope;
   summary: string;
@@ -80,7 +103,7 @@ export interface WriteExplorerMemoryInput {
   store?: ContextMemoryStore;
 }
 
-export function writeExplorerMemory(input: WriteExplorerMemoryInput): MemoryRecord | null {
+export async function writeExplorerMemory(input: WriteExplorerMemoryInput): Promise<MemoryRecord | null> {
   if (!input.summary?.trim()) return null;
   const store = input.store ?? getDefaultMemoryStore();
   const record = createMemoryRecord({
@@ -94,7 +117,7 @@ export function writeExplorerMemory(input: WriteExplorerMemoryInput): MemoryReco
     relatedFiles: input.relatedFiles,
     relatedSymbols: input.relatedSymbols,
   });
-  store.write(record);
+  await store.write(record);
   return record;
 }
 
@@ -106,7 +129,7 @@ export interface WriteCoderMemoryInput {
   store?: ContextMemoryStore;
 }
 
-export function writeCoderMemory(input: WriteCoderMemoryInput): MemoryRecord[] {
+export async function writeCoderMemory(input: WriteCoderMemoryInput): Promise<MemoryRecord[]> {
   if (input.outcome.agent !== 'coder') return [];
   const store = input.store ?? getDefaultMemoryStore();
   const written: MemoryRecord[] = [];
@@ -127,7 +150,7 @@ export function writeCoderMemory(input: WriteCoderMemoryInput): MemoryRecord[] {
     relatedFiles: input.diffPaths,
     tags: [outcome.status],
   });
-  store.write(outcomeRecord);
+  await store.write(outcomeRecord);
   written.push(outcomeRecord);
 
   if (input.diffPaths && input.diffPaths.length > 0) {
@@ -142,12 +165,12 @@ export function writeCoderMemory(input: WriteCoderMemoryInput): MemoryRecord[] {
       relatedFiles: input.diffPaths,
       derivedFrom: [outcomeRecord.id],
     });
-    store.write(fileChange);
+    await store.write(fileChange);
     written.push(fileChange);
   }
 
   for (const check of outcome.checks) {
-    supersedeVerificationMemory({
+    await supersedeVerificationMemory({
       scope: coderScope,
       checkId: check.id,
       command: input.verificationCommandsById?.[check.id],
@@ -171,7 +194,7 @@ export function writeCoderMemory(input: WriteCoderMemoryInput): MemoryRecord[] {
       ],
       derivedFrom: [outcomeRecord.id],
     });
-    store.write(verification);
+    await store.write(verification);
     written.push(verification);
   }
 
@@ -184,9 +207,9 @@ export interface WriteTaskGraphNodeMemoryInput {
   store?: ContextMemoryStore;
 }
 
-export function writeTaskGraphNodeMemory(
+export async function writeTaskGraphNodeMemory(
   input: WriteTaskGraphNodeMemoryInput,
-): MemoryRecord | null {
+): Promise<MemoryRecord | null> {
   const { nodeState } = input;
   if (nodeState.status !== 'completed') return null;
   const summary = nodeState.delegationOutcome?.summary || nodeState.result;
@@ -215,7 +238,7 @@ export function writeTaskGraphNodeMemory(
     relatedFiles: nodeState.node.files,
     tags: evidenceLabels,
   });
-  store.write(record);
+  await store.write(record);
   return record;
 }
 
@@ -224,19 +247,19 @@ export interface RetrieveMemoryForDelegationInput {
   store?: ContextMemoryStore;
 }
 
-export function retrieveMemoryForDelegation(
+export async function retrieveMemoryForDelegation(
   input: RetrieveMemoryForDelegationInput,
-): MemoryRetrievalResult {
+): Promise<MemoryRetrievalResult> {
   const store = input.store ?? getDefaultMemoryStore();
   return retrieveRecords(store, input.query);
 }
 
-export function buildRetrievedMemoryKnownContext(
+export async function buildRetrievedMemoryKnownContext(
   query: MemoryQuery,
   options: MemoryPackOptions & { store?: ContextMemoryStore } = {},
-): { line: string | null; result: MemoryRetrievalResult; packResult: MemoryPackResult } {
+): Promise<{ line: string | null; result: MemoryRetrievalResult; packResult: MemoryPackResult }> {
   const { store, ...packOptions } = options;
-  const result = retrieveMemoryForDelegation({
+  const result = await retrieveMemoryForDelegation({
     query: query.includeStale === undefined ? { ...query, includeStale: true } : query,
     store,
   });

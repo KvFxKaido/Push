@@ -190,17 +190,17 @@ export function scoreRecord(
   return { score: breakdown.total, breakdown };
 }
 
-export function retrieveRecords(
+export async function retrieveRecords(
   store: ContextMemoryStore,
   query: MemoryQuery,
   now: number = Date.now(),
-): MemoryRetrievalResult {
+): Promise<MemoryRetrievalResult> {
   const scored: ScoredMemoryRecord[] = [];
   let candidateCount = 0;
   let expiredExcluded = 0;
   let staleDropped = 0;
 
-  const inScope = store.list((record) => {
+  const inScope = await store.list((record) => {
     if (record.scope.repoFullName !== query.repoFullName) return false;
     if (query.chatId && record.scope.chatId && record.scope.chatId !== query.chatId) return false;
     if (query.branch && record.scope.branch && record.scope.branch !== query.branch) return false;

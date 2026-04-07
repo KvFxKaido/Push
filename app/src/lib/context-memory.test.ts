@@ -90,9 +90,9 @@ describe('createMemoryRecord', () => {
 });
 
 describe('writeExplorerMemory', () => {
-  it('writes a finding record bound to the explorer role', () => {
+  it('writes a finding record bound to the explorer role', async () => {
     const store = createInMemoryStore();
-    const record = writeExplorerMemory({
+    const record = await writeExplorerMemory({
       store,
       scope: makeScope(),
       summary: 'Middleware injects session state before route guards.',
@@ -101,28 +101,28 @@ describe('writeExplorerMemory', () => {
     });
 
     expect(record).not.toBeNull();
-    expect(store.size()).toBe(1);
+    expect(await store.size()).toBe(1);
     expect(record!.kind).toBe('finding');
     expect(record!.scope.role).toBe('explorer');
     expect(record!.source.label).toContain('4 rounds');
   });
 
-  it('returns null and writes nothing when summary is blank', () => {
+  it('returns null and writes nothing when summary is blank', async () => {
     const store = createInMemoryStore();
-    const record = writeExplorerMemory({
+    const record = await writeExplorerMemory({
       store,
       scope: makeScope(),
       summary: '',
     });
     expect(record).toBeNull();
-    expect(store.size()).toBe(0);
+    expect(await store.size()).toBe(0);
   });
 });
 
 describe('writeCoderMemory', () => {
-  it('emits task_outcome, file_change, and verification_result records', () => {
+  it('emits task_outcome, file_change, and verification_result records', async () => {
     const store = createInMemoryStore();
-    const records = writeCoderMemory({
+    const records = await writeCoderMemory({
       store,
       scope: makeScope(),
       outcome: makeCoderOutcome(),
@@ -144,19 +144,19 @@ describe('writeCoderMemory', () => {
     expect(verifications.some((r) => r.summary.startsWith('tests: failed'))).toBe(true);
   });
 
-  it('skips file_change record when no diff paths are provided', () => {
+  it('skips file_change record when no diff paths are provided', async () => {
     const store = createInMemoryStore();
-    writeCoderMemory({
+    await writeCoderMemory({
       store,
       scope: makeScope(),
       outcome: makeCoderOutcome({ checks: [] }),
     });
-    const allRecords = store.list();
+    const allRecords = await store.list();
     expect(allRecords.some((r) => r.kind === 'file_change')).toBe(false);
     expect(allRecords.some((r) => r.kind === 'task_outcome')).toBe(true);
   });
 
-  it('supersedes older verification records and tags new ones with check and command metadata', () => {
+  it('supersedes older verification records and tags new ones with check and command metadata', async () => {
     const store = createInMemoryStore();
     const oldVerification = createMemoryRecord({
       kind: 'verification_result',
@@ -165,16 +165,16 @@ describe('writeCoderMemory', () => {
       source: { kind: 'coder', label: 'Verification: typecheck' },
       tags: ['pass', 'check:typecheck', 'command:npm run typecheck'],
     });
-    store.write(oldVerification);
+    await store.write(oldVerification);
 
-    const records = writeCoderMemory({
+    const records = await writeCoderMemory({
       store,
       scope: makeScope(),
       outcome: makeCoderOutcome({ checks: [{ id: 'typecheck', passed: false, exitCode: 1, output: 'boom' }] }),
       verificationCommandsById: { typecheck: 'npm   run   typecheck' },
     });
 
-    const staleVerification = store.get(oldVerification.id);
+    const staleVerification = await store.get(oldVerification.id);
     expect(staleVerification?.freshness).toBe('stale');
     expect(staleVerification?.invalidationReason).toContain('typecheck');
 
@@ -185,7 +185,7 @@ describe('writeCoderMemory', () => {
 });
 
 describe('writeTaskGraphNodeMemory', () => {
-  it('writes a task_outcome for a completed coder node and a finding for an explorer node', () => {
+  it('writes a task_outcome for a completed coder node and a finding for an explorer node', async () => {
     const store = createInMemoryStore();
     const coderState: TaskGraphNodeState = {
       node: { id: 'impl-auth', agent: 'coder', task: 'Refactor auth', files: ['app/src/auth.ts'] },
@@ -203,18 +203,18 @@ describe('writeTaskGraphNodeMemory', () => {
       elapsedMs: 100,
     };
 
-    writeTaskGraphNodeMemory({
+    await writeTaskGraphNodeMemory({
       store,
       scope: makeScope({ taskGraphId: 'g1' }),
       nodeState: coderState,
     });
-    writeTaskGraphNodeMemory({
+    await writeTaskGraphNodeMemory({
       store,
       scope: makeScope({ taskGraphId: 'g1' }),
       nodeState: explorerState,
     });
 
-    const records = store.list();
+    const records = await store.list();
     expect(records).toHaveLength(2);
     const coder = records.find((r) => r.scope.taskId === 'impl-auth')!;
     expect(coder.kind).toBe('task_outcome');
@@ -227,9 +227,9 @@ describe('writeTaskGraphNodeMemory', () => {
     expect(explorer.scope.role).toBe('explorer');
   });
 
-  it('skips nodes that did not complete', () => {
+  it('skips nodes that did not complete', async () => {
     const store = createInMemoryStore();
-    const record = writeTaskGraphNodeMemory({
+    const record = await writeTaskGraphNodeMemory({
       store,
       scope: makeScope(),
       nodeState: {
@@ -239,22 +239,22 @@ describe('writeTaskGraphNodeMemory', () => {
       },
     });
     expect(record).toBeNull();
-    expect(store.size()).toBe(0);
+    expect(await store.size()).toBe(0);
   });
 });
 
 describe('buildRetrievedMemoryKnownContext', () => {
-  it('returns sectioned retrieved-memory blocks after writes', () => {
+  it('returns sectioned retrieved-memory blocks after writes', async () => {
     const store = createInMemoryStore();
     setDefaultMemoryStore(store);
     try {
-      writeExplorerMemory({
+      await writeExplorerMemory({
         store,
         scope: makeScope(),
         summary: 'Middleware injects session state before route guards.',
         relatedFiles: ['app/src/middleware.ts'],
       });
-      writeCoderMemory({
+      await writeCoderMemory({
         store,
         scope: makeScope(),
         outcome: makeCoderOutcome(),
@@ -270,7 +270,7 @@ describe('buildRetrievedMemoryKnownContext', () => {
         fileHints: ['app/src/middleware.ts'],
         maxRecords: 5,
       };
-      const { line, result, packResult } = buildRetrievedMemoryKnownContext(query);
+      const { line, result, packResult } = await buildRetrievedMemoryKnownContext(query);
 
       expect(line).not.toBeNull();
       expect(line!).toContain('[RETRIEVED_FACTS]');
@@ -287,7 +287,7 @@ describe('buildRetrievedMemoryKnownContext', () => {
     }
   });
 
-  it('includes stale records in the bounded stale section by default', () => {
+  it('includes stale records in the bounded stale section by default', async () => {
     const store = createInMemoryStore();
     const staleRecord = createMemoryRecord({
       kind: 'finding',
@@ -297,9 +297,9 @@ describe('buildRetrievedMemoryKnownContext', () => {
       freshness: 'stale',
       relatedFiles: ['app/src/middleware.ts'],
     });
-    store.write(staleRecord);
+    await store.write(staleRecord);
 
-    const { line, result, packResult } = buildRetrievedMemoryKnownContext(
+    const { line, result, packResult } = await buildRetrievedMemoryKnownContext(
       {
         repoFullName: 'owner/repo',
         branch: 'feature/auth',
@@ -319,9 +319,9 @@ describe('buildRetrievedMemoryKnownContext', () => {
     expect(packResult.sections.facts.recordCount).toBe(0);
   });
 
-  it('returns null line when nothing matches', () => {
+  it('returns null line when nothing matches', async () => {
     const store = createInMemoryStore();
-    const { line, result } = buildRetrievedMemoryKnownContext(
+    const { line, result } = await buildRetrievedMemoryKnownContext(
       {
         repoFullName: 'owner/repo',
         role: 'coder',
@@ -346,7 +346,7 @@ describe('buildRetrievedMemoryKnownContext', () => {
 });
 
 describe('store scoping', () => {
-  it('supports filtering records by scope via predicate', () => {
+  it('supports filtering records by scope via predicate', async () => {
     const store = createInMemoryStore();
     const recordA: MemoryRecord = createMemoryRecord({
       kind: 'fact',
@@ -360,9 +360,9 @@ describe('store scoping', () => {
       scope: makeScope({ branch: 'branch-b' }),
       source: { kind: 'explorer', label: 'x' },
     });
-    store.writeMany([recordA, recordB]);
+    await store.writeMany([recordA, recordB]);
 
-    const branchA = store.list((r) => r.scope.branch === 'branch-a');
+    const branchA = await store.list((r) => r.scope.branch === 'branch-a');
     expect(branchA).toHaveLength(1);
     expect(branchA[0].summary).toBe('A');
   });

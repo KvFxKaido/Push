@@ -18,10 +18,11 @@ import {
 } from '@/lib/delegation-result';
 import {
   buildRetrievedMemoryKnownContext,
-  invalidateMemoryForChangedFiles,
-  writeCoderMemory,
+  writeDecisionMemory,
   writeExplorerMemory,
   writeTaskGraphNodeMemory,
+  writeCoderMemory,
+  invalidateMemoryForChangedFiles,
 } from '@/lib/context-memory';
 import {
   activateVerificationGate,
@@ -89,13 +90,13 @@ const MAX_RETRIEVED_MEMORY_RECORDS = 6;
  * Retrieve typed memory and return a compact knownContext line or null.
  * Callers splice the returned string into the delegation's `knownContext`.
  */
-function retrieveMemoryKnownContextLine(
+async function retrieveMemoryKnownContextLine(
   scope: MemoryScope | null,
   role: MemoryQuery['role'],
   taskText: string,
   fileHints?: string[],
   extras: Partial<MemoryQuery> = {},
-): string | null {
+): Promise<string | null> {
   if (!scope) return null;
   const query: MemoryQuery = {
     repoFullName: scope.repoFullName,
@@ -107,7 +108,7 @@ function retrieveMemoryKnownContextLine(
     maxRecords: MAX_RETRIEVED_MEMORY_RECORDS,
     ...extras,
   };
-  const { line } = buildRetrievedMemoryKnownContext(query);
+  const { line } = await buildRetrievedMemoryKnownContext(query);
   return line;
 }
 
@@ -225,7 +226,7 @@ export function useAgentDelegation({
           repoRef.current,
           branchInfoRef.current?.currentBranch,
         );
-        const explorerMemoryLine = retrieveMemoryKnownContextLine(
+        const explorerMemoryLine = await retrieveMemoryKnownContextLine(
           explorerMemoryScope,
           'explorer',
           explorerTask,
@@ -315,14 +316,16 @@ export function useAgentDelegation({
             }),
             delegationOutcome: explorerOutcome,
           };
+
           if (explorerMemoryScope && explorerOutcome.status === 'complete') {
-            writeExplorerMemory({
+            await writeExplorerMemory({
               scope: explorerMemoryScope,
               summary: explorerResult.summary,
               relatedFiles: explorerArgs.files,
               rounds: explorerResult.rounds,
             });
           }
+
           updateVerificationStateForChat(chatId, (state) =>
             recordVerificationArtifact(
               state,
@@ -435,7 +438,7 @@ export function useAgentDelegation({
               repoRef.current,
               branchInfoRef.current?.currentBranch,
             );
-            const coderMemoryLine = retrieveMemoryKnownContextLine(
+            const coderMemoryLine = await retrieveMemoryKnownContextLine(
               coderMemoryScope,
               'coder',
               taskList.join('\n\n'),
@@ -542,6 +545,14 @@ export function useAgentDelegation({
                   lockedProviderForChat,
                   resolvedModelForChat || undefined,
                 );
+
+                if (coderMemoryScope) {
+                  await writeDecisionMemory({
+                    scope: coderMemoryScope,
+                    question,
+                    answer,
+                  });
+                }
 
                 updateAgentStatus(
                   { active: true, phase: `${prefix}Coder resuming...` },
@@ -885,7 +896,7 @@ export function useAgentDelegation({
             appendInlineDelegationCards(setConversations, chatId, allCards);
 
             if (coderMemoryScope && latestDiffPaths && latestDiffPaths.length > 0) {
-              invalidateMemoryForChangedFiles({
+              await invalidateMemoryForChangedFiles({
                 scope: {
                   repoFullName: coderMemoryScope.repoFullName,
                   branch: coderMemoryScope.branch,
@@ -897,7 +908,7 @@ export function useAgentDelegation({
             }
 
             if (coderMemoryScope && coderOutcome.status !== 'inconclusive') {
-              writeCoderMemory({
+              await writeCoderMemory({
                 scope: coderMemoryScope,
                 outcome: coderOutcome,
                 diffPaths: latestDiffPaths,
@@ -1043,7 +1054,7 @@ export function useAgentDelegation({
 
             // Build the task executor that bridges to existing agent runners
             const taskExecutor: TaskExecutor = async (node, enrichedContext, taskSignal) => {
-              const nodeMemoryLine = retrieveMemoryKnownContextLine(
+              const nodeMemoryLine = await retrieveMemoryKnownContextLine(
                 graphMemoryScope,
                 node.agent,
                 node.task,
@@ -1409,7 +1420,7 @@ export function useAgentDelegation({
             });
 
             if (graphMemoryScope && latestGraphDiffPaths && latestGraphDiffPaths.length > 0) {
-              invalidateMemoryForChangedFiles({
+              await invalidateMemoryForChangedFiles({
                 scope: {
                   repoFullName: graphMemoryScope.repoFullName,
                   branch: graphMemoryScope.branch,
@@ -1424,7 +1435,7 @@ export function useAgentDelegation({
             // later (out-of-graph) delegations can retrieve them.
             if (graphMemoryScope) {
               for (const nodeState of graphResult.nodeStates.values()) {
-                writeTaskGraphNodeMemory({
+                await writeTaskGraphNodeMemory({
                   scope: graphMemoryScope,
                   nodeState,
                 });

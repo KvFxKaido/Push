@@ -9,14 +9,14 @@
 import type { MemoryRecord } from './runtime-contract';
 
 export interface ContextMemoryStore {
-  write(record: MemoryRecord): void;
-  writeMany(records: MemoryRecord[]): void;
-  get(id: string): MemoryRecord | undefined;
-  list(predicate?: (record: MemoryRecord) => boolean): MemoryRecord[];
-  update(id: string, patch: Partial<MemoryRecord>): MemoryRecord | undefined;
-  remove(id: string): void;
-  clear(): void;
-  size(): number;
+  write(record: MemoryRecord): void | Promise<void>;
+  writeMany(records: MemoryRecord[]): void | Promise<void>;
+  get(id: string): MemoryRecord | undefined | Promise<MemoryRecord | undefined>;
+  list(predicate?: (record: MemoryRecord) => boolean): MemoryRecord[] | Promise<MemoryRecord[]>;
+  update(id: string, patch: Partial<MemoryRecord>): MemoryRecord | undefined | Promise<MemoryRecord | undefined>;
+  remove(id: string): void | Promise<void>;
+  clear(): void | Promise<void>;
+  size(): number | Promise<number>;
 }
 
 export function createInMemoryStore(): ContextMemoryStore {

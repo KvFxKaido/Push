@@ -25,15 +25,15 @@ function matchesScope(record: MemoryRecord, scope: Pick<MemoryScope, 'repoFullNa
   return true;
 }
 
-function setFreshness(
+async function setFreshness(
   store: ContextMemoryStore,
   record: MemoryRecord,
   freshness: MemoryRecord['freshness'],
   reason: string,
   timestamp: number,
-): boolean {
+): Promise<boolean> {
   if (record.freshness === freshness) return false;
-  store.update(record.id, {
+  await store.update(record.id, {
     freshness,
     invalidatedAt: timestamp,
     invalidationReason: reason,
@@ -66,9 +66,9 @@ export interface InvalidateMemoryForChangedFilesInput {
   timestamp?: number;
 }
 
-export function invalidateMemoryForChangedFiles(
+export async function invalidateMemoryForChangedFiles(
   input: InvalidateMemoryForChangedFilesInput,
-): number {
+): Promise<number> {
   const normalizedPaths = new Set(
     input.changedPaths
       .map(normalizePath)
@@ -78,7 +78,7 @@ export function invalidateMemoryForChangedFiles(
 
   const store = input.store ?? getDefaultMemoryStore();
   const timestamp = input.timestamp ?? Date.now();
-  const scopedRecords = store.list((record) => matchesScope(record, input.scope));
+  const scopedRecords = await store.list((record) => matchesScope(record, input.scope));
 
   const directlyAffectedIds = new Set<string>();
   for (const record of scopedRecords) {
@@ -98,7 +98,7 @@ export function invalidateMemoryForChangedFiles(
   let changedCount = 0;
   for (const record of scopedRecords) {
     if (!allAffectedIds.has(record.id)) continue;
-    if (setFreshness(store, record, 'stale', reason, timestamp)) {
+    if (await setFreshness(store, record, 'stale', reason, timestamp)) {
       changedCount++;
     }
   }
@@ -113,19 +113,19 @@ export interface ExpireBranchScopedMemoryInput {
   timestamp?: number;
 }
 
-export function expireBranchScopedMemory(
+export async function expireBranchScopedMemory(
   input: ExpireBranchScopedMemoryInput,
-): number {
+): Promise<number> {
   const store = input.store ?? getDefaultMemoryStore();
   const timestamp = input.timestamp ?? Date.now();
-  const branchScopedRecords = store.list((record) =>
+  const branchScopedRecords = await store.list((record) =>
     record.scope.repoFullName === input.repoFullName
     && record.scope.branch === input.branch,
   );
 
   let changedCount = 0;
   for (const record of branchScopedRecords) {
-    if (setFreshness(store, record, 'expired', `Branch changed away from ${input.branch}`, timestamp)) {
+    if (await setFreshness(store, record, 'expired', `Branch changed away from ${input.branch}`, timestamp)) {
       changedCount++;
     }
   }
@@ -141,15 +141,15 @@ export interface SupersedeVerificationMemoryInput {
   timestamp?: number;
 }
 
-export function supersedeVerificationMemory(
+export async function supersedeVerificationMemory(
   input: SupersedeVerificationMemoryInput,
-): number {
+): Promise<number> {
   const store = input.store ?? getDefaultMemoryStore();
   const timestamp = input.timestamp ?? Date.now();
   const normalizedCommand = input.command ? normalizeCommand(input.command) : null;
   const checkTag = `check:${input.checkId}`;
   const commandTag = normalizedCommand ? `command:${normalizedCommand}` : null;
-  const candidates = store.list((record) =>
+  const candidates = await store.list((record) =>
     record.kind === 'verification_result'
     && matchesScope(record, input.scope)
     && record.freshness !== 'expired',
@@ -161,7 +161,7 @@ export function supersedeVerificationMemory(
     const matchesCheck = tags.has(checkTag) || record.source.label === `Verification: ${input.checkId}`;
     const matchesCommand = commandTag ? tags.has(commandTag) : false;
     if (!matchesCheck && !matchesCommand) continue;
-    if (setFreshness(store, record, 'stale', `Superseded by newer verification for ${input.checkId}`, timestamp)) {
+    if (await setFreshness(store, record, 'stale', `Superseded by newer verification for ${input.checkId}`, timestamp)) {
       changedCount++;
     }
   }

@@ -338,7 +338,7 @@ export function useChat(
         || previousMemoryScope.branch !== currentMemoryScope.branch
       )
     ) {
-      expireBranchScopedMemory(previousMemoryScope);
+      void expireBranchScopedMemory(previousMemoryScope);
     }
 
     previousMemoryBranchScopeRef.current = currentMemoryScope;

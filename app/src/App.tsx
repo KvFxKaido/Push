@@ -16,6 +16,9 @@ import type {
   WorkspaceSession,
 } from '@/types';
 import './App.css';
+import { createIndexedDbStore, setDefaultMemoryStore } from '@/lib/context-memory-store';
+
+setDefaultMemoryStore(createIndexedDbStore());
 
 const WORKSPACE_SESSION_STORAGE_KEY = 'workspace_session';
 
@@ -108,6 +111,7 @@ function App() {
   const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => loadWorkspaceSession(activeRepo));
   const [conversationIndex, setConversationIndex] = useState<ConversationIndex>({});
   const [pendingResumeChatId, setPendingResumeChatId] = useState<string | null>(null);
+
 
   const {
     resolveRepoAppearance,

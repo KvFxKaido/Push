@@ -7,7 +7,7 @@
  */
 
 const DB_NAME = 'push-app-db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export const STORE = {
   conversations: 'conversations',
@@ -15,6 +15,7 @@ export const STORE = {
   checkpoints: 'checkpoints',
   usageLog: 'usage_log',
   runJournal: 'run_journal',
+  memoryRecords: 'memory_records',
 } as const;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -63,6 +64,15 @@ function openDb(): Promise<IDBDatabase> {
         const journalStore = db.createObjectStore(STORE.runJournal, { keyPath: 'runId' });
         journalStore.createIndex('chatId', 'chatId', { unique: false });
         journalStore.createIndex('startedAt', 'startedAt', { unique: false });
+      }
+
+      // Memory records — typed artifact memory (Phase 1)
+      if (!db.objectStoreNames.contains(STORE.memoryRecords)) {
+        const memStore = db.createObjectStore(STORE.memoryRecords, { keyPath: 'id' });
+        memStore.createIndex('repoFullName', 'repoFullName', { unique: false });
+        memStore.createIndex('chatId', 'chatId', { unique: false });
+        memStore.createIndex('branch', 'branch', { unique: false });
+        memStore.createIndex('kind', 'kind', { unique: false });
       }
     };
 

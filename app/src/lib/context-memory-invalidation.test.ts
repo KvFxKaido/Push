@@ -46,7 +46,7 @@ function makeRecord(
 }
 
 describe('invalidateMemoryForChangedFiles', () => {
-  it('marks directly file-linked records stale and propagates to descendants', () => {
+  it('marks directly file-linked records stale and propagates to descendants', async () => {
     const store = createInMemoryStore();
     const parent = createMemoryRecord({
       kind: 'task_outcome',
@@ -71,22 +71,22 @@ describe('invalidateMemoryForChangedFiles', () => {
     });
     store.writeMany([parent, child, unrelated, otherBranch]);
 
-    const changed = invalidateMemoryForChangedFiles({
+    const changed = await invalidateMemoryForChangedFiles({
       store,
       scope: makeScope(),
       changedPaths: ['/workspace/app/src/auth.ts'],
     });
 
     expect(changed).toBe(2);
-    expect(store.get(parent.id)?.freshness).toBe('stale');
-    expect(store.get(child.id)?.freshness).toBe('stale');
-    expect(store.get(unrelated.id)?.freshness).toBe('fresh');
-    expect(store.get(otherBranch.id)?.freshness).toBe('fresh');
+    expect((await store.get(parent.id))?.freshness).toBe('stale');
+    expect((await store.get(child.id))?.freshness).toBe('stale');
+    expect((await store.get(unrelated.id))?.freshness).toBe('fresh');
+    expect((await store.get(otherBranch.id))?.freshness).toBe('fresh');
   });
 });
 
 describe('expireBranchScopedMemory', () => {
-  it('expires records bound to the departed branch and leaves repo-wide records alone', () => {
+  it('expires records bound to the departed branch and leaves repo-wide records alone', async () => {
     const store = createInMemoryStore();
     const branchScoped = makeRecord('branch-scoped', {
       scope: { branch: 'feature/auth' },
@@ -99,21 +99,21 @@ describe('expireBranchScopedMemory', () => {
     });
     store.writeMany([branchScoped, repoScoped, otherBranch]);
 
-    const changed = expireBranchScopedMemory({
+    const changed = await expireBranchScopedMemory({
       store,
       repoFullName: 'owner/repo',
       branch: 'feature/auth',
     });
 
     expect(changed).toBe(1);
-    expect(store.get(branchScoped.id)?.freshness).toBe('expired');
-    expect(store.get(repoScoped.id)?.freshness).toBe('fresh');
-    expect(store.get(otherBranch.id)?.freshness).toBe('fresh');
+    expect((await store.get(branchScoped.id))?.freshness).toBe('expired');
+    expect((await store.get(repoScoped.id))?.freshness).toBe('fresh');
+    expect((await store.get(otherBranch.id))?.freshness).toBe('fresh');
   });
 });
 
 describe('supersedeVerificationMemory', () => {
-  it('marks prior matching verification results stale by check id or normalized command', () => {
+  it('marks prior matching verification results stale by check id or normalized command', async () => {
     const store = createInMemoryStore();
     const oldTypecheck = makeRecord('old-typecheck', {
       kind: 'verification_result',
@@ -127,7 +127,7 @@ describe('supersedeVerificationMemory', () => {
     });
     store.writeMany([oldTypecheck, oldTest]);
 
-    const changed = supersedeVerificationMemory({
+    const changed = await supersedeVerificationMemory({
       store,
       scope: makeScope(),
       checkId: 'typecheck',
@@ -135,7 +135,7 @@ describe('supersedeVerificationMemory', () => {
     });
 
     expect(changed).toBe(1);
-    expect(store.get(oldTypecheck.id)?.freshness).toBe('stale');
-    expect(store.get(oldTest.id)?.freshness).toBe('fresh');
+    expect((await store.get(oldTypecheck.id))?.freshness).toBe('stale');
+    expect((await store.get(oldTest.id))?.freshness).toBe('fresh');
   });
 });

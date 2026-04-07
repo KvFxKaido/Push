@@ -138,7 +138,7 @@ describe('scoreRecord', () => {
 });
 
 describe('retrieveRecords', () => {
-  it('ranks branch + file overlap matches above generic recency', () => {
+  it('ranks branch + file overlap matches above generic recency', async () => {
     const store = createInMemoryStore();
     const now = 2_000_000_000;
 
@@ -157,7 +157,7 @@ describe('retrieveRecords', () => {
       }),
     );
 
-    const result = retrieveRecords(
+    const result = await retrieveRecords(
       store,
       makeQuery({ fileHints: ['app/src/auth.ts'] }),
       now,
@@ -166,7 +166,7 @@ describe('retrieveRecords', () => {
     expect(result.records[0].record.id).toBe('targeted');
   });
 
-  it('uses task-text overlap when file hints are unavailable', () => {
+  it('uses task-text overlap when file hints are unavailable', async () => {
     const store = createInMemoryStore();
     const now = 2_000_000_000;
 
@@ -185,7 +185,7 @@ describe('retrieveRecords', () => {
       }),
     );
 
-    const result = retrieveRecords(
+    const result = await retrieveRecords(
       store,
       makeQuery({ taskText: 'fix auth retry flow' }),
       now,
@@ -195,7 +195,7 @@ describe('retrieveRecords', () => {
     expect(result.records[0].breakdown.taskText).toBeGreaterThan(0);
   });
 
-  it('respects maxRecords cap', () => {
+  it('respects maxRecords cap', async () => {
     const store = createInMemoryStore();
     for (let i = 0; i < 10; i++) {
       store.write(
@@ -204,7 +204,7 @@ describe('retrieveRecords', () => {
         }),
       );
     }
-    const result = retrieveRecords(
+    const result = await retrieveRecords(
       store,
       makeQuery({ fileHints: ['app/src/auth.ts'], maxRecords: 3 }),
     );
@@ -212,7 +212,7 @@ describe('retrieveRecords', () => {
     expect(result.candidateCount).toBe(10);
   });
 
-  it('excludes records from other repos entirely', () => {
+  it('excludes records from other repos entirely', async () => {
     const store = createInMemoryStore();
     store.write(
       makeRecord('other', {
@@ -220,7 +220,7 @@ describe('retrieveRecords', () => {
         relatedFiles: ['app/src/auth.ts'],
       }),
     );
-    const result = retrieveRecords(
+    const result = await retrieveRecords(
       store,
       makeQuery({ fileHints: ['app/src/auth.ts'] }),
     );
@@ -228,7 +228,7 @@ describe('retrieveRecords', () => {
     expect(result.candidateCount).toBe(0);
   });
 
-  it('drops stale records by default and counts them', () => {
+  it('drops stale records by default and counts them', async () => {
     const store = createInMemoryStore();
     store.write(makeRecord('fresh-one', { relatedFiles: ['app/src/auth.ts'] }));
     store.write(
@@ -243,7 +243,7 @@ describe('retrieveRecords', () => {
         relatedFiles: ['app/src/auth.ts'],
       }),
     );
-    const result = retrieveRecords(
+    const result = await retrieveRecords(
       store,
       makeQuery({ fileHints: ['app/src/auth.ts'] }),
     );
@@ -252,7 +252,7 @@ describe('retrieveRecords', () => {
     expect(result.expiredExcluded).toBe(1);
   });
 
-  it('isolates results to the current chat and branch', () => {
+  it('isolates results to the current chat and branch', async () => {
     const store = createInMemoryStore();
     store.write(
       makeRecord('same-chat-same-branch', {
@@ -272,7 +272,7 @@ describe('retrieveRecords', () => {
       }),
     );
 
-    const result = retrieveRecords(
+    const result = await retrieveRecords(
       store,
       makeQuery({ fileHints: ['app/src/auth.ts'] }),
     );
@@ -281,7 +281,7 @@ describe('retrieveRecords', () => {
     expect(result.candidateCount).toBe(1);
   });
 
-  it('deterministically breaks ties by newer first then by id', () => {
+  it('deterministically breaks ties by newer first then by id', async () => {
     const store = createInMemoryStore();
     const now = 3_000_000_000;
     store.write(
@@ -302,7 +302,7 @@ describe('retrieveRecords', () => {
         relatedFiles: ['app/src/auth.ts'],
       }),
     );
-    const result = retrieveRecords(
+    const result = await retrieveRecords(
       store,
       makeQuery({ fileHints: ['app/src/auth.ts'] }),
       now,
