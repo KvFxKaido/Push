@@ -6,8 +6,6 @@ export interface PersistencePolicy {
   truncateDetail?: boolean;
 }
 
-const DEFAULT_TTL_DAYS = 7;
-
 export const MEMORY_PERSISTENCE_POLICY: Record<MemoryRecordKind, PersistencePolicy> = {
   finding: { persist: true, ttlDays: 30, truncateDetail: true },
   fact: { persist: true, ttlDays: 30, truncateDetail: true },
