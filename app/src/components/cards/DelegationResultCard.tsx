@@ -30,16 +30,11 @@ function getAgentLabel(agent: DelegationResultCardData['agent']): string {
   }
 }
 
-function getAgentIcon(agent: DelegationResultCardData['agent']) {
-  switch (agent) {
-    case 'explorer':
-      return Search;
-    case 'coder':
-      return Bot;
-    case 'task_graph':
-      return Workflow;
-  }
-}
+const AGENT_ICONS: Record<DelegationResultCardData['agent'], typeof Search> = {
+  explorer: Search,
+  coder: Bot,
+  task_graph: Workflow,
+};
 
 function getStatusLabel(status: DelegationResultCardData['status']): string {
   switch (status) {
@@ -77,7 +72,7 @@ function getStatusClasses(status: DelegationResultCardData['status']) {
 
 export function DelegationResultCard({ data }: { data: DelegationResultCardData }) {
   const { expanded, toggleExpanded } = useExpandable(false);
-  const Icon = getAgentIcon(data.agent);
+  const AgentIcon = AGENT_ICONS[data.agent];
   const status = getStatusClasses(data.status);
   const auditorVerdict = data.gateVerdicts.find((verdict) => verdict.gate === 'auditor');
   const hasDetails = Boolean(
@@ -96,7 +91,7 @@ export function DelegationResultCard({ data }: { data: DelegationResultCardData 
         className="w-full text-left"
       >
         <div className={`flex items-center gap-2.5 border-b border-push-edge px-3.5 py-3 ${status.header}`}>
-          <Icon className={`h-4 w-4 shrink-0 ${status.text}`} />
+          <AgentIcon className={`h-4 w-4 shrink-0 ${status.text}`} />
           <span className={`text-push-base font-medium ${status.text}`}>
             {getAgentLabel(data.agent)}
           </span>
