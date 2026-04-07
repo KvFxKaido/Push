@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Check, X, Loader2, AlertCircle } from 'lucide-react';
 import type { CommitReviewCardData, CardAction } from '@/types';
 import { DiffPreviewCard } from './DiffPreviewCard';
@@ -21,12 +21,90 @@ interface CommitReviewCardProps {
   onAction?: (action: CardAction) => void;
 }
 
-export function CommitReviewCard({ data, messageId, cardIndex, onAction }: CommitReviewCardProps) {
-  const [editedMessage, setEditedMessage] = useState(data.commitMessage);
+interface CommitMessageEditorProps {
+  initialMessage: string;
+  messageId: string;
+  cardIndex: number;
+  isError: boolean;
+  onAction?: (action: CardAction) => void;
+}
 
-  useEffect(() => {
-    setEditedMessage(data.commitMessage);
-  }, [data.commitMessage]);
+function CommitMessageEditor({
+  initialMessage,
+  messageId,
+  cardIndex,
+  isError,
+  onAction,
+}: CommitMessageEditorProps) {
+  const [editedMessage, setEditedMessage] = useState(initialMessage);
+
+  const commitMessage = editedMessage.trim() || initialMessage;
+
+  return (
+    <>
+      <textarea
+        value={editedMessage}
+        onChange={(e) => setEditedMessage(e.target.value)}
+        rows={1}
+        placeholder="Enter commit message..."
+        className={`${CARD_INPUT_CLASS} resize-none leading-relaxed`}
+        style={{ minHeight: '38px', maxHeight: '80px' }}
+        onInput={(e) => {
+          const target = e.target as HTMLTextAreaElement;
+          target.style.height = 'auto';
+          target.style.height = Math.min(target.scrollHeight, 80) + 'px';
+        }}
+      />
+
+      <div className="flex items-center gap-2 px-3 pb-3">
+        <button
+          onClick={() => onAction?.({
+            type: 'commit-approve',
+            messageId,
+            cardIndex,
+            commitMessage,
+          })}
+          disabled={!editedMessage.trim()}
+          className={`${CARD_BUTTON_CLASS} h-11 flex-1 text-emerald-300`}
+          style={{ minHeight: '44px' }}
+        >
+          <Check className="h-4 w-4" />
+          {isError ? 'Try again' : 'Approve & Push'}
+        </button>
+        <button
+          onClick={() => onAction?.({
+            type: 'commit-refresh',
+            messageId,
+            cardIndex,
+            commitMessage,
+          })}
+          disabled={!editedMessage.trim()}
+          className={`${CARD_BUTTON_CLASS} h-11`}
+          style={{ minHeight: '44px' }}
+        >
+          <Loader2 className="h-4 w-4" />
+          Refresh
+        </button>
+        {!isError && (
+          <button
+            onClick={() => onAction?.({
+              type: 'commit-reject',
+              messageId,
+              cardIndex,
+            })}
+            className={`${CARD_BUTTON_CLASS} h-11`}
+            style={{ minHeight: '44px' }}
+          >
+            <X className="h-4 w-4" />
+            Reject
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+export function CommitReviewCard({ data, messageId, cardIndex, onAction }: CommitReviewCardProps) {
 
   const isPending = data.status === 'pending';
   const isRefreshing = data.status === 'refreshing';
@@ -95,19 +173,14 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
             </span>
           )}
         </div>
-        {isPending ? (
-          <textarea
-            value={editedMessage}
-            onChange={(e) => setEditedMessage(e.target.value)}
-            rows={1}
-            placeholder="Enter commit message..."
-            className={`${CARD_INPUT_CLASS} resize-none leading-relaxed`}
-            style={{ minHeight: '38px', maxHeight: '80px' }}
-            onInput={(e) => {
-              const target = e.target as HTMLTextAreaElement;
-              target.style.height = 'auto';
-              target.style.height = Math.min(target.scrollHeight, 80) + 'px';
-            }}
+        {(isPending || isError) ? (
+          <CommitMessageEditor
+            key={data.commitMessage}
+            initialMessage={data.commitMessage}
+            messageId={messageId}
+            cardIndex={cardIndex}
+            isError={isError}
+            onAction={onAction}
           />
         ) : (
           <div className={`${CARD_PANEL_CLASS} px-3 py-2`}>
@@ -124,54 +197,6 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
           <div className="rounded-[16px] border border-red-500/20 bg-red-500/10 px-3 py-2">
             <p className="text-push-sm text-push-status-error">{data.error}</p>
           </div>
-        </div>
-      )}
-
-      {/* Actions */}
-      {(isPending || isError) && (
-        <div className="flex items-center gap-2 px-3 pb-3">
-          <button
-            onClick={() => onAction?.({
-              type: 'commit-approve',
-              messageId,
-              cardIndex,
-              commitMessage: editedMessage.trim() || data.commitMessage,
-            })}
-            disabled={!editedMessage.trim()}
-            className={`${CARD_BUTTON_CLASS} h-11 flex-1 text-emerald-300`}
-            style={{ minHeight: '44px' }}
-          >
-            <Check className="h-4 w-4" />
-            {isError ? 'Try again' : 'Approve & Push'}
-          </button>
-          <button
-            onClick={() => onAction?.({
-              type: 'commit-refresh',
-              messageId,
-              cardIndex,
-              commitMessage: editedMessage.trim() || data.commitMessage,
-            })}
-            disabled={!editedMessage.trim()}
-            className={`${CARD_BUTTON_CLASS} h-11`}
-            style={{ minHeight: '44px' }}
-          >
-            <Loader2 className="h-4 w-4" />
-            Refresh
-          </button>
-          {!isError && (
-            <button
-              onClick={() => onAction?.({
-                type: 'commit-reject',
-                messageId,
-                cardIndex,
-              })}
-              className={`${CARD_BUTTON_CLASS} h-11`}
-              style={{ minHeight: '44px' }}
-            >
-              <X className="h-4 w-4" />
-              Reject
-            </button>
-          )}
         </div>
       )}
 
