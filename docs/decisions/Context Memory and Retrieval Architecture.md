@@ -3,6 +3,25 @@
 Status: Current, added 2026-04-05
 Origin: [Multi-Agent Orchestration Research](Multi-Agent%20Orchestration%20Research%20%E2%80%94%20open-multi-agent.md), [Task Graph Orchestration Plan](../runbooks/Task%20Graph%20Orchestration%20Plan.md)
 
+## Implementation Status
+
+- Phase 1: Shipped
+  - Typed `MemoryRecord` model, write path, and local store are in place.
+  - Web persistence now uses IndexedDB-backed records scoped to repo/branch/chat.
+- Phase 2: Shipped
+  - Deterministic retrieval is active for delegation and task-graph handoff enrichment.
+- Phase 3: Shipped
+  - File-change invalidation and branch-expiration freshness transitions are active.
+- Phase 4: Shipped
+  - Retrieved memory is packed into bounded sectioned prompt blocks.
+- Phase 5: Partial
+  - Retrieval is active for delegation and checkpoint decisions.
+  - Broader Orchestrator / Reviewer / Auditor consumers remain follow-through work.
+
+Persistence note:
+
+- Web persistence is best-effort / fail-open. Memory storage and cleanup failures should not block successful delegations or task-graph completions.
+
 ## Why This Exists
 
 Push now has a real task-graph executor, graph-scoped shared memory, and task-level trace events. That makes orchestration meaningfully better than "one delegation at a time."
