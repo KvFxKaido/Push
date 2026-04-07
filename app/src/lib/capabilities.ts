@@ -110,6 +110,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   sandbox_apply_patchset: ['repo:write'],
   sandbox_run_tests:     ['sandbox:test'],
   sandbox_check_types:   ['sandbox:test'],
+  sandbox_verify_workspace: ['sandbox:test'],
   sandbox_prepare_commit: ['git:commit'],
   sandbox_push:          ['git:push'],
   sandbox_download:      ['sandbox:download'],

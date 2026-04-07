@@ -861,6 +861,10 @@ def _run_environment_probe(sb):
         " [print(f\"{k}:{str(v).replace(chr(10),' ')}\") for k,v in s.items()"
         " if k in ('test','lint','typecheck','build','dev','start','check','format')]"
         '" 2>/dev/null; fi;'
+        'echo "---READINESS---";'
+        'cd /workspace 2>/dev/null && if [ -f package.json ]; then'
+        ' if [ -d node_modules ]; then echo "js_dependencies:installed"; else echo "js_dependencies:missing"; fi;'
+        ' fi;'
         'echo "---END---"'
     )
     try:
@@ -904,6 +908,7 @@ def _run_environment_probe(sb):
             pass
 
     markers = sections.get('MARKERS', [])
+    readiness_signals = sections.get('READINESS', [])
 
     scripts = {}
     for item in sections.get('SCRIPTS', []):
@@ -914,6 +919,87 @@ def _run_environment_probe(sb):
             scripts[name.strip()] = cmd.strip()
 
     git_available = 'git' in tools
+    marker_set = set(markers)
+
+    def detect_package_manager():
+        if 'pnpm-lock.yaml' in marker_set:
+            return 'pnpm'
+        if 'yarn.lock' in marker_set:
+            return 'yarn'
+        if 'package-lock.json' in marker_set or 'package.json' in marker_set:
+            return 'npm'
+        if 'pyproject.toml' in marker_set or 'requirements.txt' in marker_set or 'setup.py' in marker_set:
+            return 'python'
+        if 'Cargo.toml' in marker_set:
+            return 'cargo'
+        if 'go.mod' in marker_set:
+            return 'go'
+        if 'pom.xml' in marker_set:
+            return 'maven'
+        if 'Gemfile' in marker_set:
+            return 'bundler'
+        if 'Makefile' in marker_set:
+            return 'make'
+        return None
+
+    def build_script_command(package_manager, script_name):
+        if not package_manager:
+            return None
+        if package_manager == 'npm':
+            return 'npm test' if script_name == 'test' else f'npm run {script_name}'
+        if package_manager == 'yarn':
+            return f'yarn {script_name}'
+        if package_manager == 'pnpm':
+            return f'pnpm {script_name}'
+        return None
+
+    def infer_test_runner(test_script):
+        normalized = (test_script or '').lower()
+        if not normalized:
+            return None
+        if 'vitest' in normalized:
+            return 'vitest'
+        if 'jest' in normalized:
+            return 'jest'
+        if 'playwright' in normalized:
+            return 'playwright'
+        if 'pytest' in normalized:
+            return 'pytest'
+        if 'cargo test' in normalized:
+            return 'cargo test'
+        if 'go test' in normalized:
+            return 'go test'
+        return None
+
+    package_manager = detect_package_manager()
+    readiness = {}
+    if package_manager:
+        readiness['package_manager'] = package_manager
+
+    if package_manager in ('npm', 'yarn', 'pnpm'):
+        dependency_signal = next((item for item in readiness_signals if item.startswith('js_dependencies:')), None)
+        if dependency_signal == 'js_dependencies:installed':
+            readiness['dependencies'] = 'installed'
+        elif dependency_signal == 'js_dependencies:missing':
+            readiness['dependencies'] = 'missing'
+        else:
+            readiness['dependencies'] = 'unknown'
+
+    if 'test' in scripts:
+        readiness['test_command'] = build_script_command(package_manager, 'test') or scripts['test']
+        runner = infer_test_runner(scripts['test'])
+        if runner:
+            readiness['test_runner'] = runner
+
+    if 'typecheck' in scripts:
+        readiness['typecheck_command'] = build_script_command(package_manager, 'typecheck') or scripts['typecheck']
+    elif 'check' in scripts and any(token in scripts['check'].lower() for token in ('tsc', 'typecheck', 'type-check', 'pyright', 'mypy', 'cargo test', 'go test')):
+        readiness['typecheck_command'] = build_script_command(package_manager, 'check') or scripts['check']
+
+    if readiness.get('dependencies') == 'missing' and (
+        readiness.get('test_command') or readiness.get('typecheck_command') or 'build' in scripts
+    ):
+        warnings.append('Dependencies not installed (node_modules missing); test/typecheck/build scripts may fail until install.')
 
     result = {"tools": tools}
     if markers:
@@ -927,6 +1013,8 @@ def _run_environment_probe(sb):
     result["git_available"] = git_available
     result["container_ttl"] = "30m"
     result["writable_root"] = "/workspace"
+    if readiness:
+        result["readiness"] = readiness
     return result
 
 

@@ -18,6 +18,7 @@ const {
 vi.mock('./sandbox-client', () => ({
   execInSandbox: vi.fn(),
   findReferencesInSandbox: vi.fn(),
+  getSandboxEnvironment: vi.fn(),
   readFromSandbox: vi.fn(),
   writeToSandbox: vi.fn(),
   batchWriteToSandbox: vi.fn(),
@@ -138,6 +139,21 @@ describe('validateSandboxToolCall -- sandbox_edit_range', () => {
   });
 });
 
+describe('validateSandboxToolCall -- sandbox_verify_workspace', () => {
+  it('accepts empty args', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_verify_workspace',
+      args: {},
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.tool).toBe('sandbox_verify_workspace');
+    if (result?.tool === 'sandbox_verify_workspace') {
+      expect(result.args).toEqual({});
+    }
+  });
+});
+
 describe('classifyError', () => {
   it('recognizes git guard failures', () => {
     expect(classifyError('git_guard_blocked: direct git push is blocked', 'sandbox_exec')).toEqual({
@@ -146,6 +162,85 @@ describe('classifyError', () => {
       message: 'git_guard_blocked: direct git push is blocked',
       detail: 'sandbox_exec',
     });
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.getSandboxEnvironment).mockReset();
+  });
+
+  it('installs missing dependencies, then runs typecheck and tests', async () => {
+    vi.mocked(sandboxClient.getSandboxEnvironment).mockReturnValue({
+      readiness: {
+        package_manager: 'npm',
+        dependencies: 'missing',
+        typecheck_command: 'npm run typecheck',
+        test_command: 'npm test',
+      },
+    } as never);
+
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: 'installed', stderr: '', truncated: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: 'typecheck ok', stderr: '', truncated: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: 'tests ok', stderr: '', truncated: false });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_verify_workspace', args: {} },
+      'sb-123',
+    );
+
+    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
+      1,
+      'sb-123',
+      'cd /workspace && npm install',
+      undefined,
+      { markWorkspaceMutated: true },
+    );
+    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
+      2,
+      'sb-123',
+      'cd /workspace && npm run typecheck',
+      undefined,
+      { markWorkspaceMutated: false },
+    );
+    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
+      3,
+      'sb-123',
+      'cd /workspace && npm test',
+      undefined,
+      { markWorkspaceMutated: true },
+    );
+    expect(result.text).toContain('Workspace verification PASSED');
+    expect(result.text).toContain('Install dependencies: npm install');
+    expect(result.text).toContain('Typecheck: npm run typecheck');
+    expect(result.text).toContain('Test: npm test');
+  });
+
+  it('stops on the first failing verification step', async () => {
+    vi.mocked(sandboxClient.getSandboxEnvironment).mockReturnValue({
+      readiness: {
+        package_manager: 'npm',
+        dependencies: 'installed',
+        typecheck_command: 'npm run typecheck',
+        test_command: 'npm test',
+      },
+    } as never);
+
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'typecheck boom', truncated: false });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_verify_workspace', args: {} },
+      'sb-123',
+    );
+
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
+    expect(result.text).toContain('Workspace verification FAILED at typecheck');
+    expect(result.text).toContain('Output from failed step (Typecheck):');
+    expect(result.text).toContain('typecheck boom');
+    expect(result.text).toContain('rerun test() or typecheck() directly');
   });
 });
 
@@ -1592,6 +1687,41 @@ describe('sandbox_edit_file symbolic guard', () => {
     );
     // 4 calls: initial read + edit read + auto-retry re-read + post-write verification
     expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(4);
+  });
+
+  it('surfaces refreshed retry hints when stale line-qualified refs still fail', async () => {
+    const path = '/workspace/src/retry-fail.ts';
+    const originalContent = 'const value = 1;\n';
+    const latestContent = 'const value = 2;\n';
+
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({ content: originalContent, truncated: false, version: 'v1' })
+      .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' })
+      .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+
+    const staleHash = await calculateLineHash('const value = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path,
+          edits: [{ op: 'replace_line', ref: `1:${staleHash}`, content: 'const value = 3;' }],
+        },
+      },
+      'sb-123',
+    );
+
+    const refreshedHash = await calculateLineHash('const value = 2;');
+    expect(result.text).toContain('[Tool Error — sandbox_edit_file]');
+    expect(result.text).toContain('Retry hints:');
+    expect(result.text).toContain(`Same-line retry for "1:${staleHash}": use "1:${refreshedHash}"`);
+    expect(result.text).toContain('sandbox_edit_range');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 });
 

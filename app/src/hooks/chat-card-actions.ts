@@ -10,6 +10,7 @@
 import { useCallback } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type {
+  AIProviderType,
   AgentStatus,
   AgentStatusSource,
   CardAction,
@@ -21,6 +22,8 @@ import type {
 } from '@/types';
 import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
 import { executeToolCall } from '@/lib/github-tools';
+import type { ActiveProvider } from '@/lib/orchestrator';
+import { executeSandboxToolCall } from '@/lib/sandbox-tools';
 import { createId } from '@/hooks/chat-persistence';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 
@@ -36,6 +39,8 @@ export interface ChatCardActionsParams {
   isMainProtectedRef: MutableRefObject<boolean>;
   branchInfoRef: MutableRefObject<{ currentBranch?: string; defaultBranch?: string } | undefined>;
   repoRef: MutableRefObject<string | null>;
+  lockedProvider?: AIProviderType | null;
+  lockedModel?: string | null;
   updateAgentStatus: (
     status: AgentStatus,
     options?: { chatId?: string; source?: AgentStatusSource; log?: boolean },
@@ -59,6 +64,8 @@ export function useChatCardActions({
   isMainProtectedRef,
   branchInfoRef,
   repoRef,
+  lockedProvider,
+  lockedModel,
   updateAgentStatus,
   sendMessageRef,
   isStreaming,
@@ -137,7 +144,111 @@ export function useChatCardActions({
       const chatId = activeChatId;
       if (!chatId) return;
 
+      const formatToolResultDetail = (text: string): string => {
+        const trimmed = text.trim();
+        if (!trimmed) return 'Unknown error';
+        const lines = trimmed.split('\n');
+        if (lines.length <= 1) return trimmed;
+        return lines.slice(1).join('\n').trim() || lines[0];
+      };
+
       switch (action.type) {
+        case 'commit-refresh': {
+          const sandboxId = sandboxIdRef.current;
+          if (!sandboxId) {
+            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+              if (card.type !== 'commit-review') return card;
+              return {
+                ...card,
+                data: {
+                  ...card.data,
+                  status: 'error',
+                  error: 'Sandbox expired. Start a new sandbox.',
+                } as CommitReviewCardData,
+              };
+            });
+            return;
+          }
+
+          const normalizedCommitMessage = action.commitMessage.replace(/[\r\n]+/g, ' ').trim();
+          if (!normalizedCommitMessage) {
+            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+              if (card.type !== 'commit-review') return card;
+              return {
+                ...card,
+                data: {
+                  ...card.data,
+                  status: 'error',
+                  error: 'Commit message cannot be empty.',
+                } as CommitReviewCardData,
+              };
+            });
+            return;
+          }
+
+          updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+            if (card.type !== 'commit-review') return card;
+            return {
+              ...card,
+              data: {
+                ...card.data,
+                commitMessage: normalizedCommitMessage,
+                status: 'refreshing',
+                error: undefined,
+              } as CommitReviewCardData,
+            };
+          });
+
+          updateAgentStatus(
+            { active: true, phase: 'Refreshing commit review...' },
+            { chatId, source: 'system' },
+          );
+
+          try {
+            const refreshResult = await executeSandboxToolCall(
+              { tool: 'sandbox_prepare_commit', args: { message: normalizedCommitMessage } },
+              sandboxId,
+              {
+                auditorProviderOverride: lockedProvider && lockedProvider !== 'demo'
+                  ? lockedProvider as ActiveProvider
+                  : undefined,
+                auditorModelOverride: lockedModel ?? null,
+              },
+            );
+
+            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+              if (card.type !== 'commit-review') return card;
+              if (refreshResult.card?.type === 'commit-review') {
+                return refreshResult.card;
+              }
+              if (refreshResult.card?.type === 'audit-verdict') {
+                return {
+                  ...card,
+                  data: {
+                    ...card.data,
+                    auditVerdict: refreshResult.card.data,
+                    commitMessage: normalizedCommitMessage,
+                    status: 'error',
+                    error: formatToolResultDetail(refreshResult.text),
+                  } as CommitReviewCardData,
+                };
+              }
+              return {
+                ...card,
+                data: {
+                  ...card.data,
+                  commitMessage: normalizedCommitMessage,
+                  status: 'error',
+                  error: formatToolResultDetail(refreshResult.text),
+                } as CommitReviewCardData,
+              };
+            });
+          } finally {
+            updateAgentStatus({ active: false, phase: '' });
+          }
+          break;
+        }
+
         case 'commit-approve': {
           const sandboxId = sandboxIdRef.current;
           if (!sandboxId) {
@@ -540,6 +651,8 @@ export function useChatCardActions({
       injectSyntheticMessage,
       isMainProtectedRef,
       isStreaming,
+      lockedModel,
+      lockedProvider,
       messages,
       repoRef,
       sandboxIdRef,

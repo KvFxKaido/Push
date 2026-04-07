@@ -126,6 +126,7 @@ export function buildSessionCapabilityBlock(
       toolVersions: sandboxEnv?.tools ?? {},
       projectMarkers: sandboxEnv?.project_markers?.slice(0, 8) ?? [],
       scripts: sandboxEnv?.scripts ? Object.keys(sandboxEnv.scripts).sort() : [],
+      readiness: sandboxEnv?.readiness ?? null,
       warnings: sandboxEnv?.warnings?.slice(0, 4) ?? [],
     },
     workflow: {

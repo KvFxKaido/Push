@@ -166,6 +166,61 @@ export function buildPatchsetFailureDetail(writeFailures: string[]): string {
   return detail;
 }
 
+const BARE_HASH_REF_RE = /^([a-f0-9]{7,12})$/i;
+
+function parseBareHashRef(ref: string): { hash: string; hashLength: number } | null {
+  const match = ref.trim().match(BARE_HASH_REF_RE);
+  if (!match) return null;
+  return { hash: match[1].toLowerCase(), hashLength: match[1].length };
+}
+
+export async function buildHashlineRetryHints(
+  content: string,
+  edits: HashlineOp[],
+  path: string,
+): Promise<string[]> {
+  const rawLines = content.split('\n');
+  const visibleLines = content.endsWith('\n') ? rawLines.slice(0, -1) : rawLines;
+  if (visibleLines.length === 0) return [];
+
+  const fullHashes = await Promise.all(visibleLines.map((line) => calculateLineHash(line, 12)));
+  const hints: string[] = [];
+
+  for (const edit of edits) {
+    const lineQualified = parseLineQualifiedRef(edit.ref);
+    if (lineQualified) {
+      const idx = lineQualified.lineNo - 1;
+      if (idx < 0 || idx >= visibleLines.length) continue;
+      const refreshedHash = fullHashes[idx].slice(0, lineQualified.hashLength);
+      const refreshedRef = `${lineQualified.lineNo}:${refreshedHash}`;
+      if (refreshedRef.toLowerCase() !== edit.ref.trim().toLowerCase()) {
+        hints.push(`Same-line retry for "${edit.ref}": use "${refreshedRef}".`);
+      }
+      continue;
+    }
+
+    const bareHash = parseBareHashRef(edit.ref);
+    if (!bareHash) continue;
+
+    const matches = fullHashes
+      .map((hash, index) => (hash.startsWith(bareHash.hash) ? index : -1))
+      .filter((index) => index !== -1);
+    if (matches.length <= 1) continue;
+
+    const suggestedRefs = matches
+      .slice(0, 4)
+      .map((index) => `"${index + 1}:${fullHashes[index].slice(0, bareHash.hashLength)}"`)
+      .join(', ');
+    hints.push(`Disambiguate "${edit.ref}" with a line-qualified ref: ${suggestedRefs}${matches.length > 4 ? ', …' : ''}.`);
+  }
+
+  if (hints.length > 0) {
+    hints.push(`If you're replacing a contiguous block in ${path}, prefer sandbox_edit_range with explicit start/end lines.`);
+  }
+
+  return hints;
+}
+
 // ---------------------------------------------------------------------------
 // Hashline ops
 // ---------------------------------------------------------------------------

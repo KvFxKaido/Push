@@ -1585,6 +1585,8 @@ export function useChat(
       isMainProtectedRef,
       branchInfoRef,
       repoRef,
+      lockedProvider,
+      lockedModel,
       updateAgentStatus,
       sendMessageRef: sendMessageRef as import('react').MutableRefObject<((text: string) => Promise<void>) | null>,
       isStreaming,

@@ -374,6 +374,16 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     exampleJson: '{"tool": "typecheck", "args": {}}',
   },
   {
+    canonicalName: 'sandbox_verify_workspace',
+    publicName: 'verify',
+    source: 'sandbox',
+    readOnly: false,
+    statusLabel: 'Sandbox operation...',
+    protocolSignature: 'verify()',
+    protocolDescription: 'Install dependencies if needed, then run available typecheck/test commands',
+    exampleJson: '{"tool": "verify", "args": {}}',
+  },
+  {
     canonicalName: 'sandbox_download',
     publicName: 'download',
     source: 'sandbox',

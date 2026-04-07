@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, X, Loader2, AlertCircle } from 'lucide-react';
 import type { CommitReviewCardData, CardAction } from '@/types';
 import { DiffPreviewCard } from './DiffPreviewCard';
@@ -24,13 +24,18 @@ interface CommitReviewCardProps {
 export function CommitReviewCard({ data, messageId, cardIndex, onAction }: CommitReviewCardProps) {
   const [editedMessage, setEditedMessage] = useState(data.commitMessage);
 
+  useEffect(() => {
+    setEditedMessage(data.commitMessage);
+  }, [data.commitMessage]);
+
   const isPending = data.status === 'pending';
+  const isRefreshing = data.status === 'refreshing';
   const isApproved = data.status === 'approved';
   const isPushing = data.status === 'pushing';
   const isCommitted = data.status === 'committed';
   const isRejected = data.status === 'rejected';
   const isError = data.status === 'error';
-  const isBusy = isApproved || isPushing;
+  const isBusy = isRefreshing || isApproved || isPushing;
 
   return (
     <div className={CARD_SHELL_CLASS}>
@@ -54,13 +59,14 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
         )}
         <span className={`text-sm font-medium ${
           isCommitted ? 'text-push-status-success' :
-          isRejected ? 'text-push-fg-dim' :
-          isError ? 'text-push-status-error' :
-          'text-push-fg'
+           isRejected ? 'text-push-fg-dim' :
+           isError ? 'text-push-status-error' :
+           'text-push-fg'
         }`}>
           {isCommitted ? 'Committed and pushed!' :
            isRejected ? 'Commit rejected' :
            isError ? 'Commit failed' :
+           isRefreshing ? 'Refreshing review…' :
            isPushing ? 'Pushing…' :
            isApproved ? 'Committing…' :
            'Review commit'}
@@ -138,6 +144,20 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
             <Check className="h-4 w-4" />
             {isError ? 'Try again' : 'Approve & Push'}
           </button>
+          <button
+            onClick={() => onAction?.({
+              type: 'commit-refresh',
+              messageId,
+              cardIndex,
+              commitMessage: editedMessage.trim() || data.commitMessage,
+            })}
+            disabled={!editedMessage.trim()}
+            className={`${CARD_BUTTON_CLASS} h-11`}
+            style={{ minHeight: '44px' }}
+          >
+            <Loader2 className="h-4 w-4" />
+            Refresh
+          </button>
           {!isError && (
             <button
               onClick={() => onAction?.({
@@ -160,7 +180,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
         <div className="flex items-center gap-2 px-3 pb-3">
           <div className={`${CARD_PANEL_CLASS} flex flex-1 items-center justify-center gap-1.5 px-4 py-2.5 text-push-base font-medium text-push-status-success opacity-70`} style={{ minHeight: '44px' }}>
             <Loader2 className="h-4 w-4 animate-spin" />
-            {isPushing ? 'Pushing…' : 'Committing…'}
+            {isRefreshing ? 'Refreshing review…' : isPushing ? 'Pushing…' : 'Committing…'}
           </div>
         </div>
       )}

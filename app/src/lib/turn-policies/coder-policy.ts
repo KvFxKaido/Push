@@ -115,6 +115,7 @@ export const VERIFICATION_COMMAND_PATTERN =
 const SANDBOX_VERIFICATION_TOOLS = new Set([
   'sandbox_run_tests',
   'sandbox_check_types',
+  'sandbox_verify_workspace',
 ]);
 
 /**

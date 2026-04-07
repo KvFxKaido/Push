@@ -591,7 +591,7 @@ export interface CommitReviewCardData {
   diff: DiffPreviewCardData;
   auditVerdict: AuditVerdictCardData;
   commitMessage: string;
-  status: 'pending' | 'approved' | 'rejected' | 'committed' | 'pushing' | 'error';
+  status: 'pending' | 'refreshing' | 'approved' | 'rejected' | 'committed' | 'pushing' | 'error';
   error?: string;
 }
 
@@ -618,6 +618,7 @@ export interface CIStatusCardData extends CIStatus {
 
 export type CardAction =
   | { type: 'commit-approve'; messageId: string; cardIndex: number; commitMessage: string }
+  | { type: 'commit-refresh'; messageId: string; cardIndex: number; commitMessage: string }
   | { type: 'commit-reject'; messageId: string; cardIndex: number }
   | { type: 'ci-refresh'; messageId: string; cardIndex: number }
   | { type: 'sandbox-state-refresh'; messageId: string; cardIndex: number; sandboxId: string }

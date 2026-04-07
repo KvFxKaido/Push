@@ -405,6 +405,23 @@ describe('Coder Policy — mechanical backpressure', () => {
       expect(result).toBeNull();
     }
   });
+
+  it('resets counter on sandbox_verify_workspace', async () => {
+    const policy = createCoderPolicy();
+    const hook = policy.afterToolExec![0];
+    const ctx = makeCtx();
+
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
+      await hook('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
+    }
+
+    await hook('sandbox_verify_workspace', {}, 'ok', false, ctx);
+
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
+      const result = await hook('sandbox_write_file', { path: `/workspace/new${i}.ts` }, 'ok', false, ctx);
+      expect(result).toBeNull();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

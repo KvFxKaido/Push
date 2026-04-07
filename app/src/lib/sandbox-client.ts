@@ -33,6 +33,13 @@ export interface SandboxEnvironment {
   git_available?: boolean;          // whether git works in the sandbox
   container_ttl?: string;           // e.g. "30m"
   writable_root?: string;           // e.g. "/workspace"
+  readiness?: {
+    package_manager?: string;
+    dependencies?: 'installed' | 'missing' | 'unknown';
+    test_command?: string;
+    typecheck_command?: string;
+    test_runner?: string;
+  };
 }
 
 export interface SandboxSession {
@@ -474,6 +481,7 @@ export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null
   }
 
   const markers = sections['MARKERS'] || [];
+  const readinessSignals = sections['READINESS'] || [];
 
   const scripts: Record<string, string> = {};
   for (const item of sections['SCRIPTS'] || []) {
@@ -485,6 +493,72 @@ export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null
   }
 
   const gitAvailable = 'git' in tools;
+  const markerSet = new Set(markers);
+
+  const detectPackageManager = (): string | undefined => {
+    if (markerSet.has('pnpm-lock.yaml')) return 'pnpm';
+    if (markerSet.has('yarn.lock')) return 'yarn';
+    if (markerSet.has('package-lock.json') || markerSet.has('package.json')) return 'npm';
+    if (markerSet.has('pyproject.toml') || markerSet.has('requirements.txt') || markerSet.has('setup.py')) return 'python';
+    if (markerSet.has('Cargo.toml')) return 'cargo';
+    if (markerSet.has('go.mod')) return 'go';
+    if (markerSet.has('pom.xml')) return 'maven';
+    if (markerSet.has('Gemfile')) return 'bundler';
+    if (markerSet.has('Makefile')) return 'make';
+    return undefined;
+  };
+
+  const buildScriptCommand = (packageManager: string | undefined, scriptName: string): string | undefined => {
+    if (!packageManager) return undefined;
+    if (packageManager === 'npm') {
+      return scriptName === 'test' ? 'npm test' : `npm run ${scriptName}`;
+    }
+    if (packageManager === 'yarn') return `yarn ${scriptName}`;
+    if (packageManager === 'pnpm') return `pnpm ${scriptName}`;
+    return undefined;
+  };
+
+  const inferTestRunner = (testScript: string | undefined): string | undefined => {
+    const normalized = testScript?.toLowerCase() ?? '';
+    if (!normalized) return undefined;
+    if (normalized.includes('vitest')) return 'vitest';
+    if (normalized.includes('jest')) return 'jest';
+    if (normalized.includes('playwright')) return 'playwright';
+    if (normalized.includes('pytest')) return 'pytest';
+    if (normalized.includes('cargo test')) return 'cargo test';
+    if (normalized.includes('go test')) return 'go test';
+    return undefined;
+  };
+
+  const packageManager = detectPackageManager();
+  const readiness: NonNullable<SandboxEnvironment['readiness']> = {};
+  if (packageManager) readiness.package_manager = packageManager;
+
+  if (packageManager === 'npm' || packageManager === 'yarn' || packageManager === 'pnpm') {
+    const dependencySignal = readinessSignals.find((item) => item.startsWith('js_dependencies:'));
+    readiness.dependencies = dependencySignal?.endsWith(':installed')
+      ? 'installed'
+      : dependencySignal?.endsWith(':missing')
+        ? 'missing'
+        : 'unknown';
+  }
+
+  if (scripts.test) {
+    readiness.test_command = buildScriptCommand(packageManager, 'test') ?? scripts.test;
+    readiness.test_runner = inferTestRunner(scripts.test);
+  }
+  if (scripts.typecheck) {
+    readiness.typecheck_command = buildScriptCommand(packageManager, 'typecheck') ?? scripts.typecheck;
+  } else if (scripts.check && /\b(tsc|typecheck|type-check|pyright|mypy|cargo test|go test)\b/i.test(scripts.check)) {
+    readiness.typecheck_command = buildScriptCommand(packageManager, 'check') ?? scripts.check;
+  }
+
+  if (
+    readiness.dependencies === 'missing'
+    && (readiness.test_command || readiness.typecheck_command || scripts.build)
+  ) {
+    warnings.push('Dependencies not installed (node_modules missing); test/typecheck/build scripts may fail until install.');
+  }
 
   const result: SandboxEnvironment = { tools };
   if (markers.length) result.project_markers = markers;
@@ -494,6 +568,7 @@ export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null
   result.git_available = gitAvailable;
   result.container_ttl = '30m';
   result.writable_root = '/workspace';
+  if (Object.keys(readiness).length > 0) result.readiness = readiness;
   return result;
 }
 
@@ -519,6 +594,10 @@ const ENVIRONMENT_PROBE_SCRIPT =
   " [print(f\\\"{k}:{str(v).replace(chr(10),' ')}\\\") for k,v in s.items()" +
   " if k in ('test','lint','typecheck','build','dev','start','check','format')]" +
   '" 2>/dev/null; fi;' +
+  'echo "---READINESS---";' +
+  'cd /workspace 2>/dev/null && if [ -f package.json ]; then' +
+  ' if [ -d node_modules ]; then echo "js_dependencies:installed"; else echo "js_dependencies:missing"; fi;' +
+  ' fi;' +
   'echo "---END---"';
 
 /**

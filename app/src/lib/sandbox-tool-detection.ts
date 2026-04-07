@@ -39,6 +39,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_push'; args: Record<string, never> }
   | { tool: 'sandbox_run_tests'; args: { framework?: string } }
   | { tool: 'sandbox_check_types'; args: Record<string, never> }
+  | { tool: 'sandbox_verify_workspace'; args: Record<string, never> }
   | { tool: 'sandbox_download'; args: { path?: string } }
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
   | { tool: 'promote_to_github'; args: { repo_name: string; description?: string; private?: boolean } }
@@ -172,6 +173,9 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
   if (tool === 'sandbox_check_types') {
     return { tool: 'sandbox_check_types', args: {} };
   }
+  if (tool === 'sandbox_verify_workspace') {
+    return { tool: 'sandbox_verify_workspace', args: {} };
+  }
   if (tool === 'sandbox_download') {
     return { tool: 'sandbox_download', args: { path: typeof args.path === 'string' ? normalizeSandboxPath(args.path) : undefined } };
   }
@@ -290,6 +294,7 @@ const PREPARE_COMMIT_TOOL = getToolPublicName('sandbox_prepare_commit');
 const PUSH_TOOL = getToolPublicName('sandbox_push');
 const RUN_TESTS_TOOL = getToolPublicName('sandbox_run_tests');
 const CHECK_TYPES_TOOL = getToolPublicName('sandbox_check_types');
+const VERIFY_WORKSPACE_TOOL = getToolPublicName('sandbox_verify_workspace');
 const DOWNLOAD_TOOL = getToolPublicName('sandbox_download');
 const SAVE_DRAFT_TOOL = getToolPublicName('sandbox_save_draft');
 const PROMOTE_TOOL = getToolPublicName('promote_to_github');
@@ -305,14 +310,15 @@ Additional tools available when sandbox is active:
 - ${SEARCH_TOOL}(query, path?) — Search file contents in the sandbox (uses rg/grep). Case-sensitive by default; supports regex patterns. Fast way to locate functions, symbols, and strings before editing. Tip: use short, distinctive substrings rather than full names to catch different naming conventions.
 - ${LIST_DIR_TOOL}(path?) — List files and folders in a sandbox directory (default: /workspace). Use this to explore the project structure before reading specific files.
 - ${WRITE_TOOL}(path, content, expected_version?) — Write or overwrite a file in the sandbox. If expected_version is provided, stale writes are rejected.
-- ${EDIT_RANGE_TOOL}(path, start_line, end_line, content, expected_version?) — Replace a contiguous line range using human-friendly line numbers. This compiles to hashline ops under the hood, then runs through ${EDIT_TOOL} safety/guard checks. Best for "replace lines X-Y with this block" edits.
+- ${EDIT_RANGE_TOOL}(path, start_line, end_line, content, expected_version?) — Replace a contiguous line range using human-friendly line numbers. This compiles to hashline ops under the hood, then runs through ${EDIT_TOOL} safety/guard checks. Prefer this for "replace lines X-Y with this block" edits and small follow-up polish passes.
 - ${REPLACE_TOOL}(path, search, replace, expected_version?) — Find the unique line in path containing search (case-sensitive substring) and replace that substring with replace. Errors if search matches zero lines (not found) or multiple lines (ambiguous — add more context). replace may contain newlines to expand one line into several. Best for targeted one-line edits when you can name a distinctive string without knowing the hash.
-- ${EDIT_TOOL}(path, edits, expected_version?) — Edit a file using content hashes as line references. edits is an array of HashlineOp: { op: "replace_line" | "insert_after" | "insert_before" | "delete_line", ref: string, content: string }. The ref can be a bare hash ("abc1234", 7-12 hex chars) or a line-qualified ref ("42:abc1234" — 1-indexed line number + colon + hash). ${READ_TOOL} results show "[hash] lineNo" per line; use those in refs. For unique lines, bare hashes work fine. When lines have duplicate content (same hash), use a line-qualified ref to target the exact line. If an edit fails with an ambiguity error, the error shows matching line numbers — retry with a line-qualified ref. After a successful edit, a fast syntax check runs automatically and appends [DIAGNOSTICS] if errors are found.
+- ${EDIT_TOOL}(path, edits, expected_version?) — Edit a file using content hashes as line references. edits is an array of HashlineOp: { op: "replace_line" | "insert_after" | "insert_before" | "delete_line", ref: string, content: string }. The ref can be a bare hash ("abc1234", 7-12 hex chars) or a line-qualified ref ("42:abc1234" — 1-indexed line number + colon + hash). ${READ_TOOL} results show "[hash] lineNo" per line; use those in refs. For unique lines, bare hashes work fine. When lines have duplicate content (same hash), use a line-qualified ref to target the exact line. If an edit fails with an ambiguity or stale-ref error, the error includes direct retry targets. Prefer ${EDIT_RANGE_TOOL} for contiguous block replacements; use ${EDIT_TOOL} for surgical anchored edits and multi-point changes in one file. After a successful edit, a fast syntax check runs automatically and appends [DIAGNOSTICS] if errors are found.
 - ${DIFF_TOOL}() — Get the git diff of all uncommitted changes
 - ${PREPARE_COMMIT_TOOL}(message) — Prepare a commit for review. Gets diff, runs a pre-commit hook if present, then runs Auditor on the post-hook diff. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
 - ${PUSH_TOOL}() — Retry a failed push. Use this only if a push failed after approval. No Auditor needed (commit was already audited).
 - ${RUN_TESTS_TOOL}(framework?) — Run the test suite. Auto-detects npm/pytest/cargo/go if framework not specified. Returns pass/fail counts and output.
 - ${CHECK_TYPES_TOOL}() — Run type checker (tsc for TypeScript, pyright/mypy for Python). Auto-detects from config files. Returns errors with file:line locations.
+- ${VERIFY_WORKSPACE_TOOL}() — Best-effort verification pass for common repo workflows. Uses workspace readiness hints to install JS dependencies when missing, then runs inferred typecheck and test commands in sequence. Stops on the first failing step and summarizes what happened.
 - ${SAVE_DRAFT_TOOL}(message?, branch_name?) — Quick-save all uncommitted changes to a draft branch. Stages everything, commits with the message (default: "WIP: draft save"), and pushes. Skips Auditor review (drafts are WIP). If not already on a draft/ branch, creates one automatically. Use this for checkpoints, WIP saves, or before sandbox expiry.
 - ${DOWNLOAD_TOOL}(path?) — Download workspace files as a compressed archive (tar.gz). Path defaults to /workspace. Returns a download card the user can save.
 - ${READ_SYMBOLS_TOOL}(path) — Extract a symbol index from a source file (functions, classes, interfaces, types, imports with line numbers). Works on .py (via ast), .ts/.tsx/.js/.jsx (via regex). Use this to understand file structure before editing — cheaper than reading the whole file.
@@ -348,7 +354,8 @@ Sandbox rules:
 - Before delegating code changes, prefer ${SEARCH_TOOL} to quickly locate relevant files/functions and provide precise context.
 - Search strategy: Start with short, distinctive substrings. If no results, broaden the term or drop the path filter. Use ${LIST_DIR_TOOL} to verify paths exist. Use ${READ_SYMBOLS_TOOL}(path) to discover function/class names in a specific file without reading the whole file. Regex patterns can sharpen results: "^export function", "class \\w+Card", "^import.*from".
 - Use ${RUN_TESTS_TOOL} BEFORE committing to catch regressions early. It's faster than ${EXEC_TOOL}("npm test") and gives structured results.
-- Use ${CHECK_TYPES_TOOL} to validate TypeScript/Python code before committing. Catches type errors that tests might miss.`;
+- Use ${CHECK_TYPES_TOOL} to validate TypeScript/Python code before committing. Catches type errors that tests might miss.
+- Use ${VERIFY_WORKSPACE_TOOL} when the workspace may need "install → typecheck → test" in one step, especially if [SANDBOX_ENVIRONMENT] indicates dependencies are missing.`;
 
 function sanitizeSandboxEnvironmentValue(value: string): string {
   return value
@@ -379,6 +386,18 @@ export function getSandboxToolProtocol(): string {
   const scriptEntries = Object.entries(env.scripts || {});
   if (scriptEntries.length) {
     parts.push('Detected commands: ' + scriptEntries.map(([k, v]) => `${sanitizeSandboxEnvironmentValue(k)}="${sanitizeSandboxEnvironmentValue(v)}"`).join(', '));
+  }
+  if (env.readiness) {
+    const readinessParts = [
+      env.readiness.package_manager ? `package manager=${sanitizeSandboxEnvironmentValue(env.readiness.package_manager)}` : null,
+      env.readiness.dependencies ? `dependencies=${sanitizeSandboxEnvironmentValue(env.readiness.dependencies)}` : null,
+      env.readiness.test_command ? `test=${sanitizeSandboxEnvironmentValue(env.readiness.test_command)}` : null,
+      env.readiness.typecheck_command ? `typecheck=${sanitizeSandboxEnvironmentValue(env.readiness.typecheck_command)}` : null,
+      env.readiness.test_runner ? `runner=${sanitizeSandboxEnvironmentValue(env.readiness.test_runner)}` : null,
+    ].filter(Boolean);
+    if (readinessParts.length) {
+      parts.push('Workspace readiness: ' + readinessParts.join(', '));
+    }
   }
   if (env.git_available !== undefined) {
     parts.push(`Git: ${env.git_available ? 'available' : 'not available'}`);

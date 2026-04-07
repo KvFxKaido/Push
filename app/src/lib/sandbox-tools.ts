@@ -28,6 +28,7 @@ import type {
 import {
   execInSandbox,
   findReferencesInSandbox,
+  getSandboxEnvironment,
   readFromSandbox,
   readSymbolsFromSandbox,
   writeToSandbox,
@@ -100,6 +101,7 @@ import {
   parseLineQualifiedRef,
   recordPatchsetStaleConflict,
   buildPatchsetFailureDetail,
+  buildHashlineRetryHints,
   buildRangeReplaceHashlineOps,
   readFullFileByChunks,
   runPerEditDiagnostics,
@@ -123,6 +125,78 @@ export {
 const POSTCONDITION_OUTPUT_LIMIT = 1200;
 const SUPPORTED_PER_EDIT_DIAGNOSTIC_EXT_RE = /\.(ts|tsx|js|jsx|py)$/i;
 const SUPPORTED_PATCHSET_DIAGNOSTIC_EXT_RE = /\.(ts|tsx)$/i;
+
+interface WorkspaceVerifyStep {
+  id: 'install' | 'typecheck' | 'test';
+  label: string;
+  command: string;
+  markWorkspaceMutated: boolean;
+}
+
+function getWorkspaceInstallCommand(packageManager: string | undefined): string | null {
+  switch (packageManager) {
+    case 'npm':
+      return 'npm install';
+    case 'yarn':
+      return 'yarn install';
+    case 'pnpm':
+      return 'pnpm install';
+    case 'bun':
+      return 'bun install';
+    default:
+      return null;
+  }
+}
+
+function buildWorkspaceVerifySteps(sandboxId: string): {
+  steps: WorkspaceVerifyStep[];
+  warnings: string[];
+} {
+  const readiness = getSandboxEnvironment(sandboxId)?.readiness;
+  const steps: WorkspaceVerifyStep[] = [];
+  const warnings: string[] = [];
+
+  if (readiness?.dependencies === 'missing') {
+    const installCommand = getWorkspaceInstallCommand(readiness.package_manager);
+    if (installCommand) {
+      steps.push({
+        id: 'install',
+        label: 'Install dependencies',
+        command: installCommand,
+        markWorkspaceMutated: true,
+      });
+    } else if (readiness.test_command || readiness.typecheck_command) {
+      warnings.push('Dependencies appear to be missing, but no install command could be inferred.');
+    }
+  }
+
+  if (readiness?.typecheck_command) {
+    steps.push({
+      id: 'typecheck',
+      label: 'Typecheck',
+      command: readiness.typecheck_command,
+      markWorkspaceMutated: false,
+    });
+  }
+
+  if (readiness?.test_command) {
+    steps.push({
+      id: 'test',
+      label: 'Test',
+      command: readiness.test_command,
+      markWorkspaceMutated: true,
+    });
+  }
+
+  return { steps, warnings };
+}
+
+function summarizeWorkspaceVerifyOutput(output: string, maxChars = 4000): string {
+  const trimmed = output.trim();
+  if (!trimmed) return '(no output)';
+  if (trimmed.length <= maxChars) return trimmed;
+  return `${trimmed.slice(0, maxChars)}\n[output truncated]`;
+}
 
 function buildLineRanges(lineNumbers: readonly number[]): Array<{ startLine: number; endLine: number }> {
   const sorted = [...new Set(lineNumbers.filter((lineNo) => Number.isFinite(lineNo) && lineNo > 0))]
@@ -894,11 +968,13 @@ export async function executeSandboxToolCall(
         if (editResult.failed > 0) {
           const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Failed to apply ${editResult.failed} of ${edits.length} edits.`, detail: editResult.errors.join('; ') };
           const autoRetryLine = autoRetryNote ? `Auto-retry: ${autoRetryNote}` : null;
+          const retryHints = await buildHashlineRetryHints(readResult.content, edits, path);
           return {
             text: formatStructuredError(err, [
               `[Tool Error — sandbox_edit_file]`,
               `Failed to apply ${editResult.failed} of ${edits.length} edits.`,
               ...editResult.errors.map(e => `- ${e}`),
+              ...(retryHints.length > 0 ? ['', 'Retry hints:', ...retryHints.map((hint) => `- ${hint}`)] : []),
               ...(autoRetryLine ? [autoRetryLine] : []),
               `No changes were saved. Review the file content and references then retry.`,
             ].join("\n")),
@@ -2196,6 +2272,94 @@ export async function executeSandboxToolCall(
         return { text: lines.join('\n'), card: { type: 'type-check', data: cardData } };
       }
 
+      case 'sandbox_verify_workspace': {
+        const start = Date.now();
+        const { steps, warnings } = buildWorkspaceVerifySteps(sandboxId);
+
+        if (steps.length === 0) {
+          const hint = warnings[0]
+            ?? 'No install, typecheck, or test command could be inferred from the workspace readiness probe.';
+          return {
+            text: [
+              '[Tool Result — sandbox_verify_workspace]',
+              hint,
+              'Use test(), typecheck(), or exec() directly if you need a custom verification command.',
+            ].join('\n'),
+          };
+        }
+
+        const lines: string[] = ['[Tool Result — sandbox_verify_workspace]'];
+        if (warnings.length > 0) {
+          for (const warning of warnings) lines.push(`Warning: ${warning}`);
+        }
+
+        type StepResult = WorkspaceVerifyStep & {
+          exitCode: number;
+          durationMs: number;
+          output: string;
+        };
+
+        const stepResults: StepResult[] = [];
+        let failedStep: StepResult | null = null;
+
+        for (const step of steps) {
+          const stepStart = Date.now();
+          const result = await execInSandbox(
+            sandboxId,
+            `cd /workspace && ${step.command}`,
+            undefined,
+            { markWorkspaceMutated: step.markWorkspaceMutated },
+          );
+          const durationMs = Date.now() - stepStart;
+
+          if (step.markWorkspaceMutated) {
+            clearFileVersionCache(sandboxId);
+            clearPrefetchedEditFileCache(sandboxId);
+          }
+
+          const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+          const recorded: StepResult = {
+            ...step,
+            exitCode: result.exitCode,
+            durationMs,
+            output,
+          };
+          stepResults.push(recorded);
+
+          if (result.exitCode !== 0) {
+            failedStep = recorded;
+            break;
+          }
+        }
+
+        const overallPassed = !failedStep;
+        lines.push(
+          `${overallPassed ? '✓' : '✗'} Workspace verification ${overallPassed ? 'PASSED' : `FAILED at ${failedStep?.id}`}`,
+          `Duration: ${((Date.now() - start) / 1000).toFixed(1)}s`,
+          '',
+          'Steps:',
+        );
+
+        for (const step of stepResults) {
+          lines.push(
+            `- ${step.exitCode === 0 ? '✓' : '✗'} ${step.label}: ${step.command} (${(step.durationMs / 1000).toFixed(1)}s)`,
+          );
+        }
+
+        if (failedStep) {
+          lines.push(
+            '',
+            `Output from failed step (${failedStep.label}):`,
+            summarizeWorkspaceVerifyOutput(failedStep.output),
+          );
+          if (failedStep.id !== 'install') {
+            lines.push('', 'Tip: rerun test() or typecheck() directly if you need more detailed output.');
+          }
+        }
+
+        return { text: lines.join('\n') };
+      }
+
       case 'sandbox_download': {
         const archivePath = normalizeSandboxPath(call.args.path || '/workspace');
         const result = await downloadFromSandbox(sandboxId, archivePath);
@@ -2756,7 +2920,11 @@ export async function executeSandboxToolCall(
 
           const editResult = await applyHashlineEdits(fileData.content, edit.ops);
           if (editResult.failed > 0) {
-            validationErrors.push(`${edit.path}: ${editResult.errors.join('; ')}`);
+            const retryHints = await buildHashlineRetryHints(fileData.content, edit.ops, edit.path);
+            validationErrors.push([
+              `${edit.path}: ${editResult.errors.join('; ')}`,
+              ...(retryHints.length > 0 ? [`retry hints: ${retryHints.join(' ')}`] : []),
+            ].join(' '));
           } else {
             // Truncation-hashline sync: verify resolved lines fall within read ranges
             if (editResult.resolvedLines.length > 0) {

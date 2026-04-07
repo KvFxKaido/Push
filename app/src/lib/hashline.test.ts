@@ -94,11 +94,26 @@ describe('ambiguous 7-char ref → diagnostic → retry with longer ref', () => 
     expect(result1.applied).toBe(0);
     expect(result1.errors[0]).toContain('ambiguous');
     expect(result1.errors[0]).toContain('line-qualified ref');
+    expect(result1.errors[0]).toContain('"1:');
+    expect(result1.errors[0]).toContain('"3:');
 
     // The error message should suggest line-qualified refs for disambiguation
     // Since both lines have identical content, even 12-char hashes will be the same,
     // so the only way to disambiguate is via line number
     expect(result1.errors[0]).toContain('2 matches');
+  });
+
+  it('suggests a refreshed same-line ref for stale line-qualified edits', async () => {
+    const content = 'before\nafter';
+    const staleRef = `2:${await calculateLineHash('before', 7)}`;
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref: staleRef, content: 'updated' },
+    ]);
+
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('Stale line-qualified ref');
+    expect(result.errors[0]).toContain('Retry with "2:');
   });
 
   it('disambiguates lines that differ only in whitespace with longer ref', async () => {

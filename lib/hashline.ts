@@ -167,7 +167,10 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
         continue;
       }
       if (!hashCache[idx].startsWith(parsed.hash)) {
-        resolved.push({ error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Re-read the file to get current hashes.` });
+        const refreshedRef = `${parsed.lineNo}:${hashCache[idx].slice(0, parsed.hash.length)}`;
+        resolved.push({
+          error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Retry with "${refreshedRef}" to target the same line, or re-read the file if the intended content moved.`,
+        });
         continue;
       }
       resolved.push({ index: idx, edit });
@@ -194,32 +197,36 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
           distinctGroups.set(lh, group);
         }
         const candidateGroups = [...distinctGroups.entries()].filter(([lh]) => lh.startsWith(parsed.hash));
-        if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
-          resolved.push({ index: candidateGroups[0][1][0], edit });
-        } else {
-          const MAX_DIAGNOSTIC_LINES = 5;
-          const diagnostics: string[] = [];
-          for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
-            const idx = matches[k];
-            diagnostics.push(`  L${idx + 1}: ${hashCache[idx]} "${snippetOf(idx)}"`);
+          if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
+            resolved.push({ index: candidateGroups[0][1][0], edit });
+          } else {
+            const MAX_DIAGNOSTIC_LINES = 5;
+            const diagnostics: string[] = [];
+            const retryRefs: string[] = [];
+            for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
+              const idx = matches[k];
+              diagnostics.push(`  L${idx + 1}: ${hashCache[idx]} "${snippetOf(idx)}"`);
+              retryRefs.push(`"${idx + 1}:${hashCache[idx].slice(0, parsed.hash.length)}"`);
+            }
+            if (matches.length > MAX_DIAGNOSTIC_LINES) {
+              diagnostics.push(`  ... and ${matches.length - MAX_DIAGNOSTIC_LINES} more`);
+            }
+            resolved.push({
+            error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches). Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
+            });
           }
-          if (matches.length > MAX_DIAGNOSTIC_LINES) {
-            diagnostics.push(`  ... and ${matches.length - MAX_DIAGNOSTIC_LINES} more`);
-          }
-          resolved.push({
-            error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches). Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash}") to target a specific line:\n${diagnostics.join('\n')}`,
-          });
-        }
       } else {
         // Even at max hash length, lines are identical — suggest line-qualified refs
         const MAX_DIAGNOSTIC_LINES = 5;
         const diagnostics: string[] = [];
+        const retryRefs: string[] = [];
         for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
           const idx = matches[k];
           diagnostics.push(`  L${idx + 1}: "${snippetOf(idx)}"`);
+          retryRefs.push(`"${idx + 1}:${parsed.hash.slice(0, 7)}"`);
         }
         resolved.push({
-          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical content. Use a line-qualified ref (e.g. "${matches[0] + 1}:${parsed.hash.slice(0, 7)}") to target a specific line:\n${diagnostics.join('\n')}`,
+          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical content. Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
         });
       }
       continue;
