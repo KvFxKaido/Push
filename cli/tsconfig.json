@@ -14,9 +14,7 @@
     "outDir": "./dist",
     "rootDir": "..",
     "allowImportingTsExtensions": true,
-    "paths": {
-      "@push/lib/*": ["../lib/*"]
-    },
+    "ignoreDeprecations": "5.0",
     "baseUrl": ".",
     "noUnusedLocals": false,
     "noUnusedParameters": false,
