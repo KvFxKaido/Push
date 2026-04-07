@@ -129,10 +129,10 @@ export const LINE_QUALIFIED_REF_RE = /^(\d+):([a-f0-9]{7,12})$/i;
 export const PATCHSET_DETAIL_MAX_FAILURES = 12;
 export const PATCHSET_DETAIL_MAX_CHARS = 1500;
 
-export function parseLineQualifiedRef(ref: string): { lineNo: number; hashLength: number } | null {
+export function parseLineQualifiedRef(ref: string): { lineNo: number; hash: string; hashLength: number } | null {
   const m = ref.trim().match(LINE_QUALIFIED_REF_RE);
   if (!m) return null;
-  return { lineNo: Number(m[1]), hashLength: m[2].length };
+  return { lineNo: Number(m[1]), hash: m[2].toLowerCase(), hashLength: m[2].length };
 }
 
 export function recordPatchsetStaleConflict(
@@ -219,6 +219,58 @@ export async function buildHashlineRetryHints(
   }
 
   return hints;
+}
+
+export interface SameLineHashRefreshResult {
+  edits: HashlineOp[];
+  refreshedCount: number;
+  relocatedCount: number;
+}
+
+export async function refreshSameLineQualifiedRefs(
+  content: string,
+  edits: HashlineOp[],
+): Promise<SameLineHashRefreshResult> {
+  const rawLines = content.split('\n');
+  const visibleLines = content.endsWith('\n') ? rawLines.slice(0, -1) : rawLines;
+  if (visibleLines.length === 0) {
+    return { edits, refreshedCount: 0, relocatedCount: 0 };
+  }
+
+  const fullHashes = await Promise.all(visibleLines.map((line) => calculateLineHash(line, 12)));
+  let refreshedCount = 0;
+  let relocatedCount = 0;
+
+  const refreshedEdits = edits.map((edit) => {
+    const parsed = parseLineQualifiedRef(edit.ref);
+    if (!parsed) return edit;
+
+    const idx = parsed.lineNo - 1;
+    if (idx < 0 || idx >= visibleLines.length) return edit;
+
+    const currentHash = fullHashes[idx].slice(0, parsed.hashLength);
+    if (currentHash === parsed.hash) return edit;
+
+    const contentMovedElsewhere = fullHashes.some((hash, lineIndex) => (
+      lineIndex !== idx && hash.startsWith(parsed.hash)
+    ));
+    if (contentMovedElsewhere) {
+      relocatedCount += 1;
+      return edit;
+    }
+
+    refreshedCount += 1;
+    return {
+      ...edit,
+      ref: `${parsed.lineNo}:${currentHash}`,
+    };
+  });
+
+  return {
+    edits: refreshedEdits,
+    refreshedCount,
+    relocatedCount,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -102,6 +102,7 @@ import {
   recordPatchsetStaleConflict,
   buildPatchsetFailureDetail,
   buildHashlineRetryHints,
+  refreshSameLineQualifiedRefs,
   buildRangeReplaceHashlineOps,
   readFullFileByChunks,
   runPerEditDiagnostics,
@@ -983,7 +984,7 @@ export async function executeSandboxToolCall(
           };
           syncReadSnapshot(sandboxId, path, readResult);
         }
-        // 2. Apply hashline edits (with a single auto-retry path for stale
+        // 2. Apply hashline edits (with narrow auto-recovery for stale
         // line-qualified refs to reduce manual correction loops).
         let editResult = await applyHashlineEdits(readResult.content, edits);
         let autoRetryNote: string | null = null;
@@ -991,45 +992,55 @@ export async function executeSandboxToolCall(
         const allLineQualifiedRefs = edits.length > 0 && edits.every((op) => parseLineQualifiedRef(op.ref) !== null);
         if (editResult.failed > 0 && allLineQualifiedRefs) {
           try {
-            let retryRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
-            if (!retryRead.error) {
-              if (retryRead.truncated) {
-                const expanded = await readFullFileByChunks(sandboxId, path, retryRead.version);
-                if (expanded.truncated) {
-                  autoRetryNote = 'Auto-retry skipped: latest file hydration remained truncated.';
-                } else {
-                  retryRead = {
-                    ...retryRead,
-                    content: expanded.content,
-                    truncated: expanded.truncated,
-                    version: expanded.version ?? retryRead.version,
-                    workspace_revision: expanded.workspaceRevision ?? retryRead.workspace_revision,
-                  };
-                }
+            const sameLineRetry = await refreshSameLineQualifiedRefs(readResult.content, edits);
+            if (sameLineRetry.refreshedCount > 0) {
+              const sameLineRetryResult = await applyHashlineEdits(readResult.content, sameLineRetry.edits);
+              if (sameLineRetryResult.failed === 0) {
+                editResult = sameLineRetryResult;
+                autoRetryNote = `Auto-retry succeeded (refreshed ${sameLineRetry.refreshedCount} stale line-qualified ref(s) to current same-line hashes).`;
+              } else {
+                autoRetryNote = `Auto-retry refreshed ${sameLineRetry.refreshedCount} stale line-qualified ref(s) but still failed (${sameLineRetryResult.failed} op(s)).`;
               }
+            }
 
-              if (!retryRead.truncated) {
-                syncReadSnapshot(sandboxId, path, retryRead);
-                // Strip line-number prefixes and retry by hash only. Remapping to
-                // the new hash at the same line number is unsafe when the file shifted
-                // structurally — it silently edits wrong content without detection.
-                // Retrying by hash lets applyHashlineEdits find the intended content
-                // wherever it moved; if the content is gone, it fails honestly.
-                const hashOnlyEdits = edits.map(op => {
-                  const m = op.ref.trim().match(/^\d+:([a-f0-9]{7,12})$/i);
-                  return m ? { ...op, ref: m[1] } : op;
-                });
-                const retryEditResult = await applyHashlineEdits(retryRead.content, hashOnlyEdits);
-                if (retryEditResult.failed === 0) {
-                  editResult = retryEditResult;
-                  readResult = retryRead;
-                  autoRetryNote = `Auto-retry succeeded (re-located content by hash after file version change).`;
-                } else {
-                  autoRetryNote = `Auto-retry attempted but still failed (${retryEditResult.failed} op(s)).`;
+            if (editResult.failed > 0) {
+              let retryRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+              if (!retryRead.error) {
+                if (retryRead.truncated) {
+                  const expanded = await readFullFileByChunks(sandboxId, path, retryRead.version);
+                  if (expanded.truncated) {
+                    autoRetryNote = 'Auto-retry skipped: latest file hydration remained truncated.';
+                  } else {
+                    retryRead = {
+                      ...retryRead,
+                      content: expanded.content,
+                      truncated: expanded.truncated,
+                      version: expanded.version ?? retryRead.version,
+                      workspace_revision: expanded.workspaceRevision ?? retryRead.workspace_revision,
+                    };
+                  }
                 }
+
+                if (!retryRead.truncated) {
+                  syncReadSnapshot(sandboxId, path, retryRead);
+                  // Strip line-number prefixes and retry by hash only when the target
+                  // content may have moved elsewhere in the file.
+                  const hashOnlyEdits = edits.map(op => {
+                    const m = op.ref.trim().match(/^\d+:([a-f0-9]{7,12})$/i);
+                    return m ? { ...op, ref: m[1] } : op;
+                  });
+                  const retryEditResult = await applyHashlineEdits(retryRead.content, hashOnlyEdits);
+                  if (retryEditResult.failed === 0) {
+                    editResult = retryEditResult;
+                    readResult = retryRead;
+                    autoRetryNote = `Auto-retry succeeded (re-located content by hash after file version change).`;
+                  } else {
+                    autoRetryNote = `Auto-retry attempted but still failed (${retryEditResult.failed} op(s)).`;
+                  }
+                }
+              } else {
+                autoRetryNote = `Auto-retry skipped: ${retryRead.error}`;
               }
-            } else {
-              autoRetryNote = `Auto-retry skipped: ${retryRead.error}`;
             }
           } catch (retryErr) {
             const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);

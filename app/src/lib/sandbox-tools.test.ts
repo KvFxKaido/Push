@@ -1692,15 +1692,17 @@ describe('sandbox_edit_file symbolic guard', () => {
     expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(4);
   });
 
-  it('surfaces refreshed retry hints when stale line-qualified refs still fail', async () => {
-    const path = '/workspace/src/retry-fail.ts';
-    const originalContent = 'const value = 1;\n';
+  it('auto-refreshes stale line-qualified refs when the target line changed in place', async () => {
+    const path = '/workspace/src/retry-inline.ts';
+    const oldContent = 'const value = 1;\n';
     const latestContent = 'const value = 2;\n';
 
     vi.mocked(sandboxClient.readFromSandbox)
-      .mockResolvedValueOnce({ content: originalContent, truncated: false, version: 'v1' })
+      .mockResolvedValueOnce({ content: oldContent, truncated: false, version: 'v1' })
       .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' })
-      .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' });
+      .mockResolvedValueOnce({ content: 'const value = 3;\n', truncated: false, version: 'v3' });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v3', bytes_written: 17 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
 
     await executeSandboxToolCall(
       { tool: 'sandbox_read_file', args: { path } },
@@ -1714,6 +1716,49 @@ describe('sandbox_edit_file symbolic guard', () => {
         args: {
           path,
           edits: [{ op: 'replace_line', ref: `1:${staleHash}`, content: 'const value = 3;' }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/retry-inline.ts');
+    expect(result.text).toContain('refreshed 1 stale line-qualified ref');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'const value = 3;\n',
+      'v2',
+    );
+    // 3 calls: initial read + edit read + post-write verification.
+    expect(vi.mocked(sandboxClient.readFromSandbox)).toHaveBeenCalledTimes(3);
+  });
+
+  it('surfaces refreshed retry hints when stale line-qualified refs still fail', async () => {
+    const path = '/workspace/src/retry-fail.ts';
+    const originalContent = 'const value = 1;\nconst second = 1;\n';
+    const latestContent = 'const value = 2;\n';
+
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({ content: originalContent, truncated: false, version: 'v1' })
+      .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' })
+      .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+
+    const staleHash = await calculateLineHash('const value = 1;');
+    const missingHash = await calculateLineHash('const second = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path,
+          edits: [
+            { op: 'replace_line', ref: `1:${staleHash}`, content: 'const value = 3;' },
+            { op: 'replace_line', ref: `2:${missingHash}`, content: 'const second = 3;' },
+          ],
         },
       },
       'sb-123',
