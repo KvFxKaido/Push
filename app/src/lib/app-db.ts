@@ -192,3 +192,17 @@ export async function putMany<T>(storeName: string, values: T[]): Promise<void> 
     tx.onerror = () => reject(tx.error ?? new Error(`IndexedDB batch put failed on ${storeName}`));
   });
 }
+export async function deleteMany(storeName: string, keys: IDBValidKey[]): Promise<void> {
+  if (keys.length === 0) return;
+  const db = await openDb();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    for (const key of keys) {
+      store.delete(key);
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error(`IndexedDB batch delete failed on ${storeName}`));
+  });
+}
+

@@ -7,6 +7,7 @@
  */
 
 import type { MemoryRecord } from './runtime-contract';
+import { isExpired } from './memory-persistence-policy';
 
 export interface ContextMemoryStore {
   write(record: MemoryRecord): void | Promise<void>;
@@ -16,7 +17,11 @@ export interface ContextMemoryStore {
   update(id: string, patch: Partial<MemoryRecord>): MemoryRecord | undefined | Promise<MemoryRecord | undefined>;
   remove(id: string): void | Promise<void>;
   clear(): void | Promise<void>;
+  clearByRepo(repoFullName: string): void | Promise<void>;
+  clearByBranch(repoFullName: string, branch: string): void | Promise<void>;
+  pruneExpired(now?: number): number | Promise<number>;
   size(): number | Promise<number>;
+
 }
 
 export function createInMemoryStore(): ContextMemoryStore {
@@ -53,6 +58,30 @@ export function createInMemoryStore(): ContextMemoryStore {
     },
     clear() {
       records.clear();
+    },
+    clearByRepo(repoFullName) {
+      for (const [id, record] of records.entries()) {
+        if (record.scope.repoFullName === repoFullName) {
+          records.delete(id);
+        }
+      }
+    },
+    clearByBranch(repoFullName, branch) {
+      for (const [id, record] of records.entries()) {
+        if (record.scope.repoFullName === repoFullName && record.scope.branch === branch) {
+          records.delete(id);
+        }
+      }
+    },
+    pruneExpired(now = Date.now()) {
+      let removed = 0;
+      for (const [id, record] of records.entries()) {
+        if (isExpired(record, now)) {
+          records.delete(id);
+          removed++;
+        }
+      }
+      return removed;
     },
     size() {
       return records.size;

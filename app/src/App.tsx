@@ -17,8 +17,9 @@ import type {
 } from '@/types';
 import './App.css';
 import { createIndexedDbStore, setDefaultMemoryStore } from '@/lib/context-memory-store';
+import { createPolicyEnforcedStore } from '@push/lib/context-memory-policy-store';
 
-setDefaultMemoryStore(createIndexedDbStore());
+setDefaultMemoryStore(createPolicyEnforcedStore(createIndexedDbStore()));
 
 const WORKSPACE_SESSION_STORAGE_KEY = 'workspace_session';
 

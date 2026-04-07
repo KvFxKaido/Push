@@ -1,7 +1,7 @@
 import type { MemoryRecord } from '@/types';
 import type { ContextMemoryStore } from '@push/lib/context-memory-store';
-import { STORE, put, putMany, get, getAll, del, clear, count } from './app-db';
-
+import { STORE, put, putMany, get, getAll, del, clear, count, deleteMany } from './app-db';
+import { isExpired } from '@push/lib/memory-persistence-policy';
 export * from '@push/lib/context-memory-store';
 
 /**
@@ -35,6 +35,19 @@ export function createIndexedDbStore(): ContextMemoryStore {
     },
     async clear() {
       await clear(STORE.memoryRecords);
+    },
+    async clearByRepo(repoFullName: string) {
+      const all = await this.list((r) => r.scope.repoFullName === repoFullName);
+      await deleteMany(STORE.memoryRecords, all.map(r => r.id));
+    },
+    async clearByBranch(repoFullName: string, branch: string) {
+      const all = await this.list((r) => r.scope.repoFullName === repoFullName && r.scope.branch === branch);
+      await deleteMany(STORE.memoryRecords, all.map(r => r.id));
+    },
+    async pruneExpired(now = Date.now()) {
+      const all = await this.list((r) => isExpired(r, now));
+      await deleteMany(STORE.memoryRecords, all.map(r => r.id));
+      return all.length;
     },
     async size() {
       return count(STORE.memoryRecords);
