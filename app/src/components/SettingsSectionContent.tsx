@@ -1312,18 +1312,54 @@ export function SettingsSectionContent({
             <label className="text-sm font-medium text-push-fg">
               Data
             </label>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                data.deleteAllChats();
-                onDismiss();
-              }}
-              className="text-push-fg-secondary hover:text-red-400 w-full justify-start gap-2"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete all chats{data.activeRepo ? ` for ${data.activeRepo.name}` : ''}
-            </Button>
+            <p className="text-xs text-push-fg-dim">
+              Context memory is stored locally in your browser to help the agent remember facts across conversations. You can clear it below.
+            </p>
+            <div className="space-y-1.5 pt-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  data.deleteAllChats();
+                  onDismiss();
+                }}
+                className="text-push-fg-secondary hover:text-red-400 w-full justify-start gap-2 h-8 px-2"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete all chats{data.activeRepo ? ` for ${data.activeRepo.name}` : ''}
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  data.clearMemoryByRepo();
+                  onDismiss();
+                }}
+                className="text-push-fg-secondary hover:text-red-400 w-full justify-start gap-2 h-8 px-2"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Clear repo memory{data.activeRepo ? ` for ${data.activeRepo.name}` : ''}
+              </Button>
+
+              {data.activeBranch && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    data.clearMemoryByBranch();
+                    onDismiss();
+                  }}
+                  className="text-push-fg-secondary hover:text-red-400 w-full justify-start gap-2 h-8 px-2 justify-between flex"
+                >
+                  <div className="flex items-center gap-2">
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Clear branch memory
+                  </div>
+                  <span className="text-push-2xs font-mono">{data.activeBranch}</span>
+                </Button>
+              )}
+            </div>
           </div>
           </>)}
         </div>

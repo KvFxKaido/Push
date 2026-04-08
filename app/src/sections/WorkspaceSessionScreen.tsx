@@ -14,6 +14,7 @@ import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import { useWorkspaceSandboxController } from '@/hooks/useWorkspaceSandboxController';
 import { perfMark } from '@/lib/perf-marks';
 import { useWorkspaceSessionBridge } from './useWorkspaceSessionBridge';
+import { getDefaultMemoryStore } from '@/lib/context-memory-store';
 import type {
   ActiveRepo,
   RepoWithActivity,
@@ -215,6 +216,15 @@ export function WorkspaceSessionScreen({
     repoFullName: workspaceRepo?.full_name ?? undefined,
   });
 
+  const clearMemoryByRepo = useCallback(() => {
+    if (!activeRepo?.full_name) return;
+    void getDefaultMemoryStore().clearByRepo(activeRepo.full_name).catch(e => console.warn('[Settings] Failed to clear memory by repo', e));
+  }, [activeRepo]);
+
+  const clearMemoryByBranch = useCallback(() => {
+    if (!activeRepo?.full_name || !activeRepo.current_branch) return;
+    void getDefaultMemoryStore().clearByBranch(activeRepo.full_name, activeRepo.current_branch).catch(e => console.warn('[Settings] Failed to clear memory by branch', e));
+  }, [activeRepo]);
   const {
     selectedChatProvider,
     selectedChatModels,
@@ -394,6 +404,8 @@ export function WorkspaceSessionScreen({
     renameChat,
     deleteChat,
     deleteAllChats,
+    clearMemoryByRepo,
+    clearMemoryByBranch,
     regenerateLastResponse,
     editMessageAndResend,
     handleCardAction,

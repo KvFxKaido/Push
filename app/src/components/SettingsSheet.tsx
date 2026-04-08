@@ -27,7 +27,7 @@ import type {
 } from '@/components/settings-shared';
 import { SETTINGS_SECTION_ICONS } from '@/components/settings-shared';
 
-export type SettingsTabKey = 'you' | 'workspace' | 'ai';
+export type SettingsTabKey = 'you' | 'workspace' | 'ai' | 'data';
 
 const SETTINGS_TAB_META: Record<SettingsTabKey, { title: string; description: string }> = {
   you: {
@@ -41,6 +41,10 @@ const SETTINGS_TAB_META: Record<SettingsTabKey, { title: string; description: st
   ai: {
     title: 'AI',
     description: 'Which models power new chats and reviews.',
+  },
+  data: {
+    title: 'Data',
+    description: 'Manage stored workspace knowledge and history.',
   },
 };
 
@@ -204,7 +208,10 @@ export interface SettingsWorkspaceProps {
 
 export interface SettingsDataProps {
   activeRepo: { name: string } | null;
+  activeBranch: string | null;
   deleteAllChats: () => void;
+  clearMemoryByRepo: () => void;
+  clearMemoryByBranch: () => void;
 }
 
 export interface SettingsSheetProps {

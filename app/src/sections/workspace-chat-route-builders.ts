@@ -297,7 +297,10 @@ export function buildSettingsWorkspace(props: ChatRouteProps): SettingsWorkspace
 export function buildSettingsData(props: ChatRouteProps): SettingsDataProps {
   return {
     activeRepo: props.activeRepo,
+    activeBranch: props.activeRepo?.current_branch ?? null,
     deleteAllChats: props.deleteAllChats,
+    clearMemoryByRepo: props.clearMemoryByRepo,
+    clearMemoryByBranch: props.clearMemoryByBranch,
   };
 }
 

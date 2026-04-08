@@ -84,6 +84,8 @@ export interface ChatRouteConversationProps {
   renameChat: (id: string, name: string) => void;
   deleteChat: (id: string) => void;
   deleteAllChats: () => void;
+  clearMemoryByRepo: () => void;
+  clearMemoryByBranch: () => void;
   regenerateLastResponse: () => Promise<void> | void;
   editMessageAndResend: (messageId: string, text: string, attachments?: AttachmentData[], options?: ChatSendOptions) => Promise<void> | void;
   handleCardAction: (action: CardAction) => void;
