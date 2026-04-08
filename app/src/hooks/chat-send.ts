@@ -13,6 +13,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { streamChat } from '@/lib/orchestrator';
 import type { ActiveProvider } from '@/lib/orchestrator';
+import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { detectAnyToolCall, detectAllToolCalls, isReadOnlyToolCall } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import {
@@ -298,6 +299,12 @@ export async function streamAssistantRound(
   let accumulated = '';
   let thinkingAccumulated = '';
   const hasSandboxThisRound = Boolean(sandboxIdRef.current);
+
+  // Set OpenRouter session_id so all requests in this conversation are grouped.
+  // Set unconditionally: the orchestrator may resolve to OpenRouter even when
+  // lockedProvider is something else, and the getter is consume-and-clear so
+  // it won't leak into non-OpenRouter requests.
+  setOpenRouterSessionId(chatId);
 
   const error = await new Promise<Error | null>((resolve) => {
     streamChat(

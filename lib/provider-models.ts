@@ -16,6 +16,8 @@ export type SharedProviderModelId =
 
 export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
+/** Maximum length for OpenRouter session_id field (per API spec). */
+export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
 export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
 export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
