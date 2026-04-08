@@ -110,6 +110,29 @@ export function buildWorkspaceContext(
   return sections.join('\n');
 }
 
+function parseDurationToMs(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+
+  const matches = [...raw.matchAll(/(\d+)\s*([smhd])/gi)];
+  if (matches.length === 0) return null;
+
+  const normalized = raw.replace(/\s+/g, '').toLowerCase();
+  const consumed = matches.map((match) => match[0].replace(/\s+/g, '').toLowerCase()).join('');
+  if (normalized !== consumed) return null;
+
+  let total = 0;
+  for (const [, amount, unit] of matches) {
+    const value = Number.parseInt(amount, 10);
+    if (!Number.isFinite(value)) return null;
+    if (unit.toLowerCase() === 's') total += value * 1000;
+    else if (unit.toLowerCase() === 'm') total += value * 60_000;
+    else if (unit.toLowerCase() === 'h') total += value * 3_600_000;
+    else if (unit.toLowerCase() === 'd') total += value * 86_400_000;
+  }
+
+  return total > 0 ? total : null;
+}
+
 export function buildSessionCapabilityBlock(
   workspaceContext: Pick<WorkspaceContext, 'mode' | 'includeGitHubTools'>,
   hasSandbox?: boolean,
@@ -118,9 +141,9 @@ export function buildSessionCapabilityBlock(
   const lifecycleEvents = hasSandbox ? getSandboxLifecycleEvents() : [];
   const creationEvent = lifecycleEvents.find(e => e.message.includes('Workspace created'));
   const ageMs = creationEvent ? Date.now() - creationEvent.timestamp : 0;
-  const maxTtlMs = 30 * 60 * 1000;
-  const remainingMs = Math.max(0, maxTtlMs - ageMs);
-  const remainingMinutes = Math.floor(remainingMs / 60_000);
+  const maxTtlMs = parseDurationToMs(sandboxEnv?.container_ttl);
+  const remainingMs = creationEvent && maxTtlMs != null ? Math.max(0, maxTtlMs - ageMs) : null;
+  const remainingMinutes = remainingMs != null ? Math.floor(remainingMs / 60_000) : null;
   
   const formattedEvents = lifecycleEvents.map(e => {
     const d = new Date(e.timestamp);
@@ -135,7 +158,7 @@ export function buildSessionCapabilityBlock(
       writableRoot: sandboxEnv?.writable_root ?? (hasSandbox ? '/workspace' : null),
       gitAvailable: sandboxEnv?.git_available ?? null,
       containerTtl: sandboxEnv?.container_ttl ?? null,
-      containerTtlRemaining: sandboxEnv && creationEvent ? `${remainingMinutes}m` : null,
+      containerTtlRemaining: remainingMinutes != null ? `${remainingMinutes}m` : null,
       lifecycleEvents: formattedEvents,
       toolVersions: sandboxEnv?.tools ?? {},
       projectMarkers: sandboxEnv?.project_markers?.slice(0, 8) ?? [],

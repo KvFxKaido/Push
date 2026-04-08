@@ -21,6 +21,7 @@ import {
   SpanKind,
   SpanStatusCode,
 } from './tracing';
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 
 // --- Types ---
 
@@ -418,18 +419,59 @@ export interface SandboxLifecycleEvent {
 }
 
 const sandboxLifecycleEventsById = new Map<string, SandboxLifecycleEvent[]>();
+const SANDBOX_LIFECYCLE_EVENTS_STORAGE_PREFIX = 'sandbox_lifecycle_events:';
+
+function buildSandboxLifecycleStorageKey(sandboxId: string): string {
+  return `${SANDBOX_LIFECYCLE_EVENTS_STORAGE_PREFIX}${encodeURIComponent(sandboxId)}`;
+}
+
+function parsePersistedSandboxLifecycleEvents(raw: string | null): SandboxLifecycleEvent[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is SandboxLifecycleEvent => (
+        Boolean(item)
+        && typeof item === 'object'
+        && typeof (item as SandboxLifecycleEvent).timestamp === 'number'
+        && typeof (item as SandboxLifecycleEvent).message === 'string'
+      ))
+      .slice(-20);
+  } catch {
+    return [];
+  }
+}
+
+function persistSandboxLifecycleEvents(sandboxId: string, events: SandboxLifecycleEvent[]): void {
+  safeStorageSet(buildSandboxLifecycleStorageKey(sandboxId), JSON.stringify(events.slice(-20)));
+}
+
+function loadSandboxLifecycleEvents(sandboxId: string): SandboxLifecycleEvent[] {
+  return parsePersistedSandboxLifecycleEvents(safeStorageGet(buildSandboxLifecycleStorageKey(sandboxId)));
+}
 
 export function recordSandboxLifecycleEvent(sandboxId: string, message: string): void {
-  const events = sandboxLifecycleEventsById.get(sandboxId) || [];
+  const events = [...getSandboxLifecycleEvents(sandboxId)];
   events.push({ timestamp: Date.now(), message });
   if (events.length > 20) events.shift();
   sandboxLifecycleEventsById.set(sandboxId, events);
+  persistSandboxLifecycleEvents(sandboxId, events);
 }
 
 export function getSandboxLifecycleEvents(sandboxId?: string): SandboxLifecycleEvent[] {
   const targetId = sandboxId ?? activeSandboxEnvironmentId;
   if (!targetId) return [];
-  return sandboxLifecycleEventsById.get(targetId) || [];
+  const cached = sandboxLifecycleEventsById.get(targetId);
+  if (cached) return cached;
+
+  const persisted = loadSandboxLifecycleEvents(targetId);
+  if (persisted.length > 0) {
+    sandboxLifecycleEventsById.set(targetId, persisted);
+    return persisted;
+  }
+  return [];
 }
 
 export function setSandboxEnvironment(sandboxId: string, env: SandboxEnvironment | null): void {
@@ -444,6 +486,7 @@ export function setActiveSandboxEnvironment(sandboxId: string | null): void {
 export function clearSandboxEnvironment(sandboxId?: string): void {
   if (sandboxId) {
     sandboxLifecycleEventsById.delete(sandboxId);
+    safeStorageRemove(buildSandboxLifecycleStorageKey(sandboxId));
     sandboxEnvironmentsById.delete(sandboxId);
     if (activeSandboxEnvironmentId === sandboxId) {
       activeSandboxEnvironmentId = null;
@@ -453,9 +496,8 @@ export function clearSandboxEnvironment(sandboxId?: string): void {
 
   if (activeSandboxEnvironmentId) {
     sandboxLifecycleEventsById.delete(activeSandboxEnvironmentId);
+    safeStorageRemove(buildSandboxLifecycleStorageKey(activeSandboxEnvironmentId));
     sandboxEnvironmentsById.delete(activeSandboxEnvironmentId);
-
-    sandboxLifecycleEventsById.delete(activeSandboxEnvironmentId);
     activeSandboxEnvironmentId = null;
   }
 }
@@ -861,10 +903,7 @@ export async function createSandbox(
   const environment = data.environment || undefined;
   if (environment) setSandboxEnvironment(data.sandbox_id, environment);
 
-  
-  if (!environment?.readiness?.dependencies) {
-    recordSandboxLifecycleEvent(data.sandbox_id, "Workspace created");
-  }
+  recordSandboxLifecycleEvent(data.sandbox_id, 'Workspace created');
 
   return { sandboxId: data.sandbox_id, ownerToken: data.owner_token, status: 'ready', workspaceRevision: data.workspace_revision, environment };
 }

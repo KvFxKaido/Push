@@ -23,15 +23,43 @@ vi.stubGlobal('fetch', mockFetch);
 
 // We need to set the owner token before each test since the client
 // checks for it on every request.
-import { setSandboxOwnerToken, parseEnvironmentProbe, SANDBOX_TS_ARROW_FUNCTION_REGEX } from './sandbox-client';
+import {
+  clearSandboxEnvironment,
+  createSandbox,
+  getSandboxLifecycleEvents,
+  parseEnvironmentProbe,
+  SANDBOX_TS_ARROW_FUNCTION_REGEX,
+  setSandboxOwnerToken,
+} from './sandbox-client';
+
+function createStorageMock() {
+  const data = new Map<string, string>();
+
+  return {
+    data,
+    getItem: vi.fn((key: string) => (data.has(key) ? data.get(key)! : null)),
+    setItem: vi.fn((key: string, value: string) => {
+      data.set(key, value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      data.delete(key);
+    }),
+  };
+}
 
 beforeEach(() => {
   mockFetch.mockReset();
   setSandboxOwnerToken('test-owner-token');
+  vi.stubGlobal('window', {
+    localStorage: createStorageMock(),
+    sessionStorage: createStorageMock(),
+  });
 });
 
 afterEach(() => {
   setSandboxOwnerToken(null);
+  clearSandboxEnvironment('sb-created');
+  clearSandboxEnvironment('sb-persisted');
 });
 
 // ---------------------------------------------------------------------------
@@ -638,5 +666,51 @@ describe('parseEnvironmentProbe', () => {
     const env = parseEnvironmentProbe(stdout);
     expect(env).not.toBeNull();
     expect(env!.scripts).toBeUndefined();
+  });
+});
+
+describe('sandbox lifecycle events', () => {
+  it('records workspace creation even when readiness metadata exists', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sandbox_id: 'sb-created',
+        owner_token: 'owner-token',
+        workspace_revision: 1,
+        environment: {
+          tools: { node: 'v20.18.1' },
+          container_ttl: '30m',
+          readiness: {
+            package_manager: 'npm',
+            dependencies: 'installed',
+          },
+        },
+      }),
+    });
+
+    const session = await createSandbox('owner/repo', 'main');
+
+    expect(session.status).toBe('ready');
+    expect(getSandboxLifecycleEvents('sb-created')).toEqual([
+      expect.objectContaining({ message: 'Workspace created' }),
+    ]);
+  });
+
+  it('lazy-hydrates persisted lifecycle events on cache miss', () => {
+    const localStorage = createStorageMock();
+    vi.stubGlobal('window', { localStorage, sessionStorage: createStorageMock() });
+
+    localStorage.setItem(
+      'sandbox_lifecycle_events:sb-persisted',
+      JSON.stringify([
+        { timestamp: 1234, message: 'Workspace created' },
+        { timestamp: 2345, message: 'Workspace state restored from snapshot' },
+      ]),
+    );
+
+    expect(getSandboxLifecycleEvents('sb-persisted')).toEqual([
+      { timestamp: 1234, message: 'Workspace created' },
+      { timestamp: 2345, message: 'Workspace state restored from snapshot' },
+    ]);
   });
 });
