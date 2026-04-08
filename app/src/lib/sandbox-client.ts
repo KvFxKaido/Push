@@ -410,6 +410,7 @@ export function getSandboxEnvironment(sandboxId?: string): SandboxEnvironment | 
   const targetId = sandboxId ?? activeSandboxEnvironmentId;
   if (!targetId) return null;
   return sandboxEnvironmentsById.get(targetId) || null;
+}
 
 export interface SandboxLifecycleEvent {
   timestamp: number;
@@ -431,8 +432,6 @@ export function getSandboxLifecycleEvents(sandboxId?: string): SandboxLifecycleE
   return sandboxLifecycleEventsById.get(targetId) || [];
 }
 
-}
-
 export function setSandboxEnvironment(sandboxId: string, env: SandboxEnvironment | null): void {
   if (env) sandboxEnvironmentsById.set(sandboxId, env);
   else sandboxEnvironmentsById.delete(sandboxId);
@@ -443,8 +442,8 @@ export function setActiveSandboxEnvironment(sandboxId: string | null): void {
 }
 
 export function clearSandboxEnvironment(sandboxId?: string): void {
-  sandboxLifecycleEventsById.delete(sandboxId);
   if (sandboxId) {
+    sandboxLifecycleEventsById.delete(sandboxId);
     sandboxEnvironmentsById.delete(sandboxId);
     if (activeSandboxEnvironmentId === sandboxId) {
       activeSandboxEnvironmentId = null;
@@ -453,7 +452,9 @@ export function clearSandboxEnvironment(sandboxId?: string): void {
   }
 
   if (activeSandboxEnvironmentId) {
+    sandboxLifecycleEventsById.delete(activeSandboxEnvironmentId);
     sandboxEnvironmentsById.delete(activeSandboxEnvironmentId);
+
     sandboxLifecycleEventsById.delete(activeSandboxEnvironmentId);
     activeSandboxEnvironmentId = null;
   }

@@ -115,7 +115,6 @@ export function buildSessionCapabilityBlock(
   hasSandbox?: boolean,
 ): string {
   const sandboxEnv = hasSandbox ? getSandboxEnvironment() : null;
-  const payload = {
   const lifecycleEvents = hasSandbox ? getSandboxLifecycleEvents() : [];
   const creationEvent = lifecycleEvents.find(e => e.message.includes('Workspace created'));
   const ageMs = creationEvent ? Date.now() - creationEvent.timestamp : 0;
@@ -128,6 +127,7 @@ export function buildSessionCapabilityBlock(
     return `[${d.toISOString()}] ${e.message}`;
   });
 
+  const payload = {
     workspaceMode: workspaceContext.mode,
     githubTools: workspaceContext.includeGitHubTools,
     sandbox: {
